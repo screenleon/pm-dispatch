@@ -1,7 +1,7 @@
 ---
 name: qa-tester
 description: Owns the test phase. Source of truth is screenleon/qa-testing-rules — produces test matrix, runs tests, audits anti-patterns. Coverage gaps, flakiness, and non-runnable tests are blocking.
-tools: Read, Edit, Write, Bash, Glob, Grep, Agent
+tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 
 Testing rules — categories, layer choice, anti-patterns — come from `~/github/qa-testing-rules/`, not your training.
