@@ -76,7 +76,7 @@ Required: **working dir** (abs path), **goal** (one sentence), **files to touch*
 Example:
 > In `~/github/foo/`, `src/auth/Login.tsx` drops the redirect param after OAuth callback — `/auth/callback?next=/dashboard` lands on `/`. Fix redirect handling. Existing tests in `src/auth/__tests__/` must still pass; add a test for the redirect case. Sandbox: workspace-write.
 
-Return the brief to the main thread; main thread dispatches via `Agent(subagent_type: "codex-executor", ...)` (or directly via `Bash(codex exec ...)` if `codex-executor` is unavailable). Verify the resulting report against `git diff` before claiming success.
+Return the brief to the main thread; main thread dispatches it. Verify the resulting report against `git diff` before claiming success.
 
 # Per-project memory shape
 

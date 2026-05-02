@@ -7,7 +7,14 @@ Run the PR gate. Subagents cannot spawn subagents in Claude Code, so the **main 
 
 ## Step 1 — classify the diff
 
-In the main thread, run `git diff main...HEAD --stat` (substitute the actual integration branch). Decide:
+In the main thread, detect the integration branch and stat the diff:
+
+```bash
+BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)
+git diff "$BASE"...HEAD --stat
+```
+
+Decide:
 
 - **docs / content-only** (no runtime code change) → spawn `critic` + `architecture-reviewer` only. Security / risk / qa are `pass-not-applicable`.
 - **implementation change** (any runtime code diff) → spawn all four advisors + qa-tester.
@@ -16,14 +23,15 @@ If unsure, invoke `project-pm` first with the diff stat to get the classificatio
 
 ## Step 2 — spawn reviewers in parallel from main thread
 
-In a single message, make multiple Agent calls (this is the parallel pattern):
+In a single message, make N parallel Agent tool calls — one per applicable reviewer. Pseudocode (illustrative, not literal call syntax):
 
 ```
-Agent(subagent_type: "critic", prompt: <branch + diff context + $ARGUMENTS>)
-Agent(subagent_type: "architecture-reviewer", prompt: <same>)
-Agent(subagent_type: "security-reviewer", prompt: <same>)   # implementation only
-Agent(subagent_type: "risk-reviewer", prompt: <same>)       # implementation only
-Agent(subagent_type: "qa-tester", prompt: <same>)           # implementation only
+# pseudocode — emit each as a real Agent tool call in one message
+Agent(subagent_type: "critic", ...)
+Agent(subagent_type: "architecture-reviewer", ...)
+Agent(subagent_type: "security-reviewer", ...)   # implementation only
+Agent(subagent_type: "risk-reviewer", ...)       # implementation only
+Agent(subagent_type: "qa-tester", ...)           # implementation only
 ```
 
 Each reviewer brief should include: working dir, branch name vs integration branch, diff summary, scope hints from $ARGUMENTS.

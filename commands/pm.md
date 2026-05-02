@@ -7,4 +7,6 @@ Invoke `project-pm` via Agent. Brief with: request ($ARGUMENTS), current working
 
 Relay the PM's user-facing summary. Do not do the PM's job yourself.
 
-**Note**: Subagents cannot spawn subagents. If the PM's reply is "dispatch this brief to codex-executor" or "spawn reviewers X / Y / Z", the **main thread** must do the dispatching. Treat the PM's brief as the input to your own `Agent(subagent_type: "codex-executor", ...)` call (or `Bash(codex exec ...)` if `codex-executor` itself is unavailable in your environment).
+**Note**: Subagents cannot spawn subagents. If the PM's reply is "dispatch this brief to codex-executor", the **main thread** must do the dispatching — treat the PM's brief as input to your own `Agent(subagent_type: "codex-executor", ...)` call (illustrative — emit it as a real Agent tool call). If `codex-executor` is unavailable, fallback to `Bash(codex exec --sandbox workspace-write --skip-git-repo-check -C <cwd> -)` with the brief on stdin.
+
+For PR-gate flows, use `/pr-gate` instead — that skill handles reviewer orchestration; do not re-implement it inline here.

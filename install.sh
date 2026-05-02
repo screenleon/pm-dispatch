@@ -78,6 +78,13 @@ echo "  claude home: $CLAUDE_HOME"
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:        DRY RUN"; fi
 echo
 
+# Pre-flight: agent frontmatter must not declare Agent (subagents can't spawn subagents)
+if [[ -x "$REPO_ROOT/scripts/lint-agents.sh" ]]; then
+  echo "==> lint agents"
+  "$REPO_ROOT/scripts/lint-agents.sh"
+  echo
+fi
+
 install_dir agents
 install_dir skills
 install_dir commands

@@ -26,7 +26,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 ### Agents
 
 **Orchestration**
-- **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, dispatches to `codex-executor`, runs the PR gate, maintains per-project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md`.
+- **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md`.
 - **codex-executor** — Thin wrapper subagent. Accepts a complete brief, dispatches to the Codex CLI via `scripts/codex-dispatch.sh`, verifies via `git diff`, reports back.
 
 **Reviewers (advisors — PM may override with reasoning)**
@@ -53,6 +53,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 ## Design notes
 
+- **Subagents cannot spawn subagents.** Claude Code intentionally restricts nested `Agent` tool calls regardless of frontmatter declaration ([Agent SDK docs](https://code.claude.com/docs/en/agent-sdk/subagents.md)). The **main thread** orchestrates: it spawns subagents (PM, reviewers, codex-executor) and relays outputs between them. PM produces briefs and synthesizes verdicts; it does not dispatch. Reviewers run in parallel from the main thread, not from PM. Never include `Agent` in any subagent's `tools:` frontmatter — `scripts/lint-agents.sh` enforces this.
 - **PM thinks, Codex implements.** `project-pm` writes the brief; `codex-executor` is a dispatcher, not a designer. Architecture, scope, and acceptance criteria stay with the PM.
 - **Definitions in repo, state on disk.** Agent and command definitions are version-controlled here. Per-project state (memory, traces) lives in `~/.claude/` and stays out of this repo.
 - **Decoupled from agent-playbook-template.** The playbook is a methodology framework; this repo is a personal config. They evolve independently.
