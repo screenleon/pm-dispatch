@@ -2,7 +2,7 @@
 
 The canonical structure for any brief dispatched to `codex-executor` (directly via Agent, or indirectly via `scripts/codex-dispatch.sh`).
 
-`codex-executor` rejects briefs missing the four required fields. PMs and main-thread dispatchers should always write briefs against this schema; reach for the optional macros below when the task warrants them.
+`codex-executor` rejects briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 
 ## Required fields
 
@@ -12,17 +12,114 @@ The canonical structure for any brief dispatched to `codex-executor` (directly v
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
 | `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
+| `self_verify` | **Required when the brief writes any files.** Reusable macros below — drop them in by name and fill the slots. Read-only briefs (no file writes) may omit this; inline the obvious checks into `acceptance` instead. | `git-status no-collateral-damage`; `schema-match` against the reference file. |
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
+
+The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but `codex-executor` re-checks `acceptance` against `git diff` from outside.
 
 ## Optional sections
 
 Use as needed; not all briefs require all of them.
 
 - **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change.
-- **`self_verify`** — see macros below. Use whenever the work has external authority (sources, schema, level tag) Codex must not invent.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
 - **`sandbox`** / **`approval`** — only set when overriding the defaults (`workspace-write` / `never`). Caller must authorize.
+
+## Brief skeletons
+
+Pick the closest skeleton, fill the angle-bracketed slots, drop unused lines. Skeletons exist so brief-writing time stays roughly constant regardless of task type.
+
+### `edit` — small, well-specified textual edits
+
+Use when: ≤ ~10 file edits, you already know the exact OLD → NEW strings, no exploration needed.
+
+```
+working_dir: <abs path>
+goal: <one sentence>
+files:
+  - edit: <path 1>
+  - edit: <path 2>
+constraints:
+  - Do not modify any other files.
+  - Preserve existing formatting / indentation in each file.
+self_verify:
+  - <grep / wc / file-exists check that the edits landed>
+  - git-status no-collateral-damage
+acceptance:
+  - <textual delta description, file by file>
+  - <self_verify all pass>
+```
+
+### `audit` — read-only review producing a report
+
+Use when: Codex reads inputs, writes one report file, source data is off-limits.
+
+```
+working_dir: <abs path>
+goal: Audit <subject> against <criteria>; produce report at <path>.
+files:
+  - read: <inputs>
+  - write: <report path>
+constraints:
+  - READ-ONLY on all source files.
+  - Only write the audit report.
+self_verify:
+  - cross-source: <macro-fill>
+  - sample-N OK re-check
+  - git-status no-collateral-damage
+acceptance:
+  - report file exists at the declared path
+  - every flagged entry has citations
+  - footer contains the N-item OK re-check
+output_format: <markdown sections, table columns, etc.>
+```
+
+### `content-add` — new entries in an existing schema'd file family
+
+Use when: extending JSONL/JSON corpora, new entries must match the existing schema exactly.
+
+```
+working_dir: <abs path>
+goal: Add <N> <content type> entries to <target file family>.
+files:
+  - new: <new paths>
+  - read: <reference paths to learn schema>
+constraints:
+  - Match reference file schema exactly (keys, types, canonical values).
+  - Do not modify reference files or unrelated content.
+self_verify:
+  - schema-match against <reference>
+  - dedup-across-N for <key> across <files>
+  - <count check, e.g. wc -l == N for each file>
+  - git-status no-collateral-damage
+acceptance:
+  - <count> entries per new file
+  - schema check passes
+  - no duplicates across files
+```
+
+### `refactor` — rename / restructure across multiple files
+
+Use when: mechanical change preserving semantics (rename, move, signature update).
+
+```
+working_dir: <abs path>
+goal: Rename <X> → <Y> across <module / scope>.
+files:
+  - search hint: grep -rn '<X>' <scope>
+  - all matches updated; callers fixed
+constraints:
+  - Do not change semantics, only naming/structure.
+  - Keep public API stable unless the goal explicitly says otherwise.
+self_verify:
+  - grep -rn '<X>' <scope> returns no matches
+  - <existing test suite>: <command> exit 0
+  - git-status no-collateral-damage
+acceptance:
+  - all references updated, no callers broken
+  - test suite still green
+```
 
 ## Self-verify macros
 

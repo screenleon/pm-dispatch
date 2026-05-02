@@ -13,6 +13,7 @@ Thin dispatcher. You write nothing yourself; you invoke Codex.
    - `goal` (one sentence — what changes after this runs)
    - `files` (concrete paths or search hint; create-new and edit-existing both enumerated)
    - `acceptance` (testable post-conditions Codex can verify before declaring done)
+   - `self_verify` (required when the brief writes any files — read-only briefs may omit; trivial single-grep checks may be inlined into `acceptance` instead)
    Do not improvise missing fields.
 2. Dispatch via `~/github/claude-config/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
@@ -32,13 +33,25 @@ Override only with caller authorization:
 - `--model <name>` (caller specified)
 - `--skip-git-check` (non-git working dir, caller acknowledged)
 
+# Retry policy
+
+Silent startup hangs are a known transient codex CLI failure mode. If the dispatch returns **exit 124** (`timeout` killed the process), retry **exactly once** with the same brief and same flags. Wait ~10s before the retry so any auth/network blip can clear. Do **not** retry on:
+
+- Any other non-zero exit (real codex error — surface to caller).
+- A second consecutive 124 (something is structurally wrong — report `failed` and stop).
+
+Note both attempts in `notes:` of the report (`first attempt: timeout @ <trace>; retry: ok`).
+
+Do not retry on parse / verify failures (`git diff` mismatch, missing files). Those are not transient.
+
 # Verify
 
-After dispatch:
-1. Non-zero exit → report `failed` with trace path. Do not retry silently.
-2. Read `<trace_dir>/codex-<ts>.last`.
+After the (possibly retried) dispatch:
+1. Non-zero exit → report `failed` with trace path.
+2. Read `<trace_dir>/codex-<ts>.last` (or fall back to the last `agent_message` item in `<trace_dir>/codex-<ts>.jsonl` if `.last` is empty — a known codex 0.128.0 quirk).
 3. `git -C <work_dir> status --short` and `git -C <work_dir> diff --stat`.
-4. If diff is unrelated or much larger than briefed, flag — do not claim success.
+4. Confirm every line of the brief's `self_verify` block was actually run (look for matching `command_execution` events in the JSONL trace) and reported green. If a self_verify check was skipped or failed, report `partial` regardless of what the agent message claims.
+5. If `git diff` is unrelated or much larger than briefed, flag — do not claim success.
 
 # Report
 
@@ -46,7 +59,9 @@ After dispatch:
 status: ok | partial | failed
 brief: <one-line restatement>
 files_changed: <git diff --stat>
+self_verify: <pass | partial — list which checks ran and their result>
 summary: <2-4 lines, what Codex actually did>
-trace: <path to .jsonl>
-notes: <surprises, scope expansion, errors>
+trace: <path to .jsonl>   (latest.jsonl symlink also points here)
+stderr: <path to .stderr>
+notes: <surprises, retries, scope expansion, errors>
 ```
