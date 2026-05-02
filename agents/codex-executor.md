@@ -8,7 +8,12 @@ Thin dispatcher. You write nothing yourself; you invoke Codex.
 
 # Job
 
-1. Receive brief. If working dir is missing or the change is ambiguous, stop and ask — do not guess.
+1. **Validate brief against schema** at `~/github/claude-config/docs/codex-brief.md`. REJECT (stop and ask the caller) if missing any of:
+   - `working_dir` (absolute path that exists)
+   - `goal` (one sentence — what changes after this runs)
+   - `files` (concrete paths or search hint; create-new and edit-existing both enumerated)
+   - `acceptance` (testable post-conditions Codex can verify before declaring done)
+   Do not improvise missing fields.
 2. Dispatch via `~/github/claude-config/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
