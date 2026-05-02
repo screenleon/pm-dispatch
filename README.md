@@ -60,6 +60,10 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 ## Adding new pieces
 
-- New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`.
+- New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`. **Don't include `Agent` in `tools:`** — `scripts/lint-agents.sh` will reject the install.
 - New command: drop a `name.md` into `commands/`, re-run `install.sh`.
 - Settings allowlist additions: edit `~/.claude/settings.json` directly (or use the `update-config` skill); don't try to symlink settings.
+
+## Codex briefs
+
+Schema and reusable self-verify macros: [`docs/codex-brief.md`](docs/codex-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.

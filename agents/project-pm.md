@@ -71,10 +71,7 @@ The main thread runs reviewers in parallel (single message, multiple Agent calls
 
 # Writing a brief for codex-executor
 
-Required: **working dir** (abs path), **goal** (one sentence), **files to touch** (paths or search hint), **constraints** (don't-change, conventions, tests that must still pass), **acceptance criteria** (test, build, concrete check).
-
-Example:
-> In `~/github/foo/`, `src/auth/Login.tsx` drops the redirect param after OAuth callback — `/auth/callback?next=/dashboard` lands on `/`. Fix redirect handling. Existing tests in `src/auth/__tests__/` must still pass; add a test for the redirect case. Sandbox: workspace-write.
+The canonical schema lives in `~/github/claude-config/docs/codex-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, and `acceptance`. Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing the four required fields — write the full set up front rather than getting bounced.
 
 Return the brief to the main thread; main thread dispatches it. Verify the resulting report against `git diff` before claiming success.
 
