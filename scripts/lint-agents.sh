@@ -17,14 +17,36 @@ fi
 violations=0
 for f in "$agents_dir"/*.md; do
   [ -e "$f" ] || continue
-  # Extract content between the first two `---` lines (YAML frontmatter)
-  fm=$(awk '/^---$/{c++; next} c==1' "$f")
-  tools_line=$(printf '%s\n' "$fm" | grep -E '^tools:' || true)
-  if [ -z "$tools_line" ]; then
+
+  # Require well-formed frontmatter (>=2 `---` markers)
+  fence_count=$(grep -c '^---$' "$f" || true)
+  if [ "$fence_count" -lt 2 ]; then
+    echo "WARN: $(basename "$f") has no YAML frontmatter; skipping" >&2
     continue
   fi
-  if printf '%s' "$tools_line" | grep -qE '(^|[, ])Agent([, ]|$)'; then
-    echo "FAIL: $(basename "$f") declares Agent in tools: $tools_line" >&2
+
+  # Extract content between the first two `---` lines
+  fm=$(awk '/^---$/{c++; next} c==1' "$f")
+
+  # Capture the tools: block — the inline scalar form OR a block-list
+  # spanning indented `- ` lines until the next non-indented key.
+  tools_block=$(printf '%s\n' "$fm" | awk '
+    /^tools:/ { print; in_block=1; next }
+    in_block {
+      if ($0 ~ /^[[:space:]]/) { print; next }
+      else { in_block=0 }
+    }
+  ')
+
+  if [ -z "$tools_block" ]; then
+    continue
+  fi
+
+  # Match Agent as a whole token. Separators in YAML scalar/flow:
+  # `,` ` ` `[` `]` `:` and start/end of line. In block-list, `-` precedes.
+  if printf '%s' "$tools_block" | grep -qE '(^|[][, :-])Agent([][, :]|$)'; then
+    echo "FAIL: $(basename "$f") declares Agent in tools" >&2
+    printf '%s\n' "$tools_block" | sed 's/^/  /' >&2
     violations=$((violations + 1))
   fi
 done

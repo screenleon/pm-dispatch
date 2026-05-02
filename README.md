@@ -27,7 +27,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 **Orchestration**
 - **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md`.
-- **codex-executor** — Thin wrapper subagent. Accepts a complete brief, dispatches to the Codex CLI via `scripts/codex-dispatch.sh`, verifies via `git diff`, reports back.
+- **codex-executor** — Thin wrapper subagent, dispatched by the main thread. Accepts a complete brief, calls Codex via `scripts/codex-dispatch.sh`, verifies via `git diff`, reports back.
 
 **Reviewers (advisors — PM may override with reasoning)**
 - **critic** — Adversarial review of plan / diff. Scope creep, incompleteness, convention drift.
