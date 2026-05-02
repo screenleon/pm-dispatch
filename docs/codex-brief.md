@@ -11,7 +11,7 @@ The canonical structure for any brief dispatched to `codex-executor` (directly v
 | `working_dir` | Absolute path. Must exist. | `/home/screenleon/github/japanese-site/` |
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
-| `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | `wc -l shows 40/40/40`; every line parses as JSON; no character collisions across N1-N5 |
+| `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
 
