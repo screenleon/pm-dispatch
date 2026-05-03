@@ -10,14 +10,15 @@ Run the PR gate. Subagents cannot spawn subagents in Claude Code, so the **main 
 Detect the integration branch and check the diff:
 
 ```bash
-BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)
+BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+: "${BASE:=main}"
 git diff "$BASE"...HEAD --stat
 ```
 
 Apply the heuristic — bias toward `implementation` when ambiguous (an unnecessary security/risk spawn returns `pass-not-applicable` cheaply; a missed implementation review can ship a real bug):
 
 ```bash
-non_docs=$(git diff "$BASE"...HEAD --name-only | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/|^\.github/' || true)
+non_docs=$(git diff "$BASE"...HEAD --name-only | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
 [ -z "$non_docs" ] && CLASS=docs-only || CLASS=implementation
 ```
 

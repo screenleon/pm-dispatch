@@ -15,11 +15,13 @@ if [ ! -d "$agents_dir" ]; then
 fi
 
 violations=0
+checked=0
 for f in "$agents_dir"/*.md; do
   [ -e "$f" ] || continue
+  checked=$((checked + 1))
 
   # Require well-formed frontmatter (>=2 `---` markers)
-  fence_count=$(grep -c '^---$' "$f" || true)
+  fence_count=$(tr -d '\r' < "$f" | grep -c '^---$' || true)
   if [ "$fence_count" -lt 2 ]; then
     echo "WARN: $(basename "$f") has no YAML frontmatter; skipping" >&2
     continue
@@ -56,4 +58,9 @@ if [ "$violations" -gt 0 ]; then
   exit 1
 fi
 
-echo "lint-agents: OK ($(ls "$agents_dir"/*.md 2>/dev/null | wc -l) agent files checked)"
+if [ "$checked" -eq 0 ]; then
+  echo "lint-agents: no agent files found in $agents_dir" >&2
+  exit 1
+fi
+
+echo "lint-agents: OK ($checked agent files checked)"
