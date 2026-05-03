@@ -49,7 +49,8 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 ### Scripts
 
-- **codex-dispatch.sh** — Invokes `codex exec` with tracing, sandbox/approval flags, and final-message capture. All `.agent-trace/codex-*.{jsonl,last}` writes happen inside the target project's `.agent-trace/` directory.
+- **codex-dispatch.sh** — Invokes `codex exec` with tracing, sandbox/approval flags, timeout (default 1200s, override via `--timeout` or `$CODEX_DISPATCH_TIMEOUT`), and final-message capture. Writes `.agent-trace/codex-<ts>.{jsonl,last,stderr}` and refreshes `.agent-trace/latest.{jsonl,last,stderr}` symlinks so observers can attach without knowing the timestamp. Exit 124 = hit the timeout (silent codex hang most likely cause).
+- **codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
 
 ## Design notes
 
@@ -67,3 +68,17 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 ## Codex briefs
 
 Schema and reusable self-verify macros: [`docs/codex-brief.md`](docs/codex-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.
+
+### Watching a long dispatch
+
+Codex briefs that touch many files can run 10–30 minutes. The `codex-executor` subagent blocks until codex returns, so the parent agent has no incremental view. Two recovery patterns:
+
+1. **External tail (any session, no Claude Code involvement).** From another terminal:
+   ```sh
+   ~/github/claude-config/scripts/codex-watch.sh --cd /path/to/project
+   ```
+   Prints one line per codex event as it streams. Works whether the dispatcher was launched from Claude Code, the CLI, or a CI job.
+
+2. **Background dispatch from main thread.** When you need progress visible *inside* a Claude Code session, skip `codex-executor` and run the wrapper as a background Bash command, then `Monitor` (or periodically `Bash` with `tail -n 5 .agent-trace/latest.jsonl`) the trace file. Invoke `codex-executor` only at the end for `git diff` verification. Trade-off: you lose the executor's pre-dispatch brief validation, so write the brief carefully.
+
+If a dispatch exits 124, codex hit the timeout — almost always a silent startup hang. The wrapper banner + closing line in `.agent-trace/latest.stderr` is the post-mortem: re-dispatching usually clears the hang. Extend `--timeout` (or `$CODEX_DISPATCH_TIMEOUT`) only when codex is genuinely doing more work than the default 20 minutes.
