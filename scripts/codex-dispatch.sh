@@ -87,7 +87,9 @@ CMD=(codex exec
 )
 [[ -n "$MODEL" ]] && CMD+=(-m "$MODEL")
 [[ "$SKIP_GIT_CHECK" -eq 1 ]] && CMD+=(--skip-git-repo-check)
-CMD+=("$BRIEF")
+# Pass brief via stdin ("-") to avoid codex treating a multi-line positional
+# argument as an incomplete prompt and blocking on stdin.
+CMD+=("-")
 
 # Wrapper banner — also written to console so the caller can see what's happening.
 {
@@ -108,9 +110,9 @@ ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr"
 
 set +e
 if [[ "$TIMEOUT" -gt 0 ]]; then
-  timeout --foreground --kill-after=15 "$TIMEOUT" "${CMD[@]}" >"$TRACE" 2>>"$STDERR_LOG"
+  printf '%s\n' "$BRIEF" | timeout --foreground --kill-after=15 "$TIMEOUT" "${CMD[@]}" >"$TRACE" 2>>"$STDERR_LOG"
 else
-  "${CMD[@]}" >"$TRACE" 2>>"$STDERR_LOG"
+  printf '%s\n' "$BRIEF" | "${CMD[@]}" >"$TRACE" 2>>"$STDERR_LOG"
 fi
 EXIT=$?
 set -e
