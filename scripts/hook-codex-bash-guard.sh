@@ -181,23 +181,31 @@ validate_args() {
       continue
     fi
 
-    # Bundled short flag `-X<rest>` where rest looks like a path. We only
-    # validate when rest is path-like (absolute, tilde, or contains `..`
-    # segment) to avoid false-positives on combined short flags like `-iE` or
-    # patterns like `-rfoo`. If rest is anything else, treat as flag and skip.
+    # Bundled short flag `-X<rest>` (one or more single-letter flags optionally
+    # followed by a value). To catch path-taking flags bundled behind other
+    # short flags — `-rf/etc/passwd` (recursive + file-of-patterns), `-irf...`,
+    # `-nf...`, `jq -rf...` — peel leading [A-Za-z] flag chars from `rest` and
+    # check at each step whether what remains starts a path. Combined short
+    # flags like `-iE` (rest=`E`) and pattern-shaped like `-rfoo` (rest with
+    # no path-shape) end the loop without validating; treated as flags.
     if [[ "$p" =~ ^-[A-Za-z].+$ ]]; then
-      rest="${p:2}"
-      case "$rest" in
-        /*|"~"*)
-          validate_path_token "$rest" "short flag value"
-          continue
-          ;;
-      esac
-      if [[ "$rest" =~ (^|/)\.\.($|/) ]]; then
-        validate_path_token "$rest" "short flag value"
-        continue
-      fi
-      # Not path-like — treat as a flag, skip path validation.
+      scan_rest="${p:2}"
+      while [[ -n "$scan_rest" ]]; do
+        case "$scan_rest" in
+          /*|"~"*)
+            validate_path_token "$scan_rest" "short flag value"
+            break
+            ;;
+        esac
+        if [[ "$scan_rest" =~ (^|/)\.\.($|/) ]]; then
+          validate_path_token "$scan_rest" "short flag value"
+          break
+        fi
+        case "$scan_rest" in
+          [A-Za-z]*) scan_rest="${scan_rest:1}" ;;
+          *) break ;;
+        esac
+      done
       continue
     fi
 

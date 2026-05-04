@@ -634,6 +634,37 @@ run_case "cx: grep -i pattern → allow (bare short flag, no value)" 0 "$CXHOOK"
 run_case "cx: grep -iE pattern → allow (combined short flags, not path)" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -iE pattern file"}}'
 
+# --- v6: bundled-prefix short-flag bypass (-rf/etc/passwd) ---
+run_case "cx: grep -rf/etc/passwd → deny (bundled prefix + path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rf/etc/passwd /tmp/x"}}' \
+  "outside read roots"
+
+run_case "cx: grep -irf/etc/shadow → deny (multi-prefix + path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -irf/etc/shadow /tmp/x"}}' \
+  "outside read roots"
+
+run_case "cx: grep -nf/etc/passwd → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -nf/etc/passwd /tmp/x"}}' \
+  "outside read roots"
+
+run_case "cx: jq -rf/etc/passwd → deny (filter from secret file)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"jq -rf/etc/passwd /tmp/in"}}' \
+  "outside read roots"
+
+run_case "cx: grep -rf~/.ssh/x → deny (bundled prefix + tilde)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rf~/.ssh/x /tmp/x"}}' \
+  "tilde path"
+
+run_case "cx: grep -rf../etc/passwd → deny (bundled prefix + traversal)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rf../etc/passwd /tmp/x"}}' \
+  "path traversal"
+
+run_case "cx: grep -rf/tmp/foo → allow (bundled prefix, value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rf/tmp/foo /tmp/x"}}'
+
+run_case "cx: grep -rfsomefile → allow (bundled prefix, no path shape)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rfsomefile /tmp/x"}}'
+
 # --- v5: --flag VALUE space form (positional validation on next iter) ---
 run_case "cx: grep --file /etc/shadow x → deny (space form; value as positional)" 2 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file /etc/shadow x"}}' \
