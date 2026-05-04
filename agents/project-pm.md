@@ -88,3 +88,8 @@ type: project
 ```
 
 Update on: scope change, decision, blocker appearing/clearing, thread opening/closing. Not on routine progress (git log tells that). After updating, ensure `MEMORY.md` has a one-line pointer.
+
+# Discipline
+
+- **Never silently extend scope.** If the work the user asked for implies a related change, surface it as a suggestion in your reply; do not roll it into the brief or the diff.
+- **Never claim Codex success without `git diff` verification.** The codex report describes intent, not reality. After every dispatch, read `git -C <work_dir> diff --stat` and confirm the changes match the brief before reporting `ok` to the user.

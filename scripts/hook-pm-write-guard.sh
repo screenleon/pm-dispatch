@@ -1,49 +1,125 @@
 #!/usr/bin/env bash
-# PreToolUse guard: project-pm subagent may only Edit/Write inside the memory dir.
+# PreToolUse guard for the `project-pm` subagent.
 #
-# Wired into ~/.claude/settings.json as a PreToolUse hook with matcher "Edit|Write".
-# No-op for any other agent (main thread, other subagents) so the hook is safe to
-# install globally. Exit 2 with stderr message blocks the call and feeds the message
-# back to Claude.
+# Threat model: PM is a planner; it must never modify code or arbitrary files.
+# Only memory files under ~/.claude/projects/-home-screenleon-github/memory/
+# are writable. All other Edit/Write attempts are blocked.
 #
-# Bypass: set CLAUDE_HOOK_PM_GUARD=off in the environment to disable.
+# Wired into ~/.claude/settings.json as a PreToolUse hook with matcher
+# "Edit|Write". No-op for any other agent (main thread, other subagents).
+#
+# Bypass: set CLAUDE_HOOK_PM_GUARD=off in the environment to skip enforcement.
+# Each bypass is logged.
+#
+# Audit: every evaluated firing (allow / deny / bypass) is appended to
+# ~/.claude/logs/hooks.log. No-ops for other agents are not logged.
 
-set -euo pipefail
+set -uo pipefail
 
-[[ "${CLAUDE_HOOK_PM_GUARD:-}" == "off" ]] && exit 0
+HOOK_NAME="hook-pm-write-guard"
+LOG_DIR="$HOME/.claude/logs"
+LOG_FILE="$LOG_DIR/hooks.log"
 
-input="$(cat)"
+ALLOWED_PREFIX="$HOME/.claude/projects/-home-screenleon-github/memory/"
 
-agent_type="$(jq -r '.agent_type // ""' <<<"$input")"
-tool_name="$(jq -r '.tool_name // ""' <<<"$input")"
+# ---------- helpers ----------
 
-[[ "$agent_type" != "project-pm" ]] && exit 0
-[[ "$tool_name" != "Edit" && "$tool_name" != "Write" ]] && exit 0
+audit() {
+  local decision="$1" reason="${2:-}" target="${3:-}"
+  mkdir -p "$LOG_DIR" 2>/dev/null || return 0
+  local ts
+  ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+  printf '%s %s agent=%s tool=%s decision=%s reason=%q target=%q\n' \
+    "$ts" "$HOOK_NAME" "${agent_type:-?}" "${tool_name:-?}" "$decision" "$reason" "$target" \
+    >> "$LOG_FILE" 2>/dev/null || true
+}
 
-file_path="$(jq -r '.tool_input.file_path // ""' <<<"$input")"
-if [[ -z "$file_path" ]]; then
-  echo "pm-write-guard: tool_input.file_path missing — refusing." >&2
+deny() {
+  local reason="$1"
+  audit deny "$reason" "${file_path:-}"
+  cat >&2 <<EOF
+project-pm: blocked by $HOOK_NAME — $reason
+
+  attempted: $tool_name on ${file_path:-(empty)}
+  allowed:   ${ALLOWED_PREFIX}**
+
+If a code change is needed, hand a brief back to the main thread for codex-executor
+dispatch (schema: ~/github/claude-config/docs/codex-brief.md).
+
+Bypass for one turn: set CLAUDE_HOOK_PM_GUARD=off (logged).
+EOF
+  exit 2
+}
+
+allow() {
+  audit allow "${1:-ok}" "${file_path:-}"
+  exit 0
+}
+
+# ---------- preflight ----------
+
+if [[ "${CLAUDE_HOOK_PM_GUARD:-}" == "off" ]]; then
+  agent_type="${agent_type:-?}"
+  tool_name="${tool_name:-?}"
+  file_path="(bypass — input not parsed)"
+  audit bypass "CLAUDE_HOOK_PM_GUARD=off" "$file_path"
+  exit 0
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "$HOOK_NAME: jq missing on PATH — install jq or set CLAUDE_HOOK_PM_GUARD=off" >&2
   exit 2
 fi
 
-# Resolve to absolute (the path may not exist yet for Write; use realpath -m).
-abs_path="$(realpath -m -- "$file_path")"
+if ! command -v realpath >/dev/null 2>&1; then
+  echo "$HOOK_NAME: realpath missing on PATH — install coreutils or set CLAUDE_HOOK_PM_GUARD=off" >&2
+  exit 2
+fi
 
-allowed_prefix="/home/screenleon/.claude/projects/-home-screenleon-github/memory/"
+# ---------- parse input ----------
 
+input="$(cat)"
+
+agent_type="$(jq -r '.agent_type // ""' <<<"$input" 2>/dev/null)" || {
+  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
+  exit 2
+}
+tool_name="$(jq -r '.tool_name // ""' <<<"$input" 2>/dev/null)" || {
+  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
+  exit 2
+}
+
+# No-op for any caller other than the project-pm subagent on Edit/Write.
+[[ "$agent_type" != "project-pm" ]] && exit 0
+[[ "$tool_name" != "Edit" && "$tool_name" != "Write" ]] && exit 0
+
+file_path="$(jq -r '.tool_input.file_path // ""' <<<"$input" 2>/dev/null)" || {
+  audit deny "jq failed on tool_input.file_path" ""
+  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
+  exit 2
+}
+
+if [[ -z "$file_path" ]]; then
+  deny "tool_input.file_path empty"
+fi
+
+# Require absolute path. Edit/Write tools enforce this upstream, but assert
+# defensively — a relative path would be resolved against the hook's CWD,
+# which is not the agent's CWD.
+if [[ "$file_path" != /* ]]; then
+  deny "file_path must be absolute (got: $file_path)"
+fi
+
+# Normalize traversal (`..`) and resolve symlinks where they exist. realpath -m
+# tolerates non-existent path components (Write's target file may not exist yet).
+abs_path="$(realpath -m -- "$file_path" 2>/dev/null)" || {
+  deny "realpath failed on file_path"
+}
+
+# Prefix match. ALLOWED_PREFIX has trailing slash, so memory-evil/x.md does NOT
+# match memory/x.md.
 case "$abs_path" in
-  "$allowed_prefix"*) exit 0 ;;
+  "$ALLOWED_PREFIX"*) allow "inside memory dir" ;;
 esac
 
-cat >&2 <<EOF
-project-pm is not permitted to $tool_name files outside the memory directory.
-
-  attempted: $abs_path
-  allowed:   ${allowed_prefix}**
-
-If a code change is needed, write a brief and hand it back to the main thread for
-codex-executor dispatch (see ~/github/claude-config/docs/codex-brief.md).
-If you genuinely need to bypass for one turn, the user can set
-CLAUDE_HOOK_PM_GUARD=off in the environment.
-EOF
-exit 2
+deny "outside memory directory (resolved to $abs_path)"
