@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Idempotently splice the claude-config PreToolUse hooks into
+# ~/.claude/settings.json.
+#
+# Wires:
+#   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
+#   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
+#
+# Safe to re-run: detects existing entries (matched by command path) and skips
+# them. Backs up settings.json once per run if any change is staged.
+#
+# Usage:
+#   scripts/install-hooks.sh           # apply
+#   scripts/install-hooks.sh --dry-run # show what would change
+
+set -euo pipefail
+
+DRY_RUN=0
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+settings="$HOME/.claude/settings.json"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "install-hooks: jq is required" >&2
+  exit 2
+fi
+
+if [ ! -f "$settings" ]; then
+  echo "install-hooks: $settings not found — create it first" >&2
+  exit 2
+fi
+
+pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
+cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
+
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ]; then
+  echo "install-hooks: hook scripts missing or not executable" >&2
+  echo "  $pm_cmd" >&2
+  echo "  $cx_cmd" >&2
+  exit 2
+fi
+
+# Build a temp file holding the new settings.json. jq does the work; we then
+# diff against the original and apply only if it actually changed.
+tmp_new="$(mktemp)"
+trap 'rm -f "$tmp_new"' EXIT
+
+jq \
+  --arg pm "$pm_cmd" \
+  --arg cx "$cx_cmd" \
+  '
+  # Ensure .hooks.PreToolUse exists as an array.
+  .hooks //= {} |
+  .hooks.PreToolUse //= [] |
+
+  # Helper: an entry already exists if any matcher block has a hook with the same command.
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $pm) ] | length ) as $pm_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cx) ] | length ) as $cx_present |
+
+  ( if $pm_present == 0 then
+      .hooks.PreToolUse += [{
+        "matcher": "Edit|Write",
+        "hooks": [{"type": "command", "command": $pm}]
+      }]
+    else . end
+  ) |
+  ( if $cx_present == 0 then
+      .hooks.PreToolUse += [{
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": $cx}]
+      }]
+    else . end
+  )
+  ' "$settings" > "$tmp_new"
+
+if cmp -s "$settings" "$tmp_new"; then
+  echo "install-hooks: already wired, nothing to do"
+  exit 0
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "install-hooks: would apply the following change:"
+  diff -u "$settings" "$tmp_new" || true
+  exit 0
+fi
+
+backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
+cp "$settings" "$backup"
+mv "$tmp_new" "$settings"
+trap - EXIT
+echo "install-hooks: wrote $settings"
+echo "install-hooks: backup at $backup"

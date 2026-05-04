@@ -85,10 +85,28 @@ if [[ -x "$REPO_ROOT/scripts/lint-agents.sh" ]]; then
   echo
 fi
 
+# Pre-flight: scripts/*.sh hygiene (executable bit, shebang, parses, set line)
+if [[ -x "$REPO_ROOT/scripts/lint-scripts.sh" ]]; then
+  echo "==> lint scripts"
+  "$REPO_ROOT/scripts/lint-scripts.sh"
+  echo
+fi
+
+# Pre-flight: hook regression suite (security-relevant; must be green to install)
+if [[ -x "$REPO_ROOT/scripts/test-hooks.sh" ]]; then
+  echo "==> test hooks"
+  "$REPO_ROOT/scripts/test-hooks.sh"
+  echo
+fi
+
 install_dir agents
 install_dir skills
 install_dir commands
 
 echo
 echo "Done."
-if [[ "$DRY_RUN" -eq 1 ]]; then echo "(no changes made — re-run without --dry-run to apply)"; fi
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "(no changes made — re-run without --dry-run to apply)"
+else
+  echo "Hooks: run scripts/install-hooks.sh to wire PreToolUse guards into ~/.claude/settings.json (idempotent)."
+fi

@@ -52,5 +52,3 @@ After all reviewers return, invoke `project-pm` once with the classification + t
 ## Step 4 — relay to user
 
 Relay PM's gate summary verbatim. Do not collapse blocks into "looks good".
-
-If any hard gate (security / risk / qa red-line) blocks, do NOT open a PR. Surface the override path to the user and wait for explicit acknowledgment.
