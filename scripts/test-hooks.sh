@@ -538,6 +538,88 @@ assert_log "cx: bypass line records codex-executor (not '?')" "agent=codex-execu
 run_case_env "cx: cat /etc/x with /etc in read roots → allow" 0 "CLAUDE_HOOK_CODEX_READ_ROOTS=/etc" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat /etc/passwd"}}'
 
+# --- v4: quoted-path bypass ---
+run_case 'cx: cat "/etc/passwd" (double-quote) → deny' 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat \"/etc/passwd\""}}' \
+  "double-quote"
+
+run_case "cx: cat '/etc/passwd' (single-quote) → deny" 2 "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat '/etc/passwd'\"}}" \
+  "single-quote"
+
+run_case 'cx: grep "pattern" file (any double-quote) → deny' 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep \"pattern\" file"}}' \
+  "double-quote"
+
+# --- v4: relative `..` traversal bypass ---
+run_case "cx: cat ../etc/passwd → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat ../etc/passwd"}}' \
+  "path traversal"
+
+run_case "cx: cat ../../etc/shadow → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat ../../etc/shadow"}}' \
+  "path traversal"
+
+run_case "cx: cat ./../etc/passwd → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat ./../etc/passwd"}}' \
+  "path traversal"
+
+run_case "cx: cat foo/../bar → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat foo/../bar"}}' \
+  "path traversal"
+
+run_case "cx: legitimate filename foo..bar → allow (not path segment)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat foo..bar"}}'
+
+# --- v4: git -C dir read-root validation ---
+run_case "cx: git -C /etc status → deny (outside read roots)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /etc status"}}' \
+  "git -C dir outside read roots"
+
+run_case "cx: git -C /home/screenleon/.ssh status → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /home/screenleon/.ssh status"}}' \
+  "git -C dir outside read roots"
+
+run_case "cx: git -C /tmp/../etc status → deny (traversal normalizes)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /tmp/../etc status"}}' \
+  "path traversal"
+
+run_case "cx: git -C ../foo status → deny (relative traversal)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C ../foo status"}}' \
+  "path traversal"
+
+# --- v4: --flag=PATH bypass ---
+run_case "cx: grep --file=/etc/shadow x → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file=/etc/shadow x"}}' \
+  "outside read roots"
+
+run_case "cx: jq --slurpfile=/etc/passwd . → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"jq --slurpfile=/etc/passwd ."}}' \
+  "outside read roots"
+
+run_case "cx: cat --include=/tmp/foo file → allow (value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat --include=/tmp/foo file"}}'
+
+run_case "cx: grep --file=~/.ssh/x file → deny (tilde in flag value)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file=~/.ssh/x file"}}' \
+  "tilde path"
+
+run_case "cx: grep --file=/tmp/../etc/passwd → deny (traversal in flag value)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file=/tmp/../etc/passwd file"}}' \
+  "path traversal"
+
+# --- v4: dead-code regression (stash/branch removed from array) ---
+# These would silently pass if the per-subcmd gates were also removed;
+# combined with the explicit deny tests above, mutation testing is now strict.
+run_case "cx: git status (still allowed via array)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status --short"}}'
+
+run_case "cx: git branch -a (only branch gate sets allowed=1 now)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git branch -a"}}'
+
+run_case "cx: git stash list (only stash gate sets allowed=1 now)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git stash list"}}'
+
 # =============================================================================
 # summary
 # =============================================================================

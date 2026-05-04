@@ -54,9 +54,12 @@ IFS=':,' read -r -a READ_ROOTS <<<"$READ_ROOTS_RAW"
 #   bash sh env xargs — composition primitives we explicitly want to deny
 READONLY_VERBS=(cat ls head tail wc grep pwd realpath dirname basename jq test sleep date echo true false)
 
-# git subcommands considered read-only here. `branch` and `stash` are allowed
-# only with restricted further subverbs / flags (handled below).
-GIT_READONLY_SUBCMDS=(status log diff show rev-parse ls-files describe stash branch)
+# git subcommands that are unconditionally read-only (no further arg/subverb
+# restriction needed). `branch` and `stash` are NOT here — they have their own
+# gates further down because some of their forms mutate. Keeping them out of
+# this array means a regression (e.g. accidentally removing the gate) fails
+# closed: subcmd not in array → deny.
+GIT_READONLY_SUBCMDS=(status log diff show rev-parse ls-files describe)
 
 # Flag prefixes that CAUSE A WRITE on git read-only subcommands. Rejected on
 # any git invocation regardless of subcommand.
@@ -128,30 +131,58 @@ is_under_read_root() {
   return 1
 }
 
-# Validate every positional arg after the verb. Skips flags (start with -).
-# Denies any glob char, denies tilde-paths (codex should use absolute), denies
-# absolute paths outside read roots.
+# Validate a single arg-string against path/traversal/glob policy.
+#   - reject `..` as a path segment (closes `cat ../etc/passwd` style escapes)
+#   - reject any glob char (`*` `?` `[` `]`)
+#   - reject tilde paths (codex should use absolute)
+#   - require absolute paths to resolve under a read root
+# Used for both bare positional args and `--flag=VALUE` forms (where VALUE is
+# extracted by the caller).
+validate_path_token() {
+  local p="$1" what="${2:-arg}"
+
+  # Globs anywhere are denied.
+  case "$p" in
+    *\**|*\?*|*\[*|*\]*) deny "glob char in $what: $p" ;;
+  esac
+
+  # `..` as a path segment (e.g. `..`, `../foo`, `foo/..`, `foo/../bar`).
+  # Pure substring check would reject `foo..bar` (legitimate); restrict to
+  # cases where `..` is bounded by `/` or string edges.
+  if [[ "$p" =~ (^|/)\.\.($|/) ]]; then
+    deny "path traversal (\`..\`) in $what: $p"
+  fi
+
+  case "$p" in
+    "~"*) deny "tilde path in $what (use absolute under a read root): $p" ;;
+    /*)   is_under_read_root "$p" || deny "path $what outside read roots: $p" ;;
+  esac
+}
+
+# Validate every positional arg after the verb. Skips bare flags (start with -)
+# but inspects the VALUE portion of `--flag=VALUE` forms — closes
+# `grep --file=/etc/shadow` style bypasses where the path hides behind a flag.
 validate_args() {
   local start="${1:-1}"
-  local i p
+  local i p val
   for ((i=start; i<${#parts[@]}; i++)); do
     p="${parts[i]}"
     [[ -z "$p" ]] && continue
 
-    # Globs anywhere in the arg are denied.
-    case "$p" in
-      *\**|*\?*|*\[*|*\]*) deny "glob char in arg: $p" ;;
-    esac
+    # `--flag=VALUE` form: validate VALUE.
+    if [[ "$p" == --*=* ]]; then
+      val="${p#*=}"
+      [[ -n "$val" ]] && validate_path_token "$val" "flag value"
+      continue
+    fi
 
-    # Flags (start with `-`) skip path validation but still get the write-flag check.
+    # Other flags (--flag VALUE form, or short -x) skip path validation; the
+    # following arg is treated as a positional and validated on the next loop.
     if [[ "$p" == -* ]]; then
       continue
     fi
 
-    case "$p" in
-      "~"*) deny "tilde path in arg (use absolute under a read root): $p" ;;
-      /*)   is_under_read_root "$p" || deny "path arg outside read roots: $p" ;;
-    esac
+    validate_path_token "$p" "arg"
   done
 }
 
@@ -218,6 +249,17 @@ if [[ "$command" == *$'\r'* ]]; then
   deny "carriage return in command"
 fi
 
+# Quotes are rejected because our tokenizer (`read -r -a`) does NOT honor shell
+# quoting — a quoted absolute path would be stored as `"/etc/passwd"` and skip
+# the path-validation case statement (which only matches `/*` literally). Since
+# command chaining is forbidden anyway, quotes serve no purpose here.
+if [[ "$command" == *\"* ]]; then
+  deny "double-quote in command"
+fi
+if [[ "$command" == *\'* ]]; then
+  deny "single-quote in command"
+fi
+
 if [[ "$command" =~ [\;\&\|\$\`\(\)\<\>\{\}\\] ]]; then
   deny "shell metacharacter in command (one of ;&|\$\`()<>{}\\)"
 fi
@@ -254,12 +296,17 @@ if [[ "$verb" == "git" ]]; then
   # Two supported forms:
   #   git <subcmd> [...]
   #   git -C <dir> <subcmd> [...]
-  # Anything else (e.g. `git --git-dir=...`, `git -c key=val`) is rejected to
-  # keep parsing simple and avoid mis-classifying option arguments as subcommands.
+  # Anything else (e.g. `git --git-dir=...`, `git -c key=val`, `git -C=dir`,
+  # `git -Cdir`) is rejected to keep parsing simple and avoid mis-classifying
+  # option arguments as subcommands.
   if [[ "${parts[1]:-}" == "-C" ]]; then
     if [[ -z "${parts[2]:-}" || -z "${parts[3]:-}" ]]; then
       deny "git -C requires <dir> <subcmd>"
     fi
+    # Validate the -C directory against read roots before accepting the
+    # subcommand. Without this `git -C /etc status` would let `git ls-files`
+    # enumerate /etc and `git log` read tracked file contents.
+    validate_path_token "${parts[2]}" "git -C dir"
     subcmd="${parts[3]}"
     rest_start=4
   elif [[ -n "${parts[1]:-}" && "${parts[1]}" != -* ]]; then
