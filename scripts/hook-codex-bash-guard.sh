@@ -202,7 +202,7 @@ validate_args() {
           break
         fi
         case "$scan_rest" in
-          [A-Za-z]*) scan_rest="${scan_rest:1}" ;;
+          [A-Za-z0-9]*) scan_rest="${scan_rest:1}" ;;
           *) break ;;
         esac
       done

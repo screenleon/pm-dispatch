@@ -665,6 +665,25 @@ run_case "cx: grep -rf/tmp/foo → allow (bundled prefix, value under read root)
 run_case "cx: grep -rfsomefile → allow (bundled prefix, no path shape)" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -rfsomefile /tmp/x"}}'
 
+# --- v7: digit-prefix bundled bypass ---
+run_case "cx: tail -n5/etc/passwd → deny (digit prefix + path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -n5/etc/passwd"}}' \
+  "outside read roots"
+
+run_case "cx: head -c100/etc/passwd → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"head -c100/etc/passwd"}}' \
+  "outside read roots"
+
+run_case "cx: grep -A2/etc/passwd x → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -A2/etc/passwd x"}}' \
+  "outside read roots"
+
+run_case "cx: tail -n5/tmp/foo → allow (digit prefix, value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -n5/tmp/foo"}}'
+
+run_case "cx: tail -n5 → allow (digit prefix, no path)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -n5 file"}}'
+
 # --- v5: --flag VALUE space form (positional validation on next iter) ---
 run_case "cx: grep --file /etc/shadow x → deny (space form; value as positional)" 2 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file /etc/shadow x"}}' \
