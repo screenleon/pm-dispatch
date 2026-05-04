@@ -159,25 +159,49 @@ validate_path_token() {
   esac
 }
 
-# Validate every positional arg after the verb. Skips bare flags (start with -)
-# but inspects the VALUE portion of `--flag=VALUE` forms — closes
-# `grep --file=/etc/shadow` style bypasses where the path hides behind a flag.
+# Validate every positional arg after the verb. Inspects flag VALUE portions for
+# the three forms a path can hide in:
+#   --flag=VALUE   (long with equals)        — closes grep --file=/etc/shadow
+#   -f=VALUE       (short with equals)        — closes grep -f=/etc/shadow
+#   -fVALUE        (short, value attached)    — closes grep -f/etc/shadow
+# Bare flags (`--flag` alone, `-i`, `-iE`) and `--flag VALUE` (space form) skip
+# extraction here; the space-form value is treated as a positional on the next
+# loop iteration and validated normally.
 validate_args() {
   local start="${1:-1}"
-  local i p val
+  local i p val rest
   for ((i=start; i<${#parts[@]}; i++)); do
     p="${parts[i]}"
     [[ -z "$p" ]] && continue
 
-    # `--flag=VALUE` form: validate VALUE.
-    if [[ "$p" == --*=* ]]; then
+    # `-flag=VALUE` form (long or short): validate VALUE.
+    if [[ "$p" == -*=* ]]; then
       val="${p#*=}"
       [[ -n "$val" ]] && validate_path_token "$val" "flag value"
       continue
     fi
 
-    # Other flags (--flag VALUE form, or short -x) skip path validation; the
-    # following arg is treated as a positional and validated on the next loop.
+    # Bundled short flag `-X<rest>` where rest looks like a path. We only
+    # validate when rest is path-like (absolute, tilde, or contains `..`
+    # segment) to avoid false-positives on combined short flags like `-iE` or
+    # patterns like `-rfoo`. If rest is anything else, treat as flag and skip.
+    if [[ "$p" =~ ^-[A-Za-z].+$ ]]; then
+      rest="${p:2}"
+      case "$rest" in
+        /*|"~"*)
+          validate_path_token "$rest" "short flag value"
+          continue
+          ;;
+      esac
+      if [[ "$rest" =~ (^|/)\.\.($|/) ]]; then
+        validate_path_token "$rest" "short flag value"
+        continue
+      fi
+      # Not path-like — treat as a flag, skip path validation.
+      continue
+    fi
+
+    # Long flag (--foo) or any other dash-prefixed token (e.g. `-`).
     if [[ "$p" == -* ]]; then
       continue
     fi

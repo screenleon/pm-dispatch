@@ -608,6 +608,45 @@ run_case "cx: grep --file=/tmp/../etc/passwd → deny (traversal in flag value)"
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file=/tmp/../etc/passwd file"}}' \
   "path traversal"
 
+# --- v5: short-flag bypass (single-dash with =, bundled with attached path) ---
+run_case "cx: grep -f=/etc/shadow x → deny (short flag with =)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -f=/etc/shadow x"}}' \
+  "outside read roots"
+
+run_case "cx: grep -f/etc/shadow x → deny (bundled short flag, abs path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -f/etc/shadow x"}}' \
+  "outside read roots"
+
+run_case "cx: grep -f~/.ssh/id_rsa x → deny (bundled short flag, tilde)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -f~/.ssh/id_rsa x"}}' \
+  "tilde path"
+
+run_case "cx: grep -f../etc/passwd x → deny (bundled short flag, traversal)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -f../etc/passwd x"}}' \
+  "path traversal"
+
+run_case "cx: grep -f/tmp/foo x → allow (bundled short flag, value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -f/tmp/foo x"}}'
+
+run_case "cx: grep -i pattern → allow (bare short flag, no value)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -i pattern file"}}'
+
+run_case "cx: grep -iE pattern → allow (combined short flags, not path)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep -iE pattern file"}}'
+
+# --- v5: --flag VALUE space form (positional validation on next iter) ---
+run_case "cx: grep --file /etc/shadow x → deny (space form; value as positional)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file /etc/shadow x"}}' \
+  "outside read roots"
+
+run_case "cx: grep --file /tmp/foo x → allow (space form; value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file /tmp/foo x"}}'
+
+# Mutation-sensitive: distinguishes branch flag-gate (not the array entry).
+run_case "cx: git branch -d foo → deny (gate enforces destructive flag)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git branch -d foo"}}' \
+  "destructive/mutating flag"
+
 # --- v4: dead-code regression (stash/branch removed from array) ---
 # These would silently pass if the per-subcmd gates were also removed;
 # combined with the explicit deny tests above, mutation testing is now strict.
