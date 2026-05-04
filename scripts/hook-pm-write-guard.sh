@@ -17,7 +17,7 @@
 set -uo pipefail
 
 HOOK_NAME="hook-pm-write-guard"
-LOG_DIR="$HOME/.claude/logs"
+LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 
 ALLOWED_PREFIX="$HOME/.claude/projects/-home-screenleon-github/memory/"
@@ -58,14 +58,6 @@ allow() {
 
 # ---------- preflight ----------
 
-if [[ "${CLAUDE_HOOK_PM_GUARD:-}" == "off" ]]; then
-  agent_type="${agent_type:-?}"
-  tool_name="${tool_name:-?}"
-  file_path="(bypass — input not parsed)"
-  audit bypass "CLAUDE_HOOK_PM_GUARD=off" "$file_path"
-  exit 0
-fi
-
 if ! command -v jq >/dev/null 2>&1; then
   echo "$HOOK_NAME: jq missing on PATH — install jq or set CLAUDE_HOOK_PM_GUARD=off" >&2
   exit 2
@@ -77,6 +69,7 @@ if ! command -v realpath >/dev/null 2>&1; then
 fi
 
 # ---------- parse input ----------
+# Read input first so bypass and audit lines can include agent/tool/path identity.
 
 input="$(cat)"
 
@@ -98,6 +91,12 @@ file_path="$(jq -r '.tool_input.file_path // ""' <<<"$input" 2>/dev/null)" || {
   echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
   exit 2
 }
+
+# Bypass AFTER parse so audit line records the actual call being bypassed.
+if [[ "${CLAUDE_HOOK_PM_GUARD:-}" == "off" ]]; then
+  audit bypass "CLAUDE_HOOK_PM_GUARD=off" "$file_path"
+  exit 0
+fi
 
 if [[ -z "$file_path" ]]; then
   deny "tool_input.file_path empty"
