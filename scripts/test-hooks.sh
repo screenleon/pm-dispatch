@@ -684,6 +684,25 @@ run_case "cx: tail -n5/tmp/foo → allow (digit prefix, value under read root)" 
 run_case "cx: tail -n5 → allow (digit prefix, no path)" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -n5 file"}}'
 
+# --- v8: digit-only short flag (legacy obsolete `tail -N` form) ---
+run_case "cx: tail -5/etc/passwd → deny (digit-only entry + path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -5/etc/passwd"}}' \
+  "outside read roots"
+
+run_case "cx: head -5/etc/passwd → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"head -5/etc/passwd"}}' \
+  "outside read roots"
+
+run_case "cx: tail -15/etc/passwd → deny (multi-digit entry + path)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -15/etc/passwd"}}' \
+  "outside read roots"
+
+run_case "cx: tail -5/tmp/foo → allow (digit-only entry, value under read root)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -5/tmp/foo"}}'
+
+run_case "cx: tail -5 file → allow (digit-only flag, no path)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"tail -5 file"}}'
+
 # --- v5: --flag VALUE space form (positional validation on next iter) ---
 run_case "cx: grep --file /etc/shadow x → deny (space form; value as positional)" 2 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep --file /etc/shadow x"}}' \

@@ -188,7 +188,7 @@ validate_args() {
     # check at each step whether what remains starts a path. Combined short
     # flags like `-iE` (rest=`E`) and pattern-shaped like `-rfoo` (rest with
     # no path-shape) end the loop without validating; treated as flags.
-    if [[ "$p" =~ ^-[A-Za-z].+$ ]]; then
+    if [[ "$p" =~ ^-[A-Za-z0-9].+$ ]]; then
       scan_rest="${p:2}"
       while [[ -n "$scan_rest" ]]; do
         case "$scan_rest" in
