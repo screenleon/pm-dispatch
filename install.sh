@@ -99,6 +99,13 @@ if [[ -x "$REPO_ROOT/scripts/test-hooks.sh" ]]; then
   echo
 fi
 
+# Pre-flight: usage report regression suite (read-only fixture coverage)
+if [[ -x "$REPO_ROOT/scripts/test-usage-weekly.sh" ]]; then
+  echo "==> test usage weekly"
+  "$REPO_ROOT/scripts/test-usage-weekly.sh"
+  echo
+fi
+
 install_dir agents
 install_dir skills
 install_dir commands
