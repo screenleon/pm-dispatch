@@ -12,6 +12,7 @@
 
 LC_ALL=C
 IFS=$' \t\n'
+set -uo pipefail
 
 CLAUDE_STATS="${HOME}/.claude/stats-cache.json"
 CODEX_SESSIONS="${HOME}/.codex/sessions"
@@ -66,14 +67,9 @@ claude_schema() {
   fi
 
   jq -r '
-    if (.dailyActivity | type) == "array"
-       and ((.dailyActivity[0]? // {}) | has("date"))
-       and ((.dailyActivity[0]? // {}) | (has("messageCount") or has("messages")))
-    then "dailyActivity-array"
+    if (.dailyActivity | type) == "array" then "dailyActivity-array"
     elif (.dailyActivity | type) == "object" then "dailyActivity-object"
-    elif (.days | type) == "array"
-       and ((.days[0]? // {}) | has("date"))
-    then "days-array"
+    elif (.days | type) == "array" then "days-array"
     elif (.daily | type) == "object" then "daily-object"
     else "unknown"
     end
@@ -203,7 +199,7 @@ printf '## Claude\n'
 if [ ! -f "$CLAUDE_STATS" ]; then
   printf '(missing)\n'
 elif [ -n "$(find "$CLAUDE_STATS" -maxdepth 0 -type f -mtime +14 -print 2>/dev/null || true)" ]; then
-  printf '(stale last-computed %s)\n' "$(claude_last_computed)"
+  printf '(stale, last computed %s)\n' "$(claude_last_computed)"
 fi
 
 SCHEMA="$(claude_schema)"
@@ -250,6 +246,6 @@ done
 
 printf '\n'
 printf -- '---\n'
-printf 'Data freshness: Claude stats-cache.json last-computed %s Codex session files scanned live. Codex byte counts are an activity proxy not token counts.\n' "$(claude_last_computed)"
+printf 'Data freshness: Claude stats-cache.json last computed %s. Codex session files scanned live. Codex byte counts are an activity proxy, not token counts.\n' "$(claude_last_computed)"
 
 exit 0
