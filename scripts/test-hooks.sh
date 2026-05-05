@@ -21,7 +21,7 @@ CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$CLAUDE_HOOK_LOG_DIR/hooks.log"
-trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR"' EXIT
+trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}"' EXIT
 
 # Pin the codex-executor read roots to known values so path tests are
 # deterministic regardless of caller environment.
@@ -72,6 +72,36 @@ run_case_env() {
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
     printf '  FAIL  %s (expected exit=%s, got exit=%s)\n' "$name" "$expect_exit" "$actual_exit"
+  fi
+}
+
+# run_command_case <name> <expected_exit> <expected_stderr_substring> <cmd> [args...]
+run_command_case() {
+  local name="$1" expect_exit="$2" expect_stderr="$3"
+  shift 3
+  local stderr_file actual_exit actual_stderr
+  stderr_file="$(mktemp)"
+  "$@" >/dev/null 2>"$stderr_file"
+  actual_exit=$?
+  actual_stderr="$(cat "$stderr_file")"
+  rm -f "$stderr_file"
+
+  local pass=1
+  if [[ "$actual_exit" != "$expect_exit" ]]; then pass=0; fi
+  if [[ -n "$expect_stderr" && "$actual_stderr" != *"$expect_stderr"* ]]; then pass=0; fi
+
+  if [[ "$pass" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+    printf '        expected: exit=%s' "$expect_exit"
+    [[ -n "$expect_stderr" ]] && printf ' stderr~="%s"' "$expect_stderr"
+    printf '\n        actual:   exit=%s' "$actual_exit"
+    [[ -n "$actual_stderr" ]] && printf ' stderr=%q' "${actual_stderr:0:200}"
+    printf '\n'
   fi
 }
 
@@ -196,6 +226,34 @@ truncate_log
 
 dispatch_abs="/home/screenleon/github/claude-config/scripts/codex-dispatch.sh"
 dispatch_tilde='~/github/claude-config/scripts/codex-dispatch.sh'
+DISPATCH_TEST_BRIEF="$(mktemp /tmp/codex-dispatch-brief.XXXXXX.md)"
+DISPATCH_TEST_BIN="$(mktemp -d)"
+printf 'Task with quotes "ok", parens (ok), and\nmultiple lines.\n' > "$DISPATCH_TEST_BRIEF"
+cat > "$DISPATCH_TEST_BIN/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+last=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-last-message)
+      last="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+brief="$(cat)"
+if [[ "$brief" != *'Task with quotes "ok", parens (ok), and'* || "$brief" != *'multiple lines.'* ]]; then
+  exit 23
+fi
+[[ -n "$last" ]] && printf 'fake final\n' > "$last"
+exit 0
+EOF
+chmod +x "$DISPATCH_TEST_BIN/codex"
 
 # --- happy path ---
 run_case "cx: dispatch (absolute) → allow" 0 "$CXHOOK" \
@@ -203,6 +261,26 @@ run_case "cx: dispatch (absolute) → allow" 0 "$CXHOOK" \
 
 run_case "cx: dispatch (tilde) → allow" 0 "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp -- brief\"}}"
+
+run_case "cx: dispatch_brief_file_allowed → allow" 0 "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file /tmp/brief.md --skip-git-check\"}}"
+
+run_case "cx: dispatch --brief-file=/tmp/brief.md → allow" 0 "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file=/tmp/brief.md --skip-git-check\"}}"
+
+run_case "cx: dispatch_brief_file_outside_read_root_denied → deny" 2 "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file /etc/passwd --skip-git-check\"}}" \
+  "outside read roots"
+
+run_case "cx: dispatch --brief-file=/etc/passwd → deny" 2 "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file=/etc/passwd --skip-git-check\"}}" \
+  "outside read roots"
+
+run_command_case "dispatch_both_brief_forms_rejected" 2 "mutually exclusive" \
+  "$dispatch_abs" --cd /tmp --brief-file "$DISPATCH_TEST_BRIEF" -- brief
+
+run_command_case "dispatch_brief_file_reads_file" 0 "$DISPATCH_TEST_BRIEF (file)" \
+  env PATH="$DISPATCH_TEST_BIN:$PATH" "$dispatch_abs" --cd /tmp --brief-file "$DISPATCH_TEST_BRIEF" --timeout 0 --skip-git-check
 
 run_case "cx: git status → allow" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status --short"}}'

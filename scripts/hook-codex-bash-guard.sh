@@ -218,6 +218,28 @@ validate_args() {
   done
 }
 
+validate_dispatch_args() {
+  local i p val
+  for ((i=1; i<${#parts[@]}; i++)); do
+    p="${parts[i]}"
+    case "$p" in
+      --brief-file=*)
+        val="${p#*=}"
+        [[ -n "$val" ]] || deny "--brief-file requires a path"
+        validate_path_token "$val" "--brief-file"
+        ;;
+      --brief-file)
+        if [[ -z "${parts[i+1]:-}" ]]; then
+          deny "--brief-file requires a path"
+        fi
+        validate_path_token "${parts[i+1]}" "--brief-file"
+        ;;
+    esac
+  done
+
+  validate_args 1
+}
+
 # ---------- preflight ----------
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -307,7 +329,7 @@ case "$verb" in
   "$DISPATCH_REL"|"$DISPATCH_ABS")
     # Validate any path args after the verb (e.g. --cd <abs>); brief is the
     # final arg and may legitimately be a non-path string.
-    validate_args 1
+    validate_dispatch_args
     allow "dispatch script"
     ;;
 esac

@@ -13,6 +13,9 @@
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--approval <mode>] [--skip-git-check]
 #                     [--timeout <seconds>] -- <brief...>
+#   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
+#                     [--approval <mode>] [--skip-git-check]
+#                     [--timeout <seconds>] --brief-file <path>
 #
 # Defaults:
 #   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
@@ -37,6 +40,8 @@ APPROVAL="never"
 SKIP_GIT_CHECK=0
 TIMEOUT="${CODEX_DISPATCH_TIMEOUT:-1200}"
 BRIEF=""
+BRIEF_FILE=""
+BRIEF_FROM_ARGV=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,7 +51,8 @@ while [[ $# -gt 0 ]]; do
     --approval) APPROVAL="$2"; shift 2;;
     --skip-git-check) SKIP_GIT_CHECK=1; shift;;
     --timeout) TIMEOUT="$2"; shift 2;;
-    --) shift; BRIEF="$*"; break;;
+    --brief-file) BRIEF_FILE="$2"; shift 2;;
+    --) shift; BRIEF="$*"; BRIEF_FROM_ARGV=1; break;;
     -h|--help)
       sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
@@ -62,8 +68,23 @@ if [[ ! -d "$WORK_DIR" ]]; then
   echo "Error: working dir not found: $WORK_DIR" >&2
   exit 2
 fi
+if [[ -n "$BRIEF_FILE" && "$BRIEF_FROM_ARGV" -eq 1 ]]; then
+  echo "Error: --brief-file and -- <brief...> are mutually exclusive" >&2
+  exit 2
+fi
+if [[ -n "$BRIEF_FILE" ]]; then
+  if [[ ! -f "$BRIEF_FILE" || ! -r "$BRIEF_FILE" ]]; then
+    echo "Error: brief file not found or not readable: $BRIEF_FILE" >&2
+    exit 2
+  fi
+  BRIEF="$(<"$BRIEF_FILE")"
+fi
 if [[ -z "$BRIEF" ]]; then
-  echo "Error: brief is required (after --)" >&2
+  if [[ -n "$BRIEF_FILE" ]]; then
+    echo "Error: brief file is empty: $BRIEF_FILE" >&2
+  else
+    echo "Error: brief is required (after --)" >&2
+  fi
   exit 2
 fi
 if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
@@ -100,7 +121,11 @@ CMD+=("-")
   echo "  approval: $APPROVAL"
   echo "  timeout:  ${TIMEOUT}s"
   echo "  trace:    $TRACE"
-  echo "  brief:    $BRIEF"
+  if [[ -n "$BRIEF_FILE" ]]; then
+    echo "  brief:    $BRIEF_FILE (file)"
+  else
+    echo "  brief:    $BRIEF"
+  fi
 } | tee -a "$STDERR_LOG" >&2
 
 # Refresh latest.* symlinks before launch so observers can attach immediately.
