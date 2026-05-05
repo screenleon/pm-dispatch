@@ -44,6 +44,13 @@ assert_not_contains() {
   fi
 }
 
+assert_matches() {
+  local name="$1" file="$2" pattern="$3"
+  if ! grep -E -q -- "$pattern" "$file"; then
+    fail "$name" "missing pattern: $pattern"
+  fi
+}
+
 assert_exit() {
   local name="$1" actual="$2" expected="$3"
   if [[ "$actual" != "$expected" ]]; then
@@ -177,7 +184,7 @@ case_stale_boundary_15d() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "(stale, last computed"
+  assert_matches "$name" "$out" '\(stale, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
   pass_case "$name"
 }
 

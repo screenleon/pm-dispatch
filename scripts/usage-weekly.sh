@@ -67,7 +67,14 @@ claude_schema() {
   fi
 
   jq -r '
-    if (.dailyActivity | type) == "array" then "dailyActivity-array"
+    # Prefer the key that actually has data; fall through to empty
+    # variants as tiebreak so a freshly-initialized cache (empty array)
+    # still classifies cleanly without masking a populated alternate key.
+    if (.dailyActivity | type) == "array" and (.dailyActivity | length) > 0 then "dailyActivity-array"
+    elif (.dailyActivity | type) == "object" and ((.dailyActivity | keys | length) > 0) then "dailyActivity-object"
+    elif (.days | type) == "array" and (.days | length) > 0 then "days-array"
+    elif (.daily | type) == "object" and ((.daily | keys | length) > 0) then "daily-object"
+    elif (.dailyActivity | type) == "array" then "dailyActivity-array"
     elif (.dailyActivity | type) == "object" then "dailyActivity-object"
     elif (.days | type) == "array" then "days-array"
     elif (.daily | type) == "object" then "daily-object"
