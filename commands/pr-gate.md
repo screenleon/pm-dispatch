@@ -30,10 +30,13 @@ Auto-detection rules:
 
 ## Step 1 — detect the tier (main thread, no PM hop)
 
-Detect the integration branch, check the diff, and apply the tier heuristic. The first slash-command argument (if it matches `express|standard|full`) overrides auto-detection:
+Detect the integration branch, check the diff, and apply the tier heuristic. The first whitespace-separated token of `$ARGUMENTS` (if it matches `express|standard|full`) overrides auto-detection; the rest of `$ARGUMENTS` flows to reviewers as scope context:
 
 ```bash
-REQUESTED_TIER="${1:-}"
+# Parse first token of $ARGUMENTS (Claude slash-command arg string) as tier override.
+# Anything that isn't express/standard/full falls through to auto-detect, preserving
+# the prior contract where the slash arg was free-form context.
+REQUESTED_TIER=$(printf '%s' "$ARGUMENTS" | awk '{print $1}')
 case "$REQUESTED_TIER" in
   express|standard|full) TIER_OVERRIDE="$REQUESTED_TIER" ;;
   *) TIER_OVERRIDE="" ;;
@@ -45,7 +48,11 @@ git diff "$BASE"...HEAD --stat
 DIFF_FILES=$(git diff "$BASE"...HEAD --name-only)
 NON_DOCS=$(echo "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
 LINES=$(git diff "$BASE"...HEAD --shortstat | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | awk '{s+=$1} END{print s+0}')
-SENSITIVE_HIT=$(echo "$DIFF_FILES" | grep -iE 'auth|secret|migration|^\.github/|payment|billing|password|token|credential|cors|csrf|jwt|session|oauth|ssh|sudo|webhook' | wc -l)
+# Path-anchored sensitive matching: keyword must be at a path-segment boundary
+# (start, /, _, ., -) on at least one side. Reduces false-positives like
+# authoring.ts, tokenizer.ts, Discourse.md while keeping auth.ts, /oauth/,
+# session-store.ts, /payment.go, design-tokens.css matching correctly.
+SENSITIVE_HIT=$(echo "$DIFF_FILES" | grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' | wc -l)
 
 if [ -n "$TIER_OVERRIDE" ]; then
   TIER="$TIER_OVERRIDE"
