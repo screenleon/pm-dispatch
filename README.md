@@ -8,8 +8,10 @@ Personal Claude Code configuration: subagents, slash commands, skills, and dispa
 agents/      → ~/.claude/agents/    subagents callable via the Agent tool
 skills/      → ~/.claude/skills/    invocable skills
 commands/    → ~/.claude/commands/  /slash commands
-scripts/                            wrappers (not symlinked; called by absolute path)
+scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
+             → ~/.claude/scripts/   claude-usage.sh and log-usage.sh are symlinked here by install.sh
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
+docs/                               policy documents (model-tier-policy.md, codex-brief.md)
 ```
 
 ## Install
@@ -43,6 +45,14 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 - **/pm `<request>`** — Routes a free-form request to the `project-pm` agent.
 - **/pr-gate `[context]`** — Explicitly runs the full review pipeline before opening a PR.
 
+### Model tier policy
+
+All reviewer agent spawns use `model: "sonnet"` by default. Opus is only used
+when all three escalation conditions hold (full tier + diff > 1000 lines +
+sensitive path). See [`docs/model-tier-policy.md`](docs/model-tier-policy.md)
+for the full decision rules, implementation-task guidance, and token tracking
+usage.
+
 ### External dependencies
 
 - [`screenleon/qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) cloned at `~/github/qa-testing-rules/`. Used by `qa-tester`. If missing, qa-tester will stop and ask you to clone it.
@@ -62,6 +72,9 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 - **install-hooks.sh / uninstall-hooks.sh** — Idempotent `jq`-based splice into `~/.claude/settings.json`. `--dry-run` shows the diff without applying. Each apply backs up `settings.json` to `settings.json.bak.<timestamp>`.
 - **test-hooks.sh** — Regression suite for both hook scripts (~150+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `CLAUDE_HOOK_LOG_DIR`.
 - **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
+- **claude-usage.sh** — Rolling 5-hour and today-UTC token usage estimator. Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/claude-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/claude-usage.sh [--today|--all]`. Once `~/.claude/usage-calibration.json` is calibrated with a known rate-limit token count, shows % used and estimated minutes remaining.
+- **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
+- **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.
 
 **Dependencies (runtime):** `jq` and `realpath` (coreutils) must be on `$PATH`. Hooks fail closed (`exit 2`) if either is missing — they log to stderr and Claude Code surfaces the message.
 

@@ -89,16 +89,22 @@ In a single message, make N parallel Agent tool calls — one per applicable rev
 
 ```
 # pseudocode — emit each as a real Agent tool call in one message
-Agent(subagent_type: "critic", ...)
-Agent(subagent_type: "qa-tester", ...)
+# Model: always "sonnet" unless Opus escalation condition is met (see below).
+Agent(subagent_type: "critic",                model: "sonnet", ...)
+Agent(subagent_type: "qa-tester",             model: "sonnet", ...)
 
 if TIER == "standard" or TIER == "full":
-  Agent(subagent_type: "architecture-reviewer", ...)
+  Agent(subagent_type: "architecture-reviewer", model: "sonnet", ...)
 
 if TIER == "full":
-  Agent(subagent_type: "security-reviewer", ...)
-  Agent(subagent_type: "risk-reviewer", ...)
+  Agent(subagent_type: "security-reviewer", model: "sonnet", ...)
+  Agent(subagent_type: "risk-reviewer",     model: "sonnet", ...)
 ```
+
+**Opus escalation** — only when ALL THREE hold: tier is `full`, diff > 1000 changed
+lines, AND a sensitive path triggered `full`. Notify the user and wait for
+acknowledgement before switching to `model: "opus"`. See
+`docs/model-tier-policy.md` for the full policy.
 
 Each reviewer brief should include: working dir, branch name vs integration branch, tier, reviewers run, diff summary, scope hints from $ARGUMENTS.
 
