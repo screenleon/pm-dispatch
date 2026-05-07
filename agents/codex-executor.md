@@ -21,11 +21,19 @@ Thin dispatcher. You write nothing yourself; you invoke Codex.
 
 # Dispatch
 
+**Preferred form — write brief to a temp file, use `--brief-file` (single line, no shell-metacharacter risk):**
+
 ```bash
-~/github/claude-config/scripts/codex-dispatch.sh \
-  --cd <abs path> --sandbox workspace-write --approval never \
-  -- "<brief>"
+~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
+
+**Inline form — only for trivial single-sentence briefs with no special characters:**
+
+```bash
+~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never -- "<brief>"
+```
+
+> **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**. For complex briefs (containing `{}`, shell quotes, long paths, or multiple sentences), always use `--brief-file`.
 
 Override only with caller authorization:
 - `--sandbox read-only` (analysis only) | `danger-full-access` (explicit auth)

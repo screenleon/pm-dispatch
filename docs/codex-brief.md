@@ -187,6 +187,26 @@ output_format: markdown with three grouped sections (## OK / ## needs review / #
 
 No working_dir, no files, no acceptance criteria. Codex would have to guess what corpus, what sources, how to verify, where to write the report. Reject and ask.
 
+## Dispatching a brief
+
+Write the brief to a temp file and pass it via `--brief-file`. This is the **canonical** way to dispatch:
+
+```bash
+# Write brief
+cat > /tmp/brief-<task>.md << 'EOF'
+working_dir: ...
+goal: ...
+...
+EOF
+
+# Dispatch (single line — no backslash continuation)
+~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
+```
+
+**Why `--brief-file` and not inline `-- "<brief>"`?**
+- The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command that contains a newline or `\` continuation. Long briefs with code blocks, JSON, and shell paths almost always trigger this.
+- `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
+
 ## Style notes
 
 - Prose is fine; YAML-like keys above are conventions, not strict syntax. Use a heredoc when piping the brief on stdin.
