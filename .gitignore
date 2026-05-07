@@ -2,3 +2,6 @@
 *.local.*
 *.log
 .agent-trace/
+pm/.agent-trace/
+pm/rollup/PORTFOLIO.md
+pm/rollup/.PORTFOLIO.md.*

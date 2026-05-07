@@ -141,6 +141,31 @@ done
 echo "  ($us_count linked, $us_conflicts conflicts)"
 
 echo
+
+# pm-schema: symlink ~/github/.pm -> claude-config/pm so cross-repo
+# path references (rollup.sh default out, memory prose, schema.md
+# consumers) keep working.
+echo "==> pm-schema"
+PM_SRC="$REPO_ROOT/pm"
+PM_DEST="$HOME/github/.pm"
+if [[ -d "$PM_SRC" ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would  $PM_DEST -> $PM_SRC"
+  elif [[ -L "$PM_DEST" ]]; then
+    if [[ "$(readlink "$PM_DEST")" == "$PM_SRC" ]]; then
+      echo "  ok    $PM_DEST"
+    else
+      echo "  CONFLICT $PM_DEST -> $(readlink "$PM_DEST") (expected $PM_SRC)" >&2
+    fi
+  elif [[ -e "$PM_DEST" ]]; then
+    echo "  CONFLICT $PM_DEST exists and is not a symlink — skipping" >&2
+  else
+    ln -s "$PM_SRC" "$PM_DEST"
+    echo "  link   $PM_DEST -> $PM_SRC"
+  fi
+fi
+
+echo
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"

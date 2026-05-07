@@ -10,9 +10,22 @@ skills/      → ~/.claude/skills/    invocable skills
 commands/    → ~/.claude/commands/  /slash commands
 scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
              → ~/.claude/scripts/   claude-usage.sh and log-usage.sh are symlinked here by install.sh
+pm/          → ~/github/.pm/        cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
 docs/                               policy documents (model-tier-policy.md, codex-brief.md)
 ```
+
+## pm-schema (`pm/`)
+
+Cross-repo project-management schema and tooling consumed by `project-pm` and BACKLOG.md / DECISIONS.md authoring across the user's repos. `install.sh` symlinks `~/github/.pm/` to this directory so existing path references (e.g., the `rollup.sh --out` default, prose mentions in memory) keep working.
+
+Contents:
+- `schema.md` — pm-schema v1 definition.
+- `templates/{BACKLOG,DECISIONS}.md` — bootstrap templates.
+- `scripts/rollup.sh`, `scripts/validate.sh` — portable shell tooling (pure stdlib).
+- `scripts/test/` — fixture-driven test suite for the scripts above.
+
+Runtime artifacts (`.agent-trace/`, `rollup/PORTFOLIO.md`) are gitignored.
 
 ## Install
 
