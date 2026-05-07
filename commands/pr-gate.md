@@ -110,9 +110,11 @@ Each reviewer brief should include: working dir, branch name vs integration bran
 
 ## Step 3 — synthesize via project-pm (single hop)
 
-After all reviewers return, invoke `project-pm` with `model: "sonnet"` (same
-policy as reviewers — never omit the model param) once with the tier, reviewers
-run, skipped review dimensions, and reviewer verbatim outputs. Ask it to:
+After all reviewers return, invoke `project-pm` with `model: "sonnet"` — this
+is a bounded synthesis task within the review pipeline, so Sonnet applies here
+regardless of what the `/pm` command uses. Never omit the model param in this
+step. Pass the tier, reviewers run, skipped review dimensions, and reviewer
+verbatim outputs. Ask it to:
 
 - Compose the final gate summary (each reviewer's verdict, any blocks with override paths, final go/no-go).
 - Explicitly state which dimensions were not reviewed in slimmer tiers, for example: `express tier — security/risk/architecture not reviewed`.

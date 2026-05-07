@@ -2,23 +2,38 @@
 
 Governs which Claude model tier to use when spawning subagents from the main thread.
 
-## Default: Sonnet for all reviewer agents
+## `/pr-gate`: Sonnet for all reviewers and synthesis
 
-All `Agent(subagent_type: ...)` calls from `/pr-gate` and `/pm` use `model: "sonnet"` unless the Opus escalation condition is met.
+Every Agent call spawned by `/pr-gate` — reviewers and the final project-pm
+synthesis hop — uses `model: "sonnet"`. These are bounded, scoped tasks:
+reviewing a diff and synthesising the result does not benefit from a larger
+model, but does incur its cost.
 
 ```
-# every reviewer spawn
-Agent(subagent_type: "critic",               model: "sonnet", ...)
-Agent(subagent_type: "qa-tester",            model: "sonnet", ...)
-Agent(subagent_type: "architecture-reviewer",model: "sonnet", ...)
-Agent(subagent_type: "security-reviewer",    model: "sonnet", ...)
-Agent(subagent_type: "risk-reviewer",        model: "sonnet", ...)
-Agent(subagent_type: "project-pm",           model: "sonnet", ...)
+# /pr-gate reviewer spawns (Step 2)
+Agent(subagent_type: "critic",                model: "sonnet", ...)
+Agent(subagent_type: "qa-tester",             model: "sonnet", ...)
+Agent(subagent_type: "architecture-reviewer", model: "sonnet", ...)
+Agent(subagent_type: "security-reviewer",     model: "sonnet", ...)
+Agent(subagent_type: "risk-reviewer",         model: "sonnet", ...)
+
+# /pr-gate synthesis (Step 3)
+Agent(subagent_type: "project-pm", model: "sonnet", ...)
 ```
 
-Never silently use Opus. If you omit the `model:` param, the call inherits the
-main-thread model — which may or may not be Sonnet depending on how the session
-was started. Always be explicit.
+Always specify `model:` explicitly in `/pr-gate` calls. If you omit it, the
+call inherits the main-thread model — which may be Opus, silently multiplying
+review cost.
+
+## `/pm`: inherits main-thread model
+
+`/pm` invokes `project-pm` for general work — analysis, planning, brief
+writing, memory updates. These tasks may benefit from a more capable model,
+so the invocation does **not** force a model. The subagent inherits whichever
+model the user started their session with.
+
+Use `/pm` when the user's own model choice should apply. Use `/pr-gate` (which
+forces Sonnet) only for the review pipeline.
 
 ## Opus escalation (rare)
 
