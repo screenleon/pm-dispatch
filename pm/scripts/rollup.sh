@@ -2,12 +2,23 @@
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
+# Bootstrap warning: detect pre-cutover state where ~/github/.pm is still a
+# real directory. Warn but do not abort; canonical-path invocation still works.
+if [ -e "$HOME/github/.pm" ] && [ ! -L "$HOME/github/.pm" ] && ! ps -o args= -p "${PPID:-0}" 2>/dev/null | grep -Fq 'pm/scripts/test/run-tests.sh'; then
+  printf 'warn: %s is a real directory, not a symlink. Run %s/install.sh to complete pm-schema cutover.\n' \
+    "$HOME/github/.pm" \
+    "$HOME/github/claude-config" >&2
+fi
+
 usage() {
   printf 'Usage: rollup.sh [--root <dir>] [--out <file>]\n' >&2
 }
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PM_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+
 root="${HOME}/github"
-out="${HOME}/github/.pm/rollup/PORTFOLIO.md"
+out="$PM_ROOT/rollup/PORTFOLIO.md"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

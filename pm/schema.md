@@ -1,7 +1,7 @@
 # pm-schema: v1
 
 Cross-repo planning convention for `~/github/*` managed product repos.
-Authoritative version of this document lives at `~/github/.pm/schema.md`.
+Canonical path: `~/github/claude-config/pm/schema.md`. `~/github/.pm/schema.md` is a symlink alias maintained by `claude-config/install.sh`.
 
 ## 1. 檔案佈局
 

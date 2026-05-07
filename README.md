@@ -27,6 +27,22 @@ Contents:
 
 Runtime artifacts (`.agent-trace/`, `rollup/PORTFOLIO.md`) are gitignored.
 
+### Cutover (one-time, manual)
+
+`~/github/.pm/` is currently a real directory on the pre-cutover machine. To replace it with a symlink to `claude-config/pm/`, run in this order:
+
+1. `bash ~/github/claude-config/install.sh`
+   — Expected: `CONFLICT $HOME/github/.pm exists and is not a symlink — skipping`. Exit code 1. This is harmless and confirms the install.sh pm-schema block is wired correctly and detects the pre-cutover state.
+2. Inspect `~/github/.pm/.agent-trace/` for any historical codex traces you want to keep — they will NOT be migrated and `rm -rf` will permanently delete them.
+3. `rm -rf ~/github/.pm`
+   — Removes only the directory tree (not a symlink at this stage; if it were a symlink, `rm -rf` would still only remove the link, not the target).
+4. `bash ~/github/claude-config/install.sh`
+   — Expected: `link $HOME/github/.pm -> .../claude-config/pm`. Exit code 0.
+5. `readlink ~/github/.pm`
+   — Should print the path under `claude-config/pm/`. If it doesn't, stop; do not use rollup.sh / validate.sh until the symlink is confirmed.
+
+Never run step 3 before step 1 — if install.sh fails between step 3 and step 4 (lint trip, permission, env), `~/github/.pm` is gone with no automatic recovery and the symlink was never created.
+
 ## Install
 
 ```sh
