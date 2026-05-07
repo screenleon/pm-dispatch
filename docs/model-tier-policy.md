@@ -1,53 +1,120 @@
 # Model Tier Policy
 
-Governs which Claude model tier to use when spawning subagents from the main thread.
+Governs which Claude model tier to use when spawning subagents, and when to
+suggest Opus to the user.
 
-## Default: Sonnet for all reviewer agents
+**Fundamental rule:** Sonnet is the default for all agent work. Opus is only
+used when the user explicitly confirms it after being told why and what it costs.
+Never silently upgrade to Opus.
 
-All `Agent(subagent_type: ...)` calls from `/pr-gate` and `/pm` use `model: "sonnet"` unless the Opus escalation condition is met.
+---
+
+## Default: Sonnet
+
+Use `model: "sonnet"` for all agent spawns unless one of the Opus criteria
+below is met. Always specify `model:` explicitly — omitting it inherits the
+main-thread model, which may already be Opus, silently multiplying cost.
+
+---
+
+## When to suggest Opus
+
+Opus brings meaningful benefit in tasks that require:
+
+| Signal | Examples |
+|--------|---------|
+| **Novel cross-cutting architecture** | Designing a new auth layer, restructuring module boundaries, evaluating trade-offs across many interdependent systems |
+| **High-stakes, hard-to-reverse decisions** | Database schema design, public API contract definition, infrastructure topology, security model design |
+| **Deep security design** | Not just reviewing code for bugs, but designing crypto/auth/session flows from scratch |
+| **Very large context analysis** | Understanding interactions across 10+ significant files with complex dependencies |
+| **Ambiguous or unprecedented problems** | No clear solution path; wrong first step is costly to undo |
+
+Single-file edits, routine reviews, standard planning, brief writing, and
+memory updates do **not** warrant Opus.
+
+### Mandatory ask-before-use flow
+
+Whenever one of the above signals is present, **stop and ask the user** before
+proceeding. Do not spawn Opus agents first and explain later.
+
+The ask must include:
+1. **Why** Opus is being suggested for this specific task
+2. **Cost warning**: approximately 3–5× higher than Sonnet
+3. **A clear choice**: confirm Opus, or continue with Sonnet
+
+Example phrasing:
+> "This task involves [specific reason — e.g. 'designing the auth session model from scratch, a novel cross-cutting decision']. Opus may produce a more thorough analysis, but costs roughly 3–5× more than Sonnet. Use Opus, or continue with Sonnet?"
+
+Wait for user confirmation before spawning any agent.
+
+---
+
+## `/pr-gate`: Sonnet for all reviewers and synthesis
+
+Every Agent call spawned by `/pr-gate` — reviewers and the final project-pm
+synthesis hop — uses `model: "sonnet"`. These are bounded, scoped tasks:
+reviewing a diff and synthesising the result does not benefit from a larger
+model but does incur its cost.
 
 ```
-# every reviewer spawn
-Agent(subagent_type: "critic",               model: "sonnet", ...)
-Agent(subagent_type: "qa-tester",            model: "sonnet", ...)
-Agent(subagent_type: "architecture-reviewer",model: "sonnet", ...)
-Agent(subagent_type: "security-reviewer",    model: "sonnet", ...)
-Agent(subagent_type: "risk-reviewer",        model: "sonnet", ...)
-Agent(subagent_type: "project-pm",           model: "sonnet", ...)
+# /pr-gate reviewer spawns (Step 2)
+Agent(subagent_type: "critic",                model: "sonnet", ...)
+Agent(subagent_type: "qa-tester",             model: "sonnet", ...)
+Agent(subagent_type: "architecture-reviewer", model: "sonnet", ...)
+Agent(subagent_type: "security-reviewer",     model: "sonnet", ...)
+Agent(subagent_type: "risk-reviewer",         model: "sonnet", ...)
+
+# /pr-gate synthesis (Step 3)
+Agent(subagent_type: "project-pm", model: "sonnet", ...)
 ```
 
-Never silently use Opus. If you omit the `model:` param, the call inherits the
-main-thread model — which may or may not be Sonnet depending on how the session
-was started. Always be explicit.
-
-## Opus escalation (rare)
-
-Only when **all three** conditions hold:
+**`/pr-gate` Opus escalation** — suggest Opus (and ask the user per the flow
+above) only when **all three** hold:
 
 1. Tier is `full`
 2. Diff exceeds 1000 changed lines
 3. At least one sensitive path triggered `full` (auth, payments, migrations, CI, etc.)
 
-Before escalating, notify the user:
-> "This PR is large and sensitive — using Opus for reviewers. Token cost will be approximately 3–5× higher."
+Example ask:
+> "This PR is large and sensitive (>1000 lines, touches [path]). Opus reviewers
+> may catch more subtle issues, but cost is roughly 3–5× higher. Use Opus for
+> this gate, or keep Sonnet?"
 
-Wait for acknowledgement before spawning.
+---
+
+## `/pm`: inherits main-thread model
+
+`/pm` invokes `project-pm` for general work — analysis, planning, brief
+writing, memory updates. These tasks may benefit from a more capable model,
+so the invocation does **not** force a model. The subagent inherits whichever
+model the user started their session with.
+
+If the task meets an Opus signal above, apply the mandatory ask-before-use flow
+before spawning.
+
+---
 
 ## Implementation tasks
 
 For any code change (bug fix, feature, refactor):
 
-1. **Prefer `codex-executor`** — dispatches via `scripts/codex-dispatch.sh`, sandboxed, trace-logged.
-2. **Fallback to `Agent(model: "sonnet")`** — only when:
-   - User reports Codex quota errors or slowdowns, OR
-   - The task is a single-file, single-line fix where the overhead of a full brief is disproportionate.
+1. **Prefer `codex-executor`** — dispatches via `scripts/codex-dispatch.sh`,
+   sandboxed, trace-logged.
+2. **Fallback to `Agent(model: "sonnet")`** — only when Codex quota is
+   exhausted or the change is a single-line fix where a full brief is
+   disproportionate.
 3. **Never use Opus for implementation** without explicit user instruction.
 
-## Why
+---
 
-Claude Opus token cost is approximately 3–5× Sonnet. For review and analysis
-tasks, Sonnet quality is sufficient. The cost difference is significant over a
-multi-hour session with several PR gates.
+## Why Sonnet by default
+
+Claude Opus costs approximately 3–5× Sonnet per token. A typical session with
+several pr-gate passes and PM analyses can consume 500k–1M tokens; at Opus
+rates that becomes a material difference. Sonnet quality is sufficient for
+the vast majority of review, analysis, and planning work.
+
+---
 
 ## Token usage tracking
 

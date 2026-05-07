@@ -20,7 +20,7 @@ if [[ ! -f "$LOGFILE" ]]; then
 fi
 
 python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" << 'PYEOF'
-import sys, json
+import sys, json, re
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
@@ -28,17 +28,31 @@ mode = sys.argv[1]
 logfile = sys.argv[2]
 calib_file = sys.argv[3]
 
-# Load entries
+# Validate mode before doing any work
+if mode not in ('--today', '--all') and not re.fullmatch(r'--\d+h', mode):
+    sys.stderr.write(f'claude-usage: unknown mode: {mode!r}\n')
+    sys.stderr.write('Usage: claude-usage.sh [--today|--all|--Nh]  (default: --5h)\n')
+    sys.exit(2)
+
+# Load entries — skip malformed lines and entries missing required 'ts' field
 entries = []
+skipped = 0
 with open(logfile) as f:
     for line in f:
         line = line.strip()
         if not line or line.startswith('#'):
             continue
         try:
-            entries.append(json.loads(line))
-        except:
-            pass
+            entry = json.loads(line)
+            if 'ts' not in entry:
+                skipped += 1
+                continue
+            entries.append(entry)
+        except (json.JSONDecodeError, ValueError):
+            skipped += 1
+
+if skipped:
+    sys.stderr.write(f'  (warning: {skipped} malformed/incomplete line(s) skipped)\n')
 
 # Filter by time window
 now = datetime.now(timezone.utc)
@@ -54,7 +68,7 @@ else:
     cutoff = now - timedelta(hours=hours)
     entries = [e for e in entries if datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) >= cutoff]
 
-# Load calibration
+# Load calibration — distinguish missing file (silent) from corrupt file (warn)
 known_limit = None
 rate_limit_events = []
 try:
@@ -62,8 +76,10 @@ try:
         calib = json.load(f)
         known_limit = calib.get('known_limit_tokens')
         rate_limit_events = calib.get('rate_limit_events', [])
-except:
+except FileNotFoundError:
     pass
+except (json.JSONDecodeError, ValueError) as ex:
+    sys.stderr.write(f'  (warning: calibration file malformed — {ex})\n')
 
 total_tokens = sum(e.get('tokens', 0) for e in entries)
 by_type = defaultdict(lambda: {'count': 0, 'tokens': 0})
@@ -101,9 +117,9 @@ if known_limit:
         print(f' Est.   : ~{remaining_h*60:.0f} min remaining at this rate')
 else:
     print(f' Limit  : not yet calibrated')
-    print(f'  → When you hit a rate limit, note the total and run:')
-    print(f'    python3 -c "import json; d=json.load(open(\\\"~/.claude/usage-calibration.json\\\")); d[\\\"known_limit_tokens\\\"]={total_tokens}; ..."')
-    print(f'  → Or edit ~/.claude/usage-calibration.json directly')
+    print(f'  -> Edit ~/.claude/usage-calibration.json and set:')
+    print(f'       "known_limit_tokens": {total_tokens}')
+    print(f'  -> Then re-run to see % used and estimated time remaining')
 
 if by_type:
     print()

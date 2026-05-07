@@ -32,16 +32,27 @@ NOTE="${3:-}"
 SESSION="${4:-$(date +%s | sha256sum | head -c 8)}"
 TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-ENTRY=$(python3 -c "
-import json
-print(json.dumps({
-    'ts': '$TS',
-    'session': '$SESSION',
-    'type': '$TYPE',
-    'tokens': $TOKENS,
-    'note': '$NOTE'
-}))
-")
+# Validate TOKENS is a non-negative integer before building JSON
+if ! [[ "$TOKENS" =~ ^[0-9]+$ ]]; then
+  echo "log-usage: TOKENS must be a non-negative integer, got: $TOKENS" >&2
+  exit 2
+fi
 
+# Build JSON safely via jq — all values passed as typed args, never interpolated
+# into source. Prevents injection through NOTE/TYPE/SESSION containing quotes,
+# backslashes, or shell metacharacters.
+ENTRY=$(jq -nc \
+  --arg     ts      "$TS"      \
+  --arg     session "$SESSION" \
+  --arg     type    "$TYPE"    \
+  --argjson tokens  "$TOKENS"  \
+  --arg     note    "$NOTE"    \
+  '{ts:$ts, session:$session, type:$type, tokens:$tokens, note:$note}')
+
+# Ensure log directory exists and file is created with restricted permissions
+mkdir -p "$(dirname "$LOGFILE")"
+# JSONL append: O_APPEND atomicity holds for entries < PIPE_BUF (4KB on Linux).
+# Keep NOTE short to stay safely under that limit.
+( umask 077 && touch "$LOGFILE" )
 echo "$ENTRY" >> "$LOGFILE"
-echo "✓ Logged: $TYPE  $TOKENS tokens  [$NOTE]"
+echo "Logged: $TYPE  $TOKENS tokens  [$NOTE]"
