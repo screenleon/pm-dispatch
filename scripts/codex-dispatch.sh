@@ -94,7 +94,7 @@ fi
 
 TRACE_DIR="$WORK_DIR/.agent-trace"
 mkdir -p "$TRACE_DIR"
-TS=$(date +%Y%m%d-%H%M%S)
+TS=$(date +%Y%m%d-%H%M%S)-$$
 TRACE="$TRACE_DIR/codex-$TS.jsonl"
 LAST="$TRACE_DIR/codex-$TS.last"
 STDERR_LOG="$TRACE_DIR/codex-$TS.stderr"
