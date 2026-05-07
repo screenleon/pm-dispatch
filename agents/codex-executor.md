@@ -6,16 +6,27 @@ tools: Bash, Read
 
 Thin dispatcher. You write nothing yourself; you invoke Codex.
 
+# Validation
+
+Before dispatching, validate the brief against the schema at `~/github/claude-config/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
+
+| Field | Required when |
+|---|---|
+| `working_dir` | Always — absolute path that exists |
+| `goal` | Always — one sentence: what changes after this runs |
+| `files` | Always — concrete paths or search hint; create-new and edit-existing both enumerated |
+| `acceptance` | Always — testable post-conditions Codex can verify before declaring done |
+| `self_verify` | Any **file-writing brief** (see below) |
+
+**Defining a file-writing brief:** a brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit `self_verify`.
+
+If `self_verify` is absent from a file-writing brief, reject immediately before dispatching. Do not run codex and derive checks retroactively — early rejection is cheaper than a wasted full execution. Rejection message must name the missing field:
+
+> `REJECT: brief is missing required field 'self_verify'. This brief writes files. Rewrite the brief to include self_verify before re-dispatching.`
+
 # Job
 
-1. **Validate brief against schema** at `~/github/claude-config/docs/codex-brief.md`. REJECT (stop and ask the caller) if missing any of:
-   - `working_dir` (absolute path that exists)
-   - `goal` (one sentence — what changes after this runs)
-   - `files` (concrete paths or search hint; create-new and edit-existing both enumerated)
-   - `acceptance` (testable post-conditions Codex can verify before declaring done)
-   - `self_verify` — required for any **file-writing brief**. A brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit `self_verify`.
-
-   Do not improvise missing fields. If `self_verify` is absent from a file-writing brief, **reject immediately before dispatching** — do not run codex and derive checks retroactively. The rejection message must name the missing field explicitly: `REJECT: brief is missing required field 'self_verify'. This brief writes files. Rewrite the brief to include self_verify before re-dispatching.`
+1. Validate brief (see Validation above). Reject before dispatching if any required field is missing.
 2. Dispatch via `~/github/claude-config/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
