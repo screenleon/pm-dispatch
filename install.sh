@@ -95,7 +95,14 @@ fi
 # Pre-flight: hook regression suite (security-relevant; must be green to install)
 if [[ -x "$REPO_ROOT/scripts/test-hooks.sh" ]]; then
   echo "==> test hooks"
-  "$REPO_ROOT/scripts/test-hooks.sh"
+  HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" "$REPO_ROOT/scripts/test-hooks.sh"
+  echo
+fi
+
+# Pre-flight: installer regression suite (symlink/conflict behavior)
+if [[ -x "$REPO_ROOT/scripts/test-install.sh" && "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" != "1" ]]; then
+  echo "==> test install"
+  CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$REPO_ROOT/scripts/test-install.sh"
   echo
 fi
 
@@ -110,6 +117,13 @@ fi
 if [[ -x "$REPO_ROOT/scripts/test-usage-tracker.sh" ]]; then
   echo "==> test usage tracker"
   "$REPO_ROOT/scripts/test-usage-tracker.sh"
+  echo
+fi
+
+# Pre-flight: pm schema scripts regression suite
+if [[ -x "$REPO_ROOT/pm/scripts/test/run-tests.sh" ]]; then
+  echo "==> test pm scripts"
+  bash "$REPO_ROOT/pm/scripts/test/run-tests.sh"
   echo
 fi
 
@@ -139,6 +153,34 @@ for script in claude-usage.sh log-usage.sh; do
   fi
 done
 echo "  ($us_count linked, $us_conflicts conflicts)"
+
+echo
+
+# pm-schema: symlink ~/github/.pm -> claude-config/pm so cross-repo
+# path references (rollup.sh default out, memory prose, schema.md
+# consumers) keep working.
+PM_SRC="$REPO_ROOT/pm"
+PM_DEST="$HOME/github/.pm"
+if [[ -d "$PM_SRC" ]]; then
+  echo "==> pm-schema"
+  if [[ ! -d "$HOME/github" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  would mkdir $HOME/github"
+    else
+      mkdir -p "$HOME/github"
+      echo "  mkdir  $HOME/github"
+    fi
+  fi
+  pm_conflicts=0
+  link "$PM_SRC" "$PM_DEST" || pm_conflicts=$((pm_conflicts + 1))
+  echo "  (1 attempted, $pm_conflicts conflicts)"
+  if [[ "$pm_conflicts" -gt 0 ]]; then
+    echo "install.sh: pm-schema symlink failed — resolve conflict before continuing" >&2
+    exit 1
+  fi
+else
+  echo "skip pm-schema (no source)"
+fi
 
 echo
 echo "Done."

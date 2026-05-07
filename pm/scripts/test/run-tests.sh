@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C.UTF-8
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+fixtures="$script_dir/fixtures"
+
+passed=0
+failed=0
+
+pass() {
+  printf 'PASS: %s\n' "$1"
+  passed=$((passed + 1))
+}
+
+fail() {
+  printf 'FAIL: %s: %s\n' "$1" "$2"
+  failed=$((failed + 1))
+}
+
+run_validate_case() {
+  name=$1
+  file=$2
+  want_code=$3
+  want_token=$4
+  err=$(mktemp)
+  set +e
+  bash "$root_dir/validate.sh" "$file" >/dev/null 2>"$err"
+  got_code=$?
+  set -e
+  if [ "$got_code" -ne "$want_code" ]; then
+    fail "$name" "exit $got_code, expected $want_code"
+    rm -f "$err"
+    return
+  fi
+  if [ -n "$want_token" ] && ! grep -q "$want_token" "$err"; then
+    fail "$name" "missing $want_token"
+    rm -f "$err"
+    return
+  fi
+  if [ "$want_code" -eq 1 ]; then
+    tokens=$(grep -o 'E-[A-Z0-9-]*' "$err" | sort | uniq | tr '\n' ' ')
+    if [ "$tokens" != "$want_token " ]; then
+      fail "$name" "unexpected rule tokens: $tokens"
+      rm -f "$err"
+      return
+    fi
+  fi
+  if [ "$want_code" -eq 0 ] && [ -s "$err" ]; then
+    fail "$name" "stderr was not empty"
+    rm -f "$err"
+    return
+  fi
+  rm -f "$err"
+  pass "$name"
+}
+
+# validate.sh 基本案例。
+run_validate_case "validate good" "$fixtures/good/BACKLOG.md" 0 ""
+run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
+run_validate_case "validate bad-index-mismatch" "$fixtures/bad-index-mismatch/BACKLOG.md" 1 "E-INDEX-MISMATCH"
+run_validate_case "validate bad-dup-id" "$fixtures/bad-dup-id/BACKLOG.md" 1 "E-DUP-ID"
+run_validate_case "validate bad-status-enum" "$fixtures/bad-status-enum/BACKLOG.md" 1 "E-STATUS-ENUM"
+run_validate_case "validate bad-area-enum" "$fixtures/bad-area-enum/BACKLOG.md" 1 "E-AREA-ENUM"
+run_validate_case "validate bad-date-format" "$fixtures/bad-date-format/BACKLOG.md" 1 "E-DATE-FORMAT"
+run_validate_case "validate bad-refs-prefix" "$fixtures/bad-refs-prefix/BACKLOG.md" 1 "E-REFS-PREFIX"
+run_validate_case "validate bad-tags-format" "$fixtures/bad-tags-format/BACKLOG.md" 1 "E-TAGS-FORMAT"
+run_validate_case "validate bad-closure-no-see" "$fixtures/bad-closure-no-see/BACKLOG.md" 1 "E-CLOSURE-NO-SEE"
+
+# rollup.sh 彙整案例。
+rollup_out=$(mktemp)
+set +e
+bash "$root_dir/rollup.sh" --root "$fixtures/rollup" --out "$rollup_out" >/dev/null 2>/dev/null
+rollup_code=$?
+set -e
+if [ "$rollup_code" -ne 0 ]; then
+  fail "rollup fixtures" "exit $rollup_code"
+elif ! grep -q '^## Summary$' "$rollup_out"; then
+  fail "rollup fixtures" "missing summary"
+elif ! grep -q '^### repo-a$' "$rollup_out"; then
+  fail "rollup fixtures" "missing repo-a section"
+elif ! grep -q '^### repo-b$' "$rollup_out"; then
+  fail "rollup fixtures" "missing repo-b section"
+elif grep -q 'repo-c-no-marker' "$rollup_out"; then
+  fail "rollup fixtures" "included unmarked repo"
+elif ! grep -q '| repo-a | 3 | 1 |' "$rollup_out"; then
+  fail "rollup fixtures" "repo-a summary mismatch"
+elif ! grep -q '| repo-b | 2 | 0 |' "$rollup_out"; then
+  fail "rollup fixtures" "repo-b summary mismatch"
+else
+  pass "rollup fixtures"
+fi
+rm -f "$rollup_out"
+
+printf '%s passed, %s failed\n' "$passed" "$failed"
+[ "$failed" -eq 0 ]
