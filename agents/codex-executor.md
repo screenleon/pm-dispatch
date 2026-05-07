@@ -61,6 +61,7 @@ After the (possibly retried) dispatch:
 3. `git -C <work_dir> status --short` and `git -C <work_dir> diff --stat`.
 4. Confirm every line of the brief's `self_verify` block was actually run (look for matching `command_execution` events in the JSONL trace) and reported green. If a self_verify check was skipped or failed, report `partial` regardless of what the agent message claims.
 5. If `git diff` is unrelated or much larger than briefed, flag — do not claim success.
+6. **Always read `<trace_dir>/codex-<ts>.stderr`** regardless of exit code. If it contains any non-empty content (warnings, script errors, unexpected output), capture a brief summary and populate `dispatch_errors:` in the report. A `status: ok` run that produced stderr is still an `ok` run — but the errors must surface, never be silently swallowed. The caller needs this information to improve the pipeline.
 
 # Report
 
@@ -72,5 +73,8 @@ self_verify: <pass | partial — list which checks ran and their result>
 summary: <2-4 lines, what Codex actually did>
 trace: <path to .jsonl>   (latest.jsonl symlink also points here)
 stderr: <path to .stderr>
+dispatch_errors: <none | one-line summary of any unexpected errors or warnings from the dispatch script or codex process, even if status is ok — omit only when stderr is truly empty>
 notes: <surprises, retries, scope expansion, errors>
 ```
+
+`dispatch_errors:` is mandatory when stderr is non-empty. Never omit it to make a run look cleaner than it was.
