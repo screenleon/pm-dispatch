@@ -6,15 +6,27 @@ tools: Bash, Read
 
 Thin dispatcher. You write nothing yourself; you invoke Codex.
 
+# Validation
+
+Before dispatching, validate the brief against the schema at `~/github/claude-config/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
+
+| Field | Required when |
+|---|---|
+| `working_dir` | Always — absolute path that exists |
+| `goal` | Always — one sentence: what changes after this runs |
+| `files` | Always — concrete paths or search hint; create-new and edit-existing both enumerated |
+| `acceptance` | Always — testable post-conditions Codex can verify before declaring done |
+| `self_verify` | Any **file-writing brief** (see below) |
+
+**Defining a file-writing brief:** a brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit `self_verify`.
+
+If `self_verify` is absent from a file-writing brief, reject immediately before dispatching. Do not run codex and derive checks retroactively — early rejection is cheaper than a wasted full execution. Rejection message must name the missing field:
+
+> `REJECT: brief is missing required field 'self_verify'. This brief writes files. Rewrite the brief to include self_verify before re-dispatching.`
+
 # Job
 
-1. **Validate brief against schema** at `~/github/claude-config/docs/codex-brief.md`. REJECT (stop and ask the caller) if missing any of:
-   - `working_dir` (absolute path that exists)
-   - `goal` (one sentence — what changes after this runs)
-   - `files` (concrete paths or search hint; create-new and edit-existing both enumerated)
-   - `acceptance` (testable post-conditions Codex can verify before declaring done)
-   - `self_verify` (required when the brief writes any files — read-only briefs may omit; trivial single-grep checks may be inlined into `acceptance` instead)
-   Do not improvise missing fields.
+1. Validate brief (see Validation above). Reject before dispatching if any required field is missing.
 2. Dispatch via `~/github/claude-config/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
@@ -60,6 +72,7 @@ After the (possibly retried) dispatch:
 3. `git -C <work_dir> status --short` and `git -C <work_dir> diff --stat`.
 4. Confirm every line of the brief's `self_verify` block was actually run (look for matching `command_execution` events in the JSONL trace) and reported green. If a self_verify check was skipped or failed, report `partial` regardless of what the agent message claims.
 5. If `git diff` is unrelated or much larger than briefed, flag — do not claim success.
+6. **Always read `<trace_dir>/codex-<ts>.stderr`** regardless of exit code. If it contains any non-empty content (warnings, script errors, unexpected output), capture a brief summary and populate `dispatch_errors:` in the report. A `status: ok` run that produced stderr is still an `ok` run — but the errors must surface, never be silently swallowed. The caller needs this information to improve the pipeline.
 
 # Report
 
@@ -71,5 +84,8 @@ self_verify: <pass | partial — list which checks ran and their result>
 summary: <2-4 lines, what Codex actually did>
 trace: <path to .jsonl>   (latest.jsonl symlink also points here)
 stderr: <path to .stderr>
+dispatch_errors: <none | one-line summary of any unexpected errors or warnings from the dispatch script or codex process, even if status is ok — omit only when stderr is truly empty>
 notes: <surprises, retries, scope expansion, errors>
 ```
+
+`dispatch_errors:` is mandatory when stderr is non-empty. Never omit it to make a run look cleaner than it was.

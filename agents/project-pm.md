@@ -61,7 +61,7 @@ test phase ─── qa-tester                    (HARD GATE on red-line violati
 
 # Writing a brief for codex-executor
 
-The canonical schema lives in `~/github/claude-config/docs/codex-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, and `acceptance`. Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing the four required fields — write the full set up front rather than getting bounced.
+The canonical schema lives in `~/github/claude-config/docs/codex-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
 
 Return the brief to the main thread; main thread dispatches it. Verify the resulting report against `git diff` before claiming success.
 
