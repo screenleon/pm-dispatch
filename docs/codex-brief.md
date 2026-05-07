@@ -12,7 +12,7 @@ The canonical structure for any brief dispatched to `codex-executor` (directly v
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
 | `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
-| `self_verify` | **Required when the brief writes any files.** Reusable macros below — drop them in by name and fill the slots. Read-only briefs (no file writes) may omit this; inline the obvious checks into `acceptance` instead. | `git-status no-collateral-damage`; `schema-match` against the reference file. |
+| `self_verify` | **Required for any file-writing brief.** A brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit this field — do not inline checks into `acceptance` as a substitute for `self_verify` in file-writing briefs. | `git-status no-collateral-damage`; `schema-match` against the reference file. |
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
 
