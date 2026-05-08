@@ -38,6 +38,7 @@ test_creates_gitignore_entries() {
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   pass "$name"
 }
 
@@ -52,11 +53,12 @@ test_patches_existing_gitignore() {
   assert_contains "$name" "$dir/.gitignore" "*.log" || return
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   pass "$name"
 }
 
 test_idempotent_gitignore() {
-  # Running twice — no duplicate entries.
+  # Running twice — no duplicate entries for any managed entry.
   local name="idempotent-gitignore"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
@@ -64,11 +66,13 @@ test_idempotent_gitignore() {
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   local count
-  count=$(grep -c "\.agent-trace/" "$dir/.gitignore" || echo 0)
-  if [[ "$count" -ne 1 ]]; then
-    fail "$name" ".agent-trace/ appears $count times (expected 1)"
-    return
-  fi
+  for entry in ".agent-trace/" ".codex-briefs/" ".gate-results/"; do
+    count=$(grep -c "$entry" "$dir/.gitignore" || echo 0)
+    if [[ "$count" -ne 1 ]]; then
+      fail "$name" "$entry appears $count times (expected 1)"
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -113,6 +117,7 @@ test_patches_dockerignore_next_to_dockerfile() {
   assert_contains "$name" "$svcdir/.dockerignore" "node_modules/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
+  assert_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
   pass "$name"
 }
 

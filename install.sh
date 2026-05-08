@@ -201,9 +201,25 @@ else
 fi
 
 echo
+echo "==> hooks"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  if [[ ! -f "$CLAUDE_HOME/settings.json" ]]; then
+    echo "  would create $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
+    echo "  (hook wiring dry-run skipped — settings.json would be created first)"
+  else
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+  fi
+else
+  if [[ ! -f "$CLAUDE_HOME/settings.json" ]]; then
+    mkdir -p "$CLAUDE_HOME"
+    printf '{}\n' > "$CLAUDE_HOME/settings.json"
+    echo "  created $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
+  fi
+  bash "$REPO_ROOT/scripts/install-hooks.sh"
+fi
+echo
+
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
-else
-  echo "Hooks: run scripts/install-hooks.sh to wire PreToolUse guards into ~/.claude/settings.json (idempotent)."
 fi

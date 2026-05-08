@@ -203,12 +203,15 @@ EOF
 ~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
+When dispatching from `codex-executor`, create `/tmp/brief-<task>.md` with the Write tool, not a Bash heredoc. The heredoc above is only for a human shell outside the guarded subagent path.
+
 **Why `--brief-file` and not inline `-- "<brief>"`?**
 - The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command that contains a newline or `\` continuation. Long briefs with code blocks, JSON, and shell paths almost always trigger this.
 - `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
+- Inline `-- <brief>` is kept only for trivial smoke checks. Do not use it for real implementation briefs.
 
 ## Style notes
 
-- Prose is fine; YAML-like keys above are conventions, not strict syntax. Use a heredoc when piping the brief on stdin.
+- Prose is fine; YAML-like keys above are conventions, not strict syntax. Keep real dispatches file-backed via `--brief-file`.
 - Keep briefs in the active voice ("Audit X", not "X should be audited"). Codex parses imperatives more reliably than declaratives.
 - Don't write implementation steps. The brief tells Codex *what* and *what counts as done*; *how* is Codex's job.

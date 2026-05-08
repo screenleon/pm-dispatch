@@ -171,6 +171,76 @@ run_install_case "scripts-absent-real-run" script-absent 0
 run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
 run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
+# ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
+# Proves that install-hooks.sh wires all three managed hooks and that
+# uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
+
+test_install_sh_wires_hooks() {
+  # Proves that the primary install.sh path wires all three managed hooks
+  # into settings.json automatically — no manual install-hooks.sh step needed.
+  local name="install-sh-wires-hooks"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude" "$home/github"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" > /dev/null 2>&1
+
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
+test_install_sh_wires_hooks_no_settings() {
+  # First-time install with no pre-existing settings.json — install.sh must
+  # create a minimal settings.json and wire all hooks before the Write-enabled
+  # codex-executor agent is accessible.
+  local name="install-sh-wires-hooks-no-settings"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude" "$home/github"
+  # Deliberately no settings.json
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" > /dev/null 2>&1
+
+  if [[ ! -f "$home/.claude/settings.json" ]]; then
+    fail "$name" "settings.json was not created during first-time install"
+    return
+  fi
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
+test_hooks_install_uninstall_lifecycle() {
+  local name="hooks-install-uninstall-lifecycle"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+
+  pass "$name"
+}
+
+test_install_sh_wires_hooks
+test_install_sh_wires_hooks_no_settings
+test_hooks_install_uninstall_lifecycle
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
   printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2

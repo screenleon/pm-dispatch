@@ -3,6 +3,7 @@
 *.log
 .agent-trace/
 .codex-briefs/
+.gate-results/
 pm/.agent-trace/
 pm/rollup/PORTFOLIO.md
 pm/rollup/.PORTFOLIO.md.*

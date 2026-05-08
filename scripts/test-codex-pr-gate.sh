@@ -520,9 +520,48 @@ test_binary_file_routes_to_standard() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  # Binary files must not silently fall to express tier
+  # Binary files must route to standard (not express, not over-routed to full)
+  if ! grep -qF "Tier: standard" "$brief" 2>/dev/null; then
+    fail "$name" "binary file did not route to standard tier (brief: $(cat "$brief" 2>/dev/null | grep Tier || echo 'no Tier line'))"
+    return
+  fi
+  pass "$name"
+}
+
+test_untracked_binary_routes_to_standard() {
+  # Verifies that an untracked binary in the working tree (no branch commits)
+  # is not silently routed to express tier. The working-tree fallback must treat
+  # untracked non-doc files as having unknown size.
+  local name="untracked-binary-routes-to-standard"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    git add README.md
+    git commit -q -m initial
+    # Add an untracked binary file to the working tree (no commit, no staging)
+    printf '\x00\x01\x02\x03' > image.png
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  # Untracked binary must not silently route to express
   if grep -qF "Tier: express" "$brief" 2>/dev/null; then
-    fail "$name" "binary file incorrectly routed to express tier"
+    fail "$name" "untracked binary incorrectly routed to express tier"
     return
   fi
   pass "$name"
@@ -542,6 +581,7 @@ run_test test_full_tier_sensitive_file
 run_test test_via_symlink
 run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
+run_test test_untracked_binary_routes_to_standard
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

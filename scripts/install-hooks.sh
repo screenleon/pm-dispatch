@@ -4,6 +4,7 @@
 #
 # Wires:
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
+#   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips
@@ -33,11 +34,13 @@ fi
 
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
+cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
+  echo "  $cxw_cmd" >&2
   exit 2
 fi
 
@@ -49,6 +52,7 @@ trap 'rm -f "$tmp_new"' EXIT
 jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
+  --arg cxw "$cxw_cmd" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -57,11 +61,19 @@ jq \
   # Helper: an entry already exists if any matcher block has a hook with the same command.
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $pm) ] | length ) as $pm_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cx) ] | length ) as $cx_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cxw) ] | length ) as $cxw_present |
 
   ( if $pm_present == 0 then
       .hooks.PreToolUse += [{
         "matcher": "Edit|Write",
         "hooks": [{"type": "command", "command": $pm}]
+      }]
+    else . end
+  ) |
+  ( if $cxw_present == 0 then
+      .hooks.PreToolUse += [{
+        "matcher": "Edit|Write",
+        "hooks": [{"type": "command", "command": $cxw}]
       }]
     else . end
   ) |
