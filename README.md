@@ -10,14 +10,14 @@ skills/      → ~/.claude/skills/    invocable skills
 commands/    → ~/.claude/commands/  /slash commands
 scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
              → ~/.claude/scripts/   claude-usage.sh and log-usage.sh are symlinked here by install.sh
-pm/          → ~/github/.pm/        cross-repo PM schema, scripts, templates
+pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
 docs/                               policy documents (model-tier-policy.md, codex-brief.md)
 ```
 
 ## pm-schema (`pm/`)
 
-Cross-repo project-management schema and tooling consumed by `project-pm` and BACKLOG.md / DECISIONS.md authoring across the user's repos. `install.sh` symlinks `~/github/.pm/` to this directory so existing path references (e.g., the `rollup.sh --out` default, prose mentions in memory) keep working.
+Cross-repo project-management schema and tooling consumed by `project-pm` and BACKLOG.md / DECISIONS.md authoring across the user's repos. `install.sh` symlinks `~/.claude/.pm/` to this directory so canonical path references (e.g., the `rollup.sh --out` default, prose mentions in memory) keep working.
 
 Contents:
 - `schema.md` — pm-schema v1 definition.
@@ -29,19 +29,14 @@ Runtime artifacts (`.agent-trace/`, `rollup/PORTFOLIO.md`) are gitignored.
 
 ### Cutover (one-time, manual)
 
-`~/github/.pm/` is currently a real directory on the pre-cutover machine. To replace it with a symlink to `claude-config/pm/`, run in this order:
+The canonical PM path is now `~/.claude/.pm/`, installed as a symlink to `claude-config/pm/`.
 
 1. `bash ~/github/claude-config/install.sh`
-   — Expected: `CONFLICT $HOME/github/.pm exists and is not a symlink — skipping`. Exit code 1. This is harmless and confirms the install.sh pm-schema block is wired correctly and detects the pre-cutover state.
-2. Inspect `~/github/.pm/.agent-trace/` for any historical codex traces you want to keep — they will NOT be migrated and `rm -rf` will permanently delete them.
-3. `rm -rf ~/github/.pm`
-   — Removes only the directory tree (not a symlink at this stage; if it were a symlink, `rm -rf` would still only remove the link, not the target).
-4. `bash ~/github/claude-config/install.sh`
-   — Expected: `link $HOME/github/.pm -> .../claude-config/pm`. Exit code 0.
-5. `readlink ~/github/.pm`
+   — Expected: `link $HOME/.claude/.pm -> .../claude-config/pm`. Exit code 0.
+2. `readlink ~/.claude/.pm`
    — Should print the path under `claude-config/pm/`. If it doesn't, stop; do not use rollup.sh / validate.sh until the symlink is confirmed.
 
-Never run step 3 before step 1 — if install.sh fails between step 3 and step 4 (lint trip, permission, env), `~/github/.pm` is gone with no automatic recovery and the symlink was never created.
+Legacy PM directories or symlinks under the old `github` checkout location are not used by the installer. If one is present, `install.sh` leaves it untouched and emits no warning about it; inspect and remove it manually only after confirming all active references use `~/.claude/.pm`.
 
 ## Install
 

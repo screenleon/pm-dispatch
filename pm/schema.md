@@ -1,7 +1,7 @@
 # pm-schema: v1
 
 Cross-repo planning convention for `~/github/*` managed product repos.
-Canonical path: `~/github/claude-config/pm/schema.md`. `~/github/.pm/schema.md` is a symlink alias maintained by `claude-config/install.sh`.
+Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md` is a symlink alias maintained by `claude-config/install.sh`.
 
 ## 1. 檔案佈局
 
@@ -11,9 +11,9 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/github/.pm/schema.md` 
 - `DECISIONS.md` — 已沉澱的設計決策日誌（既有檔案沿用）
 - `BACKLOG_CLOSED.md` — 歸檔倉，僅在膨脹政策觸發時建立
 
-跨 repo 或 cross-cutting 的決策放 `~/github/.pm/DECISIONS.md`（自身），不汙染個別 repo 的 DECISIONS.md。
+跨 repo 或 cross-cutting 的決策放 `~/.claude/.pm/DECISIONS.md`（自身），不汙染個別 repo 的 DECISIONS.md。
 
-`~/github/.pm/` 角色：schema 中央控制點 + cross-repo decisions + 共用 templates / scripts（後續 D2/D3 才產出）。它**不**集中聚合各 repo 的 backlog；rollup 由 read-only 工具產生。
+`~/.claude/.pm/` 角色：schema 中央控制點 + cross-repo decisions + 共用 templates / scripts（後續 D2/D3 才產出）。它**不**集中聚合各 repo 的 backlog；rollup 由 read-only 工具產生。
 
 ## 2. BACKLOG.md 結構
 
