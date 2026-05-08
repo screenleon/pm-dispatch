@@ -80,9 +80,14 @@ GATE_ARGS=(--cd "$PWD")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
 
 GATE_STDOUT="$(mktemp)"
-bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" | tee "$GATE_STDOUT"
+trap 'rm -f "$GATE_STDOUT"' EXIT
+bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" > "$GATE_STDOUT"; GATE_EXIT=$?
+cat "$GATE_STDOUT"
+if [[ "$GATE_EXIT" -ne 0 ]]; then
+  printf 'Error: gate script exited %d\n' "$GATE_EXIT" >&2
+  exit "$GATE_EXIT"
+fi
 RESULT_PATH="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$GATE_STDOUT")"
-rm -f "$GATE_STDOUT"
 ```
 
 ## Step 3 - Relay the result

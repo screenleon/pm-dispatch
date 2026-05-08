@@ -8,7 +8,7 @@
 #   bash setup-project.sh [--dry-run] [project-dir]
 #
 # project-dir defaults to the current directory.
-# Searches for Dockerfiles one level deep; patches every .dockerignore found
+# Searches for Dockerfiles up to depth 3; patches every .dockerignore found
 # (or creates one next to each Dockerfile if missing).
 
 set -euo pipefail
