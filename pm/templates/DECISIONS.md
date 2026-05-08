@@ -5,7 +5,7 @@
 1. 複製本檔至 repo root，命名為 DECISIONS.md（若已存在 DECISIONS.md，沿用既有，不覆寫）
 2. 把 <repo-name> 換成 repo 名稱
 3. 刪除本段 HTML 註解
-schema 全文：~/github/.pm/schema.md
+schema 全文：~/.claude/.pm/schema.md
 
 排序：按日期倒序（最新在上）。
 H2 標題格式：## YYYY-MM-DD: <短描述>
@@ -46,11 +46,11 @@ Closes: BACKLOG.md#<PREFIX>-NNN
 ### Context
 
 Multiple repos under ~/github/ 各自演化 BACKLOG / DECISIONS 格式，PM agent 解析成本高。
-此決策不掛單一 repo backlog —— 是 cross-cutting，本身就由 ~/github/.pm/DECISIONS.md 承載。
+此決策不掛單一 repo backlog —— 是 cross-cutting，本身就由 ~/.claude/.pm/DECISIONS.md 承載。
 
 ### Decision
 
-採用 pm-schema v1，schema 文件位於 ~/github/.pm/schema.md。
+採用 pm-schema v1，schema 文件位於 ~/.claude/.pm/schema.md。
 受管 repo BACKLOG.md 頂部以 <!-- pm-schema: v1 --> 宣告版本。
 
 ### Alternatives considered

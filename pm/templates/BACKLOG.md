@@ -7,7 +7,7 @@
 2. 把 <repo-name> 換成 repo 名稱（例：japanese-site）
 3. 確認 ID PREFIX（例：JS / JJ / MN），寫入下方 ID 規則註解
 4. 刪除本段 HTML 註解後即可使用
-schema 全文：~/github/.pm/schema.md
+schema 全文：~/.claude/.pm/schema.md
 -->
 
 <!--

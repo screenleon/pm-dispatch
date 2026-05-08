@@ -40,8 +40,11 @@ HOOK_NAME="hook-codex-bash-guard"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 
-DISPATCH_REL="~/github/claude-config/scripts/codex-dispatch.sh"
-DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS:-$HOME/github/claude-config/scripts/codex-dispatch.sh}"
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS:-$_SCRIPT_DIR/codex-dispatch.sh}"
+_ABS_NO_HOME="${DISPATCH_ABS#"$HOME/"}"
+DISPATCH_REL="~/$_ABS_NO_HOME"
+unset _SCRIPT_DIR _ABS_NO_HOME
 
 READ_ROOTS_RAW="${CLAUDE_HOOK_CODEX_READ_ROOTS:-$HOME/github:/tmp}"
 # Split on either : or , for ergonomics; collect non-empty entries.

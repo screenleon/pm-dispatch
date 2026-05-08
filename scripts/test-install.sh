@@ -62,24 +62,38 @@ assert_dir_not_symlink() {
   fi
 }
 
+assert_file_content() {
+  local name="$1" path="$2" want="$3"
+  if [ ! -f "$path" ]; then
+    fail "$name" "$path is not a file"
+    return 1
+  fi
+  local got
+  got="$(cat "$path")"
+  if [ "$got" != "$want" ]; then
+    fail "$name" "$path content changed"
+    return 1
+  fi
+}
+
 run_install_case() {
   local name="$1" mode="$2" want_code="$3"
   local home="$tmp_root/fakehome-$name"
   local out="$tmp_root/$name.stdout"
   local err="$tmp_root/$name.stderr"
   local decoy="$tmp_root/decoy-$name"
-  mkdir -p "$home/github" "$home/.claude" "$decoy"
+  mkdir -p "$home/.claude" "$decoy"
 
   case "$mode" in
     absent) ;;
     correct-symlink)
-      ln -s "$REPO_ROOT/pm" "$home/github/.pm"
+      ln -s "$REPO_ROOT/pm" "$home/.claude/.pm"
       ;;
     wrong-symlink)
-      ln -s "$decoy" "$home/github/.pm"
+      ln -s "$decoy" "$home/.claude/.pm"
       ;;
     real-dir)
-      mkdir -p "$home/github/.pm/some-content"
+      mkdir -p "$home/.claude/.pm/some-content"
       ;;
     script-absent) ;;
     script-correct-symlink)
@@ -113,35 +127,35 @@ run_install_case() {
 
   case "$name" in
     pm-absent-real-run)
-      assert_contains "$name" "$out" "link   $home/github/.pm -> $REPO_ROOT/pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$REPO_ROOT/pm" || return
+      assert_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-absent-dry-run)
-      assert_contains "$name" "$out" "would  $home/github/.pm -> $REPO_ROOT/pm" || return
-      if [ -e "$home/github/.pm" ] || [ -L "$home/github/.pm" ]; then
-        fail "$name" "$home/github/.pm should not exist"
+      assert_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      if [ -e "$home/.claude/.pm" ] || [ -L "$home/.claude/.pm" ]; then
+        fail "$name" "$home/.claude/.pm should not exist"
         return
       fi
       ;;
     pm-correct-symlink-idempotent)
-      assert_contains "$name" "$out" "ok    $home/github/.pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$REPO_ROOT/pm" || return
+      assert_contains "$name" "$out" "ok    $home/.claude/.pm" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-wrong-symlink-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "expected $REPO_ROOT/pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$decoy" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$decoy" || return
       ;;
     pm-real-dir-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "is not a symlink" || return
-      assert_dir_not_symlink "$name" "$home/github/.pm" || return
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     pm-real-dir-dry-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "is not a symlink" || return
-      assert_not_contains "$name" "$out" "would  $home/github/.pm" || return
-      assert_dir_not_symlink "$name" "$home/github/.pm" || return
+      assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     scripts-absent-real-run)
       assert_contains "$name" "$out" "link   $home/.claude/scripts/codex-pr-gate.sh -> $REPO_ROOT/scripts/codex-pr-gate.sh" || return
@@ -171,6 +185,58 @@ run_install_case "scripts-absent-real-run" script-absent 0
 run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
 run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
+test_legacy_pm_left_untouched() {
+  local name="legacy-github-pm-left-untouched"
+
+  local dir_home="$tmp_root/$name-dir-home"
+  local dir_out="$tmp_root/$name-dir.stdout"
+  local dir_err="$tmp_root/$name-dir.stderr"
+  mkdir -p "$dir_home/.claude" "$dir_home/github/.pm/nested"
+  printf 'legacy dir sentinel\n' > "$dir_home/github/.pm/nested/sentinel.txt"
+
+  set +e
+  HOME="$dir_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$dir_out" 2>"$dir_err"
+  local dir_code=$?
+  set -e
+
+  if [ "$dir_code" -ne 0 ]; then
+    fail "$name" "legacy real-dir install exit $dir_code, expected 0"
+    return
+  fi
+  assert_dir_not_symlink "$name" "$dir_home/github/.pm" || return
+  assert_file_content "$name" "$dir_home/github/.pm/nested/sentinel.txt" "legacy dir sentinel" || return
+  assert_not_contains "$name" "$dir_err" "$dir_home/github/.pm" || return
+
+  local link_home="$tmp_root/$name-link-home"
+  local link_out="$tmp_root/$name-link.stdout"
+  local link_err="$tmp_root/$name-link.stderr"
+  local legacy_target="$tmp_root/$name-legacy-target"
+  mkdir -p "$link_home/.claude" "$link_home/github" "$legacy_target"
+  printf 'legacy symlink sentinel\n' > "$legacy_target/sentinel.txt"
+  ln -s "$legacy_target" "$link_home/github/.pm"
+
+  set +e
+  HOME="$link_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$link_out" 2>"$link_err"
+  local link_code=$?
+  set -e
+
+  if [ "$link_code" -ne 0 ]; then
+    fail "$name" "legacy symlink install exit $link_code, expected 0"
+    return
+  fi
+  assert_symlink_target "$name" "$link_home/github/.pm" "$legacy_target" || return
+  assert_file_content "$name" "$legacy_target/sentinel.txt" "legacy symlink sentinel" || return
+  assert_not_contains "$name" "$link_err" "$link_home/github/.pm" || return
+
+  pass "$name"
+}
+
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
 # Proves that install-hooks.sh wires all three managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
@@ -180,7 +246,7 @@ test_install_sh_wires_hooks() {
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
   local home="$tmp_root/$name"
-  mkdir -p "$home/.claude" "$home/github"
+  mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" \
@@ -200,7 +266,7 @@ test_install_sh_wires_hooks_no_settings() {
   # codex-executor agent is accessible.
   local name="install-sh-wires-hooks-no-settings"
   local home="$tmp_root/$name"
-  mkdir -p "$home/.claude" "$home/github"
+  mkdir -p "$home/.claude"
   # Deliberately no settings.json
 
   HOME="$home" \
@@ -240,6 +306,7 @@ test_hooks_install_uninstall_lifecycle() {
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_legacy_pm_left_untouched
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then

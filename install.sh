@@ -174,21 +174,13 @@ echo "  ($us_count linked, $us_conflicts conflicts)"
 
 echo
 
-# pm-schema: symlink ~/github/.pm -> claude-config/pm so cross-repo
+# pm-schema: symlink ~/.claude/.pm -> claude-config/pm so cross-repo
 # path references (rollup.sh default out, memory prose, schema.md
 # consumers) keep working.
 PM_SRC="$REPO_ROOT/pm"
-PM_DEST="$HOME/github/.pm"
+PM_DEST="$HOME/.claude/.pm"
 if [[ -d "$PM_SRC" ]]; then
   echo "==> pm-schema"
-  if [[ ! -d "$HOME/github" ]]; then
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      echo "  would mkdir $HOME/github"
-    else
-      mkdir -p "$HOME/github"
-      echo "  mkdir  $HOME/github"
-    fi
-  fi
   pm_conflicts=0
   link "$PM_SRC" "$PM_DEST" || pm_conflicts=$((pm_conflicts + 1))
   echo "  (1 attempted, $pm_conflicts conflicts)"

@@ -322,7 +322,9 @@ truncate_log
 
 dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
 export CLAUDE_HOOK_DISPATCH_ABS="$dispatch_abs"
-dispatch_tilde='~/github/claude-config/scripts/codex-dispatch.sh'
+_abs_no_home="${dispatch_abs#"$HOME/"}"
+dispatch_tilde="~/$_abs_no_home"
+unset _abs_no_home
 DISPATCH_TEST_BRIEF="$(mktemp /tmp/codex-dispatch-brief.XXXXXX.md)"
 DISPATCH_TEST_BIN="$(mktemp -d)"
 printf 'Task with quotes "ok", parens (ok), and\nmultiple lines.\n' > "$DISPATCH_TEST_BRIEF"

@@ -2,11 +2,11 @@
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
-# Bootstrap warning: detect pre-cutover state where ~/github/.pm is still a
+# Bootstrap warning: detect pre-cutover state where ~/.claude/.pm is still a
 # real directory. Warn but do not abort; canonical-path invocation still works.
-if [ -e "$HOME/github/.pm" ] && [ ! -L "$HOME/github/.pm" ] && ! ps -o args= -p "${PPID:-0}" 2>/dev/null | grep -Fq 'pm/scripts/test/run-tests.sh'; then
+if [ -e "$HOME/.claude/.pm" ] && [ ! -L "$HOME/.claude/.pm" ] && ! ps -o args= -p "${PPID:-0}" 2>/dev/null | grep -Fq 'pm/scripts/test/run-tests.sh'; then
   printf 'warn: %s is a real directory, not a symlink. Run %s/install.sh to complete pm-schema cutover.\n' \
-    "$HOME/github/.pm" \
+    "$HOME/.claude/.pm" \
     "$HOME/github/claude-config" >&2
 fi
 
