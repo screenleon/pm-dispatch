@@ -37,6 +37,21 @@
 
 set -euo pipefail
 
+# Self-snapshot to avoid mid-flight modification when a dispatched Codex session
+# edits this script (e.g. when the dispatch target is claude-config itself).
+# Bash reads scripts incrementally; rewriting the on-disk file under a running
+# interpreter can corrupt the next read. We re-exec from a /tmp copy so the
+# on-disk file is decoupled from the running process.
+if [[ "${CODEX_DISPATCH_SNAPSHOT_ACTIVE:-}" != "1" ]]; then
+  __codex_dispatch_snapshot="$(mktemp -t codex-dispatch.XXXXXX.sh)"
+  cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
+  chmod +x -- "$__codex_dispatch_snapshot"
+  CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 \
+  CODEX_DISPATCH_SNAPSHOT_PATH="$__codex_dispatch_snapshot" \
+  exec "$__codex_dispatch_snapshot" "$@"
+fi
+trap 'rm -f -- "${CODEX_DISPATCH_SNAPSHOT_PATH:-}"' EXIT
+
 WORK_DIR=""
 MODEL=""
 SANDBOX="workspace-write"
