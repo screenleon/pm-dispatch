@@ -2,8 +2,8 @@
 # PreToolUse guard for the `project-pm` subagent.
 #
 # Threat model: PM is a planner; it must never modify code or arbitrary files.
-# Only memory files under ~/.claude/projects/-home-screenleon-github/memory/
-# are writable. All other Edit/Write attempts are blocked.
+# Only memory files under ~/.claude/projects/<project>/memory/ are writable.
+# All other Edit/Write attempts are blocked.
 #
 # Wired into ~/.claude/settings.json as a PreToolUse hook with matcher
 # "Edit|Write". No-op for any other agent (main thread, other subagents).
@@ -20,7 +20,7 @@ HOOK_NAME="hook-pm-write-guard"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 
-ALLOWED_PREFIX="$HOME/.claude/projects/-home-screenleon-github/memory/"
+ALLOWED_BASE="$HOME/.claude/projects"
 
 # ---------- helpers ----------
 
@@ -41,7 +41,7 @@ deny() {
 project-pm: blocked by $HOOK_NAME — $reason
 
   attempted: $tool_name on ${file_path:-(empty)}
-  allowed:   ${ALLOWED_PREFIX}**
+  allowed:   ${ALLOWED_BASE}/<project>/memory/**
 
 If a code change is needed, hand a brief back to the main thread for codex-executor
 dispatch (schema: ~/github/claude-config/docs/codex-brief.md).
@@ -115,10 +115,10 @@ abs_path="$(realpath -m -- "$file_path" 2>/dev/null)" || {
   deny "realpath failed on file_path"
 }
 
-# Prefix match. ALLOWED_PREFIX has trailing slash, so memory-evil/x.md does NOT
-# match memory/x.md.
+# Pattern: $ALLOWED_BASE/<project>/memory/<file>
+# [!/]* = one path segment with no slashes, so memory-evil/ does NOT match.
 case "$abs_path" in
-  "$ALLOWED_PREFIX"*) allow "inside memory dir" ;;
+  "$ALLOWED_BASE"/[!/]*/memory/*) allow "inside memory dir" ;;
 esac
 
 deny "outside memory directory (resolved to $abs_path)"
