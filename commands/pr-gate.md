@@ -45,9 +45,16 @@ BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remo
 : "${BASE:=main}"
 git diff "$BASE"...HEAD --stat
 
-DIFF_FILES=$(git diff "$BASE"...HEAD --name-only)
+# Use --name-status so renames expose BOTH old and new paths for sensitive matching
+# (e.g. auth.ts → login.ts still triggers full tier on the old name).
+# Use --numstat to detect binary files (shown as -\t-\t<file>).
+DIFF_FILES=$(git diff "$BASE"...HEAD --name-status | awk '
+  /^R/ { print $2; print $3; next }
+  /^[AMDCT]/ { print $2 }
+')
 NON_DOCS=$(echo "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
-LINES=$(git diff "$BASE"...HEAD --shortstat | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | awk '{s+=$1} END{print s+0}')
+BINARY_HIT=$(git diff "$BASE"...HEAD --numstat | { grep -c $'^-\t-\t' || true; })
+LINES=$(git diff "$BASE"...HEAD --numstat | awk '/^-\t-\t/{next} {s+=$1+$2} END{print s+0}')
 # Path-anchored sensitive matching: keyword must be at a path-segment boundary
 # (start, /, _, ., -) on at least one side. Reduces false-positives like
 # authoring.ts, tokenizer.ts, Discourse.md while keeping auth.ts, /oauth/,
@@ -60,7 +67,8 @@ elif [ -z "$NON_DOCS" ]; then
   TIER=express
 elif [ "$SENSITIVE_HIT" -gt 0 ] || [ "$LINES" -gt 500 ]; then
   TIER=full
-elif [ "$LINES" -lt 100 ]; then
+elif [ "$LINES" -lt 100 ] && [ "${BINARY_HIT:-0}" -eq 0 ]; then
+  # Binary files have no line count but represent real changes — treat as standard+
   TIER=express
 else
   TIER=standard

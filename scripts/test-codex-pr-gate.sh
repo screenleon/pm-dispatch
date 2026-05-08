@@ -454,6 +454,80 @@ test_via_symlink() {
   pass "$name"
 }
 
+test_rename_sensitive_old_name() {
+  # Verifies that renaming auth.ts → login.ts still triggers full tier on the old name.
+  local name="rename-sensitive-old-name"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'package auth\n' > auth.ts
+    git add auth.ts
+    git commit -q -m initial
+    git checkout -q -b feature
+    git mv auth.ts login.ts
+    git commit -q -m "rename auth.ts to login.ts"
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$brief" "Tier: full" || return
+  pass "$name"
+}
+
+test_binary_file_routes_to_standard() {
+  # Verifies that a binary file change is not silently routed to express tier.
+  local name="binary-file-routes-to-standard"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    git add README.md
+    git commit -q -m initial
+    git checkout -q -b feature
+    # Create a binary file (null bytes trigger git binary detection)
+    printf '\x00\x01\x02\x03' > image.png
+    git add image.png
+    git commit -q -m "add binary asset"
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  # Binary files must not silently fall to express tier
+  if grep -qF "Tier: express" "$brief" 2>/dev/null; then
+    fail "$name" "binary file incorrectly routed to express tier"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_tier_detection
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
@@ -466,6 +540,8 @@ run_test test_standard_tier_detection
 run_test test_full_tier_line_count
 run_test test_full_tier_sensitive_file
 run_test test_via_symlink
+run_test test_rename_sensitive_old_name
+run_test test_binary_file_routes_to_standard
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

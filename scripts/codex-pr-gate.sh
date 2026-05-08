@@ -68,15 +68,32 @@ if ! git rev-parse --verify "$BASE" > /dev/null 2>&1; then
 fi
 
 # ── Collect diff ──────────────────────────────────────────────────────────────
+# Use --name-status so renames expose BOTH old and new paths for sensitive matching.
+# Use --numstat to detect binary files (shown as -\t-\t<file>).
 if ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
-  DIFF_FILES=$(git diff "$BASE"...HEAD --name-only)
+  # For renames (R* status lines), emit both old and new path so sensitive
+  # keywords in the old name (e.g. auth.ts → login.ts) are not lost.
+  DIFF_FILES=$(git diff "$BASE"...HEAD --name-status | awk '
+    /^R/ { print $2; print $3; next }
+    /^[AMDCT]/ { print $2 }
+  ')
   DIFF_STAT=$(git diff "$BASE"...HEAD --stat)
-  LINES=$(git diff "$BASE"...HEAD --shortstat | { grep -oE '[0-9]+ insertion|[0-9]+ deletion' || true; } | awk '{s+=$1} END{print s+0}')
+  BINARY_HIT=$(git diff "$BASE"...HEAD --numstat | { grep -c $'^-\t-\t' || true; })
+  LINES=$(git diff "$BASE"...HEAD --numstat | awk '
+    /^-\t-\t/ { next }
+    { s += $1 + $2 }
+    END { print s+0 }
+  ')
 else
   # No branch commits — fall back to working tree changes
   DIFF_FILES=$(git diff HEAD --name-only; git ls-files --others --exclude-standard)
   DIFF_STAT=$(git diff HEAD --stat)
-  LINES=$(git diff HEAD --shortstat | { grep -oE '[0-9]+ insertion|[0-9]+ deletion' || true; } | awk '{s+=$1} END{print s+0}')
+  BINARY_HIT=$(git diff HEAD --numstat | { grep -c $'^-\t-\t' || true; })
+  LINES=$(git diff HEAD --numstat | awk '
+    /^-\t-\t/ { next }
+    { s += $1 + $2 }
+    END { print s+0 }
+  ')
 fi
 
 if [[ -z "$DIFF_FILES" ]]; then
@@ -96,7 +113,8 @@ else
     TIER=express
   elif [[ "$SENSITIVE_HIT" -gt 0 || "$LINES" -gt 500 ]]; then
     TIER=full
-  elif [[ "$LINES" -lt 100 ]]; then
+  elif [[ "$LINES" -lt 100 && "${BINARY_HIT:-0}" -eq 0 ]]; then
+    # Binary files have no line count but represent real changes — treat as standard+
     TIER=express
   else
     TIER=standard
