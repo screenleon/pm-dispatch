@@ -202,14 +202,20 @@ fi
 
 echo
 echo "==> hooks"
-if [[ -f "$CLAUDE_HOME/settings.json" ]]; then
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  if [[ ! -f "$CLAUDE_HOME/settings.json" ]]; then
+    echo "  would create $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
+    echo "  (hook wiring dry-run skipped — settings.json would be created first)"
   else
-    bash "$REPO_ROOT/scripts/install-hooks.sh"
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
   fi
 else
-  echo "  skipped — $CLAUDE_HOME/settings.json not found (create it first, then re-run install.sh)"
+  if [[ ! -f "$CLAUDE_HOME/settings.json" ]]; then
+    mkdir -p "$CLAUDE_HOME"
+    printf '{}\n' > "$CLAUDE_HOME/settings.json"
+    echo "  created $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
+  fi
+  bash "$REPO_ROOT/scripts/install-hooks.sh"
 fi
 echo
 
