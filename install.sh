@@ -145,7 +145,7 @@ if [[ ! -d "$SCRIPTS_DEST" ]]; then
   fi
 fi
 us_count=0; us_conflicts=0
-for script in claude-usage.sh log-usage.sh codex-pr-gate.sh; do
+for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else
