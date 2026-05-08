@@ -124,7 +124,7 @@ assert_log() {
 # truncate_log — used between sub-suites so audit-content assertions are local.
 truncate_log() { : > "$TEST_LOG_FILE"; }
 
-mem_path="$HOME/.claude/projects/-home-screenleon-github/memory/foo.md"
+mem_path="$HOME/.claude/projects/test-project/memory/foo.md"
 code_path="$REPO_ROOT/agents/project-pm.md"
 
 # =============================================================================
@@ -148,11 +148,11 @@ run_case "pm: Write to /tmp → deny" 2 "$PMHOOK" \
   "outside memory directory"
 
 run_case "pm: Edit memory/../../etc/passwd → deny (realpath normalizes)" 2 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/-home-screenleon-github/memory/../../../etc/passwd\"}}" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/test-project/memory/../../../etc/passwd\"}}" \
   "outside memory directory"
 
 run_case "pm: Edit memory-evil/x.md → deny (no prefix collision)" 2 "$PMHOOK" \
-  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/-home-screenleon-github/memory-evil/x.md\"}}" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/test-project/memory-evil/x.md\"}}" \
   "outside memory directory"
 
 run_case "pm: relative file_path → deny" 2 "$PMHOOK" \
