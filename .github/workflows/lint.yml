@@ -9,41 +9,41 @@ jobs:
   lint-agents:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate agent frontmatter
         run: ./scripts/lint-agents.sh
 
   lint-scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate script hygiene
         run: ./scripts/lint-scripts.sh
 
   test-hooks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Hook regression suite
         run: ./scripts/test-hooks.sh
 
   test-codex-pr-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: codex-pr-gate regression suite
         run: ./scripts/test-codex-pr-gate.sh
 
   test-setup-project:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: setup-project regression suite
         run: ./scripts/test-setup-project.sh
 
   test-install:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: install/uninstall regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh
