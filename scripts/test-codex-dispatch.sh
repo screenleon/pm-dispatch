@@ -35,39 +35,53 @@ else
   printf '  got: %s\n' "$out" >&2
 fi
 
-# ---- 3: fresh invocation re-execs from /tmp ----
-# Trace via bash -x; assert exec line names a /tmp/codex-dispatch.* path.
+# Resolve the actual tmp dir mktemp -t uses (respects TMPDIR if set, else /tmp).
+SNAP_DIR="$(dirname "$(mktemp -u -t codex-dispatch.XXXXXX.sh)")"
+SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9_]+\.sh"
+
+# ---- 3: fresh invocation re-execs from a snapshot copy ----
+# Trace via bash -x; assert exec line names a codex-dispatch.* snapshot
+# regardless of the resolved TMPDIR (sandboxed envs can override it).
 trace_out="$(bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
-if grep -E "exec /tmp/codex-dispatch\.[A-Za-z0-9]+\.sh" <<<"$trace_out" >/dev/null; then
-  t_pass "snapshot/fresh invocation re-execs from /tmp"
+if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
+  t_pass "snapshot/fresh invocation re-execs from snapshot copy"
 else
-  t_fail "snapshot/fresh invocation did NOT re-exec from /tmp"
+  t_fail "snapshot/fresh invocation did NOT re-exec from a snapshot copy"
   printf '  trace tail:\n%s\n' "$(printf '%s\n' "$trace_out" | tail -10 | sed 's/^/    /')" >&2
 fi
 
 # ---- 4: idempotent — CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 skips snapshot block ----
 trace_out="$(CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
-if grep -E "exec /tmp/codex-dispatch\.[A-Za-z0-9]+\.sh" <<<"$trace_out" >/dev/null; then
+if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
   t_fail "snapshot/idempotent — re-exec fired even with CODEX_DISPATCH_SNAPSHOT_ACTIVE=1"
 else
   t_pass "snapshot/idempotent — re-exec skipped when env var set"
 fi
 
-# ---- 5: snapshot file cleaned up on exit (no /tmp leak) ----
-before=$(find /tmp -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
+# ---- 5: snapshot file cleaned up on exit (no leak in resolved tmp dir) ----
+before=$(find "$SNAP_DIR" -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
 "$DISPATCH" --help >/dev/null 2>&1
-after=$(find /tmp -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
+after=$(find "$SNAP_DIR" -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
 if [[ "$after" -le "$before" ]]; then
-  t_pass "snapshot/cleanup — no leaked /tmp/codex-dispatch.*.sh"
+  t_pass "snapshot/cleanup — no leaked codex-dispatch.*.sh in $SNAP_DIR"
 else
-  t_fail "snapshot/cleanup — file count grew from $before to $after"
+  t_fail "snapshot/cleanup — file count grew from $before to $after in $SNAP_DIR"
 fi
 
-# ---- 6: structural — snapshot block exists with expected guard env var ----
-if grep -q 'CODEX_DISPATCH_SNAPSHOT_ACTIVE' "$DISPATCH"; then
-  t_pass "snapshot/structural — guard env var present in source"
+# ---- 6: structural — snapshot block has all required constructs ----
+# Stronger than just grepping the env-var name; verifies the mechanism is
+# wired together (mktemp + cp + chmod + exec + cleanup trap).
+missing=()
+grep -q 'CODEX_DISPATCH_SNAPSHOT_ACTIVE' "$DISPATCH" || missing+=("guard env var")
+grep -q 'mktemp -t codex-dispatch'        "$DISPATCH" || missing+=("mktemp template")
+grep -q 'cp -- "\${BASH_SOURCE\[0\]}"'    "$DISPATCH" || missing+=("cp from BASH_SOURCE")
+grep -q 'chmod +x'                        "$DISPATCH" || missing+=("chmod +x")
+grep -qE 'exec "\$__codex_dispatch_snapshot"' "$DISPATCH" || missing+=("exec snapshot")
+grep -q "trap.*rm -f.*CODEX_DISPATCH_SNAPSHOT_PATH" "$DISPATCH" || missing+=("cleanup trap")
+if [[ "${#missing[@]}" -eq 0 ]]; then
+  t_pass "snapshot/structural — all snapshot-block constructs present"
 else
-  t_fail "snapshot/structural — guard env var missing; snapshot block may have been removed"
+  t_fail "snapshot/structural — missing: ${missing[*]}"
 fi
 
 echo "----"
