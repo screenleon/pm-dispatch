@@ -127,6 +127,20 @@ if [[ -x "$REPO_ROOT/pm/scripts/test/run-tests.sh" ]]; then
   echo
 fi
 
+# Pre-flight: codex-pr-gate regression suite
+if [[ -x "$REPO_ROOT/scripts/test-codex-pr-gate.sh" ]]; then
+  echo "==> test codex-pr-gate"
+  "$REPO_ROOT/scripts/test-codex-pr-gate.sh"
+  echo
+fi
+
+# Pre-flight: setup-project regression suite
+if [[ -x "$REPO_ROOT/scripts/test-setup-project.sh" ]]; then
+  echo "==> test setup-project"
+  "$REPO_ROOT/scripts/test-setup-project.sh"
+  echo
+fi
+
 install_dir agents
 install_dir skills
 install_dir commands
@@ -145,7 +159,11 @@ if [[ ! -d "$SCRIPTS_DEST" ]]; then
   fi
 fi
 us_count=0; us_conflicts=0
-for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh; do
+# Allowlist: user-facing scripts only. Excluded intentionally:
+#   test-*.sh   — run as install preflights above, not user tools
+#   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
+#   lint-*.sh   — internal CI helpers
+for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh setup-project.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else

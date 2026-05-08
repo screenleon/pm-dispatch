@@ -104,9 +104,6 @@ create_repo() {
       docs)
         printf 'docs change\n' >> README.md
         ;;
-      code)
-        printf 'package main\n\nfunc main() {}\n' > main.go
-        ;;
       many)
         for n in $(seq 1 130); do
           printf 'line %s\n' "$n" >> app.txt
@@ -116,6 +113,44 @@ create_repo() {
         printf 'unknown repo mode: %s\n' "$mode" >&2
         exit 2
         ;;
+    esac
+  )
+}
+
+# create_repo_with_branch: initial commit on main + feature branch with committed changes.
+# Used to test tier detection via git diff BASE...HEAD (not working-tree fallback).
+create_repo_with_branch() {
+  local repo="$1" mode="${2:-standard}"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    git add README.md
+    git commit -q -m initial
+    git checkout -q -b feature
+    case "$mode" in
+      standard)
+        # ~150 non-doc lines → standard tier (100 ≤ LINES < 500)
+        for n in $(seq 1 150); do printf 'func Fn%s() {}\n' "$n"; done > app.go
+        git add app.go
+        git commit -q -m "add code"
+        ;;
+      full-lines)
+        # ~600 non-doc lines → full tier (LINES > 500)
+        for n in $(seq 1 600); do printf 'func Fn%s() {}\n' "$n"; done > app.go
+        git add app.go
+        git commit -q -m "add large code"
+        ;;
+      full-sensitive)
+        # sensitive filename → full tier regardless of line count
+        printf 'package main\n' > auth-handler.go
+        git add auth-handler.go
+        git commit -q -m "add auth handler"
+        ;;
+      *)
+        printf 'unknown mode: %s\n' "$mode" >&2; exit 2 ;;
     esac
   )
 }
@@ -323,6 +358,102 @@ run_test() {
   "$@" || true
 }
 
+test_standard_tier_detection() {
+  # Verifies 100-500 non-doc lines on a feature branch triggers standard tier.
+  local name="standard-tier-detection"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$brief" "Tier: standard" || return
+  assert_contains "$name" "$brief" "Reviewers: critic,qa-tester,architecture-reviewer" || return
+  pass "$name"
+}
+
+test_full_tier_line_count() {
+  # Verifies >500 non-doc lines on a feature branch triggers full tier.
+  local name="full-tier-line-count"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" full-lines
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$brief" "Tier: full" || return
+  pass "$name"
+}
+
+test_full_tier_sensitive_file() {
+  # Verifies a sensitive filename (auth-*) triggers full tier regardless of line count.
+  local name="full-tier-sensitive-file"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" full-sensitive
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$brief" "Tier: full" || return
+  pass "$name"
+}
+
+test_via_symlink() {
+  # Verifies readlink -f fix: gate dispatches correctly when run as a symlink.
+  local name="via-symlink"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" symdir="$dir/symdir"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir" "$symdir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  # Simulate ~/.claude/scripts/codex-pr-gate.sh → real script in runner dir
+  ln -s "$runner/codex-pr-gate.sh" "$symdir/codex-pr-gate.sh"
+
+  set +e
+  HOME="$home" "$symdir/codex-pr-gate.sh" --cd "$repo" --base main > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code — readlink -f fix may be broken"
+    return
+  fi
+  assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  pass "$name"
+}
+
 run_test test_tier_detection
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
@@ -331,6 +462,10 @@ run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
+run_test test_standard_tier_detection
+run_test test_full_tier_line_count
+run_test test_full_tier_sensitive_file
+run_test test_via_symlink
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
