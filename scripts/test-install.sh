@@ -171,6 +171,31 @@ run_install_case "scripts-absent-real-run" script-absent 0
 run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
 run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
+# ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
+# Proves that install-hooks.sh wires all three managed hooks and that
+# uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
+
+test_hooks_install_uninstall_lifecycle() {
+  local name="hooks-install-uninstall-lifecycle"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+
+  pass "$name"
+}
+
+test_hooks_install_uninstall_lifecycle
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
   printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2

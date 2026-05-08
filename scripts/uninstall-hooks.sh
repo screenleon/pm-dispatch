@@ -26,6 +26,7 @@ fi
 
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
+cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
@@ -33,11 +34,12 @@ trap 'rm -f "$tmp_new"' EXIT
 jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
+  --arg cxw "$cxw_cmd" \
   '
   if (.hooks // {}).PreToolUse then
-    # Remove individual hook entries matching pm_cmd or cx_cmd.
+    # Remove individual hook entries matching any managed command.
     .hooks.PreToolUse |= map(
-      .hooks |= map(select(.command != $pm and .command != $cx))
+      .hooks |= map(select(.command != $pm and .command != $cx and .command != $cxw))
     ) |
     # Drop matcher blocks whose hooks list is now empty.
     .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
