@@ -51,7 +51,7 @@ Use the Write tool to write the brief content to `/tmp/brief-<task>.md`. Never u
 
 > **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**. For complex briefs (containing `{}`, shell quotes, long paths, or multiple sentences), always use `--brief-file`.
 >
-> **Why Write tool, not Bash?** The guard blocks single-quotes AND double-quotes in Bash commands because the tokenizer does not honor quoting — a quoted path would bypass path-validation. Brief content always contains prose, file paths, or code that needs quotes. Write tool bypasses the guard entirely and is the only safe way to create the brief file from within codex-executor.
+> **Why Write tool, not Bash?** The guard blocks single-quotes AND double-quotes in Bash commands because the tokenizer does not honor quoting — a quoted path would bypass path-validation. Brief content always contains prose, file paths, or code that needs quotes. Write tool bypasses the Bash guard but is itself constrained by `hook-codex-write-guard.sh`, which allows Write/Edit only to `/tmp/brief-*.md` paths.
 
 Override only with caller authorization:
 - `--sandbox read-only` (analysis only) | `danger-full-access` (explicit auth)

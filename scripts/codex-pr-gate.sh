@@ -94,6 +94,13 @@ else
     { s += $1 + $2 }
     END { print s+0 }
   ')
+  # Untracked non-doc files are not included in git diff HEAD --numstat, so
+  # BINARY_HIT and LINES would both be 0, silently routing to express.
+  # Treat each untracked non-doc file as a binary (unknown size) to prevent
+  # under-tiering.
+  UNTRACKED_NONDOC=$(git ls-files --others --exclude-standard | \
+    { grep -cvE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true; })
+  BINARY_HIT=$((BINARY_HIT + UNTRACKED_NONDOC))
 fi
 
 if [[ -z "$DIFF_FILES" ]]; then

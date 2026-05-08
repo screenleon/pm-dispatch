@@ -282,6 +282,15 @@ run_case "cxw: relative file_path → deny" 2 "$CXWHOOK" \
 run_case "cxw: malformed JSON → deny" 2 "$CXWHOOK" \
   'not-json'
 
+# --- symlink attack: /tmp/brief-*.md exists as a symlink to a protected path ---
+_cxw_symlink_target="$(mktemp)"
+_cxw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
+ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief"
+run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+rm -f "$_cxw_symlink_brief" "$_cxw_symlink_target"
+unset _cxw_symlink_target _cxw_symlink_brief
+
 # --- bypass ---
 run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'

@@ -110,9 +110,24 @@ abs_path="$(realpath -m -- "$file_path" 2>/dev/null)" || {
   deny "realpath failed on file_path"
 }
 
-# Allow only /tmp/brief-<anything>.md
+# Pattern check: must match /tmp/brief-<something>.md
 case "$abs_path" in
-  /tmp/brief-*.md) allow "brief temp file" ;;
+  /tmp/brief-*.md) ;;
+  *) deny "path outside allowed brief pattern (resolved to $abs_path)" ;;
 esac
 
-deny "path outside allowed brief dir (resolved to $abs_path)"
+# Reject existing symlinks — a symlink at /tmp/brief-task.md pointing to a
+# source or config file would pass the pattern check but redirect the write
+# to the symlink target, bypassing the guard's intent.
+if [[ -L "$abs_path" ]]; then
+  deny "brief path is an existing symlink (symlink attack vector: $abs_path)"
+fi
+
+# Verify the parent directory resolves to /tmp (guards against /tmp itself
+# being a symlink or path traversal via dirname).
+real_parent="$(realpath -- "$(dirname "$abs_path")" 2>/dev/null)" || {
+  deny "realpath of parent directory failed"
+}
+[[ "$real_parent" == "/tmp" ]] || deny "parent directory resolves outside /tmp (got: $real_parent)"
+
+allow "brief temp file"
