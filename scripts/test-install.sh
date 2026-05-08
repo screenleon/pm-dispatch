@@ -81,6 +81,16 @@ run_install_case() {
     real-dir)
       mkdir -p "$home/github/.pm/some-content"
       ;;
+    script-absent) ;;
+    script-correct-symlink)
+      mkdir -p "$home/.claude/scripts"
+      ln -s "$REPO_ROOT/scripts/codex-pr-gate.sh" "$home/.claude/scripts/codex-pr-gate.sh"
+      ;;
+    script-wrong-symlink)
+      mkdir -p "$home/.claude/scripts"
+      printf '#!/usr/bin/env bash\n' > "$decoy/codex-pr-gate.sh"
+      ln -s "$decoy/codex-pr-gate.sh" "$home/.claude/scripts/codex-pr-gate.sh"
+      ;;
     *)
       fail "$name" "unknown setup mode: $mode"
       return
@@ -133,6 +143,19 @@ run_install_case() {
       assert_not_contains "$name" "$out" "would  $home/github/.pm" || return
       assert_dir_not_symlink "$name" "$home/github/.pm" || return
       ;;
+    scripts-absent-real-run)
+      assert_contains "$name" "$out" "link   $home/.claude/scripts/codex-pr-gate.sh -> $REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      ;;
+    scripts-correct-symlink-idempotent)
+      assert_contains "$name" "$out" "ok    $home/.claude/scripts/codex-pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      ;;
+    scripts-wrong-symlink-real-run)
+      assert_contains "$name" "$err" "CONFLICT" || return
+      assert_contains "$name" "$err" "expected $REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$decoy/codex-pr-gate.sh" || return
+      ;;
   esac
 
   pass "$name"
@@ -144,6 +167,9 @@ run_install_case "pm-correct-symlink-idempotent" correct-symlink 0
 run_install_case "pm-wrong-symlink-real-run" wrong-symlink 1
 run_install_case "pm-real-dir-real-run" real-dir 1
 run_install_case "pm-real-dir-dry-run" real-dir 1 --dry-run
+run_install_case "scripts-absent-real-run" script-absent 0
+run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
+run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then

@@ -131,10 +131,10 @@ install_dir agents
 install_dir skills
 install_dir commands
 
-# Usage tracking scripts — symlinked into ~/.claude/scripts/ so the user can
-# call them as `bash ~/.claude/scripts/claude-usage.sh` regardless of where
+# Helper scripts — symlinked into ~/.claude/scripts/ so the user can
+# call them as `bash ~/.claude/scripts/<script>` regardless of where
 # this repo is cloned.
-echo "==> usage scripts"
+echo "==> helper scripts"
 SCRIPTS_DEST="$CLAUDE_HOME/scripts"
 if [[ ! -d "$SCRIPTS_DEST" ]]; then
   if [[ "$DRY_RUN" -eq 1 ]]; then

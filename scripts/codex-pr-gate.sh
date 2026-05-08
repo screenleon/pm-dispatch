@@ -62,17 +62,21 @@ else
   BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
   : "${BASE:=main}"
 fi
+if ! git rev-parse --verify "$BASE" > /dev/null 2>&1; then
+  printf 'Error: base ref not found: %s\n' "$BASE" >&2
+  exit 1
+fi
 
 # ── Collect diff ──────────────────────────────────────────────────────────────
 if ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
   DIFF_FILES=$(git diff "$BASE"...HEAD --name-only)
   DIFF_STAT=$(git diff "$BASE"...HEAD --stat)
-  LINES=$(git diff "$BASE"...HEAD --shortstat | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | awk '{s+=$1} END{print s+0}')
+  LINES=$(git diff "$BASE"...HEAD --shortstat | { grep -oE '[0-9]+ insertion|[0-9]+ deletion' || true; } | awk '{s+=$1} END{print s+0}')
 else
   # No branch commits — fall back to working tree changes
   DIFF_FILES=$(git diff HEAD --name-only; git ls-files --others --exclude-standard)
   DIFF_STAT=$(git diff HEAD --stat)
-  LINES=$(git diff HEAD --shortstat | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | awk '{s+=$1} END{print s+0}')
+  LINES=$(git diff HEAD --shortstat | { grep -oE '[0-9]+ insertion|[0-9]+ deletion' || true; } | awk '{s+=$1} END{print s+0}')
 fi
 
 if [[ -z "$DIFF_FILES" ]]; then
@@ -86,7 +90,7 @@ elif [[ -n "$REVIEWERS_OVERRIDE" ]]; then
   TIER="targeted"
 else
   NON_DOCS=$(printf '%s\n' "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
-  SENSITIVE_HIT=$(printf '%s\n' "$DIFF_FILES" | grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' | wc -l)
+  SENSITIVE_HIT=$(printf '%s\n' "$DIFF_FILES" | { grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' || true; } | wc -l)
 
   if [[ -z "$NON_DOCS" ]]; then
     TIER=express
@@ -136,6 +140,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
 mkdir -p "$BRIEF_DIR"
 BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
+trap 'rm -f "${BRIEF_FILE:-}"' EXIT
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
@@ -148,7 +153,8 @@ for r in $REVIEWERS; do
     AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}
 "
   else
-    printf 'Warning: agent file not found: %s\n' "$AGENT_PATH" >&2
+    printf 'Error: reviewer agent file not found: %s\n' "$AGENT_PATH" >&2
+    exit 1
   fi
 done
 
@@ -230,7 +236,7 @@ acceptance:
 BRIEF_EOF
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 printf 'codex-pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
 printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
