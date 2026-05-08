@@ -15,6 +15,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 
@@ -122,8 +123,8 @@ assert_log() {
 # truncate_log — used between sub-suites so audit-content assertions are local.
 truncate_log() { : > "$TEST_LOG_FILE"; }
 
-mem_path='/home/screenleon/.claude/projects/-home-screenleon-github/memory/foo.md'
-code_path='/home/screenleon/github/claude-config/agents/project-pm.md'
+mem_path="$HOME/.claude/projects/-home-screenleon-github/memory/foo.md"
+code_path="$REPO_ROOT/agents/project-pm.md"
 
 # =============================================================================
 # pm-write-guard
@@ -146,11 +147,11 @@ run_case "pm: Write to /tmp → deny" 2 "$PMHOOK" \
   "outside memory directory"
 
 run_case "pm: Edit memory/../../etc/passwd → deny (realpath normalizes)" 2 "$PMHOOK" \
-  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/.claude/projects/-home-screenleon-github/memory/../../../etc/passwd"}}' \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/-home-screenleon-github/memory/../../../etc/passwd\"}}" \
   "outside memory directory"
 
 run_case "pm: Edit memory-evil/x.md → deny (no prefix collision)" 2 "$PMHOOK" \
-  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/.claude/projects/-home-screenleon-github/memory-evil/x.md"}}' \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.claude/projects/-home-screenleon-github/memory-evil/x.md\"}}" \
   "outside memory directory"
 
 run_case "pm: relative file_path → deny" 2 "$PMHOOK" \
@@ -224,7 +225,8 @@ echo
 echo "== hook-codex-bash-guard =="
 truncate_log
 
-dispatch_abs="/home/screenleon/github/claude-config/scripts/codex-dispatch.sh"
+dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
+export CLAUDE_HOOK_DISPATCH_ABS="$dispatch_abs"
 dispatch_tilde='~/github/claude-config/scripts/codex-dispatch.sh'
 DISPATCH_TEST_BRIEF="$(mktemp /tmp/codex-dispatch-brief.XXXXXX.md)"
 DISPATCH_TEST_BIN="$(mktemp -d)"
