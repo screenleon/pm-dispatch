@@ -38,6 +38,7 @@ test_creates_gitignore_entries() {
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   pass "$name"
 }
 
@@ -52,6 +53,7 @@ test_patches_existing_gitignore() {
   assert_contains "$name" "$dir/.gitignore" "*.log" || return
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   pass "$name"
 }
 
@@ -113,6 +115,7 @@ test_patches_dockerignore_next_to_dockerfile() {
   assert_contains "$name" "$svcdir/.dockerignore" "node_modules/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
+  assert_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
   pass "$name"
 }
 

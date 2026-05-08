@@ -18,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
+CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -216,6 +217,74 @@ truncate_log
 printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
+
+# =============================================================================
+# codex-write-guard
+# =============================================================================
+
+echo
+echo "== hook-codex-write-guard =="
+truncate_log
+
+# --- happy path: Write/Edit to /tmp/brief-*.md ---
+run_case "cxw: Write /tmp/brief-task.md → allow" 0 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}'
+
+run_case "cxw: Write /tmp/brief-seed-postal-fix.md → allow" 0 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-seed-postal-fix.md"}}'
+
+run_case "cxw: Edit /tmp/brief-task.md → allow" 0 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/tmp/brief-task.md"}}'
+
+# --- denied: source tree / home dir ---
+run_case "cxw: Write source file → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/backend/seeds/100_demo_content.sql"}}'
+
+run_case "cxw: Edit source file → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/screenleon/github/claude-config/agents/codex-executor.md"}}'
+
+run_case "cxw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/other.md"}}'
+
+run_case "cxw: Write /tmp/brief-task.txt (not .md) → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.txt"}}'
+
+run_case "cxw: Write /tmp/brief- (no suffix) → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-"}}'
+
+run_case "cxw: Write /etc/passwd → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# --- traversal: /tmp/brief-../../../etc/passwd.md normalizes outside /tmp ---
+run_case "cxw: Write path traversal via brief prefix → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-/../etc/shadow.md"}}'
+
+# --- no-op for other agents ---
+run_case "cxw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$CXWHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/whatever.md"}}'
+
+run_case "cxw: critic Write anywhere → no-op" 0 "$CXWHOOK" \
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
+
+run_case "cxw: main thread (no agent_type) Write → no-op" 0 "$CXWHOOK" \
+  '{"tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
+
+run_case "cxw: codex-executor Bash → no-op (matcher would not fire it)" 0 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}'
+
+# --- edge cases ---
+run_case "cxw: empty file_path → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":""}}'
+
+run_case "cxw: relative file_path → deny" 2 "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"brief-task.md"}}'
+
+run_case "cxw: malformed JSON → deny" 2 "$CXWHOOK" \
+  'not-json'
+
+# --- bypass ---
+run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
 
 # =============================================================================
 # codex-bash-guard
