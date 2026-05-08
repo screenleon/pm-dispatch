@@ -41,7 +41,7 @@ LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 
 DISPATCH_REL="~/github/claude-config/scripts/codex-dispatch.sh"
-DISPATCH_ABS="$HOME/github/claude-config/scripts/codex-dispatch.sh"
+DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS:-$HOME/github/claude-config/scripts/codex-dispatch.sh}"
 
 READ_ROOTS_RAW="${CLAUDE_HOOK_CODEX_READ_ROOTS:-$HOME/github:/tmp}"
 # Split on either : or , for ergonomics; collect non-empty entries.
