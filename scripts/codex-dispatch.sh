@@ -42,15 +42,20 @@ set -euo pipefail
 # Bash reads scripts incrementally; rewriting the on-disk file under a running
 # interpreter can corrupt the next read. We re-exec from a /tmp copy so the
 # on-disk file is decoupled from the running process.
-if [[ "${CODEX_DISPATCH_SNAPSHOT_ACTIVE:-}" != "1" ]]; then
+#
+# Trigger: snapshot only when BASH_SOURCE looks like an on-disk script path,
+# not when it already matches the mktemp snapshot pattern. Avoids relying on
+# inherited env (which would let a polluted environment bypass the protection
+# or trick a cleanup trap into deleting an arbitrary file).
+if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}\.sh$ ]]; then
   __codex_dispatch_snapshot="$(mktemp -t codex-dispatch.XXXXXX.sh)"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
   chmod +x -- "$__codex_dispatch_snapshot"
-  CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 \
-  CODEX_DISPATCH_SNAPSHOT_PATH="$__codex_dispatch_snapshot" \
   exec "$__codex_dispatch_snapshot" "$@"
 fi
-trap 'rm -f -- "${CODEX_DISPATCH_SNAPSHOT_PATH:-}"' EXIT
+# Running from the snapshot copy — we own the file, clean it up on exit.
+__codex_dispatch_snapshot="${BASH_SOURCE[0]}"
+trap 'rm -f -- "$__codex_dispatch_snapshot"' EXIT
 
 WORK_DIR=""
 MODEL=""
