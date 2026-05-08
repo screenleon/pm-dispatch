@@ -62,6 +62,20 @@ assert_dir_not_symlink() {
   fi
 }
 
+assert_file_content() {
+  local name="$1" path="$2" want="$3"
+  if [ ! -f "$path" ]; then
+    fail "$name" "$path is not a file"
+    return 1
+  fi
+  local got
+  got="$(cat "$path")"
+  if [ "$got" != "$want" ]; then
+    fail "$name" "$path content changed"
+    return 1
+  fi
+}
+
 run_install_case() {
   local name="$1" mode="$2" want_code="$3"
   local home="$tmp_root/fakehome-$name"
@@ -171,6 +185,58 @@ run_install_case "scripts-absent-real-run" script-absent 0
 run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
 run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
+test_legacy_pm_left_untouched() {
+  local name="legacy-github-pm-left-untouched"
+
+  local dir_home="$tmp_root/$name-dir-home"
+  local dir_out="$tmp_root/$name-dir.stdout"
+  local dir_err="$tmp_root/$name-dir.stderr"
+  mkdir -p "$dir_home/.claude" "$dir_home/github/.pm/nested"
+  printf 'legacy dir sentinel\n' > "$dir_home/github/.pm/nested/sentinel.txt"
+
+  set +e
+  HOME="$dir_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$dir_out" 2>"$dir_err"
+  local dir_code=$?
+  set -e
+
+  if [ "$dir_code" -ne 0 ]; then
+    fail "$name" "legacy real-dir install exit $dir_code, expected 0"
+    return
+  fi
+  assert_dir_not_symlink "$name" "$dir_home/github/.pm" || return
+  assert_file_content "$name" "$dir_home/github/.pm/nested/sentinel.txt" "legacy dir sentinel" || return
+  assert_not_contains "$name" "$dir_err" "$dir_home/github/.pm" || return
+
+  local link_home="$tmp_root/$name-link-home"
+  local link_out="$tmp_root/$name-link.stdout"
+  local link_err="$tmp_root/$name-link.stderr"
+  local legacy_target="$tmp_root/$name-legacy-target"
+  mkdir -p "$link_home/.claude" "$link_home/github" "$legacy_target"
+  printf 'legacy symlink sentinel\n' > "$legacy_target/sentinel.txt"
+  ln -s "$legacy_target" "$link_home/github/.pm"
+
+  set +e
+  HOME="$link_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$link_out" 2>"$link_err"
+  local link_code=$?
+  set -e
+
+  if [ "$link_code" -ne 0 ]; then
+    fail "$name" "legacy symlink install exit $link_code, expected 0"
+    return
+  fi
+  assert_symlink_target "$name" "$link_home/github/.pm" "$legacy_target" || return
+  assert_file_content "$name" "$legacy_target/sentinel.txt" "legacy symlink sentinel" || return
+  assert_not_contains "$name" "$link_err" "$link_home/github/.pm" || return
+
+  pass "$name"
+}
+
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
 # Proves that install-hooks.sh wires all three managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
@@ -240,6 +306,7 @@ test_hooks_install_uninstall_lifecycle() {
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_legacy_pm_left_untouched
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
