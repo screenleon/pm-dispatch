@@ -189,10 +189,13 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 
 ## Dispatching a brief
 
-Write the brief to a temp file and pass it via `--brief-file`. This is the **canonical** way to dispatch:
+Write the brief to `/tmp/brief-<task>.md` first, then pass it via `--brief-file`. This is the **canonical** way to dispatch.
+
+When dispatching from an agent path such as `codex-executor`, the spawning main thread (or spawning agent's parent) must create the brief file before the Agent call. `codex-executor` has no Write tool, so it cannot create `/tmp/brief-<task>.md` for itself.
+
+For a human shell only, a heredoc is an acceptable way to create the same file:
 
 ```bash
-# Write brief
 cat > /tmp/brief-<task>.md << 'EOF'
 working_dir: ...
 goal: ...
@@ -203,8 +206,6 @@ EOF
 ~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
-When dispatching from `codex-executor`, create `/tmp/brief-<task>.md` with the Write tool, not a Bash heredoc. The heredoc above is only for a human shell outside the guarded subagent path.
-
 **Why `--brief-file` and not inline `-- "<brief>"`?**
 - The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command that contains a newline or `\` continuation. Long briefs with code blocks, JSON, and shell paths almost always trigger this.
 - `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
@@ -212,15 +213,16 @@ When dispatching from `codex-executor`, create `/tmp/brief-<task>.md` with the W
 
 ## Main-thread Agent call checklist
 
-Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)`, verify all three:
+Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)`, verify all four:
 
 | Check | Rule | Why |
 |---|---|---|
 | `isolation` absent | **Never set `isolation: "worktree"`** | Harness tries to create a worktree from the main thread's CWD, which may not be a git repo → instant "Cannot create agent worktree" error before codex-executor starts |
 | `run_in_background: true` | **Required for parallel dispatches** | Without it the main thread blocks on each agent; user cannot send new commands while agents run |
 | `self_verify` in brief | **Required for file-writing briefs** | codex-executor rejects immediately with 0 tool uses if absent; entire invocation is wasted |
+| brief file pre-written | **Required before the Agent call** | codex-executor has no Write tool, so it cannot create `/tmp/brief-*.md` for itself |
 
-Failing any check wastes the agent invocation before a single tool call is made. Check all three before sending.
+Failing any check wastes the agent invocation before a single tool call is made. Check all four before sending.
 
 ## Style notes
 
