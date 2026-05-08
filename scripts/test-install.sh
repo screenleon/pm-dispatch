@@ -68,18 +68,18 @@ run_install_case() {
   local out="$tmp_root/$name.stdout"
   local err="$tmp_root/$name.stderr"
   local decoy="$tmp_root/decoy-$name"
-  mkdir -p "$home/github" "$home/.claude" "$decoy"
+  mkdir -p "$home/.claude" "$decoy"
 
   case "$mode" in
     absent) ;;
     correct-symlink)
-      ln -s "$REPO_ROOT/pm" "$home/github/.pm"
+      ln -s "$REPO_ROOT/pm" "$home/.claude/.pm"
       ;;
     wrong-symlink)
-      ln -s "$decoy" "$home/github/.pm"
+      ln -s "$decoy" "$home/.claude/.pm"
       ;;
     real-dir)
-      mkdir -p "$home/github/.pm/some-content"
+      mkdir -p "$home/.claude/.pm/some-content"
       ;;
     script-absent) ;;
     script-correct-symlink)
@@ -113,35 +113,35 @@ run_install_case() {
 
   case "$name" in
     pm-absent-real-run)
-      assert_contains "$name" "$out" "link   $home/github/.pm -> $REPO_ROOT/pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$REPO_ROOT/pm" || return
+      assert_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-absent-dry-run)
-      assert_contains "$name" "$out" "would  $home/github/.pm -> $REPO_ROOT/pm" || return
-      if [ -e "$home/github/.pm" ] || [ -L "$home/github/.pm" ]; then
-        fail "$name" "$home/github/.pm should not exist"
+      assert_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      if [ -e "$home/.claude/.pm" ] || [ -L "$home/.claude/.pm" ]; then
+        fail "$name" "$home/.claude/.pm should not exist"
         return
       fi
       ;;
     pm-correct-symlink-idempotent)
-      assert_contains "$name" "$out" "ok    $home/github/.pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$REPO_ROOT/pm" || return
+      assert_contains "$name" "$out" "ok    $home/.claude/.pm" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-wrong-symlink-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "expected $REPO_ROOT/pm" || return
-      assert_symlink_target "$name" "$home/github/.pm" "$decoy" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$decoy" || return
       ;;
     pm-real-dir-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "is not a symlink" || return
-      assert_dir_not_symlink "$name" "$home/github/.pm" || return
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     pm-real-dir-dry-run)
       assert_contains "$name" "$err" "CONFLICT" || return
       assert_contains "$name" "$err" "is not a symlink" || return
-      assert_not_contains "$name" "$out" "would  $home/github/.pm" || return
-      assert_dir_not_symlink "$name" "$home/github/.pm" || return
+      assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     scripts-absent-real-run)
       assert_contains "$name" "$out" "link   $home/.claude/scripts/codex-pr-gate.sh -> $REPO_ROOT/scripts/codex-pr-gate.sh" || return
@@ -180,7 +180,7 @@ test_install_sh_wires_hooks() {
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
   local home="$tmp_root/$name"
-  mkdir -p "$home/.claude" "$home/github"
+  mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" \
@@ -200,7 +200,7 @@ test_install_sh_wires_hooks_no_settings() {
   # codex-executor agent is accessible.
   local name="install-sh-wires-hooks-no-settings"
   local home="$tmp_root/$name"
-  mkdir -p "$home/.claude" "$home/github"
+  mkdir -p "$home/.claude"
   # Deliberately no settings.json
 
   HOME="$home" \
