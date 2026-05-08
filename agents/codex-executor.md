@@ -1,10 +1,10 @@
 ---
 name: codex-executor
 description: Executes a well-defined coding task by dispatching to the Codex CLI. Use when the caller has a concrete brief (working dir, files, change, acceptance criteria). Not for planning, architecture, or open-ended exploration.
-tools: Bash, Read
+tools: Bash, Read, Write
 ---
 
-Thin dispatcher. You write nothing yourself; you invoke Codex.
+Thin dispatcher. You write brief files to disk and invoke Codex; you do not implement tasks yourself.
 
 # Validation
 
@@ -33,7 +33,11 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 
 # Dispatch
 
-**Preferred form — write brief to a temp file, use `--brief-file` (single line, no shell-metacharacter risk):**
+**Step 1 — write the brief to a temp file using the Write tool (NOT Bash):**
+
+Use the Write tool to write the brief content to `/tmp/brief-<task>.md`. Never use Bash (`printf`, `cat`, `tee`, heredoc) to write the brief — `hook-codex-bash-guard.sh` blocks any Bash command containing quotes, and brief content almost always includes them.
+
+**Step 2 — dispatch via Bash (single line, no metacharacters):**
 
 ```bash
 ~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
@@ -42,10 +46,12 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 **Inline form — only for trivial single-sentence briefs with no special characters:**
 
 ```bash
-~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never -- "<brief>"
+~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never -- <brief>
 ```
 
 > **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**. For complex briefs (containing `{}`, shell quotes, long paths, or multiple sentences), always use `--brief-file`.
+>
+> **Why Write tool, not Bash?** The guard blocks single-quotes AND double-quotes in Bash commands because the tokenizer does not honor quoting — a quoted path would bypass path-validation. Brief content always contains prose, file paths, or code that needs quotes. Write tool bypasses the guard entirely and is the only safe way to create the brief file from within codex-executor.
 
 Override only with caller authorization:
 - `--sandbox read-only` (analysis only) | `danger-full-access` (explicit auth)
