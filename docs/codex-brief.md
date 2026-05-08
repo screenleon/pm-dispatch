@@ -210,6 +210,18 @@ When dispatching from `codex-executor`, create `/tmp/brief-<task>.md` with the W
 - `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
 - Inline `-- <brief>` is kept only for trivial smoke checks. Do not use it for real implementation briefs.
 
+## Main-thread Agent call checklist
+
+Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)`, verify all three:
+
+| Check | Rule | Why |
+|---|---|---|
+| `isolation` absent | **Never set `isolation: "worktree"`** | Harness tries to create a worktree from the main thread's CWD, which may not be a git repo → instant "Cannot create agent worktree" error before codex-executor starts |
+| `run_in_background: true` | **Required for parallel dispatches** | Without it the main thread blocks on each agent; user cannot send new commands while agents run |
+| `self_verify` in brief | **Required for file-writing briefs** | codex-executor rejects immediately with 0 tool uses if absent; entire invocation is wasted |
+
+Failing any check wastes the agent invocation before a single tool call is made. Check all three before sending.
+
 ## Style notes
 
 - Prose is fine; YAML-like keys above are conventions, not strict syntax. Keep real dispatches file-backed via `--brief-file`.

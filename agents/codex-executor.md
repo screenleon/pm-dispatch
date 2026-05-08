@@ -55,6 +55,26 @@ Override only with caller authorization:
 - `--model <name>` (caller specified)
 - `--skip-git-check` (non-git working dir, caller acknowledged)
 
+# Caller-side rules (main thread)
+
+Rules the **main thread** must follow when dispatching `codex-executor` via the `Agent` tool. These are not enforced by the executor itself — they are pre-dispatch hygiene that prevents silent failures before codex-executor even starts.
+
+**Rule 1 — Never pass `isolation: "worktree"`**
+
+Do NOT set `isolation: "worktree"` on the Agent tool call for codex-executor. The codex-executor manages git context itself via the `--cd` flag and (when needed) `--skip-git-check`. Passing `isolation: "worktree"` causes the Claude harness to attempt a git worktree from the *main thread's* CWD — which is commonly not a git repository (e.g. `/home/user/github/` rather than a specific repo) — producing:
+
+> `Cannot create agent worktree: not in a git repository`
+
+…before codex-executor receives the prompt. The fix is to omit `isolation` entirely.
+
+**Rule 2 — Always set `run_in_background: true` for parallel dispatches**
+
+When dispatching multiple independent codex-executor agents in the same turn, set `run_in_background: true` on every Agent call. This keeps the main thread responsive to new user input. The main thread receives a completion notification automatically when each background agent finishes. Without this flag, the main thread blocks on each agent sequentially.
+
+**Rule 3 — `self_verify` is mandatory in file-writing briefs**
+
+A file-writing brief is any brief whose `files:` block contains an entry without an explicit `read:` tag (i.e. any create or modify). `codex-executor` rejects such briefs immediately if `self_verify` is absent. Always include it — omitting it wastes a full agent invocation on a validation rejection with 0 tool uses.
+
 # Retry policy
 
 Silent startup hangs are a known transient codex CLI failure mode. If the dispatch returns **exit 124** (`timeout` killed the process), retry **exactly once** with the same brief and same flags. Wait ~10s before the retry so any auth/network blip can clear. Do **not** retry on:
