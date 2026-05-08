@@ -12,10 +12,14 @@
 # Usage:
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] -- <brief...>
+#                     [--timeout <seconds>] --brief-file <path>
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] --brief-file <path>
+#                     [--timeout <seconds>] -- <brief...>
+#
+# Prefer --brief-file for all real dispatches. The inline -- <brief...> form is
+# retained only for trivial smoke checks; shell quoting, hook validation, and
+# multiline briefs are much easier to get wrong inline.
 #
 # Defaults:
 #   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
@@ -83,7 +87,7 @@ if [[ -z "$BRIEF" ]]; then
   if [[ -n "$BRIEF_FILE" ]]; then
     echo "Error: brief file is empty: $BRIEF_FILE" >&2
   else
-    echo "Error: brief is required (after --)" >&2
+    echo "Error: brief is required; prefer --brief-file <path> (inline form after -- is only for trivial smoke checks)" >&2
   fi
   exit 2
 fi

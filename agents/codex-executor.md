@@ -43,13 +43,9 @@ Use the Write tool to write the brief content to `/tmp/brief-<task>.md`. Never u
 ~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
-**Inline form — only for trivial single-sentence briefs with no special characters:**
+Do not inline the brief with `-- <brief>` for real work. That form is retained only for trivial smoke checks; shell quoting, hook validation, and multiline briefs are too easy to get wrong inline.
 
-```bash
-~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never -- <brief>
-```
-
-> **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**. For complex briefs (containing `{}`, shell quotes, long paths, or multiple sentences), always use `--brief-file`.
+> **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line** and keep all brief content in the file passed with `--brief-file`.
 >
 > **Why Write tool, not Bash?** The guard blocks single-quotes AND double-quotes in Bash commands because the tokenizer does not honor quoting — a quoted path would bypass path-validation. Brief content always contains prose, file paths, or code that needs quotes. Write tool bypasses the Bash guard but is itself constrained by `hook-codex-write-guard.sh`, which allows Write/Edit only to `/tmp/brief-*.md` paths.
 
