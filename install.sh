@@ -127,6 +127,13 @@ if [[ -x "$REPO_ROOT/pm/scripts/test/run-tests.sh" ]]; then
   echo
 fi
 
+# Pre-flight: codex-dispatch self-snapshot regression suite
+if [[ -x "$REPO_ROOT/scripts/test-codex-dispatch.sh" ]]; then
+  echo "==> test codex-dispatch"
+  "$REPO_ROOT/scripts/test-codex-dispatch.sh"
+  echo
+fi
+
 # Pre-flight: codex-pr-gate regression suite
 if [[ -x "$REPO_ROOT/scripts/test-codex-pr-gate.sh" ]]; then
   echo "==> test codex-pr-gate"
