@@ -295,6 +295,23 @@ unset _cxw_symlink_target _cxw_symlink_brief
 run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
 
+# --- audit-log content assertions ---
+truncate_log
+printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
+assert_log "cxw: audit log contains allow line" "decision=allow"
+assert_log "cxw: allow line records agent=codex-executor" "agent=codex-executor"
+assert_log "cxw: allow line records tool=Write" "tool=Write"
+
+truncate_log
+printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
+assert_log "cxw: audit log contains deny line" "decision=deny"
+assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
+
+truncate_log
+printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
+assert_log "cxw: audit log contains bypass line" "decision=bypass"
+assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
+
 # =============================================================================
 # codex-bash-guard
 # =============================================================================
