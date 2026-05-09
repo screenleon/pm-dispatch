@@ -37,13 +37,23 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 
 The brief file is always pre-written by the main thread before dispatching to codex-executor. The prompt will contain the path, e.g. `/tmp/brief-<task>.md`. Read it with the Read tool and validate against the schema at `~/github/claude-config/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
 
-**Step 2 — dispatch via Bash (single line, no metacharacters):**
+**Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
 ```bash
 ~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
 Do not inline the brief with `-- <brief>` for real work. That form is retained only for trivial smoke checks; shell quoting, hook validation, and multiline briefs are too easy to get wrong inline.
+
+> **CRITICAL — NEVER set `run_in_background: true` on the dispatch Bash call.**
+>
+> The dispatch script **must** run in the foreground (synchronously) so this agent blocks until codex finishes. The script bounds its own runtime via `--timeout` (default 1200s, raise via `--timeout` if needed), so foreground blocking is bounded and safe.
+>
+> **What goes wrong with background mode:** Bash `run_in_background: true` returns immediately to the agent. The agent then proceeds to its `Verify` step (or, worse, returns to the caller). When the agent's process exits, the orphaned background job is SIGKILLed mid-run — codex stops partway through, the `.stderr` log loses its closing banner, the `/tmp/codex-dispatch.<rand>.sh` snapshot is left undeleted (EXIT trap never ran), and the `.last` file is empty. The agent thinks "I'll await the completion notification" but the notification never fires because the agent already returned.
+>
+> **Symptoms of having done this anyway:** `latest.last` symlink points to an empty file, stderr contains only the `codex-dispatch starting` banner with no `finished` line, `/tmp/codex-dispatch.*.sh` snapshots accumulate, JSONL trace ends mid-stream with no `turn.completed` event. If you see these, the dispatch was orphaned — re-run synchronously.
+>
+> Foreground only. Always.
 
 > **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**.
 >
