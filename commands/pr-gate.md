@@ -91,23 +91,37 @@ printf 'PR-gate tier: %s\nReviewers: %s\n' "$TIER" "$REVIEWERS_RUN"
 
 Do not invoke PM at this step. PM's role is synthesis only.
 
-## Step 2 — spawn reviewers in parallel from main thread
+## Step 2 — spawn reviewers in background from main thread
 
-In a single message, make N parallel Agent tool calls — one per applicable reviewer. Pseudocode (illustrative, not literal call syntax):
+In a single message, make N parallel Agent tool calls — one per applicable
+reviewer — **with `run_in_background: true` on every call**. Background mode
+frees the main thread to accept new user input while reviewers run (each
+reviewer is ~30s-2min). The harness sends a completion notification per
+reviewer; Step 3 waits for all N before synthesizing.
+
+Pseudocode (illustrative, not literal call syntax):
 
 ```
-# pseudocode — emit each as a real Agent tool call in one message
+# pseudocode — emit each as a real Agent tool call in one message.
 # Model: always "sonnet" unless Opus escalation condition is met (see below).
-Agent(subagent_type: "critic",                model: "sonnet", ...)
-Agent(subagent_type: "qa-tester",             model: "sonnet", ...)
+# run_in_background: true on EVERY reviewer call — main thread must not block.
+Agent(subagent_type: "critic",                model: "sonnet", run_in_background: true, ...)
+Agent(subagent_type: "qa-tester",             model: "sonnet", run_in_background: true, ...)
 
 if TIER == "standard" or TIER == "full":
-  Agent(subagent_type: "architecture-reviewer", model: "sonnet", ...)
+  Agent(subagent_type: "architecture-reviewer", model: "sonnet", run_in_background: true, ...)
 
 if TIER == "full":
-  Agent(subagent_type: "security-reviewer", model: "sonnet", ...)
-  Agent(subagent_type: "risk-reviewer",     model: "sonnet", ...)
+  Agent(subagent_type: "security-reviewer", model: "sonnet", run_in_background: true, ...)
+  Agent(subagent_type: "risk-reviewer",     model: "sonnet", run_in_background: true, ...)
 ```
+
+After firing, end the turn with one short status line, e.g.:
+
+> `PR-gate launched in background (<tier>, N reviewers). Main thread free; I'll synthesize via PM when all reviewers return.`
+
+Do NOT poll for completion. The harness will notify the main thread per
+reviewer; the next step proceeds when ALL N notifications have arrived.
 
 **Opus escalation** — only when ALL THREE hold: tier is `full`, diff > 1000 changed
 lines, AND a sensitive path triggered `full`. Notify the user and wait for
@@ -116,13 +130,19 @@ acknowledgement before switching to `model: "opus"`. See
 
 Each reviewer brief should include: working dir, branch name vs integration branch, tier, reviewers run, diff summary, scope hints from $ARGUMENTS.
 
-## Step 3 — synthesize via project-pm (single hop)
+## Step 3 — synthesize via project-pm (after all reviewers return)
 
-After all reviewers return, invoke `project-pm` with `model: "sonnet"` — this
+Only proceed once **all N background reviewers have sent completion
+notifications** to the main thread. Accumulate each reviewer's verbatim output
+as their notification arrives; do not call PM until the last one is in.
+
+Then invoke `project-pm` with `model: "sonnet"` — this
 is a bounded synthesis task within the review pipeline, so Sonnet applies here
-regardless of what the `/pm` command uses. Never omit the model param in this
-step. Pass the tier, reviewers run, skipped review dimensions, and reviewer
-verbatim outputs. Ask it to:
+regardless of what the `/pm` command uses. PM may also be dispatched with
+`run_in_background: true` if the user is still mid-conversation; otherwise
+foreground is fine since PM synthesis is fast (~10-30s). Never omit the model
+param in this step. Pass the tier, reviewers run, skipped review dimensions,
+and reviewer verbatim outputs. Ask it to:
 
 - Compose the final gate summary (each reviewer's verdict, any blocks with override paths, final go/no-go).
 - Explicitly state which dimensions were not reviewed in slimmer tiers, for example: `express tier — security/risk/architecture not reviewed`.

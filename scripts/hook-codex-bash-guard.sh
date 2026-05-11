@@ -285,6 +285,30 @@ if [[ "${CLAUDE_HOOK_CODEX_GUARD:-}" == "off" ]]; then
   exit 0
 fi
 
+# Reject background mode. The dispatch script must run foreground so the
+# codex-executor subagent process stays alive until codex finishes; otherwise
+# the harness orphans the background job mid-run (see codex-executor.md
+# §Dispatch "What goes wrong with background mode"). The doc-level rule was
+# repeatedly ignored by the subagent — enforce structurally.
+#
+# DEBUG (2026-05-11): an initial fix that only checked .tool_input.run_in_background
+# was bypassed in the wild — the harness apparently places the flag elsewhere
+# in the JSON envelope. Capture the full input keys to forensics so the next
+# real dispatch reveals the correct path. Remove once located.
+{
+  ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+  echo "=== hook-codex-bash-guard input @ $ts ==="
+  jq -c '. | with_entries(.value |= (if type=="object" then with_entries(.value |= (if type=="string" then (.[0:80]) else . end)) else . end))' <<<"$input" 2>/dev/null
+} >> "$LOG_DIR/codex-bash-guard.debug.log" 2>/dev/null
+
+# Check multiple plausible locations for the run_in_background flag.
+run_in_bg_a="$(jq -r '.tool_input.run_in_background // empty' <<<"$input" 2>/dev/null)"
+run_in_bg_b="$(jq -r '.run_in_background // empty' <<<"$input" 2>/dev/null)"
+run_in_bg_c="$(jq -r '.tool_options.run_in_background // empty' <<<"$input" 2>/dev/null)"
+if [[ "$run_in_bg_a" == "true" || "$run_in_bg_b" == "true" || "$run_in_bg_c" == "true" ]]; then
+  deny "run_in_background:true forbidden on codex-executor Bash (orphans dispatch — see codex-executor.md §Dispatch)"
+fi
+
 if [[ -z "$command" ]]; then
   deny "tool_input.command empty"
 fi
