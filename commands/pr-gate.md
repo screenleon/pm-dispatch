@@ -132,17 +132,36 @@ Each reviewer brief should include: working dir, branch name vs integration bran
 
 ## Step 3 — synthesize via project-pm (after all reviewers return)
 
-Only proceed once **all N background reviewers have sent completion
-notifications** to the main thread. Accumulate each reviewer's verbatim output
-as their notification arrives; do not call PM until the last one is in.
+Track `N` explicitly: `N` is the count of reviewer Agent calls made in Step 2
+(2 for express, 3 for standard, 5 for full). Note `N` in your end-of-turn
+status line in Step 2.
 
-Then invoke `project-pm` with `model: "sonnet"` — this
+Wait for completion notifications. Each background Agent emits exactly one
+notification when it finishes; accumulate each reviewer's verbatim output as
+their `<task-notification>` arrives. **Do NOT invoke PM until the count of
+received notifications equals `N`.**
+
+Failure modes to handle:
+
+- **Reviewer crash (notification arrives with non-zero status / empty result)**:
+  Note the reviewer name + status in the synthesis input. Do not retry from
+  the skill — surface to the user with the partial result set and ask whether
+  to proceed with N−1 verdicts or re-spawn the missing reviewer.
+- **Notification never arrives (>10 min after Step 2)**: This is rare —
+  Sonnet reviewers typically finish in 30s-2min. If a reviewer has not
+  reported in 10 min, surface to the user with the names of the still-pending
+  reviewers and ask whether to proceed with partial results or wait further.
+  Do not silently start synthesis with `< N` reviewers.
+
+Once all `N` notifications are in (or the user has authorized partial
+synthesis), invoke `project-pm` with `model: "sonnet"` — this
 is a bounded synthesis task within the review pipeline, so Sonnet applies here
 regardless of what the `/pm` command uses. PM may also be dispatched with
 `run_in_background: true` if the user is still mid-conversation; otherwise
 foreground is fine since PM synthesis is fast (~10-30s). Never omit the model
 param in this step. Pass the tier, reviewers run, skipped review dimensions,
-and reviewer verbatim outputs. Ask it to:
+any crashed/missing reviewers, and the verbatim outputs of those that
+returned. Ask it to:
 
 - Compose the final gate summary (each reviewer's verdict, any blocks with override paths, final go/no-go).
 - Explicitly state which dimensions were not reviewed in slimmer tiers, for example: `express tier — security/risk/architecture not reviewed`.

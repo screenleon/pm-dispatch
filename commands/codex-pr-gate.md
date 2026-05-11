@@ -30,17 +30,36 @@ GATE_SCRIPT="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/scripts/codex-pr-gate.sh"
 
 ## Step 2 - Parse args and launch in background
 
-Parse `$ARGUMENTS`, build the gate args, then **fire the script with
-`run_in_background: true`** so the main thread is free while codex runs the
-reviewers (~3-5 min). The script owns tier detection, changed-file analysis,
-reviewer selection, brief generation, and dispatch.
+Parse `$ARGUMENTS`, build the gate args, then **fire the gate script via the
+Bash tool with the tool parameter `run_in_background: true`** so the main
+thread is free while codex runs the reviewers (~3-5 min). The gate script
+owns tier detection, changed-file analysis, reviewer selection, brief
+generation, and dispatch.
 
-> **CRITICAL — `run_in_background: true` on the OUTER Bash call (from this
-> skill).** The script's internal `codex-dispatch.sh` is still foreground-only
-> (enforced by `hook-codex-bash-guard.sh` on the codex-executor subagent), but
-> the skill is running from the **main thread**, not from a subagent. The main
-> thread is not killed when its Bash call returns, so backgrounding here
-> correctly frees the user to continue while codex churns.
+> **CRITICAL — `run_in_background: true` is a Bash TOOL PARAMETER, not a
+> shell flag.** When you invoke the Bash tool to run the gate script, set
+> `run_in_background: true` as a sibling of `command:` in the tool call,
+> NOT as a flag inside the command string. Shape:
+>
+> ```
+> Bash(
+>   command: 'bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1',
+>   run_in_background: true   ← TOOL PARAMETER (not inside the command)
+> )
+> ```
+>
+> The shell snippet shown in the code block below is just the contents of
+> the `command:` field. The background-mode signal lives at the tool-call
+> level, one layer above the shell.
+
+> **Why background mode here is safe — and required.** The gate script's
+> internal `codex-dispatch.sh` is still foreground-only (enforced by
+> `hook-codex-bash-guard.sh` on the codex-executor subagent), but **this
+> skill is running from the main thread, not from a subagent**. The main
+> thread is not killed when its Bash call returns, so backgrounding the
+> outer gate-script invocation correctly frees the user to continue while
+> codex churns. The harness sends a completion notification when the
+> backgrounded Bash exits.
 
 ```bash
 RAW_ARGS="${ARGUMENTS:-}"
