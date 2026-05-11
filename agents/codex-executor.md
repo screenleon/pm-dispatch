@@ -33,9 +33,17 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 
 # Dispatch
 
+The prompt MUST contain an absolute path ending in `.md` that points to a brief file (typically `/tmp/brief-<task>.md`). If no such path is present, **STOP immediately** — do not attempt to dispatch, do not try to reconstruct the brief from the prompt text, do not try inline `-- <brief>` form. Return this exact message to the main thread and stop:
+
+> `REJECT: No brief file path found in the prompt. The main thread must write the brief to /tmp/brief-<task>.md using the Write tool before dispatching codex-executor (see Caller-side Rule 4). Re-dispatch after the file is written.`
+
+If the path is present but the file does not exist on disk (Read tool returns not-found), also STOP:
+
+> `REJECT: Brief file not found at <path>. Verify the Write tool succeeded before re-dispatching.`
+
 **Step 1 — read and validate the brief file (path provided by main thread):**
 
-The brief file is always pre-written by the main thread before dispatching to codex-executor. The prompt will contain the path, e.g. `/tmp/brief-<task>.md`. Read it with the Read tool and validate against the schema at `~/github/claude-config/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
+The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/claude-config/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
 
 **Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
@@ -54,6 +62,12 @@ Do not inline the brief with `-- <brief>` for real work. That form is retained o
 > **Symptoms of having done this anyway:** `latest.last` symlink points to an empty file, stderr contains only the `codex-dispatch starting` banner with no `finished` line, `/tmp/codex-dispatch.*.sh` snapshots accumulate, JSONL trace ends mid-stream with no `turn.completed` event. If you see these, the dispatch was orphaned — re-run synchronously.
 >
 > Foreground only. Always.
+
+**If the dispatch script exits non-zero — STOP immediately, except exit 124 (see Retry policy).** Do NOT attempt to reformat the brief, bypass the hook, rewrite the dispatch command, or retry with different flags. Return this message to the main thread and stop:
+
+> `REJECT: codex-dispatch.sh failed with exit <N>. Error: <first non-empty line from stderr>. Do not retry without main-thread review. Trace: <path to .stderr if available, otherwise: dispatch did not reach trace creation>.`
+
+The main thread is responsible for diagnosing and fixing dispatch failures. The codex-executor's job is to execute briefs, not to negotiate with the dispatch pipeline.
 
 > **IMPORTANT — no backslash line-continuation.** The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command containing a newline (including `\` continuation). Always keep the dispatch call on a **single line**.
 >
