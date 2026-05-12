@@ -321,7 +321,7 @@ test_reviewers_override_skips_tier_detection() {
   create_repo "$repo" many
 
   set +e
-  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -410,7 +410,7 @@ test_output_directory_created() {
 }
 
 test_parallel_launches_per_reviewer() {
-  # Verifies default parallel mode launches one dispatch per reviewer and a synthesis.
+  # Verifies --parallel mode launches one dispatch per reviewer and a synthesis.
   local name="parallel-launches-per-reviewer"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -421,7 +421,7 @@ test_parallel_launches_per_reviewer() {
   create_repo "$repo" docs
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier express
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier express --parallel
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -473,7 +473,7 @@ test_failed_reviewer_aborts_gate() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_STUB_MODE=fail run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_STUB_MODE=fail run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -738,7 +738,7 @@ test_synthesis_verdict_mismatch_aborts_gate() {
 
   set +e
   CODEX_GATE_STUB_VERDICT=block CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
-    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -771,7 +771,7 @@ test_post_synthesis_injection_detected() {
 
   set +e
   CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE="$repo/service.go" run_gate \
-    "$home" "$runner" "$repo" "$out" "$err" --base main
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -800,7 +800,7 @@ test_synthesis_no_output_aborts_gate() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_STUB_SYNTHESIS_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_STUB_SYNTHESIS_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -829,7 +829,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_STUB_MODE=no-verdict run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_STUB_MODE=no-verdict run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -858,7 +858,7 @@ test_reviewer_no_output_aborts_gate() {
   create_repo "$repo" docs
 
   set +e
-  CODEX_GATE_STUB_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_STUB_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -892,7 +892,7 @@ test_prompt_injection_detected() {
 
   set +e
   CODEX_GATE_STUB_INJECT_FILE="$repo/service.go" run_gate \
-    "$home" "$runner" "$repo" "$out" "$err" --base main
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then

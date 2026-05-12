@@ -3,12 +3,13 @@ set -euo pipefail
 
 # codex-pr-gate.sh — PR-gate review via codex
 #
-# Default mode (parallel): one independent codex session per reviewer so that
-# no shared context window anchors or limits any single reviewer; a project-pm
-# synthesis session consolidates all findings into the final gate result.
+# Default mode (sequential): all reviewers run in order inside one combined
+# codex session. Lower token cost — recommended for most workflows.
 #
-# Use --sequential to fall back to the original single-session approach where
-# all reviewers run in order inside one combined codex session.
+# Use --parallel to run one independent codex session per reviewer (stronger
+# isolation; no shared context window between reviewers) plus a PM synthesis
+# session. Higher token cost — suitable for sensitive paths or when reviewer
+# independence matters.
 #
 # Adjacent test files (not in the diff but directly paired to a changed source
 # file) are automatically added to every reviewer brief so coverage gaps in
@@ -25,7 +26,8 @@ set -euo pipefail
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --timeout <secs>     codex-dispatch timeout per session (default: 1200)
-#   --sequential         run all reviewers in one codex session (original behavior)
+#   --parallel           run one codex session per reviewer + PM synthesis (higher token cost)
+#   --sequential         alias for default mode (kept for backward compatibility)
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -34,7 +36,7 @@ SCOPE=""
 BASE_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
-SEQUENTIAL=false
+SEQUENTIAL=true   # default: sequential (lower token cost)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,7 +47,8 @@ while [[ $# -gt 0 ]]; do
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
-    --sequential) SEQUENTIAL=true;         shift;;
+    --parallel)   SEQUENTIAL=false;        shift;;
+    --sequential) SEQUENTIAL=true;         shift;;   # backward compat
     -h|--help)
       sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
@@ -266,7 +269,7 @@ printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
 
-  # ── Sequential mode (original: all reviewers in one combined codex session) ──
+  # ── Sequential mode (default: all reviewers in one combined codex session) ──
   AGENT_FILE_ENTRIES=""
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
@@ -358,7 +361,9 @@ BRIEF_EOF
 
 else
 
-  # ── Parallel mode (default): one codex session per reviewer + PM synthesis ──
+  # ── Parallel mode (--parallel): one codex session per reviewer + PM synthesis ──
+  # Higher token cost; use when reviewer independence matters (auth/payment/
+  # migration paths) or when sequential results need a second opinion.
   # Each reviewer runs independently — no shared context window means no
   # anchoring bias or token pressure from earlier reviewers bleeding through.
   # PM synthesis reads all reviewer output files and consolidates.
