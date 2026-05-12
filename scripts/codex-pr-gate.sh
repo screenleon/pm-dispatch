@@ -374,12 +374,27 @@ else
 
   mkdir -p "$WORK_DIR/.agent-trace"
 
+  # Resolve a portable hash command; fail-closed if none is available or usable.
+  # sha256sum (GNU coreutils) is preferred; shasum -a 256 covers macOS/BSD.
+  # Both presence (command -v) AND usability (echo | cmd) are verified so a
+  # broken stub or wrong-architecture binary is caught before the integrity guard.
+  _HASH_CMD=""
+  if command -v sha256sum > /dev/null 2>&1 && printf '' | sha256sum > /dev/null 2>&1; then
+    _HASH_CMD="sha256sum"
+  elif command -v shasum > /dev/null 2>&1 && printf '' | shasum -a 256 > /dev/null 2>&1; then
+    _HASH_CMD="shasum -a 256"
+  fi
+  if [[ -z "$_HASH_CMD" ]]; then
+    printf 'Error: no sha256sum or shasum found — cannot fingerprint worktree for injection detection.\n' >&2
+    exit 1
+  fi
+
   # Capture working-tree content fingerprints before dispatch.
   # git diff HEAD: content-level changes to tracked files (catches already-dirty mutations).
   # git status --porcelain: new untracked source files (gate artifacts are gitignored
   # by the patch above and excluded from this snapshot).
-  _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
-  _PRE_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
+  _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
+  _PRE_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
@@ -507,8 +522,8 @@ RBRIEF_EOF
   # Worktree integrity check — detect prompt-injected file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
   # catches new untracked source files (gate artifacts are gitignored, excluded).
-  _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
-  _POST_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
+  _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
+  _POST_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
   if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
     printf 'Error: reviewer sessions modified working tree — possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
@@ -629,18 +644,20 @@ SBRIEF_EOF
     --timeout "$TIMEOUT" \
     --brief-file "$SYNTHESIS_BRIEF"
 
-  # Validate synthesis output: must exist, be non-empty, contain Final: GO|NO-GO,
-  # and match the shell-computed verdict (guards against synthesis manipulation).
+  # Validate synthesis output: must exist, be non-empty, contain exactly one
+  # Final: GO|NO-GO line, and match the shell-computed verdict.
+  # Multiple or conflicting Final: lines indicate a manipulated/corrupt artifact.
   if [[ ! -s "$OUTPUT_FILE" ]]; then
     printf 'Error: PM synthesis did not produce the gate result file: %s\n' "$OUTPUT_FILE" >&2
     printf 'Gate aborted — synthesis session may have exited 0 without completing.\n' >&2
     exit 1
   fi
-  if ! grep -qE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE"; then
-    printf 'Error: gate result file missing valid Final: GO/NO-GO conclusion.\n' >&2
+  FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
+  if [[ "$FINAL_COUNT" -ne 1 ]]; then
+    printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d).\n' "$FINAL_COUNT" >&2
     exit 1
   fi
-  SYNTHESIS_FINAL=$(grep -oE '^Final: (GO|NO-GO)' "$OUTPUT_FILE" | head -1 | awk '{print $2}')
+  SYNTHESIS_FINAL=$(grep -E '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" | awk '{print $2}')
   if [[ "$SYNTHESIS_FINAL" != "$SHELL_FINAL" ]]; then
     printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) — gate result may have been manipulated.\n' \
       "$SYNTHESIS_FINAL" "$SHELL_FINAL" >&2
@@ -649,8 +666,8 @@ SBRIEF_EOF
 
   # Post-synthesis integrity check — same dual-hash guard run again to catch
   # synthesis-side prompt injection (tracked mutations + new untracked files).
-  _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
-  _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
+  _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
+  _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
   if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then
     printf 'Error: synthesis session modified working tree — possible prompt injection.\n' >&2
     exit 1

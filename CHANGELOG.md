@@ -9,11 +9,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- `scripts/codex-pr-gate.sh`: **parallel mode** (new default) — one independent
+- `scripts/codex-pr-gate.sh`: **parallel mode** (`--parallel`) — one independent
   codex session per reviewer followed by a project-pm synthesis session; avoids
-  shared-context anchoring and token pressure that caused sequential sessions to
-  miss or re-flag findings. Original single-session behavior preserved via
-  `--sequential` flag.
+  shared-context anchoring and token pressure between reviewers. Default remains
+  sequential (one combined session); use `--parallel` when reviewer independence
+  matters (auth/payment/sensitive paths) or when token budget allows it.
 - `scripts/codex-pr-gate.sh`: **adjacent test file auto-detection** — for each
   changed `.go` source file the companion `*_test.go` is automatically appended
   to the reviewer brief; for `.ts`/`.tsx` sources the `__tests__/<name>.test.ts(x)`

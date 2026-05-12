@@ -117,8 +117,14 @@ case "$effective_mode" in
       if [[ "$brief_file" == *-synthesis.md ]]; then
         # Synthesis brief: write a minimal but structurally valid gate result.
         # CODEX_GATE_STUB_SYNTHESIS_FINAL controls the Final: line (default GO).
+        # CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL: if set, appends a second Final: line
+        # to simulate a duplicate/contradictory conclusion artifact.
         final_verdict="${CODEX_GATE_STUB_SYNTHESIS_FINAL:-GO}"
-        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: %s\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' "$final_verdict" > "$output_path"
+        extra_final_line=""
+        if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL:-}" ]]; then
+          extra_final_line="Final: ${CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL}"$'\n'
+        fi
+        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: %s\n%s\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' "$final_verdict" "$extra_final_line" > "$output_path"
       else
         # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
@@ -904,6 +910,74 @@ test_prompt_injection_detected() {
   pass "$name"
 }
 
+test_hash_tool_missing_aborts_gate() {
+  # Verifies that when neither sha256sum nor shasum is available the gate
+  # exits non-zero immediately in --parallel mode rather than silently
+  # degrading to empty-string fingerprints.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. Prepend a fakepath with failing sha256sum/shasum stubs to PATH
+  #   3. Run gate with --parallel
+  #   4. Assert non-zero exit and "no sha256sum or shasum" in stderr
+  local name="hash-tool-missing-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local fakepath="$dir/fakepath"
+  mkdir -p "$dir" "$fakepath"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  # Prepend stubs that fail so `command -v sha256sum/shasum` resolves but exits 127.
+  printf '#!/bin/sh\nexit 127\n' > "$fakepath/sha256sum"
+  printf '#!/bin/sh\nexit 127\n' > "$fakepath/shasum"
+  chmod +x "$fakepath/sha256sum" "$fakepath/shasum"
+
+  set +e
+  HOME="$home" PATH="$fakepath:$PATH" "$runner/codex-pr-gate.sh" \
+    --cd "$repo" --base main --parallel > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when sha256sum/shasum unavailable"
+    return
+  fi
+  assert_contains "$name" "$err" "no sha256sum or shasum" || return
+  pass "$name"
+}
+
+test_synthesis_multiple_final_lines_aborts_gate() {
+  # Verifies that a synthesis output with more than one Final: line causes the
+  # gate to abort — duplicate or contradictory Final: lines indicate a
+  # manipulated or corrupt gate artifact.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL=NO-GO: synthesis writes two Final: lines
+  #   3. Run gate in --parallel mode
+  #   4. Assert non-zero exit and "exactly one Final" in stderr
+  local name="synthesis-multiple-final-lines-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL=NO-GO run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis has multiple Final: lines"
+    return
+  fi
+  assert_contains "$name" "$err" "exactly one Final" || return
+  pass "$name"
+}
+
 run_test() {
   "$@" || true
 }
@@ -1141,6 +1215,8 @@ run_test test_synthesis_no_output_aborts_gate
 run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_prompt_injection_detected
+run_test test_hash_tool_missing_aborts_gate
+run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_adjacent_go_test_included
 run_test test_adjacent_ts_test_in_tests_dir
 run_test test_adjacent_ts_test_tsx_variant
