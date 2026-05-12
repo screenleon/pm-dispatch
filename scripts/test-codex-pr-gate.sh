@@ -275,9 +275,11 @@ test_reviewers_override_skips_tier_detection() {
     fail "$name" "exit $code, expected 0"
     return
   fi
+  # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
   assert_contains "$name" "$brief" "Tier: targeted" || return
   assert_contains "$name" "$brief" "Reviewers: critic" || return
-  assert_contains "$name" "$brief" "Process each reviewer IN ORDER: critic" || return
+  # Synthesis brief references the reviewer output path (not the agent file)
+  assert_contains "$name" "$brief" "reviewer-critic-" || return
   assert_not_contains "$name" "$brief" "read: $home/.claude/agents/qa-tester.md" || return
   pass "$name"
 }
@@ -351,6 +353,235 @@ test_output_directory_created() {
     fail "$name" "output directory was not created"
     return
   fi
+  pass "$name"
+}
+
+test_parallel_launches_per_reviewer() {
+  # Verifies default parallel mode launches one dispatch per reviewer and a synthesis.
+  local name="parallel-launches-per-reviewer"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier express
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "[parallel] launched critic" || return
+  assert_contains "$name" "$out" "[parallel] launched qa-tester" || return
+  assert_contains "$name" "$out" "[synthesis] running PM consolidation" || return
+  pass "$name"
+}
+
+test_sequential_flag_produces_combined_brief() {
+  # Verifies --sequential produces the combined reviewer brief with the
+  # "Process each reviewer IN ORDER" instruction.
+  local name="sequential-flag-combined-brief"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$brief" "Process each reviewer IN ORDER" || return
+  assert_not_contains "$name" "$out" "[parallel]" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+test_failed_reviewer_aborts_gate() {
+  # Verifies that when reviewer dispatches fail the gate exits non-zero and
+  # prints an error — synthesis must not run on incomplete reviewer data.
+  local name="failed-reviewer-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=fail run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when reviewers fail"
+    return
+  fi
+  assert_contains "$name" "$err" "reviewer session(s) failed:" || return
+  # Synthesis must not run after reviewer failure
+  assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+test_adjacent_go_test_included() {
+  # Verifies that a *_test.go file adjacent to a changed .go source file is
+  # automatically appended to the brief even when not in the diff.
+  local name="adjacent-go-test-included"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'package main\nfunc Add(a, b int) int { return a + b }\n' > app.go
+    printf 'package main\nimport "testing"\nfunc TestAdd(t *testing.T) {}\n' > app_test.go
+    git add app.go app_test.go
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'package main\nfunc Add(a, b int) int { return a + b + 0 }\n' > app.go
+    git add app.go
+    git commit -q -m "change app.go only"
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  pass "$name"
+}
+
+test_adjacent_ts_test_in_tests_dir() {
+  # Verifies that __tests__/<name>.test.ts adjacent to a changed .ts source
+  # file is automatically appended to the brief.
+  local name="adjacent-ts-test-tests-dir"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src/__tests__
+    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
+    printf 'import { fmt } from "../format";\ntest("fmt", () => {});\n' > src/__tests__/format.test.ts
+    git add src/format.ts src/__tests__/format.test.ts
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
+    git add src/format.ts
+    git commit -q -m "change format.ts only"
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  pass "$name"
+}
+
+test_adjacent_ts_sibling_test() {
+  # Verifies that a sibling <name>.test.ts file is found alongside a changed
+  # .ts source file when it lives in the same directory (not in __tests__/).
+  local name="adjacent-ts-sibling-test"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src
+    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
+    printf 'import { fmt } from "./format";\ntest("fmt", () => {});\n' > src/format.test.ts
+    git add src/format.ts src/format.test.ts
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
+    git add src/format.ts
+    git commit -q -m "change format.ts only"
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  pass "$name"
+}
+
+test_adjacent_test_not_duplicated_when_in_diff() {
+  # Verifies that a test file already present in the diff is not re-added as
+  # an adjacent file (de-duplication).
+  local name="adjacent-test-not-duplicated"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'package main\nfunc Add(a, b int) int { return a + b }\n' > app.go
+    printf 'package main\nimport "testing"\nfunc TestAdd(t *testing.T) {}\n' > app_test.go
+    git add app.go app_test.go
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'package main\nfunc Add(a, b int) int { return a + b + 0 }\n' > app.go
+    printf 'package main\nimport "testing"\nfunc TestAdd(t *testing.T) {}\nfunc TestSub(t *testing.T) {}\n' > app_test.go
+    git add app.go app_test.go
+    git commit -q -m "change both app.go and app_test.go"
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  # app_test.go is in the diff, so adjacent detection should add 0 extra files
+  assert_not_contains "$name" "$out" "adjacent test files added:" || return
   pass "$name"
 }
 
@@ -582,6 +813,13 @@ run_test test_via_symlink
 run_test test_rename_sensitive_old_name
 run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
+run_test test_parallel_launches_per_reviewer
+run_test test_sequential_flag_produces_combined_brief
+run_test test_failed_reviewer_aborts_gate
+run_test test_adjacent_go_test_included
+run_test test_adjacent_ts_test_in_tests_dir
+run_test test_adjacent_ts_sibling_test
+run_test test_adjacent_test_not_duplicated_when_in_diff
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

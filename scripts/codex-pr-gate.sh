@@ -227,8 +227,12 @@ while IFS= read -r f; do
       for candidate in \
           "${dname}/__tests__/${bname}.test.ts" \
           "${dname}/__tests__/${bname}.test.tsx" \
+          "${dname}/__tests__/${bname}.spec.ts" \
+          "${dname}/__tests__/${bname}.spec.tsx" \
           "${dname}/${bname}.test.ts" \
-          "${dname}/${bname}.test.tsx"; do
+          "${dname}/${bname}.test.tsx" \
+          "${dname}/${bname}.spec.ts" \
+          "${dname}/${bname}.spec.tsx"; do
         if [[ -f "$WORK_DIR/$candidate" ]] && ! printf '%s\n' "$DIFF_FILES" | grep -qxF "$candidate"; then
           ADJACENT_TEST_FILES="${ADJACENT_TEST_FILES}${candidate}"$'\n'
         fi
@@ -433,17 +437,23 @@ RBRIEF_EOF
 
   printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
-  # Wait for all reviewer sessions; collect failures but do not abort early so
-  # the synthesis step can note which reviewers produced no output.
+  # Wait for all reviewer sessions. Any non-zero exit aborts the gate — an
+  # incomplete review cannot certify a valid gate result.
   FAILED_REVIEWERS=()
   for i in "${!DISPATCH_PIDS[@]}"; do
     pid="${DISPATCH_PIDS[$i]}"
     r="${REVIEWER_NAMES[$i]}"
     if ! wait "$pid"; then
       FAILED_REVIEWERS+=("$r")
-      printf '  [warn] %s exited non-zero (pid %d); synthesis will note missing output\n' "$r" "$pid" >&2
     fi
   done
+
+  if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
+    printf 'Error: %d reviewer session(s) failed: %s\n' \
+      "${#FAILED_REVIEWERS[@]}" "${FAILED_REVIEWERS[*]}" >&2
+    printf 'Gate aborted — fix the failing session or use --sequential to diagnose.\n' >&2
+    exit 1
+  fi
   printf '  all reviewer sessions done.\n\n'
 
   # ── PM synthesis ─────────────────────────────────────────────────────────────
@@ -456,9 +466,6 @@ RBRIEF_EOF
   done
 
   FAILED_NOTE=""
-  if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
-    FAILED_NOTE=$'\n'"  Note: these reviewer sessions exited non-zero and their output may be absent or partial: ${FAILED_REVIEWERS[*]}"
-  fi
 
   cat > "$SYNTHESIS_BRIEF" << SBRIEF_EOF
 working_dir: ${WORK_DIR}
