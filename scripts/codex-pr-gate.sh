@@ -505,19 +505,21 @@ RBRIEF_EOF
     exit 1
   fi
 
-  # Verify every reviewer output contains a parseable verdict line before synthesis.
-  # A non-empty but malformed reviewer file could steer synthesis to a false GO.
+  # Verify every reviewer output contains exactly one parseable verdict line before synthesis.
+  # Zero lines → malformed output; two or more lines → ambiguous (first-match would silently
+  # ignore a later more-severe verdict). Both cases must be rejected fail-closed.
   INVALID_OUTPUTS=()
   for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
     rf="${REVIEWER_OUTPUT_FILES[$i]}"
     r="${REVIEWER_NAMES[$i]}"
-    if ! grep -qE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf"; then
-      INVALID_OUTPUTS+=("$r")
+    verdict_count=$(grep -cE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" || true)
+    if [[ "$verdict_count" -ne 1 ]]; then
+      INVALID_OUTPUTS+=("$r (found $verdict_count)")
     fi
   done
   if [[ "${#INVALID_OUTPUTS[@]}" -gt 0 ]]; then
-    printf 'Error: reviewer output missing valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
-    printf 'Expected: Verdict: approve|advise|block-soft|block\n' >&2
+    printf 'Error: reviewer output must contain exactly one valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
+    printf 'Expected: exactly one of: Verdict: approve|advise|block-soft|block\n' >&2
     printf 'Gate aborted — use --sequential to diagnose.\n' >&2
     exit 1
   fi
@@ -547,7 +549,7 @@ RBRIEF_EOF
   # Synthesis is treated as prose-only; the shell verdict is the authoritative gate result.
   SHELL_VERDICT="approve"
   for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
-    rv=$(grep -oE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" | head -1 | awk '{print $2}' | tr -d '. ' || true)
+    rv=$(grep -oE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" | awk '{print $2}' | tr -d '. ' || true)
     case "$rv" in
       block) SHELL_VERDICT="block" ;;
       block-soft) [[ "$SHELL_VERDICT" != "block" ]] && SHELL_VERDICT="block-soft" ;;

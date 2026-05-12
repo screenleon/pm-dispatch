@@ -100,6 +100,18 @@ if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-sy
   exit 0
 fi
 
+# Simulate multiple valid verdict lines in a reviewer artifact: first "approve", then "block".
+# Verifies the gate rejects ambiguous output rather than silently taking the first match.
+# CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: write two valid verdict lines to the reviewer output.
+if [[ "${CODEX_GATE_STUB_MULTIPLE_VERDICTS:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  if [[ -n "$output_path" ]]; then
+    mkdir -p "$(dirname "$output_path")"
+    printf '## stub-reviewer — approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' > "$output_path"
+  fi
+  exit 0
+fi
+
 # Determine effective mode: synthesis briefs can have their own mode override.
 if [[ "$brief_file" == *-synthesis.md ]]; then
   effective_mode="${CODEX_GATE_STUB_SYNTHESIS_MODE:-${CODEX_GATE_STUB_MODE:-success}}"
@@ -842,7 +854,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
   #   1. Create a minimal repo (express tier, docs change)
   #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
   #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit and "missing valid Verdict line" in stderr
+  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="reviewer-invalid-verdict-aborts-gate"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -860,7 +872,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer output has no valid Verdict line"
     return
   fi
-  assert_contains "$name" "$err" "missing valid Verdict line" || return
+  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -976,38 +988,10 @@ test_synthesis_artifact_tamper_detected() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  # We need to know the reviewer artifact path before the gate runs. The gate names
-  # artifacts reviewer-{name}-{timestamp}.md under .gate-results/. Use a fixed output
-  # dir and discover the file after reviewers complete via CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT.
-  # Since the path is dynamic, we use a helper: find the first reviewer artifact after dispatch.
-  # Simplest: let synthesis tamper with the path discovered from the output directory.
-  # Use CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT pointing to a known path we construct below.
-  #
-  # Approach: run the gate with a custom output dir, then have synthesis tamper with the
-  # first reviewer-*.md file in that dir by using a wrapper that does the lookup.
-  # For test simplicity, use CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT with a glob via
-  # a wrapper script instead of a fixed path.
-  #
-  # Simpler: patch the synthesis inject to target a reviewer artifact by path pattern.
-  # We use a temp file as the tamper target and point synthesis to overwrite it. But we
-  # need the actual reviewer artifact path. Use a marker file approach: the reviewer stub
-  # writes its output_path to a known location; synthesis reads that and tampers with it.
-  #
-  # Simplest working approach: create a pre-existing file at the expected artifact path
-  # prefix and point SYNTHESIS_TAMPER at it. Use a fixed timestamp trick via a fixed output.
-  local fixed_output="$dir/fixed-gate-result.md"
-  # We cannot know reviewer artifact paths ahead of time. Instead, use the existing
-  # CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE mechanism targeting a tracked file to confirm
-  # the synthesis-side artifact hash check works via the tracked-file guard as a baseline.
-  #
-  # For the gitignored reviewer artifact case: create a marker file that the synthesis stub
-  # can find via env. We record the first reviewer artifact after the reviewers run.
-  # The only way to do this cleanly in the test is a helper wrapper for codex-dispatch.sh
-  # that records the last reviewer output path and exposes it to synthesis.
-  #
-  # Given test complexity, implement via a second wrapper layer: create a dispatch wrapper
-  # that, on synthesis dispatch, reads the last reviewer output file in .gate-results/ and
-  # appends to it, simulating synthesis-side artifact tampering.
+  # Reviewer artifact paths are dynamic (timestamped). runner2 uses a custom dispatch
+  # wrapper that, on synthesis dispatch, finds the most recently written reviewer-*.md
+  # in .gate-results/ and appends to it — simulating synthesis-side artifact tampering
+  # of a gitignored file that the worktree hash cannot detect.
   local runner2="$dir/runner2"
   mkdir -p "$runner2"
   cp "$runner/codex-pr-gate.sh" "$runner2/codex-pr-gate.sh"
@@ -1071,7 +1055,7 @@ test_verdict_prefix_rejected() {
   #   1. Create a minimal repo (express tier, docs change)
   #   2. CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: stub writes "Verdict: approved" (not "approve")
   #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "missing valid Verdict line" in stderr
+  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="verdict-prefix-rejected"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -1090,7 +1074,7 @@ test_verdict_prefix_rejected() {
     fail "$name" "expected non-zero exit when verdict uses invalid prefix-only token"
     return
   fi
-  assert_contains "$name" "$err" "missing valid Verdict line" || return
+  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -1159,6 +1143,37 @@ test_synthesis_multiple_final_lines_aborts_gate() {
     return
   fi
   assert_contains "$name" "$err" "exactly one Final" || return
+  pass "$name"
+}
+
+test_multiple_verdict_lines_aborts_gate() {
+  # Verifies that a reviewer artifact with more than one valid Verdict: line is rejected.
+  # The gate must fail closed on ambiguous reviewer output — silently taking the first
+  # match would allow a more-severe later verdict to be ignored.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: stub writes "Verdict: approve" then "Verdict: block"
+  #   3. Run gate in --parallel mode
+  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
+  local name="multiple-verdict-lines-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MULTIPLE_VERDICTS=1 run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when reviewer artifact has multiple valid Verdict lines"
+    return
+  fi
+  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -1404,6 +1419,7 @@ run_test test_synthesis_artifact_tamper_detected
 run_test test_verdict_prefix_rejected
 run_test test_hash_tool_missing_aborts_gate
 run_test test_synthesis_multiple_final_lines_aborts_gate
+run_test test_multiple_verdict_lines_aborts_gate
 run_test test_adjacent_go_test_included
 run_test test_adjacent_ts_test_in_tests_dir
 run_test test_adjacent_ts_test_tsx_variant
