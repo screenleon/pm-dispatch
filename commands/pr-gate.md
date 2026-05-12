@@ -1,176 +1,140 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: [express|standard|full] [optional context]
+argument-hint: [express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]
 ---
 
-Run the PR gate. Subagents cannot spawn subagents in Claude Code, so the **main thread** orchestrates reviewers; `project-pm` is invoked once at the end to synthesize.
+Run the PR gate via `scripts/pr-gate.sh`.
 
-## Tier matrix
+**Sequential mode (default)**: all reviewers run in order inside one combined codex session.
+Low main-thread token cost (~5k dispatch + read result).
 
-PR-gate auto-detects the review tier from the diff. The first slash-command argument can override detection:
+**Parallel mode (`--parallel`)**: each reviewer runs in its own independent codex session
+followed by a PM synthesis session. Eliminates shared-context anchoring bias.
+Higher token cost — use for auth/payment/migration paths or when reviewer independence matters.
 
-- `/pr-gate express` — force the smallest reviewer set.
-- `/pr-gate standard` — force the mid-size reviewer set.
-- `/pr-gate full` — force the full reviewer set.
-- No tier argument — auto-detect from the current branch diff.
+| Situation | Args |
+|---|---|
+| Routine code / seed / docs changes | _(none)_ |
+| Re-gate after fixing specific findings | `--targeted qa-tester,risk-reviewer` |
+| Auth / payment / migration / sensitive paths | `--parallel` |
+| Force a specific tier | `express` / `standard` / `full` |
 
-Auto-detection rules:
+## Step 1 - Locate the launcher
 
-- Docs-only changes (`.md`, `.jsonl`, `.txt`, `.gitignore`, `audits/`, `docs/`) run `express`.
-- Sensitive paths or filenames run `full`: auth, secrets, migrations, GitHub workflows, payments, credentials, CORS/CSRF/JWT/session/OAuth, SSH/sudo, or webhooks.
-- Diffs over 500 changed lines run `full`.
-- Non-sensitive code diffs under 100 changed lines run `express`.
-- Other non-sensitive code diffs run `standard`.
-
-| Tier | Use case | Reviewers |
-| --- | --- | --- |
-| `express` | Small, low-risk, or docs-only changes | `critic`, `qa-tester` |
-| `standard` | Mid-size code changes without sensitive paths | `critic`, `qa-tester`, `architecture-reviewer` |
-| `full` | Large or sensitive changes | `critic`, `qa-tester`, `architecture-reviewer`, `security-reviewer`, `risk-reviewer` |
-
-## Step 1 — detect the tier (main thread, no PM hop)
-
-Detect the integration branch, check the diff, and apply the tier heuristic. The first whitespace-separated token of `$ARGUMENTS` (if it matches `express|standard|full`) overrides auto-detection; the rest of `$ARGUMENTS` flows to reviewers as scope context:
+Resolve the installed command symlink and derive the script path:
 
 ```bash
-# Parse first token of $ARGUMENTS (Claude slash-command arg string) as tier override.
-# Anything that isn't express/standard/full falls through to auto-detect, preserving
-# the prior contract where the slash arg was free-form context.
-REQUESTED_TIER=$(printf '%s' "$ARGUMENTS" | awk '{print $1}')
-case "$REQUESTED_TIER" in
-  express|standard|full) TIER_OVERRIDE="$REQUESTED_TIER" ;;
-  *) TIER_OVERRIDE="" ;;
-esac
-BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-: "${BASE:=main}"
-git diff "$BASE"...HEAD --stat
+CMD_LINK="${HOME}/.claude/commands/pr-gate.md"
+CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
+GATE_SCRIPT="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/scripts/pr-gate.sh"
+```
 
-# Use --name-status so renames expose BOTH old and new paths for sensitive matching
-# (e.g. auth.ts → login.ts still triggers full tier on the old name).
-# Use --numstat to detect binary files (shown as -\t-\t<file>).
-DIFF_FILES=$(git diff "$BASE"...HEAD --name-status | awk '
-  /^R/ { print $2; print $3; next }
-  /^[AMDCT]/ { print $2 }
-')
-NON_DOCS=$(echo "$DIFF_FILES" | grep -vE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true)
-BINARY_HIT=$(git diff "$BASE"...HEAD --numstat | { grep -c $'^-\t-\t' || true; })
-LINES=$(git diff "$BASE"...HEAD --numstat | awk '/^-\t-\t/{next} {s+=$1+$2} END{print s+0}')
-# Path-anchored sensitive matching: keyword must be at a path-segment boundary
-# (start, /, _, ., -) on at least one side. Reduces false-positives like
-# authoring.ts, tokenizer.ts, Discourse.md while keeping auth.ts, /oauth/,
-# session-store.ts, /payment.go, design-tokens.css matching correctly.
-SENSITIVE_HIT=$(echo "$DIFF_FILES" | grep -iE '(^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/' | wc -l)
+## Step 2 - Parse args and launch in background
 
-if [ -n "$TIER_OVERRIDE" ]; then
-  TIER="$TIER_OVERRIDE"
-elif [ -z "$NON_DOCS" ]; then
-  TIER=express
-elif [ "$SENSITIVE_HIT" -gt 0 ] || [ "$LINES" -gt 500 ]; then
-  TIER=full
-elif [ "$LINES" -lt 100 ] && [ "${BINARY_HIT:-0}" -eq 0 ]; then
-  # Binary files have no line count but represent real changes — treat as standard+
-  TIER=express
+Parse `$ARGUMENTS`, build the gate args, then **fire the gate script via the
+Bash tool with the tool parameter `run_in_background: true`** so the main
+thread is free while codex runs the reviewers (~3-5 min). The gate script
+owns tier detection, changed-file analysis, reviewer selection, brief
+generation, and dispatch.
+
+> **CRITICAL — `run_in_background: true` is a Bash TOOL PARAMETER, not a
+> shell flag.** When you invoke the Bash tool to run the gate script, set
+> `run_in_background: true` as a sibling of `command:` in the tool call,
+> NOT as a flag inside the command string. Shape:
+>
+> ```
+> Bash(
+>   command: 'bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1',
+>   run_in_background: true   ← TOOL PARAMETER (not inside the command)
+> )
+> ```
+>
+> The shell snippet shown in the code block below is just the contents of
+> the `command:` field. The background-mode signal lives at the tool-call
+> level, one layer above the shell.
+
+> **Why background mode here is safe — and required.** The gate script's
+> internal `codex-dispatch.sh` is still foreground-only (enforced by
+> `hook-codex-bash-guard.sh` on the codex-executor subagent), but **this
+> skill is running from the main thread, not from a subagent**. The main
+> thread is not killed when its Bash call returns, so backgrounding the
+> outer gate-script invocation correctly frees the user to continue while
+> codex churns. The harness sends a completion notification when the
+> backgrounded Bash exits.
+
+```bash
+RAW_ARGS="${ARGUMENTS:-}"
+TIER_OVERRIDE=""
+TARGETED_REVIEWERS=""
+SCOPE_TOKENS=()
+PARALLEL=false
+
+if [[ -n "$RAW_ARGS" ]]; then
+  read -r -a TOKENS <<< "$RAW_ARGS"
 else
-  TIER=standard
+  TOKENS=()
 fi
 
-case "$TIER" in
-  express)
-    REVIEWERS_RUN="critic, qa-tester"
-    ;;
-  standard)
-    REVIEWERS_RUN="critic, qa-tester, architecture-reviewer"
-    ;;
-  full)
-    REVIEWERS_RUN="critic, qa-tester, architecture-reviewer, security-reviewer, risk-reviewer"
-    ;;
-esac
+idx=0
+if [[ "${#TOKENS[@]}" -gt 0 ]]; then
+  case "${TOKENS[0]}" in
+    express|standard|full)
+      TIER_OVERRIDE="${TOKENS[0]}"
+      idx=1
+      ;;
+  esac
+fi
 
-printf 'PR-gate tier: %s\nReviewers: %s\n' "$TIER" "$REVIEWERS_RUN"
-```
+while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
+  tok="${TOKENS[$idx]}"
+  case "$tok" in
+    --targeted)
+      idx=$((idx + 1))
+      TARGETED_REVIEWERS="${TOKENS[$idx]:-}"
+      ;;
+    --scope)
+      idx=$((idx + 1))
+      [[ -n "${TOKENS[$idx]:-}" ]] && SCOPE_TOKENS+=("${TOKENS[$idx]}")
+      ;;
+    --parallel)
+      PARALLEL=true
+      ;;
+    *)
+      SCOPE_TOKENS+=("$tok")
+      ;;
+  esac
+  idx=$((idx + 1))
+done
 
-Do not invoke PM at this step. PM's role is synthesis only.
+SCOPE="${SCOPE_TOKENS[*]:-}"
+GATE_ARGS=(--cd "$PWD")
+[[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
+[[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
+[[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
+[[ "$PARALLEL" == "true" ]] && GATE_ARGS+=(--parallel)
 
-## Step 2 — spawn reviewers in background from main thread
-
-In a single message, make N parallel Agent tool calls — one per applicable
-reviewer — **with `run_in_background: true` on every call**. Background mode
-frees the main thread to accept new user input while reviewers run (each
-reviewer is ~30s-2min). The harness sends a completion notification per
-reviewer; Step 3 waits for all N before synthesizing.
-
-Pseudocode (illustrative, not literal call syntax):
-
-```
-# pseudocode — emit each as a real Agent tool call in one message.
-# Model: always "sonnet" unless Opus escalation condition is met (see below).
-# run_in_background: true on EVERY reviewer call — main thread must not block.
-Agent(subagent_type: "critic",                model: "sonnet", run_in_background: true, ...)
-Agent(subagent_type: "qa-tester",             model: "sonnet", run_in_background: true, ...)
-
-if TIER == "standard" or TIER == "full":
-  Agent(subagent_type: "architecture-reviewer", model: "sonnet", run_in_background: true, ...)
-
-if TIER == "full":
-  Agent(subagent_type: "security-reviewer", model: "sonnet", run_in_background: true, ...)
-  Agent(subagent_type: "risk-reviewer",     model: "sonnet", run_in_background: true, ...)
+# Fire with run_in_background: true. The harness captures stdout/stderr and
+# emits a completion notification when the gate script exits.
+bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1
 ```
 
 After firing, end the turn with one short status line, e.g.:
 
-> `PR-gate launched in background (<tier>, N reviewers). Main thread free; I'll synthesize via PM when all reviewers return.`
+> `PR-gate launched in background (tier <T>, ~3-5 min). Main thread free; I'll relay the verdict when it finishes.`
 
-Do NOT poll for completion. The harness will notify the main thread per
-reviewer; the next step proceeds when ALL N notifications have arrived.
+Do NOT poll, sleep, or call `BashOutput` immediately. The harness will notify.
 
-**Opus escalation** — only when ALL THREE hold: tier is `full`, diff > 1000 changed
-lines, AND a sensitive path triggered `full`. Notify the user and wait for
-acknowledgement before switching to `model: "opus"`. See
-`docs/model-tier-policy.md` for the full policy.
+## Step 3 - Receive completion and relay the result
 
-Each reviewer brief should include: working dir, branch name vs integration branch, tier, reviewers run, diff summary, scope hints from $ARGUMENTS.
+When the background-Bash completion notification arrives:
 
-## Step 3 — synthesize via project-pm (after all reviewers return)
+1. Fetch the full stdout via `BashOutput(bash_id: <id from notification>)`.
+2. Parse the result file path from the captured stdout:
+   `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
+3. If the bash exit was non-zero, surface a brief failure summary (exit code +
+   last ~20 lines of stdout) instead of pretending success.
+4. On exit 0, read the result file at the parsed path.
+5. Prepend one line: `PR-gate complete.`
+6. Relay the result file contents verbatim.
 
-Track `N` explicitly: `N` is the count of reviewer Agent calls made in Step 2
-(2 for express, 3 for standard, 5 for full). Note `N` in your end-of-turn
-status line in Step 2.
-
-Wait for completion notifications. Each background Agent emits exactly one
-notification when it finishes; accumulate each reviewer's verbatim output as
-their `<task-notification>` arrives. **Do NOT invoke PM until the count of
-received notifications equals `N`.**
-
-Failure modes to handle:
-
-- **Reviewer crash (notification arrives with non-zero status / empty result)**:
-  Note the reviewer name + status in the synthesis input. Do not retry from
-  the skill — surface to the user with the partial result set and ask whether
-  to proceed with N−1 verdicts or re-spawn the missing reviewer.
-- **Notification never arrives (>10 min after Step 2)**: This is rare —
-  Sonnet reviewers typically finish in 30s-2min. If a reviewer has not
-  reported in 10 min, surface to the user with the names of the still-pending
-  reviewers and ask whether to proceed with partial results or wait further.
-  Do not silently start synthesis with `< N` reviewers.
-
-Once all `N` notifications are in (or the user has authorized partial
-synthesis), invoke `project-pm` with `model: "sonnet"` — this
-is a bounded synthesis task within the review pipeline, so Sonnet applies here
-regardless of what the `/pm` command uses. PM may also be dispatched with
-`run_in_background: true` if the user is still mid-conversation; otherwise
-foreground is fine since PM synthesis is fast (~10-30s). Never omit the model
-param in this step. Pass the tier, reviewers run, skipped review dimensions,
-any crashed/missing reviewers, and the verbatim outputs of those that
-returned. Ask it to:
-
-- Compose the final gate summary (each reviewer's verdict, any blocks with override paths, final go/no-go).
-- Explicitly state which dimensions were not reviewed in slimmer tiers, for example: `express tier — security/risk/architecture not reviewed`.
-- Record `block-soft` overrides or trade-off advisories into project memory.
-
-## Step 4 — relay to user
-
-Prepend the tier and reviewers run, then relay PM's gate summary verbatim:
-
-`PR-gate ran in <tier> tier (reviewers: <reviewers run>).`
-
-Do not collapse blocks into "looks good".
+Do not collapse blocks into "looks good". Relay NO-GO findings completely.
