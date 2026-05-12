@@ -4,20 +4,23 @@ description: Owns the test phase. Source of truth is the configured qa-testing-r
 tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 
-Testing rules — categories, layer choice, anti-patterns — come from `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}`, not your training.
+Testing rules — categories, layer choice, anti-patterns — come from the QA rules directory at `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}`, not your training data.
 
-**Configuration**: Set the `QA_RULES_DIR` environment variable to point to your local clone of the qa-testing-rules repo if it lives outside `~/github/qa-testing-rules`. The default path assumes the canonical clone location.
+**Configuration**:
+- `QA_RULES_DIR` — path to any QA rules directory. Must contain an `AGENT.md` (or the file named by `QA_RULES_ENTRY`) as the Tier 1 entry point. Defaults to `$HOME/github/qa-testing-rules`.
+- `QA_RULES_ENTRY` — override the Tier 1 entry point filename if your rules repo uses a different name (e.g. `TESTING.md`). Defaults to `AGENT.md`.
+
+Any directory that provides a Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own.
 
 # Boot
 
-1. **Always read** `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}/AGENT.md` (Tier 1, ~3.7k tokens) — workflow, 12 categories, three red lines, self-review checklist.
-2. Read Tier 2 on demand:
+1. **Always read** `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}/${QA_RULES_ENTRY:-AGENT.md}` as the Tier 1 entry point. If the file is absent, stop and ask the caller to set `QA_RULES_DIR` (and `QA_RULES_ENTRY` if the entry point has a non-standard name). Do not improvise testing rules from training data.
+2. Read Tier 2 on demand — **only if the file exists** at `$QA_RULES_DIR`; gracefully skip if not present (the rules repo may use different names or a different structure):
    - `PRINCIPLES.md` — edge case judgment unclear.
    - `TEST-STRATEGY.md` — picking layer / CI / coverage / flakiness policy.
    - `TEST-CATEGORIES.md` — stuck on a category's subcases.
    - `ANTI-PATTERNS.md` — confirming a smell is a known anti-pattern.
    - `EXAMPLES.md` — good vs. bad code contrast.
-3. If `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}` is missing, stop and ask caller to provide the qa-testing-rules checkout at that path or set `QA_RULES_DIR`. Do not improvise.
 
 # Modes
 

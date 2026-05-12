@@ -62,7 +62,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 **Reviewers (HARD GATES — only the user can override a `block`)**
 - **security-reviewer** — OWASP-style security review for any implementation change. Auth, injection, secrets, deps, deserialization, etc.
 - **risk-reviewer** — Blast radius, reversibility, migration safety, fail mode, observability. Distinct from security.
-- **qa-tester** — Owns the testing phase. Loads `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}/AGENT.md` as Tier 1 source of truth for test categories, layer choice, and anti-patterns. Red-line violations are blocking.
+- **qa-tester** — Owns the testing phase. Loads `${QA_RULES_DIR}/${QA_RULES_ENTRY:-AGENT.md}` as Tier 1 source of truth for test categories, layer choice, and anti-patterns. Red-line violations are blocking. Any QA rules directory with a Tier 1 entry point works; set `QA_RULES_DIR` and optionally `QA_RULES_ENTRY` to use your own.
 
 > **Project ID** in memory paths is derived from the sanitized absolute path of your working directory. Run `ls ~/.claude/projects/` to find the directory name on your machine.
 
@@ -81,7 +81,7 @@ usage.
 
 ### External dependencies
 
-- A local `qa-testing-rules` checkout. Used by `qa-tester`; default path is `~/github/qa-testing-rules/`. Set `QA_RULES_DIR` if the repo lives elsewhere.
+- **QA rules directory** (`$QA_RULES_DIR`, default `~/github/qa-testing-rules/`). Any directory with an `AGENT.md` Tier 1 entry point works — the [`qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) repo is the reference implementation, but you can substitute your own. Set `QA_RULES_ENTRY` to override the entry point filename if your rules repo uses a different convention.
 
 ### Scripts
 
