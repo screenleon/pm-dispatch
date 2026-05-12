@@ -27,7 +27,7 @@ done
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
 HEADER="# Claude agent / codex output — not for VCS or Docker"
-ENTRIES=(".agent-trace/" ".codex-briefs/" ".gate-results/")
+ENTRIES=(".agent-trace/" ".codex-briefs/" ".gate-results/" ".agents/")
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

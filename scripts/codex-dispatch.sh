@@ -125,7 +125,7 @@ fi
 TRACE_DIR="$WORK_DIR/.agent-trace"
 # Auto-patch .gitignore so .agent-trace/ is not tracked
 _PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
-[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".agent-trace/"
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".agent-trace/" ".agents/"
 mkdir -p "$TRACE_DIR"
 TS=$(date +%Y%m%d-%H%M%S)-$$
 TRACE="$TRACE_DIR/codex-$TS.jsonl"
