@@ -76,24 +76,42 @@ if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
 fi
 
-case "${CODEX_GATE_STUB_MODE:-success}" in
+# Determine effective mode: synthesis briefs can have their own mode override.
+if [[ "$brief_file" == *-synthesis.md ]]; then
+  effective_mode="${CODEX_GATE_STUB_SYNTHESIS_MODE:-${CODEX_GATE_STUB_MODE:-success}}"
+else
+  effective_mode="${CODEX_GATE_STUB_MODE:-success}"
+fi
+
+case "$effective_mode" in
   fail)
     # Non-zero exit — caught by FAILED_REVIEWERS check.
     exit 1
     ;;
   no-output)
-    # Exits 0 without writing reviewer output file — simulates a reviewer that
-    # silently failed its task (caught by missing-output check).
+    # Exits 0 without writing output file — simulates a session that silently
+    # failed its task (caught by missing-output or synthesis-output check).
+    exit 0
+    ;;
+  no-verdict)
+    # Writes a non-empty output file but omits the Verdict line — simulates
+    # malformed reviewer output (caught by reviewer structure validation).
+    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+    if [[ -n "$output_path" ]]; then
+      mkdir -p "$(dirname "$output_path")"
+      printf '## stub-reviewer\nSome content without a verdict line.\n' > "$output_path"
+    fi
     exit 0
     ;;
   *)
-    # Success: write a stub reviewer output file so the gate's reviewer-output
-    # validation passes. For reviewer briefs (not synthesis), extract the
-    # '- new:' path from the brief and write a minimal placeholder.
-    if [[ "$brief_file" != *-synthesis.md ]]; then
-      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
-      if [[ -n "$output_path" ]]; then
-        mkdir -p "$(dirname "$output_path")"
+    # Success: write a stub output file so the gate's output validation passes.
+    output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+    if [[ -n "$output_path" ]]; then
+      mkdir -p "$(dirname "$output_path")"
+      if [[ "$brief_file" == *-synthesis.md ]]; then
+        # Synthesis brief: write a minimal but structurally valid gate result.
+        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' > "$output_path"
+      else
         printf '## stub-reviewer — advise\nVerdict: advise. Stub output.\n' > "$output_path"
       fi
     fi
@@ -690,9 +708,72 @@ test_adjacent_test_not_duplicated_when_in_diff() {
   pass "$name"
 }
 
+test_synthesis_no_output_aborts_gate() {
+  # Verifies that PM synthesis exiting 0 without writing the gate result file
+  # fails the gate — reviewers succeed but synthesis silently omits its output.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_SYNTHESIS_MODE=no-output: reviewers write output; synthesis does not
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit and "synthesis did not produce" in stderr
+  local name="synthesis-no-output-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis produces no output"
+    return
+  fi
+  assert_contains "$name" "$err" "synthesis did not produce" || return
+  pass "$name"
+}
+
+test_reviewer_invalid_verdict_aborts_gate() {
+  # Verifies that a reviewer output file without a valid Verdict line fails
+  # the gate before synthesis (guards against malformed or manipulated output).
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit and "missing valid Verdict line" in stderr
+  local name="reviewer-invalid-verdict-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-verdict run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when reviewer output has no valid Verdict line"
+    return
+  fi
+  assert_contains "$name" "$err" "missing valid Verdict line" || return
+  pass "$name"
+}
+
 test_reviewer_no_output_aborts_gate() {
   # Verifies that a reviewer session exiting 0 without writing its output file
   # fails the gate (fail-closed on silent reviewer failure).
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_MODE=no-output: all dispatches (reviewers + synthesis) omit output
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
   local name="reviewer-no-output-aborts-gate"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -717,6 +798,11 @@ test_reviewer_no_output_aborts_gate() {
 test_prompt_injection_detected() {
   # Verifies that a reviewer session modifying a tracked source file (simulated
   # prompt injection) causes the gate to abort before synthesis.
+  # Steps:
+  #   1. Create a repo with a committed service.go (clean tracked file)
+  #   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
   local name="prompt-injection-detected"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -975,6 +1061,8 @@ run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_sequential_flag_produces_combined_brief
 run_test test_failed_reviewer_aborts_gate
+run_test test_synthesis_no_output_aborts_gate
+run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_adjacent_go_test_included

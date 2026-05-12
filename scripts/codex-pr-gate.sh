@@ -367,9 +367,11 @@ else
 
   mkdir -p "$WORK_DIR/.agent-trace"
 
-  # Capture working-tree state before dispatching reviewers so the post-dispatch
-  # integrity check can detect only NEW changes, not pre-existing dirty state.
-  _PRE_DISPATCH_DIFF=$(git diff --name-only HEAD 2>/dev/null | sort || true)
+  # Capture working-tree content fingerprint before dispatch so the integrity
+  # check can detect changes to already-dirty tracked files (git diff HEAD
+  # compares content, not just filenames — catches mutations the filename-only
+  # approach would miss; untracked gate artifacts are gitignored and excluded).
+  _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
@@ -477,20 +479,51 @@ RBRIEF_EOF
     exit 1
   fi
 
-  # Worktree integrity check — detect prompt-injected source file modifications.
-  # Compare pre/post dispatch diff to ignore pre-existing dirty working tree state.
-  _POST_DISPATCH_DIFF=$(git diff --name-only HEAD 2>/dev/null | sort || true)
-  if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" ]]; then
-    INJECTED_FILES=$(comm -13 <(printf '%s\n' "$_PRE_DISPATCH_DIFF") <(printf '%s\n' "$_POST_DISPATCH_DIFF") || true)
-    if [[ -n "$INJECTED_FILES" ]]; then
-      printf 'Error: reviewer sessions modified tracked source files — possible prompt injection:\n' >&2
-      printf '%s\n' "$INJECTED_FILES" >&2
-      printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
-      exit 1
+  # Verify every reviewer output contains a parseable verdict line before synthesis.
+  # A non-empty but malformed reviewer file could steer synthesis to a false GO.
+  INVALID_OUTPUTS=()
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    if ! grep -qE '^Verdict: (approve|advise|block-soft|block)' "$rf"; then
+      INVALID_OUTPUTS+=("$r")
     fi
+  done
+  if [[ "${#INVALID_OUTPUTS[@]}" -gt 0 ]]; then
+    printf 'Error: reviewer output missing valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
+    printf 'Expected: Verdict: approve|advise|block-soft|block\n' >&2
+    printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+    exit 1
+  fi
+
+  # Worktree integrity check — detect prompt-injected modifications to tracked files.
+  # Content-hash comparison catches mutations to already-dirty files; filename-only
+  # comparison would miss those because the filename was already in the dirty set.
+  _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
+  if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" ]]; then
+    printf 'Error: reviewer sessions modified tracked source files — possible prompt injection.\n' >&2
+    printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
+    exit 1
   fi
 
   printf '  all reviewer sessions done.\n\n'
+
+  # Compute the final verdict deterministically in shell before synthesis.
+  # Synthesis is treated as prose-only; the shell verdict is the authoritative gate result.
+  SHELL_VERDICT="approve"
+  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
+    rv=$(grep -oE '^Verdict: (approve|advise|block-soft|block)' "$rf" | head -1 | awk '{print $2}' || true)
+    case "$rv" in
+      block) SHELL_VERDICT="block" ;;
+      block-soft) [[ "$SHELL_VERDICT" != "block" ]] && SHELL_VERDICT="block-soft" ;;
+      advise) [[ "$SHELL_VERDICT" == "approve" ]] && SHELL_VERDICT="advise" ;;
+    esac
+  done
+  if [[ "$SHELL_VERDICT" == "approve" || "$SHELL_VERDICT" == "advise" ]]; then
+    SHELL_FINAL="GO"
+  else
+    SHELL_FINAL="NO-GO"
+  fi
 
   # ── PM synthesis ─────────────────────────────────────────────────────────────
   SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
@@ -516,6 +549,8 @@ constraints:
   - Only write ${OUTPUT_FILE}.
   - Create parent directories if needed (mkdir -p).
   - If a reviewer output file is absent or empty, record "reviewer output unavailable" in that section.
+  - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
+    This is pre-computed from the reviewer verdicts and must not be overridden.
 
 context:
   Tier: ${TIER}
@@ -584,6 +619,32 @@ SBRIEF_EOF
     --cd "$WORK_DIR" \
     --timeout "$TIMEOUT" \
     --brief-file "$SYNTHESIS_BRIEF"
+
+  # Validate synthesis output: must exist, be non-empty, contain Final: GO|NO-GO,
+  # and match the shell-computed verdict (guards against synthesis manipulation).
+  if [[ ! -s "$OUTPUT_FILE" ]]; then
+    printf 'Error: PM synthesis did not produce the gate result file: %s\n' "$OUTPUT_FILE" >&2
+    printf 'Gate aborted — synthesis session may have exited 0 without completing.\n' >&2
+    exit 1
+  fi
+  if ! grep -qE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE"; then
+    printf 'Error: gate result file missing valid Final: GO/NO-GO conclusion.\n' >&2
+    exit 1
+  fi
+  SYNTHESIS_FINAL=$(grep -oE '^Final: (GO|NO-GO)' "$OUTPUT_FILE" | head -1 | awk '{print $2}')
+  if [[ "$SYNTHESIS_FINAL" != "$SHELL_FINAL" ]]; then
+    printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) — gate result may have been manipulated.\n' \
+      "$SYNTHESIS_FINAL" "$SHELL_FINAL" >&2
+    exit 1
+  fi
+
+  # Post-synthesis integrity check — same content-hash guard run again to catch
+  # synthesis-side prompt injection that modifies tracked source files.
+  _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
+  if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" ]]; then
+    printf 'Error: synthesis session modified tracked source files — possible prompt injection.\n' >&2
+    exit 1
+  fi
 
 fi
 
