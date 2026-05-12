@@ -296,24 +296,10 @@ fi
 # `.tool_input.run_in_background` was bypassed in the wild (2026-05-11). Three
 # plausible paths are checked; treat the multi-path strategy as deliberate
 # policy, not a TODO — the right fix is `+= path on next bypass observation`
-# rather than `pick one canonical path`. Coverage gap (4th path not yet seen)
-# is tracked in project memory's `project_claude-config.md` Open follow-up.
+# rather than `pick one canonical path`.
 run_in_bg_a="$(jq -r '.tool_input.run_in_background // empty' <<<"$input" 2>/dev/null)"
 run_in_bg_b="$(jq -r '.run_in_background // empty' <<<"$input" 2>/dev/null)"
 run_in_bg_c="$(jq -r '.tool_options.run_in_background // empty' <<<"$input" 2>/dev/null)"
-
-# Opt-in forensic capture. Set `CLAUDE_HOOK_CODEX_DEBUG=on` to dump every
-# codex-executor Bash invocation's input JSON to a sibling debug log. Used to
-# locate the run_in_background flag's actual JSON path when the multi-path
-# check above misses a real-world bypass. OFF by default — when ON, log
-# grows unbounded; rotate manually or unset after capturing one example.
-if [[ "${CLAUDE_HOOK_CODEX_DEBUG:-}" == "on" ]]; then
-  {
-    ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
-    echo "=== hook-codex-bash-guard input @ $ts (run_in_bg_a=$run_in_bg_a run_in_bg_b=$run_in_bg_b run_in_bg_c=$run_in_bg_c) ==="
-    jq -c '. | with_entries(.value |= (if type=="object" then with_entries(.value |= (if type=="string" then (.[0:80]) else . end)) else . end))' <<<"$input" 2>/dev/null
-  } >> "$LOG_DIR/codex-bash-guard.debug.log" 2>/dev/null
-fi
 
 if [[ "$run_in_bg_a" == "true" || "$run_in_bg_b" == "true" || "$run_in_bg_c" == "true" ]]; then
   deny "run_in_background:true forbidden on codex-executor Bash (orphans dispatch — see codex-executor.md §Dispatch)"
