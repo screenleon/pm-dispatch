@@ -41,9 +41,9 @@ assert_not_contains() {
 create_runner() {
   local dir="$1"
   mkdir -p "$dir"
-  cp "$REPO_ROOT/scripts/codex-pr-gate.sh" "$dir/codex-pr-gate.sh"
+  cp "$REPO_ROOT/scripts/pr-gate.sh" "$dir/pr-gate.sh"
   cp "$REPO_ROOT/scripts/patch-gitignore.sh" "$dir/patch-gitignore.sh"
-  chmod +x "$dir/codex-pr-gate.sh" "$dir/patch-gitignore.sh"
+  chmod +x "$dir/pr-gate.sh" "$dir/patch-gitignore.sh"
   cat > "$dir/codex-dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -159,7 +159,34 @@ case "$effective_mode" in
         # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
         printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+        if [[ "$(basename "$output_path")" == pr-gate-result-* || "$(basename "$output_path")" == gate-* ]]; then
+          printf 'Final: GO\n' >> "$output_path"
+        fi
       fi
+    fi
+    # Simulate cross-reviewer artifact tampering in --parallel mode (reviewer brief only).
+    # CODEX_GATE_STUB_CROSS_TAMPER_REVIEWER: reviewer name that performs the tamper.
+    # CODEX_GATE_STUB_CROSS_TAMPER_VICTIM: reviewer name whose artifact gets tampered.
+    # After writing own output the tamper reviewer waits until the victim's
+    # artifact exists, then overwrites it. The bounded poll makes the handshake
+    # deterministic without relying on a fixed scheduler delay.
+    if [[ -n "${CODEX_GATE_STUB_CROSS_TAMPER_REVIEWER:-}" && \
+          -n "${CODEX_GATE_STUB_CROSS_TAMPER_VICTIM:-}" && \
+          "$brief_file" == *"-${CODEX_GATE_STUB_CROSS_TAMPER_REVIEWER}.md" ]]; then
+      brief_basename="$(basename "$brief_file" .md)"
+      ts_and_rev="${brief_basename#pr-gate-}"
+      ts="${ts_and_rev%-*}"
+      work_dir="$(cd "$(dirname "$(dirname "$brief_file")")" && pwd)"
+      victim_output="$work_dir/.gate-results/reviewer-${CODEX_GATE_STUB_CROSS_TAMPER_VICTIM}-${ts}.md"
+      wait_start=$SECONDS
+      while [[ ! -s "$victim_output" ]]; do
+        if (( SECONDS - wait_start >= 5 )); then
+          printf 'timed out waiting for cross-tamper victim artifact: %s\n' "$victim_output" >&2
+          exit 1
+        fi
+        sleep 0.01
+      done
+      printf 'tampered-by-cross-reviewer\n' >> "$victim_output"
     fi
     exit 0
     ;;
@@ -248,7 +275,7 @@ run_gate() {
   local home="$1" runner="$2" repo="$3" out="$4" err="$5"
   shift 5
   set +e
-  HOME="$home" "$runner/codex-pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
+  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" "$@" > "$out" 2> "$err"
   local code=$?
   return "$code"
 }
@@ -367,8 +394,9 @@ test_reviewers_override_skips_tier_detection() {
   # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
   assert_contains "$name" "$brief" "Tier: targeted" || return
   assert_contains "$name" "$brief" "Reviewers: critic" || return
-  # Synthesis brief references the reviewer output path (not the agent file)
-  assert_contains "$name" "$brief" "reviewer-critic-" || return
+  # Synthesis brief embeds reviewer findings inline — no read: paths to reviewer output files
+  assert_contains "$name" "$brief" "--- critic findings ---" || return
+  assert_not_contains "$name" "$brief" "reviewer-critic-" || return
   assert_not_contains "$name" "$brief" "read: $home/.claude/agents/qa-tester.md" || return
   pass "$name"
 }
@@ -905,6 +933,64 @@ test_reviewer_no_output_aborts_gate() {
   pass "$name"
 }
 
+test_sequential_no_output_aborts_gate() {
+  # Verifies that sequential mode exiting 0 without writing the gate result file
+  # fails the gate before reporting a result.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
+  #   3. Run gate in sequential mode (default)
+  #   4. Assert non-zero exit and "sequential gate did not produce" in stderr
+  local name="sequential-no-output-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when sequential dispatch produces no output"
+    return
+  fi
+  assert_contains "$name" "$err" "sequential gate did not produce" || return
+  pass "$name"
+}
+
+test_sequential_no_final_line_aborts_gate() {
+  # Verifies that sequential mode output without a valid Final line fails
+  # the gate before reporting a result.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
+  #   3. Run gate in sequential mode (default)
+  #   4. Assert non-zero exit and "must contain exactly one Final" in stderr
+  local name="sequential-no-final-line-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-verdict run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when sequential output has no valid Final line"
+    return
+  fi
+  assert_contains "$name" "$err" "must contain exactly one Final" || return
+  pass "$name"
+}
+
 test_prompt_injection_detected() {
   # Verifies that a reviewer session modifying a tracked source file (simulated
   # prompt injection) causes the gate to abort before synthesis.
@@ -994,9 +1080,9 @@ test_synthesis_artifact_tamper_detected() {
   # of a gitignored file that the worktree hash cannot detect.
   local runner2="$dir/runner2"
   mkdir -p "$runner2"
-  cp "$runner/codex-pr-gate.sh" "$runner2/codex-pr-gate.sh"
+  cp "$runner/pr-gate.sh" "$runner2/pr-gate.sh"
   cp "$runner/patch-gitignore.sh" "$runner2/patch-gitignore.sh"
-  chmod +x "$runner2/codex-pr-gate.sh" "$runner2/patch-gitignore.sh"
+  chmod +x "$runner2/pr-gate.sh" "$runner2/patch-gitignore.sh"
 
   # Wrapper dispatch: on synthesis brief, tamper with the most recently written reviewer artifact.
   cat > "$runner2/codex-dispatch.sh" <<'TWRAP_EOF'
@@ -1034,7 +1120,7 @@ TWRAP_EOF
   chmod +x "$runner2/codex-dispatch.sh"
 
   set +e
-  HOME="$home" "$runner2/codex-pr-gate.sh" --cd "$repo" --base main --parallel > "$out" 2> "$err"
+  HOME="$home" "$runner2/pr-gate.sh" --cd "$repo" --base main --parallel > "$out" 2> "$err"
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -1103,7 +1189,7 @@ test_hash_tool_missing_aborts_gate() {
   chmod +x "$fakepath/sha256sum" "$fakepath/shasum"
 
   set +e
-  HOME="$home" PATH="$fakepath:$PATH" "$runner/codex-pr-gate.sh" \
+  HOME="$home" PATH="$fakepath:$PATH" "$runner/pr-gate.sh" \
     --cd "$repo" --base main --parallel > "$out" 2> "$err"
   local code=$?
   set -e
@@ -1174,6 +1260,43 @@ test_multiple_verdict_lines_aborts_gate() {
     return
   fi
   assert_contains "$name" "$err" "exactly one valid Verdict line" || return
+  pass "$name"
+}
+
+test_reviewer_cross_artifact_tamper_detected() {
+  # Verifies that cross-reviewer artifact tampering in --parallel mode is detected
+  # and the gate aborts before synthesis runs on tainted data.
+  #
+  # Scenario:
+  #   - qa-tester is at index 0: writes output quickly, exits.
+  #   - critic is at index 1 (the tamper reviewer): writes its own output, sleeps
+  #     0.3s, then appends to qa-tester's artifact before exiting.
+  #
+  # The wait loop captures qa-tester's post-wait hash immediately after qa-tester
+  # exits (before critic's 0.3s sleep ends). After critic exits, the cross-tamper
+  # check re-hashes qa-tester's artifact and detects the mismatch.
+  local name="reviewer-cross-artifact-tamper-detected"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_CROSS_TAMPER_REVIEWER=critic \
+  CODEX_GATE_STUB_CROSS_TAMPER_VICTIM=qa-tester \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" \
+      --base main --reviewers qa-tester,critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when cross-reviewer tampers a reviewer artifact"
+    return
+  fi
+  assert_contains "$name" "$err" "cross-reviewer artifact tampering" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
 
@@ -1262,11 +1385,11 @@ test_via_symlink() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  # Simulate ~/.claude/scripts/codex-pr-gate.sh → real script in runner dir
-  ln -s "$runner/codex-pr-gate.sh" "$symdir/codex-pr-gate.sh"
+  # Simulate ~/.claude/scripts/pr-gate.sh → real script in runner dir
+  ln -s "$runner/pr-gate.sh" "$symdir/pr-gate.sh"
 
   set +e
-  HOME="$home" "$symdir/codex-pr-gate.sh" --cd "$repo" --base main > "$out" 2> "$err"
+  HOME="$home" "$symdir/pr-gate.sh" --cd "$repo" --base main > "$out" 2> "$err"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -1413,6 +1536,8 @@ run_test test_post_synthesis_injection_detected
 run_test test_synthesis_no_output_aborts_gate
 run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
+run_test test_sequential_no_output_aborts_gate
+run_test test_sequential_no_final_line_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go
 run_test test_synthesis_artifact_tamper_detected
@@ -1420,6 +1545,7 @@ run_test test_verdict_prefix_rejected
 run_test test_hash_tool_missing_aborts_gate
 run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_multiple_verdict_lines_aborts_gate
+run_test test_reviewer_cross_artifact_tamper_detected
 run_test test_adjacent_go_test_included
 run_test test_adjacent_ts_test_in_tests_dir
 run_test test_adjacent_ts_test_tsx_variant

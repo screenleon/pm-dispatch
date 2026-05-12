@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codex-pr-gate.sh — PR-gate review via a dispatched session
+# pr-gate.sh — PR-gate review via a dispatched session
 #
 # DEFAULT (single-session / sequential):
 #   All reviewers run in order inside ONE combined dispatch session.
@@ -20,7 +20,7 @@ set -euo pipefail
 # unchanged test files are visible to the gate.
 #
 # Usage:
-#   codex-pr-gate.sh --cd <dir> [options]
+#   pr-gate.sh --cd <dir> [options]
 #
 # Options:
 #   --cd <dir>           working directory (required)
@@ -192,7 +192,14 @@ mkdir -p "$BRIEF_DIR"
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+_self="$0"
+while [[ -L "$_self" ]]; do
+  _self_dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
+done
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+unset _self _self_dir
 # Resolve patch-gitignore path after SCRIPT_DIR so symlink invocations use the
 # real script directory rather than the symlink's directory.
 _PATCH_GI="$SCRIPT_DIR/patch-gitignore.sh"
@@ -266,7 +273,7 @@ done <<< "$ALL_REVIEW_FILES"
 DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
 ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
-printf 'codex-pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
+printf 'pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
 printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
@@ -362,6 +369,19 @@ BRIEF_EOF
     --cd "$WORK_DIR" \
     --timeout "$TIMEOUT" \
     --brief-file "$BRIEF_FILE"
+
+  # Validate sequential output: must exist, be non-empty, contain exactly one
+  # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
+  if [[ ! -s "$OUTPUT_FILE" ]]; then
+    printf 'Error: sequential gate did not produce the result file: %s\n' "$OUTPUT_FILE" >&2
+    printf 'Gate aborted — codex session may have exited 0 without completing.\n' >&2
+    exit 1
+  fi
+  SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
+  if [[ "$SEQ_FINAL_COUNT" -ne 1 ]]; then
+    printf 'Error: gate result file must contain exactly one %s: GO/NO-GO line (found %d).\n' "Final" "$SEQ_FINAL_COUNT" >&2
+    exit 1
+  fi
 
 else
 
@@ -471,12 +491,19 @@ RBRIEF_EOF
 
   # Wait for all reviewer sessions. Any non-zero exit aborts the gate — an
   # incomplete review cannot certify a valid gate result.
+  # Hash each reviewer output immediately after its PID exits so we capture
+  # the content before any concurrently-running reviewer session can modify it.
   FAILED_REVIEWERS=()
+  REVIEWER_POST_WAIT_HASHES=()
   for i in "${!DISPATCH_PIDS[@]}"; do
     pid="${DISPATCH_PIDS[$i]}"
     r="${REVIEWER_NAMES[$i]}"
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
     if ! wait "$pid"; then
       FAILED_REVIEWERS+=("$r")
+      REVIEWER_POST_WAIT_HASHES+=("none")
+    else
+      REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')")
     fi
   done
 
@@ -524,6 +551,27 @@ RBRIEF_EOF
     exit 1
   fi
 
+  # Cross-reviewer artifact tamper detection: re-hash every reviewer output and
+  # compare with the hash captured immediately after that reviewer's PID exited.
+  # A mismatch means a concurrently-running reviewer session modified this file
+  # after it was completed — fail closed before synthesis can run on tainted data.
+  CROSS_TAMPERED=()
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    expected="${REVIEWER_POST_WAIT_HASHES[$i]}"
+    [[ "$expected" == "none" ]] && continue
+    current="$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')"
+    if [[ "$current" != "$expected" ]]; then
+      CROSS_TAMPERED+=("$r")
+    fi
+  done
+  if [[ "${#CROSS_TAMPERED[@]}" -gt 0 ]]; then
+    printf 'Error: reviewer artifact modified after that reviewer session completed: %s\n' "${CROSS_TAMPERED[*]}" >&2
+    printf 'Possible cross-reviewer artifact tampering in --parallel mode. Gate aborted.\n' >&2
+    exit 1
+  fi
+
   # Worktree integrity check — detect prompt-injected tracked-file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
   # catches new untracked source files (gate artifacts are gitignored, excluded).
@@ -566,26 +614,23 @@ RBRIEF_EOF
   SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
   BRIEF_FILES+=("$SYNTHESIS_BRIEF")
 
-  REVIEWER_FILE_ENTRIES=""
-  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
-    REVIEWER_FILE_ENTRIES="${REVIEWER_FILE_ENTRIES}  - read: ${rf}"$'\n'
-  done
+  # Write synthesis brief in segments so reviewer content is appended with `cat`
+  # (no heredoc expansion) rather than embedded in an unquoted heredoc.
+  # This also removes `read:` file paths from the brief, preventing the synthesis
+  # session from discovering or targeting reviewer output file locations.
 
-  FAILED_NOTE=""
-
-  cat > "$SYNTHESIS_BRIEF" << SBRIEF_EOF
+  cat > "$SYNTHESIS_BRIEF" << SBRIEF_P1
 working_dir: ${WORK_DIR}
 
-goal: You are project-pm. Read each reviewer's individual findings file and synthesize a final consolidated PR-gate result at ${OUTPUT_FILE}.
+goal: You are project-pm. Synthesize the reviewer findings provided in the context below and write a final consolidated PR-gate result at ${OUTPUT_FILE}.
 
 files:
-${REVIEWER_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
+  - new:  ${OUTPUT_FILE}
 
 constraints:
-  - Do NOT modify any source file or reviewer output file.
+  - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
   - Create parent directories if needed (mkdir -p).
-  - If a reviewer output file is absent or empty, record "reviewer output unavailable" in that section.
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
     This is pre-computed from the reviewer verdicts and must not be overridden.
 
@@ -596,10 +641,26 @@ context:
   Base: ${BASE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${FAILED_NOTE}
+
+  Reviewer findings (embedded — do NOT attempt to read any external reviewer output file):
+SBRIEF_P1
+
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    printf '  --- %s findings ---\n' "$r" >> "$SYNTHESIS_BRIEF"
+    if [[ -s "$rf" ]]; then
+      cat "$rf" >> "$SYNTHESIS_BRIEF"
+    else
+      printf '  (reviewer output unavailable)\n' >> "$SYNTHESIS_BRIEF"
+    fi
+    printf '\n' >> "$SYNTHESIS_BRIEF"
+  done
+
+  cat >> "$SYNTHESIS_BRIEF" << SBRIEF_P2
 
 task:
-  1. Read each reviewer output file listed above.
+  1. Use the reviewer findings embedded in the context above.
   2. Identify cross-reviewer overlaps: issues raised by more than one reviewer.
   3. Determine the overall verdict: most severe individual verdict across all reviewers
      (approve < advise < block-soft < block).
@@ -616,9 +677,9 @@ output_format: |
   **Not reviewed**: ${SKIPPED_DISPLAY}
 
   ## {reviewer-name} — {verdict}
-  {Copy findings from that reviewer's output file, one bullet per finding with [severity] and file:line}
+  {Copy findings from that reviewer's findings block above, one bullet per finding with [severity] and file:line}
 
-  Verdict: {verdict from reviewer file}. {rationale}
+  Verdict: {verdict from reviewer findings}. {rationale}
 
   (repeat for each reviewer in order)
 
@@ -649,7 +710,7 @@ acceptance:
   - ${OUTPUT_FILE} exists with a section for each of the ${NUM_REVIEWERS} reviewers
   - Cross-Reviewer Overlaps section is present
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
-SBRIEF_EOF
+SBRIEF_P2
 
   printf '  [synthesis] running PM consolidation...\n'
   bash "$SCRIPT_DIR/codex-dispatch.sh" \
