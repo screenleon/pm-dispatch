@@ -42,8 +42,7 @@ create_runner() {
   local dir="$1"
   mkdir -p "$dir"
   cp "$REPO_ROOT/scripts/pr-gate.sh" "$dir/pr-gate.sh"
-  cp "$REPO_ROOT/scripts/patch-gitignore.sh" "$dir/patch-gitignore.sh"
-  chmod +x "$dir/pr-gate.sh" "$dir/patch-gitignore.sh"
+  chmod +x "$dir/pr-gate.sh"
   cat > "$dir/codex-dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -205,6 +204,10 @@ create_agents() {
   done
 }
 
+write_managed_gitignore() {
+  printf '.agent-trace/\n.codex-briefs/\n.gate-results/\n.agents/\n' > .gitignore
+}
+
 create_repo() {
   local repo="$1" mode="${2:-clean}"
   git init -q -b main "$repo"
@@ -213,7 +216,8 @@ create_repo() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'initial\n' > README.md
-    git add README.md
+    write_managed_gitignore
+    git add README.md .gitignore
     git commit -q -m initial
     case "$mode" in
       clean) ;;
@@ -243,7 +247,8 @@ create_repo_with_branch() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'initial\n' > README.md
-    git add README.md
+    write_managed_gitignore
+    git add README.md .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     case "$mode" in
@@ -301,6 +306,46 @@ test_tier_detection() {
   assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
   assert_contains "$name" "$brief" "Tier: express" || return
   assert_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
+  pass "$name"
+}
+
+test_pr_gate_does_not_mutate_gitignore() {
+  local name="pr-gate-does-not-mutate-gitignore"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    printf '*.log\n' > .gitignore
+    git add README.md .gitignore
+    git commit -q -m initial
+    printf 'docs change\n' >> README.md
+  )
+  local before after
+  before="$(sha256sum "$repo/.gitignore" | awk '{print $1}')"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  after="$(sha256sum "$repo/.gitignore" | awk '{print $1}')"
+  if [[ "$after" != "$before" ]]; then
+    fail "$name" ".gitignore checksum changed"
+    return
+  fi
+  assert_not_contains "$name" "$repo/.gitignore" "Claude agent" || return
+  assert_not_contains "$name" "$repo/.gitignore" "codex" || return
   pass "$name"
 }
 
@@ -560,7 +605,8 @@ _make_go_repo_with_test() {
     git config user.name 'Gate Test'
     printf 'package main\nfunc Add(a, b int) int { return a + b }\n' > app.go
     printf 'package main\nimport "testing"\nfunc TestAdd(t *testing.T) {}\n' > app_test.go
-    git add app.go app_test.go
+    write_managed_gitignore
+    git add app.go app_test.go .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     printf 'package main\nfunc Add(a, b int) int { return a + b + 0 }\n' > app.go
@@ -581,7 +627,8 @@ _make_ts_repo_with_test() {
     mkdir -p "$(dirname "$test_path")"
     printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
     printf '%s\n' "$test_content" > "$test_path"
-    git add src/format.ts "$test_path"
+    write_managed_gitignore
+    git add src/format.ts "$test_path" .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
@@ -761,7 +808,8 @@ test_adjacent_test_not_duplicated_when_in_diff() {
     git config user.name 'Gate Test'
     printf 'package main\nfunc Add(a, b int) int { return a + b }\n' > app.go
     printf 'package main\nimport "testing"\nfunc TestAdd(t *testing.T) {}\n' > app_test.go
-    git add app.go app_test.go
+    write_managed_gitignore
+    git add app.go app_test.go .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     printf 'package main\nfunc Add(a, b int) int { return a + b + 0 }\n' > app.go
@@ -1081,8 +1129,7 @@ test_synthesis_artifact_tamper_detected() {
   local runner2="$dir/runner2"
   mkdir -p "$runner2"
   cp "$runner/pr-gate.sh" "$runner2/pr-gate.sh"
-  cp "$runner/patch-gitignore.sh" "$runner2/patch-gitignore.sh"
-  chmod +x "$runner2/pr-gate.sh" "$runner2/patch-gitignore.sh"
+  chmod +x "$runner2/pr-gate.sh"
 
   # Wrapper dispatch: on synthesis brief, tamper with the most recently written reviewer artifact.
   cat > "$runner2/codex-dispatch.sh" <<'TWRAP_EOF'
@@ -1415,7 +1462,8 @@ test_rename_sensitive_old_name() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'package auth\n' > auth.ts
-    git add auth.ts
+    write_managed_gitignore
+    git add auth.ts .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     git mv auth.ts login.ts
@@ -1449,7 +1497,8 @@ test_binary_file_routes_to_standard() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'initial\n' > README.md
-    git add README.md
+    write_managed_gitignore
+    git add README.md .gitignore
     git commit -q -m initial
     git checkout -q -b feature
     # Create a binary file (null bytes trigger git binary detection)
@@ -1491,7 +1540,8 @@ test_untracked_binary_routes_to_standard() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'initial\n' > README.md
-    git add README.md
+    write_managed_gitignore
+    git add README.md .gitignore
     git commit -q -m initial
     # Add an untracked binary file to the working tree (no commit, no staging)
     printf '\x00\x01\x02\x03' > image.png
@@ -1514,6 +1564,7 @@ test_untracked_binary_routes_to_standard() {
 }
 
 run_test test_tier_detection
+run_test test_pr_gate_does_not_mutate_gitignore
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files

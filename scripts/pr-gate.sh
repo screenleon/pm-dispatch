@@ -186,7 +186,6 @@ done
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
-# Auto-patch .gitignore (resolved after SCRIPT_DIR below; see _PATCH_GI reassignment)
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
@@ -200,10 +199,6 @@ while [[ -L "$_self" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 unset _self _self_dir
-# Resolve patch-gitignore path after SCRIPT_DIR so symlink invocations use the
-# real script directory rather than the symlink's directory.
-_PATCH_GI="$SCRIPT_DIR/patch-gitignore.sh"
-[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/" ".agent-trace/"
 
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()

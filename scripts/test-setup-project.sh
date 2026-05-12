@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETUP_SCRIPT="$SCRIPT_DIR/setup-project.sh"
+EXPECTED_ENTRIES=(".agent-trace/" ".codex-briefs/" ".gate-results/" ".agents/")
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -34,6 +35,24 @@ assert_not_contains() {
   fi
 }
 
+assert_entry_once() {
+  local name="$1" file="$2" entry="$3"
+  local count
+  count="$(grep -xcF -- "$entry" "$file" 2>/dev/null || true)"
+  if [[ "$count" -ne 1 ]]; then
+    fail "$name" "$entry appears $count times in $file (expected 1)"
+    return 1
+  fi
+}
+
+assert_expected_entries_once() {
+  local name="$1" file="$2"
+  local entry
+  for entry in "${EXPECTED_ENTRIES[@]}"; do
+    assert_entry_once "$name" "$file" "$entry" || return
+  done
+}
+
 test_creates_gitignore_entries() {
   # Happy path: no .gitignore exists — both entries must be created.
   local name="creates-gitignore-entries"
@@ -45,6 +64,8 @@ test_creates_gitignore_entries() {
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
   assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
+  assert_contains "$name" "$dir/.gitignore" ".agents/" || return
+  assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
 
@@ -61,6 +82,8 @@ test_patches_existing_gitignore() {
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
   assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
   assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
+  assert_contains "$name" "$dir/.gitignore" ".agents/" || return
+  assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
 
@@ -73,14 +96,7 @@ test_idempotent_gitignore() {
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  local count
-  for entry in ".agent-trace/" ".codex-briefs/" ".gate-results/"; do
-    count=$(grep -c "$entry" "$dir/.gitignore" || echo 0)
-    if [[ "$count" -ne 1 ]]; then
-      fail "$name" "$entry appears $count times (expected 1)"
-      return
-    fi
-  done
+  assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
 
@@ -127,6 +143,7 @@ test_patches_dockerignore_next_to_dockerfile() {
   assert_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
   assert_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
+  assert_contains "$name" "$svcdir/.dockerignore" ".agents/" || return
   pass "$name"
 }
 
@@ -139,12 +156,7 @@ test_already_present_entries() {
   printf '.agent-trace/\n.codex-briefs/\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  local count
-  count=$(grep -c "\.agent-trace/" "$dir/.gitignore" || echo 0)
-  if [[ "$count" -ne 1 ]]; then
-    fail "$name" ".agent-trace/ appears $count times (expected 1)"
-    return
-  fi
+  assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
 
@@ -167,6 +179,19 @@ test_partial_state_no_header_duplicate() {
   pass "$name"
 }
 
+test_entry_list_parity() {
+  local name="entry-list-parity"
+  local dir="$TMP_ROOT/$name"
+  mkdir -p "$dir"
+  init_git_repo "$dir"
+  touch "$dir/Dockerfile"
+
+  bash "$SETUP_SCRIPT" "$dir" > /dev/null
+  assert_expected_entries_once "$name" "$dir/.gitignore" || return
+  assert_expected_entries_once "$name" "$dir/.dockerignore" || return
+  pass "$name"
+}
+
 run_test() { "$@" || true; }
 
 run_test test_creates_gitignore_entries
@@ -177,6 +202,7 @@ run_test test_no_dockerfiles_skips_dockerignore
 run_test test_patches_dockerignore_next_to_dockerfile
 run_test test_already_present_entries
 run_test test_partial_state_no_header_duplicate
+run_test test_entry_list_parity
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

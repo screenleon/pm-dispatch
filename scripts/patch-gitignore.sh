@@ -35,6 +35,19 @@ GIT_ROOT=$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null) || {
 GITIGNORE="$GIT_ROOT/.gitignore"
 HEADER="# Claude agent / codex output — not for VCS or Docker"
 
+if ! [[ "$GITIGNORE" == "$GIT_ROOT"/* ]]; then
+  printf 'patch-gitignore: refusing path outside git root: %s\n' "$GITIGNORE" >&2
+  exit 1
+fi
+if [[ -L "$GITIGNORE" ]]; then
+  printf 'patch-gitignore: refusing to operate on symlink: %s\n' "$GITIGNORE" >&2
+  exit 1
+fi
+if [[ -e "$GITIGNORE" && ! -f "$GITIGNORE" ]]; then
+  printf 'patch-gitignore: refusing to operate on non-regular file: %s\n' "$GITIGNORE" >&2
+  exit 1
+fi
+
 if [[ "$DRY_RUN" -eq 0 ]]; then
   [[ -f "$GITIGNORE" ]] || touch "$GITIGNORE"
 fi
