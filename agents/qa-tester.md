@@ -40,6 +40,12 @@ Any directory that provides a Tier 1 entry point works — the [`qa-testing-rule
 
 ## C — full test phase (PR gate default)
 
+**Step 0 — pre-flight coverage enumeration** (always run first, before A or B):
+
+1. From the diff, list every new behavioral unit: new/modified functions, exported fields, API query params, route handlers, schema fields, event types, or error codes.
+2. For each behavioral unit, search the adjacent test files included in this brief for a test that directly exercises that unit. Adjacent test files follow the conventions: `<pkg>/<name>_test.go` (Go) and `__tests__/<name>.test.ts(x)` or `<name>.test.ts(x)` (TypeScript) — these are provided alongside the changed source files when the gate includes them.
+3. Any new behavioral unit with no corresponding test is a **block** finding. Report it with the exact function/param/field name, the source file:line where it was introduced, and the expected test file path where coverage should appear.
+
 Run A if no tests exist, then B. End state: runnable suite with explicit category coverage, zero red-line violations, no unresolved anti-patterns, all green.
 
 # Output

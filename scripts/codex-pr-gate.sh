@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codex-pr-gate.sh — sequential PR-gate review via codex
+# codex-pr-gate.sh — PR-gate review via codex
 #
-# All reviewer work runs inside a single codex session, keeping main-thread
-# token cost to ~5k (dispatch overhead + reading result) vs ~40–80k for the
-# multi-agent /pr-gate.
+# Default mode (parallel): one independent codex session per reviewer so that
+# no shared context window anchors or limits any single reviewer; a project-pm
+# synthesis session consolidates all findings into the final gate result.
 #
-# Trade-off: reviewers run sequentially (not in parallel) and share the same
-# context window, so for sensitive-path or >1000-line diffs prefer /pr-gate.
+# Use --sequential to fall back to the original single-session approach where
+# all reviewers run in order inside one combined codex session.
+#
+# Adjacent test files (not in the diff but directly paired to a changed source
+# file) are automatically added to every reviewer brief so coverage gaps in
+# unchanged test files are visible to the gate.
 #
 # Usage:
 #   codex-pr-gate.sh --cd <dir> [options]
@@ -20,7 +24,8 @@ set -euo pipefail
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
-#   --timeout <secs>     codex-dispatch timeout (default: 1200)
+#   --timeout <secs>     codex-dispatch timeout per session (default: 1200)
+#   --sequential         run all reviewers in one codex session (original behavior)
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -29,18 +34,20 @@ SCOPE=""
 BASE_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
+SEQUENTIAL=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cd)        WORK_DIR="$2";        shift 2;;
-    --tier)      TIER_OVERRIDE="$2";   shift 2;;
-    --reviewers) REVIEWERS_OVERRIDE="$2"; shift 2;;
-    --scope)     SCOPE="$2";           shift 2;;
-    --base)      BASE_OVERRIDE="$2";   shift 2;;
-    --output)    OUTPUT_OVERRIDE="$2"; shift 2;;
-    --timeout)   TIMEOUT="$2";         shift 2;;
+    --cd)         WORK_DIR="$2";           shift 2;;
+    --tier)       TIER_OVERRIDE="$2";      shift 2;;
+    --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
+    --scope)      SCOPE="$2";              shift 2;;
+    --base)       BASE_OVERRIDE="$2";      shift 2;;
+    --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
+    --timeout)    TIMEOUT="$2";            shift 2;;
+    --sequential) SEQUENTIAL=true;         shift;;
     -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *) printf 'Unknown arg: %s\n' "$1" >&2; exit 2;;
   esac
@@ -142,7 +149,7 @@ else
   esac
 fi
 
-REVIEWER_DISPLAY=$(printf '%s' "$REVIEWERS" | tr ' ' ', ')
+REVIEWER_DISPLAY=$(printf '%s' "$REVIEWERS" | tr ' ' ',')
 NUM_REVIEWERS=$(printf '%s\n' $REVIEWERS | wc -l | tr -d ' ')
 
 # Compute skipped dimensions
@@ -160,6 +167,15 @@ if [[ ! -d "$AGENT_DIR" ]]; then
   printf 'Error: agent dir not found: %s\n' "$AGENT_DIR" >&2; exit 1
 fi
 
+# Validate all reviewer agent files exist before doing any work
+for r in $REVIEWERS; do
+  AGENT_PATH="$AGENT_DIR/${r}.md"
+  if [[ ! -f "$AGENT_PATH" ]]; then
+    printf 'Error: reviewer agent file not found: %s\n' "$AGENT_PATH" >&2
+    exit 1
+  fi
+done
+
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
@@ -167,36 +183,94 @@ BRIEF_DIR="$WORK_DIR/.codex-briefs"
 _PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
 [[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/"
 mkdir -p "$BRIEF_DIR"
-BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
-trap 'rm -f "${BRIEF_FILE:-}"' EXIT
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-# ── Build file entries for the brief ─────────────────────────────────────────
-AGENT_FILE_ENTRIES=""
-for r in $REVIEWERS; do
-  AGENT_PATH="$AGENT_DIR/${r}.md"
-  if [[ -f "$AGENT_PATH" ]]; then
-    AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}
-"
-  else
-    printf 'Error: reviewer agent file not found: %s\n' "$AGENT_PATH" >&2
-    exit 1
-  fi
-done
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+# Track all brief files for EXIT cleanup
+BRIEF_FILES=()
+cleanup_briefs() {
+  for bf in "${BRIEF_FILES[@]:-}"; do
+    rm -f "$bf"
+  done
+}
+trap cleanup_briefs EXIT
+
+# ── Find adjacent test files not in the diff ─────────────────────────────────
+# For each changed source file, locate its companion test file if it exists and
+# is not already included in the diff. Including adjacent tests allows reviewers
+# to detect coverage gaps in unchanged test files alongside changed source.
+#
+# Go:         <pkg>/<name>.go       → <pkg>/<name>_test.go
+# TypeScript: <dir>/<name>.ts(x)    → <dir>/__tests__/<name>.test.ts(x)
+#                                   → <dir>/<name>.test.ts(x)
+ADJACENT_TEST_FILES=""
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  case "$f" in
+    *.go)
+      base="$(basename "$f")"
+      if [[ "$base" != *_test.go ]]; then
+        testfile="${f%.go}_test.go"
+        if [[ -f "$WORK_DIR/$testfile" ]] && ! printf '%s\n' "$DIFF_FILES" | grep -qxF "$testfile"; then
+          ADJACENT_TEST_FILES="${ADJACENT_TEST_FILES}${testfile}"$'\n'
+        fi
+      fi
+      ;;
+    *.ts|*.tsx)
+      base="$(basename "$f")"
+      case "$base" in *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx) continue ;; esac
+      bname="${base%.*}"
+      dname="$(dirname "$f")"
+      for candidate in \
+          "${dname}/__tests__/${bname}.test.ts" \
+          "${dname}/__tests__/${bname}.test.tsx" \
+          "${dname}/${bname}.test.ts" \
+          "${dname}/${bname}.test.tsx"; do
+        if [[ -f "$WORK_DIR/$candidate" ]] && ! printf '%s\n' "$DIFF_FILES" | grep -qxF "$candidate"; then
+          ADJACENT_TEST_FILES="${ADJACENT_TEST_FILES}${candidate}"$'\n'
+        fi
+      done
+      ;;
+  esac
+done <<< "$DIFF_FILES"
+
+# ── Build combined review file list ──────────────────────────────────────────
+ALL_REVIEW_FILES="$DIFF_FILES"
+if [[ -n "$ADJACENT_TEST_FILES" ]]; then
+  ALL_REVIEW_FILES="$(printf '%s\n%s' "$ALL_REVIEW_FILES" "$ADJACENT_TEST_FILES" | sort -u | grep -v '^$')"
+fi
 
 DIFF_FILE_ENTRIES=""
 while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
   fp="$WORK_DIR/$f"
-  [[ -f "$fp" ]] && DIFF_FILE_ENTRIES="${DIFF_FILE_ENTRIES}  - read: ${fp}
-"
-done <<< "$DIFF_FILES"
+  [[ -f "$fp" ]] && DIFF_FILE_ENTRIES="${DIFF_FILE_ENTRIES}  - read: ${fp}"$'\n'
+done <<< "$ALL_REVIEW_FILES"
 
 DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
+ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
-# ── Generate the brief ────────────────────────────────────────────────────────
-cat > "$BRIEF_FILE" << BRIEF_EOF
+printf 'codex-pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
+[[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
+printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+if [[ "$SEQUENTIAL" == "true" ]]; then
+
+  # ── Sequential mode (original: all reviewers in one combined codex session) ──
+  AGENT_FILE_ENTRIES=""
+  for r in $REVIEWERS; do
+    AGENT_PATH="$AGENT_DIR/${r}.md"
+    AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}"$'\n'
+  done
+
+  BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
+  BRIEF_FILES+=("$BRIEF_FILE")
+
+  cat > "$BRIEF_FILE" << BRIEF_EOF
 working_dir: ${WORK_DIR}
 
 goal: Sequential ${TIER}-tier PR-gate review. Apply each reviewer's criteria to the changed files and write a structured verdict to ${OUTPUT_FILE}.
@@ -250,7 +324,15 @@ output_format: |
 
   (repeat for each reviewer in order)
 
+  ## Cross-Reviewer Overlaps
+  {list issues raised by >1 reviewer; "none" if clean}
+
+  ## Coverage Notes
+  **Dimensions not covered**: ${SKIPPED_DISPLAY}
+
   ## Gate Conclusion
+  **Overall verdict**: {most severe}
+  **Most severe individual verdict**: {most severe}
   **Final**: GO | NO-GO
   {required fixes if NO-GO; override path if any block-soft}
 
@@ -263,17 +345,204 @@ acceptance:
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
 BRIEF_EOF
 
-# ── Dispatch ─────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-printf 'codex-pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
-printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
+  bash "$SCRIPT_DIR/codex-dispatch.sh" \
+    --cd "$WORK_DIR" \
+    --timeout "$TIMEOUT" \
+    --brief-file "$BRIEF_FILE"
 
-bash "$SCRIPT_DIR/codex-dispatch.sh" \
-  --cd "$WORK_DIR" \
-  --timeout "$TIMEOUT" \
-  --brief-file "$BRIEF_FILE"
+else
 
-rm -f "$BRIEF_FILE"
+  # ── Parallel mode (default): one codex session per reviewer + PM synthesis ──
+  # Each reviewer runs independently — no shared context window means no
+  # anchoring bias or token pressure from earlier reviewers bleeding through.
+  # PM synthesis reads all reviewer output files and consolidates.
+
+  REVIEWER_OUTPUT_FILES=()
+  DISPATCH_PIDS=()
+  REVIEWER_NAMES=()
+
+  mkdir -p "$WORK_DIR/.agent-trace"
+
+  for r in $REVIEWERS; do
+    AGENT_PATH="$AGENT_DIR/${r}.md"
+    REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
+    REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
+    DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
+
+    BRIEF_FILES+=("$REVIEWER_BRIEF")
+    REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")
+    REVIEWER_NAMES+=("$r")
+
+    cat > "$REVIEWER_BRIEF" << RBRIEF_EOF
+working_dir: ${WORK_DIR}
+
+goal: You are acting as the ${r} reviewer. Read your agent definition, apply your specific review criteria to the changed files, and write your structured findings to ${REVIEWER_OUTPUT}.
+
+files:
+  - read: ${AGENT_PATH}
+${DIFF_FILE_ENTRIES}  - new:  ${REVIEWER_OUTPUT}
+
+constraints:
+  - Do NOT modify any source file.
+  - Only write ${REVIEWER_OUTPUT}.
+  - Create parent directories if needed (mkdir -p).
+
+context:
+  Tier: ${TIER}
+  Reviewer: ${r}
+  Base: ${BASE}
+  Scope: ${SCOPE:-none}
+  Date: $(date '+%Y-%m-%d')
+
+  Diff (${LINES} changed lines):
+${DIFF_STAT_INDENTED}
+
+task:
+  1. Read your agent definition (${AGENT_PATH}). Follow its boot instructions
+     and internalize your specific review criteria and verdict scale.
+  2. Review the changed files strictly from the ${r} perspective only.
+     Do not attempt to cover other reviewer dimensions.
+  3. Write a structured findings block with:
+     - Findings: [severity] file:line — description (low/medium/high)
+     - Explicit verdict: approve | advise | block-soft | block
+     - One-sentence rationale for your verdict
+
+  Write your complete review to ${REVIEWER_OUTPUT}.
+
+output_format: |
+  ## ${r} — {verdict}
+  - [{severity}] {file:line} — {finding description}
+
+  Verdict: {approve | advise | block-soft | block}. {One-sentence rationale.}
+
+self_verify:
+  - file-exists: ${REVIEWER_OUTPUT}
+
+acceptance:
+  - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
+RBRIEF_EOF
+
+    bash "$SCRIPT_DIR/codex-dispatch.sh" \
+      --cd "$WORK_DIR" \
+      --timeout "$TIMEOUT" \
+      --brief-file "$REVIEWER_BRIEF" \
+      > "$DISPATCH_LOG" 2>&1 &
+    DISPATCH_PIDS+=($!)
+    printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
+  done
+
+  printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
+
+  # Wait for all reviewer sessions; collect failures but do not abort early so
+  # the synthesis step can note which reviewers produced no output.
+  FAILED_REVIEWERS=()
+  for i in "${!DISPATCH_PIDS[@]}"; do
+    pid="${DISPATCH_PIDS[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    if ! wait "$pid"; then
+      FAILED_REVIEWERS+=("$r")
+      printf '  [warn] %s exited non-zero (pid %d); synthesis will note missing output\n' "$r" "$pid" >&2
+    fi
+  done
+  printf '  all reviewer sessions done.\n\n'
+
+  # ── PM synthesis ─────────────────────────────────────────────────────────────
+  SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
+  BRIEF_FILES+=("$SYNTHESIS_BRIEF")
+
+  REVIEWER_FILE_ENTRIES=""
+  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
+    REVIEWER_FILE_ENTRIES="${REVIEWER_FILE_ENTRIES}  - read: ${rf}"$'\n'
+  done
+
+  FAILED_NOTE=""
+  if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
+    FAILED_NOTE=$'\n'"  Note: these reviewer sessions exited non-zero and their output may be absent or partial: ${FAILED_REVIEWERS[*]}"
+  fi
+
+  cat > "$SYNTHESIS_BRIEF" << SBRIEF_EOF
+working_dir: ${WORK_DIR}
+
+goal: You are project-pm. Read each reviewer's individual findings file and synthesize a final consolidated PR-gate result at ${OUTPUT_FILE}.
+
+files:
+${REVIEWER_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
+
+constraints:
+  - Do NOT modify any source file or reviewer output file.
+  - Only write ${OUTPUT_FILE}.
+  - Create parent directories if needed (mkdir -p).
+  - If a reviewer output file is absent or empty, record "reviewer output unavailable" in that section.
+
+context:
+  Tier: ${TIER}
+  Reviewers: ${REVIEWER_DISPLAY}
+  Not reviewed: ${SKIPPED_DISPLAY}
+  Base: ${BASE}
+  Scope: ${SCOPE:-none}
+  Date: $(date '+%Y-%m-%d')
+${FAILED_NOTE}
+
+task:
+  1. Read each reviewer output file listed above.
+  2. Identify cross-reviewer overlaps: issues raised by more than one reviewer.
+  3. Determine the overall verdict: most severe individual verdict across all reviewers
+     (approve < advise < block-soft < block).
+  4. State Final: GO or NO-GO.
+     - GO:    no reviewer returned block or block-soft.
+     - NO-GO: any reviewer returned block or block-soft. List required fixes and
+              any applicable override path.
+  5. Write the complete consolidated result to ${OUTPUT_FILE}.
+
+output_format: |
+  # PR-Gate Result — ${TIER} tier (parallel codex mode)
+  **Date**: $(date '+%Y-%m-%d')
+  **Reviewers**: ${REVIEWER_DISPLAY}
+  **Not reviewed**: ${SKIPPED_DISPLAY}
+
+  ## {reviewer-name} — {verdict}
+  {Copy findings from that reviewer's output file, one bullet per finding with [severity] and file:line}
+
+  Verdict: {verdict from reviewer file}. {rationale}
+
+  (repeat for each reviewer in order)
+
+  ## Cross-Reviewer Overlaps
+  {list issues raised by more than one reviewer; "none" if clean}
+
+  ## Coverage Notes
+  **Dimensions not covered**: ${SKIPPED_DISPLAY}
+
+  ## Gate Conclusion
+  **Overall verdict**: {most severe across all reviewers}
+  **Most severe individual verdict**: {most severe}
+  **Final**: GO | NO-GO
+
+  Required fixes before GO: {bulleted list if NO-GO; "none" if GO}
+
+  Recommended follow-ups:
+  {non-blocking improvements from advise-level findings, if any}
+
+  Rationale: {1-2 sentences explaining the final verdict}
+
+self_verify:
+  - file-exists: ${OUTPUT_FILE}
+  - has-final: grep -c 'Final' ${OUTPUT_FILE} should be exactly 1
+  - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}
+
+acceptance:
+  - ${OUTPUT_FILE} exists with a section for each of the ${NUM_REVIEWERS} reviewers
+  - Cross-Reviewer Overlaps section is present
+  - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
+SBRIEF_EOF
+
+  printf '  [synthesis] running PM consolidation...\n'
+  bash "$SCRIPT_DIR/codex-dispatch.sh" \
+    --cd "$WORK_DIR" \
+    --timeout "$TIMEOUT" \
+    --brief-file "$SYNTHESIS_BRIEF"
+
+fi
 
 # ── Print result path for caller ─────────────────────────────────────────────
 printf '\nresult: %s\n' "$OUTPUT_FILE"

@@ -8,6 +8,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `scripts/codex-pr-gate.sh`: **parallel mode** (new default) — one independent
+  codex session per reviewer followed by a project-pm synthesis session; avoids
+  shared-context anchoring and token pressure that caused sequential sessions to
+  miss or re-flag findings. Original single-session behavior preserved via
+  `--sequential` flag.
+- `scripts/codex-pr-gate.sh`: **adjacent test file auto-detection** — for each
+  changed `.go` source file the companion `*_test.go` is automatically appended
+  to the reviewer brief; for `.ts`/`.tsx` sources the `__tests__/<name>.test.ts(x)`
+  and sibling `<name>.test.ts(x)` are appended. Files already in the diff are
+  de-duplicated. This gives reviewers visibility into coverage gaps in unchanged
+  test files.
+- `agents/qa-tester.md`: **Step 0 pre-flight coverage enumeration** added to
+  Mode C — the reviewer must enumerate every new behavioral unit (function,
+  param, field, handler) from the diff and verify adjacent test coverage before
+  proceeding to the audit; missing coverage is a blocking finding.
+
 ---
 
 ## [1.1.0] - 2026-05-12
