@@ -172,7 +172,6 @@ trap 'rm -f "${BRIEF_FILE:-}"' EXIT
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
-mkdir -p "$(dirname "$OUTPUT_FILE")"
 
 # ── Build file entries for the brief ─────────────────────────────────────────
 AGENT_FILE_ENTRIES=""
