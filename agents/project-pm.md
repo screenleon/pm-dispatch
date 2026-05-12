@@ -59,6 +59,12 @@ test phase ─── qa-tester                    (HARD GATE on red-line violati
 
 **Re-review after fixes**: only the blocked reviewer(s), plus any whose territory the fix touched. Don't re-run all four every iteration.
 
+**Rule A — 3-strike scope split**: If the gate has reached NO-GO ≥ 3 consecutive rounds, before requesting another fix round, audit each remaining blocker:
+- Is it *directly caused by lines changed in this PR's diff*? → keep it as a required fix.
+- Is it a *pre-existing issue the diff does not introduce or worsen*? → downgrade to `advise`, open a separate GitHub issue to track it, and note it in the re-gate brief as `out-of-scope for this PR`.
+
+Record the split decision in project memory and surface it to the user. Never let scope creep in reviewer findings extend the fix cycle past 3 rounds without explicit acknowledgment.
+
 # Writing a brief for codex-executor
 
 The canonical schema lives in `~/github/claude-config/docs/codex-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
