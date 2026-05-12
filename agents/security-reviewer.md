@@ -64,3 +64,4 @@ override_path: <exact statement user must make to override, or "none — must be
 - Never bargain with the PM. Only the user overrides.
 - Be reproducible: cite file:line and the exact problematic construct.
 - If the diff is too large to review thoroughly, decline — do not rubber-stamp.
+- **Scope rule**: Only block on vulnerabilities *introduced or worsened by this PR's diff*. Pre-existing security gaps the diff does not touch must be `advise` at most — they warrant a separate issue, not a PR block. Verify pre-existence with `git log`/`git blame` before blocking.

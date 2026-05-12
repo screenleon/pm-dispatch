@@ -82,3 +82,4 @@ verdict: <2-3 sentences — does the test phase clear the gate?>
 - Never trust coverage % alone. Red line 1: a test that wouldn't fail under plausible mutation doesn't count.
 - Never silently skip a category. `N/A` requires a reason.
 - The three red lines are absolute. No `sleep(N)` async waits; no mocking SUT's own logic; no test you don't expect to fail when the impl breaks.
+- **Scope rule**: Only block on test coverage gaps for behavior *introduced or changed by this PR's diff*. Missing coverage for pre-existing untested code is a non-blocking audit finding at most — file it as a separate issue, not a blocker on this PR.
