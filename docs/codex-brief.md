@@ -8,7 +8,7 @@ The canonical structure for any brief dispatched to `codex-executor` (directly v
 
 | Field | What | Example |
 |---|---|---|
-| `working_dir` | Absolute path. Must exist. | `/home/screenleon/github/japanese-site/` |
+| `working_dir` | Absolute path. Must exist. | `/home/example/github/my-app/` |
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
 | `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
@@ -23,6 +23,8 @@ The pairing matters: `acceptance` is **what** must be true after the run; `self_
 Use as needed; not all briefs require all of them.
 
 - **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change.
+- **`context`** — free-form background section used by composed workflows (e.g., `codex-pr-gate`) to pass reviewer context or codebase summary to the agent.
+- **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
 - **`sandbox`** / **`approval`** — only set when overriding the defaults (`workspace-write` / `never`). Caller must authorize.
 
@@ -158,7 +160,7 @@ Used when extending an existing data file family.
 ## Example brief (good)
 
 ```
-working_dir: /home/screenleon/github/japanese-site/
+working_dir: /home/example/github/my-app/
 goal: Audit PR #8 N1 corpus additions for JLPT level appropriateness — flag mis-classification.
 files:
   - read: server/data/corpus/grammar/N1/{ga-hayai-ka,...}.{json,examples.jsonl}

@@ -11,9 +11,15 @@ Never silently upgrade to Opus.
 
 ## Default: Sonnet
 
-Use `model: "sonnet"` for all agent spawns unless one of the Opus criteria
-below is met. Always specify `model:` explicitly — omitting it inherits the
-main-thread model, which may already be Opus, silently multiplying cost.
+For reviewer and implementation-adjacent agent spawns, use `model: "sonnet"`
+unless one of the Opus criteria below is met. Always specify `model:`
+explicitly unless a named exception below says otherwise — omitting it inherits
+the main-thread model, which may already be Opus, silently multiplying cost.
+
+**Exception — `/pm` skill**: The `/pm` command intentionally omits `model:` on
+its Agent call so the subagent inherits the main thread's active model. Do not
+add `model:` when invoking PM from the `/pm` skill; specify it only when
+invoking PM from non-pm contexts (e.g., PR-gate synthesis step).
 
 ---
 

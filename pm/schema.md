@@ -26,7 +26,7 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md`
 
 ### 2.2 ID 規則
 
-- 條目編號 `<PREFIX>-NNN`，PREFIX 為 repo 縮寫（例：`JS` for japanese-site, `JJ` for JapanJob）。
+- 條目編號 `<PREFIX>-NNN`，PREFIX 為 repo 縮寫（例：`PA` for project-alpha, `PB` for project-beta）。
 - ID 永久穩定：**永不重用、永不重排**。新增固定取「目前最大號 + 1」。
 - closed / dropped 條目保留 ID，狀態欄變更，body 折疊。
 
@@ -99,7 +99,7 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 ```
 
 - `Tags`：放 `priority` / `milestone` 等次要維度。寫法 `P{1-3}` / `M{n}`；多個以 `, ` 分隔；無則整行省略（不寫 `—`）。priority/milestone 不進 index 欄，避免熱點欄位過寬。
-  - **Variant — closed-enum milestone + theme axis**：採用 repo 可改以封閉 enum（如 `{M1, M3, M4, DX}`）約束 `milestone:`，並另加 sibling `theme:` 欄位承載 topic / content 軸（free-form lowercase-kebab-case，single token，ASCII）。此變體下 `milestone:` 在無 release commitment 時整行省略；`theme:` 開放擴充、不需 schema bump。japanese-site 於 2026-05-07 採用此模式（含 yml-level validator），參考 `../japanese-site/DECISIONS.md#2026-05-07-pm-schema-v1-milestone-theme-split`。
+  - **Variant — closed-enum milestone + theme axis**：採用 repo 可改以封閉 enum（如 `{M1, M3, M4, DX}`）約束 `milestone:`，並另加 sibling `theme:` 欄位承載 topic / content 軸（free-form lowercase-kebab-case，single token，ASCII）。此變體下 `milestone:` 在無 release commitment 時整行省略；`theme:` 開放擴充、不需 schema bump。project-alpha 於 2026-05-07 採用此模式（含 yml-level validator），參考 `../project-alpha/DECISIONS.md#2026-05-07-pm-schema-v1-milestone-theme-split`。
 - `Refs`：僅在 index 欄已塞滿（>3 條）或需註記非主要引用時出現；語法同 §2.4.3。索引欄裡的 ref 不必在 body 重複。
 - **不寫實作細節**：不指定具體欄位、API 路徑、檔案改動方式。實作走 codex 的 brief，brief 是 ephemeral，不入 BACKLOG。
 - 暫態（doing / blocked / 進度筆記）以單獨 `**Status note (YYYY-MM-DD)**:` 行追加，最多保留最近 3 條，更舊的併入或刪除。
@@ -119,7 +119,7 @@ closed 條目折疊為 3–5 行：
 
 ### 2.7 Code TODO 追蹤條目（optional pattern）
 
-允許但不強制：將 repo 內的 `// TODO(JS-NNN):` 註解綁到一個 backlog 條目，作為「程式碼欠帳的單一聚集點」。沿用 JapanJob #10 風格：
+允許但不強制：將 repo 內的 `// TODO(PA-NNN):` 註解綁到一個 backlog 條目，作為「程式碼欠帳的單一聚集點」。沿用 project-beta #10 風格：
 
 - 條目主題寫「Code TODO 追蹤」
 - body Requirement 列出當前所有掛 ID 的 TODO 位置
@@ -133,7 +133,7 @@ closed 條目折疊為 3–5 行：
 
 - 按日期**倒序**（最新在上）。
 - 每筆 entry 的 H2 標題格式：`## YYYY-MM-DD: <短描述>`
-- 內容必含：**Context / Decision / Alternatives considered / Constraints introduced** 四節（既有 japanese-site DECISIONS.md 已是此模式）。
+- 內容必含：**Context / Decision / Alternatives considered / Constraints introduced** 四節（既有 project-alpha DECISIONS.md 已是此模式）。
 - 與 BACKLOG closure 對應的 entry 在內文首行寫 `Closes: BACKLOG.md#JS-NNN`。
 - 純跨切面決策（無 backlog 對應）允許 standalone，但需在 Context 解釋為何不掛 backlog。
 
@@ -148,7 +148,7 @@ closed 條目折疊為 3–5 行：
 
 ## 5. 跨 repo 採用規則
 
-- **採用**：active product repo（current: japanese-site, JapanJob, mma-news 等有持續開發的 repo）。
+- **採用**：active product repo（current: project-alpha, project-beta, project-gamma 等有持續開發的 repo）。
 - **跳過**：純 sandbox / 一次性實驗 / 純內容 repo（看個案決定）。
 - 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1 -->`，否則 PM agent 視為未採用、不解析。
 - schema 升級（v2 等）時，`.pm/schema.md` bump 版本，受管 repo 逐個遷移；混用版本期間 PM agent 依個別檔頂部宣告解析。

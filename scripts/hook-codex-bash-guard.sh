@@ -315,7 +315,7 @@ fi
 # anything that turns one tool_input.command into N actual commands or a write.
 #
 # Rejected: ;  &  |  $  `  (  )  <  >  {  }  \   plus literal CR/LF.
-# Permitted: tilde (~), normal punctuation, whitespace, quotes (note: our
+# Permitted: tilde (~), normal punctuation, whitespace (note: our
 # tokenizer doesn't honor quotes, so quoted strings tokenize on whitespace —
 # document this as a known parse limitation).
 
