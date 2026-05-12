@@ -148,6 +148,13 @@ if [[ -x "$REPO_ROOT/scripts/test-setup-project.sh" ]]; then
   echo
 fi
 
+# Pre-flight: gitignore patch helper regression suite
+if [[ -x "$REPO_ROOT/scripts/test-patch-gitignore.sh" ]]; then
+  echo "==> test patch-gitignore"
+  "$REPO_ROOT/scripts/test-patch-gitignore.sh"
+  echo
+fi
+
 install_dir agents
 install_dir skills
 install_dir commands
@@ -170,7 +177,7 @@ us_count=0; us_conflicts=0
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh setup-project.sh; do
+for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else

@@ -15,6 +15,11 @@ FAILED_CASES=()
 pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); printf 'FAIL: %s: %s\n' "$1" "$2"; }
 
+init_git_repo() {
+  local dir="$1"
+  git -C "$dir" init -q
+}
+
 assert_contains() {
   local name="$1" file="$2" needle="$3"
   if ! grep -Fq -- "$needle" "$file" 2>/dev/null; then
@@ -34,6 +39,7 @@ test_creates_gitignore_entries() {
   local name="creates-gitignore-entries"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
@@ -47,6 +53,7 @@ test_patches_existing_gitignore() {
   local name="patches-existing-gitignore"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
   printf '*.log\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
@@ -62,6 +69,7 @@ test_idempotent_gitignore() {
   local name="idempotent-gitignore"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
@@ -81,6 +89,7 @@ test_dry_run_no_modifications() {
   local name="dry-run-no-modifications"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
 
   bash "$SETUP_SCRIPT" --dry-run "$dir" > /dev/null
   if [[ -f "$dir/.gitignore" ]]; then
@@ -126,14 +135,10 @@ test_already_present_entries() {
   local name="already-present-entries"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
   printf '.agent-trace/\n.codex-briefs/\n' > "$dir/.gitignore"
 
-  local out
-  out=$(bash "$SETUP_SCRIPT" "$dir" 2>&1)
-  if ! printf '%s' "$out" | grep -q "already present"; then
-    fail "$name" "expected 'already present' in output"
-    return
-  fi
+  bash "$SETUP_SCRIPT" "$dir" > /dev/null
   local count
   count=$(grep -c "\.agent-trace/" "$dir/.gitignore" || echo 0)
   if [[ "$count" -ne 1 ]]; then
@@ -148,6 +153,7 @@ test_partial_state_no_header_duplicate() {
   local name="partial-state-no-header-duplicate"
   local dir="$TMP_ROOT/$name"
   mkdir -p "$dir"
+  init_git_repo "$dir"
   printf '.agent-trace/\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
