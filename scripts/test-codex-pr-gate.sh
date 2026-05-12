@@ -42,7 +42,8 @@ create_runner() {
   local dir="$1"
   mkdir -p "$dir"
   cp "$REPO_ROOT/scripts/codex-pr-gate.sh" "$dir/codex-pr-gate.sh"
-  chmod +x "$dir/codex-pr-gate.sh"
+  cp "$REPO_ROOT/scripts/patch-gitignore.sh" "$dir/patch-gitignore.sh"
+  chmod +x "$dir/codex-pr-gate.sh" "$dir/patch-gitignore.sh"
   cat > "$dir/codex-dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -71,9 +72,14 @@ if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
   cp "$brief_file" "$CODEX_GATE_CAPTURE_BRIEF"
 fi
 
-# Simulate injection: modify a tracked file if CODEX_GATE_STUB_INJECT_FILE is set.
+# Simulate reviewer-side injection (tracked file modification during reviewer dispatch).
 if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
+fi
+
+# Simulate synthesis-side injection (tracked file modification during synthesis dispatch).
+if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE:-}" && "$brief_file" == *-synthesis.md ]]; then
+  printf 'injected-by-synthesis\n' >> "$CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE"
 fi
 
 # Determine effective mode: synthesis briefs can have their own mode override.
@@ -110,9 +116,13 @@ case "$effective_mode" in
       mkdir -p "$(dirname "$output_path")"
       if [[ "$brief_file" == *-synthesis.md ]]; then
         # Synthesis brief: write a minimal but structurally valid gate result.
-        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' > "$output_path"
+        # CODEX_GATE_STUB_SYNTHESIS_FINAL controls the Final: line (default GO).
+        final_verdict="${CODEX_GATE_STUB_SYNTHESIS_FINAL:-GO}"
+        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: %s\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' "$final_verdict" > "$output_path"
       else
-        printf '## stub-reviewer — advise\nVerdict: advise. Stub output.\n' > "$output_path"
+        # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
+        stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
+        printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
       fi
     fi
     exit 0
@@ -708,6 +718,70 @@ test_adjacent_test_not_duplicated_when_in_diff() {
   pass "$name"
 }
 
+test_synthesis_verdict_mismatch_aborts_gate() {
+  # Verifies that when synthesis writes Final: GO but the shell-computed verdict
+  # from reviewer outputs is NO-GO (block), the gate aborts before reporting success.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_VERDICT=block: reviewers write Verdict: block → SHELL_FINAL=NO-GO
+  #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
+  local name="synthesis-verdict-mismatch-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_VERDICT=block CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis verdict contradicts shell verdict"
+    return
+  fi
+  assert_contains "$name" "$err" "contradicts shell-computed" || return
+  pass "$name"
+}
+
+test_post_synthesis_injection_detected() {
+  # Verifies that a synthesis session modifying a tracked source file is detected
+  # and the gate aborts after synthesis (guards against synthesis-side injection).
+  # Steps:
+  #   1. Create a repo with a committed service.go (clean tracked file)
+  #   2. CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE=service.go: synthesis stub appends to service.go
+  #   3. Run gate in parallel mode (default)
+  #   4. Assert non-zero exit, "synthesis session modified" in stderr
+  local name="post-synthesis-injection-detected"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  printf 'package main\n' > "$repo/service.go"
+  git -C "$repo" add service.go
+  git -C "$repo" commit -q -m "add service.go"
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE="$repo/service.go" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis modifies tracked file"
+    return
+  fi
+  assert_contains "$name" "$err" "synthesis session modified" || return
+  pass "$name"
+}
+
 test_synthesis_no_output_aborts_gate() {
   # Verifies that PM synthesis exiting 0 without writing the gate result file
   # fails the gate — reviewers succeed but synthesis silently omits its output.
@@ -1061,6 +1135,8 @@ run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_sequential_flag_produces_combined_brief
 run_test test_failed_reviewer_aborts_gate
+run_test test_synthesis_verdict_mismatch_aborts_gate
+run_test test_post_synthesis_injection_detected
 run_test test_synthesis_no_output_aborts_gate
 run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate

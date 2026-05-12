@@ -179,15 +179,17 @@ done
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
-# Auto-patch .gitignore so .codex-briefs/ is not tracked
-_PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
-[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/" ".agent-trace/"
+# Auto-patch .gitignore (resolved after SCRIPT_DIR below; see _PATCH_GI reassignment)
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# Resolve patch-gitignore path after SCRIPT_DIR so symlink invocations use the
+# real script directory rather than the symlink's directory.
+_PATCH_GI="$SCRIPT_DIR/patch-gitignore.sh"
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/" ".agent-trace/"
 
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
@@ -337,7 +339,7 @@ output_format: |
   ## Gate Conclusion
   **Overall verdict**: {most severe}
   **Most severe individual verdict**: {most severe}
-  **Final**: GO | NO-GO
+  Final: GO | NO-GO
   {required fixes if NO-GO; override path if any block-soft}
 
 self_verify:
@@ -367,11 +369,12 @@ else
 
   mkdir -p "$WORK_DIR/.agent-trace"
 
-  # Capture working-tree content fingerprint before dispatch so the integrity
-  # check can detect changes to already-dirty tracked files (git diff HEAD
-  # compares content, not just filenames — catches mutations the filename-only
-  # approach would miss; untracked gate artifacts are gitignored and excluded).
+  # Capture working-tree content fingerprints before dispatch.
+  # git diff HEAD: content-level changes to tracked files (catches already-dirty mutations).
+  # git status --porcelain: new untracked source files (gate artifacts are gitignored
+  # by the patch above and excluded from this snapshot).
   _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
+  _PRE_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
@@ -496,12 +499,13 @@ RBRIEF_EOF
     exit 1
   fi
 
-  # Worktree integrity check — detect prompt-injected modifications to tracked files.
-  # Content-hash comparison catches mutations to already-dirty files; filename-only
-  # comparison would miss those because the filename was already in the dirty set.
+  # Worktree integrity check — detect prompt-injected file modifications.
+  # Content-hash catches mutations to already-dirty tracked files; status hash
+  # catches new untracked source files (gate artifacts are gitignored, excluded).
   _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
-  if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" ]]; then
-    printf 'Error: reviewer sessions modified tracked source files — possible prompt injection.\n' >&2
+  _POST_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
+  if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
+    printf 'Error: reviewer sessions modified working tree — possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
     exit 1
   fi
@@ -594,7 +598,7 @@ output_format: |
   ## Gate Conclusion
   **Overall verdict**: {most severe across all reviewers}
   **Most severe individual verdict**: {most severe}
-  **Final**: GO | NO-GO
+  Final: GO | NO-GO
 
   Required fixes before GO: {bulleted list if NO-GO; "none" if GO}
 
@@ -638,11 +642,12 @@ SBRIEF_EOF
     exit 1
   fi
 
-  # Post-synthesis integrity check — same content-hash guard run again to catch
-  # synthesis-side prompt injection that modifies tracked source files.
+  # Post-synthesis integrity check — same dual-hash guard run again to catch
+  # synthesis-side prompt injection (tracked mutations + new untracked files).
   _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | sha256sum 2>/dev/null || true)
-  if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" ]]; then
-    printf 'Error: synthesis session modified tracked source files — possible prompt injection.\n' >&2
+  _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | sha256sum 2>/dev/null || true)
+  if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then
+    printf 'Error: synthesis session modified working tree — possible prompt injection.\n' >&2
     exit 1
   fi
 
