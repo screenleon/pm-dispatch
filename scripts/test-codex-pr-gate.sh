@@ -71,9 +71,34 @@ if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
   cp "$brief_file" "$CODEX_GATE_CAPTURE_BRIEF"
 fi
 
+# Simulate injection: modify a tracked file if CODEX_GATE_STUB_INJECT_FILE is set.
+if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
+  printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
+fi
+
 case "${CODEX_GATE_STUB_MODE:-success}" in
-  fail) exit 1;;
-  *) exit 0;;
+  fail)
+    # Non-zero exit — caught by FAILED_REVIEWERS check.
+    exit 1
+    ;;
+  no-output)
+    # Exits 0 without writing reviewer output file — simulates a reviewer that
+    # silently failed its task (caught by missing-output check).
+    exit 0
+    ;;
+  *)
+    # Success: write a stub reviewer output file so the gate's reviewer-output
+    # validation passes. For reviewer briefs (not synthesis), extract the
+    # '- new:' path from the brief and write a minimal placeholder.
+    if [[ "$brief_file" != *-synthesis.md ]]; then
+      output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+      if [[ -n "$output_path" ]]; then
+        mkdir -p "$(dirname "$output_path")"
+        printf '## stub-reviewer — advise\nVerdict: advise. Stub output.\n' > "$output_path"
+      fi
+    fi
+    exit 0
+    ;;
 esac
 STUB_EOF
   chmod +x "$dir/codex-dispatch.sh"
@@ -433,16 +458,9 @@ test_failed_reviewer_aborts_gate() {
   pass "$name"
 }
 
-test_adjacent_go_test_included() {
-  # Verifies that a *_test.go file adjacent to a changed .go source file is
-  # automatically appended to the brief even when not in the diff.
-  local name="adjacent-go-test-included"
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+_make_go_repo_with_test() {
+  # Helper: init a repo with app.go + app_test.go on main; feature branch changes app.go only.
+  local repo="$1"
   git init -q -b main "$repo"
   (
     cd "$repo"
@@ -457,9 +475,45 @@ test_adjacent_go_test_included() {
     git add app.go
     git commit -q -m "change app.go only"
   )
+}
+
+_make_ts_repo_with_test() {
+  # Helper: init a repo with src/format.ts + a test file; feature branch changes format.ts only.
+  # Args: repo-path  test-path  test-content
+  local repo="$1" test_path="$2" test_content="$3"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p "$(dirname "$test_path")"
+    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
+    printf '%s\n' "$test_content" > "$test_path"
+    git add src/format.ts "$test_path"
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
+    git add src/format.ts
+    git commit -q -m "change format.ts only"
+  )
+}
+
+test_adjacent_go_test_included() {
+  # Verifies that a *_test.go companion to a changed .go source file is
+  # automatically included in the reviewer brief even when not in the diff.
+  # Uses --sequential so CAPTURE_BRIEF holds the combined brief that lists all
+  # review files, directly proving inclusion (not just the stdout counter).
+  local name="adjacent-go-test-included"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  _make_go_repo_with_test "$repo"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -467,37 +521,25 @@ test_adjacent_go_test_included() {
     return
   fi
   assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "app_test.go" || return
   pass "$name"
 }
 
 test_adjacent_ts_test_in_tests_dir() {
   # Verifies that __tests__/<name>.test.ts adjacent to a changed .ts source
-  # file is automatically appended to the brief.
+  # file is included in the reviewer brief.
   local name="adjacent-ts-test-tests-dir"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir" "$dir/repo/src"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  git init -q -b main "$repo"
-  (
-    cd "$repo"
-    git config user.email test@example.com
-    git config user.name 'Gate Test'
-    mkdir -p src/__tests__
-    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
-    printf 'import { fmt } from "../format";\ntest("fmt", () => {});\n' > src/__tests__/format.test.ts
-    git add src/format.ts src/__tests__/format.test.ts
-    git commit -q -m initial
-    git checkout -q -b feature
-    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
-    git add src/format.ts
-    git commit -q -m "change format.ts only"
-  )
+  _make_ts_repo_with_test "$repo" "src/__tests__/format.test.ts" \
+    "import { fmt } from '../format'; test('fmt', () => {});"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -505,37 +547,100 @@ test_adjacent_ts_test_in_tests_dir() {
     return
   fi
   assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "format.test.ts" || return
+  pass "$name"
+}
+
+test_adjacent_ts_test_tsx_variant() {
+  # Verifies that __tests__/<name>.test.tsx is recognised as an adjacent test.
+  local name="adjacent-ts-test-tsx-variant"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  _make_ts_repo_with_test "$repo" "src/__tests__/format.test.tsx" \
+    "import { fmt } from '../format'; test('fmt', () => {});"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "format.test.tsx" || return
+  pass "$name"
+}
+
+test_adjacent_ts_spec_ts_variant() {
+  # Verifies that __tests__/<name>.spec.ts is recognised as an adjacent test.
+  local name="adjacent-ts-spec-ts-variant"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  _make_ts_repo_with_test "$repo" "src/__tests__/format.spec.ts" \
+    "import { fmt } from '../format'; test('fmt', () => {});"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "format.spec.ts" || return
+  pass "$name"
+}
+
+test_adjacent_ts_spec_tsx_variant() {
+  # Verifies that a sibling <name>.spec.tsx file is recognised as an adjacent test.
+  local name="adjacent-ts-spec-tsx-variant"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  _make_ts_repo_with_test "$repo" "src/format.spec.tsx" \
+    "import { fmt } from './format'; test('fmt', () => {});"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "format.spec.tsx" || return
   pass "$name"
 }
 
 test_adjacent_ts_sibling_test() {
-  # Verifies that a sibling <name>.test.ts file is found alongside a changed
-  # .ts source file when it lives in the same directory (not in __tests__/).
+  # Verifies that a sibling <name>.test.ts file (not in __tests__/) is
+  # included in the reviewer brief.
   local name="adjacent-ts-sibling-test"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  git init -q -b main "$repo"
-  (
-    cd "$repo"
-    git config user.email test@example.com
-    git config user.name 'Gate Test'
-    mkdir -p src
-    printf 'export function fmt(s: string) { return s; }\n' > src/format.ts
-    printf 'import { fmt } from "./format";\ntest("fmt", () => {});\n' > src/format.test.ts
-    git add src/format.ts src/format.test.ts
-    git commit -q -m initial
-    git checkout -q -b feature
-    printf 'export function fmt(s: string) { return s.trim(); }\n' > src/format.ts
-    git add src/format.ts
-    git commit -q -m "change format.ts only"
-  )
+  _make_ts_repo_with_test "$repo" "src/format.test.ts" \
+    "import { fmt } from './format'; test('fmt', () => {});"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -543,12 +648,13 @@ test_adjacent_ts_sibling_test() {
     return
   fi
   assert_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_contains "$name" "$brief" "format.test.ts" || return
   pass "$name"
 }
 
 test_adjacent_test_not_duplicated_when_in_diff() {
-  # Verifies that a test file already present in the diff is not re-added as
-  # an adjacent file (de-duplication).
+  # Verifies that a test file already in the diff is not re-appended as an
+  # adjacent file (de-duplication).
   local name="adjacent-test-not-duplicated"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -580,8 +686,61 @@ test_adjacent_test_not_duplicated_when_in_diff() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  # app_test.go is in the diff, so adjacent detection should add 0 extra files
   assert_not_contains "$name" "$out" "adjacent test files added:" || return
+  pass "$name"
+}
+
+test_reviewer_no_output_aborts_gate() {
+  # Verifies that a reviewer session exiting 0 without writing its output file
+  # fails the gate (fail-closed on silent reviewer failure).
+  local name="reviewer-no-output-aborts-gate"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-output run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when reviewer produces no output"
+    return
+  fi
+  assert_contains "$name" "$err" "reviewer output missing or empty" || return
+  pass "$name"
+}
+
+test_prompt_injection_detected() {
+  # Verifies that a reviewer session modifying a tracked source file (simulated
+  # prompt injection) causes the gate to abort before synthesis.
+  local name="prompt-injection-detected"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  # Add a committed tracked source file the stub can modify
+  printf 'package main\n' > "$repo/service.go"
+  git -C "$repo" add service.go
+  git -C "$repo" commit -q -m "add service.go"
+
+  set +e
+  CODEX_GATE_STUB_INJECT_FILE="$repo/service.go" run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when reviewer modifies tracked file"
+    return
+  fi
+  assert_contains "$name" "$err" "prompt injection" || return
+  assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
 
@@ -816,8 +975,13 @@ run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_sequential_flag_produces_combined_brief
 run_test test_failed_reviewer_aborts_gate
+run_test test_reviewer_no_output_aborts_gate
+run_test test_prompt_injection_detected
 run_test test_adjacent_go_test_included
 run_test test_adjacent_ts_test_in_tests_dir
+run_test test_adjacent_ts_test_tsx_variant
+run_test test_adjacent_ts_spec_ts_variant
+run_test test_adjacent_ts_spec_tsx_variant
 run_test test_adjacent_ts_sibling_test
 run_test test_adjacent_test_not_duplicated_when_in_diff
 

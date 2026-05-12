@@ -181,7 +181,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
 # Auto-patch .gitignore so .codex-briefs/ is not tracked
 _PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
-[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/"
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/" ".gate-results/" ".agents/" ".agent-trace/"
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
@@ -367,6 +367,10 @@ else
 
   mkdir -p "$WORK_DIR/.agent-trace"
 
+  # Capture working-tree state before dispatching reviewers so the post-dispatch
+  # integrity check can detect only NEW changes, not pre-existing dirty state.
+  _PRE_DISPATCH_DIFF=$(git diff --name-only HEAD 2>/dev/null | sort || true)
+
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
@@ -454,6 +458,38 @@ RBRIEF_EOF
     printf 'Gate aborted — fix the failing session or use --sequential to diagnose.\n' >&2
     exit 1
   fi
+
+  # Verify every reviewer wrote a non-empty output file — a codex session can
+  # exit 0 without completing its task, which would leave the synthesis brief
+  # with nothing to consolidate and could produce a spurious GO.
+  MISSING_OUTPUTS=()
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    if [[ ! -s "$rf" ]]; then
+      MISSING_OUTPUTS+=("$r")
+    fi
+  done
+  if [[ "${#MISSING_OUTPUTS[@]}" -gt 0 ]]; then
+    printf 'Error: reviewer output missing or empty for: %s\n' "${MISSING_OUTPUTS[*]}" >&2
+    printf 'A reviewer session may have exited 0 without writing its findings file.\n' >&2
+    printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+    exit 1
+  fi
+
+  # Worktree integrity check — detect prompt-injected source file modifications.
+  # Compare pre/post dispatch diff to ignore pre-existing dirty working tree state.
+  _POST_DISPATCH_DIFF=$(git diff --name-only HEAD 2>/dev/null | sort || true)
+  if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" ]]; then
+    INJECTED_FILES=$(comm -13 <(printf '%s\n' "$_PRE_DISPATCH_DIFF") <(printf '%s\n' "$_POST_DISPATCH_DIFF") || true)
+    if [[ -n "$INJECTED_FILES" ]]; then
+      printf 'Error: reviewer sessions modified tracked source files — possible prompt injection:\n' >&2
+      printf '%s\n' "$INJECTED_FILES" >&2
+      printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
+      exit 1
+    fi
+  fi
+
   printf '  all reviewer sessions done.\n\n'
 
   # ── PM synthesis ─────────────────────────────────────────────────────────────
