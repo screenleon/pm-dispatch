@@ -47,15 +47,21 @@ set -euo pipefail
 # not when it already matches the mktemp snapshot pattern. Avoids relying on
 # inherited env (which would let a polluted environment bypass the protection
 # or trick a cleanup trap into deleting an arbitrary file).
-if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}\.sh$ ]]; then
-  __codex_dispatch_snapshot="$(mktemp -t codex-dispatch.XXXXXX.sh)"
+if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.sh$ ]]; then
+  __codex_dispatch_source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  __codex_dispatch_snapshot_dir="$(mktemp -d -t codex-dispatch.XXXXXX)"
+  __codex_dispatch_snapshot="$__codex_dispatch_snapshot_dir/codex-dispatch.sh"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
+  if [[ -f "$__codex_dispatch_source_dir/patch-gitignore.sh" ]]; then
+    cp -- "$__codex_dispatch_source_dir/patch-gitignore.sh" "$__codex_dispatch_snapshot_dir/patch-gitignore.sh"
+    chmod +x -- "$__codex_dispatch_snapshot_dir/patch-gitignore.sh"
+  fi
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
-# Running from the snapshot copy — we own the file, clean it up on exit.
-__codex_dispatch_snapshot="${BASH_SOURCE[0]}"
-trap 'rm -f -- "$__codex_dispatch_snapshot"' EXIT
+# Running from the snapshot copy — we own the directory, clean it up on exit.
+__codex_dispatch_snapshot_dir="$(dirname "${BASH_SOURCE[0]}")"
+trap 'rm -rf -- "$__codex_dispatch_snapshot_dir"' EXIT
 
 WORK_DIR=""
 MODEL=""
@@ -117,6 +123,9 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
 fi
 
 TRACE_DIR="$WORK_DIR/.agent-trace"
+# Auto-patch .gitignore so .agent-trace/ is not tracked
+_PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".agent-trace/"
 mkdir -p "$TRACE_DIR"
 TS=$(date +%Y%m%d-%H%M%S)-$$
 TRACE="$TRACE_DIR/codex-$TS.jsonl"

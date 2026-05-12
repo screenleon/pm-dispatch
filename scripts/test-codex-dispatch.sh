@@ -7,7 +7,7 @@
 # re-exec'ing from a /tmp copy decoupled from the on-disk file.
 #
 # Design: the snapshot trigger is BASH_SOURCE[0]'s shape, NOT an env var.
-# Path verification (must look like `<dir>/codex-dispatch.XXXXXX.sh`) means
+# Path verification (must look like `<tmp>/codex-dispatch.XXXXXX/codex-dispatch.sh`) means
 # polluted ambient environment cannot bypass the snapshot or trick the
 # cleanup trap into removing an arbitrary file.
 set -euo pipefail
@@ -26,8 +26,8 @@ t_pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS+1)); }
 t_fail() { printf 'FAIL: %s\n' "$1" >&2; FAIL=$((FAIL+1)); }
 
 # Resolve the actual tmp dir mktemp -t uses (respects TMPDIR if set).
-SNAP_DIR="$(dirname "$(mktemp -u -t codex-dispatch.XXXXXX.sh)")"
-SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9]+\.sh"
+SNAP_DIR="$(dirname "$(mktemp -u -t codex-dispatch.XXXXXX)")"
+SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9]+/codex-dispatch\.sh"
 
 # ---- 1: --help exits 0 ----
 if "$DISPATCH" --help >/dev/null 2>&1; then
@@ -81,9 +81,9 @@ else
 fi
 
 # ---- 6: cleanup on normal exit (no leak in resolved tmp dir) ----
-before=$(find "$SNAP_DIR" -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
+before=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
 "$DISPATCH" --help >/dev/null 2>&1
-after=$(find "$SNAP_DIR" -maxdepth 1 -name 'codex-dispatch.*.sh' 2>/dev/null | wc -l)
+after=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
 if [[ "$after" -le "$before" ]]; then
   t_pass "snapshot/cleanup — no leak in $SNAP_DIR (before=$before after=$after)"
 else
@@ -94,13 +94,13 @@ fi
 # Stronger than just one keyword; guards against a partial-revert that
 # silently breaks the mechanism while keeping a token of the original block.
 missing=()
-grep -qE 'BASH_SOURCE\[0\].*codex-dispatch\\\.\[A-Za-z0-9\]\{6\}\\\.sh' "$DISPATCH" \
+grep -qE 'BASH_SOURCE\[0\].*codex-dispatch\\\.\[A-Za-z0-9\]\{6\}/codex-dispatch\\\.sh' "$DISPATCH" \
   || missing+=("BASH_SOURCE path-pattern check")
-grep -q 'mktemp -t codex-dispatch'                 "$DISPATCH" || missing+=("mktemp template")
+grep -q 'mktemp -d -t codex-dispatch'              "$DISPATCH" || missing+=("mktemp template")
 grep -q 'cp -- "\${BASH_SOURCE\[0\]}"'             "$DISPATCH" || missing+=("cp from BASH_SOURCE")
 grep -q 'chmod +x'                                  "$DISPATCH" || missing+=("chmod +x")
 grep -qE 'exec "\$__codex_dispatch_snapshot"'      "$DISPATCH" || missing+=("exec snapshot")
-grep -qE "trap.*rm -f.*\\\$__codex_dispatch_snapshot" "$DISPATCH" || missing+=("cleanup trap")
+grep -qE "trap.*rm -rf.*\\\$__codex_dispatch_snapshot_dir" "$DISPATCH" || missing+=("cleanup trap")
 if [[ "${#missing[@]}" -eq 0 ]]; then
   t_pass "snapshot/structural — all snapshot-block constructs present"
 else

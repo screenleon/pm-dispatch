@@ -15,6 +15,7 @@ set -euo pipefail
 
 DRY_RUN=0
 PROJECT_DIR="."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 for arg in "$@"; do
   case "$arg" in
@@ -76,7 +77,11 @@ echo
 
 # 1. Patch root .gitignore
 echo "==> .gitignore"
-patch_file "$PROJECT_DIR/.gitignore"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  bash "$SCRIPT_DIR/patch-gitignore.sh" --dry-run "$PROJECT_DIR" ".agent-trace/" ".codex-briefs/" ".gate-results/" 2>&1 || true
+else
+  bash "$SCRIPT_DIR/patch-gitignore.sh" "$PROJECT_DIR" ".agent-trace/" ".codex-briefs/" ".gate-results/"
+fi
 echo
 
 # 2. Find Dockerfiles and patch the co-located .dockerignore

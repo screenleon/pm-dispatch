@@ -163,11 +163,16 @@ fi
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRIEF_DIR="$WORK_DIR/.codex-briefs"
+# Auto-patch .gitignore so .codex-briefs/ is not tracked
+_PATCH_GI="$(cd "$(dirname "$0")" && pwd)/patch-gitignore.sh"
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".codex-briefs/"
 mkdir -p "$BRIEF_DIR"
 BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
 trap 'rm -f "${BRIEF_FILE:-}"' EXIT
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
+# Auto-patch .gitignore so .gate-results/ is not tracked
+[[ -x "$_PATCH_GI" ]] && bash "$_PATCH_GI" "$WORK_DIR" ".gate-results/"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
 # ── Build file entries for the brief ─────────────────────────────────────────
