@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression suite for hook-pm-write-guard.sh and hook-codex-bash-guard.sh.
+# Regression suite for hook-pm-write-guard.sh, hook-codex-bash-guard.sh, and hook-codex-write-guard.sh.
 #
 # Runs each hook script with a stdin payload that simulates the PreToolUse JSON
 # Claude Code emits, asserts the exit code, optionally checks for a substring in

@@ -4,7 +4,7 @@ description: Executes a well-defined coding task by dispatching to the Codex CLI
 tools: Bash, Read
 ---
 
-Thin dispatcher. You write brief files to disk and invoke Codex; you do not implement tasks yourself.
+Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
 
 # Validation
 
