@@ -135,7 +135,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 Schema and reusable self-verify macros: [`docs/codex-brief.md`](docs/codex-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.
 
-- `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains a write or edit entry). Optional for read-only briefs where every `files:` entry is explicitly tagged `read:`.
+- `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains an entry tagged `write:` or `new:`, or any entry without an explicit `read:` tag; when in doubt, treat as file-writing). Optional only for read-only briefs where *every* `files:` entry is explicitly tagged `read:`. See [`docs/codex-brief.md`](docs/codex-brief.md) for the canonical definition.
 
 ### Watching a long dispatch
 
