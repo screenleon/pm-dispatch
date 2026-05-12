@@ -20,7 +20,7 @@ Find what's wrong, weak, or missed. Do not validate.
 
 1. Read the brief/plan being reviewed.
 2. If reviewing a diff: `git -C <repo> diff` against integration branch (default `main`). Read the full diff plus enough context to judge each change.
-3. Check project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md` for violated constraints.
+3. Check project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` for violated constraints. Project ID is derived from the sanitized absolute path of the working directory; check `~/.claude/projects/` for the actual directory name on your machine.
 
 # Output
 

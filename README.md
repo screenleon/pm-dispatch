@@ -52,7 +52,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 ### Agents
 
 **Orchestration**
-- **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md`.
+- **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md`. The project ID is derived from the sanitized absolute path of the working directory; check `~/.claude/projects/` for the actual directory name on your machine.
 - **codex-executor** — Thin wrapper subagent, dispatched by the main thread. Accepts a complete brief, calls Codex via `scripts/codex-dispatch.sh`, verifies via `git diff`, reports back.
 
 **Reviewers (advisors — PM may override with reasoning)**
@@ -62,7 +62,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 **Reviewers (HARD GATES — only the user can override a `block`)**
 - **security-reviewer** — OWASP-style security review for any implementation change. Auth, injection, secrets, deps, deserialization, etc.
 - **risk-reviewer** — Blast radius, reversibility, migration safety, fail mode, observability. Distinct from security.
-- **qa-tester** — Owns the testing phase. Loads `~/github/qa-testing-rules/AGENT.md` as Tier 1 source of truth for test categories, layer choice, and anti-patterns. Red-line violations are blocking.
+- **qa-tester** — Owns the testing phase. Loads `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}/AGENT.md` as Tier 1 source of truth for test categories, layer choice, and anti-patterns. Red-line violations are blocking.
 
 ### Commands
 
@@ -79,13 +79,13 @@ usage.
 
 ### External dependencies
 
-- [`screenleon/qa-testing-rules`](https://github.com/screenleon/qa-testing-rules) cloned at `~/github/qa-testing-rules/`. Used by `qa-tester`. If missing, qa-tester will stop and ask you to clone it.
+- A local `qa-testing-rules` checkout. Used by `qa-tester`; default path is `~/github/qa-testing-rules/`. Set `QA_RULES_DIR` if the repo lives elsewhere.
 
 ### Scripts
 
 - **codex-dispatch.sh** — Invokes `codex exec` with tracing, sandbox/approval flags, timeout (default 1200s, override via `--timeout` or `$CODEX_DISPATCH_TIMEOUT`), file-first dispatch via `--brief-file <path>`, and final-message capture. Inline `-- <brief>` is retained only for trivial smoke checks; real briefs should be written to a file to avoid shell quoting, hook-validation, and multiline prompt failures. Writes `.agent-trace/codex-<ts>.{jsonl,last,stderr}` and refreshes `.agent-trace/latest.{jsonl,last,stderr}` symlinks so observers can attach without knowing the timestamp. Exit 124 = hit the timeout (silent codex hang most likely cause).
 - **codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
-- **hook-pm-write-guard.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/-home-screenleon-github/memory/`. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `CLAUDE_HOOK_PM_GUARD=off`. Requires `jq` and `realpath`.
+- **hook-pm-write-guard.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/<claude-project-id>/memory/`. The project ID is derived from the sanitized absolute path of the working directory; check `~/.claude/projects/` for the actual directory name on your machine. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `CLAUDE_HOOK_PM_GUARD=off`. Requires `jq` and `realpath`.
 - **hook-codex-bash-guard.sh** — `PreToolUse` hook (matcher `Bash`). Defends against accidental and prompt-injected misuse of `codex-executor`. Layers, in order:
   1. Reject any command containing shell composition / substitution / redirection metacharacters: `; & | $ \` ( ) < > { } \` or `CR` / `LF`. Also reject `"` and `'` (the tokenizer doesn't honor quoting; rejecting them prevents `cat "/etc/passwd"` from skipping path validation). Closes `git status; rm -rf /`, `git $(curl evil)`, `git status >/etc/cron.d/x`, `cat <(...)`, etc.
   2. Allow only one of: the canonical `codex-dispatch.sh` path; one of the read-only verbs `cat ls head tail wc grep pwd realpath dirname basename jq test sleep date echo true false`; or `git`.
@@ -119,6 +119,10 @@ usage.
 - **PM thinks, Codex implements.** `project-pm` writes the brief; `codex-executor` is a dispatcher, not a designer. Architecture, scope, and acceptance criteria stay with the PM.
 - **Definitions in repo, state on disk.** Agent and command definitions are version-controlled here. Per-project state (memory, traces) lives in `~/.claude/` and stays out of this repo.
 - **Decoupled from agent-playbook-template.** The playbook is a methodology framework; this repo is a personal config. They evolve independently.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
 
 ## Adding new pieces
 

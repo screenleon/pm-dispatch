@@ -22,7 +22,7 @@ Out of scope: style (critic), security/risk (separate), tests (qa-tester), featu
 
 1. Read brief + `git -C <repo> diff`.
 2. Read what *was* the design: `ARCHITECTURE.md` if present, the changed module's directory layout, how peers handle similar concerns.
-3. Check project memory at `~/.claude/projects/-home-screenleon-github/memory/project_<repo>.md` for prior decisions that bind this change.
+3. Check project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` for prior decisions that bind this change. Project ID is derived from the sanitized absolute path of the working directory; check `~/.claude/projects/` for the actual directory name on your machine.
 
 # Output
 

@@ -238,10 +238,10 @@ run_case "cxw: Edit /tmp/brief-task.md → allow" 0 "$CXWHOOK" \
 
 # --- denied: source tree / home dir ---
 run_case "cxw: Write source file → deny" 2 "$CXWHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/backend/seeds/100_demo_content.sql"}}'
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/backend/seeds/100_demo_content.sql"}}'
 
 run_case "cxw: Edit source file → deny" 2 "$CXWHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/screenleon/github/claude-config/agents/codex-executor.md"}}'
+  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/claude-config/agents/codex-executor.md"}}'
 
 run_case "cxw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/other.md"}}'
@@ -264,10 +264,10 @@ run_case "cxw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$CX
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/whatever.md"}}'
 
 run_case "cxw: critic Write anywhere → no-op" 0 "$CXWHOOK" \
-  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 run_case "cxw: main thread (no agent_type) Write → no-op" 0 "$CXWHOOK" \
-  '{"tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
+  '{"tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 run_case "cxw: codex-executor Bash → no-op (matcher would not fire it)" 0 "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}'
@@ -293,7 +293,7 @@ unset _cxw_symlink_target _cxw_symlink_brief
 
 # --- bypass ---
 run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}'
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions ---
 truncate_log
@@ -303,12 +303,12 @@ assert_log "cxw: allow line records agent=codex-executor" "agent=codex-executor"
 assert_log "cxw: allow line records tool=Write" "tool=Write"
 
 truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
+printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains deny line" "decision=deny"
 assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
 
 truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/screenleon/github/JapanJob/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
+printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains bypass line" "decision=bypass"
 assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -496,16 +496,16 @@ run_case "cx: cat ~/.ssh/id_rsa → deny (tilde rejected)" 2 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat ~/.ssh/id_rsa"}}' \
   "tilde path"
 
-run_case "cx: cat /home/screenleon/.aws/credentials → deny (outside read root)" 2 "$CXHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat /home/screenleon/.aws/credentials"}}' \
+run_case "cx: cat /home/example/.aws/credentials → deny (outside read root)" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat /home/example/.aws/credentials"}}' \
   "outside read roots"
 
-run_case "cx: grep secret /home/screenleon/.netrc → deny" 2 "$CXHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep secret /home/screenleon/.netrc"}}' \
+run_case "cx: grep secret /home/example/.netrc → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"grep secret /home/example/.netrc"}}' \
   "outside read roots"
 
-run_case "cx: ls /home/screenleon/.config → deny" 2 "$CXHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /home/screenleon/.config"}}' \
+run_case "cx: ls /home/example/.config → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /home/example/.config"}}' \
   "outside read roots"
 
 # --- security: glob rejection ---
@@ -753,8 +753,8 @@ run_case "cx: git -C /etc status → deny (outside read roots)" 2 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /etc status"}}' \
   "git -C dir outside read roots"
 
-run_case "cx: git -C /home/screenleon/.ssh status → deny" 2 "$CXHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /home/screenleon/.ssh status"}}' \
+run_case "cx: git -C /home/example/.ssh status → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git -C /home/example/.ssh status"}}' \
   "git -C dir outside read roots"
 
 run_case "cx: git -C /tmp/../etc status → deny (traversal normalizes)" 2 "$CXHOOK" \
