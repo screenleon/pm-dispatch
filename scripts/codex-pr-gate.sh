@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codex-pr-gate.sh — PR-gate review via codex
+# codex-pr-gate.sh — PR-gate review via a dispatched session
 #
-# Default mode (sequential): all reviewers run in order inside one combined
-# codex session. Lower token cost — recommended for most workflows.
+# DEFAULT (single-session / sequential):
+#   All reviewers run in order inside ONE combined dispatch session.
+#   Lower token cost. All reviewer findings appear in a single output file.
+#   Use this for most routine changes.
 #
-# Use --parallel to run one independent codex session per reviewer (stronger
-# isolation; no shared context window between reviewers) plus a PM synthesis
-# session. Higher token cost — suitable for sensitive paths or when reviewer
-# independence matters.
+# MULTI-SESSION (--parallel):
+#   Each reviewer runs in its own INDEPENDENT dispatch session, followed by a
+#   separate PM synthesis session. Reviewers share no context window, which
+#   eliminates anchoring bias across reviewers.
+#   Higher token cost. Use for auth/payment/migration paths or when reviewer
+#   independence is worth the extra cost.
 #
 # Adjacent test files (not in the diff but directly paired to a changed source
 # file) are automatically added to every reviewer brief so coverage gaps in
@@ -25,9 +29,9 @@ set -euo pipefail
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
-#   --timeout <secs>     codex-dispatch timeout per session (default: 1200)
-#   --parallel           run one codex session per reviewer + PM synthesis (higher token cost)
-#   --sequential         alias for default mode (kept for backward compatibility)
+#   --timeout <secs>     dispatch timeout per session (default: 1200)
+#   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
+#   --sequential         alias for default single-session mode (kept for backward compatibility)
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -361,12 +365,11 @@ BRIEF_EOF
 
 else
 
-  # ── Parallel mode (--parallel): one codex session per reviewer + PM synthesis ──
-  # Higher token cost; use when reviewer independence matters (auth/payment/
-  # migration paths) or when sequential results need a second opinion.
-  # Each reviewer runs independently — no shared context window means no
-  # anchoring bias or token pressure from earlier reviewers bleeding through.
-  # PM synthesis reads all reviewer output files and consolidates.
+  # ── Multi-session mode (--parallel): one independent dispatch per reviewer + synthesis ──
+  # Each reviewer runs in its own session with no shared context — eliminates
+  # anchoring bias that can occur when all reviewers share one session window.
+  # Followed by a PM synthesis session that consolidates all individual results.
+  # Higher token cost vs single-session; suitable for auth/payment/migration paths.
 
   REVIEWER_OUTPUT_FILES=()
   DISPATCH_PIDS=()
@@ -508,7 +511,7 @@ RBRIEF_EOF
   for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
     rf="${REVIEWER_OUTPUT_FILES[$i]}"
     r="${REVIEWER_NAMES[$i]}"
-    if ! grep -qE '^Verdict: (approve|advise|block-soft|block)' "$rf"; then
+    if ! grep -qE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf"; then
       INVALID_OUTPUTS+=("$r")
     fi
   done
@@ -519,7 +522,7 @@ RBRIEF_EOF
     exit 1
   fi
 
-  # Worktree integrity check — detect prompt-injected file modifications.
+  # Worktree integrity check — detect prompt-injected tracked-file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
   # catches new untracked source files (gate artifacts are gitignored, excluded).
   _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
@@ -530,13 +533,21 @@ RBRIEF_EOF
     exit 1
   fi
 
+  # Reviewer artifact integrity — snapshot each reviewer output file content now,
+  # before synthesis, to detect synthesis-side tampering of reviewer artifacts.
+  # Reviewer outputs are gitignored and not covered by the worktree hash above.
+  REVIEWER_ARTIFACT_HASHES=()
+  for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
+    REVIEWER_ARTIFACT_HASHES+=("$(cat "$rf" | $_HASH_CMD)")
+  done
+
   printf '  all reviewer sessions done.\n\n'
 
   # Compute the final verdict deterministically in shell before synthesis.
   # Synthesis is treated as prose-only; the shell verdict is the authoritative gate result.
   SHELL_VERDICT="approve"
   for rf in "${REVIEWER_OUTPUT_FILES[@]}"; do
-    rv=$(grep -oE '^Verdict: (approve|advise|block-soft|block)' "$rf" | head -1 | awk '{print $2}' || true)
+    rv=$(grep -oE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" | head -1 | awk '{print $2}' | tr -d '. ' || true)
     case "$rv" in
       block) SHELL_VERDICT="block" ;;
       block-soft) [[ "$SHELL_VERDICT" != "block" ]] && SHELL_VERDICT="block-soft" ;;
@@ -664,8 +675,24 @@ SBRIEF_EOF
     exit 1
   fi
 
-  # Post-synthesis integrity check — same dual-hash guard run again to catch
-  # synthesis-side prompt injection (tracked mutations + new untracked files).
+  # Verify reviewer artifact files were not modified by synthesis.
+  # These are gitignored and not covered by the tracked-file hash above.
+  TAMPERED_ARTIFACTS=()
+  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+    rf="${REVIEWER_OUTPUT_FILES[$i]}"
+    r="${REVIEWER_NAMES[$i]}"
+    current_hash="$(cat "$rf" | $_HASH_CMD)"
+    if [[ "${REVIEWER_ARTIFACT_HASHES[$i]}" != "$current_hash" ]]; then
+      TAMPERED_ARTIFACTS+=("$r")
+    fi
+  done
+  if [[ "${#TAMPERED_ARTIFACTS[@]}" -gt 0 ]]; then
+    printf 'Error: reviewer artifact(s) modified after review phase — synthesis-side tampering detected: %s\n' \
+      "${TAMPERED_ARTIFACTS[*]}" >&2
+    exit 1
+  fi
+
+  # Post-synthesis integrity check — same dual-hash guard for tracked files.
   _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
   _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
   if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then

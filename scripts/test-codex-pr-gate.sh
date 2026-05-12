@@ -82,6 +82,24 @@ if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE:-}" && "$brief_file" == *-synt
   printf 'injected-by-synthesis\n' >> "$CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE"
 fi
 
+# Simulate synthesis-side artifact tampering: synthesis modifies a reviewer output file.
+# CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT: path to the reviewer artifact to tamper with.
+if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT:-}" && "$brief_file" == *-synthesis.md ]]; then
+  printf 'tampered-by-synthesis\n' >> "$CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT"
+fi
+
+# Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
+# with the right prefix) to verify the anchored regex rejects it.
+# CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: write an invalid prefix verdict instead of a valid one.
+if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-synthesis.md ]]; then
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+  if [[ -n "$output_path" ]]; then
+    mkdir -p "$(dirname "$output_path")"
+    printf '## stub-reviewer — approved\nVerdict: approved. Prefix-only bypass attempt.\n' > "$output_path"
+  fi
+  exit 0
+fi
+
 # Determine effective mode: synthesis briefs can have their own mode override.
 if [[ "$brief_file" == *-synthesis.md ]]; then
   effective_mode="${CODEX_GATE_STUB_SYNTHESIS_MODE:-${CODEX_GATE_STUB_MODE:-success}}"
@@ -910,6 +928,172 @@ test_prompt_injection_detected() {
   pass "$name"
 }
 
+test_block_soft_verdict_is_no_go() {
+  # Verifies that block-soft (the mildest blocking verdict) causes SHELL_FINAL=NO-GO
+  # and the gate exits with a contradiction error when synthesis writes Final: GO.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_VERDICT=block-soft: reviewers write Verdict: block-soft → SHELL_FINAL=NO-GO
+  #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
+  #   3. Run gate in --parallel mode
+  #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
+  local name="block-soft-verdict-is-no-go"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft CODEX_GATE_STUB_SYNTHESIS_FINAL=GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when block-soft verdict triggers NO-GO"
+    return
+  fi
+  assert_contains "$name" "$err" "contradicts shell-computed" || return
+  pass "$name"
+}
+
+test_synthesis_artifact_tamper_detected() {
+  # Verifies that synthesis modifying a reviewer output artifact (gitignored) is detected
+  # before the final verdict is accepted. This guards against a synthesis session
+  # writing forged findings into an already-validated reviewer file.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change) with a committed tracked file
+  #   2. Run gate in --parallel mode; synthesis stub appends to the first reviewer output
+  #   3. Assert non-zero exit and "artifact" or "tampering" in stderr
+  local name="synthesis-artifact-tamper-detected"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  # We need to know the reviewer artifact path before the gate runs. The gate names
+  # artifacts reviewer-{name}-{timestamp}.md under .gate-results/. Use a fixed output
+  # dir and discover the file after reviewers complete via CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT.
+  # Since the path is dynamic, we use a helper: find the first reviewer artifact after dispatch.
+  # Simplest: let synthesis tamper with the path discovered from the output directory.
+  # Use CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT pointing to a known path we construct below.
+  #
+  # Approach: run the gate with a custom output dir, then have synthesis tamper with the
+  # first reviewer-*.md file in that dir by using a wrapper that does the lookup.
+  # For test simplicity, use CODEX_GATE_STUB_SYNTHESIS_TAMPER_ARTIFACT with a glob via
+  # a wrapper script instead of a fixed path.
+  #
+  # Simpler: patch the synthesis inject to target a reviewer artifact by path pattern.
+  # We use a temp file as the tamper target and point synthesis to overwrite it. But we
+  # need the actual reviewer artifact path. Use a marker file approach: the reviewer stub
+  # writes its output_path to a known location; synthesis reads that and tampers with it.
+  #
+  # Simplest working approach: create a pre-existing file at the expected artifact path
+  # prefix and point SYNTHESIS_TAMPER at it. Use a fixed timestamp trick via a fixed output.
+  local fixed_output="$dir/fixed-gate-result.md"
+  # We cannot know reviewer artifact paths ahead of time. Instead, use the existing
+  # CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE mechanism targeting a tracked file to confirm
+  # the synthesis-side artifact hash check works via the tracked-file guard as a baseline.
+  #
+  # For the gitignored reviewer artifact case: create a marker file that the synthesis stub
+  # can find via env. We record the first reviewer artifact after the reviewers run.
+  # The only way to do this cleanly in the test is a helper wrapper for codex-dispatch.sh
+  # that records the last reviewer output path and exposes it to synthesis.
+  #
+  # Given test complexity, implement via a second wrapper layer: create a dispatch wrapper
+  # that, on synthesis dispatch, reads the last reviewer output file in .gate-results/ and
+  # appends to it, simulating synthesis-side artifact tampering.
+  local runner2="$dir/runner2"
+  mkdir -p "$runner2"
+  cp "$runner/codex-pr-gate.sh" "$runner2/codex-pr-gate.sh"
+  cp "$runner/patch-gitignore.sh" "$runner2/patch-gitignore.sh"
+  chmod +x "$runner2/codex-pr-gate.sh" "$runner2/patch-gitignore.sh"
+
+  # Wrapper dispatch: on synthesis brief, tamper with the most recently written reviewer artifact.
+  cat > "$runner2/codex-dispatch.sh" <<'TWRAP_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+brief_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --brief-file) brief_file="$2"; shift 2;;
+    --cd|--timeout) shift 2;;
+    *) shift;;
+  esac
+done
+
+printf 'DISPATCH_STUB:success\n'
+
+output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
+[[ -n "$output_path" ]] && mkdir -p "$(dirname "$output_path")"
+
+if [[ "$brief_file" == *-synthesis.md ]]; then
+  # Synthesis: tamper with the most recently written reviewer artifact before writing output
+  gate_dir="$(dirname "$output_path")"
+  reviewer_artifact=$(ls -t "$gate_dir"/reviewer-*.md 2>/dev/null | head -1 || true)
+  if [[ -n "$reviewer_artifact" ]]; then
+    printf 'tampered-by-synthesis\n' >> "$reviewer_artifact"
+  fi
+  # Write valid synthesis output so other checks pass
+  printf '# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
+else
+  stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
+  printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+fi
+exit 0
+TWRAP_EOF
+  chmod +x "$runner2/codex-dispatch.sh"
+
+  set +e
+  HOME="$home" "$runner2/codex-pr-gate.sh" --cd "$repo" --base main --parallel > "$out" 2> "$err"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis tampers with reviewer artifact"
+    return
+  fi
+  if ! grep -qiE "artifact|tamper" "$err"; then
+    fail "$name" "expected 'artifact' or 'tamper' in stderr; got: $(cat "$err")"
+    return
+  fi
+  pass "$name"
+}
+
+test_verdict_prefix_rejected() {
+  # Verifies that a verdict line with a valid prefix but invalid suffix is rejected.
+  # For example "Verdict: approved" must not be accepted as "Verdict: approve".
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: stub writes "Verdict: approved" (not "approve")
+  #   3. Run gate in --parallel mode
+  #   4. Assert non-zero exit and "missing valid Verdict line" in stderr
+  local name="verdict-prefix-rejected"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1 run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when verdict uses invalid prefix-only token"
+    return
+  fi
+  assert_contains "$name" "$err" "missing valid Verdict line" || return
+  pass "$name"
+}
+
 test_hash_tool_missing_aborts_gate() {
   # Verifies that when neither sha256sum nor shasum is available the gate
   # exits non-zero immediately in --parallel mode rather than silently
@@ -1215,6 +1399,9 @@ run_test test_synthesis_no_output_aborts_gate
 run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_prompt_injection_detected
+run_test test_block_soft_verdict_is_no_go
+run_test test_synthesis_artifact_tamper_detected
+run_test test_verdict_prefix_rejected
 run_test test_hash_tool_missing_aborts_gate
 run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_adjacent_go_test_included
