@@ -285,6 +285,26 @@ if [[ "${CLAUDE_HOOK_CODEX_GUARD:-}" == "off" ]]; then
   exit 0
 fi
 
+# Reject background mode. The dispatch script must run foreground so the
+# codex-executor subagent process stays alive until codex finishes; otherwise
+# the harness orphans the background job mid-run (see codex-executor.md
+# §Dispatch "What goes wrong with background mode"). The doc-level rule was
+# repeatedly ignored by the subagent — enforce structurally.
+#
+# Multi-path JSON check: the Claude Code harness payload shape for the
+# `run_in_background` flag is undocumented. An initial fix that only checked
+# `.tool_input.run_in_background` was bypassed in the wild (2026-05-11). Three
+# plausible paths are checked; treat the multi-path strategy as deliberate
+# policy, not a TODO — the right fix is `+= path on next bypass observation`
+# rather than `pick one canonical path`.
+run_in_bg_a="$(jq -r '.tool_input.run_in_background // empty' <<<"$input" 2>/dev/null)"
+run_in_bg_b="$(jq -r '.run_in_background // empty' <<<"$input" 2>/dev/null)"
+run_in_bg_c="$(jq -r '.tool_options.run_in_background // empty' <<<"$input" 2>/dev/null)"
+
+if [[ "$run_in_bg_a" == "true" || "$run_in_bg_b" == "true" || "$run_in_bg_c" == "true" ]]; then
+  deny "run_in_background:true forbidden on codex-executor Bash (orphans dispatch — see codex-executor.md §Dispatch)"
+fi
+
 if [[ -z "$command" ]]; then
   deny "tool_input.command empty"
 fi

@@ -95,6 +95,8 @@ Do NOT set `isolation: "worktree"` on the Agent tool call for codex-executor. Th
 
 When dispatching multiple independent codex-executor agents in the same turn, set `run_in_background: true` on every Agent call. This keeps the main thread responsive to new user input. The main thread receives a completion notification automatically when each background agent finishes. Without this flag, the main thread blocks on each agent sequentially.
 
+> **Scope of this rule**: applies to the main thread's `Agent` tool call when dispatching codex-executor. It does NOT apply to the Bash dispatch call that runs INSIDE codex-executor (which must remain foreground-only per §Dispatch — `hook-codex-bash-guard.sh` enforces this structurally and will deny `run_in_background:true` on codex-executor's Bash invocations).
+
 **Rule 3 — `self_verify` is mandatory in file-writing briefs**
 
 A file-writing brief is any brief whose `files:` block contains an entry without an explicit `read:` tag (i.e. any create or modify). `codex-executor` rejects such briefs immediately if `self_verify` is absent. Always include it — omitting it wastes a full agent invocation on a validation rejection with 0 tool uses.

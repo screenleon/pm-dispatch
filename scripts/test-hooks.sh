@@ -905,6 +905,60 @@ run_case "cx: git branch -a (only branch gate sets allowed=1 now)" 0 "$CXHOOK" \
 run_case "cx: git stash list (only stash gate sets allowed=1 now)" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git stash list"}}'
 
+# --- run_in_background:true deny path ---------------------------------------
+# The hook denies `run_in_background:true` because backgrounding the
+# codex-dispatch.sh call from inside the codex-executor subagent orphans the
+# codex job (subagent process dies when its Bash returns; harness SIGKILLs the
+# orphaned background command). See codex-executor.md §Dispatch.
+#
+# The harness payload shape for the `run_in_background` flag is undocumented;
+# the hook hedges across three plausible JSON paths. EVERY path must have a
+# regression test — a prior single-path fix shipped without tests was bypassed
+# in production (see DEBUG comment in hook-codex-bash-guard.sh).
+
+# Path 1 of 3: nested under tool_input.
+run_case "cx: run_in_background:true in tool_input → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}' \
+  "run_in_background:true forbidden"
+
+# Path 2 of 3: top-level envelope sibling of tool_input.
+run_case "cx: run_in_background:true at top level → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","run_in_background":true,"tool_input":{"command":"git status"}}' \
+  "run_in_background:true forbidden"
+
+# Path 3 of 3: nested under tool_options.
+run_case "cx: run_in_background:true in tool_options → deny" 2 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_options":{"run_in_background":true},"tool_input":{"command":"git status"}}' \
+  "run_in_background:true forbidden"
+
+# Allow: explicit false should never trigger the deny.
+run_case "cx: run_in_background:false in tool_input → allow" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":false}}'
+
+# Allow: field absent (the common case) should never trigger the deny.
+run_case "cx: run_in_background field absent → allow" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}'
+
+# Bypass: CLAUDE_HOOK_CODEX_GUARD=off must skip the new check (consistent with
+# the bypass behaviour for all other guard checks in this hook).
+run_case_env "cx: bypass CLAUDE_HOOK_CODEX_GUARD=off with run_in_background:true → allow" 0 \
+  "CLAUDE_HOOK_CODEX_GUARD=off" "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
+
+# Narrowness: only an exact boolean true (jq -r "true") triggers — string "yes",
+# numeric 1, mixed-case "TRUE" are NOT denied. Documents the intentional
+# scope of the check; a future widening would require an explicit decision.
+run_case "cx: run_in_background:\"yes\" (string) → allow (only boolean true denied)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":"yes"}}'
+
+run_case "cx: run_in_background:1 (numeric) → allow (only boolean true denied)" 0 "$CXHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":1}}'
+
+# Negative: non-codex-executor agents are unaffected by the run_in_background
+# check (and indeed by the entire hook — it no-ops for other agent types).
+run_case "cx: main thread (no agent_type) with run_in_background:true → no-op allow" 0 "$CXHOOK" \
+  '{"tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
+
 # =============================================================================
 # summary
 # =============================================================================
