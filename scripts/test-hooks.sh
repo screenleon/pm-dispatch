@@ -1153,6 +1153,29 @@ stop_nested_message_usage() {
   fi
 }
 
+stop_no_session_id_skips_log() {
+  local name="stop_no_session_id_skips_log" home transcript payload status
+  home="$(make_stop_home)"
+  transcript="$home/transcript-nosession.jsonl"
+  printf '%s\n' \
+    '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' \
+    > "$transcript"
+  # Payload has transcript_path but no session_id field
+  payload="$(jq -nc --arg path "$transcript" '{transcript_path:$path}')"
+  # Invoke twice — without session_id the hook must skip logging (cannot deduplicate)
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, tracker unexpectedly exists)\n' "$name" "$status"
+  fi
+}
+
 stop_happy_path
 stop_missing_transcript_path
 stop_transcript_file_not_found
@@ -1161,6 +1184,7 @@ stop_zero_token_transcript
 stop_failure_logged
 stop_idempotent_double_call
 stop_nested_message_usage
+stop_no_session_id_skips_log
 
 # =============================================================================
 # summary

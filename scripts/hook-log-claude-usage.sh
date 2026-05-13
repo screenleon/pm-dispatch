@@ -33,6 +33,8 @@ PYEOF
 )
 
 [[ "${tokens:-0}" -gt 0 ]] || exit 0
+# Require session_id: without a stable key we cannot deduplicate repeated Stop events.
+[[ -n "${session_id:-}" ]] || exit 0
 
 # Delta-based logging: only log tokens not yet recorded for this session.
 # Prevents duplicate entries if Stop fires multiple times for the same session.
