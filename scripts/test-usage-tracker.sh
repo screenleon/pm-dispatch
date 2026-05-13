@@ -431,23 +431,24 @@ write_calib() {
 echo "== claude-usage: --remaining =="
 
 case_remaining_basic_no_calibration() {
-  local name="remaining_basic_no_calibration" home out
+  local name="remaining_basic_no_calibration" home out status
   home="$(new_home "$name")"
   local t1; t1="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-2H +%Y-%m-%dT%H:%M:%SZ)"
   local t2; t2="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
   write_log "$home" "$t1" "codex_task"   120000 "first op"
   write_log "$home" "$t2" "pm_analysis"   80000 "second op"
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
   assert_contains "$name" "$out" "Remaining Capacity Estimate"
   assert_contains "$name" "$out" "Inferred total limit"
   assert_contains "$name" "$out" "Remaining tokens"
   assert_contains "$name" "$out" "tokens/hr"
+  assert_exit "$name" "$status" 0
   pass_case "$name"
 }
 
 case_remaining_with_calibration() {
-  local name="remaining_with_calibration" home out
+  local name="remaining_with_calibration" home out status
   home="$(new_home "$name")"
   local t1; t1="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-2H +%Y-%m-%dT%H:%M:%SZ)"
   local t2; t2="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
@@ -455,11 +456,12 @@ case_remaining_with_calibration() {
   write_log "$home" "$t2" "codex_task"  80000 "op2"
   write_calib "$home" 600000
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
   assert_contains "$name" "$out" "Calibrated limit"
   assert_contains "$name" "$out" "600,000"
   assert_contains "$name" "$out" "from calibration"
   assert_contains "$name" "$out" "Inferred total limit"
+  assert_exit "$name" "$status" 0
   pass_case "$name"
 }
 

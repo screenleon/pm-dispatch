@@ -1089,12 +1089,51 @@ stop_failure_logged() {
   fi
 }
 
+stop_idempotent_double_call() {
+  local name="stop_idempotent_double_call" home transcript payload status logfile total
+  home="$(make_stop_home)"
+  transcript="$home/transcript-idem.jsonl"
+  printf '%s\n' \
+    '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' \
+    '{"role":"user","usage":{"input_tokens":500,"output_tokens":0}}' \
+    > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "sess-idem" \
+    '{transcript_path:$path,session_id:$session}')"
+  # First invocation
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  # Second invocation (same session + transcript)
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  logfile="$home/.claude/usage-tracker.jsonl"
+  # Sum all session_total entries for this session - must equal 1700, not 3400
+  total=$(python3 -c "
+import json
+total = 0
+for line in open('$logfile'):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'session_total':
+            total += e.get('tokens', 0)
+    except: pass
+print(total)
+" 2>/dev/null || echo 0)
+  if [[ "$status" == "0" && "$total" == "1700" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, total=%s, expected 1700)\n' "$name" "$status" "$total"
+  fi
+}
+
 stop_happy_path
 stop_missing_transcript_path
 stop_transcript_file_not_found
 stop_malformed_json_payload
 stop_zero_token_transcript
 stop_failure_logged
+stop_idempotent_double_call
 
 # =============================================================================
 # summary

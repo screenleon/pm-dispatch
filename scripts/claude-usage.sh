@@ -3,9 +3,10 @@
 # claude-usage.sh — rolling 5-hour Claude token usage estimator
 #
 # Usage:
-#   bash ~/.claude/scripts/claude-usage.sh          # last 5 hours
-#   bash ~/.claude/scripts/claude-usage.sh --today  # today only
-#   bash ~/.claude/scripts/claude-usage.sh --all    # all time
+#   bash ~/.claude/scripts/claude-usage.sh               # last 5 hours
+#   bash ~/.claude/scripts/claude-usage.sh --today       # today only
+#   bash ~/.claude/scripts/claude-usage.sh --all         # all time
+#   bash ~/.claude/scripts/claude-usage.sh --remaining N # estimate time left (N = % remaining from dashboard)
 
 set -euo pipefail
 
