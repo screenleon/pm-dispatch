@@ -19,6 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
+STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -123,6 +124,14 @@ assert_log() {
 
 # truncate_log — used between sub-suites so audit-content assertions are local.
 truncate_log() { : > "$TEST_LOG_FILE"; }
+
+make_stop_home() {
+  local tmp_home
+  tmp_home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/stop-home.XXXXXX")"
+  mkdir -p "$tmp_home/.claude/scripts"
+  ln -s "$SCRIPT_DIR/log-usage.sh" "$tmp_home/.claude/scripts/log-usage.sh"
+  printf '%s\n' "$tmp_home"
+}
 
 mem_path="$HOME/.claude/projects/test-project/memory/foo.md"
 code_path="$REPO_ROOT/agents/project-pm.md"
@@ -958,6 +967,224 @@ run_case "cx: run_in_background:1 (numeric) → allow (only boolean true denied)
 # check (and indeed by the entire hook — it no-ops for other agent types).
 run_case "cx: main thread (no agent_type) with run_in_background:true → no-op allow" 0 "$CXHOOK" \
   '{"tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
+
+# =============================================================================
+# hook-log-claude-usage
+# =============================================================================
+
+echo
+echo "== hook-log-claude-usage =="
+truncate_log
+
+stop_happy_path() {
+  local name="stop_happy_path" home transcript payload out err status logfile
+  home="$(make_stop_home)"
+  transcript="$home/transcript.jsonl"
+  printf '%s\n' \
+    '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' \
+    '{"role":"user","usage":{"input_tokens":500,"output_tokens":0}}' \
+    > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "sess1" '{transcript_path:$path,session_id:$session}')"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
+  status=$?
+  logfile="$home/.claude/usage-tracker.jsonl"
+  if [[ "$status" == "0" && -f "$logfile" ]] &&
+     grep -q -F '"type":"session_total"' "$logfile" &&
+     grep -q -F '"tokens":1700' "$logfile"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, logfile=%s)\n' "$name" "$status" "$logfile"
+  fi
+  rm -f "$out" "$err"
+}
+
+stop_missing_transcript_path() {
+  local name="stop_missing_transcript_path" home status
+  home="$(make_stop_home)"
+  printf '%s' '{"session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s)\n' "$name" "$status"
+  fi
+}
+
+stop_transcript_file_not_found() {
+  local name="stop_transcript_file_not_found" home status
+  home="$(make_stop_home)"
+  printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s)\n' "$name" "$status"
+  fi
+}
+
+stop_malformed_json_payload() {
+  local name="stop_malformed_json_payload" home status
+  home="$(make_stop_home)"
+  printf '%s' 'not json' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s)\n' "$name" "$status"
+  fi
+}
+
+stop_zero_token_transcript() {
+  local name="stop_zero_token_transcript" home transcript payload status
+  home="$(make_stop_home)"
+  transcript="$home/transcript-zero.jsonl"
+  printf '%s\n' '{"role":"assistant","content":"hello"}' '{"role":"user","content":"ok"}' > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s)\n' "$name" "$status"
+  fi
+}
+
+stop_failure_logged() {
+  local name="stop_failure_logged" home transcript payload status logfile
+  home="$(make_stop_home)"
+  transcript="$home/transcript-fail.jsonl"
+  printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
+  logfile="$home/.claude/usage-tracker.jsonl"
+  : > "$logfile"
+  chmod 444 "$logfile"
+  payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
+  truncate_log
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  chmod 644 "$logfile"
+  if [[ "$status" == "0" && -f "$TEST_LOG_FILE" ]] && grep -q -F "failed" "$TEST_LOG_FILE"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, hooks.log missing failure)\n' "$name" "$status"
+  fi
+}
+
+stop_idempotent_double_call() {
+  local name="stop_idempotent_double_call" home transcript payload status logfile total
+  home="$(make_stop_home)"
+  transcript="$home/transcript-idem.jsonl"
+  printf '%s\n' \
+    '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' \
+    '{"role":"user","usage":{"input_tokens":500,"output_tokens":0}}' \
+    > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "sess-idem" \
+    '{transcript_path:$path,session_id:$session}')"
+  # First invocation
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  # Second invocation (same session + transcript)
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  logfile="$home/.claude/usage-tracker.jsonl"
+  # Sum all session_total entries for this session - must equal 1700, not 3400
+  total=$(python3 -c "
+import json
+total = 0
+for line in open('$logfile'):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'session_total':
+            total += e.get('tokens', 0)
+    except: pass
+print(total)
+" 2>/dev/null || echo 0)
+  if [[ "$status" == "0" && "$total" == "1700" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, total=%s, expected 1700)\n' "$name" "$status" "$total"
+  fi
+}
+
+stop_nested_message_usage() {
+  local name="stop_nested_message_usage" home transcript payload status logfile
+  home="$(make_stop_home)"
+  transcript="$home/transcript-nested.jsonl"
+  # Nested format: usage is under message.usage (Claude API transcript format)
+  printf '%s\n' \
+    '{"role":"assistant","message":{"usage":{"input_tokens":800,"output_tokens":200}}}' \
+    '{"role":"user","message":{"usage":{"input_tokens":100,"output_tokens":0}}}' \
+    > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "sess-nested" \
+    '{transcript_path:$path,session_id:$session}')"
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  logfile="$home/.claude/usage-tracker.jsonl"
+  if [[ "$status" == "0" && -f "$logfile" ]] &&
+     grep -q -F '"type":"session_total"' "$logfile" &&
+     grep -q -F '"tokens":1100' "$logfile"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, logfile=%s)\n' "$name" "$status" "$logfile"
+  fi
+}
+
+stop_no_session_id_skips_log() {
+  local name="stop_no_session_id_skips_log" home transcript payload status
+  home="$(make_stop_home)"
+  transcript="$home/transcript-nosession.jsonl"
+  printf '%s\n' \
+    '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' \
+    > "$transcript"
+  # Payload has transcript_path but no session_id field
+  payload="$(jq -nc --arg path "$transcript" '{transcript_path:$path}')"
+  # Invoke twice — without session_id the hook must skip logging (cannot deduplicate)
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, tracker unexpectedly exists)\n' "$name" "$status"
+  fi
+}
+
+stop_happy_path
+stop_missing_transcript_path
+stop_transcript_file_not_found
+stop_malformed_json_payload
+stop_zero_token_transcript
+stop_failure_logged
+stop_idempotent_double_call
+stop_nested_message_usage
+stop_no_session_id_skips_log
 
 # =============================================================================
 # summary

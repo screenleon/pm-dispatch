@@ -122,6 +122,170 @@ else
 fi
 rm -rf "$tmp_repo"
 
+# ---- 9: auto-log/parser emits exactly one integer ----
+tmp_trace9="$(mktemp)"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0}}' \
+  > "$tmp_trace9"
+_result9=$(python3 - "$tmp_trace9" << 'PYEOF'
+import json, sys
+for line in open(sys.argv[1]):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'turn.completed':
+            u = e.get('usage', {})
+            print(u.get('input_tokens',0) + u.get('output_tokens',0))
+            sys.exit(0)
+    except Exception: pass
+print(0)
+PYEOF
+)
+rm -f "$tmp_trace9"
+# Must be exactly "105000" — one line, one integer
+if [[ "$_result9" == "105000" ]]; then
+  t_pass "auto-log/parser-single-integer"
+else
+  t_fail "auto-log/parser-single-integer — got: $(printf '%q' "$_result9")"
+fi
+
+# ---- 10: auto-log/successful-dispatch-logs-codex ----
+_fake_bin10="$(mktemp -d)"
+cat > "$_fake_bin10/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+# Fake codex: write a minimal trace to stdout (captured to TRACE by dispatch)
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
+exit 0
+FAKEOF
+chmod +x "$_fake_bin10/codex"
+
+_home10="$(mktemp -d)"
+mkdir -p "$_home10/.claude/scripts"
+ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home10/.claude/scripts/log-usage.sh"
+
+_work10="$(mktemp -d)"
+git init -q "$_work10"
+
+_brief10="$(mktemp --suffix=.md)"
+printf 'working_dir: %s\ngoal: test auto-log\n' "$_work10" > "$_brief10"
+
+PATH="$_fake_bin10:$PATH" HOME="$_home10" \
+  "$DISPATCH" --cd "$_work10" --brief-file "$_brief10" >/dev/null 2>&1
+_exit10=$?
+
+_tracker10="$_home10/.claude/usage-tracker.jsonl"
+if [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
+   && grep -q '"pool":"codex"' "$_tracker10" \
+   && grep -q '"tokens":105000' "$_tracker10"; then
+  t_pass "auto-log/successful-dispatch-logs-codex"
+else
+  t_fail "auto-log/successful-dispatch-logs-codex — exit=$_exit10 tracker=$(cat "$_tracker10" 2>/dev/null || echo MISSING)"
+fi
+rm -rf "$_fake_bin10" "$_home10" "$_work10"
+rm -f "$_brief10"
+
+# ---- 11: auto-log/failed-dispatch-no-log ----
+_fake_bin11="$(mktemp -d)"
+cat > "$_fake_bin11/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+exit 1
+FAKEOF
+chmod +x "$_fake_bin11/codex"
+
+_home11="$(mktemp -d)"
+mkdir -p "$_home11/.claude/scripts"
+ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home11/.claude/scripts/log-usage.sh"
+
+_work11="$(mktemp -d)"
+git init -q "$_work11"
+
+_brief11="$(mktemp --suffix=.md)"
+printf 'goal: test\n' > "$_brief11"
+
+PATH="$_fake_bin11:$PATH" HOME="$_home11" \
+  "$DISPATCH" --cd "$_work11" --brief-file "$_brief11" >/dev/null 2>&1 || true
+
+if [[ ! -f "$_home11/.claude/usage-tracker.jsonl" ]]; then
+  t_pass "auto-log/failed-dispatch-no-log"
+else
+  t_fail "auto-log/failed-dispatch-no-log — tracker was created despite failure"
+fi
+rm -rf "$_fake_bin11" "$_home11" "$_work11"
+rm -f "$_brief11"
+
+# ---- 12: auto-log/spark-model-logs-spark-pool ----
+_fake_bin12="$(mktemp -d)"
+cat > "$_fake_bin12/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":50000,"output_tokens":2000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
+exit 0
+FAKEOF
+chmod +x "$_fake_bin12/codex"
+
+_home12="$(mktemp -d)"
+mkdir -p "$_home12/.claude/scripts"
+ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home12/.claude/scripts/log-usage.sh"
+
+_work12="$(mktemp -d)"
+git init -q "$_work12"
+
+_brief12="$(mktemp --suffix=.md)"
+printf 'goal: spark test\n' > "$_brief12"
+
+PATH="$_fake_bin12:$PATH" HOME="$_home12" \
+  "$DISPATCH" --cd "$_work12" --brief-file "$_brief12" --model codex-spark >/dev/null 2>&1
+_exit12=$?
+
+_tracker12="$_home12/.claude/usage-tracker.jsonl"
+if [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
+   && grep -q '"pool":"spark"' "$_tracker12" \
+   && grep -q '"tokens":52000' "$_tracker12"; then
+  t_pass "auto-log/spark-model-logs-spark-pool"
+else
+  t_fail "auto-log/spark-model-logs-spark-pool — exit=$_exit12 tracker=$(cat "$_tracker12" 2>/dev/null || echo MISSING)"
+fi
+rm -rf "$_fake_bin12" "$_home12" "$_work12"
+rm -f "$_brief12"
+
+# ---- 13: auto-log/log-failure-preserves-dispatch-exit ----
+_fake_bin13="$(mktemp -d)"
+cat > "$_fake_bin13/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10000,"output_tokens":500}}'
+exit 0
+FAKEOF
+chmod +x "$_fake_bin13/codex"
+
+_home13="$(mktemp -d)"
+mkdir -p "$_home13/.claude/scripts"
+# Deliberately no log-usage.sh so the auto-log call fails
+
+_work13="$(mktemp -d)"
+git init -q "$_work13"
+
+_brief13="$(mktemp --suffix=.md)"
+printf 'goal: test logging failure\n' > "$_brief13"
+
+PATH="$_fake_bin13:$PATH" HOME="$_home13" \
+  "$DISPATCH" --cd "$_work13" --brief-file "$_brief13" >/dev/null 2>&1
+_exit13=$?
+
+# Find the stderr trace file written by dispatch
+_stderr13="$(ls "$_work13/.agent-trace/"*.stderr 2>/dev/null | head -1)"
+if [[ "$_exit13" -eq 0 && -n "$_stderr13" ]] && grep -q "usage log failed" "$_stderr13"; then
+  t_pass "auto-log/log-failure-preserves-dispatch-exit"
+else
+  t_fail "auto-log/log-failure-preserves-dispatch-exit — exit=$_exit13 stderr=$(cat "$_stderr13" 2>/dev/null | tail -5 || echo MISSING)"
+fi
+rm -rf "$_fake_bin13" "$_home13" "$_work13"
+rm -f "$_brief13"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
