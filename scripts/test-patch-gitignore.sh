@@ -98,11 +98,83 @@ test_dry_run_writes_nothing() {
   pass "$name"
 }
 
+test_rejects_symlink_gitignore() {
+  local name="rejects-symlink-gitignore"
+  local dir="$TMP_ROOT/$name"
+  local target="$TMP_ROOT/$name-elsewhere-target"
+  local out="$TMP_ROOT/$name.out"
+  local err="$TMP_ROOT/$name.err"
+  init_git_repo "$dir"
+  printf 'pre-existing\n' > "$target"
+  ln -s "$target" "$dir/.gitignore"
+
+  set +e
+  bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" >"$out" 2>"$err"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit"
+    return
+  fi
+  if ! grep -qi 'symlink' "$err"; then
+    fail "$name" "stderr did not mention symlink"
+    return
+  fi
+  if [[ "$(cat "$target")" != "pre-existing" ]]; then
+    fail "$name" "symlink target was modified"
+    return
+  fi
+  if [[ ! -L "$dir/.gitignore" ]]; then
+    fail "$name" ".gitignore symlink was replaced"
+    return
+  fi
+  pass "$name"
+}
+
+test_rejects_symlink_dry_run() {
+  local name="rejects-symlink-dry-run"
+  local dir="$TMP_ROOT/$name"
+  local target="$TMP_ROOT/$name-elsewhere-target"
+  local out="$TMP_ROOT/$name.out"
+  local err="$TMP_ROOT/$name.err"
+  init_git_repo "$dir"
+  printf 'pre-existing\n' > "$target"
+  ln -s "$target" "$dir/.gitignore"
+
+  set +e
+  bash "$PATCH_SCRIPT" --dry-run "$dir" ".agent-trace/" >"$out" 2>"$err"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit"
+    return
+  fi
+  if ! grep -qi 'symlink' "$err"; then
+    fail "$name" "stderr did not mention symlink"
+    return
+  fi
+  if grep -Fq 'would add' "$out" "$err"; then
+    fail "$name" "dry-run printed would-add output for symlink"
+    return
+  fi
+  if [[ "$(cat "$target")" != "pre-existing" ]]; then
+    fail "$name" "symlink target was modified"
+    return
+  fi
+  if [[ ! -L "$dir/.gitignore" ]]; then
+    fail "$name" ".gitignore symlink was replaced"
+    return
+  fi
+  pass "$name"
+}
+
 run_test() { "$@" || true; }
 
 run_test test_non_git_skips_silently
 run_test test_adds_entries_and_is_idempotent
 run_test test_dry_run_writes_nothing
+run_test test_rejects_symlink_gitignore
+run_test test_rejects_symlink_dry_run
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

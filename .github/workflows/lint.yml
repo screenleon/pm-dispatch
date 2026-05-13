@@ -27,12 +27,12 @@ jobs:
       - name: Hook regression suite
         run: ./scripts/test-hooks.sh
 
-  test-codex-pr-gate:
+  test-pr-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: codex-pr-gate regression suite
-        run: ./scripts/test-codex-pr-gate.sh
+      - name: pr-gate regression suite
+        run: ./scripts/test-pr-gate.sh
 
   test-setup-project:
     runs-on: ubuntu-latest

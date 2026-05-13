@@ -39,6 +39,20 @@ link() {
   fi
 }
 
+remove_legacy_symlink() {
+  local path="$1" old_target="$2"
+  [[ -L "$path" ]] || return 0
+  local current
+  current="$(readlink "$path")"
+  [[ "$current" == "$old_target" ]] || return 0
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would remove (legacy) $path"
+  else
+    rm "$path"
+    echo "  remove (legacy) $path"
+  fi
+}
+
 install_dir() {
   local subdir="$1"
   local src_dir="$REPO_ROOT/$subdir"
@@ -134,10 +148,10 @@ if [[ -x "$REPO_ROOT/scripts/test-codex-dispatch.sh" ]]; then
   echo
 fi
 
-# Pre-flight: codex-pr-gate regression suite
-if [[ -x "$REPO_ROOT/scripts/test-codex-pr-gate.sh" ]]; then
-  echo "==> test codex-pr-gate"
-  "$REPO_ROOT/scripts/test-codex-pr-gate.sh"
+# Pre-flight: pr-gate regression suite
+if [[ -x "$REPO_ROOT/scripts/test-pr-gate.sh" ]]; then
+  echo "==> test pr-gate"
+  "$REPO_ROOT/scripts/test-pr-gate.sh"
   echo
 fi
 
@@ -172,12 +186,17 @@ if [[ ! -d "$SCRIPTS_DEST" ]]; then
     echo "  mkdir  $SCRIPTS_DEST"
   fi
 fi
+
+echo "==> legacy cleanup"
+remove_legacy_symlink "$SCRIPTS_DEST/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh"
+remove_legacy_symlink "$CLAUDE_HOME/commands/codex-pr-gate.md" "$REPO_ROOT/commands/codex-pr-gate.md"
+
 us_count=0; us_conflicts=0
 # Allowlist: user-facing scripts only. Excluded intentionally:
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in claude-usage.sh log-usage.sh codex-pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
+for script in claude-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else

@@ -98,12 +98,12 @@ run_install_case() {
     script-absent) ;;
     script-correct-symlink)
       mkdir -p "$home/.claude/scripts"
-      ln -s "$REPO_ROOT/scripts/codex-pr-gate.sh" "$home/.claude/scripts/codex-pr-gate.sh"
+      ln -s "$REPO_ROOT/scripts/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
       ;;
     script-wrong-symlink)
       mkdir -p "$home/.claude/scripts"
-      printf '#!/usr/bin/env bash\n' > "$decoy/codex-pr-gate.sh"
-      ln -s "$decoy/codex-pr-gate.sh" "$home/.claude/scripts/codex-pr-gate.sh"
+      printf '#!/usr/bin/env bash\n' > "$decoy/pr-gate.sh"
+      ln -s "$decoy/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
       ;;
     *)
       fail "$name" "unknown setup mode: $mode"
@@ -158,17 +158,17 @@ run_install_case() {
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     scripts-absent-real-run)
-      assert_contains "$name" "$out" "link   $home/.claude/scripts/codex-pr-gate.sh -> $REPO_ROOT/scripts/codex-pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      assert_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
       ;;
     scripts-correct-symlink-idempotent)
-      assert_contains "$name" "$out" "ok    $home/.claude/scripts/codex-pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh" || return
+      assert_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
       ;;
     scripts-wrong-symlink-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "expected $REPO_ROOT/scripts/codex-pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/codex-pr-gate.sh" "$decoy/codex-pr-gate.sh" || return
+      assert_contains "$name" "$err" "expected $REPO_ROOT/scripts/pr-gate.sh" || return
+      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$decoy/pr-gate.sh" || return
       ;;
   esac
 
@@ -233,6 +233,59 @@ test_legacy_pm_left_untouched() {
   assert_symlink_target "$name" "$link_home/github/.pm" "$legacy_target" || return
   assert_file_content "$name" "$legacy_target/sentinel.txt" "legacy symlink sentinel" || return
   assert_not_contains "$name" "$link_err" "$link_home/github/.pm" || return
+
+  pass "$name"
+}
+
+test_legacy_stale_symlinks_removed() {
+  local name="legacy-stale-symlinks-removed"
+
+  local script_home="$tmp_root/$name-script-home"
+  local script_out="$tmp_root/$name-script.stdout"
+  local script_err="$tmp_root/$name-script.stderr"
+  mkdir -p "$script_home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/codex-pr-gate.sh" "$script_home/.claude/scripts/codex-pr-gate.sh"
+
+  set +e
+  HOME="$script_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$script_out" 2>"$script_err"
+  local script_code=$?
+  set -e
+
+  if [ "$script_code" -ne 0 ]; then
+    fail "$name" "legacy script install exit $script_code, expected 0"
+    return
+  fi
+  if [ -e "$script_home/.claude/scripts/codex-pr-gate.sh" ] || [ -L "$script_home/.claude/scripts/codex-pr-gate.sh" ]; then
+    fail "$name" "$script_home/.claude/scripts/codex-pr-gate.sh should not exist"
+    return
+  fi
+  assert_contains "$name" "$script_out" "remove (legacy)" || return
+
+  local command_home="$tmp_root/$name-command-home"
+  local command_out="$tmp_root/$name-command.stdout"
+  local command_err="$tmp_root/$name-command.stderr"
+  mkdir -p "$command_home/.claude/commands"
+  ln -s "$REPO_ROOT/commands/codex-pr-gate.md" "$command_home/.claude/commands/codex-pr-gate.md"
+
+  set +e
+  HOME="$command_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$command_out" 2>"$command_err"
+  local command_code=$?
+  set -e
+
+  if [ "$command_code" -ne 0 ]; then
+    fail "$name" "legacy command install exit $command_code, expected 0"
+    return
+  fi
+  if [ -e "$command_home/.claude/commands/codex-pr-gate.md" ] || [ -L "$command_home/.claude/commands/codex-pr-gate.md" ]; then
+    fail "$name" "$command_home/.claude/commands/codex-pr-gate.md should not exist"
+    return
+  fi
 
   pass "$name"
 }
@@ -307,6 +360,7 @@ test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
 test_legacy_pm_left_untouched
+test_legacy_stale_symlinks_removed
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then

@@ -7,3 +7,6 @@
 pm/.agent-trace/
 pm/rollup/PORTFOLIO.md
 pm/rollup/.PORTFOLIO.md.*
+
+# Claude agent / codex output — not for VCS or Docker
+.agents/

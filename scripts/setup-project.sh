@@ -78,9 +78,9 @@ echo
 # 1. Patch root .gitignore
 echo "==> .gitignore"
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  bash "$SCRIPT_DIR/patch-gitignore.sh" --dry-run "$PROJECT_DIR" ".agent-trace/" ".codex-briefs/" ".gate-results/" 2>&1 || true
+  bash "$SCRIPT_DIR/patch-gitignore.sh" --dry-run "$PROJECT_DIR" "${ENTRIES[@]}" 2>&1 || true
 else
-  bash "$SCRIPT_DIR/patch-gitignore.sh" "$PROJECT_DIR" ".agent-trace/" ".codex-briefs/" ".gate-results/"
+  bash "$SCRIPT_DIR/patch-gitignore.sh" "$PROJECT_DIR" "${ENTRIES[@]}"
 fi
 echo
 

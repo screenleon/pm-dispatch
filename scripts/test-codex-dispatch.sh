@@ -107,6 +107,21 @@ else
   t_fail "snapshot/structural — missing: ${missing[*]}"
 fi
 
+# ---- 8: dispatch startup does not mutate .gitignore ----
+tmp_repo="$(mktemp -d)"
+git init -q "$tmp_repo"
+printf '*.log\n' > "$tmp_repo/.gitignore"
+before="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
+"$DISPATCH" --help >/dev/null 2>&1
+"$DISPATCH" --cd "$tmp_repo" --brief-file "$tmp_repo/missing-brief.md" >/dev/null 2>&1 || true
+after="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
+if [[ "$after" == "$before" ]]; then
+  t_pass "dispatch/does-not-mutate-gitignore"
+else
+  t_fail "dispatch/does-not-mutate-gitignore — checksum changed"
+fi
+rm -rf "$tmp_repo"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
