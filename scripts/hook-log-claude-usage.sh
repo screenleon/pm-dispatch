@@ -34,7 +34,18 @@ PYEOF
 
 [[ "${tokens:-0}" -gt 0 ]] || exit 0
 
-bash "${HOME}/.claude/scripts/log-usage.sh" \
-  "session_total" "$tokens" "auto: stop hook" "${session_id:-}" "claude" 2>/dev/null || true
+_log_file="${CLAUDE_HOOK_LOG_DIR:+${CLAUDE_HOOK_LOG_DIR}/hooks.log}"
+_log_file="${_log_file:-${HOME}/.claude/logs/hooks.log}"
+mkdir -p "$(dirname "$_log_file")"
+if ! bash "${HOME}/.claude/scripts/log-usage.sh" \
+     "session_total" "$tokens" "auto: stop hook" "${session_id:-}" "claude" \
+     2>>"$_log_file"; then
+  echo "[$(date -Is)] hook-log-claude-usage: log-usage.sh failed (session=${session_id:-?})" \
+    >> "$_log_file"
+else
+  [[ -n "${CLAUDE_HOOK_LOG_DIR:-}" ]] && \
+    echo "[$(date -Is)] hook-log-claude-usage: logged ${tokens} tokens (session=${session_id:-?})" \
+      >> "$_log_file"
+fi
 
 exit 0

@@ -42,6 +42,13 @@ assert_not_contains() {
   grep -qF -- "$needle" "$file" && fail "$name" "unexpected: $needle" || true
 }
 
+assert_occurrences() {
+  local name="$1" file="$2" needle="$3" expected="$4"
+  local actual
+  actual=$(grep -oF -- "$needle" "$file" | wc -l)
+  [[ "$actual" -eq "$expected" ]] || fail "$name" "expected $expected occurrence(s) of $needle, got $actual"
+}
+
 assert_line_count() {
   local name="$1" file="$2" expected="$3"
   local actual
@@ -417,32 +424,6 @@ write_calib() {
     > "$home/.claude/usage-calibration.json"
 }
 
-write_codex_dispatch() {
-  # Creates a fake .agent-trace/codex-*.jsonl with turn.completed usage.
-  # $1=home $2=input_tokens $3=output_tokens (default 1000)
-  local home="$1" inp="$2" out="${3:-1000}"
-  local trace_dir="$home/github/testrepo/.agent-trace"
-  mkdir -p "$trace_dir"
-  local fpath="$trace_dir/codex-$(date +%Y%m%d-%H%M%S)-$$-test.jsonl"
-  printf '{"type":"turn.started"}\n' > "$fpath"
-  jq -nc --argjson inp "$inp" --argjson out "$out" \
-    '{"type":"turn.completed","usage":{"input_tokens":$inp,"cached_input_tokens":0,"output_tokens":$out}}' \
-    >> "$fpath"
-}
-
-write_codex_dispatch_old() {
-  # Creates a fake dispatch with mtime set far in the past (outside any window).
-  local home="$1" inp="$2" out="${3:-1000}"
-  local trace_dir="$home/github/oldrepo/.agent-trace"
-  mkdir -p "$trace_dir"
-  local fpath="$trace_dir/codex-20200101-000000-$$-old.jsonl"
-  printf '{"type":"turn.started"}\n' > "$fpath"
-  jq -nc --argjson inp "$inp" --argjson out "$out" \
-    '{"type":"turn.completed","usage":{"input_tokens":$inp,"cached_input_tokens":0,"output_tokens":$out}}' \
-    >> "$fpath"
-  touch -t 202001010000 "$fpath"
-}
-
 # ---------------------------------------------------------------------------
 # --remaining flag tests
 # ---------------------------------------------------------------------------
@@ -498,8 +479,9 @@ case_remaining_out_of_range_low() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining -- -5 > "$out" 2> "$out.err"; status=$?
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining -5 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
+  assert_contains "$name" "$out.err" "0"
   pass_case "$name"
 }
 
@@ -570,47 +552,43 @@ case_remaining_codex_dispatch_counted() {
   local name="remaining_codex_dispatch" home out status
   home="$(new_home "$name")"
   local t1; t1="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-2H +%Y-%m-%dT%H:%M:%SZ)"
+  local t2; t2="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
   write_log "$home" "$t1" "pm_analysis" 50000 "claude op"
-  write_codex_dispatch "$home" 150000 5000  # 155k codex tokens
+  write_log "$home" "$t2" "codex_dispatch" 155000 "codex op" codex
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Codex"
-  assert_contains "$name" "$out" "dispatches"
-  # Display total should be 50k + 155k = 205k; --remaining math stays Claude-only.
+  assert_contains "$name" "$out" "Codex   : 155,000 tokens  (1 logged)"
   assert_contains "$name" "$out" "205,000"
+  assert_not_contains "$name" "$out" "310,000"
+  assert_occurrences "$name" "$out" "Codex   : 155,000" 1
   pass_case "$name"
 }
 
-case_remaining_codex_dispatch_old_excluded() {
-  local name="remaining_codex_old_excluded" home out status
+case_codex_old_log_excluded() {
+  local name="codex_old_log_excluded" home out status
   home="$(new_home "$name")"
   local t1; t1="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
   write_log "$home" "$t1" "pm_analysis" 50000 "claude op"
-  write_codex_dispatch_old "$home" 999000  # old dispatch — should NOT be counted
+  write_log "$home" "2020-01-01T00:00:00Z" "codex_dispatch" 999000 "old codex op" codex
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --5h > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  # Old dispatch excluded from --all window? No — --all uses epoch as cutoff.
-  # But write_codex_dispatch_old sets mtime to 2020, which is after epoch, so it IS included.
-  # The test verifies the script doesn't crash; Codex line may or may not appear.
-  assert_contains "$name" "$out" "Remaining Capacity Estimate"
+  assert_contains "$name" "$out" "last 5h"
+  assert_not_contains "$name" "$out" "999,000"
   pass_case "$name"
 }
 
-case_remaining_github_dir_missing() {
-  local name="remaining_github_dir_missing" home out status
+case_one_dispatch_one_count() {
+  local name="one_dispatch_one_count" home out status
   home="$(new_home "$name")"
-  local t1; t1="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-2H +%Y-%m-%dT%H:%M:%SZ)"
-  local t2; t2="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
-  write_log "$home" "$t1" "codex_task" 100000 "op1"
-  write_log "$home" "$t2" "codex_task"  50000 "op2"
-  # home/github does not exist — graceful degradation
+  local t1; t1="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)"
+  write_log "$home" "$t1" "codex_dispatch" 155000 "codex op" codex
   out="$TMP_ROOT/$name.out"
-  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Remaining Capacity Estimate"
-  assert_not_contains "$name" "$out" "dispatches"
+  assert_contains "$name" "$out" "155,000"
+  assert_not_contains "$name" "$out" "310,000"
   pass_case "$name"
 }
 
@@ -657,8 +635,8 @@ case_remaining_100_no_calibration
 case_remaining_0_percent
 case_remaining_calibration_divergence_warning
 case_remaining_codex_dispatch_counted
-case_remaining_codex_dispatch_old_excluded
-case_remaining_github_dir_missing
+case_codex_old_log_excluded
+case_one_dispatch_one_count
 
 echo
 echo "----"

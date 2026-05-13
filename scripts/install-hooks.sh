@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Idempotently splice the claude-config PreToolUse hooks into
+# Idempotently splice the claude-config hooks into
 # ~/.claude/settings.json.
 #
 # Wires:
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
+#   - Stop                 → scripts/hook-log-claude-usage.sh
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
@@ -35,12 +36,14 @@ fi
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
+stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
+  echo "  $stop_cmd" >&2
   exit 2
 fi
 
@@ -53,15 +56,24 @@ jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
+  --arg stop "$stop_cmd" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
   .hooks.PreToolUse //= [] |
+  .hooks.Stop //= [] |
+
+  # Migrate the former unmanaged Stop hook path under hooks/ to scripts/.
+  .hooks.Stop |= map(
+    .hooks |= map(select(.command == $stop or (.command | tostring | contains("hook-log-claude-usage.sh") | not)))
+  ) |
+  .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
   # Helper: an entry already exists if any matcher block has a hook with the same command.
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $pm) ] | length ) as $pm_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cx) ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cxw) ] | length ) as $cxw_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(.command == $stop) ] | length ) as $stop_present |
 
   ( if $pm_present == 0 then
       .hooks.PreToolUse += [{
@@ -82,6 +94,10 @@ jq \
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": $cx}]
       }]
+    else . end
+  ) |
+  ( if $stop_present == 0 then
+      .hooks.Stop += [{"hooks": [{"type": "command", "command": $stop}]}]
     else . end
   )
   ' "$settings" > "$tmp_new"

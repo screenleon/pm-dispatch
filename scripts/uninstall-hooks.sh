@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove the claude-config PreToolUse hooks from ~/.claude/settings.json.
+# Remove the claude-config managed hooks from ~/.claude/settings.json.
 # Idempotent: skips entries that aren't present.
 #
 # Usage:
@@ -27,6 +27,7 @@ fi
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
+stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
@@ -35,8 +36,9 @@ jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
+  --arg stop "$stop_cmd" \
   '
-  if (.hooks // {}).PreToolUse then
+  (if (.hooks // {}).PreToolUse then
     # Remove individual hook entries matching any managed command.
     .hooks.PreToolUse |= map(
       .hooks |= map(select(.command != $pm and .command != $cx and .command != $cxw))
@@ -44,10 +46,16 @@ jq \
     # Drop matcher blocks whose hooks list is now empty.
     .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
     # Drop PreToolUse if empty.
-    if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end |
-    # Drop hooks if empty.
-    if (.hooks | length) == 0 then del(.hooks) else . end
-  else . end
+    if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
+  else . end) |
+  (if (.hooks // {}).Stop then
+    .hooks.Stop |= map(
+      .hooks |= map(select(.command != $stop and (.command | tostring | contains("hook-log-claude-usage.sh") | not)))
+    ) |
+    .hooks.Stop |= map(select((.hooks | length) > 0)) |
+    if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
+  else . end) |
+  if (.hooks // {} | length) == 0 then del(.hooks) else . end
   ' "$settings" > "$tmp_new"
 
 if cmp -s "$settings" "$tmp_new"; then
