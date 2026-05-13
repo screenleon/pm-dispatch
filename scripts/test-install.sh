@@ -291,11 +291,11 @@ test_legacy_stale_symlinks_removed() {
 }
 
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires all four managed hooks and that
+# Proves that install-hooks.sh wires all five managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
-  # Proves that the primary install.sh path wires all four managed hooks
+  # Proves that the primary install.sh path wires all five managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
   local home="$tmp_root/$name"
@@ -311,6 +311,11 @@ test_install_sh_wires_hooks() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
+    fail "$name" "statusline-chain.conf should not exist without previous statusLine"
+    return
+  fi
   pass "$name"
 }
 
@@ -336,6 +341,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -350,12 +356,18 @@ test_hooks_install_uninstall_lifecycle() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "statusLine should be deleted when no chain target exists"
+    return
+  fi
 
   pass "$name"
 }
@@ -397,11 +409,64 @@ test_stop_hook_preservation() {
   pass "$name"
 }
 
+test_statusline_install_chains_previous() {
+  local name="statusline-install-chains-previous"
+  local home="$tmp_root/$name"
+  local previous="$tmp_root/$name-prev-statusline.sh"
+  local out="$tmp_root/$name-second-install.out"
+  mkdir -p "$home/.claude"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$previous"
+  chmod +x "$previous"
+  printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
+    "$previous" > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  local got
+  got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
+  if [[ "$got" != "$REPO_ROOT/scripts/hook-save-rate-limits.sh" ]]; then
+    fail "$name" "statusLine.command was $got"
+    return
+  fi
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > "$out"
+  assert_contains "$name" "$out" "already wired, nothing to do" || return
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
+  pass "$name"
+}
+
+test_statusline_uninstall_restores() {
+  local name="statusline-uninstall-restores"
+  local home="$tmp_root/$name"
+  local previous="$tmp_root/$name-prev-statusline.sh"
+  mkdir -p "$home/.claude"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$previous"
+  chmod +x "$previous"
+  printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
+    "$previous" > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  local got
+  got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
+  if [[ "$got" != "$previous" ]]; then
+    fail "$name" "statusLine.command was $got"
+    return
+  fi
+  if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
+    fail "$name" "statusline-chain.conf should be deleted"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
 test_stop_hook_migration
 test_stop_hook_preservation
+test_statusline_install_chains_previous
+test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
 

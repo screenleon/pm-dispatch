@@ -20,6 +20,7 @@ PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
 STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
+RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -1185,6 +1186,93 @@ stop_failure_logged
 stop_idempotent_double_call
 stop_nested_message_usage
 stop_no_session_id_skips_log
+
+# =============================================================================
+# hook-save-rate-limits
+# =============================================================================
+
+echo
+echo "== hook-save-rate-limits =="
+
+run_rl_hook() {
+  local json="$1" config_dir="$2"
+  printf '%s' "$json" | CLAUDE_CONFIG_DIR="$config_dir" "$RL_HOOK" 2>/dev/null
+}
+
+rl_hook_happy_path() {
+  local name="rl-hook/happy-path-writes-file" rl_home
+  rl_home="$(mktemp -d)"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
+  if [[ -f "$rl_home/rate-limits.json" ]] && python3 -c "import json; d=json.load(open('$rl_home/rate-limits.json')); assert d['five_hour']['used_percentage']==25; assert d['seven_day']['used_percentage']==10; assert 'updated_at' in d"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — file: %s\n' "$name" "$(cat "$rl_home/rate-limits.json" 2>/dev/null || echo MISSING)"
+  fi
+  rm -rf "$rl_home"
+}
+
+rl_hook_missing_rate_limits() {
+  local name="rl-hook/missing-rate-limits-no-write" rl_home status
+  rl_home="$(mktemp -d)"
+  printf '%s' '{"other_key":"value"}' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$rl_home/rate-limits.json" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s file_exists=%s\n' "$name" "$status" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
+rl_hook_malformed_json() {
+  local name="rl-hook/malformed-json-exits-0" rl_home status
+  rl_home="$(mktemp -d)"
+  printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$rl_home/rate-limits.json" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s\n' "$name" "$status"
+  fi
+  rm -rf "$rl_home"
+}
+
+rl_hook_chain_called() {
+  local name="rl-hook/chain-called" rl_home chain_log chain_script
+  rl_home="$(mktemp -d)"
+  chain_log="$rl_home/chain-called"
+  chain_script="$rl_home/chain.sh"
+  cat > "$chain_script" <<'CHAINEOF'
+#!/usr/bin/env bash
+touch "$(dirname "$0")/chain-called"
+CHAINEOF
+  chmod +x "$chain_script"
+  printf '%s\n' "$chain_script" > "$rl_home/statusline-chain.conf"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
+  if [[ -f "$rl_home/rate-limits.json" && -f "$chain_log" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — rate-limits.json=%s chain-called=%s\n' "$name" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)" "$(test -f "$chain_log" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
+rl_hook_happy_path
+rl_hook_missing_rate_limits
+rl_hook_malformed_json
+rl_hook_chain_called
 
 # =============================================================================
 # summary

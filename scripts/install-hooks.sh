@@ -7,6 +7,7 @@
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #   - Stop                 → scripts/hook-log-claude-usage.sh
+#   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
@@ -38,13 +39,16 @@ cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
+statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
+statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
   echo "  $stop_cmd" >&2
+  echo "  $statusline_cmd" >&2
   exit 2
 fi
 
@@ -53,12 +57,24 @@ fi
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
 
+# Read current statusLine.command to determine if chaining is needed.
+_current_statusline=$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null || true)
+_statusline_already_wired=0
+if [[ "$_current_statusline" == "$statusline_cmd" ]]; then
+    _statusline_already_wired=1
+elif [[ -n "$_current_statusline" && "$DRY_RUN" -eq 0 ]]; then
+    # Save previous command so the hook can chain to it.
+    printf '%s\n' "$_current_statusline" > "$statusline_chain_conf"
+fi
+
 jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
+  --arg statusline "$statusline_cmd" \
+  --argjson sl_present "$_statusline_already_wired" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -101,6 +117,10 @@ jq \
   ) |
   ( if $stop_present == 0 then
       .hooks.Stop += [{"hooks": [{"type": "command", "command": $stop}]}]
+    else . end
+  ) |
+  ( if $sl_present == 0 then
+      .statusLine = {"type": "command", "command": $statusline}
     else . end
   )
   ' "$settings" > "$tmp_new"

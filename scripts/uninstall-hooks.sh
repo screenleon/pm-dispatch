@@ -29,9 +29,14 @@ cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
+statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
+statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
+
+_chain_target=""
+[[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
 jq \
   --arg pm "$pm_cmd" \
@@ -39,6 +44,8 @@ jq \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
+  --arg statusline "$statusline_cmd" \
+  --arg chain_target "$_chain_target" \
   '
   (if (.hooks // {}).PreToolUse then
     # Remove individual hook entries matching any managed command.
@@ -56,6 +63,13 @@ jq \
     ) |
     .hooks.Stop |= map(select((.hooks | length) > 0)) |
     if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
+  else . end) |
+  (if (.statusLine.command // "") == $statusline then
+    if $chain_target != "" then
+      .statusLine = {"type": "command", "command": $chain_target}
+    else
+      del(.statusLine)
+    end
   else . end) |
   if (.hooks // {} | length) == 0 then del(.hooks) else . end
   ' "$settings" > "$tmp_new"
@@ -75,5 +89,8 @@ backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
 cp "$settings" "$backup"
 mv "$tmp_new" "$settings"
 trap - EXIT
+if [[ "$DRY_RUN" -eq 0 ]]; then
+    rm -f "$statusline_chain_conf"
+fi
 echo "uninstall-hooks: wrote $settings"
 echo "uninstall-hooks: backup at $backup"

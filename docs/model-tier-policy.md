@@ -137,6 +137,6 @@ Standard types: `pr_gate_full`, `pr_gate_standard`, `pr_gate_express`,
 View rolling 5-hour or today's usage:
 
 ```sh
-bash ~/.claude/scripts/claude-usage.sh          # last 5 hours
-bash ~/.claude/scripts/claude-usage.sh --today  # today (UTC)
+bash ~/.claude/scripts/token-usage.sh          # last 5 hours
+bash ~/.claude/scripts/token-usage.sh --today  # today (UTC)
 ```
