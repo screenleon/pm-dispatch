@@ -167,6 +167,29 @@ fi
 EXIT=$?
 set -e
 
+# --- auto-log token usage to usage-tracker.jsonl ---
+if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
+  _CODEX_TOKENS=$(python3 -c "
+import json, sys
+for line in open(sys.argv[1]):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'turn.completed':
+            u = e.get('usage', {})
+            print(u.get('input_tokens',0) + u.get('output_tokens',0))
+            sys.exit(0)
+    except: pass
+print(0)
+" "$TRACE" 2>/dev/null || echo 0)
+  if [[ "$_CODEX_TOKENS" -gt 0 ]]; then
+    _POOL="codex"
+    [[ "${MODEL:-}" == *spark* ]] && _POOL="spark"
+    _NOTE="auto: $(basename "$WORK_DIR")"
+    bash "${HOME}/.claude/scripts/log-usage.sh" \
+      "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>/dev/null || true
+  fi
+fi
+
 # Closing banner — captures exit code so post-mortem can spot timeouts (124).
 {
   echo "[$(date -Is)] codex-dispatch finished"

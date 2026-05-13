@@ -11,7 +11,20 @@ set -euo pipefail
 
 LOGFILE="$HOME/.claude/usage-tracker.jsonl"
 CALIB_FILE="$HOME/.claude/usage-calibration.json"
-MODE="${1:---5h}"
+MODE="--5h"
+REMAINING_PCT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --today|--all|--[0-9]*h)
+      MODE="$1"; shift ;;
+    --remaining)
+      [[ $# -ge 2 ]] || { echo "claude-usage: --remaining requires a value" >&2; exit 2; }
+      REMAINING_PCT="$2"; shift 2 ;;
+    *)
+      echo "claude-usage: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
 if [[ ! -f "$LOGFILE" ]]; then
   echo "No usage log at $LOGFILE"
@@ -19,20 +32,77 @@ if [[ ! -f "$LOGFILE" ]]; then
   exit 0
 fi
 
-python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" << 'PYEOF'
-import sys, json, re
+GITHUB_DIR="$HOME/github"
+python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" "$REMAINING_PCT" "$GITHUB_DIR" << 'PYEOF'
+import sys, json, re, os, glob
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-mode = sys.argv[1]
-logfile = sys.argv[2]
-calib_file = sys.argv[3]
+mode              = sys.argv[1]
+logfile           = sys.argv[2]
+calib_file        = sys.argv[3]
+remaining_pct_raw = sys.argv[4] if len(sys.argv) > 4 else ''
+github_dir        = sys.argv[5] if len(sys.argv) > 5 else ''
 
 # Validate mode before doing any work
 if mode not in ('--today', '--all') and not re.fullmatch(r'--\d+h', mode):
     sys.stderr.write(f'claude-usage: unknown mode: {mode!r}\n')
     sys.stderr.write('Usage: claude-usage.sh [--today|--all|--Nh]  (default: --5h)\n')
     sys.exit(2)
+
+remaining_pct = None
+if remaining_pct_raw != '':
+    try:
+        remaining_pct = float(remaining_pct_raw)
+    except ValueError:
+        sys.stderr.write(f'claude-usage: --remaining must be a number, got: {remaining_pct_raw!r}\n')
+        sys.exit(2)
+    if not (0.0 <= remaining_pct <= 100.0):
+        sys.stderr.write(f'claude-usage: --remaining must be 0–100, got: {remaining_pct}\n')
+        sys.exit(2)
+
+def load_codex_dispatch_tokens(github_dir, cutoff_ts, now_ts):
+    """Returns (total_tokens, dispatch_count, earliest_mtime_utc_or_None)."""
+    if not github_dir or not os.path.isdir(github_dir):
+        return 0, 0, None
+    pattern      = os.path.join(github_dir, '**', '.agent-trace', 'codex-*.jsonl')
+    files        = glob.glob(pattern, recursive=True)
+    total        = 0
+    count        = 0
+    earliest     = None
+    cutoff_epoch = cutoff_ts.timestamp()
+    now_epoch    = now_ts.timestamp()
+    for fpath in files:
+        try:
+            mtime = os.path.getmtime(fpath)
+        except OSError:
+            continue
+        if not (cutoff_epoch <= mtime <= now_epoch):
+            continue
+        try:
+            with open(fpath) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry.get('type') == 'turn.completed':
+                            usage = entry.get('usage', {})
+                            inp = usage.get('input_tokens', 0) or 0
+                            out = usage.get('output_tokens', 0) or 0
+                            if inp + out > 0:
+                                total += inp + out
+                                count += 1
+                                if earliest is None or mtime < earliest:
+                                    earliest = mtime
+                            break
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        continue
+        except (IOError, OSError):
+            continue
+    earliest_dt = datetime.fromtimestamp(earliest, tz=timezone.utc) if earliest else None
+    return total, count, earliest_dt
 
 # Load entries — skip malformed lines and entries missing required 'ts' field
 entries = []
@@ -68,6 +138,15 @@ else:
     cutoff = now - timedelta(hours=hours)
     entries = [e for e in entries if datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) >= cutoff]
 
+if mode == '--all':
+    codex_cutoff = datetime(1970, 1, 1, tzinfo=timezone.utc)
+elif mode == '--today':
+    codex_cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+else:
+    codex_cutoff = cutoff
+
+codex_tokens, codex_dispatches, codex_first_ts = load_codex_dispatch_tokens(github_dir, codex_cutoff, now)
+
 # Load calibration — distinguish missing file (silent) from corrupt file (warn)
 known_limit = None
 rate_limit_events = []
@@ -81,7 +160,19 @@ except FileNotFoundError:
 except (json.JSONDecodeError, ValueError) as ex:
     sys.stderr.write(f'  (warning: calibration file malformed — {ex})\n')
 
-total_tokens = sum(e.get('tokens', 0) for e in entries)
+def entry_pool(entry):
+    pool = entry.get('pool') or 'claude'
+    return pool if pool in ('claude', 'codex', 'spark') else 'claude'
+
+claude_entries = [e for e in entries if entry_pool(e) == 'claude']
+codex_entries  = [e for e in entries if entry_pool(e) == 'codex']
+spark_entries  = [e for e in entries if entry_pool(e) == 'spark']
+
+claude_log_tokens = sum(e.get('tokens', 0) for e in claude_entries)
+codex_log_tokens  = sum(e.get('tokens', 0) for e in codex_entries)
+spark_log_tokens  = sum(e.get('tokens', 0) for e in spark_entries)
+codex_tokens      = codex_log_tokens + codex_tokens
+total_tokens      = claude_log_tokens + codex_tokens + spark_log_tokens
 by_type = defaultdict(lambda: {'count': 0, 'tokens': 0})
 by_session = defaultdict(lambda: {'count': 0, 'tokens': 0})
 for e in entries:
@@ -97,29 +188,104 @@ print(' Claude Code Usage Estimator')
 print('═══════════════════════════════════════════════')
 print(f' Window : {label}')
 print(f' Entries: {len(entries)}')
-print(f' Total  : {total_tokens:,} tokens  (~{total_tokens/1000:.0f}k)')
+print(f' Claude  : {claude_log_tokens:,} tokens  (~{claude_log_tokens/1000:.0f}k)')
+if codex_tokens > 0 or codex_dispatches > 0:
+    print(f' Codex   : {codex_tokens:,} tokens  ({codex_dispatches} dispatches)  [separate quota]')
+elif github_dir and os.path.isdir(github_dir):
+    print(f' Codex   : 0 tokens  (0 dispatches)  [separate quota]')
+if spark_log_tokens > 0:
+    print(f' Spark   : {spark_log_tokens:,} tokens  [separate quota]')
+print(f' Total   : {total_tokens:,} tokens  (~{total_tokens/1000:.0f}k)')
 
 if known_limit:
-    pct = total_tokens / known_limit * 100
-    remaining = max(0, known_limit - total_tokens)
+    pct = claude_log_tokens / known_limit * 100
+    remaining = max(0, known_limit - claude_log_tokens)
     bar_filled = min(20, int(pct / 5))
     bar = '█' * bar_filled + '░' * (20 - bar_filled)
     print(f' Limit  : {known_limit:,} tokens (calibrated)')
     print(f' Used   : [{bar}] {pct:.1f}%')
     print(f' Remain : ~{remaining:,} tokens')
-    if total_tokens > 0 and len(entries) > 1:
+    if claude_log_tokens > 0 and len(claude_entries) > 1:
         # Estimate based on current session rate
-        first_ts = min(datetime.fromisoformat(e['ts'].replace('Z','+00:00')) for e in entries)
+        first_ts = min(datetime.fromisoformat(e['ts'].replace('Z','+00:00')) for e in claude_entries)
         elapsed_h = max(0.01, (now - first_ts).total_seconds() / 3600)
-        rate_per_h = total_tokens / elapsed_h
+        rate_per_h = claude_log_tokens / elapsed_h
         remaining_h = remaining / rate_per_h if rate_per_h > 0 else 0
         print(f' Rate   : ~{rate_per_h/1000:.0f}k tokens/hour at current pace')
         print(f' Est.   : ~{remaining_h*60:.0f} min remaining at this rate')
 else:
     print(f' Limit  : not yet calibrated')
-    print(f'  -> Edit ~/.claude/usage-calibration.json and set:')
-    print(f'       "known_limit_tokens": {total_tokens}')
-    print(f'  -> Then re-run to see % used and estimated time remaining')
+    if claude_log_tokens > 0:
+        print(f'  -> Edit ~/.claude/usage-calibration.json and set:')
+        print(f'       "known_limit_tokens": {claude_log_tokens}')
+        print(f'  -> Then re-run to see % used and estimated time remaining')
+    else:
+        print(f'  -> No Claude-pool log data in this window; calibrate after Claude usage is logged')
+
+if remaining_pct is not None:
+    print()
+    print('─' * 47)
+    print(' Remaining Capacity Estimate')
+    print('─' * 47)
+    print(f' Remaining (from dashboard): {remaining_pct:.1f}%')
+    print(f' Tokens used (Claude pool) : {claude_log_tokens:,}')
+    if codex_tokens > 0 or spark_log_tokens > 0:
+        print(f' Separate quota tokens     : Codex {codex_tokens:,}  Spark {spark_log_tokens:,}')
+
+    used_pct = 100.0 - remaining_pct
+
+    inferred_total    = None
+    calibration_total = None
+    remaining_tokens  = None
+    method_label      = ''
+
+    if known_limit and known_limit > 0:
+        calibration_total = known_limit
+        remaining_tokens  = int(known_limit * remaining_pct / 100)
+        method_label      = 'from calibration'
+
+    if used_pct > 0 and claude_log_tokens > 0:
+        inferred_total = int(claude_log_tokens / (used_pct / 100))
+        if remaining_tokens is None:
+            remaining_tokens = int(inferred_total * remaining_pct / 100)
+            method_label     = 'inferred from log'
+
+    if inferred_total is not None:
+        print(f' Inferred total limit      : {inferred_total:,} tokens')
+    if calibration_total is not None:
+        print(f' Calibrated limit          : {calibration_total:,} tokens')
+    if inferred_total is not None and calibration_total is not None:
+        diff_pct = abs(inferred_total - calibration_total) / calibration_total * 100
+        if diff_pct > 10:
+            sys.stderr.write(
+                f'  (note: inferred {inferred_total:,} differs from calibrated '
+                f'{calibration_total:,} by {diff_pct:.0f}% — consider recalibrating)\n'
+            )
+
+    if remaining_tokens is None:
+        print(f' Remaining tokens          : cannot estimate (0% used and no calibration)')
+        if claude_log_tokens == 0:
+            print(' Estimated time remaining  : no Claude log data — rate unknown')
+    else:
+        print(f' Remaining tokens          : ~{remaining_tokens:,}  [{method_label}]')
+
+        first_ts = None
+        if len(claude_entries) > 1:
+            first_ts = min(datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) for e in claude_entries)
+
+        if remaining_tokens > 0 and claude_log_tokens > 0 and first_ts is not None:
+            elapsed_h  = max(0.01, (now - first_ts).total_seconds() / 3600)
+            rate_per_h = claude_log_tokens / elapsed_h
+            if rate_per_h > 0:
+                remaining_h = remaining_tokens / rate_per_h
+                eta_utc     = now + timedelta(hours=remaining_h)
+                eta_str     = eta_utc.strftime('%H:%M UTC')
+                print(f' Current rate              : ~{rate_per_h/1000:.1f}k tokens/hr  (Claude only)')
+                print(f' Estimated time remaining  : ~{remaining_h:.1f} hrs  (until ~{eta_str})')
+        elif claude_log_tokens == 0:
+            print(' Estimated time remaining  : no Claude log data — rate unknown')
+        elif first_ts is None:
+            print(f' Estimated time remaining  : cannot estimate (need ≥2 data points for rate)')
 
 if by_type:
     print()
