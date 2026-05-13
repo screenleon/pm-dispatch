@@ -27,6 +27,14 @@ Use as needed; not all briefs require all of them.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
 - **`sandbox`** / **`approval`** — only set when overriding the defaults (`workspace-write` / `never`). Caller must authorize.
+- **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
+  ```
+  qa_checklist:
+    - happy path: dispatch exits 0, trace file exists
+    - failed dispatch: exit preserved, stderr records message
+    - spark pool: --model *spark* → pool=spark in log entry
+    - log failure: log-usage.sh unavailable → dispatch still exits 0
+  ```
 
 ## Brief skeletons
 
@@ -45,6 +53,7 @@ files:
 constraints:
   - Do not modify any other files.
   - Preserve existing formatting / indentation in each file.
+# qa_checklist: add if introducing ≥ 3 behavioral units (see Optional sections)
 self_verify:
   - <grep / wc / file-exists check that the edits landed>
   - git-status no-collateral-damage
@@ -223,6 +232,7 @@ Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "co
 | `run_in_background: true` | **Required for parallel dispatches** | Without it the main thread blocks on each agent; user cannot send new commands while agents run |
 | `self_verify` in brief | **Required for file-writing briefs** | codex-executor rejects immediately with 0 tool uses if absent; entire invocation is wasted |
 | brief file pre-written | **Required before the Agent call** | codex-executor has no Write tool, so it cannot create `/tmp/brief-*.md` for itself |
+| `qa_checklist` in brief | **Required when ≥ 3 behavioral units introduced** | Without it, `qa-tester` blocks in gate round 1 for missing coverage; fixing after the fact adds 1–2 extra gate rounds |
 
 Failing any check wastes the agent invocation before a single tool call is made. Check all four before sending.
 

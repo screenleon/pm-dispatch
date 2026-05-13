@@ -13,6 +13,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 |
 | CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
+| CC-006 | 🔵 active | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#40 |
+| CC-007 | 🔵 active | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | — |
+| CC-008 | 🔵 active | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | — |
 
 ---
 
@@ -33,3 +36,28 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: install.sh:151 把展開後完整的 test-pr-gate.sh 加入 preflight 套件，install 整體時間變長。
 **Why**: 風險面是低的（失敗 loud、rollback = revert 該行 preflight），但每次 install 都付出代價。如果未來 test-pr-gate 套件繼續長大，install 體驗會持續惡化，現在留個 entry 以便未來決策時有歷史。
 **Requirement**: 監測 install 端到端時間；若 preflight 變成 dev 體驗瓶頸，考慮 (a) 拆 fast / slow tiers、(b) 預設 fast，full 由 env var 觸發、(c) 在 CI 跑 full 而 install 只跑 smoke 子集。目前不需立即動作。
+
+## CC-006 — `claude-usage.sh` → `token-usage.sh` 改名 + statusLine hook 自動寫入 rate-limits
+
+**Problem**: 腳本現在追蹤 claude / codex / spark 三個 pool，但名稱 `claude-usage.sh` 暗示只追蹤 Claude，產生誤導。同時 `--remaining N` 需手動輸入剩餘 %，而 Claude Code CLI 已透過 statusLine hook stdin 提供即時 `rate_limits` 資料。
+**Why**:
+- 改名：命名應反映功能範圍。`token-usage.sh` 精確描述「查詢各 pool token 使用量」，與 pool 種類無關。配對邏輯：`log-usage.sh`（寫入）↔ `token-usage.sh`（讀取）。
+- rate-limits hook：abtop 的 `abtop-statusline.sh` 示範了取得路徑，但正確做法是 claude-config 自己掛 hook，不依賴 abtop 是否安裝。
+**Requirement**:
+1. `scripts/claude-usage.sh` → `scripts/token-usage.sh`（更新所有引用：install.sh、install-hooks.sh、uninstall-hooks.sh、test-install.sh、test-usage-tracker.sh、README.md、docs/）
+2. `~/.claude/scripts/` symlink 同步更新；`~/.claude/settings.json` 中的路徑更新
+3. 新增 `scripts/hook-save-rate-limits.sh`：statusLine hook，讀 stdin JSON → 提取 `rate_limits` → 寫入 `~/.claude/rate-limits.json`
+4. `install-hooks.sh` 掛入 StatusLine；`uninstall-hooks.sh` 清除
+5. `token-usage.sh --remaining`（無參數）：讀 `~/.claude/rate-limits.json`，自動計算 `100 - five_hour.used_percentage`；`updated_at` 超過 30 分鐘或檔案不存在則警告並退回手動輸入
+
+## CC-007 — brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md
+
+**Problem**: PR #40 開發過程中 7 輪 gate 才通過，主因是 brief 列了行為變更但沒預先列出對應測試需求，導致 qa-tester 每輪都 block 追加 coverage。
+**Why**: 若 brief 在 `files` 或獨立區塊明確列出「每個新 behavioral unit 需要哪些測試」，codex-executor 第一次就能一起實作，省去多輪 gate + fix 循環。
+**Requirement**: 在 `docs/codex-brief.md` 加 `qa_checklist` 選填區塊規範（引入 3+ behavioral units 時必填）；在 `agents/project-pm.md` 加 PM 生成 brief 時的對應指引。
+
+## CC-008 — Spark routing 判斷標準寫入 agents/project-pm.md
+
+**Problem**: PM 派發 codex 任務時，尚無文件說明何時應選 `--model codex-spark` 而非預設 codex。Spark 適合小型、定點修改，但沒有明確標準。
+**Why**: 若 PM 自動選 Spark 處理輕量任務，可降低 token 消耗。但錯誤路由（把大任務給 Spark）會導致結果品質下降。
+**Requirement**: 在 `agents/project-pm.md` 加 Spark routing 判斷規則：(a) diff 預期 < 50 行、(b) 單一檔案修改、(c) 無跨模組依賴時，優先考慮 Spark；否則走預設 codex。
