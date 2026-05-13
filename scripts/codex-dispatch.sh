@@ -178,7 +178,7 @@ for line in open(sys.argv[1]):
             u = e.get('usage', {})
             print(u.get('input_tokens',0) + u.get('output_tokens',0))
             sys.exit(0)
-    except: pass
+    except Exception: pass
 print(0)
 " "$TRACE" 2>/dev/null || echo 0)
   if [[ "$_CODEX_TOKENS" -gt 0 ]]; then

@@ -347,11 +347,13 @@ test_hooks_install_uninstall_lifecycle() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
 
   pass "$name"
 }
