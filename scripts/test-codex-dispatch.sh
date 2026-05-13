@@ -251,6 +251,41 @@ fi
 rm -rf "$_fake_bin12" "$_home12" "$_work12"
 rm -f "$_brief12"
 
+# ---- 13: auto-log/log-failure-preserves-dispatch-exit ----
+_fake_bin13="$(mktemp -d)"
+cat > "$_fake_bin13/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10000,"output_tokens":500}}'
+exit 0
+FAKEOF
+chmod +x "$_fake_bin13/codex"
+
+_home13="$(mktemp -d)"
+mkdir -p "$_home13/.claude/scripts"
+# Deliberately no log-usage.sh so the auto-log call fails
+
+_work13="$(mktemp -d)"
+git init -q "$_work13"
+
+_brief13="$(mktemp --suffix=.md)"
+printf 'goal: test logging failure\n' > "$_brief13"
+
+PATH="$_fake_bin13:$PATH" HOME="$_home13" \
+  "$DISPATCH" --cd "$_work13" --brief-file "$_brief13" >/dev/null 2>&1
+_exit13=$?
+
+# Find the stderr trace file written by dispatch
+_stderr13="$(ls "$_work13/.agent-trace/"*.stderr 2>/dev/null | head -1)"
+if [[ "$_exit13" -eq 0 && -n "$_stderr13" ]] && grep -q "usage log failed" "$_stderr13"; then
+  t_pass "auto-log/log-failure-preserves-dispatch-exit"
+else
+  t_fail "auto-log/log-failure-preserves-dispatch-exit — exit=$_exit13 stderr=$(cat "$_stderr13" 2>/dev/null | tail -5 || echo MISSING)"
+fi
+rm -rf "$_fake_bin13" "$_home13" "$_work13"
+rm -f "$_brief13"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

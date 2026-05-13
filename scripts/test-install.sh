@@ -291,11 +291,11 @@ test_legacy_stale_symlinks_removed() {
 }
 
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires all three managed hooks and that
+# Proves that install-hooks.sh wires all four managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
-  # Proves that the primary install.sh path wires all three managed hooks
+  # Proves that the primary install.sh path wires all four managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
   local home="$tmp_root/$name"
@@ -310,6 +310,7 @@ test_install_sh_wires_hooks() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   pass "$name"
 }
 
@@ -334,6 +335,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   pass "$name"
 }
 
