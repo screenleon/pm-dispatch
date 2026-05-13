@@ -358,9 +358,48 @@ test_hooks_install_uninstall_lifecycle() {
   pass "$name"
 }
 
+test_stop_hook_migration() {
+  local name="hooks-stop-migration"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local old_stop="$REPO_ROOT/hooks/hook-log-claude-usage.sh"
+  printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
+    "$old_stop" > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" \
+    "hooks/hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" \
+    "scripts/hook-log-claude-usage.sh" || return
+  pass "$name"
+}
+
+test_stop_hook_preservation() {
+  local name="hooks-stop-preservation"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  # Unrelated hook at a completely different path that happens to share the basename
+  local unrelated="/home/testuser/myproject/hook-log-claude-usage.sh"
+  printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
+    "$unrelated" > "$home/.claude/settings.json"
+
+  # After install: unrelated hook preserved, managed hook added
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
+
+  # After uninstall: managed hook removed, unrelated hook still present
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  pass "$name"
+}
+
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_stop_hook_migration
+test_stop_hook_preservation
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
 

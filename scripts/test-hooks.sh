@@ -1127,6 +1127,32 @@ print(total)
   fi
 }
 
+stop_nested_message_usage() {
+  local name="stop_nested_message_usage" home transcript payload status logfile
+  home="$(make_stop_home)"
+  transcript="$home/transcript-nested.jsonl"
+  # Nested format: usage is under message.usage (Claude API transcript format)
+  printf '%s\n' \
+    '{"role":"assistant","message":{"usage":{"input_tokens":800,"output_tokens":200}}}' \
+    '{"role":"user","message":{"usage":{"input_tokens":100,"output_tokens":0}}}' \
+    > "$transcript"
+  payload="$(jq -nc --arg path "$transcript" --arg session "sess-nested" \
+    '{transcript_path:$path,session_id:$session}')"
+  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  status=$?
+  logfile="$home/.claude/usage-tracker.jsonl"
+  if [[ "$status" == "0" && -f "$logfile" ]] &&
+     grep -q -F '"type":"session_total"' "$logfile" &&
+     grep -q -F '"tokens":1100' "$logfile"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (status=%s, logfile=%s)\n' "$name" "$status" "$logfile"
+  fi
+}
+
 stop_happy_path
 stop_missing_transcript_path
 stop_transcript_file_not_found
@@ -1134,6 +1160,7 @@ stop_malformed_json_payload
 stop_zero_token_transcript
 stop_failure_logged
 stop_idempotent_double_call
+stop_nested_message_usage
 
 # =============================================================================
 # summary

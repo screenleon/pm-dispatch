@@ -364,6 +364,17 @@ case_log_pool_spark() {
   pass_case "$name"
 }
 
+case_log_pool_invalid() {
+  local name="log_pool_invalid" home status err
+  home="$(new_home "$name")"
+  err="$TMP_ROOT/$name.err"
+  HOME="$home" /bin/bash "$LOG_SCRIPT" codex_dispatch 1100 "test" "" badpool > /dev/null 2> "$err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
+  assert_contains "$name" "$err" "unknown pool"
+  pass_case "$name"
+}
+
 case_remaining_excludes_codex_pool() {
   local name="remaining_excludes_codex_pool" home out status
   home="$(new_home "$name")"
@@ -623,6 +634,7 @@ case_round_trip
 case_log_pool_codex
 case_log_pool_default
 case_log_pool_spark
+case_log_pool_invalid
 case_remaining_excludes_codex_pool
 case_remaining_no_claude_log
 case_remaining_mixed_pools_correct_total

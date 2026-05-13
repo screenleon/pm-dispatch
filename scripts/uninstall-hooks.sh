@@ -28,6 +28,7 @@ pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
+old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
@@ -37,6 +38,7 @@ jq \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
+  --arg old_stop "$old_stop_cmd" \
   '
   (if (.hooks // {}).PreToolUse then
     # Remove individual hook entries matching any managed command.
@@ -50,7 +52,7 @@ jq \
   else . end) |
   (if (.hooks // {}).Stop then
     .hooks.Stop |= map(
-      .hooks |= map(select(.command != $stop and (.command | tostring | contains("hook-log-claude-usage.sh") | not)))
+      .hooks |= map(select(.command != $stop and .command != $old_stop))
     ) |
     .hooks.Stop |= map(select((.hooks | length) > 0)) |
     if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end

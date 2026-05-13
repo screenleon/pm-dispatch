@@ -185,8 +185,9 @@ print(0)
     _POOL="codex"
     [[ "${MODEL:-}" == *spark* ]] && _POOL="spark"
     _NOTE="auto: $(basename "$WORK_DIR")"
-    bash "${HOME}/.claude/scripts/log-usage.sh" \
-      "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>/dev/null || true
+    bash "${HOME}/.claude/scripts/log-usage.sh" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
+      echo "[$(date -Is)] codex-dispatch: usage log failed (pool=$_POOL tokens=$_CODEX_TOKENS)" \
+        >> "$STDERR_LOG"
   fi
 fi
 

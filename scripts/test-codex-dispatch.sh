@@ -215,6 +215,42 @@ fi
 rm -rf "$_fake_bin11" "$_home11" "$_work11"
 rm -f "$_brief11"
 
+# ---- 12: auto-log/spark-model-logs-spark-pool ----
+_fake_bin12="$(mktemp -d)"
+cat > "$_fake_bin12/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":50000,"output_tokens":2000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
+exit 0
+FAKEOF
+chmod +x "$_fake_bin12/codex"
+
+_home12="$(mktemp -d)"
+mkdir -p "$_home12/.claude/scripts"
+ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home12/.claude/scripts/log-usage.sh"
+
+_work12="$(mktemp -d)"
+git init -q "$_work12"
+
+_brief12="$(mktemp --suffix=.md)"
+printf 'goal: spark test\n' > "$_brief12"
+
+PATH="$_fake_bin12:$PATH" HOME="$_home12" \
+  "$DISPATCH" --cd "$_work12" --brief-file "$_brief12" --model codex-spark >/dev/null 2>&1
+_exit12=$?
+
+_tracker12="$_home12/.claude/usage-tracker.jsonl"
+if [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
+   && grep -q '"pool":"spark"' "$_tracker12" \
+   && grep -q '"tokens":52000' "$_tracker12"; then
+  t_pass "auto-log/spark-model-logs-spark-pool"
+else
+  t_fail "auto-log/spark-model-logs-spark-pool — exit=$_exit12 tracker=$(cat "$_tracker12" 2>/dev/null || echo MISSING)"
+fi
+rm -rf "$_fake_bin12" "$_home12" "$_work12"
+rm -f "$_brief12"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

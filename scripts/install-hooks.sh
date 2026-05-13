@@ -37,6 +37,7 @@ pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
+old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 
 if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
@@ -57,6 +58,7 @@ jq \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
+  --arg old_stop "$old_stop_cmd" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -64,8 +66,9 @@ jq \
   .hooks.Stop //= [] |
 
   # Migrate the former unmanaged Stop hook path under hooks/ to scripts/.
+  # Use exact-path match — do not remove Stop hooks from other sources.
   .hooks.Stop |= map(
-    .hooks |= map(select(.command == $stop or (.command | tostring | contains("hook-log-claude-usage.sh") | not)))
+    .hooks |= map(select(.command != $old_stop))
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
