@@ -67,9 +67,17 @@ If no changes are needed, say so clearly.
 
 If `$ARGUMENTS` contains `--dry-run`, **stop here**. Do not write any files.
 
-## Step 5 — Write changes (non-dry-run only)
+## Step 5 — Confirm before writing (non-dry-run only)
 
-After user confirms (or if no confirmation is requested), apply each change:
+Present the proposed changes from Step 4 to the user and ask:
+
+> "Apply these <N> change(s) to MEMORY.md and the linked memory files? (yes/no)"
+
+**Do not proceed until the user explicitly confirms with "yes" (or equivalent affirmative).** If the user declines or does not respond affirmatively, stop and report "Distillation cancelled — no changes written."
+
+## Step 6 — Write changes
+
+After explicit user confirmation, apply each change:
 
 - **ADD**: Create the new memory file in the memory directory (using the standard frontmatter format); add the entry to MEMORY.md index.
 - **UPDATE**: Edit the hook line in MEMORY.md; update the `description:` field in the linked memory file if needed.

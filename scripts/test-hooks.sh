@@ -242,17 +242,17 @@ run_case_env "pm: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_PM_GUARD=" "$PMHO
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
 # Audit-log content assertions for pm-guard.
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains allow line" "decision=allow"
 
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" | "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" | "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains deny line with reason" "decision=deny"
 assert_log "pm: audit log includes target file_path" "$code_path"
 
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
@@ -334,19 +334,19 @@ run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions ---
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains allow line" "decision=allow"
 assert_log "cxw: allow line records agent=codex-executor" "agent=codex-executor"
 assert_log "cxw: allow line records tool=Write" "tool=Write"
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains deny line" "decision=deny"
 assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains bypass line" "decision=bypass"
 assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -728,24 +728,24 @@ run_case_env "cx: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_CODEX_GUARD=" "$C
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
 # --- audit-log content assertions ---
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains allow line" "decision=allow"
 # %q escapes spaces as backslash-space; assert the escaped form.
 assert_log "cx: allow line records git command (escaped)" 'git\ status'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git push --force"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git push --force"}}' | "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains deny line" "decision=deny"
 assert_log "cx: deny line records command target (escaped)" 'git\ push\ --force'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status; rm -rf /"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status; rm -rf /"}}' | "$CXHOOK" >/dev/null 2>&1
 # Reason is also %q-escaped; the literal `shell` token survives unescaped.
 assert_log "cx: deny reason includes 'shell metacharacter'" 'shell\ metacharacter'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env CLAUDE_HOOK_CODEX_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env CLAUDE_HOOK_CODEX_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "cx: bypass line records codex-executor (not '?')" "agent=codex-executor"
 
@@ -2183,6 +2183,65 @@ session_hook_empty_stdin() {
   fi
 }
 
+session_hook_missing_session_id() {
+  # Verifies the Stop hook exits 0 and writes nothing when session_id is absent.
+  # Without a stable session_id the hook cannot deduplicate, so it must skip.
+  # Steps:
+  #   1. Create project memory dir with no episodes.jsonl
+  #   2. Run hook with payload that omits the session_id key entirely
+  #   3. Assert exit 0 and no episodes.jsonl created
+  local name="session-hook/missing-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '%s' "{\"cwd\":\"$cwd\"}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
+    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_non_string_session_id() {
+  # Verifies the Stop hook exits 0 and writes nothing when session_id is a
+  # non-string JSON value (e.g., integer). Non-string ids are normalized to ""
+  # and must be treated as absent (no write).
+  # Steps:
+  #   1. Create project memory dir with no episodes.jsonl
+  #   2. Run hook with payload where session_id is an integer (42)
+  #   3. Assert exit 0 and no episodes.jsonl created
+  local name="session-hook/non-string-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":42}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
+    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
+  fi
+  rm -rf "$dir"
+}
+
 session_hook_happy_path
 session_hook_duplicate_no_summary
 session_hook_duplicate_has_summary
@@ -2190,6 +2249,8 @@ session_hook_new_session_appends
 session_hook_no_memory_dir
 session_hook_malformed_payload
 session_hook_empty_stdin
+session_hook_missing_session_id
+session_hook_non_string_session_id
 
 # =============================================================================
 # command validators — /mem-recall injection format

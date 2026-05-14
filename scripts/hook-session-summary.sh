@@ -32,6 +32,10 @@ try:
     session_id = data.get('session_id', '')
     if not isinstance(session_id, str):
         session_id = ''
+    # Require a non-empty session_id to write. /mem-log handles session_id=""
+    # entries; without a stable id the Stop hook cannot deduplicate safely.
+    if not session_id:
+        sys.exit(0)
 
     # Find project memory dir (same ancestor-walk as hook-inject-memory.sh)
     projects_dir = os.path.join(config_dir, 'projects')
