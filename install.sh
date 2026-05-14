@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — symlink claude-config contents into ~/.claude/
+# install.sh — symlink pm-dispatch contents into ~/.claude/
 #
 # Idempotent: re-running is safe.
 # Per-file symlinks: ~/.claude/agents/ may contain agents from other sources alongside.
@@ -86,7 +86,7 @@ install_dir() {
   echo "  ($count linked, $conflicts conflicts)"
 }
 
-echo "claude-config installer"
+echo "pm-dispatch installer"
 echo "  repo:        $REPO_ROOT"
 echo "  claude home: $CLAUDE_HOME"
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:        DRY RUN"; fi
@@ -217,7 +217,7 @@ echo "  ($us_count linked, $us_conflicts conflicts)"
 
 echo
 
-# pm-schema: symlink ~/.claude/.pm -> claude-config/pm so cross-repo
+# pm-schema: symlink ~/.claude/.pm -> pm-dispatch/pm so cross-repo
 # path references (rollup.sh default out, memory prose, schema.md
 # consumers) keep working.
 PM_SRC="$REPO_ROOT/pm"

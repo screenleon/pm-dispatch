@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove the claude-config managed hooks from ~/.claude/settings.json.
+# Remove the pm-dispatch managed hooks from ~/.claude/settings.json.
 # Idempotent: skips entries that aren't present.
 #
 # Usage:

@@ -1,5 +1,5 @@
 <!-- pm-schema: v1 -->
-# claude-config backlog
+# pm-dispatch backlog
 
 <!--
 ID PREFIX: CC
@@ -103,7 +103,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 ## CC-013 — `/caveman` token 壓縮 skill
 
 **Problem**: 長 session 中 Claude 回應冗長，token 消耗快速，尤其在 codex brief 審核、多輪 gate 等場景。
-**Why**: Caveman 專案實測降低 65-75% token 用量，架構（slash command + hook）與 claude-config 完全相容。
+**Why**: Caveman 專案實測降低 65-75% token 用量，架構（slash command + hook）與 pm-dispatch 完全相容。
 **Requirement**: `commands/caveman.md` slash command，切換壓縮模式（off / lite / full / ultra）；`/caveman-commit` 變體生成超簡潔 commit message。
 
 ## CC-014 — `using-git-worktrees` skill
@@ -168,14 +168,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 ## CC-025 — `/skill-refine` skill 自我精修
 
 **Problem**: skill / command（`/pr-gate`、`/codex-pr-gate`、`/pm`、`/pre-impl` 等）的 .md 內容是手寫的，使用過程中遇到的卡點與更正只會沉澱成 feedback memory（例：[[feedback_gate_on_stacked_branches]]、[[feedback_stale_binary_before_smoke]]），不會回流到 skill 本身。下次同個 skill 的 fresh 使用者（包含未來的自己）仍會踩同樣的洞。
-**Why**: PR #45 已落地 `episodes.jsonl` + `/mem-log` + `/mem-distill`，episode 層已包含「該 session 用了哪些 skill / 是否有後續更正」的原始訊號 — 缺的是把這個訊號針對「skill 本身」做 diff 提議的閉環。Hermes Agent README 把這條稱作 "skills self-improve during use"，是 self-improvement loop 中 claude-config 最明顯的缺口。預期 ROI 最高，因為 PR-gate / Codex routing 是高頻使用的 skill，每一條 feedback rule 沉澱回 skill 都能直接降低未來 fix-loop 輪數（對應 [[feedback_shared_schema_briefs]] 的根本痛點）。
+**Why**: PR #45 已落地 `episodes.jsonl` + `/mem-log` + `/mem-distill`，episode 層已包含「該 session 用了哪些 skill / 是否有後續更正」的原始訊號 — 缺的是把這個訊號針對「skill 本身」做 diff 提議的閉環。Hermes Agent README 把這條稱作 "skills self-improve during use"，是 self-improvement loop 中 pm-dispatch 最明顯的缺口。預期 ROI 最高，因為 PR-gate / Codex routing 是高頻使用的 skill，每一條 feedback rule 沉澱回 skill 都能直接降低未來 fix-loop 輪數（對應 [[feedback_shared_schema_briefs]] 的根本痛點）。
 **Requirement**:
 1. `commands/skill-refine.md` slash command，介面：`/skill-refine <skill-name> [--dry-run]`。
 2. 讀 `episodes.jsonl` 近 N 個 entry 中 metadata 顯示有觸發該 skill 的 session；提取後續 turns 的 user-correction 訊號（user 在 skill 跑完後立刻給出 "no"/"actually"/"don't"/「不對」/「應該」等更正詞、或重發類似 prompt）。
 3. 對 `commands/<skill-name>.md` 提 diff，預設 `--dry-run` 印出 patch 等待 user 確認；非 dry-run 也僅輸出 diff 不直寫，由 user/main thread 套用（避免 skill 自改 skill 的回授風險）。
 4. 觀察期：先當 `/mem-distill` 的兄弟工具，不進 cron / 自動觸發，避免污染。
 **Note**: 依賴 **CC-027**（PreToolUse tool-trace 基礎建設）— 原本標為 spike brief 內待釐清的訊號層，現移為獨立前置項目。
-**Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 claude-config 的 gap 分析。
+**Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
 ## CC-026 — `/skill-distill` 從重複工作流產出 skill
 
@@ -187,7 +187,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 3. 若同樣序列在不同 session 出現 ≥ N 次（預設 3）且總長度 ≥ 5 步，產出草稿 `commands/<draft-name>.md` 並回報出處 episodes。
 4. 預設 `--dry-run` 只印名稱與草稿 outline，user 確認後再寫檔。
 **Note**: 依賴 **CC-027** 與 **CC-025**。順序：CC-027 訊號層落地 → CC-025 驗證單一 skill 改進迴路 → CC-026 才有足夠資料做序列聚類。
-**Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 claude-config 的 gap 分析。
+**Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
 ## CC-027 — PreToolUse `hook-tool-trace.sh` tool/skill 觸發訊號層
 
@@ -199,7 +199,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 3. tool-trace.jsonl 採獨立檔以便日後輪轉/壓縮；最近 N session 保留，超過 archive 或刪除。
 4. `install-hooks.sh` wire PreToolUse；`scripts/test-hooks.sh` 加對應 case 驗證 append 結構、效能不退化、不阻擋。
 **Note**: blocks **CC-025**, **CC-026**。在這條落地前，CC-025/026 不應啟動。
-**Source**: 2026-05-15 對話 — claude-config 改善分析（A2）。
+**Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A2）。
 
 ## CC-028 — PostToolUse `hook-routing-log.sh` 自動 append routing_log
 
@@ -210,7 +210,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 2. 從 brief 檔（`.codex-briefs/<id>.md` 或 dispatch first non-flag arg）讀 `goal:` / `files:`，append `{ts, brief_id, goal_excerpt, file_count, q_hit?}` 到 `routing_log.md`。
 3. `q_hit` 為選填，MVP 可只記 raw metadata，由 `/mem-distill` 或新增的 `/routing-distill` 後製判斷 Q1/Q2/Q3 hit。
 4. `scripts/test-hooks.sh` 加對應 case：dispatch 觸發、非 dispatch Bash 不觸發、append 結構正確、append 失敗不能阻擋 dispatch 結果。
-**Source**: 2026-05-15 對話 — claude-config 改善分析（A1）。對應 [[routing_log]] 與 [[feedback_codex_routing]] 設計目標。
+**Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A1）。對應 [[routing_log]] 與 [[feedback_codex_routing]] 設計目標。
 
 ## CC-029 — `test-codex-dispatch.sh` 加入 CI
 
@@ -220,7 +220,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 1. `.github/workflows/lint.yml` 加 `test-codex-dispatch` job，runner steps 同既有 test jobs 模式。
 2. 確認 snapshot fixtures 不依賴本機 `$HOME` 絕對路徑、不依賴外部 secret；若有則先補 fixture isolation 再進 CI。
 3. 與 CC-024 同 PR 處理。
-**Source**: 2026-05-15 對話 — claude-config 改善分析（A3）。
+**Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A3）。
 
 ## CC-030 — `pm/scripts/validate.sh` Index↔Section 雙向一致性 + CHANGELOG drift
 
@@ -231,7 +231,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 2. CHANGELOG drift 檢查（可選 / 第二階段）：`[Unreleased]` 引用的 `pr:#NN` 對應 backlog row 必須是 `✅ closed` 狀態。
 3. 對應 `pm/scripts/test/fixtures/` 加 `bad-orphan-index/`、`bad-orphan-section/`、`bad-changelog-drift/` fixture；既有 `good/` fixture 通過。
 4. `.github/workflows/lint.yml` 既有 schema test 自動涵蓋，不需新 job。
-**Source**: 2026-05-15 對話 — claude-config 改善分析（B2）。對應 [[feedback_known_bug_backlog]] 由 feedback rule 升級為結構性保證。
+**Source**: 2026-05-15 對話 — pm-dispatch 改善分析（B2）。對應 [[feedback_known_bug_backlog]] 由 feedback rule 升級為結構性保證。
 
 ## CC-031 — 開源前置：CONTRIBUTING.md + SECURITY.md + README 工作語言聲明
 

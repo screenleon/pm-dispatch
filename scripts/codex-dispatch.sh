@@ -38,7 +38,7 @@
 set -euo pipefail
 
 # Self-snapshot to avoid mid-flight modification when a dispatched Codex session
-# edits this script (e.g. when the dispatch target is claude-config itself).
+# edits this script (e.g. when the dispatch target is pm-dispatch itself).
 # Bash reads scripts incrementally; rewriting the on-disk file under a running
 # interpreter can corrupt the next read. We re-exec from a /tmp copy so the
 # on-disk file is decoupled from the running process.

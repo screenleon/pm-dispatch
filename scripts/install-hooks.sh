@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotently splice the claude-config hooks into
+# Idempotently splice the pm-dispatch hooks into
 # ~/.claude/settings.json.
 #
 # Wires:

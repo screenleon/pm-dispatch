@@ -8,7 +8,7 @@ Thin dispatcher. You read pre-written brief files and invoke Codex; you do not i
 
 # Validation
 
-Before dispatching, validate the brief against the schema at `~/github/claude-config/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
+Before dispatching, validate the brief against the schema at `~/github/pm-dispatch/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
 
 | Field | Required when |
 |---|---|
@@ -27,7 +27,7 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 # Job
 
 1. Validate brief (see Validation above). Reject before dispatching if any required field is missing.
-2. Dispatch via `~/github/claude-config/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
+2. Dispatch via `~/github/pm-dispatch/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
 
@@ -43,12 +43,12 @@ If the path is present but the file does not exist on disk (Read tool returns no
 
 **Step 1 — read and validate the brief file (path provided by main thread):**
 
-The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/claude-config/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
+The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/pm-dispatch/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
 
 **Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
 ```bash
-~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
+~/github/pm-dispatch/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
 Do not inline the brief with `-- <brief>` for real work. That form is retained only for trivial smoke checks; shell quoting, hook validation, and multiline briefs are too easy to get wrong inline.

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to claude-config are documented here.
+All notable changes to pm-dispatch are documented here.
 Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 Versions follow [Semantic Versioning](https://semver.org/).
 

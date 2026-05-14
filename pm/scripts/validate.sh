@@ -7,7 +7,7 @@ export LC_ALL=C.UTF-8
 if [ -e "$HOME/.claude/.pm" ] && [ ! -L "$HOME/.claude/.pm" ] && ! ps -o args= -p "${PPID:-0}" 2>/dev/null | grep -Fq 'pm/scripts/test/run-tests.sh'; then
   printf 'warn: %s is a real directory, not a symlink. Run %s/install.sh to complete pm-schema cutover.\n' \
     "$HOME/.claude/.pm" \
-    "$HOME/github/claude-config" >&2
+    "$HOME/github/pm-dispatch" >&2
 fi
 
 usage() {
