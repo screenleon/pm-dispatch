@@ -96,11 +96,15 @@ claude_schema() {
     return 0
   fi
 
-  # Simplified: detect by key presence/type only, without separate
-  # populated-vs-empty branches. Empty arrays/objects return zeros in
-  # claude_counts_for_date regardless of schema variant.
+  # Prefer populated keys first; an empty preferred key falls through to
+  # populated alternate keys so that {dailyActivity:[], days:[{...}]} returns
+  # days-array rather than reporting all zeros.
   jq -r '
-    if (.dailyActivity | type) == "array" then "dailyActivity-array"
+    if ((.dailyActivity | type) == "array" and (.dailyActivity | length) > 0) then "dailyActivity-array"
+    elif ((.dailyActivity | type) == "object" and (.dailyActivity | length) > 0) then "dailyActivity-object"
+    elif ((.days | type) == "array" and (.days | length) > 0) then "days-array"
+    elif ((.daily | type) == "object" and (.daily | length) > 0) then "daily-object"
+    elif (.dailyActivity | type) == "array" then "dailyActivity-array"
     elif (.dailyActivity | type) == "object" then "dailyActivity-object"
     elif (.days | type) == "array" then "days-array"
     elif (.daily | type) == "object" then "daily-object"
