@@ -96,6 +96,10 @@ echo
 # (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1) to avoid running the full suite for
 # every install.sh invocation in the installer test suite (~9 calls × N tests).
 _SKIP_PREFLIGHT="${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}"
+if [[ "$_SKIP_PREFLIGHT" == "1" ]]; then
+  echo "  [preflight skipped: CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1]"
+  echo
+fi
 
 # Pre-flight: agent frontmatter must not declare Agent (subagents can't spawn subagents)
 if [[ -x "$REPO_ROOT/scripts/lint-agents.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then

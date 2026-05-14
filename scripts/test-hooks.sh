@@ -2396,8 +2396,30 @@ meta_list_exits_zero_with_count() {
   fi
 }
 
+meta_filter_no_match_exits_nonzero() {
+  # Verifies --filter with a pattern that matches no cases exits nonzero
+  # and emits a diagnostic message rather than silently reporting 0 passed.
+  # Steps:
+  #   1. Invoke test-hooks.sh --filter with a pattern known to match nothing
+  #   2. Assert exit status is nonzero
+  #   3. Assert stderr/stdout contains "no tests matched"
+  local name="meta/filter-no-match-exits-nonzero"
+  should_run "$name" || return 0
+  local out status
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"no tests matched"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — status=%s out=%q\n' "$name" "$status" "$out"
+  fi
+}
+
 meta_filter_runs_only_matching
 meta_list_exits_zero_with_count
+meta_filter_no_match_exits_nonzero
 
 # =============================================================================
 # summary
@@ -2406,6 +2428,11 @@ meta_list_exits_zero_with_count
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
   exit 0
+fi
+
+if [[ -n "$FILTER" && $((PASS + FAIL)) -eq 0 ]]; then
+  printf 'no tests matched filter %q — check --list for available case names\n' "$FILTER" >&2
+  exit 1
 fi
 
 echo

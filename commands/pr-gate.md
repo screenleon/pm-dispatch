@@ -160,3 +160,7 @@ bash scripts/test-hooks.sh && bash scripts/test-install.sh
 `--filter <pattern>` runs only cases whose name contains `<pattern>`.
 `--list` prints all case names and exits 0 — useful for finding the right pattern.
 Full suites are still required in the gate; `--filter` is for local iteration speed only.
+
+**Warning**: if the pattern matches zero cases, the harness exits nonzero and prints
+`no tests matched filter <pattern>`. A typo in the filter produces a hard failure, not a
+false green. Use `--list` first to confirm the case name before running `--filter`.
