@@ -1200,6 +1200,11 @@ run_rl_hook() {
 }
 
 rl_hook_happy_path() {
+  # Verifies that a valid rate_limits payload writes rate-limits.json with the
+  # correct five_hour, seven_day percentages, and an updated_at timestamp.
+  # Steps:
+  #   1. Run the hook with JSON containing five_hour (25%) and seven_day (10%)
+  #   2. Assert rate-limits.json exists with correct field values and updated_at
   local name="rl-hook/happy-path-writes-file" rl_home
   rl_home="$(mktemp -d)"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
@@ -1215,6 +1220,11 @@ rl_hook_happy_path() {
 }
 
 rl_hook_missing_rate_limits() {
+  # Verifies that a payload without a rate_limits key exits 0 and does not
+  # create rate-limits.json (no partial write on irrelevant payloads).
+  # Steps:
+  #   1. Run the hook with JSON that has no rate_limits key
+  #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/missing-rate-limits-no-write" rl_home status
   rl_home="$(mktemp -d)"
   printf '%s' '{"other_key":"value"}' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
@@ -1231,6 +1241,11 @@ rl_hook_missing_rate_limits() {
 }
 
 rl_hook_malformed_json() {
+  # Verifies that malformed JSON input exits 0 and does not create rate-limits.json
+  # (hook must not crash or produce partial output on bad input).
+  # Steps:
+  #   1. Run the hook with a non-JSON payload string
+  #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/malformed-json-exits-0" rl_home status
   rl_home="$(mktemp -d)"
   printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
@@ -1247,6 +1262,13 @@ rl_hook_malformed_json() {
 }
 
 rl_hook_chain_called() {
+  # Verifies that when statusline-chain.conf holds a bare executable path,
+  # the hook invokes it and still writes rate-limits.json.
+  # Steps:
+  #   1. Write a chain script that creates a sentinel file on invocation
+  #   2. Write the script path to statusline-chain.conf
+  #   3. Run the hook with a valid rate_limits payload
+  #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called" rl_home chain_log chain_script
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
@@ -1270,6 +1292,13 @@ CHAINEOF
 }
 
 rl_hook_chain_called_with_args() {
+  # Verifies that a statusline-chain.conf entry that is a command string with
+  # unquoted arguments is correctly invoked via bash -c and writes rate-limits.json.
+  # Steps:
+  #   1. Write a chain script that accepts arguments and creates a sentinel file
+  #   2. Write "$script --some-arg" to statusline-chain.conf
+  #   3. Run the hook with a valid rate_limits payload
+  #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called-with-args" rl_home chain_log chain_script
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
@@ -1294,6 +1323,12 @@ CHAINEOF
 }
 
 rl_hook_chain_called_bash_c() {
+  # Verifies that a statusline-chain.conf entry using bash -c shell syntax is
+  # correctly executed and rate-limits.json is still written.
+  # Steps:
+  #   1. Write a bash -c '...' command string to statusline-chain.conf
+  #   2. Run the hook with a valid rate_limits payload
+  #   3. Assert rate-limits.json exists and the sentinel file was created by bash -c
   local name="rl-hook/chain-called-bash-c" rl_home chain_log
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
@@ -1311,12 +1346,58 @@ rl_hook_chain_called_bash_c() {
   rm -rf "$rl_home"
 }
 
+rl_hook_empty_stdin() {
+  # Verifies that empty stdin exits 0 without creating rate-limits.json
+  # (guards against spurious writes when Claude Code sends a no-payload event).
+  # Steps:
+  #   1. Run the hook with empty stdin (printf '')
+  #   2. Assert exit 0 and rate-limits.json does not exist
+  local name="rl-hook/empty-stdin-exits-0" rl_home status
+  rl_home="$(mktemp -d)"
+  printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$rl_home/rate-limits.json" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s file_exists=%s\n' "$name" "$status" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
+rl_hook_chain_failure_isolated() {
+  # Verifies that a failing chain command (non-zero exit) does not prevent
+  # rate-limits.json from being written (|| true isolates chain failure).
+  # Steps:
+  #   1. Write "exit 1" as the chain command in statusline-chain.conf
+  #   2. Run the hook with a valid rate_limits payload
+  #   3. Assert hook exits 0 and rate-limits.json was written despite chain failure
+  local name="rl-hook/chain-failure-isolated" rl_home status
+  rl_home="$(mktemp -d)"
+  printf '%s\n' "exit 1" > "$rl_home/statusline-chain.conf"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
+  status=$?
+  if [[ "$status" == "0" && -f "$rl_home/rate-limits.json" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s rate-limits.json=%s\n' "$name" "$status" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
 rl_hook_happy_path
 rl_hook_missing_rate_limits
 rl_hook_malformed_json
+rl_hook_empty_stdin
 rl_hook_chain_called
 rl_hook_chain_called_with_args
 rl_hook_chain_called_bash_c
+rl_hook_chain_failure_isolated
 
 # =============================================================================
 # summary

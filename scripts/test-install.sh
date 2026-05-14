@@ -435,6 +435,14 @@ test_stop_hook_preservation() {
 }
 
 test_statusline_install_chains_previous() {
+  # Verifies that when a previous statusLine.command exists, install saves it to
+  # statusline-chain.conf and replaces it with hook-save-rate-limits.sh; a second
+  # install run is idempotent and preserves the chain conf.
+  # Steps:
+  #   1. Write settings.json with a bare-path statusLine.command
+  #   2. Run install; assert statusLine.command is now hook-save-rate-limits.sh
+  #   3. Assert statusline-chain.conf contains the previous command path
+  #   4. Run install again; assert "already wired" and chain conf unchanged
   local name="statusline-install-chains-previous"
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"
@@ -461,6 +469,12 @@ test_statusline_install_chains_previous() {
 }
 
 test_statusline_install_chains_previous_with_args() {
+  # Verifies that a statusLine.command containing arguments (e.g. "/path/cmd --flag")
+  # is stored verbatim in statusline-chain.conf so bash -c can invoke it correctly.
+  # Steps:
+  #   1. Write settings.json with a statusLine.command that includes a flag argument
+  #   2. Run install; assert statusLine.command is replaced with hook-save-rate-limits.sh
+  #   3. Assert statusline-chain.conf contains the full original command string with args
   local name="statusline-install-chains-previous-with-args"
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"
@@ -484,6 +498,13 @@ test_statusline_install_chains_previous_with_args() {
 }
 
 test_statusline_uninstall_restores() {
+  # Verifies that uninstall restores the previous statusLine.command from
+  # statusline-chain.conf and removes the chain conf file.
+  # Steps:
+  #   1. Write settings.json with a previous statusLine.command and run install
+  #   2. Run uninstall
+  #   3. Assert statusLine.command is restored to the original value
+  #   4. Assert statusline-chain.conf no longer exists
   local name="statusline-uninstall-restores"
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"

@@ -579,6 +579,12 @@ case_remaining_codex_dispatch_counted() {
 }
 
 case_remaining_auto_valid_file() {
+  # Verifies that --remaining auto-reads a fresh rate-limits.json and prints
+  # the derived remaining percentage without requiring a manual argument.
+  # Steps:
+  #   1. Write a rate-limits.json with five_hour.used_percentage=25 and a current timestamp
+  #   2. Run token-usage.sh --remaining (no N argument) with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and output contains "Remaining (from dashboard): 75"
   local name="remaining_auto_valid_file" home out status rl_dir rl_file
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
@@ -594,6 +600,12 @@ case_remaining_auto_valid_file() {
 }
 
 case_remaining_auto_stale_warning() {
+  # Verifies that a rate-limits.json with a very old updated_at causes a staleness
+  # warning on stderr while still exiting 0 and printing a percentage.
+  # Steps:
+  #   1. Write a rate-limits.json with updated_at=1000000 (epoch far in the past)
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "old" or "stale"
   local name="remaining_auto_stale_warning" home out status rl_dir
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
@@ -612,6 +624,12 @@ case_remaining_auto_stale_warning() {
 }
 
 case_remaining_auto_missing_file() {
+  # Verifies that --remaining auto-mode exits 0 and emits a "not found" note when
+  # rate-limits.json does not exist (guides user to install the StatusLine hook).
+  # Steps:
+  #   1. Point CLAUDE_CONFIG_DIR to an empty directory (no rate-limits.json)
+  #   2. Run token-usage.sh --remaining
+  #   3. Assert exit 0 and stderr contains "not found" or "rate-limits"
   local name="remaining_auto_missing_file" home out status rl_dir
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
@@ -629,6 +647,12 @@ case_remaining_auto_missing_file() {
 }
 
 case_remaining_auto_no_five_hour_key() {
+  # Verifies that a rate-limits.json missing five_hour.used_percentage emits a
+  # warning and exits 0 without printing a derived remaining percentage.
+  # Steps:
+  #   1. Write a rate-limits.json that has seven_day but no five_hour key
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "no five_hour"
   local name="remaining_auto_no_five_hour_key" home out status rl_dir
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
@@ -647,6 +671,12 @@ case_remaining_auto_no_five_hour_key() {
 }
 
 case_remaining_auto_malformed_json() {
+  # Verifies that a malformed rate-limits.json exits 0, emits a "could not read"
+  # warning, and does not print a derived remaining percentage.
+  # Steps:
+  #   1. Write a non-JSON file as rate-limits.json
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "could not read"
   local name="remaining_auto_malformed_json" home out status rl_dir
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
@@ -665,6 +695,12 @@ case_remaining_auto_malformed_json() {
 }
 
 case_remaining_manual_n_unchanged() {
+  # Verifies that providing an explicit N value to --remaining uses that value
+  # directly and ignores any rate-limits.json in the config directory.
+  # Steps:
+  #   1. Point CLAUDE_CONFIG_DIR to an empty directory (no rate-limits.json)
+  #   2. Run token-usage.sh --remaining 60
+  #   3. Assert exit 0 and output contains "Remaining (from dashboard): 60"
   local name="remaining_manual_N_unchanged" home out status rl_dir
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
