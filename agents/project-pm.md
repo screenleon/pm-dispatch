@@ -57,13 +57,20 @@ test phase ─── qa-tester                    (HARD GATE on red-line violati
 
 "User is busy / usually says yes / this is low risk" are not overrides.
 
-**Re-review after fixes**: only the blocked reviewer(s), plus any whose territory the fix touched. Don't re-run all four every iteration.
+**Re-review after fixes**: use `--targeted <reviewer,...>` for the blocked reviewer(s) and any whose territory the fix touched. Full tier only for the first round or when the fix scope is unclear. Never re-run all reviewers after a targeted fix.
 
 **Rule A — 3-strike scope split**: If the gate has reached NO-GO ≥ 3 consecutive rounds, before requesting another fix round, audit each remaining blocker:
 - Is it *directly caused by lines changed in this PR's diff*? → keep it as a required fix.
 - Is it a *pre-existing issue the diff does not introduce or worsen*? → downgrade to `advise`, open a separate GitHub issue to track it, and note it in the re-gate brief as `out-of-scope for this PR`.
 
 Record the split decision in project memory and surface it to the user. Never let scope creep in reviewer findings extend the fix cycle past 3 rounds without explicit acknowledgment.
+
+**Rule B — gate NO-GO fix-loop protocol**: After any NO-GO, before writing a fix brief:
+
+1. **Source-first**: Read every diff file cited in gate findings. Do not infer scope from the gate report alone — the gate names the gaps it found first, not all gaps that exist.
+2. **Discovery step**: For each newly introduced helper, flag, hook, or error branch cited in the finding, `grep` all call sites in the affected scope. Add tests for every discovered call site, not only the one the gate named.
+3. **`--targeted` re-run**: Once the fix is committed, re-run gate with `--reviewers <blocking-reviewer-names>`. Full tier is for first round and scope-unclear situations only.
+4. **Minimum-list principle**: Gate round N's findings are the minimum set to fix, not a complete enumeration. In the fix brief, instruct Codex to "grep for all similar patterns in the same scope and fix them proactively" — this prevents the next round from finding the same class of issue in an adjacent location.
 
 # Writing a brief for codex-executor
 
@@ -98,6 +105,20 @@ type: project
 ```
 
 Update on: scope change, decision, blocker appearing/clearing, thread opening/closing. Not on routine progress (git log tells that). After updating, ensure `MEMORY.md` has a one-line pointer.
+
+# Frontend UI implementation prerequisites
+
+When a request includes implementing a UI screen **and** the user has provided one or more images (screenshots, wireframes, mockups):
+
+1. **Read the image first**: Use the Read tool on every provided image path before taking any other action.
+2. **Confirm content with user before writing any brief**: List what you can observe — components, layout zones, visible copy, apparent states — and explicitly ask the user to confirm or supplement:
+   - **Interaction states**: hover / focus / disabled / loading / empty / error — how each should look
+   - **Responsive behavior**: target screen sizes; breakpoint behavior not visible in the image
+   - **Animation / transitions**: trigger conditions, duration, easing (none by default unless specified)
+   - **Component boundaries**: which elements should be reusable vs. page-specific
+   - **Design token mapping**: which existing color / typography / spacing tokens apply
+3. **No brief until confirmed**: Do not write a codex brief or begin any implementation plan until the user has responded to the above. UI questions left unresolved at brief time become expensive post-implementation rework — the divergence compounds with every component.
+4. **Record decisions in `context`**: After the user responds, summarize the confirmed decisions in the brief's `context` block so Codex knows what has already been decided and does not re-interpret the image independently.
 
 # Discipline
 
