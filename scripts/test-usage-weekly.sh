@@ -13,7 +13,18 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 PASS=0
-CURRENT_DATE="$(date -d '4 days ago' +%F 2>/dev/null || printf '2026-05-01')"
+CURRENT_DATE="$(date -d '4 days ago' +%F 2>/dev/null || date -v -4d +%F 2>/dev/null || printf '2026-05-01')"
+
+# touch_days_ago FILE DAYS — portable mtime setter (GNU + BSD).
+touch_days_ago() {
+  local file="$1" days="$2" stamp=""
+  stamp="$(date -d "$days days ago" +%Y%m%d%H%M 2>/dev/null \
+    || date -v -${days}d +%Y%m%d%H%M 2>/dev/null \
+    || true)"
+  if [ -n "$stamp" ]; then
+    touch -t "$stamp" "$file"
+  fi
+}
 
 fail() {
   local name="$1" detail="${2:-}"
@@ -158,7 +169,35 @@ case_missing_stats_cache() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "(missing)"
+  assert_contains "$name" "$out" "(stats-cache.json not found)"
+  pass_case "$name"
+}
+
+case_stale_boundary_2d() {
+  local name="stale_boundary_2d" home out status
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[]}"
+  touch_days_ago "$home/.claude/stats-cache.json" 2
+
+  run_usage "$home" "$out"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_not_contains "$name" "$out" "(slightly stale"
+  assert_not_contains "$name" "$out" "(stale"
+  pass_case "$name"
+}
+
+case_stale_boundary_3d() {
+  local name="stale_boundary_3d" home out status
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[]}"
+  touch_days_ago "$home/.claude/stats-cache.json" 3
+
+  run_usage "$home" "$out"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_matches "$name" "$out" '\(slightly stale, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
+  assert_not_contains "$name" "$out" "(stale >"
   pass_case "$name"
 }
 
@@ -167,11 +206,11 @@ case_stale_boundary_14d() {
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
   write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[]}"
-  touch -d "14 days ago" "$home/.claude/stats-cache.json"
+  touch_days_ago "$home/.claude/stats-cache.json" 14
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_not_contains "$name" "$out" "(stale"
+  assert_not_contains "$name" "$out" "(stale >14d"
   pass_case "$name"
 }
 
@@ -180,11 +219,35 @@ case_stale_boundary_15d() {
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
   write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[]}"
-  touch -d "15 days ago" "$home/.claude/stats-cache.json"
+  touch_days_ago "$home/.claude/stats-cache.json" 15
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_matches "$name" "$out" '\(stale, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
+  assert_matches "$name" "$out" '\(stale >14d, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
+  pass_case "$name"
+}
+
+case_model_tokens_array() {
+  local name="model_tokens_array" home out status
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[],\"dailyModelTokens\":[{\"date\":\"$CURRENT_DATE\",\"tokensByModel\":{\"claude-sonnet-4-6\":1234}}]}"
+
+  run_usage "$home" "$out"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "- claude-sonnet-4-6: 1234"
+  pass_case "$name"
+}
+
+case_model_tokens_object() {
+  local name="model_tokens_object" home out status
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[],\"dailyModelTokens\":{\"$CURRENT_DATE\":{\"tokensByModel\":{\"claude-opus-4-7\":5678}}}}"
+
+  run_usage "$home" "$out"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "- claude-opus-4-7: 5678"
   pass_case "$name"
 }
 
@@ -236,14 +299,14 @@ case_read_only_invariant() {
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
   write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[{\"date\":\"$CURRENT_DATE\",\"messageCount\":1,\"sessionCount\":1,\"toolCallCount\":1}]}"
-  stat_before="$(stat -c '%i %Y' "$home/.claude/stats-cache.json")"
+  stat_before="$(stat -c '%i %Y' "$home/.claude/stats-cache.json" 2>/dev/null || stat -f '%i %m' "$home/.claude/stats-cache.json" 2>/dev/null || true)"
   before="$TMP_ROOT/$name.before"
   after="$TMP_ROOT/$name.after"
   snapshot_home "$home" "$before"
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  stat_after="$(stat -c '%i %Y' "$home/.claude/stats-cache.json")"
+  stat_after="$(stat -c '%i %Y' "$home/.claude/stats-cache.json" 2>/dev/null || stat -f '%i %m' "$home/.claude/stats-cache.json" 2>/dev/null || true)"
   if [[ "$stat_after" != "$stat_before" ]]; then
     fail "$name" "stats-cache.json inode/mtime changed"
   fi
@@ -284,8 +347,12 @@ case_schema_days_array
 case_schema_daily_object
 case_empty_dailyActivity_array
 case_missing_stats_cache
+case_stale_boundary_2d
+case_stale_boundary_3d
 case_stale_boundary_14d
 case_stale_boundary_15d
+case_model_tokens_array
+case_model_tokens_object
 case_corrupt_json
 case_jq_missing
 case_codex_session_filename_with_space
@@ -294,5 +361,5 @@ case_output_contract
 
 echo
 echo "----"
-echo "$PASS passed, 0 failed"
+printf '%s passed, 0 failed\n' "$PASS"
 echo "test-usage-weekly: all cases pass"
