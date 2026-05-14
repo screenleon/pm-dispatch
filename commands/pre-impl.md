@@ -13,17 +13,20 @@ Scan the current working directory to build a minimal structural picture. Run th
 
 ```bash
 # Public-facing entry points
-find . -name "main.*" -o -name "index.*" -o -name "app.*" -o -name "server.*" \
-  | grep -v node_modules | grep -v .git | grep -v dist | head -20
+find . \( -path './node_modules' -o -path './.git' -o -path './dist' -o -path './__pycache__' -o -path './vendor' \) -prune \
+  -o \( -name "main.*" -o -name "index.*" -o -name "app.*" -o -name "server.*" \) -print \
+  | head -20
 
 # Existing modules/packages
-find . -maxdepth 3 -type d \
-  | grep -v node_modules | grep -v .git | grep -v dist | grep -v __pycache__
+find . -maxdepth 3 \( -path './node_modules' -o -path './.git' -o -path './dist' -o -path './__pycache__' -o -path './vendor' \) -prune \
+  -o -type d -print
 
 # Files related to the feature (keyword from $ARGUMENTS)
-grep -rli "KEYWORD" . --include="*.go" --include="*.ts" --include="*.py" \
+grep -rli "KEYWORD" . \
+  --include="*.go" --include="*.ts" --include="*.py" \
   --include="*.js" --include="*.java" --include="*.rb" \
-  | grep -v node_modules | grep -v .git | head -20
+  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=__pycache__ --exclude-dir=vendor \
+  | head -20
 ```
 
 Replace `KEYWORD` with the most specific noun from `$ARGUMENTS` (e.g., for "add OAuth login", use `auth` or `oauth`).
