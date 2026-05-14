@@ -9,6 +9,9 @@
 # This script does not write to, mutate, compact, or regenerate Claude or Codex
 # data. Missing tools, missing files, and unexpected schemas degrade to markers,
 # zeros, or dashes, and the script exits 0.
+#
+# TZ note: dates are computed using the local system timezone. Run with
+# TZ=UTC prefix if UTC-anchored output is needed.
 
 LC_ALL=C
 IFS=$' \t\n'
@@ -21,8 +24,12 @@ has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# date_for_offset N: print YYYY-MM-DD for N days ago.
+# Supports GNU date (-d) and BSD date (-v).
 date_for_offset() {
-  date -d "$1 days ago" +%F 2>/dev/null || true
+  date -d "$1 days ago" +%F 2>/dev/null \
+    || date -v -${1}d +%F 2>/dev/null \
+    || true
 }
 
 START="$(date_for_offset 6)"
@@ -36,9 +43,32 @@ if [ -z "$END" ]; then
   END="unknown"
 fi
 
+# file_mtime PATH: print Unix mtime integer.
+# Supports GNU stat (-c) and BSD stat (-f).
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null \
+    || stat -f %m "$1" 2>/dev/null \
+    || true
+}
+
+# file_size PATH: print byte size integer.
+# Supports GNU stat (-c) and BSD stat (-f).
+file_size() {
+  stat -c %s "$1" 2>/dev/null \
+    || stat -f %z "$1" 2>/dev/null \
+    || true
+}
+
+# epoch_to_date EPOCH: convert Unix timestamp to YYYY-MM-DD.
+# Supports GNU date (-d @) and BSD date (-r).
+epoch_to_date() {
+  date -d "@$1" +%F 2>/dev/null \
+    || date -r "$1" +%F 2>/dev/null \
+    || true
+}
+
 claude_last_computed() {
-  local computed=""
-  local mtime=""
+  local computed="" mtime=""
 
   if [ -f "$CLAUDE_STATS" ] && has_cmd jq; then
     computed="$(jq -r '.lastComputedDate // .lastComputed // .computedAt // empty' "$CLAUDE_STATS" 2>/dev/null || true)"
@@ -50,14 +80,14 @@ claude_last_computed() {
   fi
 
   if [ -f "$CLAUDE_STATS" ]; then
-    mtime="$(stat -c %Y "$CLAUDE_STATS" 2>/dev/null || true)"
+    mtime="$(file_mtime "$CLAUDE_STATS")"
     if [ -n "$mtime" ]; then
-      date -d "@$mtime" +%F 2>/dev/null || true
+      epoch_to_date "$mtime"
       return 0
     fi
   fi
 
-  printf 'missing\n'
+  printf 'n/a\n'
 }
 
 claude_schema() {
@@ -66,15 +96,11 @@ claude_schema() {
     return 0
   fi
 
+  # Simplified: detect by key presence/type only, without separate
+  # populated-vs-empty branches. Empty arrays/objects return zeros in
+  # claude_counts_for_date regardless of schema variant.
   jq -r '
-    # Prefer the key that actually has data; fall through to empty
-    # variants as tiebreak so a freshly-initialized cache (empty array)
-    # still classifies cleanly without masking a populated alternate key.
-    if (.dailyActivity | type) == "array" and (.dailyActivity | length) > 0 then "dailyActivity-array"
-    elif (.dailyActivity | type) == "object" and ((.dailyActivity | keys | length) > 0) then "dailyActivity-object"
-    elif (.days | type) == "array" and (.days | length) > 0 then "days-array"
-    elif (.daily | type) == "object" and ((.daily | keys | length) > 0) then "daily-object"
-    elif (.dailyActivity | type) == "array" then "dailyActivity-array"
+    if (.dailyActivity | type) == "array" then "dailyActivity-array"
     elif (.dailyActivity | type) == "object" then "dailyActivity-object"
     elif (.days | type) == "array" then "days-array"
     elif (.daily | type) == "object" then "daily-object"
@@ -184,13 +210,7 @@ codex_counts_for_date() {
 
   while IFS= read -r -d '' file; do
     sessions=$((sessions + 1))
-    size="$(stat -c %s "$file" 2>/dev/null || true)"
-    if [ -z "$size" ]; then
-      size="$(du -b "$file" 2>/dev/null | {
-        IFS=$'\t' read -r du_size _ || true
-        printf '%s\n' "$du_size"
-      } || true)"
-    fi
+    size="$(file_size "$file")"
     if [ -n "$size" ]; then
       bytes=$((bytes + size))
     fi
@@ -204,9 +224,15 @@ printf '\n'
 printf '## Claude\n'
 
 if [ ! -f "$CLAUDE_STATS" ]; then
-  printf '(missing)\n'
-elif [ -n "$(find "$CLAUDE_STATS" -maxdepth 0 -type f -mtime +14 -print 2>/dev/null || true)" ]; then
-  printf '(stale, last computed %s)\n' "$(claude_last_computed)"
+  printf '(stats-cache.json not found)\n'
+else
+  # Soft stale: >2 days old — data may be slightly behind.
+  # Hard stale: >14 days old — data is likely meaningless.
+  if [ -n "$(find "$CLAUDE_STATS" -maxdepth 0 -type f -mtime +14 -print 2>/dev/null || true)" ]; then
+    printf '(stale >14d, last computed %s)\n' "$(claude_last_computed)"
+  elif [ -n "$(find "$CLAUDE_STATS" -maxdepth 0 -type f -mtime +2 -print 2>/dev/null || true)" ]; then
+    printf '(slightly stale, last computed %s)\n' "$(claude_last_computed)"
+  fi
 fi
 
 SCHEMA="$(claude_schema)"
@@ -253,6 +279,10 @@ done
 
 printf '\n'
 printf -- '---\n'
-printf 'Data freshness: Claude stats-cache.json last computed %s. Codex session files scanned live. Codex byte counts are an activity proxy, not token counts.\n' "$(claude_last_computed)"
+if [ ! -f "$CLAUDE_STATS" ]; then
+  printf 'Data freshness: Claude stats-cache.json not found. Codex session files scanned live.\n'
+else
+  printf 'Data freshness: Claude stats-cache.json last computed %s. Codex session files scanned live. Codex byte counts are an activity proxy, not token counts.\n' "$(claude_last_computed)"
+fi
 
 exit 0
