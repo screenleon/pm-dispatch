@@ -50,7 +50,7 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md`
 |----|--------|------|--------|----------|------|
 
 - **#**：條目 ID
-- **Status**：上述三值之一
+- **Status**：上述五值之一
 - **主題**：6–12 字標題
 - **影響面**：見下方 area enum；單值或斜線複合
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
