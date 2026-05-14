@@ -23,6 +23,18 @@ STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
 
+# --filter <pattern>  run only cases whose name contains <pattern> (substring match)
+FILTER=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --filter) FILTER="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# Returns 0 (run) or 1 (skip) based on FILTER.
+should_run() { [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]; }
+
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$CLAUDE_HOOK_LOG_DIR/hooks.log"
@@ -39,6 +51,7 @@ FAILED_CASES=()
 # run_case <name> <expected_exit> <hook_path> <json_input> [<expected_stderr_substring>]
 run_case() {
   local name="$1" expect_exit="$2" hook="$3" json="$4" expect_stderr="${5:-}"
+  should_run "$name" || return 0
   local stderr_file actual_exit actual_stderr
   stderr_file="$(mktemp)"
   printf '%s' "$json" | "$hook" 2>"$stderr_file"
@@ -68,6 +81,7 @@ run_case() {
 # run_case_env <name> <expected_exit> <env_var=value> <hook_path> <json_input>
 run_case_env() {
   local name="$1" expect_exit="$2" envspec="$3" hook="$4" json="$5"
+  should_run "$name" || return 0
   local actual_exit
   actual_exit=$(printf '%s' "$json" | env "$envspec" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
   if [[ "$actual_exit" == "$expect_exit" ]]; then
@@ -83,6 +97,7 @@ run_case_env() {
 # run_command_case <name> <expected_exit> <expected_stderr_substring> <cmd> [args...]
 run_command_case() {
   local name="$1" expect_exit="$2" expect_stderr="$3"
+  should_run "$name" || return 0
   shift 3
   local stderr_file actual_exit actual_stderr
   stderr_file="$(mktemp)"

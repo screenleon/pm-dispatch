@@ -16,7 +16,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
 | CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
-| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:pending |
+| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:#44 |
+| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:#44 |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
 | CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
@@ -26,7 +27,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-016 | ✅ done | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 |
 | CC-017 | ✅ done | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | pr:#43 |
 | CC-018 | 🔵 active | Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota 寫入 rate-limits-codex.json | ux/token | 2026-05-14 | — |
-| CC-019 | 🔵 active | Episodic memory 層：Stop hook 寫 session 摘要、`/mem-recall` 按需注入、`/mem-distill` 整合回 MEMORY.md | ux/memory | 2026-05-14 | — |
+| CC-019 | 🔵 active | Episodic memory 層：Stop hook metadata + `/mem-log` + `/mem-recall` + `/mem-distill` | ux/memory | 2026-05-14 | — |
 | CC-020 | 🔵 active | `/mem-search`：`rg` 關鍵字過濾 + Claude 語意理解，跨 memory 檔搜尋 | ux/memory | 2026-05-14 | — |
 | CC-021 | 🔵 active | test scripts 支援 `--filter <pattern>` 只跑名稱匹配的 test case | ops/test | 2026-05-14 | — |
 
@@ -81,13 +82,27 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 ## CC-010 — `/memory-compress` 指令：壓縮 MEMORY.md 條目
 
-**Problem**: MEMORY.md 隨時間增長後，CC-009 的 inject token 量會持續上升，最終超過 500 token 上限或使 context 膨脹。
+**Problem**: MEMORY.md 隨時間增長後，CC-009 的 inject token 量持續上升；≥50 條時 hook 發出 directive，但 `/memory-compress` 指令本身不存在，directive 無從執行。
 **Why**: claude-mem 的漸進式 token 注入策略 + Caveman 的 `caveman-compress` 概念共同指向：memory 需要定期被摘要壓縮，而非無限累積。
+
+**設計決策（2026-05-14）**:
+- 純 slash command（`commands/memory-compress.md`），邏輯完全由 Claude 執行，不需 shell script
+- `$ARGUMENTS` 接收 `--dry-run` flag；dry-run 時只 print diff，不寫入任何檔案
+
 **Requirement**:
-1. 新增 `commands/memory-compress.md`：slash command，呼叫壓縮邏輯
-2. 對 MEMORY.md 中的每個條目：讀取對應 memory 檔 → 摘要為 1-2 行精華 → 更新 MEMORY.md index 行
-3. 壓縮後 MEMORY.md 總長度目標 < 100 行
-4. 提供 `--dry-run` 選項預覽壓縮結果，不實際寫入
+1. 新增 `commands/memory-compress.md`：slash command，包含以下 Claude 指令：
+   - Read MEMORY.md → 列出所有 `- [Title](file.md) — hook` 條目
+   - 對每個條目 Read 對應 .md 檔
+   - 壓縮 hook 行（目標 ≤ 15 words、≤ 150 chars）：保留最核心規則，移除冗餘描述
+   - 合併主題重疊的條目（e.g., 3 個 codex-dispatch feedback → 1 條）
+   - 標記疑似過時條目（引用不存在的函式/路徑）→ 列出供用戶確認再刪
+   - 重寫 MEMORY.md；`--dry-run` 則只顯示 before/after diff
+2. 壓縮目標：index 行數 < 50（對應 CC-009 threshold）、總字數減少 ≥ 30%
+3. 每個 `[[name]]` cross-link 仍然有效（壓縮時不刪除 slug）
+
+**測試**：不需要 shell test（slash command = markdown 指令，無殼層邏輯）。
+**工作量**：Small（1 個 .md 檔，~80 行）。
+**依賴**：CC-009 ✅。
 
 ## CC-011 — sync-memory.sh + install 選項：symlink memory 到雲端資料夾（跨裝置，deferred）
 
