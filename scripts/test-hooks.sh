@@ -1645,12 +1645,87 @@ inject_hook_threshold_shows_directive() {
   rm -rf "$dir"
 }
 
+inject_hook_threshold_below_emits_no_directive() {
+  # Verifies that exactly 49 index entries (one below the threshold of 50) does
+  # NOT emit the /memory-compress directive — threshold is exclusive at 49.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with exactly 49 index lines
+  #   2. Run the hook and capture stdout
+  #   3. Assert all 49 lines present, no "⚠" directive line in output
+  local name="inject-hook/threshold-49-no-directive" dir cwd payload output body status i directive_line
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 49); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/memory49.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory49.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  body="$(printf '%s\n' "$output" | sed '1d;$d')"
+  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if [[ "$status" == "0" \
+      && "$body" == *"memory index line 049"* \
+      && -z "$directive_line" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_threshold_at_boundary_emits_directive() {
+  # Verifies that exactly 50 index entries (at the threshold) DOES emit the
+  # /memory-compress directive — threshold fires at >= 50.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with exactly 50 index lines
+  #   2. Run the hook and capture stdout
+  #   3. Assert all 50 lines present AND the "⚠" directive line appears
+  local name="inject-hook/threshold-50-emits-directive" dir cwd payload output body status i directive_line
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 50); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/memory50.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory50.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  body="$(printf '%s\n' "$output" | sed '1d;$d')"
+  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if [[ "$status" == "0" \
+      && "$body" == *"memory index line 050"* \
+      && -n "$directive_line" \
+      && "$directive_line" == *"run /memory-compress"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
 inject_hook_empty_index
 inject_hook_malformed_payload
 inject_hook_empty_stdin
+inject_hook_threshold_below_emits_no_directive
+inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
 
 # =============================================================================

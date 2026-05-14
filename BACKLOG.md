@@ -15,7 +15,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
 | CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
-| CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:pending |
+| CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
 | CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:pending |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
