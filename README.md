@@ -153,3 +153,11 @@ Codex briefs that touch many files can run 10–30 minutes. The `codex-executor`
 2. **Background dispatch from main thread.** When you need progress visible *inside* a Claude Code session, skip `codex-executor` and run the wrapper as a background Bash command, then `Monitor` (or periodically `Bash` with `tail -n 5 .agent-trace/latest.jsonl`) the trace file. Invoke `codex-executor` only at the end for `git diff` verification. Trade-off: you lose the executor's pre-dispatch brief validation, so write the brief carefully.
 
 If a dispatch exits 124, codex hit the timeout — almost always a silent startup hang. The wrapper banner + closing line in `.agent-trace/latest.stderr` is the post-mortem: re-dispatching usually clears the hang. Extend `--timeout` (or `$CODEX_DISPATCH_TIMEOUT`) only when codex is genuinely doing more work than the default 20 minutes.
+
+---
+
+## Disclaimer
+
+Claude Code is a product of [Anthropic](https://www.anthropic.com/). This project is an independent personal configuration for Claude Code and is **not affiliated with, sponsored by, or endorsed by Anthropic**. "Claude" and "Claude Code" are trademarks of Anthropic; references in this repository are descriptive use only.
+
+Similarly, [Codex CLI](https://github.com/openai/codex) is a product of OpenAI; this project integrates with it but is not affiliated with OpenAI.

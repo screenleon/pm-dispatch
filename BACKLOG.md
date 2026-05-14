@@ -38,6 +38,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-028 | 🔵 active | PostToolUse `hook-routing-log.sh`：codex-dispatch 自動 append routing_log 記錄 Q1/Q2/Q3 校準資料 | ux/memory | 2026-05-15 | — |
 | CC-029 | 🔵 active | `test-codex-dispatch.sh` 加入 CI（與 CC-024 並行做 lint.yml 補完） | ops/test | 2026-05-15 | — |
 | CC-030 | 🔵 active | `pm/scripts/validate.sh` 補 Index ↔ Section 雙向一致性 + CHANGELOG drift 檢查 | ops/process | 2026-05-15 | — |
+| CC-031 | 🔵 active | 開源前置：`CONTRIBUTING.md` + `SECURITY.md` + README 工作語言聲明 | process/DX | 2026-05-15 | — |
+| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — |
+| CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — |
 
 ---
 
@@ -224,11 +227,45 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: `pm/scripts/validate.sh` 只驗 Index 表格欄位格式，無法捕捉：(a) Index row 缺對應 `## CC-XXX —` detail section、(b) detail section 缺對應 Index row、(c) `[Unreleased]` CHANGELOG 條目與 BACKLOG 狀態歧義（active 但 [Unreleased] 引用 / closed 但仍出現於 active 表）。實際發生過：CC-024 retroactively 加入 Index、CC-003/004/005 status 與 [Unreleased] 對應不明。
 **Why**: [[feedback_known_bug_backlog]] 規則目前靠自律維持；schema 工具能把它升級為結構性保證，同精神於 PR #46 `/pre-impl` — 用工具強制流程，不靠 reviewer 抓。
 **Requirement**:
-1. `pm/scripts/validate.sh` 加雙向一致性：(a) 每筆 Index row 必須有同 ID 的 detail section、(b) 反之亦然、(c) ID 與 status 必須在兩處字串相等；**title 文字允許自然差異**（Index 求極簡標題、detail heading 可含技術細節）— 驗證器以 ID 對齊為主，不對 title 做嚴格字串相等比對。若未來要求嚴格一致，需先定義 normalize 規則（whitespace / punctuation / 動詞 prefix）並一次回填全部既有 entry。
+1. `pm/scripts/validate.sh` 加雙向一致性：(a) 每筆 Index row 必須有同 ID 的 detail section、(b) 反之亦然、(c) closure marker 一致性 — 若 Index 標 `✅ closed YYYY-MM-DD`，對應 detail section 必須有 `✅ YYYY-MM-DD` 或 `**Outcome**:` 區段對齊日期。**title 與 status 文字不做嚴格字串相等比對**（detail section 目前 schema 不含 status 欄位；若未來要求 status 兩處相等需先做 schema migration 在 detail section 增列 status，並一次回填全部既有 entry）。
 2. CHANGELOG drift 檢查（可選 / 第二階段）：`[Unreleased]` 引用的 `pr:#NN` 對應 backlog row 必須是 `✅ closed` 狀態。
 3. 對應 `pm/scripts/test/fixtures/` 加 `bad-orphan-index/`、`bad-orphan-section/`、`bad-changelog-drift/` fixture；既有 `good/` fixture 通過。
 4. `.github/workflows/lint.yml` 既有 schema test 自動涵蓋，不需新 job。
 **Source**: 2026-05-15 對話 — claude-config 改善分析（B2）。對應 [[feedback_known_bug_backlog]] 由 feedback rule 升級為結構性保證。
+
+## CC-031 — 開源前置：CONTRIBUTING.md + SECURITY.md + README 工作語言聲明
+
+**Problem**: repo 目前缺 `CONTRIBUTING.md`（PR/branching/test 要求）、`SECURITY.md`（vuln 揭露管道）；README 也未說明工作語言為中文 + 英文 commit。轉公開後，外部讀者沒有明確進入點，會在 issue tracker 提不適合的需求或誤解語言預期。
+**Why**: 公開的「使用面」前置條件之一；無 CoC 可接受，但 CONTRIBUTING + SECURITY 是 GitHub OSS 慣例 + 法律保護（responsible disclosure 路徑）。和 [[breaking-change for maintainability]] 一致：與其公開後逐個應付外部需求，不如事先寫清楚預期。
+**Requirement**:
+1. `CONTRIBUTING.md`：PR 流程（必跑 `/pr-gate` + `pm/scripts/validate.sh`）、branch 命名、commit message 風格、test 強制要求、為何不接受 `--no-verify`。
+2. `SECURITY.md`：vuln 揭露 email 與不揭露時段；hook bypass / sandbox escape 算 in-scope。
+3. README 加 `Working language` 區段：「Primary working language is Mandarin Chinese; commit messages and code identifiers are English. Foreign-language contributors are welcome but should expect bilingual issue threads.」
+4. CoC 不放（個人 repo 風險低、避免 boilerplate）。
+**Source**: 2026-05-15 對話 — 公開前置盤點 #1。Blocks **CC-033**（public flip）。
+
+## CC-032 — `[[feedback_*]]` cross-link 公開化（dead-link 防護）
+
+**Problem**: BACKLOG.md（含本次 CC-025..CC-030 新條目）多處引用 `[[feedback_undocumented_harness_payload]]`、`[[feedback_known_bug_backlog]]`、`[[feedback_codex_routing]]`、`[[routing_log]]` 等 — 這些 memory 檔**不在 repo 內**（在 `~/.claude/projects/<proj>/memory/`，純本地）。轉公開後，外部讀者點不開、不知道內容、cross-link 形同 dead link。
+**Why**: 公開要兼容「沒有 user memory 的讀者」。兩條路：(a) 把這些 feedback rules 中真正屬於 repo 政策的部分抽到 `docs/policies/*.md` 並改 link 指向新位置；(b) 在每次第一次引用時 inline 引述兩三行。前者乾淨且可被 search engine 索引、後者侵入度低但容易過時。建議 (a)，配合 schema 規則：所有 BACKLOG 條目的 `[[name]]` 必須對應 `docs/policies/<name>.md` 存在。
+**Requirement**:
+1. 盤點所有 BACKLOG.md / docs/ 中 `[[feedback_*]]` 與 `[[*_log]]` 出現位置。
+2. 把屬於「repo 適用政策」（非個人偏好）的 rule 抽寫至 `docs/policies/<slug>.md`，每篇含：摘要、原因、實作守則、reference。
+3. 更新所有 `[[name]]` 改為 `[docs/policies/<slug>.md](docs/policies/<slug>.md)` 或 `[[<slug>]]`（若決定保留 wikilink 風格、配合 CC-030 validator 擴充驗證 link target 存在）。
+4. 個人偏好類 feedback memory（不適合公開）留 local memory 不對外。
+**Note**: 與 CC-030 schema validator 設計協同 — 可同 PR 加上「`[[name]]` link target 必須存在」的 validation。Blocks **CC-033**。
+**Source**: 2026-05-15 對話 — 公開前置盤點 #3（Explore 未抓到的盲點）。
+
+## CC-033 — Public flip checklist 與後續觀察
+
+**Problem**: 完成 CC-031/CC-032 後，public flip 本身仍涉及多個 GitHub repo 設定決策（Issues 開關、Discussions 開關、template、labels、release tagging policy），需要明確 checklist 避免「按下 public 後才發現某設定不對」。
+**Why**: 公開是 one-way door — 翻成 public 之後 commit history 全部對外（雖然 git history 已審 clean）；issue 也會公開。所以 flip 本身需要清單化，並決定先試水溫的 setting（Discussions only vs 全開）。
+**Requirement**:
+1. 決策清單：(a) Issues 開關（建議先關，僅 Discussions），(b) Discussions categories 規劃，(c) PR template，(d) release tagging（已有 1.1.0，是否設 GitHub Releases），(e) 是否加 CITATION.cff。
+2. 觀察期：flip 後 2-4 週評估 — 若有有效 use case 出現再開 Issues。
+3. Flip 動作本身為 1 行：`gh repo edit --visibility public`。
+**Note**: 依賴 **CC-031**, **CC-032** 完成；本條為「最後一哩」與後續評估。
+**Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 
 ## CC-023 — `coupling-reviewer` PR gate 耦合分析（deferred）
 
