@@ -101,6 +101,51 @@ make_path_without_jq() {
   printf '%s\n' "$bin"
 }
 
+# make_path_with_bsd_tools — prepend PATH with fake date/stat that fail the GNU
+# -d / -c flags and succeed on BSD -v / -r / -f flags (via real GNU under the
+# hood). All other PATH commands remain accessible from the original PATH.
+make_path_with_bsd_tools() {
+  local bin real_date real_stat
+  bin="$TMP_ROOT/bsd-tools-bin"
+  real_date="$(command -v date)"
+  real_stat="$(command -v stat)"
+  mkdir -p "$bin"
+  cat > "$bin/date" << FAKEDATE
+#!/bin/bash
+case "\${1:-}" in
+  -d) exit 1 ;;
+  -v)
+    adj="\${2:-0d}"; n="\${adj#-}"; n="\${n%d}"
+    shift 2; exec $real_date -d "\$n days ago" "\$@" ;;
+  -r)
+    shift; exec $real_date -d "@\$1" "\${@:2}" ;;
+  *) exec $real_date "\$@" ;;
+esac
+FAKEDATE
+  chmod +x "$bin/date"
+  cat > "$bin/stat" << FAKESTAT
+#!/bin/bash
+case "\${1:-}" in
+  -c) exit 1 ;;
+  -f)
+    fmt="\${2:-}"; file="\${3:-}"
+    case "\$fmt" in
+      %m) exec $real_stat -c %Y "\$file" ;;
+      %z) exec $real_stat -c %s "\$file" ;;
+      *) exit 1 ;;
+    esac ;;
+  *) exec $real_stat "\$@" ;;
+esac
+FAKESTAT
+  chmod +x "$bin/stat"
+  for cmd in find jq du; do
+    local p
+    p="$(command -v "$cmd" 2>/dev/null || true)"
+    [ -n "$p" ] && ln -sf "$p" "$bin/$cmd"
+  done
+  printf '%s:%s\n' "$bin" "$PATH"
+}
+
 case_happy_path_dailyActivity_array() {
   local name="happy_path_dailyActivity_array" home out status
   home="$(new_home "$name")"
@@ -174,6 +219,11 @@ case_missing_stats_cache() {
 }
 
 case_stale_boundary_2d() {
+  # Verifies that a stats-cache.json modified 2 days ago produces no stale
+  # warning (boundary: ≤2d is considered fresh).
+  # Steps:
+  #   1. Write stats file and set mtime to 2 days ago with touch_days_ago
+  #   2. Run usage and assert neither stale marker appears in the output
   local name="stale_boundary_2d" home out status
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
@@ -188,6 +238,11 @@ case_stale_boundary_2d() {
 }
 
 case_stale_boundary_3d() {
+  # Verifies that a stats-cache.json modified 3 days ago emits a soft stale
+  # warning "(slightly stale, last computed YYYY-MM-DD)" (threshold: >2d).
+  # Steps:
+  #   1. Write stats file and set mtime to 3 days ago with touch_days_ago
+  #   2. Run usage and assert the soft-stale pattern matches and hard-stale does not
   local name="stale_boundary_3d" home out status
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
@@ -228,6 +283,11 @@ case_stale_boundary_15d() {
 }
 
 case_model_tokens_array() {
+  # Verifies that dailyModelTokens in array form is aggregated over the 7-day
+  # window and printed as "- model: tokens" lines.
+  # Steps:
+  #   1. Write stats with dailyModelTokens as an array containing one entry for today
+  #   2. Run usage and assert the model/token line appears in the output
   local name="model_tokens_array" home out status
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
@@ -240,6 +300,11 @@ case_model_tokens_array() {
 }
 
 case_model_tokens_object() {
+  # Verifies that dailyModelTokens in object form (keyed by date) is
+  # aggregated and printed as "- model: tokens" lines.
+  # Steps:
+  #   1. Write stats with dailyModelTokens as an object with one date key for today
+  #   2. Run usage and assert the model/token line appears in the output
   local name="model_tokens_object" home out status
   home="$(new_home "$name")"
   out="$TMP_ROOT/$name.out"
@@ -339,6 +404,70 @@ case_output_contract() {
   pass_case "$name"
 }
 
+case_mixed_schema_empty_preferred_populated_alternate() {
+  # Verifies that when the preferred key (dailyActivity) is an empty array and
+  # an alternate key (days) has populated entries, the populated key wins.
+  # Steps:
+  #   1. Write stats with dailyActivity:[] and days:[{populated}] for today
+  #   2. Run usage and assert the populated days data is displayed in the table
+  local name="mixed_schema_empty_preferred_populated_alternate" home out status
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[],\"days\":[{\"date\":\"$CURRENT_DATE\",\"message_count\":99,\"session_count\":3,\"tool_calls\":33}]}"
+
+  run_usage "$home" "$out"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "| $CURRENT_DATE | 99 | 3 | 33 |"
+  pass_case "$name"
+}
+
+case_bsd_date_fallback() {
+  # Verifies that date_for_offset and epoch_to_date use the BSD -v / -r
+  # fallback when GNU date -d fails, producing a valid weekly report.
+  # Steps:
+  #   1. Write stats without a lastComputedDate field so epoch_to_date is exercised
+  #   2. Run usage with a PATH containing a BSD-only fake date (fails GNU -d)
+  #   3. Assert exit 0, a valid header date range, and a real date in the footer
+  local name="bsd_date_fallback" home out status bsd_path
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  write_stats "$home" "{\"dailyActivity\":[]}"
+  bsd_path="$(make_path_with_bsd_tools)"
+
+  run_usage "$home" "$out" "$bsd_path"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_matches "$name" "$out" '^# Weekly Usage Report [0-9]{4}-[0-9]{2}-[0-9]{2} ~ [0-9]{4}-[0-9]{2}-[0-9]{2}$'
+  # epoch_to_date via BSD date -r must produce a real date, not "n/a"
+  assert_matches "$name" "$out" 'Data freshness: Claude stats-cache\.json last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\.'
+  pass_case "$name"
+}
+
+case_bsd_stat_fallback() {
+  # Verifies that file_size uses the BSD stat -f fallback when GNU stat -c
+  # fails, reporting a non-zero byte count for a codex session file.
+  # Steps:
+  #   1. Write a codex session JSONL file for today with known content
+  #   2. Run usage with a PATH containing a BSD-only fake stat (fails GNU -c)
+  #   3. Assert exit 0 and the codex table shows 1 session with non-zero bytes
+  local name="bsd_stat_fallback" home out status bsd_path y m d dir
+  home="$(new_home "$name")"
+  out="$TMP_ROOT/$name.out"
+  y="${CURRENT_DATE:0:4}"
+  m="${CURRENT_DATE:5:2}"
+  d="${CURRENT_DATE:8:2}"
+  dir="$home/.codex/sessions/$y/$m/$d"
+  mkdir -p "$dir"
+  printf '{"type":"event"}\n' > "$dir/session.jsonl"
+  write_stats "$home" "{\"lastComputedDate\":\"$CURRENT_DATE\",\"dailyActivity\":[]}"
+  bsd_path="$(make_path_with_bsd_tools)"
+
+  run_usage "$home" "$out" "$bsd_path"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
+  assert_not_contains "$name" "$out" "| $CURRENT_DATE | 1 | 0 |"
+  pass_case "$name"
+}
+
 echo "== usage-weekly =="
 
 case_happy_path_dailyActivity_array
@@ -346,6 +475,7 @@ case_schema_dailyActivity_object
 case_schema_days_array
 case_schema_daily_object
 case_empty_dailyActivity_array
+case_mixed_schema_empty_preferred_populated_alternate
 case_missing_stats_cache
 case_stale_boundary_2d
 case_stale_boundary_3d
@@ -355,6 +485,8 @@ case_model_tokens_array
 case_model_tokens_object
 case_corrupt_json
 case_jq_missing
+case_bsd_date_fallback
+case_bsd_stat_fallback
 case_codex_session_filename_with_space
 case_read_only_invariant
 case_output_contract
