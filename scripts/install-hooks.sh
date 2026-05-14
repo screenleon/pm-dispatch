@@ -7,6 +7,7 @@
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #   - Stop                 → scripts/hook-log-claude-usage.sh
+#   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
 #   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
 #
@@ -40,16 +41,18 @@ cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
+session_cmd="$repo_root/scripts/hook-session-summary.sh"
 inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
   echo "  $stop_cmd" >&2
+  echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
   echo "  $statusline_cmd" >&2
   exit 2
@@ -76,6 +79,7 @@ jq \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
+  --arg session "$session_cmd" \
   --arg inject "$inject_cmd" \
   --arg statusline "$statusline_cmd" \
   --argjson sl_present "$_statusline_already_wired" \
@@ -98,6 +102,7 @@ jq \
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cx) ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cxw) ] | length ) as $cxw_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(.command == $stop) ] | length ) as $stop_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session) ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject) ] | length ) as $inject_present |
 
   ( if $pm_present == 0 then
@@ -123,6 +128,10 @@ jq \
   ) |
   ( if $stop_present == 0 then
       .hooks.Stop += [{"hooks": [{"type": "command", "command": $stop}]}]
+    else . end
+  ) |
+  ( if $session_present == 0 then
+      .hooks.Stop += [{"hooks": [{"type": "command", "command": $session}]}]
     else . end
   ) |
   ( if $inject_present == 0 then

@@ -29,6 +29,7 @@ cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
+session_cmd="$repo_root/scripts/hook-session-summary.sh"
 inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
@@ -45,6 +46,7 @@ jq \
   --arg cxw "$cxw_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
+  --arg session "$session_cmd" \
   --arg inject "$inject_cmd" \
   --arg statusline "$statusline_cmd" \
   --arg chain_target "$_chain_target" \
@@ -61,7 +63,7 @@ jq \
   else . end) |
   (if (.hooks // {}).Stop then
     .hooks.Stop |= map(
-      .hooks |= map(select(.command != $stop and .command != $old_stop))
+      .hooks |= map(select(.command != $stop and .command != $old_stop and .command != $session))
     ) |
     .hooks.Stop |= map(select((.hooks | length) > 0)) |
     if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
