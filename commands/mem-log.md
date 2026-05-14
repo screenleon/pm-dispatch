@@ -47,19 +47,21 @@ Keep the summary factual and dense. No filler phrases.
 
 ## Step 3 — Update episodes.jsonl
 
-Read the episodes.jsonl file. Find the **last entry** where `session_id` matches the current session (the Stop hook should have already written a skeleton entry with `"summary": ""`).
+**/mem-log owns summary creation.** Do not assume the Stop hook has already written a skeleton — the Stop hook runs at session end, after /mem-log. If a skeleton already exists (e.g., from a previous session), update it; otherwise append a new entry.
 
-- If a matching skeleton entry exists: overwrite it with the full entry (same date/cwd/session_id, add the summary).
-- If no matching entry exists: append a new entry.
+Read the episodes.jsonl file (it may not exist yet). Then:
+
+1. **Find an updatable entry**: scan all lines for one where `session_id` matches the current session AND `summary` is empty. If found, replace that line with the full entry (same `date`/`cwd`/`session_id`, filled `summary`).
+2. **Otherwise**: append a new entry with the current date and cwd.
 
 The entry format:
 ```json
 {"date":"<ISO8601>","cwd":"<absolute path>","session_id":"<id>","summary":"<3-5 line text>"}
 ```
 
-To get the current session_id, check if it is available in the hook payload context. If not, use an empty string.
+`session_id` is only available inside hook payloads; from a slash command it may not be accessible. Use an empty string `""` if it is unknown — the Stop hook will still skip this session correctly if the last entry for this cwd already has a non-empty summary.
 
-Write the updated file (overwrite the matching line, preserve all other lines).
+Write the updated file (replace the matched line in-place or append; preserve all other lines).
 
 ## Step 4 — Confirm
 

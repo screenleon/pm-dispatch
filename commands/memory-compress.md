@@ -61,7 +61,7 @@ Apply these rules to produce a new index:
 - [Title](file.md) — compressed hook text
 ```
 
-## Step 5 — Show result
+## Step 5 — Show result and ask for confirmation
 
 Display the new MEMORY.md content in full, followed by:
 ```
@@ -74,12 +74,27 @@ Flagged stale: <list of stale entries, or "none">
 
 If `$ARGUMENTS` contains `--dry-run`, **stop here**. Do not write any files.
 
-## Step 6 — Write (non-dry-run only)
+Otherwise, ask the user explicitly:
+```
+Apply this compression?
+  - MEMORY.md will be overwritten (timestamped backup created first)
+  - Merged source files will be renamed to <name>.archived (not deleted)
+  - Stale entries will NOT be removed without a separate confirmation
+Reply "yes" to proceed, anything else to cancel.
+```
 
-If not dry-run and the user has not objected to the proposed changes:
+Do not proceed to Step 6 until the user replies "yes" (or equivalent affirmative).
 
-1. Write the compressed content to MEMORY.md (overwrite).
-2. If any entries were merged, update the surviving memory file's `description:` frontmatter to reflect the merged scope, then delete the redundant file(s).
-3. Report: "Compressed: <N_before> → <N_after> entries. MEMORY.md updated."
+## Step 6 — Write (non-dry-run, after confirmation)
 
-Do not delete stale entries without explicit user confirmation. List them and ask.
+1. **Backup first**: copy MEMORY.md to `MEMORY.md.bak.<YYYYMMDD-HHMMSS>` in the same directory.
+2. Write the compressed content to MEMORY.md (overwrite).
+3. If any entries were merged, update the surviving memory file's `description:` frontmatter to reflect the merged scope, then **rename** the redundant file(s) to `<filename>.archived` — do NOT delete them.
+4. Report:
+   ```
+   Compressed: <N_before> → <N_after> entries. MEMORY.md updated.
+   Backup: MEMORY.md.bak.<timestamp>
+   Archived: <list of .archived files, or "none">
+   ```
+
+Do not remove stale entries without explicit user confirmation. List them separately and ask.

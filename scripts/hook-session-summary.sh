@@ -62,16 +62,11 @@ try:
                     except json.JSONDecodeError:
                         pass
 
-    # Skip if latest entry has the same session_id and already has a summary
-    if entries:
-        last = entries[-1]
-        if (last.get('session_id') == session_id and
-                isinstance(last.get('summary'), str) and
-                last['summary'].strip()):
-            sys.exit(0)
-        # Skip if same session_id and summary is blank (already have the metadata entry)
-        if last.get('session_id') == session_id and not last.get('summary', '').strip():
-            sys.exit(0)
+    # Skip if any entry already records this session_id (with or without summary).
+    # /mem-log runs during the session and may have written a full entry already;
+    # the Stop hook should not add a duplicate skeleton in that case.
+    if any(e.get('session_id') == session_id for e in entries) and session_id:
+        sys.exit(0)
 
     # Append new metadata entry
     entry = {

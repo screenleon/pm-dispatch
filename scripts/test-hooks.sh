@@ -24,17 +24,27 @@ RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
 SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
 
-# --filter <pattern>  run only cases whose name contains <pattern> (substring match)
+# --filter <pattern>  run only cases whose name contains <pattern>
+# --list              print all case names and exit
 FILTER=""
+LIST=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --filter) FILTER="${2:-}"; shift 2 ;;
+    --list)   LIST=true; shift ;;
     *) shift ;;
   esac
 done
 
-# Returns 0 (run) or 1 (skip) based on FILTER.
-should_run() { [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]; }
+ALL_CASES=()
+# Returns 0 (run) or 1 (skip). In --list mode, registers name and skips.
+should_run() {
+  if $LIST; then
+    ALL_CASES+=("$1")
+    return 1
+  fi
+  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+}
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -159,7 +169,7 @@ code_path="$REPO_ROOT/agents/project-pm.md"
 # pm-write-guard
 # =============================================================================
 
-echo "== hook-pm-write-guard =="
+$LIST || echo "== hook-pm-write-guard =="
 
 run_case "pm: Edit memory file → allow" 0 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}"
@@ -251,7 +261,7 @@ assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 # =============================================================================
 
 echo
-echo "== hook-codex-write-guard =="
+$LIST || echo "== hook-codex-write-guard =="
 truncate_log
 
 # --- happy path: Write/Edit to /tmp/brief-*.md ---
@@ -345,7 +355,7 @@ assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor
 # =============================================================================
 
 echo
-echo "== hook-codex-bash-guard =="
+$LIST || echo "== hook-codex-bash-guard =="
 truncate_log
 
 dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
@@ -992,12 +1002,12 @@ run_case "cx: main thread (no agent_type) with run_in_background:true → no-op 
 # =============================================================================
 
 echo
-echo "== hook-log-claude-usage =="
+$LIST || echo "== hook-log-claude-usage =="
 truncate_log
 
 stop_happy_path() {
   local name="stop_happy_path" home transcript payload out err status logfile
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript.jsonl"
   printf '%s\n' \
@@ -1025,7 +1035,7 @@ stop_happy_path() {
 
 stop_missing_transcript_path() {
   local name="stop_missing_transcript_path" home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' '{"session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1041,7 +1051,7 @@ stop_missing_transcript_path() {
 
 stop_transcript_file_not_found() {
   local name="stop_transcript_file_not_found" home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1057,7 +1067,7 @@ stop_transcript_file_not_found() {
 
 stop_malformed_json_payload() {
   local name="stop_malformed_json_payload" home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' 'not json' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1073,7 +1083,7 @@ stop_malformed_json_payload() {
 
 stop_zero_token_transcript() {
   local name="stop_zero_token_transcript" home transcript payload status
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-zero.jsonl"
   printf '%s\n' '{"role":"assistant","content":"hello"}' '{"role":"user","content":"ok"}' > "$transcript"
@@ -1092,7 +1102,7 @@ stop_zero_token_transcript() {
 
 stop_failure_logged() {
   local name="stop_failure_logged" home transcript payload status logfile
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-fail.jsonl"
   printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
@@ -1116,7 +1126,7 @@ stop_failure_logged() {
 
 stop_idempotent_double_call() {
   local name="stop_idempotent_double_call" home transcript payload status logfile total
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-idem.jsonl"
   printf '%s\n' \
@@ -1155,7 +1165,7 @@ print(total)
 
 stop_nested_message_usage() {
   local name="stop_nested_message_usage" home transcript payload status logfile
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-nested.jsonl"
   # Nested format: usage is under message.usage (Claude API transcript format)
@@ -1182,7 +1192,7 @@ stop_nested_message_usage() {
 
 stop_no_session_id_skips_log() {
   local name="stop_no_session_id_skips_log" home transcript payload status
-  should_run "$name" || return
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-nosession.jsonl"
   printf '%s\n' \
@@ -1219,7 +1229,7 @@ stop_no_session_id_skips_log
 # =============================================================================
 
 echo
-echo "== hook-save-rate-limits =="
+$LIST || echo "== hook-save-rate-limits =="
 
 run_rl_hook() {
   local json="$1" config_dir="$2"
@@ -1233,7 +1243,7 @@ rl_hook_happy_path() {
   #   1. Run the hook with JSON containing five_hour (25%) and seven_day (10%)
   #   2. Assert rate-limits.json exists with correct field values and updated_at
   local name="rl-hook/happy-path-writes-file" rl_home
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
   if [[ -f "$rl_home/rate-limits.json" ]] && python3 -c "import json; d=json.load(open('$rl_home/rate-limits.json')); assert d['five_hour']['used_percentage']==25; assert d['seven_day']['used_percentage']==10; assert 'updated_at' in d"; then
@@ -1254,7 +1264,7 @@ rl_hook_missing_rate_limits() {
   #   1. Run the hook with JSON that has no rate_limits key
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/missing-rate-limits-no-write" rl_home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s' '{"other_key":"value"}' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1276,7 +1286,7 @@ rl_hook_malformed_json() {
   #   1. Run the hook with a non-JSON payload string
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/malformed-json-exits-0" rl_home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1300,7 +1310,7 @@ rl_hook_chain_called() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called" rl_home chain_log chain_script
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   chain_script="$rl_home/chain.sh"
@@ -1331,7 +1341,7 @@ rl_hook_chain_called_with_args() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called-with-args" rl_home chain_log chain_script
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   chain_script="$rl_home/chain.sh"
@@ -1362,7 +1372,7 @@ rl_hook_chain_called_bash_c() {
   #   2. Run the hook with a valid rate_limits payload
   #   3. Assert rate-limits.json exists and the sentinel file was created by bash -c
   local name="rl-hook/chain-called-bash-c" rl_home chain_log
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   # bash -c style command string — the form that read -r -a would break.
@@ -1386,7 +1396,7 @@ rl_hook_empty_stdin() {
   #   1. Run the hook with empty stdin (printf '')
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/empty-stdin-exits-0" rl_home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1411,7 +1421,7 @@ rl_hook_write_failure_chains() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert exit 0, chain sentinel exists, rate-limits.json absent
   local name="rl-hook/write-failure-chains" rl_home chain_dir chain_script chain_log status
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_dir="$(mktemp -d)"
   chain_script="$chain_dir/chain.sh"
@@ -1449,7 +1459,7 @@ rl_hook_chain_failure_isolated() {
   #   2. Run the hook with a valid rate_limits payload
   #   3. Assert hook exits 0 and rate-limits.json was written despite chain failure
   local name="rl-hook/chain-failure-isolated" rl_home status
-  should_run "$name" || return
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s\n' "exit 1" > "$rl_home/statusline-chain.conf"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
@@ -1480,7 +1490,7 @@ rl_hook_chain_failure_isolated
 # =============================================================================
 
 echo
-echo "== hook-inject-memory =="
+$LIST || echo "== hook-inject-memory =="
 
 inject_encoded_path() {
   local path="$1"
@@ -1502,7 +1512,7 @@ inject_hook_happy_path() {
   #   2. Run the hook with a UserPromptSubmit payload whose cwd matches the project
   #   3. Assert stdout contains only the index lines wrapped in delimiters
   local name="inject-hook/happy-path" dir cwd payload output expected status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1529,7 +1539,7 @@ inject_hook_parent_fallback() {
   #   2. Run the hook with cwd set to a nested child directory
   #   3. Assert stdout injects the parent project index line
   local name="inject-hook/parent-fallback" dir parent child payload output expected status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   parent="$dir/repo"
   child="$parent/packages/app"
@@ -1557,7 +1567,7 @@ inject_hook_no_memory_found() {
   #   2. Run the hook with a valid cwd payload
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/no-memory-found" dir cwd payload output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/no-memory/subdir"
   mkdir -p "$cwd"
@@ -1582,7 +1592,7 @@ inject_hook_empty_index() {
   #   2. Run the hook with a valid cwd payload
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/empty-index" dir cwd payload output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1608,7 +1618,7 @@ inject_hook_malformed_payload() {
   #   2. Run the hook with non-JSON stdin
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/malformed-payload" dir output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1630,7 +1640,7 @@ inject_hook_empty_stdin() {
   #   2. Run the hook with empty stdin
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/empty-stdin" dir output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1652,7 +1662,7 @@ inject_hook_missing_cwd() {
   #   1. Run the hook with valid JSON payload containing no cwd field
   #   2. Assert exit 0 and empty stdout (hook silently skips)
   local name="inject-hook/missing-cwd" dir output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' '{}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1674,7 +1684,7 @@ inject_hook_non_string_cwd() {
   #   1. Run the hook with valid JSON payload where cwd is an integer (123)
   #   2. Assert exit 0 and empty stdout (hook silently skips)
   local name="inject-hook/non-string-cwd" dir output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' '{"cwd":123}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1698,7 +1708,7 @@ inject_hook_threshold_shows_directive() {
   #   3. Assert all 60 lines appear (no truncation), delimiters present,
   #      and a "⚠ MEMORY.md has N entries" directive appears before closing delimiter
   local name="inject-hook/threshold-shows-directive" dir cwd payload output body status i directive_line
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1739,7 +1749,7 @@ inject_hook_threshold_below_emits_no_directive() {
   #   2. Run the hook and capture stdout
   #   3. Assert all 49 lines present, no "⚠" directive line in output
   local name="inject-hook/threshold-49-no-directive" dir cwd payload output body status i directive_line
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1776,7 +1786,7 @@ inject_hook_threshold_at_boundary_emits_directive() {
   #   2. Run the hook and capture stdout
   #   3. Assert all 50 lines present AND the "⚠" directive line appears
   local name="inject-hook/threshold-50-emits-directive" dir cwd payload output body status i directive_line
-  should_run "$name" || return
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1816,7 +1826,7 @@ inject_hook_default_home_fallback() {
   #   3. Assert exit 0 and the index line appears in stdout
   #   4. Clean up the temp HOME — never touches real $HOME
   local name="inject-hook/default-home-fallback" cwd encoded tmp_home project_dir payload output status
-  should_run "$name" || return
+  should_run "$name" || return 0
   tmp_home="$(mktemp -d)"
   cwd="/tmp/inject-hook-home-fallback-test-$$"
   encoded="$(inject_encoded_path "$cwd")"
@@ -1866,7 +1876,7 @@ inject_hook_episode_no_file() {
   #   2. Run inject hook and capture output
   #   3. Assert output contains index lines but no episode reminder
   local name="inject-hook/episode-no-file"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload output status
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1893,7 +1903,7 @@ inject_hook_episode_fresh() {
   #   2. Run inject hook
   #   3. Assert no 💡 reminder in output
   local name="inject-hook/episode-fresh"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload output status now_iso
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1922,7 +1932,7 @@ inject_hook_episode_stale_no_summary() {
   #   2. Run inject hook
   #   3. Assert output contains 💡 ... /mem-log reminder
   local name="inject-hook/episode-stale-no-summary"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload output status old_iso
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1951,7 +1961,7 @@ inject_hook_episode_stale_has_summary() {
   #   2. Run inject hook
   #   3. Assert output contains 💡 Last episode reminder (not /mem-log reminder)
   local name="inject-hook/episode-stale-has-summary"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload output status old_iso
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1983,7 +1993,7 @@ inject_hook_episode_stale_has_summary
 # =============================================================================
 
 echo
-echo "== hook-session-summary =="
+$LIST || echo "== hook-session-summary =="
 
 session_hook_happy_path() {
   # Verifies a new session_id appends a metadata entry to episodes.jsonl.
@@ -1992,7 +2002,7 @@ session_hook_happy_path() {
   #   2. Run session hook with a valid payload (cwd + session_id)
   #   3. Assert exit 0 and episodes.jsonl has one line with correct session_id
   local name="session-hook/happy-path"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload status episodes entry
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2021,7 +2031,7 @@ session_hook_duplicate_no_summary() {
   #   2. Run session hook with the same session_id
   #   3. Assert episodes.jsonl still has exactly 1 line (no duplicate)
   local name="session-hook/duplicate-no-summary"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload status line_count encoded
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2052,7 +2062,7 @@ session_hook_duplicate_has_summary() {
   #   2. Run session hook with the same session_id
   #   3. Assert episodes.jsonl still has exactly 1 line
   local name="session-hook/duplicate-has-summary"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload status line_count encoded
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2083,7 +2093,7 @@ session_hook_new_session_appends() {
   #   2. Run hook with a DIFFERENT session_id
   #   3. Assert episodes.jsonl now has 2 lines
   local name="session-hook/new-session-appends"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload status line_count encoded
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2114,7 +2124,7 @@ session_hook_no_memory_dir() {
   #   2. Run hook with a cwd that has no ancestor memory dir
   #   3. Assert exit 0 and no episodes.jsonl created
   local name="session-hook/no-memory-dir"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local dir cwd payload output status
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -2139,7 +2149,7 @@ session_hook_malformed_payload() {
   #   1. Send non-JSON string to session hook stdin
   #   2. Assert exit 0 and empty stdout
   local name="session-hook/malformed-payload"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local output status
   output=$(printf 'not json' | "$SESSION_HOOK" 2>/dev/null)
   status=$?
@@ -2156,7 +2166,7 @@ session_hook_malformed_payload() {
 session_hook_empty_stdin() {
   # Verifies exit 0 with no output when stdin is empty.
   local name="session-hook/empty-stdin"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local output status
   output=$(printf '' | "$SESSION_HOOK" 2>/dev/null)
   status=$?
@@ -2179,8 +2189,82 @@ session_hook_malformed_payload
 session_hook_empty_stdin
 
 # =============================================================================
+# command validators — /mem-recall injection format
+# =============================================================================
+$LIST || echo "== mem-recall format validator =="
+
+mem_recall_format_validator() {
+  # Validates that the /mem-recall logic (read last N non-empty-summary entries
+  # from episodes.jsonl) produces the expected injection format.
+  # This scriptable validator exercises the data contract that /mem-recall depends on.
+  local name="mem-recall/format-validator"
+  should_run "$name" || return 0
+  local dir episodes result
+  dir="$(mktemp -d)"
+  episodes="$dir/episodes.jsonl"
+
+  # Write 3 entries: 2 with summary, 1 skeleton (should be skipped)
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"/proj","session_id":"s1","summary":"First session: fixed bug X."}\n' >> "$episodes"
+  printf '{"date":"2026-01-02T00:00:00+00:00","cwd":"/proj","session_id":"s2","summary":""}\n' >> "$episodes"
+  printf '{"date":"2026-01-03T00:00:00+00:00","cwd":"/proj","session_id":"s3","summary":"Third session: added feature Y."}\n' >> "$episodes"
+
+  result=$(python3 - "$episodes" 5 << 'PYEOF'
+import json, sys
+episodes_file, raw_n = sys.argv[1], sys.argv[2]
+n = int(raw_n)
+entries = []
+with open(episodes_file) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get('summary', '').strip():
+            entries.append(e)
+recent = entries[-n:]
+print(f'== Recent episodes (last {len(recent)}) ==')
+print()
+for e in recent:
+    print(f'[{e["date"]}] {e["cwd"]}')
+    print(e['summary'])
+    print()
+print('== end episodes ==')
+PYEOF
+)
+
+  local ok=true
+  [[ "$result" == *"== Recent episodes (last 2) =="* ]] || ok=false
+  [[ "$result" == *"First session: fixed bug X."* ]] || ok=false
+  [[ "$result" == *"Third session: added feature Y."* ]] || ok=false
+  [[ "$result" == *"== end episodes =="* ]] || ok=false
+  # Skeleton entry must NOT appear in output
+  [[ "$result" != *'"summary":""'* ]] || ok=false
+
+  rm -rf "$dir"
+
+  if $ok; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — output=%q\n' "$name" "$result"
+  fi
+}
+
+mem_recall_format_validator
+
+# =============================================================================
 # summary
 # =============================================================================
+
+if $LIST; then
+  printf '%s\n' "${ALL_CASES[@]}"
+  exit 0
+fi
 
 echo
 echo "----"

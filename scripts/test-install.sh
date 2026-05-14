@@ -6,16 +6,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"
 
-# --filter <pattern>  run only cases whose name contains <pattern> (substring match)
+# --filter <pattern>  run only cases whose name contains <pattern>
+# --list              print all case names and exit
 FILTER=""
+LIST=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --filter) FILTER="${2:-}"; shift 2 ;;
+    --list)   LIST=true; shift ;;
     *) shift ;;
   esac
 done
 
-should_run() { [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]; }
+ALL_CASES=()
+# Returns 0 (run) or 1 (skip). In --list mode, registers name and skips.
+should_run() {
+  if $LIST; then
+    ALL_CASES+=("$1")
+    return 1
+  fi
+  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+}
 
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
@@ -199,7 +210,7 @@ run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
 test_legacy_pm_left_untouched() {
   local name="legacy-github-pm-left-untouched"
-  should_run "$name" || return
+  should_run "$name" || return 0
 
   local dir_home="$tmp_root/$name-dir-home"
   local dir_out="$tmp_root/$name-dir.stdout"
@@ -252,7 +263,7 @@ test_legacy_pm_left_untouched() {
 
 test_legacy_stale_symlinks_removed() {
   local name="legacy-stale-symlinks-removed"
-  should_run "$name" || return
+  should_run "$name" || return 0
 
   local script_home="$tmp_root/$name-script-home"
   local script_out="$tmp_root/$name-script.stdout"
@@ -337,7 +348,7 @@ test_install_sh_wires_hooks() {
   # Proves that the primary install.sh path wires all six managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -365,7 +376,7 @@ test_install_sh_wires_hooks_no_settings() {
   # create a minimal settings.json and wire all hooks before the Write-enabled
   # codex-executor agent is accessible.
   local name="install-sh-wires-hooks-no-settings"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   # Deliberately no settings.json
@@ -390,7 +401,7 @@ test_install_sh_wires_hooks_no_settings() {
 
 test_hooks_install_uninstall_lifecycle() {
   local name="hooks-install-uninstall-lifecycle"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -425,7 +436,7 @@ test_userpromptsubmit_install_wires_hook() {
   #   2. Run install-hooks.sh directly
   #   3. Assert UserPromptSubmit exists and contains the memory injection hook path
   local name="userpromptsubmit-install-wires-hook"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
   mkdir -p "$home/.claude"
@@ -451,7 +462,7 @@ test_userpromptsubmit_uninstall_removes_hook() {
   #   2. Run uninstall-hooks.sh
   #   3. Assert hook-inject-memory.sh and the UserPromptSubmit key are gone
   local name="userpromptsubmit-uninstall-removes-hook"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -475,7 +486,7 @@ test_userpromptsubmit_install_idempotent() {
   #   2. Run install-hooks.sh twice
   #   3. Assert exactly one hook-inject-memory.sh command is present
   local name="userpromptsubmit-install-idempotent"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
   local count
@@ -502,7 +513,7 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
   #   2. Run install-hooks.sh, then uninstall-hooks.sh
   #   3. Assert the unrelated hook remains and hook-inject-memory.sh is gone
   local name="userpromptsubmit-uninstall-preserves-unrelated"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local unrelated="/home/testuser/project/custom-userpromptsubmit.sh"
   mkdir -p "$home/.claude"
@@ -519,7 +530,7 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
 
 test_stop_hook_migration() {
   local name="hooks-stop-migration"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   local old_stop="$REPO_ROOT/hooks/hook-log-claude-usage.sh"
@@ -536,7 +547,7 @@ test_stop_hook_migration() {
 
 test_stop_hook_preservation() {
   local name="hooks-stop-preservation"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   # Unrelated hook at a completely different path that happens to share the basename
@@ -566,7 +577,7 @@ test_statusline_install_chains_previous() {
   #   3. Assert statusline-chain.conf contains the previous command path
   #   4. Run install again; assert "already wired" and chain conf unchanged
   local name="statusline-install-chains-previous"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"
   local out="$tmp_root/$name-second-install.out"
@@ -599,7 +610,7 @@ test_statusline_install_chains_previous_with_args() {
   #   2. Run install; assert statusLine.command is replaced with hook-save-rate-limits.sh
   #   3. Assert statusline-chain.conf contains the full original command string with args
   local name="statusline-install-chains-previous-with-args"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"
   mkdir -p "$home/.claude"
@@ -630,7 +641,7 @@ test_statusline_uninstall_restores() {
   #   3. Assert statusLine.command is restored to the original value
   #   4. Assert statusline-chain.conf no longer exists
   local name="statusline-uninstall-restores"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local previous="$tmp_root/$name-prev-statusline.sh"
   mkdir -p "$home/.claude"
@@ -661,7 +672,7 @@ test_session_stop_install_wires_hook() {
   #   2. Run install-hooks.sh
   #   3. Assert Stop exists and contains the session summary hook path
   local name="session-stop-install-wires-hook"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session="$REPO_ROOT/scripts/hook-session-summary.sh"
   mkdir -p "$home/.claude"
@@ -686,7 +697,7 @@ test_session_stop_uninstall_removes_hook() {
   #   2. Run uninstall-hooks.sh
   #   3. Assert hook-session-summary.sh is gone from settings.json
   local name="session-stop-uninstall-removes-hook"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session="$REPO_ROOT/scripts/hook-session-summary.sh"
   mkdir -p "$home/.claude"
@@ -706,7 +717,7 @@ test_session_stop_install_idempotent() {
   #   2. Run install-hooks.sh twice
   #   3. Assert exactly one hook-session-summary.sh command is present
   local name="session-stop-install-idempotent"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session="$REPO_ROOT/scripts/hook-session-summary.sh"
   local count
@@ -734,7 +745,7 @@ test_session_stop_uninstall_preserves_stop() {
   #   2. Run install-hooks.sh, then uninstall-hooks.sh
   #   3. Assert the unrelated hook remains and hook-session-summary.sh is gone
   local name="session-stop-uninstall-preserves-stop"
-  should_run "$name" || return
+  should_run "$name" || return 0
   local home="$tmp_root/$name"
   local unrelated="/home/testuser/project/custom-stop-hook.sh"
   mkdir -p "$home/.claude"
@@ -767,6 +778,11 @@ test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
+
+if $LIST; then
+  printf '%s\n' "${ALL_CASES[@]}"
+  exit 0
+fi
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then

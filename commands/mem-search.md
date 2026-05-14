@@ -31,15 +31,21 @@ If nothing is printed, report "No memory directory found for this project" and s
 
 ## Step 2 — Keyword search (Layer 1)
 
+Store the query in a variable first so shell metacharacters in `$ARGUMENTS` are not interpreted:
+
 ```bash
-rg -il "<QUERY>" <MEMORY_DIR>/*.md <MEMORY_DIR>/episodes.jsonl 2>/dev/null || true
+_query='$ARGUMENTS'
+_mem='<MEMORY_DIR>'
+rg -il -- "$_query" "$_mem"/*.md "$_mem"/episodes.jsonl 2>/dev/null || true
 ```
 
-Replace `<QUERY>` with `$ARGUMENTS` and `<MEMORY_DIR>` with the path from Step 1.
+Replace `<MEMORY_DIR>` with the path from Step 1. Do not substitute `$ARGUMENTS` directly into the command string.
 
 If `rg` is not available, fall back to:
 ```bash
-grep -ril "<QUERY>" <MEMORY_DIR>/ 2>/dev/null || true
+_query='$ARGUMENTS'
+_mem='<MEMORY_DIR>'
+grep -ril -- "$_query" "$_mem"/ 2>/dev/null || true
 ```
 
 ## Step 3 — Semantic search (Layer 2, fallback)
