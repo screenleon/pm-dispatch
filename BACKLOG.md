@@ -15,16 +15,20 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
 | CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
-| CC-008 | 🔵 active | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | — |
-| CC-009 | 🔵 active | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | — |
+| CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
+| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:pending |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
 | CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
 | CC-013 | 🔵 active | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | — |
 | CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — |
 | CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — |
-| CC-016 | 🔵 active | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | — |
-| CC-017 | 🔵 active | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | — |
+| CC-016 | ✅ done | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 |
+| CC-017 | ✅ done | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | pr:#43 |
+| CC-018 | 🔵 active | Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota 寫入 rate-limits-codex.json | ux/token | 2026-05-14 | — |
+| CC-019 | 🔵 active | Episodic memory 層：Stop hook 寫 session 摘要、`/mem-recall` 按需注入、`/mem-distill` 整合回 MEMORY.md | ux/memory | 2026-05-14 | — |
+| CC-020 | 🔵 active | `/mem-search`：`rg` 關鍵字過濾 + Claude 語意理解，跨 memory 檔搜尋 | ux/memory | 2026-05-14 | — |
+| CC-021 | 🔵 active | test scripts 支援 `--filter <pattern>` 只跑名稱匹配的 test case | ops/test | 2026-05-14 | — |
 
 ---
 
@@ -70,10 +74,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: Claude Code auto-compact 時只保留對話摘要，`~/.claude/projects/*/memory/` 的檔案雖存在磁碟，但 Claude 因 context 壓縮而可能遺忘 MEMORY.md 的存在或內容，跨 session 記憶斷裂。
 **Why**: claude-mem 專案驗證了 UserPromptSubmit hook 是最有效的防遺忘時機（每次用戶輸入前注入，確保 compact 後 memory 仍在 context）。相較 SessionStart hook，UserPromptSubmit 更能對抗 mid-session compact。
 **Requirement**:
-1. 新增 `scripts/hook-inject-memory.sh`：UserPromptSubmit hook，讀取 `~/.claude/projects/*/memory/MEMORY.md`（比對 cwd 對應的 project），以精簡格式注入 context
+1. 新增 `scripts/hook-inject-memory.sh`：UserPromptSubmit hook，讀取 `~/.claude/projects/*/memory/MEMORY.md`（比對 cwd 對應的 project），注入 index 行到 context
 2. `install-hooks.sh` 掛入 UserPromptSubmit；`uninstall-hooks.sh` 清除
-3. inject 內容限制在 500 tokens 以內（僅 index 行，不含詳細 memory 檔內容）
-4. 測試覆蓋：memory 存在時注入、不存在時靜默跳過
+3. **設計決策（2026-05-14）**：inject 永遠完整注入 index，不截斷。截斷會造成 Claude 遺失部分記憶規則，比 token 多花費更危險。當 index ≥ 50 條時，在 inject 末尾加入 directive 指示 Claude 在回覆前執行 `/memory-compress`，由 Claude 在 LLM 語意層做壓縮，而非 hook 靜默截斷。
+4. 測試覆蓋：memory 存在時注入全部 index 行、不存在時靜默跳過、≥50 條時出現 `/memory-compress` directive
 
 ## CC-010 — `/memory-compress` 指令：壓縮 MEMORY.md 條目
 
@@ -188,3 +192,79 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 3. **Brief 鎖定**：確認完成前不得開始寫 codex brief；使用者回覆後，將確認內容摘要為 brief 的 `context` 區塊，讓 codex 知道設計決策已經定案。
 
 **影響文件**: `agents/project-pm.md`（加入 UI 實作前置流程規則）。
+
+## CC-018 — Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota
+
+**Problem**: CC-006 透過 StatusLine hook 解決了 Claude 5h rate-limit 的自動讀取，但 Codex（codex-executor）並無等效的 hook 機制——沒有 stdin 事件，也沒有 rate_limits 欄位可掛。目前 Codex 使用量只靠 `log-usage.sh` 手動寫入 usage-tracker.jsonl，用戶無法即時得知 Codex pool 剩餘額度，只能進 dashboard 查。
+
+**Why**: Claude 的 rate_limits 透過 StatusLine hook 由 Claude Code 推送，是 CLI 設計。Codex 走 OpenAI API 路徑，quota 資訊需要主動 API 查詢（`/v1/organization/usage` 或 response header `x-ratelimit-remaining-tokens`），架構不同。若能在 `codex-dispatch.sh` 派發後自動讀 response header 或週期性 API 查詢，就能補齊這個資訊缺口，讓 `token-usage.sh --remaining` 對 Codex pool 也有資料可用。
+
+**Requirement**:
+1. 研究 Codex API response headers：確認是否回傳 `x-ratelimit-remaining-requests` / `x-ratelimit-remaining-tokens`（類似 OpenAI standard headers）
+2. 若有：在 `scripts/codex-dispatch.sh` 中，dispatch 後解析 response headers，將 Codex 剩餘 quota 寫入 `~/.claude/rate-limits-codex.json`（格式與 rate-limits.json 對齊：`{ "updated_at": ..., "remaining_tokens": ..., "reset_at": ... }`）
+3. 若無（Codex 走 batch/async 路徑不回傳即時 quota）：改為在 dispatch 後呼叫 `/v1/organization/usage` 查詢，或記錄「目前技術限制，無法自動取得」供日後重評估
+4. `token-usage.sh` 加入 Codex pool 剩餘顯示（讀 rate-limits-codex.json）
+5. 測試覆蓋：header 存在時寫入、header 缺失時靜默跳過、json 格式正確
+
+**注意**: 實作前需先驗證 Codex API 的 rate-limit header 行為，若 API 不支援，此項可能降為 documentation-only（記錄技術限制）。CC-008 Spark routing 實作時需同步確認 Spark 是否有獨立 quota endpoint。
+
+## CC-019 — Episodic memory 層：session 摘要 + `/mem-recall` + `/mem-distill`
+
+**Problem**: 目前 memory 系統只有一層（MEMORY.md flat index），缺乏跨 session 的事件歷史。對話結束後，這個 session 發生了什麼、解決了什麼問題、做了什麼決策，都會消失在 auto-compact 中。
+
+**Why**: 認知科學架構（CoALA / agentmemory）和 claude-mem 都驗證了 episodic layer 的價值：把每個 session 壓縮成 3-5 行摘要，比試圖在 MEMORY.md 裡記錄所有細節更有效率。Session 歷史可以按需注入（`/mem-recall`），也可以定期整合提升 MEMORY.md 品質（`/mem-distill`）。
+
+**Requirement**:
+1. 新增 `scripts/hook-session-summary.sh`：Stop hook，session 結束時由 Claude 生成 3-5 行摘要，append 到 `~/.claude/projects/<id>/memory/episodes.jsonl`（格式：`{"date":"...","cwd":"...","summary":"..."}`）
+2. 新增 `commands/mem-recall.md`：slash command，讀取最近 N 個 episode 注入 context（預設 5）
+3. 新增 `commands/mem-distill.md`：slash command，讓 Claude 讀取最近 10 個 episodes，對照現有 MEMORY.md，更新/新增/移除條目，提供 dry-run 預覽
+4. `install-hooks.sh` / `uninstall-hooks.sh` 掛入 Stop hook（與現有 `hook-log-claude-usage.sh` 並行）
+5. 測試覆蓋：episodes.jsonl 正確 append、格式驗證、/mem-recall 注入格式
+
+**設計決策**:
+- Stop hook 生成摘要：由 Claude 在 session 結束時自行判斷重要事件，不是機械式截取
+- episodes.jsonl 只 append，不覆寫：歷史不可刪除，壓縮靠 /mem-distill
+- /mem-distill 有 --dry-run：讓用戶看到要改什麼再確認
+
+**依賴**: CC-009（UserPromptSubmit hook）已完成，episodic 層是自然延伸。
+
+## CC-020 — `/mem-search`：跨 memory 檔語意搜尋
+
+**Problem**: 隨著 memory 檔數量增加，「我之前記過關於 X 的東西嗎？」這類問題需要手動翻 MEMORY.md 再 Read 個別檔案，效率低。
+
+**Why**: `rg`（ripgrep）可以在毫秒內掃遍所有 memory 檔做關鍵字過濾，Claude 再對結果做語意理解。這個組合在目前規模（< 50 個 memory 檔）完全夠用，不需要向量資料庫或 BM25。等規模真正成長時（200+ 筆）再評估本地 embedding（`sentence-transformers`）。
+
+**Requirement**:
+1. 新增 `commands/mem-search.md`：slash command，用法 `/mem-search <query>`
+2. 執行邏輯：
+   - `rg -l "<query>" ~/.claude/projects/*/memory/` → 找出包含關鍵字的 memory 檔
+   - 若有結果：Claude Read 這些檔案 → 語意理解 → 回答
+   - 若無結果：Claude 看 MEMORY.md index → 判斷語意相關條目 → Read 那些檔 → 回答
+3. 輸出格式：列出命中的 memory 條目 + 相關摘要，說明「記憶來源」
+4. 無需測試腳本（slash command 為 markdown，邏輯在 Claude 端執行）
+
+**設計決策**:
+- 搜尋工具選 `rg` 而非 BM25：corpus 小（< 50 檔），rg 速度和準確度已足夠，不需要排名演算法
+- 語意理解靠 Claude：不需要 embedding API 或外部模型
+- 未來擴展路徑：規模 > 200 筆時考慮 `sentence-transformers` 本地 embedding
+
+**依賴**: CC-009（memory 結構穩定）、CC-019（episodic 層建立後 /mem-search 也能搜尋 episodes）。
+
+## CC-021 — test scripts 支援 `--filter <pattern>` 只跑匹配的 test case
+
+**Problem**: 每次 gate NO-GO 後加入 1-2 個 test case，驗證時仍需跑整套測試（例如 `scripts/test-hooks.sh` 233 tests、`scripts/test-install.sh` 23 tests），即使被改動的只有 1 個函式。這造成不必要的等待，也讓「是否真的只有新測試受影響」變得不可見。
+
+**Why**: 目前 test scripts 把所有 test function 依序呼叫，沒有 filter 機制。當 gate 要求「只補 inject-hook/default-home-fallback 這條測試」，最小驗證路徑應該是只跑那一個 case，而非整個 suite。fix-loop 每輪多跑 200+ 無關 tests 累積浪費明顯。
+
+**Requirement**:
+1. `scripts/test-hooks.sh` 和 `scripts/test-install.sh` 支援 `--filter <pattern>` 選項：只執行 case name 包含 `<pattern>` 的 test function（用 `[[ "$name" == *"$FILTER"* ]]` 做字串比對即可，不需 regex）
+2. 無 `--filter` 時行為不變，仍跑全部
+3. `--filter` 下 `PASS/FAIL` 計數只統計實際跑的 case，輸出格式不變
+4. 加入 `--list` 選項：列出所有 test case 名稱，方便查詢 pattern（`printf '%s\n' "${ALL_CASES[@]}"`）
+5. gate re-run 文件（`docs/pr-gate-flow.md` 或 `commands/pr-gate.md`）加入說明：gate fix 後本地驗證時，可用 `--filter <changed-area>` 最小化執行範圍；完整 suite 仍需在 gate 中跑
+
+**實作方向**:
+- 各 test function 開頭已有 `local name="<case-name>"` 變數，只需在 `PASS++/FAIL++` 前加 `[[ -z "$FILTER" || "$name" == *"$FILTER"* ]] || return` 即可 skip
+- 或改為先收集 case list 再 dispatch，兩種方式都行
+
+**影響文件**: `scripts/test-hooks.sh`、`scripts/test-install.sh`（主要）；`commands/pr-gate.md` 或 `docs/` 文件說明（次要）。

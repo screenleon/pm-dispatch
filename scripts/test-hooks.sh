@@ -21,6 +21,7 @@ CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
 STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
+MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -1438,6 +1439,369 @@ rl_hook_chain_called_with_args
 rl_hook_chain_called_bash_c
 rl_hook_write_failure_chains
 rl_hook_chain_failure_isolated
+
+# =============================================================================
+# hook-inject-memory
+# =============================================================================
+
+echo
+echo "== hook-inject-memory =="
+
+inject_encoded_path() {
+  local path="$1"
+  path="${path#/}"
+  printf -- '-%s' "${path//\//-}"
+}
+
+write_inject_memory() {
+  local config_dir="$1" cwd="$2" content="$3" encoded
+  encoded="$(inject_encoded_path "$cwd")"
+  mkdir -p "$config_dir/projects/$encoded/memory"
+  printf '%s' "$content" > "$config_dir/projects/$encoded/memory/MEMORY.md"
+}
+
+inject_hook_happy_path() {
+  # Verifies MEMORY.md index lines are injected when cwd matches a project exactly.
+  # Steps:
+  #   1. Create a sandbox project MEMORY.md with two "- " index lines
+  #   2. Run the hook with a UserPromptSubmit payload whose cwd matches the project
+  #   3. Assert stdout contains only the index lines wrapped in delimiters
+  local name="inject-hook/happy-path" dir cwd payload output expected status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'# title\n- alpha\n  - nested ignored\n- beta\nnot index\n'
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  expected=$'=== auto-memory: MEMORY.md index ===\n- alpha\n- beta\n=== end auto-memory ==='
+  if [[ "$status" == "0" && "$output" == "$expected" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_parent_fallback() {
+  # Verifies ancestor project fallback is used when cwd has no direct MEMORY.md.
+  # Steps:
+  #   1. Create MEMORY.md for a parent project directory only
+  #   2. Run the hook with cwd set to a nested child directory
+  #   3. Assert stdout injects the parent project index line
+  local name="inject-hook/parent-fallback" dir parent child payload output expected status
+  dir="$(mktemp -d)"
+  parent="$dir/repo"
+  child="$parent/packages/app"
+  mkdir -p "$child"
+  write_inject_memory "$dir" "$parent" $'# memory\n- parent index\n'
+  payload="{\"cwd\":\"$child\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  expected=$'=== auto-memory: MEMORY.md index ===\n- parent index\n=== end auto-memory ==='
+  if [[ "$status" == "0" && "$output" == "$expected" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_no_memory_found() {
+  # Verifies missing MEMORY.md in cwd and ancestors exits 0 with empty stdout.
+  # Steps:
+  #   1. Create a sandbox config with no project memory files
+  #   2. Run the hook with a valid cwd payload
+  #   3. Assert exit 0 and empty stdout
+  local name="inject-hook/no-memory-found" dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/no-memory/subdir"
+  mkdir -p "$cwd"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_empty_index() {
+  # Verifies MEMORY.md without "- " index lines exits 0 with empty stdout.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with no top-level index bullets
+  #   2. Run the hook with a valid cwd payload
+  #   3. Assert exit 0 and empty stdout
+  local name="inject-hook/empty-index" dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'# title\nnot an index\n  - nested ignored\n'
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_malformed_payload() {
+  # Verifies malformed JSON stdin never crashes or blocks the prompt.
+  # Steps:
+  #   1. Create a sandbox config directory
+  #   2. Run the hook with non-JSON stdin
+  #   3. Assert exit 0 and empty stdout
+  local name="inject-hook/malformed-payload" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_empty_stdin() {
+  # Verifies empty stdin exits 0 without stdout.
+  # Steps:
+  #   1. Create a sandbox config directory
+  #   2. Run the hook with empty stdin
+  #   3. Assert exit 0 and empty stdout
+  local name="inject-hook/empty-stdin" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_missing_cwd() {
+  # Verifies that a valid JSON payload with no "cwd" key exits 0 with empty
+  # stdout — the cwd validation guard handles absent keys gracefully.
+  # Steps:
+  #   1. Run the hook with valid JSON payload containing no cwd field
+  #   2. Assert exit 0 and empty stdout (hook silently skips)
+  local name="inject-hook/missing-cwd" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' '{}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_non_string_cwd() {
+  # Verifies that a valid JSON payload with a non-string "cwd" value (e.g. a
+  # number) exits 0 with empty stdout — the isinstance check rejects it.
+  # Steps:
+  #   1. Run the hook with valid JSON payload where cwd is an integer (123)
+  #   2. Assert exit 0 and empty stdout (hook silently skips)
+  local name="inject-hook/non-string-cwd" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' '{"cwd":123}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_threshold_shows_directive() {
+  # Verifies that when MEMORY.md has >= 50 index entries, the hook injects
+  # ALL entries without truncation and appends a "run /memory-compress" directive.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with 60 index lines (> threshold of 50)
+  #   2. Run the hook with a valid cwd payload and capture stdout
+  #   3. Assert all 60 lines appear (no truncation), delimiters present,
+  #      and a "⚠ MEMORY.md has N entries" directive appears before closing delimiter
+  local name="inject-hook/threshold-shows-directive" dir cwd payload output body status i directive_line
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 60); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/long-memory.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/long-memory.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  body="$(printf '%s\n' "$output" | sed '1d;$d')"
+  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if [[ "$status" == "0" \
+      && "$output" == ===\ auto-memory:\ MEMORY.md\ index\ ===$'\n'* \
+      && "$output" == *$'\n'===\ end\ auto-memory\ === \
+      && "$body" == *"memory index line 001"* \
+      && "$body" == *"memory index line 060"* \
+      && -n "$directive_line" \
+      && "$directive_line" == *"run /memory-compress"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s directive=%q output_tail=%q\n' "$name" "$status" "$directive_line" "${output: -80}"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_threshold_below_emits_no_directive() {
+  # Verifies that exactly 49 index entries (one below the threshold of 50) does
+  # NOT emit the /memory-compress directive — threshold is exclusive at 49.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with exactly 49 index lines
+  #   2. Run the hook and capture stdout
+  #   3. Assert all 49 lines present, no "⚠" directive line in output
+  local name="inject-hook/threshold-49-no-directive" dir cwd payload output body status i directive_line
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 49); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/memory49.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory49.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  body="$(printf '%s\n' "$output" | sed '1d;$d')"
+  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if [[ "$status" == "0" \
+      && "$body" == *"memory index line 049"* \
+      && -z "$directive_line" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_threshold_at_boundary_emits_directive() {
+  # Verifies that exactly 50 index entries (at the threshold) DOES emit the
+  # /memory-compress directive — threshold fires at >= 50.
+  # Steps:
+  #   1. Create a matching project MEMORY.md with exactly 50 index lines
+  #   2. Run the hook and capture stdout
+  #   3. Assert all 50 lines present AND the "⚠" directive line appears
+  local name="inject-hook/threshold-50-emits-directive" dir cwd payload output body status i directive_line
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  {
+    printf '# title\n'
+    for i in $(seq 1 50); do
+      printf -- '- memory index line %03d\n' "$i"
+    done
+  } > "$dir/memory50.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory50.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  body="$(printf '%s\n' "$output" | sed '1d;$d')"
+  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if [[ "$status" == "0" \
+      && "$body" == *"memory index line 050"* \
+      && -n "$directive_line" \
+      && "$directive_line" == *"run /memory-compress"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_default_home_fallback() {
+  # Verifies that when CLAUDE_CONFIG_DIR is unset, the hook falls back to $HOME/.claude.
+  # Steps:
+  #   1. Create a temp dir used as a sandboxed HOME; write MEMORY.md under
+  #      <tmp_home>/.claude/projects/<encoded>/memory/ with a uniquely-named fake cwd
+  #   2. Run hook-inject-memory.sh with HOME overridden to the temp dir and
+  #      CLAUDE_CONFIG_DIR stripped (env -u), so the fallback resolves to tmp_home
+  #   3. Assert exit 0 and the index line appears in stdout
+  #   4. Clean up the temp HOME — never touches real $HOME
+  local name="inject-hook/default-home-fallback" cwd encoded tmp_home project_dir payload output status
+  tmp_home="$(mktemp -d)"
+  cwd="/tmp/inject-hook-home-fallback-test-$$"
+  encoded="$(inject_encoded_path "$cwd")"
+  project_dir="${tmp_home}/.claude/projects/${encoded}/memory"
+  mkdir -p "$project_dir"
+  printf '# test\n- home fallback line\n' > "$project_dir/MEMORY.md"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | HOME="$tmp_home" env -u CLAUDE_CONFIG_DIR "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$tmp_home"
+  if [[ "$status" == "0" && "$output" == *"home fallback line"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
+inject_hook_happy_path
+inject_hook_parent_fallback
+inject_hook_no_memory_found
+inject_hook_empty_index
+inject_hook_malformed_payload
+inject_hook_empty_stdin
+inject_hook_missing_cwd
+inject_hook_non_string_cwd
+inject_hook_threshold_below_emits_no_directive
+inject_hook_threshold_at_boundary_emits_directive
+inject_hook_threshold_shows_directive
+inject_hook_default_home_fallback
 
 # =============================================================================
 # summary
