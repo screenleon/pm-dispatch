@@ -316,11 +316,11 @@ test_legacy_stale_symlinks_removed() {
 }
 
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires all five managed hooks and that
+# Proves that install-hooks.sh wires all six managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
-  # Proves that the primary install.sh path wires all five managed hooks
+  # Proves that the primary install.sh path wires all six managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   local name="install-sh-wires-hooks"
   local home="$tmp_root/$name"
@@ -336,6 +336,7 @@ test_install_sh_wires_hooks() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
@@ -366,6 +367,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
 }
@@ -381,6 +383,7 @@ test_hooks_install_uninstall_lifecycle() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
@@ -388,12 +391,108 @@ test_hooks_install_uninstall_lifecycle() {
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "statusLine should be deleted when no chain target exists"
     return
   fi
 
+  pass "$name"
+}
+
+test_userpromptsubmit_install_wires_hook() {
+  # Verifies install-hooks.sh wires hook-inject-memory.sh into UserPromptSubmit.
+  # Steps:
+  #   1. Create a sandbox settings.json with no hooks
+  #   2. Run install-hooks.sh directly
+  #   3. Assert UserPromptSubmit exists and contains the memory injection hook path
+  local name="userpromptsubmit-install-wires-hook"
+  local home="$tmp_root/$name"
+  local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  assert_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return
+  assert_contains "$name" "$home/.claude/settings.json" "$inject" || return
+  if ! jq -e --arg inject "$inject" \
+    '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
+    "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "UserPromptSubmit hook command not found"
+    return
+  fi
+  pass "$name"
+}
+
+test_userpromptsubmit_uninstall_removes_hook() {
+  # Verifies uninstall-hooks.sh removes the managed UserPromptSubmit hook cleanly.
+  # Steps:
+  #   1. Create a sandbox settings.json, then run install-hooks.sh
+  #   2. Run uninstall-hooks.sh
+  #   3. Assert hook-inject-memory.sh and the UserPromptSubmit key are gone
+  local name="userpromptsubmit-uninstall-removes-hook"
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  if ! jq -e '((.hooks // {}) | has("UserPromptSubmit") | not) or ((.hooks.UserPromptSubmit // []) | length == 0)' \
+    "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "UserPromptSubmit should be absent or empty"
+    return
+  fi
+  pass "$name"
+}
+
+test_userpromptsubmit_install_idempotent() {
+  # Verifies repeated install-hooks.sh runs do not duplicate UserPromptSubmit hooks.
+  # Steps:
+  #   1. Create a sandbox settings.json with no hooks
+  #   2. Run install-hooks.sh twice
+  #   3. Assert exactly one hook-inject-memory.sh command is present
+  local name="userpromptsubmit-install-idempotent"
+  local home="$tmp_root/$name"
+  local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
+  local count
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  count="$(jq --arg inject "$inject" \
+    '[.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)] | length' \
+    "$home/.claude/settings.json")"
+  if [[ "$count" != "1" ]]; then
+    fail "$name" "expected one UserPromptSubmit memory hook, got $count"
+    return
+  fi
+  pass "$name"
+}
+
+test_userpromptsubmit_uninstall_preserves_unrelated() {
+  # Verifies uninstall-hooks.sh removes only the managed UserPromptSubmit hook.
+  # Steps:
+  #   1. Create settings.json with an unrelated UserPromptSubmit hook
+  #   2. Run install-hooks.sh, then uninstall-hooks.sh
+  #   3. Assert the unrelated hook remains and hook-inject-memory.sh is gone
+  local name="userpromptsubmit-uninstall-preserves-unrelated"
+  local home="$tmp_root/$name"
+  local unrelated="/home/testuser/project/custom-userpromptsubmit.sh"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
+    "$unrelated" > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+
+  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -532,6 +631,10 @@ test_statusline_uninstall_restores() {
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_userpromptsubmit_install_wires_hook
+test_userpromptsubmit_uninstall_removes_hook
+test_userpromptsubmit_install_idempotent
+test_userpromptsubmit_uninstall_preserves_unrelated
 test_stop_hook_migration
 test_stop_hook_preservation
 test_statusline_install_chains_previous

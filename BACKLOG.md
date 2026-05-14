@@ -15,16 +15,17 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
 | CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
-| CC-008 | 🔵 active | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | — |
-| CC-009 | 🔵 active | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | — |
+| CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:pending |
+| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:pending |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
 | CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
 | CC-013 | 🔵 active | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | — |
 | CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — |
 | CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — |
-| CC-016 | 🔵 active | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | — |
-| CC-017 | 🔵 active | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | — |
+| CC-016 | ✅ done | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 |
+| CC-017 | ✅ done | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | pr:#43 |
+| CC-018 | 🔵 active | Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota 寫入 rate-limits-codex.json | ux/token | 2026-05-14 | — |
 
 ---
 
@@ -188,3 +189,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 3. **Brief 鎖定**：確認完成前不得開始寫 codex brief；使用者回覆後，將確認內容摘要為 brief 的 `context` 區塊，讓 codex 知道設計決策已經定案。
 
 **影響文件**: `agents/project-pm.md`（加入 UI 實作前置流程規則）。
+
+## CC-018 — Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota
+
+**Problem**: CC-006 透過 StatusLine hook 解決了 Claude 5h rate-limit 的自動讀取，但 Codex（codex-executor）並無等效的 hook 機制——沒有 stdin 事件，也沒有 rate_limits 欄位可掛。目前 Codex 使用量只靠 `log-usage.sh` 手動寫入 usage-tracker.jsonl，用戶無法即時得知 Codex pool 剩餘額度，只能進 dashboard 查。
+
+**Why**: Claude 的 rate_limits 透過 StatusLine hook 由 Claude Code 推送，是 CLI 設計。Codex 走 OpenAI API 路徑，quota 資訊需要主動 API 查詢（`/v1/organization/usage` 或 response header `x-ratelimit-remaining-tokens`），架構不同。若能在 `codex-dispatch.sh` 派發後自動讀 response header 或週期性 API 查詢，就能補齊這個資訊缺口，讓 `token-usage.sh --remaining` 對 Codex pool 也有資料可用。
+
+**Requirement**:
+1. 研究 Codex API response headers：確認是否回傳 `x-ratelimit-remaining-requests` / `x-ratelimit-remaining-tokens`（類似 OpenAI standard headers）
+2. 若有：在 `scripts/codex-dispatch.sh` 中，dispatch 後解析 response headers，將 Codex 剩餘 quota 寫入 `~/.claude/rate-limits-codex.json`（格式與 rate-limits.json 對齊：`{ "updated_at": ..., "remaining_tokens": ..., "reset_at": ... }`）
+3. 若無（Codex 走 batch/async 路徑不回傳即時 quota）：改為在 dispatch 後呼叫 `/v1/organization/usage` 查詢，或記錄「目前技術限制，無法自動取得」供日後重評估
+4. `token-usage.sh` 加入 Codex pool 剩餘顯示（讀 rate-limits-codex.json）
+5. 測試覆蓋：header 存在時寫入、header 缺失時靜默跳過、json 格式正確
+
+**注意**: 實作前需先驗證 Codex API 的 rate-limit header 行為，若 API 不支援，此項可能降為 documentation-only（記錄技術限制）。CC-008 Spark routing 實作時需同步確認 Spark 是否有獨立 quota endpoint。
