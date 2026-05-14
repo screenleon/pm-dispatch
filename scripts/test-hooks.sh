@@ -1293,11 +1293,30 @@ CHAINEOF
   rm -rf "$rl_home"
 }
 
+rl_hook_chain_called_bash_c() {
+  local name="rl-hook/chain-called-bash-c" rl_home chain_log
+  rl_home="$(mktemp -d)"
+  chain_log="$rl_home/chain-called"
+  # bash -c style command string — the form that read -r -a would break.
+  printf '%s\n' "bash -c 'touch \"$chain_log\"'" > "$rl_home/statusline-chain.conf"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
+  if [[ -f "$rl_home/rate-limits.json" && -f "$chain_log" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — rate-limits.json=%s chain-called=%s\n' "$name" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)" "$(test -f "$chain_log" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
 rl_hook_happy_path
 rl_hook_missing_rate_limits
 rl_hook_malformed_json
 rl_hook_chain_called
 rl_hook_chain_called_with_args
+rl_hook_chain_called_bash_c
 
 # =============================================================================
 # summary

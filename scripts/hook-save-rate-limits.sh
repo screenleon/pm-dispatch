@@ -40,15 +40,13 @@ with open(os.path.join(config_dir, 'rate-limits.json'), 'w') as f:
 PYEOF
 
 # Chain to previous statusLine command if configured.
-# statusline-chain.conf may contain a bare path or a command string with args.
+# Use bash -c to preserve full command-string semantics (quoted args,
+# bash -c wrappers, env prefixes, etc.) from the original statusLine.command.
 _chain_conf="${_config_dir}/statusline-chain.conf"
 if [[ -f "$_chain_conf" ]]; then
     _chain=$(head -1 "$_chain_conf")
     if [[ -n "$_chain" ]]; then
-        read -r -a _chain_parts <<< "$_chain"
-        if [[ -x "${_chain_parts[0]}" ]]; then
-            printf '%s' "$payload" | "${_chain_parts[@]}" || true
-        fi
+        printf '%s' "$payload" | bash -c "$_chain" || true
     fi
 fi
 

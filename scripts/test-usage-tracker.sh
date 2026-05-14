@@ -628,6 +628,42 @@ case_remaining_auto_missing_file() {
   fi
 }
 
+case_remaining_auto_no_five_hour_key() {
+  local name="remaining_auto_no_five_hour_key" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "no five_hour" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected no-five_hour warning, got: $(head -3 "$out.err")"
+  fi
+}
+
+case_remaining_auto_malformed_json() {
+  local name="remaining_auto_malformed_json" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  printf 'not valid json{{{\n' > "$rl_dir/rate-limits.json"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "could not read" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected could-not-read warning, got: $(head -3 "$out.err")"
+  fi
+}
+
 case_remaining_manual_n_unchanged() {
   local name="remaining_manual_N_unchanged" home out status rl_dir
   home="$(new_home "$name")"
@@ -715,6 +751,8 @@ case_remaining_codex_dispatch_counted
 case_remaining_auto_valid_file
 case_remaining_auto_stale_warning
 case_remaining_auto_missing_file
+case_remaining_auto_no_five_hour_key
+case_remaining_auto_malformed_json
 case_remaining_manual_n_unchanged
 case_codex_old_log_excluded
 case_one_dispatch_one_count
