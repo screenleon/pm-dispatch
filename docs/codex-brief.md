@@ -27,6 +27,7 @@ Use as needed; not all briefs require all of them.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
 - **`sandbox`** / **`approval`** — only set when overriding the defaults (`workspace-write` / `never`). Caller must authorize.
+- **`constraints`** from `/pre-impl`: when the brief introduces ≥ 3 behavioral units, run `/pre-impl "<feature description>"` before writing the brief and paste the output's design constraint list into the `constraints:` field. This prevents architecture-reviewer blocks caused by boundary or dependency issues.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
