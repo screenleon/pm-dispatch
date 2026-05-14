@@ -13,8 +13,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 |
 | CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
-| CC-006 | 🔵 active | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#40 |
-| CC-007 | 🔵 active | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | — |
+| CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
+| CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
 | CC-008 | 🔵 active | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | — |
 | CC-009 | 🔵 active | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | — |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
@@ -23,6 +23,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-013 | 🔵 active | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | — |
 | CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — |
 | CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — |
+| CC-016 | 🔵 active | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | — |
+| CC-017 | 🔵 active | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | — |
 
 ---
 
@@ -127,8 +129,62 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Requirement**:
 1. 新增 `commands/systematic-debugging.md`：slash command，提供結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）
 
+## CC-016 — gate NO-GO fix-loop 效率：PM brief 撰寫策略
+
+**Problem**: JapanJob fix/residence-location-backfill 分支跑了 4 輪 gate 才通過，原因是 main thread 寫 fix brief 時：
+(1) 沒有先讀原始碼確認 diff 範圍，只靠 gate 報告文字；
+(2) gate round 1 泛指「缺測試」，但沒枚舉所有 call sites，brief 只補了明確點名的地方；
+(3) 確認修復時跑完整 5-reviewer full gate，浪費 token；
+(4) gate 報告被當作「完整清單」而非「最少清單」。
+
+**Why**: gate reviewer 的枚舉深度是漸進的——第一輪只能報最明顯的缺口，第二輪看到測試後才能逐函式比對。PM brief 寫作策略若不補 discovery 步驟，就必然產生多輪循環。這是工具層（claude-config PM agent）的流程問題，不是個別 repo 的業務規則問題。
+
+**Requirement**: 在 `agents/project-pm.md` 的「gate NO-GO 後撰寫 fix brief」區塊加入下列規則：
+
+1. **Source-first**：收到 NO-GO 後，先讀 diff 範圍內的相關原始碼，再寫 brief；不可只靠 gate 報告文字推斷範圍。
+
+2. **Discovery 步驟**：若 gate 報告提到新加入的 helper 函式，brief 必須要求 codex 先 `grep` 所有 call sites，對每個 call site 補對應測試，而非只測試 gate 明確點名的位置。
+
+3. **--targeted 重跑**：gate NO-GO 已知問題分類（只剩 qa-tester block、只剩 risk-reviewer block 等）時，重跑用 `--targeted <reviewers>`，不跑完整 full tier。full tier 只用於首輪或問題分類不明確時。
+
+4. **「最少清單」原則**：把 gate round 1 的報告視為「至少需要修的清單」，而非「所有需要修的完整清單」。在 brief 中加入「找出所有類似情境」的 discovery 指令，避免 round 2 gate 發現相同類型的新問題。
+
+**影響文件**: `agents/project-pm.md`（主要）、`commands/pr-gate.md`（--targeted 使用時機說明）。
+
+---
+
 ## CC-008 — Spark routing 判斷標準寫入 agents/project-pm.md
 
 **Problem**: PM 派發 codex 任務時，尚無文件說明何時應選 `--model codex-spark` 而非預設 codex。Spark 適合小型、定點修改，但沒有明確標準。
 **Why**: 若 PM 自動選 Spark 處理輕量任務，可降低 token 消耗。但錯誤路由（把大任務給 Spark）會導致結果品質下降。
 **Requirement**: 在 `agents/project-pm.md` 加 Spark routing 判斷規則：(a) diff 預期 < 50 行、(b) 單一檔案修改、(c) 無跨模組依賴時，優先考慮 Spark；否則走預設 codex。
+
+
+## CC-017 — 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief
+
+**Problem**: 當使用者提供 UI 設計圖（截圖、wireframe、mockup）要求實作前端畫面時，PM 或 Claude 直接進入 brief 撰寫或 codex 派發，沒有先確認畫面的互動細節、元件狀態、響應式行為等，導致實作完才發現方向偏差，需要大幅返工。
+
+**Why**: UI 畫面的「看起來像」和「實際行為一致」之間有大量隱性規格：
+- hover / focus / active 狀態是否要特別處理
+- 資料載入中、空狀態、錯誤狀態如何呈現
+- RWD breakpoint 行為（圖片通常只有一個螢幕尺寸）
+- 動畫 / transition 有無
+- 元件邊界（哪些是共用元件、哪些是 one-off）
+- 顏色/字型/間距的精確 token 對應
+
+不先釐清這些，codex 會做出「外觀像但行為差很多」的實作，後續修改成本遠高於事前討論。
+
+**Requirement**: 在 `agents/project-pm.md` 加入前端 UI 實作前置規則：
+
+1. **圖片讀取確認**：收到含圖片的前端實作請求時，PM 必須先用 Read tool 讀取圖片，然後向使用者列出從圖片可辨識的元件清單與行為假設，請使用者確認或補充。
+
+2. **必問清單**（每次 UI 實作 brief 前都要確認）：
+   - 互動狀態：hover / focus / disabled / loading / empty / error 狀態的呈現方式
+   - 響應式：目標螢幕尺寸，圖片以外的 breakpoint 行為
+   - 動態行為：有無 transition / animation，行為觸發時機
+   - 元件邊界：哪些元件應該是 reusable，哪些是 page-specific
+   - Design token 對應：顏色、字型、間距是否有現有 token 可對應
+
+3. **Brief 鎖定**：確認完成前不得開始寫 codex brief；使用者回覆後，將確認內容摘要為 brief 的 `context` 區塊，讓 codex 知道設計決策已經定案。
+
+**影響文件**: `agents/project-pm.md`（加入 UI 實作前置流程規則）。
