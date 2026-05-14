@@ -279,7 +279,7 @@ run_case "cxw: Write source file → deny" 2 "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/backend/seeds/100_demo_content.sql"}}'
 
 run_case "cxw: Edit source file → deny" 2 "$CXWHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/claude-config/agents/codex-executor.md"}}'
+  '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/pm-dispatch/agents/codex-executor.md"}}'
 
 run_case "cxw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/other.md"}}'

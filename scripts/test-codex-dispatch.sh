@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression tests for codex-dispatch.sh self-snapshot mechanism.
 #
-# Threat model: dispatching Codex against claude-config can rewrite
+# Threat model: dispatching Codex against pm-dispatch can rewrite
 # codex-dispatch.sh while bash is still reading it line-by-line, corrupting
 # execution. The snapshot block at the top of the script mitigates this by
 # re-exec'ing from a /tmp copy decoupled from the on-disk file.

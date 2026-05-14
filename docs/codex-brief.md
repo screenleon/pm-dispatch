@@ -214,7 +214,7 @@ goal: ...
 EOF
 
 # Dispatch (single line — no backslash continuation)
-~/github/claude-config/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
+~/github/pm-dispatch/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
 ```
 
 **Why `--brief-file` and not inline `-- "<brief>"`?**

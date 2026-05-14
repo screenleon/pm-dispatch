@@ -1,4 +1,4 @@
-# claude-config
+# pm-dispatch
 
 Personal Claude Code configuration: subagents, slash commands, skills, and dispatch scripts. Source of truth lives in this repo; entries are symlinked into `~/.claude/` by `install.sh`.
 
@@ -29,12 +29,12 @@ Runtime artifacts (`.agent-trace/`, `rollup/PORTFOLIO.md`) are gitignored.
 
 ### Cutover (one-time, manual)
 
-The canonical PM path is now `~/.claude/.pm/`, installed as a symlink to `claude-config/pm/`.
+The canonical PM path is now `~/.claude/.pm/`, installed as a symlink to `pm-dispatch/pm/`.
 
-1. `bash ~/github/claude-config/install.sh`
-   — Expected: `link $HOME/.claude/.pm -> .../claude-config/pm`. Exit code 0.
+1. `bash ~/github/pm-dispatch/install.sh`
+   — Expected: `link $HOME/.claude/.pm -> .../pm-dispatch/pm`. Exit code 0.
 2. `readlink ~/.claude/.pm`
-   — Should print the path under `claude-config/pm/`. If it doesn't, stop; do not use rollup.sh / validate.sh until the symlink is confirmed.
+   — Should print the path under `pm-dispatch/pm/`. If it doesn't, stop; do not use rollup.sh / validate.sh until the symlink is confirmed.
 
 Legacy PM directories or symlinks under the old `github` checkout location are not used by the installer. If one is present, `install.sh` leaves it untouched and emits no warning about it; inspect and remove it manually only after confirming all active references use `~/.claude/.pm`.
 
@@ -146,7 +146,7 @@ Codex briefs that touch many files can run 10–30 minutes. The `codex-executor`
 
 1. **External tail (any session, no Claude Code involvement).** From another terminal:
    ```sh
-   ~/github/claude-config/scripts/codex-watch.sh --cd /path/to/project
+   ~/github/pm-dispatch/scripts/codex-watch.sh --cd /path/to/project
    ```
    Prints one line per codex event as it streams. Works whether the dispatcher was launched from Claude Code, the CLI, or a CI job.
 
