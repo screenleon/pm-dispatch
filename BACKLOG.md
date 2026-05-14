@@ -71,10 +71,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: Claude Code auto-compact 時只保留對話摘要，`~/.claude/projects/*/memory/` 的檔案雖存在磁碟，但 Claude 因 context 壓縮而可能遺忘 MEMORY.md 的存在或內容，跨 session 記憶斷裂。
 **Why**: claude-mem 專案驗證了 UserPromptSubmit hook 是最有效的防遺忘時機（每次用戶輸入前注入，確保 compact 後 memory 仍在 context）。相較 SessionStart hook，UserPromptSubmit 更能對抗 mid-session compact。
 **Requirement**:
-1. 新增 `scripts/hook-inject-memory.sh`：UserPromptSubmit hook，讀取 `~/.claude/projects/*/memory/MEMORY.md`（比對 cwd 對應的 project），以精簡格式注入 context
+1. 新增 `scripts/hook-inject-memory.sh`：UserPromptSubmit hook，讀取 `~/.claude/projects/*/memory/MEMORY.md`（比對 cwd 對應的 project），注入 index 行到 context
 2. `install-hooks.sh` 掛入 UserPromptSubmit；`uninstall-hooks.sh` 清除
-3. inject 內容限制在 500 tokens 以內（僅 index 行，不含詳細 memory 檔內容）
-4. 測試覆蓋：memory 存在時注入、不存在時靜默跳過
+3. **設計決策（2026-05-14）**：inject 永遠完整注入 index，不截斷。截斷會造成 Claude 遺失部分記憶規則，比 token 多花費更危險。當 index ≥ 50 條時，在 inject 末尾加入 directive 指示 Claude 在回覆前執行 `/memory-compress`，由 Claude 在 LLM 語意層做壓縮，而非 hook 靜默截斷。
+4. 測試覆蓋：memory 存在時注入全部 index 行、不存在時靜默跳過、≥50 條時出現 `/memory-compress` directive
 
 ## CC-010 — `/memory-compress` 指令：壓縮 MEMORY.md 條目
 
