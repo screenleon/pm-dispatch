@@ -16,7 +16,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-006 | ✅ done | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ done | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
 | CC-008 | ✅ done | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
-| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:pending |
+| CC-009 | ✅ done | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | pr:#44 |
 | CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
 | CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
@@ -26,9 +26,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-016 | ✅ done | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 |
 | CC-017 | ✅ done | 前端 UI 實作前置流程：提供圖片時需先讀取確認再 brief | process/ux | 2026-05-14 | pr:#43 |
 | CC-018 | 🔵 active | Codex quota 自動追蹤：codex-dispatch 後查詢剩餘 quota 寫入 rate-limits-codex.json | ux/token | 2026-05-14 | — |
-| CC-019 | 🔵 active | Episodic memory 層：Stop hook 寫 session 摘要、`/mem-recall` 按需注入、`/mem-distill` 整合回 MEMORY.md | ux/memory | 2026-05-14 | — |
+| CC-019 | 🔵 active | Episodic memory 層：Stop hook metadata + `/mem-log` + `/mem-recall` + `/mem-distill` | ux/memory | 2026-05-14 | — |
 | CC-020 | 🔵 active | `/mem-search`：`rg` 關鍵字過濾 + Claude 語意理解，跨 memory 檔搜尋 | ux/memory | 2026-05-14 | — |
-| CC-021 | 🔵 active | test scripts 支援 `--filter <pattern>` 只跑名稱匹配的 test case | ops/test | 2026-05-14 | — |
+| CC-021 | 🔵 active | test scripts 支援 `--filter <pattern>` + `--list` 只跑/列出名稱匹配的 test case | ops/test | 2026-05-14 | — |
+| CC-022 | 🔵 active | `/pre-impl` 指令：開發前設計評審，強制定義邊界/依賴/變動點，減少事後重構 | ux/arch | 2026-05-14 | — |
+| CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — |
 
 ---
 
@@ -81,13 +83,27 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 ## CC-010 — `/memory-compress` 指令：壓縮 MEMORY.md 條目
 
-**Problem**: MEMORY.md 隨時間增長後，CC-009 的 inject token 量會持續上升，最終超過 500 token 上限或使 context 膨脹。
+**Problem**: MEMORY.md 隨時間增長後，CC-009 的 inject token 量持續上升；≥50 條時 hook 發出 directive，但 `/memory-compress` 指令本身不存在，directive 無從執行。
 **Why**: claude-mem 的漸進式 token 注入策略 + Caveman 的 `caveman-compress` 概念共同指向：memory 需要定期被摘要壓縮，而非無限累積。
+
+**設計決策（2026-05-14）**:
+- 純 slash command（`commands/memory-compress.md`），邏輯完全由 Claude 執行，不需 shell script
+- `$ARGUMENTS` 接收 `--dry-run` flag；dry-run 時只 print diff，不寫入任何檔案
+
 **Requirement**:
-1. 新增 `commands/memory-compress.md`：slash command，呼叫壓縮邏輯
-2. 對 MEMORY.md 中的每個條目：讀取對應 memory 檔 → 摘要為 1-2 行精華 → 更新 MEMORY.md index 行
-3. 壓縮後 MEMORY.md 總長度目標 < 100 行
-4. 提供 `--dry-run` 選項預覽壓縮結果，不實際寫入
+1. 新增 `commands/memory-compress.md`：slash command，包含以下 Claude 指令：
+   - Read MEMORY.md → 列出所有 `- [Title](file.md) — hook` 條目
+   - 對每個條目 Read 對應 .md 檔
+   - 壓縮 hook 行（目標 ≤ 15 words、≤ 150 chars）：保留最核心規則，移除冗餘描述
+   - 合併主題重疊的條目（e.g., 3 個 codex-dispatch feedback → 1 條）
+   - 標記疑似過時條目（引用不存在的函式/路徑）→ 列出供用戶確認再刪
+   - 重寫 MEMORY.md；`--dry-run` 則只顯示 before/after diff
+2. 壓縮目標：index 行數 < 50（對應 CC-009 threshold）、總字數減少 ≥ 30%
+3. 每個 `[[name]]` cross-link 仍然有效（壓縮時不刪除 slug）
+
+**測試**：不需要 shell test（slash command = markdown 指令，無殼層邏輯）。
+**工作量**：Small（1 個 .md 檔，~80 行）。
+**依賴**：CC-009 ✅。
 
 ## CC-011 — sync-memory.sh + install 選項：symlink memory 到雲端資料夾（跨裝置，deferred）
 
@@ -215,16 +231,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: 認知科學架構（CoALA / agentmemory）和 claude-mem 都驗證了 episodic layer 的價值：把每個 session 壓縮成 3-5 行摘要，比試圖在 MEMORY.md 裡記錄所有細節更有效率。Session 歷史可以按需注入（`/mem-recall`），也可以定期整合提升 MEMORY.md 品質（`/mem-distill`）。
 
 **Requirement**:
-1. 新增 `scripts/hook-session-summary.sh`：Stop hook，session 結束時由 Claude 生成 3-5 行摘要，append 到 `~/.claude/projects/<id>/memory/episodes.jsonl`（格式：`{"date":"...","cwd":"...","summary":"..."}`）
-2. 新增 `commands/mem-recall.md`：slash command，讀取最近 N 個 episode 注入 context（預設 5）
-3. 新增 `commands/mem-distill.md`：slash command，讓 Claude 讀取最近 10 個 episodes，對照現有 MEMORY.md，更新/新增/移除條目，提供 dry-run 預覽
-4. `install-hooks.sh` / `uninstall-hooks.sh` 掛入 Stop hook（與現有 `hook-log-claude-usage.sh` 並行）
-5. 測試覆蓋：episodes.jsonl 正確 append、格式驗證、/mem-recall 注入格式
+1. 新增 `scripts/hook-session-summary.sh`：Stop hook，session 結束時記錄 metadata-only skeleton entry（`{"date":"...","cwd":"...","session_id":"...","summary":""}`）到 `episodes.jsonl`；語意摘要由使用者主動執行 `/mem-log` 填入
+2. 新增 `commands/mem-log.md`：slash command，session 期間由使用者呼叫，讓 Claude 生成 3-5 行摘要並寫入 episodes.jsonl；Stop hook 在 /mem-log 已執行時自動跳過
+3. 新增 `commands/mem-recall.md`：slash command，讀取最近 N 個 episode 注入 context（預設 5）
+4. 新增 `commands/mem-distill.md`：slash command，讓 Claude 讀取最近 10 個 episodes，對照現有 MEMORY.md，更新/新增/移除條目，提供 dry-run 預覽
+5. `install-hooks.sh` / `uninstall-hooks.sh` 掛入 Stop hook（與現有 `hook-log-claude-usage.sh` 並行）
+6. 測試覆蓋：episodes.jsonl 正確 append、格式驗證、/mem-recall 注入格式、Stop hook 在 /mem-log 先跑後不重複寫入
 
 **設計決策**:
-- Stop hook 生成摘要：由 Claude 在 session 結束時自行判斷重要事件，不是機械式截取
+- Stop hook metadata-only（無 LLM 呼叫）：session 結束時零成本記錄；語意摘要由使用者在 session 活躍時呼叫 /mem-log 取得
 - episodes.jsonl 只 append，不覆寫：歷史不可刪除，壓縮靠 /mem-distill
 - /mem-distill 有 --dry-run：讓用戶看到要改什麼再確認
+- inject hook 在 >24h 無記錄時顯示 💡 提示，引導使用者執行 /mem-log
 
 **依賴**: CC-009（UserPromptSubmit hook）已完成，episodic 層是自然延伸。
 
@@ -268,3 +286,52 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - 或改為先收集 case list 再 dispatch，兩種方式都行
 
 **影響文件**: `scripts/test-hooks.sh`、`scripts/test-install.sh`（主要）；`commands/pr-gate.md` 或 `docs/` 文件說明（次要）。
+
+## CC-022 — `/pre-impl`：開發前設計評審指令
+
+**Problem**: codex 拿到的 brief 通常只描述「做什麼」，沒有描述「怎麼做才不需要事後重構」。開發者在實作過程中才發現耦合過高、職責邊界不清，導致 PR gate 被 architecture-reviewer 打回，或完成後需要另起 refactor PR。
+
+**Why**: Refactoring-like-a-superhero 和 Refactoring-Summary 的核心論點是：預防比治療便宜 10 倍。設計決策應在寫第一行 code 之前完成，而非在 code review 時才被指出。此指令強制走「設計約束 → brief → 實作」的順序，讓架構問題在 codex 開始前就被識別。
+
+**Requirement**:
+1. 新增 `commands/pre-impl.md`：slash command，用法 `/pre-impl "<feature description>"`
+2. 執行邏輯（語言無關）：
+   - 掃描 cwd 的相關 entry points 和公開 API（`find` + `grep`，不需要語言 parser）
+   - 強制回答 3 個設計問題：
+     1. **職責邊界**：「這個模組的唯一職責是？哪些事情不在其範圍內？」
+     2. **依賴方向**：「依賴哪些現有模組？能否以介面/注入取代直接依賴？」
+     3. **變動接縫**：「未來最可能在哪裡改變？要預留哪個接縫？」
+   - 輸出「設計約束清單」（不是實作說明）：3-5 條不可違反的結構規則
+3. 設計約束清單可直接貼入 PM brief 的 `constraints:` 欄位，讓 codex 帶著約束實作
+
+**設計決策**:
+- 語言無關：用 `find`/`grep` 而非語言特定 AST 工具，確保在任何語言的 codebase 都可用
+- 輸出是「約束」而非「方案」：避免 Claude 在設計評審時就開始寫實作，保持職責分離
+- 3 個問題固定：避免每次問的問題不同，讓評審結果可對比
+
+**影響文件**: `commands/pre-impl.md`（新增）。
+
+**依賴**: 無。可獨立實作。
+
+## CC-023 — `coupling-reviewer`：PR gate 語言感知耦合分析（Phase 2，deferred）
+
+**Problem**: PR gate 現有的 architecture-reviewer 依賴 Claude 主觀判斷耦合問題，沒有客觀量化基線。高耦合模組在多個 PR 中持續惡化，直到重構成本遠超過預防成本。
+
+**Why**: 量化耦合指標（afferent/efferent coupling、循環複雜度）可以提供客觀基線，讓 architecture-reviewer 的判斷有數據支撐。coca（Java）、dependency-cruiser（TS）、gocyclo（Go）等工具已成熟，只需整合到 gate 流程。
+
+**Requirement**:
+1. 新增 `scripts/coupling-check.sh`：語言偵測 + 工具呼叫，只分析 changed files 的直接耦合變化
+   - 偵測語言：根據 `git diff --name-only main...HEAD` 的副檔名判斷
+   - TypeScript/JS：`dependency-cruiser --validate`（需 repo 內有 `.dependency-cruiser.js`）
+   - Go：`gocyclo -over 15`（複雜度 > 15 警告）
+   - Java：`coca` bs（boundary analysis）
+   - 未識別語言：跳過，輸出 "coupling-check: skipped (language not detected)"
+2. PR gate 加入可選 `--coupling` flag：啟用 coupling-reviewer 步驟
+3. 閾值超過 → block-soft（advisory），不強制 block；量化數字附在建議中
+
+**設計決策**:
+- 只看 changed files：避免全量掃描噴出無關 legacy 問題，讓 PR 作者只面對自己引入的耦合
+- 工具安裝不強制：若工具未安裝則跳過該語言分析，不中斷 gate
+- Phase 2 / deferred：等 /pre-impl（CC-022）跑一段時間、確認設計評審流程有效後再推進
+
+**依賴**: CC-022（/pre-impl 建立設計評審文化後，coupling-reviewer 才有比較基準）。

@@ -22,6 +22,29 @@ CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
 STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
+SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
+
+# --filter <pattern>  run only cases whose name contains <pattern>
+# --list              print all case names and exit
+FILTER=""
+LIST=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --filter) FILTER="${2:-}"; shift 2 ;;
+    --list)   LIST=true; shift ;;
+    *) shift ;;
+  esac
+done
+
+ALL_CASES=()
+# Returns 0 (run) or 1 (skip). In --list mode, registers name and skips.
+should_run() {
+  if $LIST; then
+    ALL_CASES+=("$1")
+    return 1
+  fi
+  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+}
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
@@ -39,6 +62,7 @@ FAILED_CASES=()
 # run_case <name> <expected_exit> <hook_path> <json_input> [<expected_stderr_substring>]
 run_case() {
   local name="$1" expect_exit="$2" hook="$3" json="$4" expect_stderr="${5:-}"
+  should_run "$name" || return 0
   local stderr_file actual_exit actual_stderr
   stderr_file="$(mktemp)"
   printf '%s' "$json" | "$hook" 2>"$stderr_file"
@@ -68,6 +92,7 @@ run_case() {
 # run_case_env <name> <expected_exit> <env_var=value> <hook_path> <json_input>
 run_case_env() {
   local name="$1" expect_exit="$2" envspec="$3" hook="$4" json="$5"
+  should_run "$name" || return 0
   local actual_exit
   actual_exit=$(printf '%s' "$json" | env "$envspec" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
   if [[ "$actual_exit" == "$expect_exit" ]]; then
@@ -83,6 +108,7 @@ run_case_env() {
 # run_command_case <name> <expected_exit> <expected_stderr_substring> <cmd> [args...]
 run_command_case() {
   local name="$1" expect_exit="$2" expect_stderr="$3"
+  should_run "$name" || return 0
   shift 3
   local stderr_file actual_exit actual_stderr
   stderr_file="$(mktemp)"
@@ -114,6 +140,7 @@ run_command_case() {
 # Asserts the test log file contains the substring SOMEWHERE in any line.
 assert_log() {
   local name="$1" needle="$2"
+  should_run "$name" || return 0
   if [[ -f "$TEST_LOG_FILE" ]] && grep -q -F -- "$needle" "$TEST_LOG_FILE"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -142,7 +169,7 @@ code_path="$REPO_ROOT/agents/project-pm.md"
 # pm-write-guard
 # =============================================================================
 
-echo "== hook-pm-write-guard =="
+$LIST || echo "== hook-pm-write-guard =="
 
 run_case "pm: Edit memory file → allow" 0 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}"
@@ -215,17 +242,17 @@ run_case_env "pm: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_PM_GUARD=" "$PMHO
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
 # Audit-log content assertions for pm-guard.
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains allow line" "decision=allow"
 
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" | "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}" | "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains deny line with reason" "decision=deny"
 assert_log "pm: audit log includes target file_path" "$code_path"
 
-truncate_log
-printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
@@ -234,7 +261,7 @@ assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 # =============================================================================
 
 echo
-echo "== hook-codex-write-guard =="
+$LIST || echo "== hook-codex-write-guard =="
 truncate_log
 
 # --- happy path: Write/Edit to /tmp/brief-*.md ---
@@ -307,19 +334,19 @@ run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions ---
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains allow line" "decision=allow"
 assert_log "cxw: allow line records agent=codex-executor" "agent=codex-executor"
 assert_log "cxw: allow line records tool=Write" "tool=Write"
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains deny line" "decision=deny"
 assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains bypass line" "decision=bypass"
 assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -328,7 +355,7 @@ assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor
 # =============================================================================
 
 echo
-echo "== hook-codex-bash-guard =="
+$LIST || echo "== hook-codex-bash-guard =="
 truncate_log
 
 dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
@@ -701,24 +728,24 @@ run_case_env "cx: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_CODEX_GUARD=" "$C
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
 # --- audit-log content assertions ---
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains allow line" "decision=allow"
 # %q escapes spaces as backslash-space; assert the escaped form.
 assert_log "cx: allow line records git command (escaped)" 'git\ status'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git push --force"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git push --force"}}' | "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains deny line" "decision=deny"
 assert_log "cx: deny line records command target (escaped)" 'git\ push\ --force'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status; rm -rf /"}}' | "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status; rm -rf /"}}' | "$CXHOOK" >/dev/null 2>&1
 # Reason is also %q-escaped; the literal `shell` token survives unescaped.
 assert_log "cx: deny reason includes 'shell metacharacter'" 'shell\ metacharacter'
 
-truncate_log
-printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env CLAUDE_HOOK_CODEX_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env CLAUDE_HOOK_CODEX_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "cx: bypass line records codex-executor (not '?')" "agent=codex-executor"
 
@@ -975,11 +1002,12 @@ run_case "cx: main thread (no agent_type) with run_in_background:true → no-op 
 # =============================================================================
 
 echo
-echo "== hook-log-claude-usage =="
+$LIST || echo "== hook-log-claude-usage =="
 truncate_log
 
 stop_happy_path() {
   local name="stop_happy_path" home transcript payload out err status logfile
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript.jsonl"
   printf '%s\n' \
@@ -1007,6 +1035,7 @@ stop_happy_path() {
 
 stop_missing_transcript_path() {
   local name="stop_missing_transcript_path" home status
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' '{"session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1022,6 +1051,7 @@ stop_missing_transcript_path() {
 
 stop_transcript_file_not_found() {
   local name="stop_transcript_file_not_found" home status
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1037,6 +1067,7 @@ stop_transcript_file_not_found() {
 
 stop_malformed_json_payload() {
   local name="stop_malformed_json_payload" home status
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   printf '%s' 'not json' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
@@ -1052,6 +1083,7 @@ stop_malformed_json_payload() {
 
 stop_zero_token_transcript() {
   local name="stop_zero_token_transcript" home transcript payload status
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-zero.jsonl"
   printf '%s\n' '{"role":"assistant","content":"hello"}' '{"role":"user","content":"ok"}' > "$transcript"
@@ -1070,6 +1102,7 @@ stop_zero_token_transcript() {
 
 stop_failure_logged() {
   local name="stop_failure_logged" home transcript payload status logfile
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-fail.jsonl"
   printf '%s\n' '{"role":"assistant","usage":{"input_tokens":1000,"output_tokens":200}}' > "$transcript"
@@ -1093,6 +1126,7 @@ stop_failure_logged() {
 
 stop_idempotent_double_call() {
   local name="stop_idempotent_double_call" home transcript payload status logfile total
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-idem.jsonl"
   printf '%s\n' \
@@ -1131,6 +1165,7 @@ print(total)
 
 stop_nested_message_usage() {
   local name="stop_nested_message_usage" home transcript payload status logfile
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-nested.jsonl"
   # Nested format: usage is under message.usage (Claude API transcript format)
@@ -1157,6 +1192,7 @@ stop_nested_message_usage() {
 
 stop_no_session_id_skips_log() {
   local name="stop_no_session_id_skips_log" home transcript payload status
+  should_run "$name" || return 0
   home="$(make_stop_home)"
   transcript="$home/transcript-nosession.jsonl"
   printf '%s\n' \
@@ -1193,7 +1229,7 @@ stop_no_session_id_skips_log
 # =============================================================================
 
 echo
-echo "== hook-save-rate-limits =="
+$LIST || echo "== hook-save-rate-limits =="
 
 run_rl_hook() {
   local json="$1" config_dir="$2"
@@ -1207,6 +1243,7 @@ rl_hook_happy_path() {
   #   1. Run the hook with JSON containing five_hour (25%) and seven_day (10%)
   #   2. Assert rate-limits.json exists with correct field values and updated_at
   local name="rl-hook/happy-path-writes-file" rl_home
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
   if [[ -f "$rl_home/rate-limits.json" ]] && python3 -c "import json; d=json.load(open('$rl_home/rate-limits.json')); assert d['five_hour']['used_percentage']==25; assert d['seven_day']['used_percentage']==10; assert 'updated_at' in d"; then
@@ -1227,6 +1264,7 @@ rl_hook_missing_rate_limits() {
   #   1. Run the hook with JSON that has no rate_limits key
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/missing-rate-limits-no-write" rl_home status
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s' '{"other_key":"value"}' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1248,6 +1286,7 @@ rl_hook_malformed_json() {
   #   1. Run the hook with a non-JSON payload string
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/malformed-json-exits-0" rl_home status
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1271,6 +1310,7 @@ rl_hook_chain_called() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called" rl_home chain_log chain_script
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   chain_script="$rl_home/chain.sh"
@@ -1301,6 +1341,7 @@ rl_hook_chain_called_with_args() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert rate-limits.json exists and the sentinel file was created
   local name="rl-hook/chain-called-with-args" rl_home chain_log chain_script
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   chain_script="$rl_home/chain.sh"
@@ -1331,6 +1372,7 @@ rl_hook_chain_called_bash_c() {
   #   2. Run the hook with a valid rate_limits payload
   #   3. Assert rate-limits.json exists and the sentinel file was created by bash -c
   local name="rl-hook/chain-called-bash-c" rl_home chain_log
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_log="$rl_home/chain-called"
   # bash -c style command string — the form that read -r -a would break.
@@ -1354,6 +1396,7 @@ rl_hook_empty_stdin() {
   #   1. Run the hook with empty stdin (printf '')
   #   2. Assert exit 0 and rate-limits.json does not exist
   local name="rl-hook/empty-stdin-exits-0" rl_home status
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
@@ -1378,6 +1421,7 @@ rl_hook_write_failure_chains() {
   #   3. Run the hook with a valid rate_limits payload
   #   4. Assert exit 0, chain sentinel exists, rate-limits.json absent
   local name="rl-hook/write-failure-chains" rl_home chain_dir chain_script chain_log status
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   chain_dir="$(mktemp -d)"
   chain_script="$chain_dir/chain.sh"
@@ -1415,6 +1459,7 @@ rl_hook_chain_failure_isolated() {
   #   2. Run the hook with a valid rate_limits payload
   #   3. Assert hook exits 0 and rate-limits.json was written despite chain failure
   local name="rl-hook/chain-failure-isolated" rl_home status
+  should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   printf '%s\n' "exit 1" > "$rl_home/statusline-chain.conf"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
@@ -1445,7 +1490,7 @@ rl_hook_chain_failure_isolated
 # =============================================================================
 
 echo
-echo "== hook-inject-memory =="
+$LIST || echo "== hook-inject-memory =="
 
 inject_encoded_path() {
   local path="$1"
@@ -1467,6 +1512,7 @@ inject_hook_happy_path() {
   #   2. Run the hook with a UserPromptSubmit payload whose cwd matches the project
   #   3. Assert stdout contains only the index lines wrapped in delimiters
   local name="inject-hook/happy-path" dir cwd payload output expected status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1493,6 +1539,7 @@ inject_hook_parent_fallback() {
   #   2. Run the hook with cwd set to a nested child directory
   #   3. Assert stdout injects the parent project index line
   local name="inject-hook/parent-fallback" dir parent child payload output expected status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   parent="$dir/repo"
   child="$parent/packages/app"
@@ -1520,6 +1567,7 @@ inject_hook_no_memory_found() {
   #   2. Run the hook with a valid cwd payload
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/no-memory-found" dir cwd payload output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/no-memory/subdir"
   mkdir -p "$cwd"
@@ -1544,6 +1592,7 @@ inject_hook_empty_index() {
   #   2. Run the hook with a valid cwd payload
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/empty-index" dir cwd payload output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1569,6 +1618,7 @@ inject_hook_malformed_payload() {
   #   2. Run the hook with non-JSON stdin
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/malformed-payload" dir output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' 'not-json{{{' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1590,6 +1640,7 @@ inject_hook_empty_stdin() {
   #   2. Run the hook with empty stdin
   #   3. Assert exit 0 and empty stdout
   local name="inject-hook/empty-stdin" dir output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1611,6 +1662,7 @@ inject_hook_missing_cwd() {
   #   1. Run the hook with valid JSON payload containing no cwd field
   #   2. Assert exit 0 and empty stdout (hook silently skips)
   local name="inject-hook/missing-cwd" dir output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' '{}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1632,6 +1684,7 @@ inject_hook_non_string_cwd() {
   #   1. Run the hook with valid JSON payload where cwd is an integer (123)
   #   2. Assert exit 0 and empty stdout (hook silently skips)
   local name="inject-hook/non-string-cwd" dir output status
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   output=$(printf '%s' '{"cwd":123}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
@@ -1655,6 +1708,7 @@ inject_hook_threshold_shows_directive() {
   #   3. Assert all 60 lines appear (no truncation), delimiters present,
   #      and a "⚠ MEMORY.md has N entries" directive appears before closing delimiter
   local name="inject-hook/threshold-shows-directive" dir cwd payload output body status i directive_line
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1695,6 +1749,7 @@ inject_hook_threshold_below_emits_no_directive() {
   #   2. Run the hook and capture stdout
   #   3. Assert all 49 lines present, no "⚠" directive line in output
   local name="inject-hook/threshold-49-no-directive" dir cwd payload output body status i directive_line
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1731,6 +1786,7 @@ inject_hook_threshold_at_boundary_emits_directive() {
   #   2. Run the hook and capture stdout
   #   3. Assert all 50 lines present AND the "⚠" directive line appears
   local name="inject-hook/threshold-50-emits-directive" dir cwd payload output body status i directive_line
+  should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -1770,6 +1826,7 @@ inject_hook_default_home_fallback() {
   #   3. Assert exit 0 and the index line appears in stdout
   #   4. Clean up the temp HOME — never touches real $HOME
   local name="inject-hook/default-home-fallback" cwd encoded tmp_home project_dir payload output status
+  should_run "$name" || return 0
   tmp_home="$(mktemp -d)"
   cwd="/tmp/inject-hook-home-fallback-test-$$"
   encoded="$(inject_encoded_path "$cwd")"
@@ -1803,9 +1860,641 @@ inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
 inject_hook_default_home_fallback
 
+# Episode reminder tests (CC-019 inject hook extension)
+
+write_episodes_jsonl() {
+  local config_dir="$1" cwd="$2" content="$3" encoded
+  encoded="$(inject_encoded_path "$cwd")"
+  mkdir -p "$config_dir/projects/$encoded/memory"
+  printf '%s' "$content" > "$config_dir/projects/$encoded/memory/episodes.jsonl"
+}
+
+inject_hook_episode_no_file() {
+  # Verifies that when episodes.jsonl does not exist, no reminder is appended.
+  # Steps:
+  #   1. Create project MEMORY.md but no episodes.jsonl
+  #   2. Run inject hook and capture output
+  #   3. Assert output contains index lines but no episode reminder
+  local name="inject-hook/episode-no-file"
+  should_run "$name" || return 0
+  local dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && "$output" == *"alpha"* && "$output" != *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_episode_fresh() {
+  # Verifies that a recent episode (< 24h) does not trigger a reminder.
+  # Steps:
+  #   1. Create project MEMORY.md and episodes.jsonl with a now-dated entry
+  #   2. Run inject hook
+  #   3. Assert no 💡 reminder in output
+  local name="inject-hook/episode-fresh"
+  should_run "$name" || return 0
+  local dir cwd payload output status now_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  now_iso="$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).isoformat())')"
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$now_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && "$output" == *"alpha"* && "$output" != *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_episode_stale_no_summary() {
+  # Verifies stale episode (> 24h) with no summary triggers /mem-log reminder.
+  # Steps:
+  #   1. Create episodes.jsonl with an entry dated 48h ago, empty summary
+  #   2. Run inject hook
+  #   3. Assert output contains 💡 ... /mem-log reminder
+  local name="inject-hook/episode-stale-no-summary"
+  should_run "$name" || return 0
+  local dir cwd payload output status old_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && "$output" == *"/mem-log"* && "$output" == *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_episode_stale_has_summary() {
+  # Verifies stale episode (> 24h) with a summary triggers "Last episode" reminder.
+  # Steps:
+  #   1. Create episodes.jsonl with a 48h-old entry that has a non-empty summary
+  #   2. Run inject hook
+  #   3. Assert output contains 💡 Last episode reminder (not /mem-log reminder)
+  local name="inject-hook/episode-stale-has-summary"
+  should_run "$name" || return 0
+  local dir cwd payload output status old_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"Previous session summary.\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && "$output" == *"Last episode"* && "$output" == *"💡"* && "$output" != *"/mem-log to record"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_episode_no_file
+inject_hook_episode_fresh
+inject_hook_episode_stale_no_summary
+inject_hook_episode_stale_has_summary
+
+# =============================================================================
+# hook-session-summary
+# =============================================================================
+
+echo
+$LIST || echo "== hook-session-summary =="
+
+session_hook_happy_path() {
+  # Verifies a new session_id appends a metadata entry to episodes.jsonl.
+  # Steps:
+  #   1. Create a project memory dir with no episodes.jsonl
+  #   2. Run session hook with a valid payload (cwd + session_id)
+  #   3. Assert exit 0 and episodes.jsonl has one line with correct session_id
+  local name="session-hook/happy-path"
+  should_run "$name" || return 0
+  local dir cwd payload status episodes entry
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"sess-001\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  entry="$(cat "$episodes" 2>/dev/null || true)"
+  if [[ "$status" == "0" && "$entry" == *'"session_id":"sess-001"'* && "$entry" == *'"summary":""'* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s entry=%q\n' "$name" "$status" "$entry"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_duplicate_no_summary() {
+  # Verifies same session_id with empty summary is NOT appended again.
+  # Steps:
+  #   1. Pre-populate episodes.jsonl with a skeleton entry for session-abc
+  #   2. Run session hook with the same session_id
+  #   3. Assert episodes.jsonl still has exactly 1 line (no duplicate)
+  local name="session-hook/duplicate-no-summary"
+  should_run "$name" || return 0
+  local dir cwd payload status line_count encoded
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  encoded="$(inject_encoded_path "$cwd")"
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":""}\n' "$cwd" \
+    > "$dir/projects/$encoded/memory/episodes.jsonl"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
+  if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_duplicate_has_summary() {
+  # Verifies same session_id with non-empty summary is NOT appended again.
+  # Steps:
+  #   1. Pre-populate episodes.jsonl with a full entry for session-abc
+  #   2. Run session hook with the same session_id
+  #   3. Assert episodes.jsonl still has exactly 1 line
+  local name="session-hook/duplicate-has-summary"
+  should_run "$name" || return 0
+  local dir cwd payload status line_count encoded
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  encoded="$(inject_encoded_path "$cwd")"
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"session-abc","summary":"Done work."}\n' "$cwd" \
+    > "$dir/projects/$encoded/memory/episodes.jsonl"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"session-abc\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
+  if [[ "$status" == "0" && "$line_count" -eq 1 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_new_session_appends() {
+  # Verifies a new session_id appends to an existing episodes.jsonl.
+  # Steps:
+  #   1. Pre-populate episodes.jsonl with one completed entry
+  #   2. Run hook with a DIFFERENT session_id
+  #   3. Assert episodes.jsonl now has 2 lines
+  local name="session-hook/new-session-appends"
+  should_run "$name" || return 0
+  local dir cwd payload status line_count encoded
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  encoded="$(inject_encoded_path "$cwd")"
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"old-sess","summary":"Old work."}\n' "$cwd" \
+    > "$dir/projects/$encoded/memory/episodes.jsonl"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-sess\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$dir/projects/$encoded/memory/episodes.jsonl")
+  if [[ "$status" == "0" && "$line_count" -eq 2 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s\n' "$name" "$status" "$line_count"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_no_memory_dir() {
+  # Verifies exit 0 with no output when no matching project memory dir exists.
+  # Steps:
+  #   1. Create a config dir with no projects
+  #   2. Run hook with a cwd that has no ancestor memory dir
+  #   3. Assert exit 0 and no episodes.jsonl created
+  local name="session-hook/no-memory-dir"
+  should_run "$name" || return 0
+  local dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"s1\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_malformed_payload() {
+  # Verifies exit 0 with no output when payload is not valid JSON.
+  # Steps:
+  #   1. Send non-JSON string to session hook stdin
+  #   2. Assert exit 0 and empty stdout
+  local name="session-hook/malformed-payload"
+  should_run "$name" || return 0
+  local output status
+  output=$(printf 'not json' | "$SESSION_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
+session_hook_empty_stdin() {
+  # Verifies the session hook exits 0 silently when stdin is empty.
+  # Steps:
+  #   1. Pipe an empty string to the session hook
+  #   2. Assert exit 0 and no output produced
+  local name="session-hook/empty-stdin"
+  should_run "$name" || return 0
+  local output status
+  output=$(printf '' | "$SESSION_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
+session_hook_missing_session_id() {
+  # Verifies the Stop hook exits 0 and writes nothing when session_id is absent.
+  # Without a stable session_id the hook cannot deduplicate, so it must skip.
+  # Steps:
+  #   1. Create project memory dir with no episodes.jsonl
+  #   2. Run hook with payload that omits the session_id key entirely
+  #   3. Assert exit 0 and no episodes.jsonl created
+  local name="session-hook/missing-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '%s' "{\"cwd\":\"$cwd\"}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
+    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_non_string_session_id() {
+  # Verifies the Stop hook exits 0 and writes nothing when session_id is a
+  # non-string JSON value (e.g., integer). Non-string ids are normalized to ""
+  # and must be treated as absent (no write).
+  # Steps:
+  #   1. Create project memory dir with no episodes.jsonl
+  #   2. Run hook with payload where session_id is an integer (42)
+  #   3. Assert exit 0 and no episodes.jsonl created
+  local name="session-hook/non-string-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '%s' "{\"cwd\":\"$cwd\",\"session_id\":42}" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -f "$episodes" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    local lines=0; [[ -f "$episodes" ]] && lines=$(wc -l < "$episodes")
+    printf '  FAIL  %s — exit=%s episodes_exists=%s lines=%s\n' "$name" "$status" "$([[ -f "$episodes" ]] && echo yes || echo no)" "$lines"
+  fi
+  rm -rf "$dir"
+}
+
+session_hook_happy_path
+session_hook_duplicate_no_summary
+session_hook_duplicate_has_summary
+session_hook_new_session_appends
+session_hook_no_memory_dir
+session_hook_malformed_payload
+session_hook_empty_stdin
+session_hook_missing_session_id
+session_hook_non_string_session_id
+
+# =============================================================================
+# command validators — /mem-recall injection format
+# =============================================================================
+$LIST || echo "== mem-recall format validator =="
+
+mem_recall_format_validator() {
+  # Validates the /mem-recall output format contract using a Python replica of the
+  # command logic. Exercises the data contract that /mem-recall depends on.
+  # Steps:
+  #   1. Write 3 episodes.jsonl entries: 2 with summaries, 1 skeleton (empty summary)
+  #   2. Run the Python reader logic (last-N non-empty-summary filter)
+  #   3. Assert output contains both summaries, the header/footer markers,
+  #      and does NOT include the skeleton entry
+  local name="mem-recall/format-validator"
+  should_run "$name" || return 0
+  local dir episodes result
+  dir="$(mktemp -d)"
+  episodes="$dir/episodes.jsonl"
+
+  # Write 3 entries: 2 with summary, 1 skeleton (should be skipped)
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"/proj","session_id":"s1","summary":"First session: fixed bug X."}\n' >> "$episodes"
+  printf '{"date":"2026-01-02T00:00:00+00:00","cwd":"/proj","session_id":"s2","summary":""}\n' >> "$episodes"
+  printf '{"date":"2026-01-03T00:00:00+00:00","cwd":"/proj","session_id":"s3","summary":"Third session: added feature Y."}\n' >> "$episodes"
+
+  result=$(python3 - "$episodes" 5 << 'PYEOF'
+import json, sys
+episodes_file, raw_n = sys.argv[1], sys.argv[2]
+n = int(raw_n)
+entries = []
+with open(episodes_file) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get('summary', '').strip():
+            entries.append(e)
+recent = entries[-n:]
+print(f'== Recent episodes (last {len(recent)}) ==')
+print()
+for e in recent:
+    print(f'[{e["date"]}] {e["cwd"]}')
+    print(e['summary'])
+    print()
+print('== end episodes ==')
+PYEOF
+)
+
+  local ok=true
+  [[ "$result" == *"== Recent episodes (last 2) =="* ]] || ok=false
+  [[ "$result" == *"First session: fixed bug X."* ]] || ok=false
+  [[ "$result" == *"Third session: added feature Y."* ]] || ok=false
+  [[ "$result" == *"== end episodes =="* ]] || ok=false
+  # Skeleton entry must NOT appear in output
+  [[ "$result" != *'"summary":""'* ]] || ok=false
+
+  rm -rf "$dir"
+
+  if $ok; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — output=%q\n' "$name" "$result"
+  fi
+}
+
+mem_recall_format_validator
+
+# =============================================================================
+# cross-command: /mem-log (session_id="") + Stop hook interaction
+# =============================================================================
+$LIST || echo "== cross-command: mem-log + session-stop =="
+
+session_stop_skips_after_recent_memlog_empty_session_id() {
+  # Verifies Stop hook does NOT append a skeleton when /mem-log already wrote
+  # a full summary entry with session_id="" for the same cwd within the 4-hour
+  # session window. The recent /mem-log entry represents the current session.
+  # Steps:
+  #   1. Create project memory dir and write a /mem-log entry (1h ago, session_id="")
+  #      with a non-empty summary for the workspace cwd
+  #   2. Run Stop hook with a real session_id for the same cwd
+  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (no skeleton appended)
+  local name="cross-cmd/stop-skips-after-recent-memlog-empty-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count recent_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  # Recent /mem-log entry (1 hour ago) with empty session_id
+  recent_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=1)).isoformat())")
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
+    "$recent_iso" "$cwd" > "$episodes"
+
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-id-123\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+
+  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+session_stop_appends_after_old_memlog_empty_session_id() {
+  # Verifies Stop hook DOES append a new skeleton when the last session_id=""
+  # entry is older than the 4-hour session window. An old /mem-log entry from
+  # a previous day must not permanently suppress future Stop-hook recording.
+  # Steps:
+  #   1. Create project memory dir and write a /mem-log entry (10h ago, session_id="")
+  #      with a non-empty summary — outside the 4-hour session window
+  #   2. Run Stop hook with a new real session_id for the same cwd
+  #   3. Assert exit 0 and episodes.jsonl now has 2 lines (new skeleton appended)
+  local name="cross-cmd/stop-appends-after-old-memlog-empty-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count old_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  # Old /mem-log entry (10 hours ago) with empty session_id
+  old_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=10)).isoformat())")
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Old session summary."}\n' \
+    "$old_iso" "$cwd" > "$episodes"
+
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+
+  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+session_stop_skips_after_recent_memlog_empty_session_id
+session_stop_appends_after_old_memlog_empty_session_id
+
+# =============================================================================
+# meta: --filter and --list self-verification
+# =============================================================================
+$LIST || echo "== meta: filter and list behavior =="
+
+meta_filter_runs_only_matching() {
+  # Verifies --filter executes exactly the cases whose name contains the pattern
+  # and exits 0; all other cases are skipped.
+  # Steps:
+  #   1. Invoke test-hooks.sh --filter with a pattern matching exactly one known case
+  #   2. Assert the output reports exactly "1 passed, 0 failed"
+  local name="meta/filter-runs-only-matching"
+  should_run "$name" || return 0
+  local out
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "pm: Edit memory file" 2>&1)
+  if [[ "$out" == *"1 passed, 0 failed"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — got: %q\n' "$name" "$out"
+  fi
+}
+
+meta_list_exits_zero_with_count() {
+  # Verifies --list exits 0 and emits at least 200 case name lines without
+  # executing any test code (counters remain 0).
+  # Steps:
+  #   1. Invoke test-hooks.sh --list
+  #   2. Assert exit status is 0
+  #   3. Assert the printed line count exceeds 200 (confirming the full registry)
+  local name="meta/list-exits-zero-with-count"
+  should_run "$name" || return 0
+  local out count status
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --list 2>&1)
+  status=$?
+  count=$(printf '%s\n' "$out" | wc -l)
+  if [[ "$status" == "0" && "$count" -gt 200 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — status=%s count=%s\n' "$name" "$status" "$count"
+  fi
+}
+
+meta_filter_no_match_exits_nonzero() {
+  # Verifies --filter with a pattern that matches no cases exits nonzero
+  # and emits a diagnostic message rather than silently reporting 0 passed.
+  # Steps:
+  #   1. Invoke test-hooks.sh --filter with a pattern known to match nothing
+  #   2. Assert exit status is nonzero
+  #   3. Assert stderr/stdout contains "no tests matched"
+  local name="meta/filter-no-match-exits-nonzero"
+  should_run "$name" || return 0
+  local out status
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"no tests matched"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — status=%s out=%q\n' "$name" "$status" "$out"
+  fi
+}
+
+meta_filter_runs_only_matching
+meta_list_exits_zero_with_count
+meta_filter_no_match_exits_nonzero
+
 # =============================================================================
 # summary
 # =============================================================================
+
+if $LIST; then
+  printf '%s\n' "${ALL_CASES[@]}"
+  exit 0
+fi
+
+if [[ -n "$FILTER" && $((PASS + FAIL)) -eq 0 ]]; then
+  printf 'no tests matched filter %q — check --list for available case names\n' "$FILTER" >&2
+  exit 1
+fi
 
 echo
 echo "----"
