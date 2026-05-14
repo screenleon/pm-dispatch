@@ -69,7 +69,7 @@ Record the split decision in project memory and surface it to the user. Never le
 
 1. **Source-first**: Read every diff file cited in gate findings. Do not infer scope from the gate report alone — the gate names the gaps it found first, not all gaps that exist.
 2. **Discovery step**: For each newly introduced helper, flag, hook, or error branch cited in the finding, `grep` all call sites in the affected scope. Add tests for every discovered call site, not only the one the gate named.
-3. **`--targeted` re-run**: Once the fix is committed, re-run gate with `--reviewers <blocking-reviewer-names>`. Full tier is for first round and scope-unclear situations only.
+3. **`--targeted` re-run**: Once the fix is committed, re-run gate with `--targeted <reviewer,...>` (maps to `--reviewers` at the script level). Full tier is for first round and scope-unclear situations only.
 4. **Minimum-list principle**: Gate round N's findings are the minimum set to fix, not a complete enumeration. In the fix brief, instruct Codex to "grep for all similar patterns in the same scope and fix them proactively" — this prevents the next round from finding the same class of issue in an adjacent location.
 
 # Writing a brief for codex-executor
