@@ -1760,6 +1760,35 @@ inject_hook_threshold_at_boundary_emits_directive() {
   rm -rf "$dir"
 }
 
+inject_hook_default_home_fallback() {
+  # Verifies that when CLAUDE_CONFIG_DIR is unset, the hook falls back to $HOME/.claude.
+  # Steps:
+  #   1. Create a MEMORY.md under $HOME/.claude using a uniquely-named fake cwd
+  #      (PID-suffixed path guarantees no collision with real projects)
+  #   2. Run hook-inject-memory.sh with that cwd but WITHOUT CLAUDE_CONFIG_DIR
+  #      (env -u strips the variable from the child process)
+  #   3. Assert exit 0 and the index line appears in stdout
+  #   4. Remove the temporary project dir from $HOME/.claude
+  local name="inject-hook/default-home-fallback" cwd encoded project_dir payload output status
+  cwd="/tmp/inject-hook-home-fallback-test-$$"
+  encoded="$(inject_encoded_path "$cwd")"
+  project_dir="${HOME}/.claude/projects/${encoded}/memory"
+  mkdir -p "$project_dir"
+  printf '# test\n- home fallback line\n' > "$project_dir/MEMORY.md"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | env -u CLAUDE_CONFIG_DIR "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "${HOME}/.claude/projects/${encoded}"
+  if [[ "$status" == "0" && "$output" == *"home fallback line"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -1771,6 +1800,7 @@ inject_hook_non_string_cwd
 inject_hook_threshold_below_emits_no_directive
 inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
+inject_hook_default_home_fallback
 
 # =============================================================================
 # summary
