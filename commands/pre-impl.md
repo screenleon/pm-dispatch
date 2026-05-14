@@ -7,6 +7,12 @@ Run a design review for `$ARGUMENTS` before any implementation starts. If no arg
 
 The goal is to produce a **design constraint list** — 3–5 structural rules the implementation must not violate — that can be pasted directly into a PM brief's `constraints:` field.
 
+## When to invoke
+
+PM **must** run `/pre-impl` before writing a Codex brief whenever the brief introduces **3 or more behavioral units** (new functions, endpoints, hooks, commands, or schema changes). For single-unit changes, it is optional but recommended when the change touches a module boundary or a shared dependency.
+
+The design constraint list produced here should be pasted into the brief's `constraints:` field so Codex implements with the constraints from the start, not after an architecture-reviewer flag.
+
 ## Step 1 — Understand the codebase entry points
 
 Scan the current working directory to build a minimal structural picture. Run the following (adjust depth if the repo is large):
