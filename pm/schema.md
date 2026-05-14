@@ -32,11 +32,13 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md`
 
 ### 2.3 Status enum
 
-僅三值：
+五值：
 
 - `🔵 active` — 仍在 backlog，包含尚未開工 / 進行中 / 阻塞中（細節寫在 body）
-- `✅ closed YYYY-MM-DD` — 已 ship，body 折疊為 stub
+- `✅ closed YYYY-MM-DD` — 已 ship，body 折疊為 closed stub（§2.6）
 - `🚫 dropped YYYY-MM-DD` — 不做了，body 折疊為 stub 並指向 DECISIONS
+- `✅ done` — **soft-close**：已完成但不需要 PR 追蹤或具體日期的項目（例：文件新增、config 設定）。body 保持 active 格式（Problem/Why/Requirement），不需折疊為 stub；不需要 `See:` 引用。
+- `⏸ deferred` — **延後**：不是不做，而是等待外部條件（依賴項、時機）再推進。body 保持 active 格式；與 `🔵 active` 的差異是「現在刻意不排程」。
 
 不再使用 `todo / doing / done / blocked` 等舊四態；`doing / blocked` 屬於 active 內的暫態，記在 body。
 
@@ -48,7 +50,7 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md`
 |----|--------|------|--------|----------|------|
 
 - **#**：條目 ID
-- **Status**：上述三值之一
+- **Status**：上述五值之一
 - **主題**：6–12 字標題
 - **影響面**：見下方 area enum；單值或斜線複合
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
@@ -60,7 +62,20 @@ Canonical path: `~/github/claude-config/pm/schema.md`. `~/.claude/.pm/schema.md`
 
 固定值（單一或以 `/` 複合，最多 2 段）：
 
+**Layer tokens**（系統分層）：
 `arch / backend / frontend / content / ops / connector / DX / product`
+
+**Topic tokens**（工具層 / 影響面）：
+`ux / process / memory / token / test / gate`
+
+- `ux` — 使用者操作體驗、developer ergonomics
+- `process` — 開發流程、工作流、PM 規範
+- `memory` — 跨 session 記憶層（episodic / semantic memory）
+- `token` — token 用量追蹤、quota 管理
+- `test` — 測試基礎設施、test runner、fixture
+- `gate` — PR gate 工具、reviewer 流程
+
+Topic tokens 可與 layer tokens 複合（例：`ux/memory`、`ops/test`、`ops/gate`）。純 topic 也合法（例：`process`、`ux`）。
 
 Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` → `arch`、`operations` → `ops`、`con` → `connector`。未列入的詞先討論擴 enum，不可自由發明。
 

@@ -22,11 +22,16 @@ ID 規則：永久穩定，永不重用、永不重排。新增取「目前最�
 | <PREFIX>-001 | 🔵 active | <6–12 字標題> | backend | YYYY-MM-DD | — |
 
 <!--
-Status enum（僅三值）：
-  🔵 active
-  ✅ closed YYYY-MM-DD
-  🚫 dropped YYYY-MM-DD
-影響面：backend / frontend / content / ops / arch / product 之一或斜線複合
+Status enum（五值）：
+  🔵 active           — 仍在 backlog（含進行中 / 阻塞中）
+  ✅ closed YYYY-MM-DD — 已 ship，body 折疊為 stub
+  🚫 dropped YYYY-MM-DD — 不做了，body 折疊為 stub
+  ✅ done              — soft-close，body 保持 active 格式，不需日期或 See:
+  ⏸ deferred          — 等待外部條件，body 保持 active 格式
+
+影響面（layer tokens）：arch / backend / frontend / content / ops / connector / DX / product
+影響面（topic tokens）：ux / process / memory / token / test / gate
+可斜線複合，最多 2 段（例：ux/memory、ops/test）。
 索引必須與下方 body 一一對應，順序按 ID 升冪。
 -->
 

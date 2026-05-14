@@ -22,7 +22,7 @@ The pairing matters: `acceptance` is **what** must be true after the run; `self_
 
 Use as needed; not all briefs require all of them.
 
-- **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change.
+- **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change. **When the brief introduces ≥ 3 behavioral units**, run `/pre-impl "<feature description>"` first and paste the output's design constraint list here — this prevents architecture-reviewer blocks from boundary/dependency issues caught too late.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.

@@ -78,6 +78,8 @@ The canonical schema lives in `~/github/claude-config/docs/codex-brief.md`. Brie
 
 **`qa_checklist` rule**: when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error branches), add a `qa_checklist` section listing each unit and its expected test name or scenario. Without it, `qa-tester` will block in gate round 1 — writing it upfront prevents 1–2 extra gate/fix cycles. A "behavioral unit" is any code path that can be independently exercised by a test.
 
+**`/pre-impl` rule**: when the brief introduces ≥ 3 behavioral units, run `/pre-impl "<feature description>"` **before** writing the brief. Paste the output's design constraint list into the brief's `constraints:` field. This prevents architecture-reviewer blocks caused by boundary/dependency issues that could have been caught before implementation started.
+
 **Dispatch model selection**: default to the standard Codex model. Use `--model codex-spark` only when all three criteria are met: (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. Spark has a lower context ceiling — misrouting a large task degrades output quality without a loud failure signal.
 
 Return the brief to the main thread; main thread dispatches it. Verify the resulting report against `git diff` before claiming success.
