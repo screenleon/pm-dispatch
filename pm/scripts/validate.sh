@@ -58,7 +58,7 @@ function norm_area(s) {
 
 function valid_area_token(s) {
   s = norm_area(s)
-  return (s == "arch" || s == "backend" || s == "frontend" || s == "content" || s == "ops" || s == "connector" || s == "DX" || s == "product")
+  return (s == "arch" || s == "backend" || s == "frontend" || s == "content" || s == "ops" || s == "connector" || s == "DX" || s == "product" || s == "ux" || s == "process" || s == "memory" || s == "token" || s == "test" || s == "gate")
 }
 
 function emit(code, ctx) {
@@ -102,6 +102,14 @@ function parse_status(id, status, d) {
   status = trim(status)
   if (status == "🔵 active") {
     row_kind[id] = "active"
+    return
+  }
+  if (status == "✅ done") {
+    row_kind[id] = "done"
+    return
+  }
+  if (status == "⏸ deferred") {
+    row_kind[id] = "deferred"
     return
   }
   if (status ~ /^✅ closed /) {
