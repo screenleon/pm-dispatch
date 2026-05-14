@@ -14,7 +14,9 @@ printf '%s' "$payload" > "$_tmp"
 
 python3 - "$_tmp" "$_config_dir" << 'PYEOF'
 import json, os, sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+SESSION_WINDOW_HOURS = 4  # /mem-log entries older than this do not suppress new sessions
 
 payload_file, config_dir = sys.argv[1], sys.argv[2]
 
@@ -69,15 +71,22 @@ try:
         sys.exit(0)
 
     # Also skip if the most recent entry for the same cwd was written by /mem-log
-    # with session_id="" (unknown session) and already has a non-empty summary.
-    # This prevents Stop from appending a duplicate skeleton after /mem-log ran.
-    # A real previous session_id does NOT trigger this path (new sessions should
-    # still be recorded even when the previous session had a summary).
+    # (session_id="") within the last SESSION_WINDOW_HOURS hours and already has
+    # a non-empty summary. This covers /mem-log running before Stop in the same
+    # session. Time-bounded: an old /mem-log entry must not suppress later sessions.
     cwd_entries = [e for e in entries if e.get('cwd') == cwd]
-    if (cwd_entries and
-            not cwd_entries[-1].get('session_id', '').strip() and
-            cwd_entries[-1].get('summary', '').strip()):
-        sys.exit(0)
+    if cwd_entries:
+        last = cwd_entries[-1]
+        if (not last.get('session_id', '').strip() and last.get('summary', '').strip()):
+            try:
+                last_date = datetime.fromisoformat(last.get('date', ''))
+                if last_date.tzinfo is None:
+                    last_date = last_date.replace(tzinfo=timezone.utc)
+                age_hours = (datetime.now(timezone.utc) - last_date).total_seconds() / 3600
+                if age_hours < SESSION_WINDOW_HOURS:
+                    sys.exit(0)
+            except (ValueError, TypeError):
+                pass
 
     # Append new metadata entry
     entry = {

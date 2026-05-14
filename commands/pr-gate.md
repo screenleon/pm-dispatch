@@ -157,6 +157,6 @@ bash scripts/test-hooks.sh --filter "inject-hook/episode"
 bash scripts/test-hooks.sh && bash scripts/test-install.sh
 ```
 
-`--filter <pattern>` runs only cases whose name contains `<pattern>`.  
-`--list` prints all case names and exits 0 — useful for finding the right pattern.  
+`--filter <pattern>` runs only cases whose name contains `<pattern>`.
+`--list` prints all case names and exits 0 — useful for finding the right pattern.
 Full suites are still required in the gate; `--filter` is for local iteration speed only.

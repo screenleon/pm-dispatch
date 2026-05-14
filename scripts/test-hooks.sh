@@ -2262,31 +2262,26 @@ mem_recall_format_validator
 # =============================================================================
 $LIST || echo "== cross-command: mem-log + session-stop =="
 
-session_stop_skips_after_memlog_empty_session_id() {
-  # Verifies Stop hook does NOT append a skeleton when /mem-log already wrote
-  # a full summary entry with session_id="" for the same cwd.
-  # This is the key cross-command regression: without the cwd-based fallback
-  # check, Stop would see no matching session_id and write a duplicate skeleton.
-  local name="cross-cmd/stop-skips-after-memlog-empty-session-id"
+session_stop_skips_after_recent_memlog_empty_session_id() {
+  # Verifies Stop hook does NOT append a skeleton when /mem-log wrote a RECENT
+  # full summary entry with session_id="" for the same cwd (within 4h window).
+  local name="cross-cmd/stop-skips-after-recent-memlog-empty-session-id"
   should_run "$name" || return 0
-  local dir cwd episodes payload status line_count
+  local dir cwd episodes payload status line_count recent_iso
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  # Recent /mem-log entry (1 hour ago) with empty session_id
+  recent_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=1)).isoformat())")
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
+    "$recent_iso" "$cwd" > "$episodes"
 
-  # Simulate /mem-log writing a full entry with empty session_id
-  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
-    "$cwd" > "$episodes"
-
-  # Stop hook fires with a real session_id for the same cwd
   payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-id-123\"}"
   printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
   status=$?
-
   line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
-
   rm -rf "$dir"
 
   if [[ "$status" == "0" && "$line_count" == "1" ]]; then
@@ -2299,7 +2294,41 @@ session_stop_skips_after_memlog_empty_session_id() {
   fi
 }
 
-session_stop_skips_after_memlog_empty_session_id
+session_stop_appends_after_old_memlog_empty_session_id() {
+  # Verifies Stop hook DOES append a new skeleton when the last session_id=""
+  # entry is OLDER than the session window (>4h). An old /mem-log entry must
+  # not suppress later real sessions.
+  local name="cross-cmd/stop-appends-after-old-memlog-empty-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count old_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  # Old /mem-log entry (10 hours ago) with empty session_id
+  old_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=10)).isoformat())")
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Old session summary."}\n' \
+    "$old_iso" "$cwd" > "$episodes"
+
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+
+  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+session_stop_skips_after_recent_memlog_empty_session_id
+session_stop_appends_after_old_memlog_empty_session_id
 
 # =============================================================================
 # meta: --filter and --list self-verification

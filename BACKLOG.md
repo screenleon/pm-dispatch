@@ -29,6 +29,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-019 | 🔵 active | Episodic memory 層：Stop hook metadata + `/mem-log` + `/mem-recall` + `/mem-distill` | ux/memory | 2026-05-14 | — |
 | CC-020 | 🔵 active | `/mem-search`：`rg` 關鍵字過濾 + Claude 語意理解，跨 memory 檔搜尋 | ux/memory | 2026-05-14 | — |
 | CC-021 | 🔵 active | test scripts 支援 `--filter <pattern>` + `--list` 只跑/列出名稱匹配的 test case | ops/test | 2026-05-14 | — |
+| CC-022 | 🔵 active | `/pre-impl` 指令：開發前設計評審，強制定義邊界/依賴/變動點，減少事後重構 | ux/arch | 2026-05-14 | — |
+| CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — |
 
 ---
 
@@ -284,3 +286,52 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - 或改為先收集 case list 再 dispatch，兩種方式都行
 
 **影響文件**: `scripts/test-hooks.sh`、`scripts/test-install.sh`（主要）；`commands/pr-gate.md` 或 `docs/` 文件說明（次要）。
+
+## CC-022 — `/pre-impl`：開發前設計評審指令
+
+**Problem**: codex 拿到的 brief 通常只描述「做什麼」，沒有描述「怎麼做才不需要事後重構」。開發者在實作過程中才發現耦合過高、職責邊界不清，導致 PR gate 被 architecture-reviewer 打回，或完成後需要另起 refactor PR。
+
+**Why**: Refactoring-like-a-superhero 和 Refactoring-Summary 的核心論點是：預防比治療便宜 10 倍。設計決策應在寫第一行 code 之前完成，而非在 code review 時才被指出。此指令強制走「設計約束 → brief → 實作」的順序，讓架構問題在 codex 開始前就被識別。
+
+**Requirement**:
+1. 新增 `commands/pre-impl.md`：slash command，用法 `/pre-impl "<feature description>"`
+2. 執行邏輯（語言無關）：
+   - 掃描 cwd 的相關 entry points 和公開 API（`find` + `grep`，不需要語言 parser）
+   - 強制回答 3 個設計問題：
+     1. **職責邊界**：「這個模組的唯一職責是？哪些事情不在其範圍內？」
+     2. **依賴方向**：「依賴哪些現有模組？能否以介面/注入取代直接依賴？」
+     3. **變動接縫**：「未來最可能在哪裡改變？要預留哪個接縫？」
+   - 輸出「設計約束清單」（不是實作說明）：3-5 條不可違反的結構規則
+3. 設計約束清單可直接貼入 PM brief 的 `constraints:` 欄位，讓 codex 帶著約束實作
+
+**設計決策**:
+- 語言無關：用 `find`/`grep` 而非語言特定 AST 工具，確保在任何語言的 codebase 都可用
+- 輸出是「約束」而非「方案」：避免 Claude 在設計評審時就開始寫實作，保持職責分離
+- 3 個問題固定：避免每次問的問題不同，讓評審結果可對比
+
+**影響文件**: `commands/pre-impl.md`（新增）。
+
+**依賴**: 無。可獨立實作。
+
+## CC-023 — `coupling-reviewer`：PR gate 語言感知耦合分析（Phase 2，deferred）
+
+**Problem**: PR gate 現有的 architecture-reviewer 依賴 Claude 主觀判斷耦合問題，沒有客觀量化基線。高耦合模組在多個 PR 中持續惡化，直到重構成本遠超過預防成本。
+
+**Why**: 量化耦合指標（afferent/efferent coupling、循環複雜度）可以提供客觀基線，讓 architecture-reviewer 的判斷有數據支撐。coca（Java）、dependency-cruiser（TS）、gocyclo（Go）等工具已成熟，只需整合到 gate 流程。
+
+**Requirement**:
+1. 新增 `scripts/coupling-check.sh`：語言偵測 + 工具呼叫，只分析 changed files 的直接耦合變化
+   - 偵測語言：根據 `git diff --name-only main...HEAD` 的副檔名判斷
+   - TypeScript/JS：`dependency-cruiser --validate`（需 repo 內有 `.dependency-cruiser.js`）
+   - Go：`gocyclo -over 15`（複雜度 > 15 警告）
+   - Java：`coca` bs（boundary analysis）
+   - 未識別語言：跳過，輸出 "coupling-check: skipped (language not detected)"
+2. PR gate 加入可選 `--coupling` flag：啟用 coupling-reviewer 步驟
+3. 閾值超過 → block-soft（advisory），不強制 block；量化數字附在建議中
+
+**設計決策**:
+- 只看 changed files：避免全量掃描噴出無關 legacy 問題，讓 PR 作者只面對自己引入的耦合
+- 工具安裝不強制：若工具未安裝則跳過該語言分析，不中斷 gate
+- Phase 2 / deferred：等 /pre-impl（CC-022）跑一段時間、確認設計評審流程有效後再推進
+
+**依賴**: CC-022（/pre-impl 建立設計評審文化後，coupling-reviewer 才有比較基準）。
