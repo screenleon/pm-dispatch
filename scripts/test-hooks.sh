@@ -1604,6 +1604,48 @@ inject_hook_empty_stdin() {
   rm -rf "$dir"
 }
 
+inject_hook_missing_cwd() {
+  # Verifies that a valid JSON payload with no "cwd" key exits 0 with empty
+  # stdout — the cwd validation guard handles absent keys gracefully.
+  # Steps:
+  #   1. Run the hook with valid JSON payload containing no cwd field
+  #   2. Assert exit 0 and empty stdout (hook silently skips)
+  local name="inject-hook/missing-cwd" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' '{}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_non_string_cwd() {
+  # Verifies that a valid JSON payload with a non-string "cwd" value (e.g. a
+  # number) exits 0 with empty stdout — the isinstance check rejects it.
+  # Steps:
+  #   1. Run the hook with valid JSON payload where cwd is an integer (123)
+  #   2. Assert exit 0 and empty stdout (hook silently skips)
+  local name="inject-hook/non-string-cwd" dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' '{"cwd":123}' | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_threshold_shows_directive() {
   # Verifies that when MEMORY.md has >= 50 index entries, the hook injects
   # ALL entries without truncation and appends a "run /memory-compress" directive.
@@ -1724,6 +1766,8 @@ inject_hook_no_memory_found
 inject_hook_empty_index
 inject_hook_malformed_payload
 inject_hook_empty_stdin
+inject_hook_missing_cwd
+inject_hook_non_string_cwd
 inject_hook_threshold_below_emits_no_directive
 inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
