@@ -65,7 +65,18 @@ try:
     # Skip if any entry already records this session_id (with or without summary).
     # /mem-log runs during the session and may have written a full entry already;
     # the Stop hook should not add a duplicate skeleton in that case.
-    if any(e.get('session_id') == session_id for e in entries) and session_id:
+    if session_id and any(e.get('session_id') == session_id for e in entries):
+        sys.exit(0)
+
+    # Also skip if the most recent entry for the same cwd was written by /mem-log
+    # with session_id="" (unknown session) and already has a non-empty summary.
+    # This prevents Stop from appending a duplicate skeleton after /mem-log ran.
+    # A real previous session_id does NOT trigger this path (new sessions should
+    # still be recorded even when the previous session had a summary).
+    cwd_entries = [e for e in entries if e.get('cwd') == cwd]
+    if (cwd_entries and
+            not cwd_entries[-1].get('session_id', '').strip() and
+            cwd_entries[-1].get('summary', '').strip()):
         sys.exit(0)
 
     # Append new metadata entry

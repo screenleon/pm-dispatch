@@ -229,16 +229,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: 認知科學架構（CoALA / agentmemory）和 claude-mem 都驗證了 episodic layer 的價值：把每個 session 壓縮成 3-5 行摘要，比試圖在 MEMORY.md 裡記錄所有細節更有效率。Session 歷史可以按需注入（`/mem-recall`），也可以定期整合提升 MEMORY.md 品質（`/mem-distill`）。
 
 **Requirement**:
-1. 新增 `scripts/hook-session-summary.sh`：Stop hook，session 結束時由 Claude 生成 3-5 行摘要，append 到 `~/.claude/projects/<id>/memory/episodes.jsonl`（格式：`{"date":"...","cwd":"...","summary":"..."}`）
-2. 新增 `commands/mem-recall.md`：slash command，讀取最近 N 個 episode 注入 context（預設 5）
-3. 新增 `commands/mem-distill.md`：slash command，讓 Claude 讀取最近 10 個 episodes，對照現有 MEMORY.md，更新/新增/移除條目，提供 dry-run 預覽
-4. `install-hooks.sh` / `uninstall-hooks.sh` 掛入 Stop hook（與現有 `hook-log-claude-usage.sh` 並行）
-5. 測試覆蓋：episodes.jsonl 正確 append、格式驗證、/mem-recall 注入格式
+1. 新增 `scripts/hook-session-summary.sh`：Stop hook，session 結束時記錄 metadata-only skeleton entry（`{"date":"...","cwd":"...","session_id":"...","summary":""}`）到 `episodes.jsonl`；語意摘要由使用者主動執行 `/mem-log` 填入
+2. 新增 `commands/mem-log.md`：slash command，session 期間由使用者呼叫，讓 Claude 生成 3-5 行摘要並寫入 episodes.jsonl；Stop hook 在 /mem-log 已執行時自動跳過
+3. 新增 `commands/mem-recall.md`：slash command，讀取最近 N 個 episode 注入 context（預設 5）
+4. 新增 `commands/mem-distill.md`：slash command，讓 Claude 讀取最近 10 個 episodes，對照現有 MEMORY.md，更新/新增/移除條目，提供 dry-run 預覽
+5. `install-hooks.sh` / `uninstall-hooks.sh` 掛入 Stop hook（與現有 `hook-log-claude-usage.sh` 並行）
+6. 測試覆蓋：episodes.jsonl 正確 append、格式驗證、/mem-recall 注入格式、Stop hook 在 /mem-log 先跑後不重複寫入
 
 **設計決策**:
-- Stop hook 生成摘要：由 Claude 在 session 結束時自行判斷重要事件，不是機械式截取
+- Stop hook metadata-only（無 LLM 呼叫）：session 結束時零成本記錄；語意摘要由使用者在 session 活躍時呼叫 /mem-log 取得
 - episodes.jsonl 只 append，不覆寫：歷史不可刪除，壓縮靠 /mem-distill
 - /mem-distill 有 --dry-run：讓用戶看到要改什麼再確認
+- inject hook 在 >24h 無記錄時顯示 💡 提示，引導使用者執行 /mem-log
 
 **依賴**: CC-009（UserPromptSubmit hook）已完成，episodic 層是自然延伸。
 

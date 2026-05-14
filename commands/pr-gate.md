@@ -138,3 +138,25 @@ When the background-Bash completion notification arrives:
 6. Relay the result file contents verbatim.
 
 Do not collapse blocks into "looks good". Relay NO-GO findings completely.
+
+## Local verification after gate findings
+
+After fixing a NO-GO finding, run only the affected tests before re-gating:
+
+```bash
+# List all available case names to find the right filter pattern
+bash scripts/test-hooks.sh --list
+bash scripts/test-install.sh --list
+
+# Run only tests matching the changed area (substring match)
+bash scripts/test-hooks.sh --filter "session-hook"
+bash scripts/test-install.sh --filter "session-stop"
+bash scripts/test-hooks.sh --filter "inject-hook/episode"
+
+# Full suites must still pass before re-gating
+bash scripts/test-hooks.sh && bash scripts/test-install.sh
+```
+
+`--filter <pattern>` runs only cases whose name contains `<pattern>`.  
+`--list` prints all case names and exits 0 — useful for finding the right pattern.  
+Full suites are still required in the gate; `--filter` is for local iteration speed only.

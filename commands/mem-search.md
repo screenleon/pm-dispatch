@@ -31,22 +31,46 @@ If nothing is printed, report "No memory directory found for this project" and s
 
 ## Step 2 — Keyword search (Layer 1)
 
-Store the query in a variable first so shell metacharacters in `$ARGUMENTS` are not interpreted:
+**Do not embed `$ARGUMENTS` in any shell command string.** Use Python with `subprocess` so the query is never parsed by a shell:
 
-```bash
-_query='$ARGUMENTS'
-_mem='<MEMORY_DIR>'
-rg -il -- "$_query" "$_mem"/*.md "$_mem"/episodes.jsonl 2>/dev/null || true
+```python
+python3 - << 'PYEOF'
+import subprocess, os, sys
+
+# Assign query and memory_dir as Python string literals.
+# Claude: replace the placeholders below with the actual values,
+# properly escaped for Python string syntax (use repr() if needed).
+query = "QUERY_PLACEHOLDER"
+memory_dir = "MEMORY_DIR_PLACEHOLDER"
+
+files = []
+try:
+    for name in os.listdir(memory_dir):
+        if name.endswith('.md') or name == 'episodes.jsonl':
+            files.append(os.path.join(memory_dir, name))
+except OSError:
+    sys.exit(0)
+
+if not files or not query:
+    sys.exit(0)
+
+# -F: fixed-string (not regex), -i: case-insensitive, -l: filenames only
+# Argument list — query is never parsed by a shell.
+result = subprocess.run(
+    ['rg', '-ilF', '--', query] + files,
+    capture_output=True, text=True
+)
+if result.returncode == 127:
+    # rg not available — fall back to grep
+    result = subprocess.run(
+        ['grep', '-rilF', '--', query] + files,
+        capture_output=True, text=True
+    )
+print(result.stdout.strip())
+PYEOF
 ```
 
-Replace `<MEMORY_DIR>` with the path from Step 1. Do not substitute `$ARGUMENTS` directly into the command string.
-
-If `rg` is not available, fall back to:
-```bash
-_query='$ARGUMENTS'
-_mem='<MEMORY_DIR>'
-grep -ril -- "$_query" "$_mem"/ 2>/dev/null || true
-```
+Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
 
 ## Step 3 — Semantic search (Layer 2, fallback)
 

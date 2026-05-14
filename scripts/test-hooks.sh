@@ -2258,6 +2258,92 @@ PYEOF
 mem_recall_format_validator
 
 # =============================================================================
+# cross-command: /mem-log (session_id="") + Stop hook interaction
+# =============================================================================
+$LIST || echo "== cross-command: mem-log + session-stop =="
+
+session_stop_skips_after_memlog_empty_session_id() {
+  # Verifies Stop hook does NOT append a skeleton when /mem-log already wrote
+  # a full summary entry with session_id="" for the same cwd.
+  # This is the key cross-command regression: without the cwd-based fallback
+  # check, Stop would see no matching session_id and write a duplicate skeleton.
+  local name="cross-cmd/stop-skips-after-memlog-empty-session-id"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+
+  # Simulate /mem-log writing a full entry with empty session_id
+  printf '{"date":"2026-01-01T00:00:00+00:00","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
+    "$cwd" > "$episodes"
+
+  # Stop hook fires with a real session_id for the same cwd
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-id-123\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+
+  rm -rf "$dir"
+
+  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+session_stop_skips_after_memlog_empty_session_id
+
+# =============================================================================
+# meta: --filter and --list self-verification
+# =============================================================================
+$LIST || echo "== meta: filter and list behavior =="
+
+meta_filter_runs_only_matching() {
+  # Verifies --filter executes exactly the matching cases and exits 0.
+  local name="meta/filter-runs-only-matching"
+  should_run "$name" || return 0
+  local out
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "pm: Edit memory file" 2>&1)
+  if [[ "$out" == *"1 passed, 0 failed"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — got: %q\n' "$name" "$out"
+  fi
+}
+
+meta_list_exits_zero_with_count() {
+  # Verifies --list exits 0 and prints at least 200 case names (no test code runs).
+  local name="meta/list-exits-zero-with-count"
+  should_run "$name" || return 0
+  local out count status
+  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --list 2>&1)
+  status=$?
+  count=$(printf '%s\n' "$out" | wc -l)
+  if [[ "$status" == "0" && "$count" -gt 200 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — status=%s count=%s\n' "$name" "$status" "$count"
+  fi
+}
+
+meta_filter_runs_only_matching
+meta_list_exits_zero_with_count
+
+# =============================================================================
 # summary
 # =============================================================================
 
