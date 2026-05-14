@@ -127,7 +127,7 @@ if [[ -x "$REPO_ROOT/scripts/test-usage-weekly.sh" ]]; then
   echo
 fi
 
-# Pre-flight: usage tracker regression suite (log-usage.sh + claude-usage.sh)
+# Pre-flight: usage tracker regression suite (log-usage.sh + token-usage.sh)
 if [[ -x "$REPO_ROOT/scripts/test-usage-tracker.sh" ]]; then
   echo "==> test usage tracker"
   "$REPO_ROOT/scripts/test-usage-tracker.sh"
@@ -190,13 +190,14 @@ fi
 echo "==> legacy cleanup"
 remove_legacy_symlink "$SCRIPTS_DEST/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh"
 remove_legacy_symlink "$CLAUDE_HOME/commands/codex-pr-gate.md" "$REPO_ROOT/commands/codex-pr-gate.md"
+remove_legacy_symlink "$SCRIPTS_DEST/claude-usage.sh" "$REPO_ROOT/scripts/claude-usage.sh"
 
 us_count=0; us_conflicts=0
 # Allowlist: user-facing scripts only. Excluded intentionally:
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in claude-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
+for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else

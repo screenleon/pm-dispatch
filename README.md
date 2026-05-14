@@ -9,7 +9,7 @@ agents/      → ~/.claude/agents/    subagents callable via the Agent tool
 skills/      → ~/.claude/skills/    invocable skills
 commands/    → ~/.claude/commands/  /slash commands
 scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
-             → ~/.claude/scripts/   claude-usage.sh and log-usage.sh are symlinked here by install.sh
+             → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
 docs/                               policy documents (model-tier-policy.md, codex-brief.md)
@@ -96,10 +96,11 @@ usage.
   
   Bypass (logged): `CLAUDE_HOOK_CODEX_GUARD=off` (literal "off" only). Requires `jq` and `realpath`.
 - **hook-codex-write-guard.sh** — `PreToolUse` hook (matcher `Edit|Write`). Prevents codex-executor subagents from writing files outside `/tmp/brief-*.md` (enforces pre-write-by-main-thread discipline). Bypass (logged): `CLAUDE_HOOK_CODEX_WRITE_GUARD=off`. Requires `jq` and `realpath`.
+- **hook-save-rate-limits.sh** — `StatusLine` hook that saves Claude rate-limit payloads to `~/.claude/rate-limits.json` for `token-usage.sh --remaining`. If a previous `statusLine.command` existed during install, it is saved to `~/.claude/statusline-chain.conf` and invoked after the rate-limit file is updated.
 - **install-hooks.sh / uninstall-hooks.sh** — Idempotent `jq`-based splice into `~/.claude/settings.json`. `--dry-run` shows the diff without applying. Each apply backs up `settings.json` to `settings.json.bak.<timestamp>`.
-- **test-hooks.sh** — Regression suite for all three hook scripts (~150+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `CLAUDE_HOOK_LOG_DIR`.
+- **test-hooks.sh** — Regression suite for the managed hook scripts (~200+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion, and StatusLine rate-limit capture). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `CLAUDE_HOOK_LOG_DIR`.
 - **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
-- **claude-usage.sh** — Rolling 5-hour and today-UTC token usage estimator. Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/claude-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/claude-usage.sh [--today|--all]`. Once `~/.claude/usage-calibration.json` is calibrated with a known rate-limit token count, shows % used and estimated minutes remaining.
+- **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.
 

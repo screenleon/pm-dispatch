@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixture-driven regression suite for log-usage.sh and claude-usage.sh.
+# Fixture-driven regression suite for log-usage.sh and token-usage.sh.
 #
 # Usage:
 #   scripts/test-usage-tracker.sh           # print PASS per case
@@ -9,7 +9,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_SCRIPT="$SCRIPT_DIR/log-usage.sh"
-VIEW_SCRIPT="$SCRIPT_DIR/claude-usage.sh"
+VIEW_SCRIPT="$SCRIPT_DIR/token-usage.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -204,10 +204,10 @@ case_file_permissions() {
 }
 
 # ---------------------------------------------------------------------------
-# claude-usage.sh tests
+# token-usage.sh tests
 # ---------------------------------------------------------------------------
 
-echo "== claude-usage =="
+echo "== token-usage =="
 
 write_log() {
   local home="$1" ts="$2" type="$3" tokens="$4" note="${5:-}" pool="${6:-}"
@@ -319,7 +319,7 @@ case_view_malformed_calibration_warns() {
 }
 
 case_round_trip() {
-  # Entry written by log-usage.sh is readable and counted by claude-usage.sh
+  # Entry written by log-usage.sh is readable and counted by token-usage.sh
   local name="round_trip" home out status
   home="$(new_home "$name")"
   HOME="$home" /bin/bash "$LOG_SCRIPT" reviewer_critic 80000 "round-trip test"
@@ -439,7 +439,7 @@ write_calib() {
 # --remaining flag tests
 # ---------------------------------------------------------------------------
 
-echo "== claude-usage: --remaining =="
+echo "== token-usage: --remaining =="
 
 case_remaining_basic_no_calibration() {
   local name="remaining_basic_no_calibration" home out status
@@ -515,8 +515,8 @@ case_remaining_missing_value() {
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
-  assert_exit "$name" "$status" 2
-  assert_contains "$name" "$out.err" "requires a value"
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out.err" "not found"
   pass_case "$name"
 }
 
@@ -575,6 +575,165 @@ case_remaining_codex_dispatch_counted() {
   assert_contains "$name" "$out" "205,000"
   assert_not_contains "$name" "$out" "310,000"
   assert_occurrences "$name" "$out" "Codex   : 155,000" 1
+  pass_case "$name"
+}
+
+case_remaining_auto_valid_file() {
+  # Verifies that --remaining auto-reads a fresh rate-limits.json and prints
+  # the derived remaining percentage without requiring a manual argument.
+  # Steps:
+  #   1. Write a rate-limits.json with five_hour.used_percentage=25 and a current timestamp
+  #   2. Run token-usage.sh --remaining (no N argument) with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and output contains "Remaining (from dashboard): 75"
+  local name="remaining_auto_valid_file" home out status rl_dir rl_file
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  rl_file="$rl_dir/rate-limits.json"
+  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':25,'resets_at':9999999999},'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_file','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "Remaining (from dashboard): 75"
+  rm -rf "$rl_dir"
+  pass_case "$name"
+}
+
+case_remaining_auto_stale_warning() {
+  # Verifies that a rate-limits.json with a very old updated_at causes a staleness
+  # warning on stderr while still exiting 0 and printing a percentage.
+  # Steps:
+  #   1. Write a rate-limits.json with updated_at=1000000 (epoch far in the past)
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "old" or "stale"
+  local name="remaining_auto_stale_warning" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  python3 -c "import json; json.dump({'updated_at':1000000,'five_hour':{'used_percentage':30,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -Eq "old|stale" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected staleness warning, got: $(head -5 "$out.err")"
+  fi
+}
+
+case_remaining_auto_missing_file() {
+  # Verifies that --remaining auto-mode exits 0 and emits a "not found" note when
+  # rate-limits.json does not exist (guides user to install the StatusLine hook).
+  # Steps:
+  #   1. Point CLAUDE_CONFIG_DIR to an empty directory (no rate-limits.json)
+  #   2. Run token-usage.sh --remaining
+  #   3. Assert exit 0 and stderr contains "not found" or "rate-limits"
+  local name="remaining_auto_missing_file" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -Eqi "not found|rate-limits" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected missing-file note, got: $(head -3 "$out.err")"
+  fi
+}
+
+case_remaining_auto_out_of_range_percentage() {
+  # Verifies that a rate-limits.json with five_hour.used_percentage outside 0-100
+  # emits an "out of range" warning, exits 0, and does not print a derived percentage.
+  # Steps:
+  #   1. Write a rate-limits.json with five_hour.used_percentage=150
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0, stderr contains "out of range", stdout has no "Remaining (from dashboard)"
+  local name="remaining_auto_out_of_range_percentage" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':150,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "out of range" "$out.err" && ! grep -q "Remaining (from dashboard)" "$out"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected out-of-range warning and no derived percentage, got stderr: $(head -3 "$out.err")"
+  fi
+}
+
+case_remaining_auto_no_five_hour_key() {
+  # Verifies that a rate-limits.json missing five_hour.used_percentage emits a
+  # warning and exits 0 without printing a derived remaining percentage.
+  # Steps:
+  #   1. Write a rate-limits.json that has seven_day but no five_hour key
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "no five_hour"
+  local name="remaining_auto_no_five_hour_key" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "no five_hour" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected no-five_hour warning, got: $(head -3 "$out.err")"
+  fi
+}
+
+case_remaining_auto_malformed_json() {
+  # Verifies that a malformed rate-limits.json exits 0, emits a "could not read"
+  # warning, and does not print a derived remaining percentage.
+  # Steps:
+  #   1. Write a non-JSON file as rate-limits.json
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0 and stderr contains "could not read"
+  local name="remaining_auto_malformed_json" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  printf 'not valid json{{{\n' > "$rl_dir/rate-limits.json"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "could not read" "$out.err"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected could-not-read warning, got: $(head -3 "$out.err")"
+  fi
+}
+
+case_remaining_manual_n_unchanged() {
+  # Verifies that providing an explicit N value to --remaining uses that value
+  # directly and ignores any rate-limits.json in the config directory.
+  # Steps:
+  #   1. Point CLAUDE_CONFIG_DIR to an empty directory (no rate-limits.json)
+  #   2. Run token-usage.sh --remaining 60
+  #   3. Assert exit 0 and output contains "Remaining (from dashboard): 60"
+  local name="remaining_manual_N_unchanged" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining 60 > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_contains "$name" "$out" "Remaining (from dashboard): 60"
+  rm -rf "$rl_dir"
   pass_case "$name"
 }
 
@@ -649,6 +808,13 @@ case_remaining_100_no_calibration
 case_remaining_0_percent
 case_remaining_calibration_divergence_warning
 case_remaining_codex_dispatch_counted
+case_remaining_auto_valid_file
+case_remaining_auto_stale_warning
+case_remaining_auto_missing_file
+case_remaining_auto_out_of_range_percentage
+case_remaining_auto_no_five_hour_key
+case_remaining_auto_malformed_json
+case_remaining_manual_n_unchanged
 case_codex_old_log_excluded
 case_one_dispatch_one_count
 

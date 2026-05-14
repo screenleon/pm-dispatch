@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# claude-usage.sh — rolling 5-hour Claude token usage estimator
+# token-usage.sh — multi-pool token usage estimator (Claude / Codex / Spark)
 #
 # Usage:
-#   bash ~/.claude/scripts/claude-usage.sh               # last 5 hours
-#   bash ~/.claude/scripts/claude-usage.sh --today       # today only
-#   bash ~/.claude/scripts/claude-usage.sh --all         # all time
-#   bash ~/.claude/scripts/claude-usage.sh --remaining N # estimate time left (N = % remaining from dashboard)
+#   bash ~/.claude/scripts/token-usage.sh               # last 5 hours
+#   bash ~/.claude/scripts/token-usage.sh --today       # today only
+#   bash ~/.claude/scripts/token-usage.sh --all         # all time
+#   bash ~/.claude/scripts/token-usage.sh --remaining    # auto-populate from rate-limits.json
+#   bash ~/.claude/scripts/token-usage.sh --remaining N # estimate time left (N = % remaining from dashboard)
 
 set -euo pipefail
 
@@ -14,16 +15,20 @@ LOGFILE="$HOME/.claude/usage-tracker.jsonl"
 CALIB_FILE="$HOME/.claude/usage-calibration.json"
 MODE="--5h"
 REMAINING_PCT=""
+RATE_LIMITS_FILE="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/rate-limits.json"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --today|--all|--[0-9]*h)
       MODE="$1"; shift ;;
     --remaining)
-      [[ $# -ge 2 ]] || { echo "claude-usage: --remaining requires a value" >&2; exit 2; }
-      REMAINING_PCT="$2"; shift 2 ;;
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        REMAINING_PCT="$2"; shift 2
+      else
+        REMAINING_PCT="auto"; shift
+      fi ;;
     *)
-      echo "claude-usage: unknown argument: $1" >&2; exit 2 ;;
+      echo "token-usage: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
@@ -33,7 +38,7 @@ if [[ ! -f "$LOGFILE" ]]; then
   exit 0
 fi
 
-python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" "$REMAINING_PCT" << 'PYEOF'
+python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" "$REMAINING_PCT" "$RATE_LIMITS_FILE" << 'PYEOF'
 import sys, json, re
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -42,22 +47,50 @@ mode              = sys.argv[1]
 logfile           = sys.argv[2]
 calib_file        = sys.argv[3]
 remaining_pct_raw = sys.argv[4] if len(sys.argv) > 4 else ''
+rate_limits_file  = sys.argv[5] if len(sys.argv) > 5 else ''
 
 # Validate mode before doing any work
 if mode not in ('--today', '--all') and not re.fullmatch(r'--\d+h', mode):
-    sys.stderr.write(f'claude-usage: unknown mode: {mode!r}\n')
-    sys.stderr.write('Usage: claude-usage.sh [--today|--all|--Nh]  (default: --5h)\n')
+    sys.stderr.write(f'token-usage: unknown mode: {mode!r}\n')
+    sys.stderr.write('Usage: token-usage.sh [--today|--all|--Nh]  (default: --5h)\n')
     sys.exit(2)
 
 remaining_pct = None
-if remaining_pct_raw != '':
+if remaining_pct_raw == 'auto':
+    import time as _time
+    try:
+        with open(rate_limits_file) as _rf:
+            _rl = json.load(_rf)
+        _upd = _rl.get('updated_at', 0)
+        _age_min = (_time.time() - _upd) / 60
+        _fh = _rl.get('five_hour', {})
+        _used = _fh.get('used_percentage')
+        if _used is not None:
+            try:
+                _used_float = float(_used)
+            except (ValueError, TypeError):
+                sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used!r} is not a number — ignoring)\n')
+            else:
+                if not (0.0 <= _used_float <= 100.0):
+                    sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used_float!r} is out of range 0–100 — ignoring)\n')
+                else:
+                    remaining_pct = 100.0 - _used_float
+                    if _age_min > 30:
+                        sys.stderr.write(f'  (note: rate-limits.json is {_age_min:.0f}min old — may be stale)\n')
+        else:
+            sys.stderr.write('  (note: rate-limits.json has no five_hour.used_percentage)\n')
+    except FileNotFoundError:
+        sys.stderr.write(f'  (note: {rate_limits_file} not found — install StatusLine hook or use --remaining N)\n')
+    except Exception as _ex:
+        sys.stderr.write(f'  (note: could not read rate-limits.json: {_ex})\n')
+elif remaining_pct_raw != '':
     try:
         remaining_pct = float(remaining_pct_raw)
     except ValueError:
-        sys.stderr.write(f'claude-usage: --remaining must be a number, got: {remaining_pct_raw!r}\n')
+        sys.stderr.write(f'token-usage: --remaining must be a number, got: {remaining_pct_raw!r}\n')
         sys.exit(2)
     if not (0.0 <= remaining_pct <= 100.0):
-        sys.stderr.write(f'claude-usage: --remaining must be 0–100, got: {remaining_pct}\n')
+        sys.stderr.write(f'token-usage: --remaining must be 0–100, got: {remaining_pct}\n')
         sys.exit(2)
 
 # Load entries — skip malformed lines and entries missing required 'ts' field

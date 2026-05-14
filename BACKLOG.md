@@ -16,6 +16,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-006 | 🔵 active | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#40 |
 | CC-007 | 🔵 active | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | — |
 | CC-008 | 🔵 active | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | — |
+| CC-009 | 🔵 active | UserPromptSubmit hook 自動 inject MEMORY.md 防止 auto-compact 遺忘 | ux/memory | 2026-05-14 | — |
+| CC-010 | 🔵 active | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | — |
+| CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
+| CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
+| CC-013 | 🔵 active | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | — |
+| CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — |
+| CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — |
 
 ---
 
@@ -55,6 +62,70 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: PR #40 開發過程中 7 輪 gate 才通過，主因是 brief 列了行為變更但沒預先列出對應測試需求，導致 qa-tester 每輪都 block 追加 coverage。
 **Why**: 若 brief 在 `files` 或獨立區塊明確列出「每個新 behavioral unit 需要哪些測試」，codex-executor 第一次就能一起實作，省去多輪 gate + fix 循環。
 **Requirement**: 在 `docs/codex-brief.md` 加 `qa_checklist` 選填區塊規範（引入 3+ behavioral units 時必填）；在 `agents/project-pm.md` 加 PM 生成 brief 時的對應指引。
+
+## CC-009 — UserPromptSubmit hook 自動 inject MEMORY.md
+
+**Problem**: Claude Code auto-compact 時只保留對話摘要，`~/.claude/projects/*/memory/` 的檔案雖存在磁碟，但 Claude 因 context 壓縮而可能遺忘 MEMORY.md 的存在或內容，跨 session 記憶斷裂。
+**Why**: claude-mem 專案驗證了 UserPromptSubmit hook 是最有效的防遺忘時機（每次用戶輸入前注入，確保 compact 後 memory 仍在 context）。相較 SessionStart hook，UserPromptSubmit 更能對抗 mid-session compact。
+**Requirement**:
+1. 新增 `scripts/hook-inject-memory.sh`：UserPromptSubmit hook，讀取 `~/.claude/projects/*/memory/MEMORY.md`（比對 cwd 對應的 project），以精簡格式注入 context
+2. `install-hooks.sh` 掛入 UserPromptSubmit；`uninstall-hooks.sh` 清除
+3. inject 內容限制在 500 tokens 以內（僅 index 行，不含詳細 memory 檔內容）
+4. 測試覆蓋：memory 存在時注入、不存在時靜默跳過
+
+## CC-010 — `/memory-compress` 指令：壓縮 MEMORY.md 條目
+
+**Problem**: MEMORY.md 隨時間增長後，CC-009 的 inject token 量會持續上升，最終超過 500 token 上限或使 context 膨脹。
+**Why**: claude-mem 的漸進式 token 注入策略 + Caveman 的 `caveman-compress` 概念共同指向：memory 需要定期被摘要壓縮，而非無限累積。
+**Requirement**:
+1. 新增 `commands/memory-compress.md`：slash command，呼叫壓縮邏輯
+2. 對 MEMORY.md 中的每個條目：讀取對應 memory 檔 → 摘要為 1-2 行精華 → 更新 MEMORY.md index 行
+3. 壓縮後 MEMORY.md 總長度目標 < 100 行
+4. 提供 `--dry-run` 選項預覽壓縮結果，不實際寫入
+
+## CC-011 — sync-memory.sh + install 選項：symlink memory 到雲端資料夾（跨裝置，deferred）
+
+**Problem**: `~/.claude/projects/*/memory/` 為本機路徑，多台電腦之間 memory 各自獨立，無法共用。
+**Why**: 用戶目前不急，但設計上若以 symlink 指向 Dropbox/iCloud/OneDrive 資料夾，可以零維護代價實現跨裝置共用，且完全相容現有 file-based memory 架構。
+**Requirement**:
+1. `scripts/sync-memory.sh`：提供 `--setup <cloud-path>` 選項，把 `~/.claude/projects/` 下的 memory 資料夾 symlink 到指定雲端同步路徑
+2. `install.sh` 加入可選步驟（opt-in，詢問是否設定雲端 memory 路徑）
+3. 文件說明支援的同步工具（Dropbox、iCloud、OneDrive、Google Drive 本機同步資料夾）
+**Note**: 此項 deferred，有實際跨裝置需求時再實作。
+
+## CC-012 — SessionStart hook：pull 最新 memory（deferred）
+
+**Problem**: 若多台電腦透過 CC-011 共用同一雲端 memory 資料夾，session 啟動時不保證已取得最新版本（雲端同步可能有延遲）。
+**Why**: AgentMemory 專案的 P2P mesh sync 概念過重；更輕量的方式是 SessionStart hook 觸發一次 `rsync` 或 `git pull`，確保 memory 是最新版。
+**Requirement**:
+1. 新增 `scripts/hook-sync-memory.sh`：SessionStart hook，若設定了 sync 端點則執行 pull
+2. 支援兩種模式：(a) git repo 模式（git pull）、(b) rsync 模式（rsync from remote）
+3. 失敗時靜默降級（不阻斷 session 啟動）
+**Note**: 此項 deferred，依賴 CC-011 完成後再評估。
+
+## CC-013 — `/caveman` token 壓縮 skill
+
+**Problem**: 長 session 中 Claude 回應冗長，token 消耗快速，尤其在 codex brief 審核、多輪 gate 等場景。
+**Why**: Caveman 專案實測降低 65-75% token 用量，架構（slash command + hook）與 claude-config 完全相容。`lite`/`full`/`ultra` 三模式讓用戶依場景調整。
+**Requirement**:
+1. 新增 `commands/caveman.md`：slash command，切換壓縮模式（off / lite / full / ultra）
+2. 模式定義寫入 CLAUDE.md（全域生效）或 project CLAUDE.md（project 生效）
+3. 提供 `/caveman-commit` 變體：生成超簡潔 git commit message
+
+## CC-014 — `using-git-worktrees` skill
+
+**Problem**: `--parallel` PR gate 目前各 reviewer 在同一 working tree 執行，reviewer 的寫入（artifact 目錄）可能互相干擾，且無法確保每個 reviewer 看到的是原始狀態。
+**Why**: Superpowers 專案的 `using-git-worktrees` skill 示範了如何讓每個 subagent 在獨立 worktree 中工作，避免狀態污染。這直接補強 CC-003 的解法方向。
+**Requirement**:
+1. 新增 `commands/using-git-worktrees.md`：skill，指導如何在平行開發中使用 git worktree
+2. 評估 `--parallel` gate 是否可以為每個 reviewer 建立獨立 worktree（替代方案或 CC-003 的補充）
+
+## CC-015 — `systematic-debugging` skill
+
+**Problem**: debug 工作流目前無標準化流程，每次偵錯方式不一致，容易遺漏根本原因分析。
+**Why**: Superpowers 的 `systematic-debugging` skill 提供 RED-GREEN-REFACTOR 以外的結構化偵錯步驟，有助於複雜 bug 分析。
+**Requirement**:
+1. 新增 `commands/systematic-debugging.md`：slash command，提供結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）
 
 ## CC-008 — Spark routing 判斷標準寫入 agents/project-pm.md
 
