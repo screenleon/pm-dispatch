@@ -1269,10 +1269,35 @@ CHAINEOF
   rm -rf "$rl_home"
 }
 
+rl_hook_chain_called_with_args() {
+  local name="rl-hook/chain-called-with-args" rl_home chain_log chain_script
+  rl_home="$(mktemp -d)"
+  chain_log="$rl_home/chain-called"
+  chain_script="$rl_home/chain.sh"
+  cat > "$chain_script" <<'CHAINEOF'
+#!/usr/bin/env bash
+touch "$(dirname "$0")/chain-called"
+CHAINEOF
+  chmod +x "$chain_script"
+  # Store command string with arguments (not a bare path).
+  printf '%s\n' "$chain_script --some-arg" > "$rl_home/statusline-chain.conf"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
+  if [[ -f "$rl_home/rate-limits.json" && -f "$chain_log" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — rate-limits.json=%s chain-called=%s\n' "$name" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)" "$(test -f "$chain_log" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home"
+}
+
 rl_hook_happy_path
 rl_hook_missing_rate_limits
 rl_hook_malformed_json
 rl_hook_chain_called
+rl_hook_chain_called_with_args
 
 # =============================================================================
 # summary

@@ -460,6 +460,29 @@ test_statusline_install_chains_previous() {
   pass "$name"
 }
 
+test_statusline_install_chains_previous_with_args() {
+  local name="statusline-install-chains-previous-with-args"
+  local home="$tmp_root/$name"
+  local previous="$tmp_root/$name-prev-statusline.sh"
+  mkdir -p "$home/.claude"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$previous"
+  chmod +x "$previous"
+  # Command string with arguments — the full value must be preserved in chain conf.
+  local previous_with_args="$previous --some-flag"
+  printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
+    "$previous_with_args" > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  local got
+  got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
+  if [[ "$got" != "$REPO_ROOT/scripts/hook-save-rate-limits.sh" ]]; then
+    fail "$name" "statusLine.command was $got"
+    return
+  fi
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous_with_args" || return
+  pass "$name"
+}
+
 test_statusline_uninstall_restores() {
   local name="statusline-uninstall-restores"
   local home="$tmp_root/$name"
@@ -491,6 +514,7 @@ test_hooks_install_uninstall_lifecycle
 test_stop_hook_migration
 test_stop_hook_preservation
 test_statusline_install_chains_previous
+test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
