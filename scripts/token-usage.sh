@@ -66,9 +66,17 @@ if remaining_pct_raw == 'auto':
         _fh = _rl.get('five_hour', {})
         _used = _fh.get('used_percentage')
         if _used is not None:
-            remaining_pct = 100.0 - float(_used)
-            if _age_min > 30:
-                sys.stderr.write(f'  (note: rate-limits.json is {_age_min:.0f}min old — may be stale)\n')
+            try:
+                _used_float = float(_used)
+            except (ValueError, TypeError):
+                sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used!r} is not a number — ignoring)\n')
+            else:
+                if not (0.0 <= _used_float <= 100.0):
+                    sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used_float!r} is out of range 0–100 — ignoring)\n')
+                else:
+                    remaining_pct = 100.0 - _used_float
+                    if _age_min > 30:
+                        sys.stderr.write(f'  (note: rate-limits.json is {_age_min:.0f}min old — may be stale)\n')
         else:
             sys.stderr.write('  (note: rate-limits.json has no five_hour.used_percentage)\n')
     except FileNotFoundError:

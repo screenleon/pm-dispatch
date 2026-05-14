@@ -1367,6 +1367,45 @@ rl_hook_empty_stdin() {
   rm -rf "$rl_home"
 }
 
+rl_hook_write_failure_chains() {
+  # Verifies that a rate-limits.json write failure (unwritable CLAUDE_CONFIG_DIR)
+  # does not prevent the configured chain command from being invoked; the hook
+  # must still exit 0 so the chained StatusLine command is not silently dropped.
+  # Steps:
+  #   1. Create a temp dir; add statusline-chain.conf pointing to a chain script
+  #   2. Make the dir read-only so rate-limits.json cannot be written
+  #   3. Run the hook with a valid rate_limits payload
+  #   4. Assert exit 0, chain sentinel exists, rate-limits.json absent
+  local name="rl-hook/write-failure-chains" rl_home chain_dir chain_script chain_log status
+  rl_home="$(mktemp -d)"
+  chain_dir="$(mktemp -d)"
+  chain_script="$chain_dir/chain.sh"
+  chain_log="$chain_dir/chain-called"
+  cat > "$chain_script" <<'CHAINEOF'
+#!/usr/bin/env bash
+touch "$(dirname "$0")/chain-called"
+CHAINEOF
+  chmod +x "$chain_script"
+  printf '%s\n' "$chain_script" > "$rl_home/statusline-chain.conf"
+  chmod 555 "$rl_home"
+  printf '%s' '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' \
+    | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  chmod 755 "$rl_home"
+  if [[ "$status" == "0" && -f "$chain_log" && ! -f "$rl_home/rate-limits.json" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s chain-called=%s rate-limits.json=%s\n' \
+      "$name" "$status" \
+      "$(test -f "$chain_log" && echo yes || echo no)" \
+      "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)"
+  fi
+  rm -rf "$rl_home" "$chain_dir"
+}
+
 rl_hook_chain_failure_isolated() {
   # Verifies that a failing chain command (non-zero exit) does not prevent
   # rate-limits.json from being written (|| true isolates chain failure).
@@ -1397,6 +1436,7 @@ rl_hook_empty_stdin
 rl_hook_chain_called
 rl_hook_chain_called_with_args
 rl_hook_chain_called_bash_c
+rl_hook_write_failure_chains
 rl_hook_chain_failure_isolated
 
 # =============================================================================

@@ -646,6 +646,30 @@ case_remaining_auto_missing_file() {
   fi
 }
 
+case_remaining_auto_out_of_range_percentage() {
+  # Verifies that a rate-limits.json with five_hour.used_percentage outside 0-100
+  # emits an "out of range" warning, exits 0, and does not print a derived percentage.
+  # Steps:
+  #   1. Write a rate-limits.json with five_hour.used_percentage=150
+  #   2. Run token-usage.sh --remaining with CLAUDE_CONFIG_DIR pointing to the file
+  #   3. Assert exit 0, stderr contains "out of range", stdout has no "Remaining (from dashboard)"
+  local name="remaining_auto_out_of_range_percentage" home out status rl_dir
+  home="$(new_home "$name")"
+  write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
+  rl_dir="$(mktemp -d)"
+  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':150,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  if grep -qi "out of range" "$out.err" && ! grep -q "Remaining (from dashboard)" "$out"; then
+    rm -rf "$rl_dir"
+    pass_case "$name"
+  else
+    rm -rf "$rl_dir"
+    fail "$name" "expected out-of-range warning and no derived percentage, got stderr: $(head -3 "$out.err")"
+  fi
+}
+
 case_remaining_auto_no_five_hour_key() {
   # Verifies that a rate-limits.json missing five_hour.used_percentage emits a
   # warning and exits 0 without printing a derived remaining percentage.
@@ -787,6 +811,7 @@ case_remaining_codex_dispatch_counted
 case_remaining_auto_valid_file
 case_remaining_auto_stale_warning
 case_remaining_auto_missing_file
+case_remaining_auto_out_of_range_percentage
 case_remaining_auto_no_five_hour_key
 case_remaining_auto_malformed_json
 case_remaining_manual_n_unchanged

@@ -34,9 +34,14 @@ for key in ('five_hour', 'seven_day'):
         out[key] = {'used_percentage': part.get('used_percentage', 0),
                     'resets_at': part.get('resets_at', 0)}
 
-os.makedirs(config_dir, exist_ok=True)
-with open(os.path.join(config_dir, 'rate-limits.json'), 'w') as f:
-    json.dump(out, f)
+try:
+    os.makedirs(config_dir, exist_ok=True)
+    _tmp_path = os.path.join(config_dir, '.rate-limits.json.tmp')
+    with open(_tmp_path, 'w') as _f:
+        json.dump(out, _f)
+    os.replace(_tmp_path, os.path.join(config_dir, 'rate-limits.json'))
+except Exception as _ex:
+    sys.stderr.write(f'  (note: could not write rate-limits.json: {_ex})\n')
 PYEOF
 
 # Chain to previous statusLine command if configured.
