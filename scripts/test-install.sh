@@ -287,6 +287,31 @@ test_legacy_stale_symlinks_removed() {
     return
   fi
 
+  # claude-usage.sh → token-usage.sh rename: stale helper symlink must be removed.
+  local usage_home="$tmp_root/$name-usage-home"
+  local usage_out="$tmp_root/$name-usage.stdout"
+  mkdir -p "$usage_home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/claude-usage.sh" "$usage_home/.claude/scripts/claude-usage.sh" 2>/dev/null || \
+    ln -s "/dev/null" "$usage_home/.claude/scripts/claude-usage.sh"
+
+  set +e
+  HOME="$usage_home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$usage_out" 2>/dev/null
+  local usage_code=$?
+  set -e
+
+  if [ "$usage_code" -ne 0 ]; then
+    fail "$name" "claude-usage legacy install exit $usage_code, expected 0"
+    return
+  fi
+  if [ -e "$usage_home/.claude/scripts/claude-usage.sh" ] || [ -L "$usage_home/.claude/scripts/claude-usage.sh" ]; then
+    fail "$name" "$usage_home/.claude/scripts/claude-usage.sh should have been removed"
+    return
+  fi
+  assert_contains "$name" "$usage_out" "remove (legacy)" || return
+
   pass "$name"
 }
 
