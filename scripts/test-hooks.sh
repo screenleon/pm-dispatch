@@ -2164,7 +2164,10 @@ session_hook_malformed_payload() {
 }
 
 session_hook_empty_stdin() {
-  # Verifies exit 0 with no output when stdin is empty.
+  # Verifies the session hook exits 0 silently when stdin is empty.
+  # Steps:
+  #   1. Pipe an empty string to the session hook
+  #   2. Assert exit 0 and no output produced
   local name="session-hook/empty-stdin"
   should_run "$name" || return 0
   local output status
@@ -2194,9 +2197,13 @@ session_hook_empty_stdin
 $LIST || echo "== mem-recall format validator =="
 
 mem_recall_format_validator() {
-  # Validates that the /mem-recall logic (read last N non-empty-summary entries
-  # from episodes.jsonl) produces the expected injection format.
-  # This scriptable validator exercises the data contract that /mem-recall depends on.
+  # Validates the /mem-recall output format contract using a Python replica of the
+  # command logic. Exercises the data contract that /mem-recall depends on.
+  # Steps:
+  #   1. Write 3 episodes.jsonl entries: 2 with summaries, 1 skeleton (empty summary)
+  #   2. Run the Python reader logic (last-N non-empty-summary filter)
+  #   3. Assert output contains both summaries, the header/footer markers,
+  #      and does NOT include the skeleton entry
   local name="mem-recall/format-validator"
   should_run "$name" || return 0
   local dir episodes result
@@ -2263,8 +2270,14 @@ mem_recall_format_validator
 $LIST || echo "== cross-command: mem-log + session-stop =="
 
 session_stop_skips_after_recent_memlog_empty_session_id() {
-  # Verifies Stop hook does NOT append a skeleton when /mem-log wrote a RECENT
-  # full summary entry with session_id="" for the same cwd (within 4h window).
+  # Verifies Stop hook does NOT append a skeleton when /mem-log already wrote
+  # a full summary entry with session_id="" for the same cwd within the 4-hour
+  # session window. The recent /mem-log entry represents the current session.
+  # Steps:
+  #   1. Create project memory dir and write a /mem-log entry (1h ago, session_id="")
+  #      with a non-empty summary for the workspace cwd
+  #   2. Run Stop hook with a real session_id for the same cwd
+  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (no skeleton appended)
   local name="cross-cmd/stop-skips-after-recent-memlog-empty-session-id"
   should_run "$name" || return 0
   local dir cwd episodes payload status line_count recent_iso
@@ -2296,8 +2309,13 @@ session_stop_skips_after_recent_memlog_empty_session_id() {
 
 session_stop_appends_after_old_memlog_empty_session_id() {
   # Verifies Stop hook DOES append a new skeleton when the last session_id=""
-  # entry is OLDER than the session window (>4h). An old /mem-log entry must
-  # not suppress later real sessions.
+  # entry is older than the 4-hour session window. An old /mem-log entry from
+  # a previous day must not permanently suppress future Stop-hook recording.
+  # Steps:
+  #   1. Create project memory dir and write a /mem-log entry (10h ago, session_id="")
+  #      with a non-empty summary — outside the 4-hour session window
+  #   2. Run Stop hook with a new real session_id for the same cwd
+  #   3. Assert exit 0 and episodes.jsonl now has 2 lines (new skeleton appended)
   local name="cross-cmd/stop-appends-after-old-memlog-empty-session-id"
   should_run "$name" || return 0
   local dir cwd episodes payload status line_count old_iso
@@ -2336,7 +2354,11 @@ session_stop_appends_after_old_memlog_empty_session_id
 $LIST || echo "== meta: filter and list behavior =="
 
 meta_filter_runs_only_matching() {
-  # Verifies --filter executes exactly the matching cases and exits 0.
+  # Verifies --filter executes exactly the cases whose name contains the pattern
+  # and exits 0; all other cases are skipped.
+  # Steps:
+  #   1. Invoke test-hooks.sh --filter with a pattern matching exactly one known case
+  #   2. Assert the output reports exactly "1 passed, 0 failed"
   local name="meta/filter-runs-only-matching"
   should_run "$name" || return 0
   local out
@@ -2352,7 +2374,12 @@ meta_filter_runs_only_matching() {
 }
 
 meta_list_exits_zero_with_count() {
-  # Verifies --list exits 0 and prints at least 200 case names (no test code runs).
+  # Verifies --list exits 0 and emits at least 200 case name lines without
+  # executing any test code (counters remain 0).
+  # Steps:
+  #   1. Invoke test-hooks.sh --list
+  #   2. Assert exit status is 0
+  #   3. Assert the printed line count exceeds 200 (confirming the full registry)
   local name="meta/list-exits-zero-with-count"
   should_run "$name" || return 0
   local out count status

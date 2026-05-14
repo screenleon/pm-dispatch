@@ -56,12 +56,14 @@ if not files or not query:
 
 # -F: fixed-string (not regex), -i: case-insensitive, -l: filenames only
 # Argument list — query is never parsed by a shell.
-result = subprocess.run(
-    ['rg', '-ilF', '--', query] + files,
-    capture_output=True, text=True
-)
-if result.returncode == 127:
-    # rg not available — fall back to grep
+# subprocess raises FileNotFoundError (not returncode 127) when the binary
+# is absent, so catch that explicitly before falling back to grep.
+try:
+    result = subprocess.run(
+        ['rg', '-ilF', '--', query] + files,
+        capture_output=True, text=True
+    )
+except FileNotFoundError:
     result = subprocess.run(
         ['grep', '-rilF', '--', query] + files,
         capture_output=True, text=True

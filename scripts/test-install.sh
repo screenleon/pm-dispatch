@@ -760,6 +760,35 @@ test_session_stop_uninstall_preserves_stop() {
   pass "$name"
 }
 
+test_skip_preflight_skips_all_tests() {
+  # Verifies that CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 causes install.sh to
+  # skip all preflight test suites (no test output headers produced).
+  # Steps:
+  #   1. Create a sandbox settings.json
+  #   2. Run install.sh with CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1
+  #   3. Assert output contains NO "==>" preflight section headers for any test suite
+  local name="skip-preflight-skips-all-tests"
+  should_run "$name" || return 0
+  local home out
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  out=$(HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$REPO_ROOT/install.sh" 2>&1)
+
+  local ok=true
+  for label in "test hooks" "test install" "test usage" "test pm" "test codex" \
+               "test pr-gate" "test setup-project" "test patch-gitignore" \
+               "lint agents" "lint scripts"; do
+    if [[ "$out" == *"==> $label"* ]]; then
+      ok=false
+      printf '  FAIL  %s — unexpected preflight section: "==> %s"\n' "$name" "$label" >&2
+    fi
+  done
+
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
+}
+
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
@@ -778,6 +807,7 @@ test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
+test_skip_preflight_skips_all_tests
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"

@@ -154,21 +154,21 @@ if [[ -x "$REPO_ROOT/scripts/test-codex-dispatch.sh" && "$_SKIP_PREFLIGHT" != "1
 fi
 
 # Pre-flight: pr-gate regression suite
-if [[ -x "$REPO_ROOT/scripts/test-pr-gate.sh" ]]; then
+if [[ -x "$REPO_ROOT/scripts/test-pr-gate.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> test pr-gate"
   "$REPO_ROOT/scripts/test-pr-gate.sh"
   echo
 fi
 
 # Pre-flight: setup-project regression suite
-if [[ -x "$REPO_ROOT/scripts/test-setup-project.sh" ]]; then
+if [[ -x "$REPO_ROOT/scripts/test-setup-project.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> test setup-project"
   "$REPO_ROOT/scripts/test-setup-project.sh"
   echo
 fi
 
 # Pre-flight: gitignore patch helper regression suite
-if [[ -x "$REPO_ROOT/scripts/test-patch-gitignore.sh" ]]; then
+if [[ -x "$REPO_ROOT/scripts/test-patch-gitignore.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> test patch-gitignore"
   "$REPO_ROOT/scripts/test-patch-gitignore.sh"
   echo
