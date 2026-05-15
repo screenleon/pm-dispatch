@@ -20,7 +20,7 @@ audit() {
   mkdir -p "$LOG_DIR" 2>/dev/null || return 0
   local ts
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
-  printf '%s %s reason=%q detail=%q\n' "$ts" "$HOOK_NAME" "$reason" "$detail" >> "$ERR_FILE" 2>/dev/null || true
+  printf '%s %s reason=%q detail=%q reason_text="%s"\n' "$ts" "$HOOK_NAME" "$reason" "$detail" "$reason" >> "$ERR_FILE" 2>/dev/null || true
 }
 
 encode_path() {
@@ -187,38 +187,60 @@ rotate_if_needed() {
 }
 
 append_inside_block() {
-  local target="$1" line="$2" tmp
-  if [[ ! -f "$target" ]]; then
-    create_minimal_log "$target" 2>/dev/null || {
-      audit "create routing log failed" "$target"
-      return 1
+  local target="$1" line="$2" tmp lockfile lockdir
+  lockfile="${target}.lock"
+  lockdir="$(dirname "$target")"
+  mkdir -p "$lockdir" 2>/dev/null || {
+    audit "lock directory failed" "$target"
+    return 1
+  }
+
+  { exec 9>"$lockfile"; } 2>/dev/null || {
+    audit "append/rotation lock open failed" "$target"
+    return 1
+  }
+
+  (
+    flock -x -w 2 9 || {
+      audit "lock timeout" "$target"
+      exit 1
     }
-  fi
-  if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
-    audit "auto-block missing; run migrator first" "$target"
-    return 1
-  fi
 
-  rotate_if_needed "$target" || return 1
+    if [[ ! -f "$target" ]]; then
+      create_minimal_log "$target" 2>/dev/null || {
+        audit "create routing log failed" "$target"
+        exit 1
+      }
+    fi
+    if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
+      audit "auto-block missing; run migrator first" "$target"
+      exit 1
+    fi
 
-  tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
-    audit "append temp failed" "$target"
-    return 1
-  }
-  awk -v end="$AUTO_END" -v row="$line" '
-    $0 == end && !done { print row; done=1 }
-    { print }
-  ' "$target" > "$tmp" 2>/dev/null || {
-    rm -f "$tmp"
-    audit "append rewrite failed" "$target"
-    return 1
-  }
-  mv -f "$tmp" "$target" 2>/dev/null || {
-    rm -f "$tmp"
-    audit "append move failed" "$target"
-    return 1
-  }
-  return 0
+    rotate_if_needed "$target" || exit 1
+
+    tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
+      audit "append temp failed" "$target"
+      exit 1
+    }
+    awk -v end="$AUTO_END" -v row="$line" '
+      $0 == end && !done { print row; done=1 }
+      { print }
+    ' "$target" > "$tmp" 2>/dev/null || {
+      rm -f "$tmp"
+      audit "append rewrite failed" "$target"
+      exit 1
+    }
+    mv -f "$tmp" "$target" 2>/dev/null || {
+      rm -f "$tmp"
+      audit "append move failed" "$target"
+      exit 1
+    }
+    exit 0
+  )
+  local locked_status=$?
+  exec 9>&-
+  return "$locked_status"
 }
 
 [[ "${CLAUDE_ROUTING_LOG_DISABLE:-}" == "1" ]] && exit 0

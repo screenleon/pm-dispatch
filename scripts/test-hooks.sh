@@ -3120,6 +3120,82 @@ routing_rotation_fail_case() {
   fi
 }
 
+# Behavior: Routing hook serializes concurrent appends through the routing log lock.
+# Steps:
+#   1. Fire 50 parallel Agent routing payloads at one routing_log.md.
+#   2. Verify exactly 50 JSON rows were appended and the auto-block markers remain intact.
+#   3. Hold the sibling lockfile and verify lock timeout audits while the hook still exits zero.
+routing_concurrent_append_case() {
+  local name="routing: concurrent appends keep every row"
+  should_run "$name" || return 0
+  local root mem n payload status pid count unique start_count end_count json_ok lockfile ready lock_release holder timeout_status before_timeout after_timeout
+  local pids=()
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-concurrent.XXXXXX")"
+  mem="$root/memory"
+  make_routing_log "$mem"
+  n=50
+  status=0
+
+  for i in $(seq 1 "$n"); do
+    payload="{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"concurrent-$i\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"codex-executor\"}}"
+    (
+      printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+    ) &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+
+  count="$(routing_count "$mem")"
+  unique="$(routing_rows "$mem" | jq -r '.session_id' | sort -u | wc -l | tr -d '[:space:]')"
+  start_count="$(grep -c -F '<!-- routing-log:auto-block:start -->' "$mem/routing_log.md" 2>/dev/null || true)"
+  end_count="$(grep -c -F '<!-- routing-log:auto-block:end -->' "$mem/routing_log.md" 2>/dev/null || true)"
+  json_ok=0
+  routing_rows "$mem" | jq -c . >/dev/null && json_ok=1
+
+  lockfile="$mem/routing_log.md.lock"
+  ready="$root/lock-ready"
+  lock_release="$root/lock-release"
+  mkfifo "$lock_release"
+  (
+    exec 8>"$lockfile"
+    flock -x 8
+    : > "$ready"
+    cat "$lock_release" >/dev/null
+    exec 8>&-
+  ) &
+  holder="$!"
+  while [[ ! -e "$ready" ]]; do
+    sleep 0.05
+  done
+  before_timeout="$(routing_count "$mem")"
+  payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"lock-timeout","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  timeout_status=$?
+  after_timeout="$(routing_count "$mem")"
+  : > "$lock_release"
+  wait "$holder" 2>/dev/null || true
+
+  if [[ "$status" == "0" ]] &&
+     [[ "$count" == "$n" ]] &&
+     [[ "$unique" == "$n" ]] &&
+     [[ "$json_ok" == "1" ]] &&
+     [[ "$start_count" == "1" ]] &&
+     [[ "$end_count" == "1" ]] &&
+     [[ "$timeout_status" == "0" ]] &&
+     [[ "$before_timeout" == "$after_timeout" ]] &&
+     grep -q -F 'lock timeout' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (wait_status=%s count=%s unique=%s json_ok=%s start=%s end=%s timeout_status=%s before_timeout=%s after_timeout=%s)\n' \
+      "$name" "$status" "$count" "$unique" "$json_ok" "$start_count" "$end_count" "$timeout_status" "$before_timeout" "$after_timeout"
+  fi
+}
+
 # Behavior: install-hooks dry-run shows PostToolUse Bash|Agent routing hook wiring.
 # Steps:
 #   1. Prepare an isolated HOME with empty Claude settings.
@@ -3320,6 +3396,7 @@ routing_missing_file_case
 routing_missing_marker_case
 routing_rotation_case
 routing_rotation_fail_case
+routing_concurrent_append_case
 install_routing_dry_run_case
 install_routing_idempotent_case
 install_routing_migrates_unmarked_case
