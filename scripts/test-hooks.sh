@@ -1136,6 +1136,11 @@ tool_trace_case "tool-trace/read_foreign_path_redacted" \
   '.tool == "Read" and .first_arg_or_skill == null' \
   'shadow|/etc'
 
+# Behavior: Tool trace truncates long first_arg_or_skill values to the documented 80-character cap.
+# Steps:
+#   1. Prepare an Agent payload with a subagent_type longer than 80 characters.
+#   2. Trigger the trace hook with the payload.
+#   3. Verify the logged first_arg_or_skill is exactly 80 characters and emits no stdout or stderr.
 tool_trace_first_arg_truncation() {
   local name="tool-trace/first_arg_truncation" trace_dir out err payload line value
   should_run "$name" || return 0
@@ -1158,6 +1163,11 @@ tool_trace_first_arg_truncation() {
 }
 tool_trace_first_arg_truncation
 
+# Behavior: Tool trace exits cleanly without writing when no project memory directory is discoverable.
+# Steps:
+#   1. Prepare an isolated Claude config directory with no matching project memory path.
+#   2. Trigger the trace hook with a cwd outside any discoverable project.
+#   3. Verify the hook exits zero, emits no output, and creates no files.
 tool_trace_no_project_dir() {
   local name="tool-trace/no_project_dir" config_dir out err status before after
   should_run "$name" || return 0
@@ -1181,6 +1191,11 @@ tool_trace_no_project_dir() {
 }
 tool_trace_no_project_dir
 
+# Behavior: Tool trace skips payloads that do not include a cwd field.
+# Steps:
+#   1. Prepare a valid Bash payload with no cwd.
+#   2. Trigger the trace hook with the payload.
+#   3. Verify the hook exits zero without creating tool-trace.jsonl or emitting output.
 tool_trace_missing_cwd() {
   local name="tool-trace/missing_cwd" trace_dir out err status
   should_run "$name" || return 0
@@ -1201,6 +1216,11 @@ tool_trace_missing_cwd() {
 }
 tool_trace_missing_cwd
 
+# Behavior: Tool trace audits malformed JSON and does not append a trace row.
+# Steps:
+#   1. Prepare a malformed stdin payload.
+#   2. Trigger the trace hook with the malformed payload.
+#   3. Verify the hook exits zero, writes no trace file, and records a malformed audit entry.
 tool_trace_malformed_json() {
   local name="tool-trace/malformed_json" trace_dir out err status
   should_run "$name" || return 0
@@ -1250,6 +1270,11 @@ tool_trace_malformed_key_bearing_rejected() {
 }
 tool_trace_malformed_key_bearing_rejected
 
+# Behavior: Tool trace append failures audit the error without blocking the tool call.
+# Steps:
+#   1. Prepare a trace file that cannot be appended.
+#   2. Trigger the trace hook with a valid Bash payload.
+#   3. Verify the hook exits zero, emits no output, and records an append audit entry.
 tool_trace_append_failure_non_blocking() {
   local name="tool-trace/append_failure_non_blocking" trace_dir out err status target
   should_run "$name" || return 0
@@ -1275,6 +1300,11 @@ tool_trace_append_failure_non_blocking() {
 }
 tool_trace_append_failure_non_blocking
 
+# Behavior: Tool trace disable env var prevents trace writes while preserving a zero exit.
+# Steps:
+#   1. Prepare a valid Bash payload and set CLAUDE_TOOL_TRACE_DISABLE.
+#   2. Trigger the trace hook with tracing disabled.
+#   3. Verify no trace file is created and no output is emitted.
 tool_trace_disabled_envvar() {
   local name="tool-trace/disabled_envvar" trace_dir out err status
   should_run "$name" || return 0
@@ -1296,6 +1326,11 @@ tool_trace_disabled_envvar() {
 }
 tool_trace_disabled_envvar
 
+# Behavior: Tool trace records metadata without leaking full command payload content.
+# Steps:
+#   1. Prepare a Bash payload containing a secret-shaped command string.
+#   2. Trigger the trace hook with the payload.
+#   3. Verify the trace row exists but omits the secret command content.
 tool_trace_no_payload_leakage() {
   local name="tool-trace/no_payload_leakage" trace_dir out err line
   should_run "$name" || return 0
@@ -1375,6 +1410,11 @@ tool_trace_case "tool-trace/jsonl_schema_shape" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"schema\",\"tool_name\":\"Task\",\"tool_input\":{\"subagent_type\":\"worker\"}}" \
   'keys == ["first_arg_or_skill","session_id","tool","ts"] and (.ts | type == "string") and (.session_id | type == "string") and (.tool | type == "string")'
 
+# Behavior: install-hooks wires tool trace once and subsequent dry-runs report no pending change.
+# Steps:
+#   1. Prepare an isolated HOME with empty Claude settings.
+#   2. Trigger install-hooks once and then run dry-run checks.
+#   3. Verify tool-trace is wired once and later dry-runs report already wired.
 tool_trace_install_hooks_idempotent() {
   local name="tool-trace/install_hooks_idempotent" home out1 out2 out3 count
   should_run "$name" || return 0
@@ -2976,6 +3016,11 @@ routing_hook_case() {
   fi
 }
 
+# Behavior: Routing hook creates a minimal routing_log.md when the file is missing.
+# Steps:
+#   1. Prepare an empty memory directory and a valid Agent routing payload.
+#   2. Trigger the routing hook with the payload.
+#   3. Verify routing_log.md is created and contains one routing row.
 routing_missing_file_case() {
   local name="routing: missing routing_log.md creates minimal file and appends"
   should_run "$name" || return 0
@@ -2995,6 +3040,11 @@ routing_missing_file_case() {
   fi
 }
 
+# Behavior: Routing hook audits an existing routing_log.md without an auto-block and leaves it unchanged.
+# Steps:
+#   1. Prepare a legacy routing_log.md without the auto-block marker.
+#   2. Trigger the routing hook with a valid Agent routing payload.
+#   3. Verify the file is byte-identical and the audit log reports the missing marker.
 routing_missing_marker_case() {
   local name="routing: existing log without auto-block audits and leaves file unmodified"
   should_run "$name" || return 0
@@ -3016,6 +3066,11 @@ routing_missing_marker_case() {
   fi
 }
 
+# Behavior: Routing hook rotates an over-cap routing_log.md while preserving header content and a fresh auto-block.
+# Steps:
+#   1. Prepare a routing_log.md larger than 1 MiB with an existing auto-block.
+#   2. Trigger the routing hook with a valid Agent routing payload.
+#   3. Verify the archive is created, the fresh log has one row, and the header remains.
 routing_rotation_case() {
   local name="routing: rotates over 1MiB preserving header and fresh block"
   should_run "$name" || return 0
@@ -3036,6 +3091,11 @@ routing_rotation_case() {
   fi
 }
 
+# Behavior: Routing hook audits rotation failures and skips appending.
+# Steps:
+#   1. Prepare an over-cap routing_log.md in a non-writable memory directory.
+#   2. Trigger the routing hook with a valid Agent routing payload.
+#   3. Verify the row count is unchanged and the audit log reports rotation failure.
 routing_rotation_fail_case() {
   local name="routing: rotation failure audits and skips append"
   should_run "$name" || return 0
@@ -3060,6 +3120,11 @@ routing_rotation_fail_case() {
   fi
 }
 
+# Behavior: install-hooks dry-run shows PostToolUse Bash|Agent routing hook wiring.
+# Steps:
+#   1. Prepare an isolated HOME with empty Claude settings.
+#   2. Trigger install-hooks with --dry-run.
+#   3. Verify the diff contains PostToolUse Bash|Agent wiring for hook-routing-log.sh.
 install_routing_dry_run_case() {
   local name="routing: install-hooks dry-run wires PostToolUse Bash|Agent"
   should_run "$name" || return 0
@@ -3078,6 +3143,11 @@ install_routing_dry_run_case() {
   fi
 }
 
+# Behavior: install-hooks exits cleanly when routing hook wiring is already present.
+# Steps:
+#   1. Prepare an isolated HOME and run install-hooks once.
+#   2. Trigger install-hooks a second time.
+#   3. Verify the second run reports already wired.
 install_routing_idempotent_case() {
   local name="routing: install-hooks already-wired exits cleanly"
   should_run "$name" || return 0
@@ -3094,6 +3164,130 @@ install_routing_idempotent_case() {
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
     printf '  FAIL  %s — out=%q\n' "$name" "$out"
+  fi
+}
+
+routing_encode_path() {
+  local cwd="$1" enc
+  enc="-${cwd#/}"
+  printf '%s' "${enc//\//-}"
+}
+
+install_routing_memory_dir() {
+  local home="$1"
+  printf '%s/.claude/projects/%s/memory' "$home" "$(routing_encode_path "$REPO_ROOT")"
+}
+
+write_install_routing_legacy_fixture() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<'EOF'
+---
+name: routing_log
+type: log
+---
+Append one row per Brief or Dispatch decision.
+
+| date | task | routed to | Q hit | second-thoughts |
+|------|------|-----------|-------|-----------------|
+| 2026-05-15 | legacy alpha | Codex | Q1 | no |
+
+## 2026-05-15 — one
+- Task: apply exact patch one
+- Routed to: Codex (executor)
+- Q1/Q2/Q3 hit: Q1 yes
+- Second thoughts: none
+EOF
+}
+
+# Behavior: install-hooks migrates an unmarked routing_log.md before wiring routing hooks.
+# Steps:
+#   1. Prepare isolated Claude settings and a discoverable legacy routing_log.md.
+#   2. Trigger install-hooks normally.
+#   3. Verify settings wiring, auto-block migration, and routing_log.md backup creation.
+install_routing_migrates_unmarked_case() {
+  local name="install-routing: unmarked routing_log triggers migrator end-to-end" home mem out count
+  should_run "$name" || return 0
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-migrate.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$home/.claude/settings.json"
+  mem="$(install_routing_memory_dir "$home")"
+  write_install_routing_legacy_fixture "$mem/routing_log.md"
+  out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
+  count="$(jq '[.hooks.PostToolUse[]? | select(.matcher == "Bash|Agent") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
+  if [[ "$count" == "1" ]] &&
+     grep -q -F '<!-- routing-log:auto-block:start -->' "$mem/routing_log.md" &&
+     [[ -f "$mem/routing_log.md.bak" ]] &&
+     [[ "$out" == *"migrate-routing-log: migrated"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — out=%q count=%s marker=%s bak=%s\n' "$name" "$out" "$count" "$(grep -c -F '<!-- routing-log:auto-block:start -->' "$mem/routing_log.md" 2>/dev/null || true)" "$([[ -f "$mem/routing_log.md.bak" ]] && echo yes || echo no)"
+  fi
+}
+
+# Behavior: install-hooks skips migrator when routing_log.md already contains the auto-block marker.
+# Steps:
+#   1. Prepare isolated Claude settings and an already migrated routing_log.md.
+#   2. Trigger install-hooks normally.
+#   3. Verify settings wiring, unchanged routing_log.md bytes, no new backup, and skip output.
+install_routing_skips_already_migrated_case() {
+  local name="install-routing: already-migrated routing_log skips migrator" home mem out count
+  should_run "$name" || return 0
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-skip.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$home/.claude/settings.json"
+  mem="$(install_routing_memory_dir "$home")"
+  mkdir -p "$mem"
+  make_routing_log "$mem"
+  cp "$mem/routing_log.md" "$mem/routing_log.md.before"
+  out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
+  count="$(jq '[.hooks.PostToolUse[]? | select(.matcher == "Bash|Agent") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
+  if [[ "$count" == "1" ]] &&
+     cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" &&
+     [[ ! -e "$mem/routing_log.md.bak" ]] &&
+     [[ "$out" == *"install-hooks: routing-log already migrated, skipping migrator"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — out=%q count=%s unchanged=%s bak=%s\n' "$name" "$out" "$count" "$(cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && echo yes || echo no)" "$([[ -e "$mem/routing_log.md.bak" ]] && echo yes || echo no)"
+  fi
+}
+
+# Behavior: install-hooks leaves settings.json untouched when routing-log migration fails.
+# Steps:
+#   1. Prepare isolated Claude settings, a legacy routing_log.md, and a conflicting .bak file.
+#   2. Trigger install-hooks normally.
+#   3. Verify non-zero exit, unchanged settings and routing log, no settings backup, and migrator failure output.
+install_routing_migrator_failure_preserves_settings_case() {
+  local name="install-routing: migrator failure leaves settings.json untouched" home mem out status backups
+  should_run "$name" || return 0
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-fail.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '{"hooks":{"PreToolUse":[]}}\n' > "$home/.claude/settings.json"
+  cp "$home/.claude/settings.json" "$home/.claude/settings.json.before"
+  mem="$(install_routing_memory_dir "$home")"
+  write_install_routing_legacy_fixture "$mem/routing_log.md"
+  cp "$mem/routing_log.md" "$mem/routing_log.md.before"
+  printf 'existing backup\n' > "$mem/routing_log.md.bak"
+  out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)" && status=$? || status=$?
+  backups="$(find "$home/.claude" -maxdepth 1 -name 'settings.json.bak.*' | wc -l)"
+  if [[ "$status" -ne 0 ]] &&
+     cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" &&
+     cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" &&
+     [[ "$backups" == "0" ]] &&
+     [[ "$out" == *"migrate-routing-log:"* ]] &&
+     [[ "$out" == *"install-hooks: routing-log migrator failed"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — status=%s backups=%s out=%q settings-unchanged=%s log-unchanged=%s\n' "$name" "$status" "$backups" "$out" "$(cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" && echo yes || echo no)" "$(cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && echo yes || echo no)"
   fi
 }
 
@@ -3128,6 +3322,9 @@ routing_rotation_case
 routing_rotation_fail_case
 install_routing_dry_run_case
 install_routing_idempotent_case
+install_routing_migrates_unmarked_case
+install_routing_skips_already_migrated_case
+install_routing_migrator_failure_preserves_settings_case
 
 meta_filter_runs_only_matching
 meta_list_exits_zero_with_count

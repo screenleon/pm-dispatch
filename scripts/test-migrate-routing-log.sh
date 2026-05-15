@@ -98,6 +98,11 @@ assert_schema() {
     jq -e '.ts and (.kind | IN("bash-dispatch","agent-dispatch")) and has("subagent_type") and has("brief_file") and has("goal_excerpt") and has("q_hit") and has("second_thoughts")' >/dev/null
 }
 
+# Behavior: Fresh legacy routing_log.md migration writes a backup, auto-block markers, and five JSONL rows.
+# Steps:
+#   1. Prepare a legacy routing_log.md fixture without an auto-block.
+#   2. Trigger migrate-routing-log.sh against that fixture.
+#   3. Verify backup creation, marker insertion, row count, legacy bullet removal, and JSON schema.
 test_fresh_migrates() {
   local name="migrate: fresh file writes backup markers and 5 rows" path out
   path="$TMP_ROOT/m1/routing_log.md"
@@ -110,6 +115,11 @@ test_fresh_migrates() {
   fi
 }
 
+# Behavior: Re-running migration on an already migrated routing_log.md is a no-op.
+# Steps:
+#   1. Prepare and migrate a legacy routing_log.md fixture once.
+#   2. Trigger migrate-routing-log.sh against the migrated fixture again.
+#   3. Verify the output reports no-op, file bytes are preserved, and the backup remains.
 test_idempotent() {
   local name="migrate: second invocation no-op preserves file and bak" path out
   path="$TMP_ROOT/m2/routing_log.md"
@@ -124,6 +134,11 @@ test_idempotent() {
   fi
 }
 
+# Behavior: Migration aborts without touching routing_log.md when a backup already exists.
+# Steps:
+#   1. Prepare a legacy routing_log.md fixture and a pre-existing .bak file.
+#   2. Trigger migrate-routing-log.sh against that fixture.
+#   3. Verify the command exits non-zero, reports the backup conflict, and preserves the original file.
 test_existing_backup_aborts() {
   local name="migrate: existing backup aborts without touching file" path out status
   path="$TMP_ROOT/m3/routing_log.md"
@@ -138,6 +153,11 @@ test_existing_backup_aborts() {
   fi
 }
 
+# Behavior: Migration skips malformed legacy bullets while migrating valid rows and auditing the skip.
+# Steps:
+#   1. Prepare a legacy routing_log.md fixture with one malformed bullet.
+#   2. Trigger migrate-routing-log.sh against that fixture.
+#   3. Verify only valid rows are migrated and the missing Task line is reported.
 test_malformed_skips() {
   local name="migrate: malformed bullet skips one row and audits" path out
   path="$TMP_ROOT/m4/routing_log.md"
@@ -150,6 +170,11 @@ test_malformed_skips() {
   fi
 }
 
+# Behavior: Migration preserves the legacy markdown table region byte-for-byte.
+# Steps:
+#   1. Prepare a legacy routing_log.md fixture and save its table region.
+#   2. Trigger migrate-routing-log.sh against that fixture.
+#   3. Verify the table region after migration matches the saved copy.
 test_legacy_integrity() {
   local name="migrate: legacy table region byte-for-byte unchanged" path
   path="$TMP_ROOT/m5/routing_log.md"

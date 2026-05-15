@@ -5,8 +5,28 @@ set -uo pipefail
 
 AUTO_START="<!-- routing-log:auto-block:start -->"
 AUTO_END="<!-- routing-log:auto-block:end -->"
-DEFAULT_PATH="$HOME/.claude/projects/-home-screenleon-github/memory/routing_log.md"
-TARGET="${CLAUDE_ROUTING_LOG_PATH:-$DEFAULT_PATH}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/memory-dir.sh
+. "$SCRIPT_DIR/lib/memory-dir.sh"
+
+CWD="$PWD"
+if [[ "${1:-}" == "--cwd" ]]; then
+  CWD="${2:-}"
+  if [[ -z "$CWD" ]]; then
+    printf 'migrate-routing-log: --cwd requires a path\n' >&2
+    exit 2
+  fi
+fi
+
+if [[ -n "${CLAUDE_ROUTING_LOG_PATH:-}" ]]; then
+  TARGET="$CLAUDE_ROUTING_LOG_PATH"
+else
+  if ! MEMORY_DIR="$(find_memory_dir "$CWD")"; then
+    printf 'migrate-routing-log: failed to discover routing_log.md memory dir for cwd=%s\n' "$CWD" >&2
+    exit 1
+  fi
+  TARGET="$MEMORY_DIR/routing_log.md"
+fi
 
 json_escape_into() {
   local target="$1" value="$2"

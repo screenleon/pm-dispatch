@@ -12,7 +12,7 @@
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
 #   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
-#   - one-shot routing_log.md legacy bullet migrator after settings write
+#   - one-shot routing_log.md legacy bullet migrator before settings write
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
@@ -28,6 +28,8 @@ DRY_RUN=0
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 settings="$HOME/.claude/settings.json"
+# shellcheck source=scripts/lib/memory-dir.sh
+. "$repo_root/scripts/lib/memory-dir.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "install-hooks: jq is required" >&2
@@ -218,18 +220,28 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
+routing_log=""
+if routing_memory_dir="$(find_memory_dir "$repo_root")"; then
+  routing_log="$routing_memory_dir/routing_log.md"
+fi
+
+if [[ -n "$routing_log" && -f "$routing_log" ]]; then
+  if grep -q -F '<!-- routing-log:auto-block:start -->' "$routing_log" 2>/dev/null; then
+    echo "install-hooks: routing-log already migrated, skipping migrator"
+  else
+    if "$migrate_routing_cmd" --cwd "$repo_root"; then
+      :
+    else
+      status=$?
+      echo "install-hooks: routing-log migrator failed; settings.json not modified" >&2
+      exit "$status"
+    fi
+  fi
+fi
+
 backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
 cp "$settings" "$backup"
 mv "$tmp_new" "$settings"
 trap - EXIT
 echo "install-hooks: wrote $settings"
 echo "install-hooks: backup at $backup"
-
-routing_log="$HOME/.claude/projects/-home-screenleon-github/memory/routing_log.md"
-if [[ -f "$routing_log" ]]; then
-  if grep -q -F '<!-- routing-log:auto-block:start -->' "$routing_log" 2>/dev/null; then
-    echo "install-hooks: routing-log already migrated, skipping migrator"
-  else
-    "$migrate_routing_cmd"
-  fi
-fi
