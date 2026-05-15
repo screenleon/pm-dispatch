@@ -66,7 +66,7 @@ trap 'rm -f "$tmp_new"' EXIT
 # Read current statusLine.command to determine if chaining is needed.
 _current_statusline=$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null || true)
 _statusline_already_wired=0
-if [[ "$_current_statusline" == "$statusline_cmd" ]]; then
+if [[ "$(basename "${_current_statusline:-}")" == "$(basename "$statusline_cmd")" ]]; then
     _statusline_already_wired=1
 elif [[ -n "$_current_statusline" && "$DRY_RUN" -eq 0 ]]; then
     # Save previous command so the hook can chain to it.
@@ -97,13 +97,40 @@ jq \
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
-  # Helper: an entry already exists if any matcher block has a hook with the same command.
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $pm) ] | length ) as $pm_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cx) ] | length ) as $cx_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $cxw) ] | length ) as $cxw_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(.command == $stop) ] | length ) as $stop_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session) ] | length ) as $session_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject) ] | length ) as $inject_present |
+  # Helper: an entry already exists if any matcher block has a hook with the same command basename.
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last)) ] | length ) as $pm_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last)) ] | length ) as $cx_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last)) ] | length ) as $cxw_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last)) ] | length ) as $stop_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last)) ] | length ) as $session_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last)) ] | length ) as $inject_present |
+
+  # Refresh stale command paths (basename match, full-path update — survives repo rename/move)
+  .hooks.PreToolUse |= map(
+    .hooks |= map(
+      if   (.command | split("/") | last) == ($pm  | split("/") | last) then .command = $pm
+      elif (.command | split("/") | last) == ($cx  | split("/") | last) then .command = $cx
+      elif (.command | split("/") | last) == ($cxw | split("/") | last) then .command = $cxw
+      else . end
+    )
+  ) |
+  .hooks.Stop |= map(
+    .hooks |= map(
+      if   (.command | split("/") | last) == ($stop    | split("/") | last) then .command = $stop
+      elif (.command | split("/") | last) == ($session | split("/") | last) then .command = $session
+      else . end
+    )
+  ) |
+  .hooks.UserPromptSubmit |= map(
+    .hooks |= map(
+      if (.command | split("/") | last) == ($inject | split("/") | last) then .command = $inject
+      else . end
+    )
+  ) |
+  ( if ((.statusLine.command? // "") | split("/") | last) == ($statusline | split("/") | last) then
+      .statusLine.command = $statusline
+    else . end
+  ) |
 
   ( if $pm_present == 0 then
       .hooks.PreToolUse += [{

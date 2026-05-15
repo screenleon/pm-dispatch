@@ -429,6 +429,66 @@ test_hooks_install_uninstall_lifecycle() {
   pass "$name"
 }
 
+test_install_hooks_updates_stale_paths_after_rename() {
+  # Verifies that install-hooks.sh updates stale full-paths (e.g. from a repo
+  # rename claude-config -> pm-dispatch) without creating duplicate entries.
+  #
+  # Steps:
+  #   1. Create settings.json pre-populated with hooks pointing at /fake/old-repo/scripts/
+  #   2. Run install-hooks.sh (current repo_root)
+  #   3. Assert each hook appears exactly once and with the current path
+  local name="install-hooks-updates-stale-paths-after-rename"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  # Simulate settings.json left over from old repo path
+  cat > "$home/.claude/settings.json" <<'JSON'
+{
+  "permissions": {},
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-inject-memory.sh"}]}
+    ]
+  },
+  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/hook-save-rate-limits.sh"}
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  # Each hook basename must appear exactly once (no duplicates)
+  local settings="$home/.claude/settings.json"
+  for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
+              hook-log-claude-usage.sh hook-session-summary.sh \
+              hook-inject-memory.sh hook-save-rate-limits.sh; do
+    local count
+    count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
+    if [[ "$count" -ne 1 ]]; then
+      fail "$name" "$hook appears $count times in settings.json (want 1)"
+      return
+    fi
+  done
+
+  # Old path must be gone; current repo path must be present
+  if grep -q "/fake/old-repo/" "$settings"; then
+    fail "$name" "stale /fake/old-repo/ path still present after re-install"
+    return
+  fi
+  assert_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
+
+  pass "$name"
+}
+
 test_userpromptsubmit_install_wires_hook() {
   # Verifies install-hooks.sh wires hook-inject-memory.sh into UserPromptSubmit.
   # Steps:
@@ -550,8 +610,8 @@ test_stop_hook_preservation() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  # Unrelated hook at a completely different path that happens to share the basename
-  local unrelated="/home/testuser/myproject/hook-log-claude-usage.sh"
+  # Unrelated hook at a completely different path.
+  local unrelated="/home/testuser/myproject/custom-stop-hook.sh"
   printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$unrelated" > "$home/.claude/settings.json"
 
@@ -792,6 +852,7 @@ test_skip_preflight_skips_all_tests() {
 test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_install_hooks_updates_stale_paths_after_rename
 test_userpromptsubmit_install_wires_hook
 test_userpromptsubmit_uninstall_removes_hook
 test_userpromptsubmit_install_idempotent
