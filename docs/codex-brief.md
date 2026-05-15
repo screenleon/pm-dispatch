@@ -198,6 +198,121 @@ output_format: markdown with three grouped sections (## OK / ## needs review / #
 
 No working_dir, no files, no acceptance criteria. Codex would have to guess what corpus, what sources, how to verify, where to write the report. Reject and ask.
 
+## Main-thread dispatch via codex_dispatch_handover_v1
+
+`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `codex_dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches `scripts/codex-dispatch.sh` directly with Bash in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
+
+```codex_dispatch_handover_v1
+handover_version: 1
+dispatch_route: main_thread_bash_background
+working_dir: /home/screenleon/github/pm-dispatch
+brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
+sandbox: workspace-write
+approval: never
+timeout: 1200
+model: default
+skip_git_check: false
+fallback_allowed: true
+---
+working_dir: /home/screenleon/github/pm-dispatch
+goal: ...
+files:
+  - read: ...
+  - edit: ...
+constraints:
+  - ...
+self_verify:
+  - ...
+acceptance:
+  - ...
+```
+
+Extraction rules:
+
+1. Read the fenced block tagged exactly `codex_dispatch_handover_v1`.
+2. Treat the metadata header as dispatch-control data only.
+3. Treat everything after the first standalone `---` line as the brief body to write to `brief_file`.
+4. Validate `working_dir` in metadata matches `working_dir` in the brief body.
+5. Reject, or re-prompt the PM once, if metadata is absent or contradictory.
+6. Ignore any human prose summary outside the fence when constructing the dispatch.
+
+Metadata fields:
+
+| Field | Required | Notes |
+|---|---|---|
+| `handover_version` | yes | Currently `1`; bump on shape change. |
+| `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_codex_executor` for fallback. |
+| `working_dir` | yes | Absolute path; must exist; must match the brief body. |
+| `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread writes this file. |
+| `sandbox` | yes | `workspace-write` default unless caller authorized another value. |
+| `approval` | yes | `never` default unless caller authorized another value. |
+| `timeout` | yes | `1200` default, in seconds. |
+| `model` | yes | `default` or a specific Codex model name. |
+| `skip_git_check` | yes | `false` default; use `true` only for caller-approved non-git workdirs. |
+| `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
+
+Direct Bash dispatch shape:
+
+```text
+Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd '<working_dir>' --sandbox '<sandbox>' --approval '<approval>' --timeout '<timeout>' --brief-file '<brief_file>'", run_in_background: true, description: "Dispatch codex for <slug>")
+```
+
+Argument order is stable:
+
+1. `bash <abs path>/scripts/codex-dispatch.sh`
+2. `--cd '<working_dir>'`
+3. `--model '<model>'` only if `model` is not `default`
+4. `--sandbox '<sandbox>'`
+5. `--approval '<approval>'`
+6. `--skip-git-check` only if `skip_git_check: true`
+7. `--timeout '<timeout>'`
+8. `--brief-file '<brief_file>'`
+
+Quoting and command-shape rules:
+
+- Single quotes around path values.
+- Single physical line, with no `\` continuation.
+- No `cd <dir> && ...` compounds; this avoids the stale agent-context lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
+- No inline `-- <brief>` form; always dispatch a file-backed brief.
+- Use `run_in_background: true` on the main-thread Bash call so the main thread can continue and receive the completion notification later.
+
+Completion-parse procedure:
+
+1. When the completion notification arrives, read `BashOutput(bash_id: <id>)` to get the full merged stdout and stderr captured by the harness.
+2. Parse the stable stdout footer emitted by `scripts/codex-dispatch.sh:203-207`: `trace:`, `last:`, `stderr:`, and `exit:` between `---` separators.
+3. Use `scripts/codex-dispatch.sh:142-154` to recognize the start banner in stderr: cwd, model, sandbox, approval, timeout, trace, and brief.
+4. Use `scripts/codex-dispatch.sh:196-199` to recognize the finish banner and the optional timeout note.
+5. Read `<last>` for the final Codex message. If it is empty, fall back to the last `agent_message` item in the `.jsonl` trace.
+6. Read `<stderr>` regardless of exit code. Surface any non-empty content beyond the standard start and finish banners as `dispatch_errors`.
+7. Verify `git -C <working_dir> status --short`, `git -C <working_dir> diff --stat <base>...HEAD`, and observed `command_execution` events against the brief's `files:` and `self_verify:` blocks before reporting `ok`; otherwise report `partial` or `failed`.
+
+Report shape:
+
+```text
+Codex dispatch completed: ok | partial | failed
+Brief: <one-line goal>
+Exit: <N>
+Trace: <trace path>
+Last message: <summary from .last or trace fallback>
+Verification: <self_verify checks observed or missing>
+Worktree: <git status/diff summary>
+Dispatch stderr: <none | concise warning summary>
+```
+
+If the completion notification does not arrive within `<timeout>+30s`, run the diagnostic checklist from `[[feedback_codex_dispatch_foreground]]`: check for a live `codex-dispatch` process, inspect `.agent-trace/latest.*` mtimes, and decide whether the task is still running or orphaned before retrying. If the direct Bash route exits 124, retry exactly once with the same brief and flags after the diagnostic check; do not retry other non-zero exits without main-thread review.
+
+Use `Agent(codex-executor)` only for this fallback allowlist:
+
+| Condition | Rationale |
+|---|---|
+| Strict pre-flight validation is the primary need. | `codex-executor` rejects missing schema fields, missing file-writing `self_verify`, and subtle read/write ambiguity before a long dispatch is wasted. |
+| Main-thread context is near-full. | The fallback moves validation, trace-reading, and result verification out of the main thread when the conversation window is the limiting factor. |
+| Sync workflow must remain serialized. | Some composed flows need foreground sequencing and artifact validation rather than an asynchronous completion notification. |
+| Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or an unavailable Bash tool means the documented primary route cannot run. |
+| User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
+
+When using fallback, set `dispatch_route: agent_codex_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
+
 ## Dispatching a brief
 
 Write the brief to `/tmp/brief-<task>.md` first, then pass it via `--brief-file`. This is the **canonical** way to dispatch.
