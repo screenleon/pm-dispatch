@@ -86,6 +86,8 @@ Return exactly one fenced `codex_dispatch_handover_v1` block. The metadata heade
 
 Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `scripts/lib/handover-validate.sh` before constructing Bash argv.
 
+The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
+
 ```codex_dispatch_handover_v1
 handover_version: 1
 dispatch_route: main_thread_bash_background

@@ -61,3 +61,10 @@ jobs:
       - uses: actions/checkout@v6
       - name: codex-dispatch regression suite
         run: ./scripts/test-codex-dispatch.sh
+
+  test-dispatch-handover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: dispatch handover regression suite
+        run: ./scripts/test-dispatch-handover.sh

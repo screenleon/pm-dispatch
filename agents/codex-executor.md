@@ -85,6 +85,8 @@ Override only with caller authorization:
 
 Rules the **main thread** must follow when dispatching `codex-executor` via the `Agent` tool. These are not enforced by the executor itself — they are pre-dispatch hygiene that prevents silent failures before codex-executor even starts.
 
+The main-thread handover route is regression-tested by `scripts/test-dispatch-handover.sh`; this executor remains the fallback route and must not redefine that contract.
+
 **Rule 1 — Never pass `isolation: "worktree"`**
 
 Do NOT set `isolation: "worktree"` on the Agent tool call for codex-executor. The codex-executor manages git context itself via the `--cd` flag and (when needed) `--skip-git-check`. Passing `isolation: "worktree"` causes the Claude harness to attempt a git worktree from the *main thread's* CWD — which is commonly not a git repository (e.g. `/home/user/github/` rather than a specific repo) — producing:

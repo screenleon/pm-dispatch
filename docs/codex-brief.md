@@ -297,6 +297,8 @@ Completion-parse procedure:
 6. Read `<stderr>` regardless of exit code. Surface any non-empty content beyond the standard start and finish banners as `dispatch_errors`.
 7. Verify `git -C <working_dir> status --short`, `git -C <working_dir> diff --stat <base>...HEAD`, and observed `command_execution` events against the brief's `files:` and `self_verify:` blocks before reporting `ok`; otherwise report `partial` or `failed`.
 
+Runnable coverage for extraction, validation, safe argv construction, and footer parsing lives in `scripts/test-dispatch-handover.sh`.
+
 Report shape:
 
 ```text
