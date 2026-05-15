@@ -356,3 +356,37 @@ Failing any check wastes the agent invocation before a single tool call is made.
 - Prose is fine; YAML-like keys above are conventions, not strict syntax. Keep real dispatches file-backed via `--brief-file`.
 - Keep briefs in the active voice ("Audit X", not "X should be audited"). Codex parses imperatives more reliably than declaratives.
 - Don't write implementation steps. The brief tells Codex *what* and *what counts as done*; *how* is Codex's job.
+
+## Trial dispatch end-to-end recipe
+
+Use this smoke recipe after changing dispatch policy. It should complete without modifying the repo.
+
+Minimal no-op brief body:
+
+```yaml
+working_dir: /home/screenleon/github/pm-dispatch
+goal: Confirm codex-dispatch can run a read-only no-op brief and report cleanly.
+files:
+  - read: README.md
+constraints:
+  - Do not modify files.
+acceptance:
+  - Codex reports the README exists.
+  - git status --short is unchanged.
+```
+
+Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md`, then launch one physical line:
+
+```text
+Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd '/home/screenleon/github/pm-dispatch' --sandbox 'workspace-write' --approval 'never' --timeout '1200' --brief-file '/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md'", run_in_background: true, description: "Dispatch codex for cc036-smoke")
+```
+
+Expected sequence:
+
+1. Harness returns a background Bash task id.
+2. Completion notification arrives.
+3. Main thread reads `BashOutput(bash_id: <id>)`.
+4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from `scripts/codex-dispatch.sh:203-207`.
+5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start banner from `scripts/codex-dispatch.sh:142-154` and finish banner from `scripts/codex-dispatch.sh:196-199`.
+6. Main thread runs `git -C /home/screenleon/github/pm-dispatch status --short` and confirms no unexpected changes.
+7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook; the future CC-036b schema extension may add `dispatch_route` after two weeks of telemetry.
