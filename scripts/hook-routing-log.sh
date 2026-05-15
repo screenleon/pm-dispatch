@@ -195,28 +195,33 @@ append_inside_block() {
     return 1
   }
 
-  {
+  { exec 9>"$lockfile"; } 2>/dev/null || {
+    audit "append/rotation lock open failed" "$target"
+    return 1
+  }
+
+  (
     flock -x -w 2 9 || {
       audit "lock timeout" "$target"
-      return 1
+      exit 1
     }
 
     if [[ ! -f "$target" ]]; then
       create_minimal_log "$target" 2>/dev/null || {
         audit "create routing log failed" "$target"
-        return 1
+        exit 1
       }
     fi
     if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
       audit "auto-block missing; run migrator first" "$target"
-      return 1
+      exit 1
     fi
 
-    rotate_if_needed "$target" || return 1
+    rotate_if_needed "$target" || exit 1
 
     tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
       audit "append temp failed" "$target"
-      return 1
+      exit 1
     }
     awk -v end="$AUTO_END" -v row="$line" '
       $0 == end && !done { print row; done=1 }
@@ -224,18 +229,18 @@ append_inside_block() {
     ' "$target" > "$tmp" 2>/dev/null || {
       rm -f "$tmp"
       audit "append rewrite failed" "$target"
-      return 1
+      exit 1
     }
     mv -f "$tmp" "$target" 2>/dev/null || {
       rm -f "$tmp"
       audit "append move failed" "$target"
-      return 1
+      exit 1
     }
-    return 0
-  } 9>"$lockfile" || {
-    audit "append/rotation lock open failed" "$target"
-    return 1
-  }
+    exit 0
+  )
+  local locked_status=$?
+  exec 9>&-
+  return "$locked_status"
 }
 
 [[ "${CLAUDE_ROUTING_LOG_DISABLE:-}" == "1" ]] && exit 0

@@ -3128,7 +3128,7 @@ routing_rotation_fail_case() {
 routing_concurrent_append_case() {
   local name="routing: concurrent appends keep every row"
   should_run "$name" || return 0
-  local root mem n payload status pid count unique start_count end_count json_ok lockfile ready holder timeout_status before_timeout after_timeout
+  local root mem n payload status pid count unique start_count end_count json_ok lockfile ready lock_release holder timeout_status before_timeout after_timeout
   local pids=()
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-concurrent.XXXXXX")"
   mem="$root/memory"
@@ -3156,11 +3156,14 @@ routing_concurrent_append_case() {
 
   lockfile="$mem/routing_log.md.lock"
   ready="$root/lock-ready"
+  lock_release="$root/lock-release"
+  mkfifo "$lock_release"
   (
     exec 8>"$lockfile"
     flock -x 8
     : > "$ready"
-    sleep 5
+    cat "$lock_release" >/dev/null
+    exec 8>&-
   ) &
   holder="$!"
   while [[ ! -e "$ready" ]]; do
@@ -3171,7 +3174,7 @@ routing_concurrent_append_case() {
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   timeout_status=$?
   after_timeout="$(routing_count "$mem")"
-  kill "$holder" 2>/dev/null || true
+  : > "$lock_release"
   wait "$holder" 2>/dev/null || true
 
   if [[ "$status" == "0" ]] &&
