@@ -6,6 +6,8 @@ tools: Bash, Read
 
 Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
 
+> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `codex_dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/codex-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
+
 # Validation
 
 Before dispatching, validate the brief against the schema at `~/github/pm-dispatch/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
@@ -61,7 +63,7 @@ Do not inline the brief with `-- <brief>` for real work. That form is retained o
 >
 > **Symptoms of having done this anyway:** `latest.last` symlink points to an empty file, stderr contains only the `codex-dispatch starting` banner with no `finished` line, `/tmp/codex-dispatch.*.sh` snapshots accumulate, JSONL trace ends mid-stream with no `turn.completed` event. If you see these, the dispatch was orphaned — re-run synchronously.
 >
-> Foreground only. Always.
+> Foreground only when this agent is the chosen route. Always.
 
 **If the dispatch script exits non-zero — STOP immediately, except exit 124 (see Retry policy).** Do NOT attempt to reformat the brief, bypass the hook, rewrite the dispatch command, or retry with different flags. Return this message to the main thread and stop:
 
@@ -82,6 +84,8 @@ Override only with caller authorization:
 # Caller-side rules (main thread)
 
 Rules the **main thread** must follow when dispatching `codex-executor` via the `Agent` tool. These are not enforced by the executor itself — they are pre-dispatch hygiene that prevents silent failures before codex-executor even starts.
+
+The main-thread handover route is regression-tested by `scripts/test-dispatch-handover.sh`; this executor remains the fallback route and must not redefine that contract.
 
 **Rule 1 — Never pass `isolation: "worktree"`**
 
@@ -104,6 +108,35 @@ A file-writing brief is any brief whose `files:` block contains an entry without
 **Rule 4 — always pre-write the brief file before dispatching**
 
 The Write tool is NOT available to codex-executor subagents (the Agent tool does not grant Write from frontmatter at dispatch time). The main thread must write the brief to `/tmp/brief-<task>.md` using its own Write tool **before** the `Agent(subagent_type: "codex-executor", ...)` call. Pass the file path in the agent prompt. Skipping this step leaves codex-executor with no way to write the brief, causing an immediate failure.
+
+# When NOT to use this agent
+
+Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `codex_dispatch_handover_v1` block, the main thread should write `brief_file` and run `scripts/codex-dispatch.sh` directly with `run_in_background:true`. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
+
+Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/codex-brief.md` §Fallback remains the canonical dispatch policy.
+
+| Condition | Why fallback is allowed |
+|---|---|
+| Strict pre-flight validation is the primary need. | This agent hard-rejects missing fields, missing file-writing `self_verify`, and ambiguous file scope before dispatch. |
+| Main-thread context is near-full. | Validation, dispatch, and result verification can move out of the main thread when context pressure is the limiting factor. |
+| Sync workflow must remain serialized. | This agent keeps the dispatch foreground and blocks until Codex finishes. |
+| Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or no usable Bash tool means the primary route cannot run. |
+| User explicitly requests codex-executor validation. | User intent overrides the default when it does not conflict with safety rules. |
+
+If none of those conditions applies, do not spawn this agent; use the main-thread Bash route documented in `docs/codex-brief.md`.
+
+Caller decision checklist:
+
+1. If PM returned a valid `codex_dispatch_handover_v1` block and no fallback condition is true, do not call this agent.
+2. If the only reason for this agent is habit from the old `/pm` route, stop and use main-thread Bash instead.
+3. If the brief is schema-sensitive, include the exact validation concern in the agent prompt.
+4. If context pressure is the reason, pass only the brief file path and the minimum caller context needed for reporting.
+5. If sync sequencing is the reason, keep the caller blocked until this agent returns its verification report.
+6. If Bash is unavailable, name the local limitation so the report explains why the primary route was skipped.
+7. If the user requested this agent, quote or summarize that request in the prompt.
+8. Do not use this agent to avoid writing the brief file; the main thread must still pre-write it.
+9. Do not use this agent for `/pr-gate` internals that already dispatch directly through `scripts/pr-gate.sh`.
+10. Do not use this agent for planning, architecture, or open-ended exploration; it remains a thin dispatcher.
 
 # Retry policy
 

@@ -20,7 +20,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 |---|---|
 | **Analysis** | Read code, answer. Update memory only on non-obvious findings. No dispatch. |
 | **Planning** | Decompose into work items, brief per item, confirm with user before dispatch. |
-| **Brief** | Write a complete brief and return it to main thread for `codex-executor` dispatch. After main thread relays the codex report, review it against `git diff` and update memory. PM has no Dispatch action — main thread calls Agent. |
+| **Brief** | Write a complete brief and return one `codex_dispatch_handover_v1` block to the main thread. After main thread relays the codex report, review it against `git diff` and update memory. PM has no Dispatch action — main thread dispatches. |
 | **Status** | Read memory + git state across projects, summarize. |
 | **Memory update** | User told you something worth remembering — write it. |
 | **PR gate** | Run review pipeline below. |
@@ -82,7 +82,40 @@ The canonical schema lives in `~/github/pm-dispatch/docs/codex-brief.md`. Briefs
 
 **Dispatch model selection**: default to the standard Codex model. Use `--model codex-spark` only when all three criteria are met: (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. Spark has a lower context ceiling — misrouting a large task degrades output quality without a loud failure signal.
 
-Return the brief to the main thread; main thread dispatches it. Verify the resulting report against `git diff` before claiming success.
+Return exactly one fenced `codex_dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
+
+Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `scripts/lib/handover-validate.sh` before constructing Bash argv.
+
+The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
+
+```codex_dispatch_handover_v1
+handover_version: 1
+dispatch_route: main_thread_bash_background
+working_dir: /home/screenleon/github/pm-dispatch
+brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
+sandbox: workspace-write
+approval: never
+timeout: 1200
+model: default
+skip_git_check: false
+fallback_allowed: true
+---
+working_dir: /home/screenleon/github/pm-dispatch
+goal: ...
+files:
+  - read: ...
+  - edit: ...
+constraints:
+  - ...
+self_verify:
+  - ...
+acceptance:
+  - ...
+```
+
+Use direct background Bash by default. Set `dispatch_route: agent_codex_executor` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, and state the reason in one sentence outside the fence.
+
+You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not run `scripts/codex-dispatch.sh`; do not write the brief file yourself. Main thread extracts the `codex_dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
 
 # Per-project memory shape
 

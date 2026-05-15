@@ -104,12 +104,15 @@ before spawning.
 
 For any code change (bug fix, feature, refactor):
 
-1. **Prefer `codex-executor`** — dispatches via `scripts/codex-dispatch.sh`,
-   sandboxed, trace-logged.
-2. **Fallback to `Agent(model: "sonnet")`** — only when Codex quota is
+1. **Follow the dispatch contract in `docs/codex-brief.md`** — `/pm`
+   implementation handovers use the main-thread Bash route by default,
+   sandboxed and trace-logged via `scripts/codex-dispatch.sh`.
+2. **Use `codex-executor` only for the fallback allowlist** documented in
+   `docs/codex-brief.md` §Fallback.
+3. **Fallback to `Agent(model: "sonnet")`** — only when Codex quota is
    exhausted or the change is a single-line fix where a full brief is
    disproportionate.
-3. **Never use Opus for implementation** without explicit user instruction.
+4. **Never use Opus for implementation** without explicit user instruction.
 
 ---
 
