@@ -161,6 +161,11 @@ find_memory_dir() {
 input="$(cat)"
 [[ -z "$input" ]] && exit 0
 
+# NOTE: strict jq validation deferred to CC-027c — `jq -e .` alone is
+# ~25ms/call subprocess startup on this host, exceeding the entire
+# per-call budget. Brace heuristic below is best-effort; a malformed
+# but key-bearing payload may write a garbage line, which is a data
+# quality concern, not security/risk (no leak, no block).
 case "$input" in
   *\{*\}*) ;;
   *)
@@ -202,8 +207,14 @@ case "$tool_name" in
       || json_string_after command_arg "$input" "tool" "command" \
       || json_string_after command_arg "$input" params "command" \
       || true
-    read -r first_arg _ <<<"$command_arg"
-    first_arg="$(truncate80 "$first_arg")"
+    read -r first_token _ <<<"$command_arg"
+    if [[ "$first_token" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      first_arg_is_null=1
+    elif [[ "$first_token" =~ ^[a-z][a-z0-9_-]{0,30}$ ]]; then
+      first_arg="$first_token"
+    else
+      first_arg_is_null=1
+    fi
     ;;
   Read|Edit|Write)
     file_arg=""
@@ -211,7 +222,21 @@ case "$tool_name" in
       || json_string_after file_arg "$input" "tool" "file_path" \
       || json_string_after file_arg "$input" params "file_path" \
       || true
-    first_arg="$(truncate80 "$(home_abbrev "$file_arg")")"
+    if [[ -z "$file_arg" ]]; then
+      first_arg_is_null=1
+    else
+      case "$file_arg" in
+        "$cwd"/*)
+          first_arg="$(truncate80 "${file_arg#"$cwd/"}")"
+          ;;
+        "$HOME"/*)
+          first_arg="$(truncate80 "$(basename "$file_arg")")"
+          ;;
+        *)
+          first_arg_is_null=1
+          ;;
+      esac
+    fi
     ;;
   Agent|Task)
     subagent_arg=""
@@ -222,12 +247,7 @@ case "$tool_name" in
     first_arg="$(truncate80 "$subagent_arg")"
     ;;
   Glob|Grep)
-    pattern_arg=""
-    json_string_after pattern_arg "$input" tool_input "pattern" \
-      || json_string_after pattern_arg "$input" "tool" "pattern" \
-      || json_string_after pattern_arg "$input" params "pattern" \
-      || true
-    first_arg="$(truncate80 "$pattern_arg")"
+    first_arg_is_null=1
     ;;
   *)
     first_arg_is_null=1
@@ -249,6 +269,13 @@ else
 fi
 
 target="$memory_dir/tool-trace.jsonl"
+if [[ -f "$target" ]]; then
+  size=$(stat -c %s "$target" 2>/dev/null || echo 0)
+  if (( size > 4194304 )); then
+    mv -f "$target" "${target}.1" 2>/dev/null || audit "rotation failed" "$target"
+  fi
+fi
+
 { printf '%s\n' "$line" >> "$target"; } 2>/dev/null || {
   audit "append failed" "$target"
   exit 0

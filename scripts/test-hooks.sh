@@ -1021,16 +1021,20 @@ tool_trace_assert_field() {
 }
 
 tool_trace_case() {
-  local name="$1" payload="$2" jq_filter="$3"
+  local name="$1" payload="$2" jq_filter="$3" forbidden_regex="${4:-}"
   should_run "$name" || return 0
-  local trace_dir out err status line
+  local trace_dir out err status line no_forbidden
   trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   tool_trace_run "$payload" "$trace_dir" "$out" "$err"
   status=$?
   line="$(tool_trace_record "$trace_dir")"
-  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -n "$line" ]] && tool_trace_assert_field "$line" "$jq_filter"; then
+  no_forbidden=1
+  if [[ -n "$forbidden_regex" && "$line" =~ $forbidden_regex ]]; then
+    no_forbidden=0
+  fi
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -n "$line" && "$no_forbidden" == "1" ]] && tool_trace_assert_field "$line" "$jq_filter"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -1041,29 +1045,96 @@ tool_trace_case() {
   rm -f "$out" "$err"
 }
 
+# Behavior: Bash command beginning with a safe lowercase command records that token only.
+# Steps: 1. Run the trace hook with a Bash payload; 2. Assert the JSONL first_arg_or_skill field is the command token.
 tool_trace_case "tool-trace/happy_path_bash" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-bash\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"}}" \
   '.tool == "Bash" and .first_arg_or_skill == "ls" and .session_id == "s-bash" and .cwd == "'"$REPO_ROOT"'"'
 
+# Behavior: Read tool with file_path inside cwd records a cwd-relative path.
+# Steps: 1. Run the trace hook with a Read payload under cwd; 2. Assert only the repo-relative path is logged.
 tool_trace_case "tool-trace/happy_path_read" \
-  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-read\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$HOME/github/pm-dispatch/BACKLOG.md\"}}" \
-  '.tool == "Read" and .first_arg_or_skill == "~/github/pm-dispatch/BACKLOG.md"'
+  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-read\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/BACKLOG.md\"}}" \
+  '.tool == "Read" and .first_arg_or_skill == "BACKLOG.md"'
 
+# Behavior: Agent tool records the enum-like subagent_type as first_arg_or_skill.
+# Steps: 1. Run the trace hook with an Agent payload; 2. Assert subagent_type is logged.
 tool_trace_case "tool-trace/happy_path_agent" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-agent\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"qa-tester\"}}" \
   '.tool == "Agent" and .first_arg_or_skill == "qa-tester"'
 
+# Behavior: Grep tool invocations redact patterns while preserving tool_name extraction.
+# Steps: 1. Run the trace hook with tool_name and tool_input fields; 2. Assert tool is Grep and first_arg_or_skill is null.
 tool_trace_case "tool-trace/tool_name_hedge_a" \
   "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"needle\"}}" \
-  '.tool == "Grep" and .first_arg_or_skill == "needle"'
+  '.tool == "Grep" and .first_arg_or_skill == null' \
+  'needle'
 
+# Behavior: Bash tool can be extracted from the legacy tool field and command from params.
+# Steps: 1. Run the trace hook with tool and params fields; 2. Assert the hedged fields are parsed.
 tool_trace_case "tool-trace/tool_name_hedge_b" \
   "{\"cwd\":\"$REPO_ROOT\",\"tool\":\"Bash\",\"params\":{\"command\":\"pwd -P\"}}" \
   '.tool == "Bash" and .first_arg_or_skill == "pwd"'
 
+# Behavior: Missing tool name falls back to "?" and does not infer first_arg_or_skill.
+# Steps: 1. Run the trace hook without tool_name/tool fields; 2. Assert unknown tool and null first_arg_or_skill.
 tool_trace_case "tool-trace/tool_name_missing" \
   "{\"cwd\":\"$REPO_ROOT\",\"tool_input\":{\"command\":\"ls -la\"}}" \
   '.tool == "?" and .first_arg_or_skill == null'
+
+# Behavior: Bash command beginning with env-assignment first token redacts first_arg_or_skill.
+# Steps: 1. Run Bash with TOKEN= prefix; 2. Assert first_arg_or_skill is null and secret substrings are absent.
+tool_trace_case "tool-trace/bash_env_prefix_redacted" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"TOKEN=abc123 curl https://api.example.com\"}}" \
+  '.tool == "Bash" and .first_arg_or_skill == null' \
+  'TOKEN|abc123'
+
+# Behavior: Bash command beginning with safe lowercase command name records that token only.
+# Steps: 1. Run Bash with git status --short; 2. Assert first_arg_or_skill is git.
+tool_trace_case "tool-trace/bash_safe_command_kept" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status --short\"}}" \
+  '.tool == "Bash" and .first_arg_or_skill == "git"'
+
+# Behavior: Bash command beginning with a pathful token redacts first_arg_or_skill.
+# Steps: 1. Run Bash with an absolute command path; 2. Assert first_arg_or_skill is null and basename is absent.
+tool_trace_case "tool-trace/bash_pathful_command_redacted" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/usr/bin/secret-tool show account\"}}" \
+  '.tool == "Bash" and .first_arg_or_skill == null' \
+  'secret-tool'
+
+# Behavior: Grep tool invocation never logs the pattern.
+# Steps: 1. Run Grep with a secret-shaped pattern; 2. Assert first_arg_or_skill is null and pattern substrings are absent.
+tool_trace_case "tool-trace/grep_pattern_redacted" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"API_KEY=sk-live-abc\"}}" \
+  '.tool == "Grep" and .first_arg_or_skill == null' \
+  'API_KEY|sk-live'
+
+# Behavior: Glob tool invocation never logs the pattern.
+# Steps: 1. Run Glob with an env-file pattern; 2. Assert first_arg_or_skill is null and pattern substrings are absent.
+tool_trace_case "tool-trace/glob_pattern_redacted" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Glob\",\"tool_input\":{\"pattern\":\"**/.env*\"}}" \
+  '.tool == "Glob" and .first_arg_or_skill == null' \
+  '\.env'
+
+# Behavior: Read tool with file_path inside cwd records repo-relative path.
+# Steps: 1. Run Read with /tmp/proj/src/main.go under cwd /tmp/proj; 2. Assert first_arg_or_skill is src/main.go without cwd prefix.
+tool_trace_case "tool-trace/read_repo_relative_path" \
+  '{"cwd":"/tmp/proj","tool_name":"Read","tool_input":{"file_path":"/tmp/proj/src/main.go"}}' \
+  '.tool == "Read" and .first_arg_or_skill == "src/main.go"'
+
+# Behavior: Read tool with file_path under HOME but outside cwd records basename only.
+# Steps: 1. Run Read with $HOME/.aws/credentials while cwd is outside HOME; 2. Assert only credentials is logged.
+tool_trace_case "tool-trace/read_home_path_basename_only" \
+  "$(jq -nc --arg home "$HOME" '{cwd:"/tmp/proj",tool_name:"Read",tool_input:{file_path:($home + "/.aws/credentials")}}')" \
+  '.tool == "Read" and .first_arg_or_skill == "credentials"' \
+  '\.aws|'"$HOME"
+
+# Behavior: Read tool with file_path outside cwd and HOME records null.
+# Steps: 1. Run Read with /etc/shadow; 2. Assert first_arg_or_skill is null and sensitive path substrings are absent.
+tool_trace_case "tool-trace/read_foreign_path_redacted" \
+  '{"cwd":"/tmp/proj","tool_name":"Read","tool_input":{"file_path":"/etc/shadow"}}' \
+  '.tool == "Read" and .first_arg_or_skill == null' \
+  'shadow|/etc'
 
 tool_trace_first_arg_truncation() {
   local name="tool-trace/first_arg_truncation" trace_dir out err payload line value
@@ -1071,7 +1142,7 @@ tool_trace_first_arg_truncation() {
   trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
-  payload="$(jq -nc --arg cwd "$REPO_ROOT" --arg cmd "$(printf 'a%.0s' $(seq 1 200)) rest" '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')"
+  payload="$(jq -nc --arg cwd "$REPO_ROOT" --arg subagent "$(printf 'a%.0s' $(seq 1 200))" '{cwd:$cwd,tool_name:"Agent",tool_input:{subagent_type:$subagent}}')"
   tool_trace_run "$payload" "$trace_dir" "$out" "$err"
   line="$(tool_trace_record "$trace_dir")"
   value="$(printf '%s\n' "$line" | jq -r '.first_arg_or_skill // ""' 2>/dev/null)"
@@ -1151,6 +1222,34 @@ tool_trace_malformed_json() {
 }
 tool_trace_malformed_json
 
+tool_trace_malformed_key_bearing_rejected() {
+  # Behavior: Malformed JSON containing key-looking substrings is rejected without appending.
+  # Steps: 1. Run a broken payload containing cwd and tool_name keys; 2. Assert no JSONL line is written and audit records malformed JSON.
+  local name="tool-trace/malformed_key_bearing_rejected" trace_dir out err status before after
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  before="$(grep -c -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
+  # Strict jq validation deferred to CC-027c (jq inline cost ~25ms/call
+  # exceeds budget); brace heuristic rejects this payload because it lacks
+  # a closing `}`. Other brace-shaped malformed inputs may slip through —
+  # see CC-027c.
+  tool_trace_run '{"cwd":"/tmp/proj","tool_name":"Bash","tool_input":{"command":' "$trace_dir" "$out" "$err"
+  status=$?
+  after="$(grep -c -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && ! -s "$trace_dir/tool-trace.jsonl" && "$after" -gt "$before" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s before=%s after=%s trace=%q\n' "$name" "$status" "$before" "$after" "$(cat "$trace_dir/tool-trace.jsonl" 2>/dev/null)"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_malformed_key_bearing_rejected
+
 tool_trace_append_failure_non_blocking() {
   local name="tool-trace/append_failure_non_blocking" trace_dir out err status target
   should_run "$name" || return 0
@@ -1217,6 +1316,61 @@ tool_trace_no_payload_leakage() {
 }
 tool_trace_no_payload_leakage
 
+# Behavior: When tool-trace.jsonl exceeds 4 MiB before append, the hook rotates it to .1 and starts fresh.
+# Steps: 1. Pre-create an over-cap trace file; 2. Run a valid payload; 3. Assert .1 contains the old file and main contains one new line.
+tool_trace_rotation_at_size_cap() {
+  local name="tool-trace/rotation_at_size_cap" trace_dir out err target status main_size archive_size main_lines archive_lines
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  target="$trace_dir/tool-trace.jsonl"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  head -c 4500000 /dev/zero > "$target"
+  tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"}}" "$trace_dir" "$out" "$err"
+  status=$?
+  main_size="$(stat -c %s "$target" 2>/dev/null || echo 0)"
+  archive_size="$(stat -c %s "${target}.1" 2>/dev/null || echo 0)"
+  main_lines="$(wc -l < "$target" 2>/dev/null || echo 0)"
+  archive_lines="$(wc -l < "${target}.1" 2>/dev/null || echo 0)"
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -f "${target}.1" && "$archive_size" -gt 4194304 && "$main_size" -lt 4194304 && "$main_lines" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s main-size=%s archive-size=%s main-lines=%s archive-lines=%s\n' "$name" "$status" "$main_size" "$archive_size" "$main_lines" "$archive_lines"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_rotation_at_size_cap
+
+# Behavior: When tool-trace.jsonl is under 4 MiB, no rotation occurs.
+# Steps: 1. Pre-create an under-cap trace file with one line; 2. Run a valid payload; 3. Assert main has two lines and .1 is absent.
+tool_trace_rotation_under_cap_no_op() {
+  local name="tool-trace/rotation_under_cap_no_op" trace_dir out err target status lines
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  target="$trace_dir/tool-trace.jsonl"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  printf '%s\n' '{"old":true}' > "$target"
+  tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"}}" "$trace_dir" "$out" "$err"
+  status=$?
+  lines="$(wc -l < "$target" 2>/dev/null || echo 0)"
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && "$lines" == "2" && ! -e "${target}.1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s archive-exists=%s\n' "$name" "$status" "$lines" "$([[ -e "${target}.1" ]] && echo yes || echo no)"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_rotation_under_cap_no_op
+
+# Behavior: JSONL records keep the five-field schema shape and primitive field types.
+# Steps: 1. Run a Task payload; 2. Assert the emitted JSONL keys and value types match the schema.
 tool_trace_case "tool-trace/jsonl_schema_shape" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"schema\",\"tool_name\":\"Task\",\"tool_input\":{\"subagent_type\":\"worker\"}}" \
   'keys == ["cwd","first_arg_or_skill","session_id","tool","ts"] and (.ts | type == "string") and (.session_id | type == "string") and (.tool | type == "string") and (.cwd | type == "string")'
