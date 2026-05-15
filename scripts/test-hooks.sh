@@ -1049,7 +1049,7 @@ tool_trace_case() {
 # Steps: 1. Run the trace hook with a Bash payload; 2. Assert the JSONL first_arg_or_skill field is the command token.
 tool_trace_case "tool-trace/happy_path_bash" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-bash\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"}}" \
-  '.tool == "Bash" and .first_arg_or_skill == "ls" and .session_id == "s-bash" and .cwd == "'"$REPO_ROOT"'"'
+  '.tool == "Bash" and .first_arg_or_skill == "ls" and .session_id == "s-bash" and has("cwd") == false'
 
 # Behavior: Read tool with file_path inside cwd records a cwd-relative path.
 # Steps: 1. Run the trace hook with a Read payload under cwd; 2. Assert only the repo-relative path is logged.
@@ -1369,11 +1369,11 @@ tool_trace_rotation_under_cap_no_op() {
 }
 tool_trace_rotation_under_cap_no_op
 
-# Behavior: JSONL records keep the five-field schema shape and primitive field types.
+# Behavior: JSONL records keep the four-field schema shape and primitive field types.
 # Steps: 1. Run a Task payload; 2. Assert the emitted JSONL keys and value types match the schema.
 tool_trace_case "tool-trace/jsonl_schema_shape" \
   "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"schema\",\"tool_name\":\"Task\",\"tool_input\":{\"subagent_type\":\"worker\"}}" \
-  'keys == ["cwd","first_arg_or_skill","session_id","tool","ts"] and (.ts | type == "string") and (.session_id | type == "string") and (.tool | type == "string") and (.cwd | type == "string")'
+  'keys == ["first_arg_or_skill","session_id","tool","ts"] and (.ts | type == "string") and (.session_id | type == "string") and (.tool | type == "string")'
 
 tool_trace_install_hooks_idempotent() {
   local name="tool-trace/install_hooks_idempotent" home out1 out2 out3 count

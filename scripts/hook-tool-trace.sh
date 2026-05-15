@@ -221,14 +221,13 @@ printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts="$(date -Iseconds 2>
 json_escape_into ts_json "$ts"
 json_escape_into session_id_json "$session_id"
 json_escape_into tool_name_json "$tool_name"
-json_escape_into cwd_json "$cwd"
 if [[ "$first_arg_is_null" == "1" ]]; then
-  printf -v line '{"ts":"%s","session_id":"%s","tool":"%s","first_arg_or_skill":null,"cwd":"%s"}' \
-    "$ts_json" "$session_id_json" "$tool_name_json" "$cwd_json"
+  printf -v line '{"ts":"%s","session_id":"%s","tool":"%s","first_arg_or_skill":null}' \
+    "$ts_json" "$session_id_json" "$tool_name_json"
 else
   json_escape_into first_arg_json "$first_arg"
-  printf -v line '{"ts":"%s","session_id":"%s","tool":"%s","first_arg_or_skill":"%s","cwd":"%s"}' \
-    "$ts_json" "$session_id_json" "$tool_name_json" "$first_arg_json" "$cwd_json"
+  printf -v line '{"ts":"%s","session_id":"%s","tool":"%s","first_arg_or_skill":"%s"}' \
+    "$ts_json" "$session_id_json" "$tool_name_json" "$first_arg_json"
 fi
 
 target="$memory_dir/tool-trace.jsonl"
