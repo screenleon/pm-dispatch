@@ -34,14 +34,16 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-024 | 🔵 active | `test-usage-weekly.sh` 加入 GitHub Actions CI（lint.yml 新增 job） | ops/test | 2026-05-14 | pr:#48 |
 | CC-025 | 🔵 active | `/skill-refine`：讀 skill 執行 episodes + 後續更正訊號，提 diff 自我精修 | ux/memory | 2026-05-15 | — |
 | CC-026 | 🔵 active | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — |
-| CC-027 | 🔵 active | PreToolUse `hook-tool-trace.sh`：tool/skill 觸發落 tool-trace.jsonl（CC-025/CC-026 前置） | ux/memory | 2026-05-15 | — |
+| CC-027 | ✅ closed 2026-05-15 | PreToolUse `hook-tool-trace.sh`：tool/skill 觸發落 tool-trace.jsonl（CC-025/CC-026 前置） | ux/memory | 2026-05-15 | pr:#TBD |
 | CC-028 | 🔵 active | PostToolUse `hook-routing-log.sh`：codex-dispatch 自動 append routing_log 記錄 Q1/Q2/Q3 校準資料 | ux/memory | 2026-05-15 | — |
 | CC-029 | 🔵 active | `test-codex-dispatch.sh` 加入 CI（與 CC-024 並行做 lint.yml 補完） | ops/test | 2026-05-15 | — |
 | CC-030 | 🔵 active | `pm/scripts/validate.sh` 補 Index ↔ Section 雙向一致性 + CHANGELOG drift 檢查 | ops/process | 2026-05-15 | — |
 | CC-031 | 🔵 active | 開源前置：`CONTRIBUTING.md` + `SECURITY.md` + README 工作語言聲明 | process/DX | 2026-05-15 | — |
 | CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — |
 | CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — |
-| CC-034 | ✅ closed 2026-05-15 | `install-hooks.sh` 改名/移動 checkout 後 append-not-replace bug：以 hook script basename 取代 full-path 比對 | ops | 2026-05-15 | — |
+| CC-034 | ✅ closed 2026-05-15 | `install-hooks.sh` 改名/移動 checkout 後 append-not-replace bug：以 hook script basename 取代 full-path 比對 | ops | 2026-05-15 | pr:#53 |
+| CC-035 | 🔵 active | install/uninstall-hooks basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 |
+| CC-044 | ⏸ deferred | `tool-trace.jsonl` rotation/retention policy（max sessions vs bytes vs archive） | ux/memory | 2026-05-15 | — |
 
 ---
 
@@ -201,6 +203,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 4. `install-hooks.sh` wire PreToolUse；`scripts/test-hooks.sh` 加對應 case 驗證 append 結構、效能不退化、不阻擋。
 **Note**: blocks **CC-025**, **CC-026**。在這條落地前，CC-025/026 不應啟動。
 **Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A2）。
+**Outcome**: Added metadata-only PreToolUse `hook-tool-trace.sh`, install wiring, and hook regression coverage; PR #TBD.
 
 ## CC-028 — PostToolUse `hook-routing-log.sh` 自動 append routing_log
 
@@ -280,6 +283,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 5. 注意 statusLine 處理：目前 chain logic 已用 `_statusline_already_wired` 條件存在判斷，basename 改造需確認 chain 不被誤刪。
 **Note**: 此 bug 不阻擋一般使用；列為 ops 維護債。
 **Source**: 2026-05-15 對話 — PR #51 改名 cutover 時 observed。
+
+## CC-044 — `tool-trace.jsonl` rotation/retention policy（deferred）
+
+**Problem**: CC-027 intentionally ships append-only `tool-trace.jsonl` without log rotation. Long-running projects need a retention policy before the trace file grows without bound.
+**Why**: Rotation needs a separate design choice: retain by last N sessions, max bytes, or gzip/archive windows. Mixing that policy into CC-027 would make the signal-layer MVP larger and harder to validate.
+**Requirement**: Design and implement rotation/retention for `tool-trace.jsonl`, including tests for boundary behavior and non-blocking failure.
+**Source**: 2026-05-15 CC-027 implementation brief.
 
 ## CC-023 — `coupling-reviewer` PR gate 耦合分析（deferred）
 

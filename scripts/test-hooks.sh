@@ -19,6 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
+TRACE_HOOK="$SCRIPT_DIR/hook-tool-trace.sh"
 STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
@@ -996,6 +997,258 @@ run_case "cx: run_in_background:1 (numeric) → allow (only boolean true denied)
 # check (and indeed by the entire hook — it no-ops for other agent types).
 run_case "cx: main thread (no agent_type) with run_in_background:true → no-op allow" 0 "$CXHOOK" \
   '{"tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
+
+# =============================================================================
+# hook-tool-trace
+# =============================================================================
+
+echo
+$LIST || echo "== hook-tool-trace =="
+
+tool_trace_run() {
+  local payload="$1" trace_dir="$2" stdout_file="$3" stderr_file="$4"
+  printf '%s' "$payload" | CLAUDE_TOOL_TRACE_DIR="$trace_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$stdout_file" 2>"$stderr_file"
+}
+
+tool_trace_record() {
+  local trace_dir="$1"
+  tail -n 1 "$trace_dir/tool-trace.jsonl" 2>/dev/null
+}
+
+tool_trace_assert_field() {
+  local json="$1" filter="$2"
+  printf '%s\n' "$json" | jq -e "$filter" >/dev/null 2>&1
+}
+
+tool_trace_case() {
+  local name="$1" payload="$2" jq_filter="$3"
+  should_run "$name" || return 0
+  local trace_dir out err status line
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  tool_trace_run "$payload" "$trace_dir" "$out" "$err"
+  status=$?
+  line="$(tool_trace_record "$trace_dir")"
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -n "$line" ]] && tool_trace_assert_field "$line" "$jq_filter"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s stdout=%q stderr=%q line=%q\n' "$name" "$status" "$(cat "$out")" "$(cat "$err")" "$line"
+  fi
+  rm -f "$out" "$err"
+}
+
+tool_trace_case "tool-trace/happy_path_bash" \
+  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-bash\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"}}" \
+  '.tool == "Bash" and .first_arg_or_skill == "ls" and .session_id == "s-bash" and .cwd == "'"$REPO_ROOT"'"'
+
+tool_trace_case "tool-trace/happy_path_read" \
+  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-read\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$HOME/github/pm-dispatch/BACKLOG.md\"}}" \
+  '.tool == "Read" and .first_arg_or_skill == "~/github/pm-dispatch/BACKLOG.md"'
+
+tool_trace_case "tool-trace/happy_path_agent" \
+  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"s-agent\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"qa-tester\"}}" \
+  '.tool == "Agent" and .first_arg_or_skill == "qa-tester"'
+
+tool_trace_case "tool-trace/tool_name_hedge_a" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"needle\"}}" \
+  '.tool == "Grep" and .first_arg_or_skill == "needle"'
+
+tool_trace_case "tool-trace/tool_name_hedge_b" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool\":\"Bash\",\"params\":{\"command\":\"pwd -P\"}}" \
+  '.tool == "Bash" and .first_arg_or_skill == "pwd"'
+
+tool_trace_case "tool-trace/tool_name_missing" \
+  "{\"cwd\":\"$REPO_ROOT\",\"tool_input\":{\"command\":\"ls -la\"}}" \
+  '.tool == "?" and .first_arg_or_skill == null'
+
+tool_trace_first_arg_truncation() {
+  local name="tool-trace/first_arg_truncation" trace_dir out err payload line value
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  payload="$(jq -nc --arg cwd "$REPO_ROOT" --arg cmd "$(printf 'a%.0s' $(seq 1 200)) rest" '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')"
+  tool_trace_run "$payload" "$trace_dir" "$out" "$err"
+  line="$(tool_trace_record "$trace_dir")"
+  value="$(printf '%s\n' "$line" | jq -r '.first_arg_or_skill // ""' 2>/dev/null)"
+  if [[ ${#value} -le 80 && ${#value} -eq 80 && ! -s "$out" && ! -s "$err" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — len=%s line=%q\n' "$name" "${#value}" "$line"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_first_arg_truncation
+
+tool_trace_no_project_dir() {
+  local name="tool-trace/no_project_dir" config_dir out err status before after
+  should_run "$name" || return 0
+  config_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace-config.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  before="$(find "$config_dir" -type f | wc -l)"
+  printf '%s' '{"cwd":"/tmp/not-a-claude-project","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+    | CLAUDE_CONFIG_DIR="$config_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
+  status=$?
+  after="$(find "$config_dir" -type f | wc -l)"
+  if [[ "$status" == "0" && "$before" == "$after" && ! -s "$out" && ! -s "$err" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s files-before=%s files-after=%s\n' "$name" "$status" "$before" "$after"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_no_project_dir
+
+tool_trace_missing_cwd() {
+  local name="tool-trace/missing_cwd" trace_dir out err status
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  tool_trace_run '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$trace_dir" "$out" "$err"
+  status=$?
+  if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s\n' "$name" "$status"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_missing_cwd
+
+tool_trace_malformed_json() {
+  local name="tool-trace/malformed_json" trace_dir out err status
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  tool_trace_run 'not-json' "$trace_dir" "$out" "$err"
+  status=$?
+  if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" && -f "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" ]] &&
+     grep -q -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s\n' "$name" "$status"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_malformed_json
+
+tool_trace_append_failure_non_blocking() {
+  local name="tool-trace/append_failure_non_blocking" trace_dir out err status target
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  target="$trace_dir/tool-trace.jsonl"
+  : > "$target"
+  chmod 0444 "$target"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}" "$trace_dir" "$out" "$err"
+  status=$?
+  chmod 0644 "$target"
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -f "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" ]] &&
+     grep -q -F "append" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s\n' "$name" "$status"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_append_failure_non_blocking
+
+tool_trace_disabled_envvar() {
+  local name="tool-trace/disabled_envvar" trace_dir out err status
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  printf '%s' "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}" \
+    | CLAUDE_TOOL_TRACE_DISABLE=1 CLAUDE_TOOL_TRACE_DIR="$trace_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
+  status=$?
+  if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s\n' "$name" "$status"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_disabled_envvar
+
+tool_trace_no_payload_leakage() {
+  local name="tool-trace/no_payload_leakage" trace_dir out err line
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  out="$(mktemp)"
+  err="$(mktemp)"
+  tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"printf SECRET_PAYLOAD\"}}" "$trace_dir" "$out" "$err"
+  line="$(tool_trace_record "$trace_dir")"
+  if [[ -n "$line" && "$line" != *"SECRET_PAYLOAD"* && ! -s "$out" && ! -s "$err" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — line=%q\n' "$name" "$line"
+  fi
+  rm -f "$out" "$err"
+}
+tool_trace_no_payload_leakage
+
+tool_trace_case "tool-trace/jsonl_schema_shape" \
+  "{\"cwd\":\"$REPO_ROOT\",\"session_id\":\"schema\",\"tool_name\":\"Task\",\"tool_input\":{\"subagent_type\":\"worker\"}}" \
+  'keys == ["cwd","first_arg_or_skill","session_id","tool","ts"] and (.ts | type == "string") and (.session_id | type == "string") and (.tool | type == "string") and (.cwd | type == "string")'
+
+tool_trace_install_hooks_idempotent() {
+  local name="tool-trace/install_hooks_idempotent" home out1 out2 out3 count
+  should_run "$name" || return 0
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-hooks.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '%s\n' '{"hooks":{}}' > "$home/.claude/settings.json"
+  out1="$(mktemp)"
+  out2="$(mktemp)"
+  out3="$(mktemp)"
+  HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run >"$out1" 2>&1
+  HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" >/dev/null 2>&1
+  HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run >"$out2" 2>&1
+  HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run >"$out3" 2>&1
+  count="$(jq '[.hooks.PreToolUse[]? | select(.matcher == "*") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-tool-trace.sh")] | length' "$home/.claude/settings.json")"
+  if grep -q -F "would apply" "$out1" &&
+     grep -q -F "already wired" "$out2" &&
+     grep -q -F "already wired" "$out3" &&
+     [[ "$count" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — first=%q second=%q third=%q count=%s\n' "$name" "$(cat "$out1")" "$(cat "$out2")" "$(cat "$out3")" "$count"
+  fi
+  rm -f "$out1" "$out2" "$out3"
+}
+tool_trace_install_hooks_idempotent
 
 # =============================================================================
 # hook-log-claude-usage
