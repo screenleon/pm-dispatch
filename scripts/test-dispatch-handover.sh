@@ -7,86 +7,42 @@ source "$REPO_ROOT/scripts/lib/handover-validate.sh"
 
 PASS=0
 FAIL=0
+FAILED_CASES=()
 
 t_pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS+1)); }
-t_fail() { printf 'FAIL: %s\n' "$1" >&2; FAIL=$((FAIL+1)); }
+t_fail() { printf 'FAIL: %s\n' "$1" >&2; FAIL=$((FAIL+1)); FAILED_CASES+=("$1"); }
+
+run_case() {
+  local name=$1
+  local fn=$2
+
+  if "$fn"; then
+    t_pass "$name"
+  else
+    t_fail "$name"
+  fi
+}
 
 make_tmpdir() {
   mktemp -d -t dispatch-handover.XXXXXX
 }
 
-extract_handover() {
-  local input_file=$1
-  local meta_out=$2
-  local body_out=$3
+metadata_fixture() {
+  local work_dir=${1:-$REPO_ROOT}
+  local brief_file=${2:-/tmp/brief-pm-dispatch-test.md}
 
-  : > "$meta_out"
-  : > "$body_out"
-
-  awk -v meta="$meta_out" -v body="$body_out" '
-    BEGIN { in_block = 0; in_body = 0; found = 0 }
-    /^```codex_dispatch_handover_v1$/ { in_block = 1; found = 1; next }
-    in_block && /^```$/ { exit }
-    in_block && !in_body && /^---$/ { in_body = 1; next }
-    in_block && in_body { print > body; next }
-    in_block { print > meta; next }
-    END { if (!found) exit 0 }
-  ' "$input_file"
-}
-
-meta_value() {
-  local field=$1
-  local meta_file=$2
-
-  awk -F': ' -v key="$field" '$1 == key { print substr($0, length(key) + 3); exit }' "$meta_file"
-}
-
-body_working_dir() {
-  local body_file=$1
-
-  awk -F': ' '$1 == "working_dir" { print substr($0, length("working_dir") + 3); exit }' "$body_file"
-}
-
-validate_contract() {
-  local meta_file=$1
-  local body_file=$2
-  local value
-  local field
-  local route
-  local meta_wd
-  local body_wd
-
-  for field in handover_version dispatch_route working_dir brief_file sandbox approval timeout model skip_git_check fallback_allowed; do
-    value="$(meta_value "$field" "$meta_file")"
-    [[ -n "$value" ]] || { printf 'missing metadata field: %s\n' "$field" >&2; return 1; }
-    handover_validate_metadata_value "$field" "$value" >/dev/null || return 1
-  done
-
-  route="$(meta_value dispatch_route "$meta_file")"
-  case "$route" in
-    main_thread_bash_background|agent_codex_executor) ;;
-    *) printf 'unknown dispatch_route: %s\n' "$route" >&2; return 1;;
-  esac
-
-  meta_wd="$(meta_value working_dir "$meta_file")"
-  body_wd="$(body_working_dir "$body_file")"
-  [[ -n "$body_wd" ]] || { printf 'missing body working_dir\n' >&2; return 1; }
-  [[ "$meta_wd" == "$body_wd" ]] || {
-    printf 'working_dir mismatch: metadata=%s body=%s\n' "$meta_wd" "$body_wd" >&2
-    return 1
-  }
-}
-
-parse_footer() {
-  local stdout_file=$1
-  local out_file=$2
-
-  awk '
-    /^trace:[[:space:]]+/ { sub(/^trace:[[:space:]]+/, "trace="); print; next }
-    /^last:[[:space:]]+/ { sub(/^last:[[:space:]]+/, "last="); print; next }
-    /^stderr:[[:space:]]+/ { sub(/^stderr:[[:space:]]+/, "stderr="); print; next }
-    /^exit:[[:space:]]+/ { sub(/^exit:[[:space:]]+/, "exit="); print; next }
-  ' "$stdout_file" > "$out_file"
+  cat <<EOF
+handover_version: 1
+dispatch_route: main_thread_bash_background
+working_dir: $work_dir
+brief_file: $brief_file
+sandbox: workspace-write
+approval: never
+timeout: 1200
+model: default
+skip_git_check: false
+fallback_allowed: true
+EOF
 }
 
 write_valid_handover() {
@@ -119,102 +75,187 @@ acceptance:
 EOF
 }
 
-# ---- 1: valid handover extracts metadata and body ----
-tmp1="$(make_tmpdir)"
-input1="$tmp1/input.md"
-meta1="$tmp1/meta.txt"
-body1="$tmp1/body.md"
-write_valid_handover "$input1" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-1.md"
-extract_handover "$input1" "$meta1" "$body1"
-if [[ "$(meta_value working_dir "$meta1")" == "$REPO_ROOT" ]] \
-  && [[ "$(meta_value brief_file "$meta1")" == "/tmp/brief-pm-dispatch-test-1.md" ]] \
-  && grep -q '^goal: Confirm handover extraction\.$' "$body1" \
-  && validate_contract "$meta1" "$body1" >/dev/null 2>&1; then
-  t_pass "handover/valid block extracts metadata and body"
-else
-  t_fail "handover/valid block extraction failed"
-fi
-rm -rf "$tmp1"
+extract_handover() {
+  local input_file=$1
+  local meta_out=$2
+  local body_out=$3
+  local input
+  local block
 
-# ---- 2: metadata/body working_dir mismatch rejects ----
-tmp2="$(make_tmpdir)"
-input2="$tmp2/input.md"
-meta2="$tmp2/meta.txt"
-body2="$tmp2/body.md"
-write_valid_handover "$input2" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-2.md"
-sed -i '0,/^working_dir: /! s|^working_dir: .*|working_dir: /tmp/other|' "$input2"
-extract_handover "$input2" "$meta2" "$body2"
-if ! validate_contract "$meta2" "$body2" >/dev/null 2>&1; then
-  t_pass "handover/working_dir mismatch rejects"
-else
-  t_fail "handover/working_dir mismatch accepted"
-fi
-rm -rf "$tmp2"
+  : > "$meta_out"
+  : > "$body_out"
+  input="$(cat "$input_file")"
+  block="$(handover_extract_block "$input")" || return 1
+  handover_extract_metadata "$block" > "$meta_out" || return 1
+  handover_extract_body "$block" > "$body_out"
+}
 
-# ---- 3: shell metacharacters in working_dir reject ----
-bad_wd_ok=1
-for bad in "/tmp/x'bad" "/tmp/x;bad" '/tmp/x$bad'; do
-  if handover_validate_metadata_value working_dir "$bad" >/dev/null 2>&1; then
-    bad_wd_ok=0
+meta_value() {
+  local field=$1
+  local meta_file=$2
+
+  handover_get_field "$(cat "$meta_file")" "$field"
+}
+
+body_working_dir() {
+  local body_file=$1
+
+  awk -F': ' '$1 == "working_dir" { print substr($0, length("working_dir") + 3); exit }' "$body_file"
+}
+
+validate_contract() {
+  local meta_file=$1
+  local body_file=$2
+  local metadata
+  local meta_wd
+  local body_wd
+
+  metadata="$(cat "$meta_file")"
+  handover_validate_all_metadata "$metadata" || return 1
+  meta_wd="$(handover_get_field "$metadata" working_dir)" || return 1
+  body_wd="$(body_working_dir "$body_file")"
+  handover_validate_working_dir_match "$meta_wd" "$body_wd"
+}
+
+parse_footer() {
+  local stdout_file=$1
+  local out_file=$2
+
+  awk '
+    /^trace:[[:space:]]+/ { sub(/^trace:[[:space:]]+/, "trace="); print; next }
+    /^last:[[:space:]]+/ { sub(/^last:[[:space:]]+/, "last="); print; next }
+    /^stderr:[[:space:]]+/ { sub(/^stderr:[[:space:]]+/, "stderr="); print; next }
+    /^exit:[[:space:]]+/ { sub(/^exit:[[:space:]]+/, "exit="); print; next }
+  ' "$stdout_file" > "$out_file"
+}
+
+expect_reject() {
+  local field=$1
+  shift
+  local output
+
+  if output="$("$@" 2>&1 >/dev/null)"; then
+    return 1
   fi
-done
-if [[ "$bad_wd_ok" -eq 1 ]]; then
-  t_pass "handover/working_dir shell metacharacters reject"
-else
-  t_fail "handover/working_dir shell metacharacter accepted"
-fi
+  grep -q "handover-validate: reject $field:" <<<"$output"
+}
 
-# ---- 4: shell metacharacter in brief_file rejects ----
-if ! handover_validate_metadata_value brief_file '/tmp/brief-pm-dispatch-test;touch-pwned.md' >/dev/null 2>&1; then
-  t_pass "handover/brief_file shell metacharacter rejects"
-else
-  t_fail "handover/brief_file shell metacharacter accepted"
-fi
+# Behavior: A valid handover block extracts metadata and body and passes the shared contract validators.
+# Steps:
+#   1. Write a valid fenced handover block to a temp file and extract it through the lib helpers.
+#   2. Assert metadata, body, and shared contract validation all succeed.
+valid_handover_extracts_metadata_and_body_case() {
+  local tmp input meta body ok=1
+  tmp="$(make_tmpdir)"
+  input="$tmp/input.md"
+  meta="$tmp/meta.txt"
+  body="$tmp/body.md"
+  write_valid_handover "$input" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-1.md"
+  extract_handover "$input" "$meta" "$body" || ok=0
+  [[ "$(meta_value working_dir "$meta")" == "$REPO_ROOT" ]] || ok=0
+  [[ "$(meta_value brief_file "$meta")" == "/tmp/brief-pm-dispatch-test-1.md" ]] || ok=0
+  grep -q '^goal: Confirm handover extraction\.$' "$body" || ok=0
+  validate_contract "$meta" "$body" >/dev/null 2>&1 || ok=0
+  rm -rf "$tmp"
+  [[ "$ok" -eq 1 ]]
+}
 
-# ---- 5: unknown dispatch_route rejects ----
-tmp5="$(make_tmpdir)"
-input5="$tmp5/input.md"
-meta5="$tmp5/meta.txt"
-body5="$tmp5/body.md"
-write_valid_handover "$input5" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-5.md"
-sed -i 's/^dispatch_route: .*/dispatch_route: mystery_route/' "$input5"
-extract_handover "$input5" "$meta5" "$body5"
-if ! validate_contract "$meta5" "$body5" >/dev/null 2>&1; then
-  t_pass "handover/unknown dispatch_route rejects"
-else
-  t_fail "handover/unknown dispatch_route accepted"
-fi
-rm -rf "$tmp5"
+# Behavior: Metadata and body working_dir disagreement is rejected by the shared match validator.
+# Steps:
+#   1. Write a valid handover and mutate only the body working_dir.
+#   2. Assert shared contract validation rejects the mismatch.
+working_dir_mismatch_rejects_case() {
+  local tmp input meta body ok=1
+  tmp="$(make_tmpdir)"
+  input="$tmp/input.md"
+  meta="$tmp/meta.txt"
+  body="$tmp/body.md"
+  write_valid_handover "$input" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-2.md"
+  sed -i '0,/^working_dir: /! s|^working_dir: .*|working_dir: /tmp/other|' "$input"
+  extract_handover "$input" "$meta" "$body" || ok=0
+  validate_contract "$meta" "$body" >/dev/null 2>&1 && ok=0
+  rm -rf "$tmp"
+  [[ "$ok" -eq 1 ]]
+}
 
-# ---- 6: missing handover block extracts empty files ----
-tmp6="$(make_tmpdir)"
-input6="$tmp6/input.md"
-meta6="$tmp6/meta.txt"
-body6="$tmp6/body.md"
-printf 'ordinary PM summary with no fenced handover\n' > "$input6"
-extract_handover "$input6" "$meta6" "$body6"
-if [[ ! -s "$meta6" && ! -s "$body6" ]]; then
-  t_pass "handover/missing block yields empty extraction"
-else
-  t_fail "handover/missing block produced content"
-fi
-rm -rf "$tmp6"
+# Behavior: Shell metacharacters in working_dir are rejected.
+# Steps:
+#   1. Validate representative working_dir values containing shell metacharacters.
+#   2. Assert every value is rejected by the metadata value guard.
+working_dir_shell_metacharacters_reject_case() {
+  local bad
 
-# ---- 7: safe argv quoting round-trips an internal space ----
-safe_value="/tmp/normal path"
-safe_argv="$(handover_safe_argv working_dir "$safe_value")"
-round_trip="$(bash -c "printf '%s' $safe_argv")"
-if [[ "$round_trip" == "$safe_value" && "$safe_argv" == "/tmp/normal\\ path" ]]; then
-  t_pass "handover/safe argv quoting round-trips"
-else
-  t_fail "handover/safe argv quoting failed — argv=$safe_argv round_trip=$round_trip"
-fi
+  for bad in "/tmp/x'bad" "/tmp/x;bad" '/tmp/x$bad'; do
+    handover_validate_metadata_value working_dir "$bad" >/dev/null 2>&1 && return 1
+  done
+  return 0
+}
 
-# ---- 8: footer parse fixture extracts paths and exit code ----
-tmp8="$(make_tmpdir)"
-stdout8="$tmp8/stdout.txt"
-parsed8="$tmp8/footer.env"
-cat > "$stdout8" <<EOF
+# Behavior: Shell metacharacters in brief_file are rejected.
+# Steps:
+#   1. Validate a brief_file containing a command separator.
+#   2. Assert the generic metadata value guard rejects it.
+brief_file_shell_metacharacter_rejects_case() {
+  ! handover_validate_metadata_value brief_file '/tmp/brief-pm-dispatch-test;touch-pwned.md' >/dev/null 2>&1
+}
+
+# Behavior: Unknown dispatch routes are rejected.
+# Steps:
+#   1. Mutate a valid handover to use an unknown dispatch_route.
+#   2. Assert shared contract validation rejects it.
+unknown_dispatch_route_rejects_case() {
+  local tmp input meta body ok=1
+  tmp="$(make_tmpdir)"
+  input="$tmp/input.md"
+  meta="$tmp/meta.txt"
+  body="$tmp/body.md"
+  write_valid_handover "$input" "$REPO_ROOT" "/tmp/brief-pm-dispatch-test-5.md"
+  sed -i 's/^dispatch_route: .*/dispatch_route: mystery_route/' "$input"
+  extract_handover "$input" "$meta" "$body" || ok=0
+  validate_contract "$meta" "$body" >/dev/null 2>&1 && ok=0
+  rm -rf "$tmp"
+  [[ "$ok" -eq 1 ]]
+}
+
+# Behavior: Missing handover fences fail extraction without writing metadata or body content.
+# Steps:
+#   1. Attempt extraction from prose with no codex_dispatch_handover_v1 block.
+#   2. Assert extraction fails and output files remain empty.
+missing_block_rejects_with_empty_extraction_case() {
+  local tmp input meta body ok=1
+  tmp="$(make_tmpdir)"
+  input="$tmp/input.md"
+  meta="$tmp/meta.txt"
+  body="$tmp/body.md"
+  printf 'ordinary PM summary with no fenced handover\n' > "$input"
+  extract_handover "$input" "$meta" "$body" >/dev/null 2>&1 && ok=0
+  [[ ! -s "$meta" && ! -s "$body" ]] || ok=0
+  rm -rf "$tmp"
+  [[ "$ok" -eq 1 ]]
+}
+
+# Behavior: Safe argv quoting round-trips an internal space.
+# Steps:
+#   1. Quote a working_dir value with an internal space.
+#   2. Assert bash receives the original value and the emitted argv fragment escapes the space.
+safe_argv_round_trips_internal_space_case() {
+  local safe_value safe_argv round_trip
+  safe_value="/tmp/normal path"
+  safe_argv="$(handover_safe_argv working_dir "$safe_value")"
+  round_trip="$(bash -c "printf '%s' $safe_argv")"
+  [[ "$round_trip" == "$safe_value" && "$safe_argv" == "/tmp/normal\\ path" ]]
+}
+
+# Behavior: Dispatch footer parsing extracts trace, last, stderr, and exit fields.
+# Steps:
+#   1. Write a representative codex-dispatch stdout footer fixture.
+#   2. Assert parser output contains all normalized footer fields.
+footer_parse_extracts_paths_and_exit_case() {
+  local tmp stdout parsed ok=1
+  tmp="$(make_tmpdir)"
+  stdout="$tmp/stdout.txt"
+  parsed="$tmp/footer.env"
+  cat > "$stdout" <<EOF
 [2026-05-15T00:00:00+00:00] codex-dispatch finished
 ---
 trace:  /repo/.agent-trace/codex-20260515-000000-123.jsonl
@@ -223,17 +264,407 @@ stderr: /repo/.agent-trace/codex-20260515-000000-123.stderr
 exit:   0
 ---
 EOF
-parse_footer "$stdout8" "$parsed8"
-if grep -qx 'trace=/repo/.agent-trace/codex-20260515-000000-123.jsonl' "$parsed8" \
-  && grep -qx 'last=/repo/.agent-trace/codex-20260515-000000-123.last' "$parsed8" \
-  && grep -qx 'stderr=/repo/.agent-trace/codex-20260515-000000-123.stderr' "$parsed8" \
-  && grep -qx 'exit=0' "$parsed8"; then
-  t_pass "handover/footer parse extracts trace last stderr exit"
-else
-  t_fail "handover/footer parse failed — parsed=$(tr '\n' ';' < "$parsed8")"
-fi
-rm -rf "$tmp8"
+  parse_footer "$stdout" "$parsed"
+  grep -qx 'trace=/repo/.agent-trace/codex-20260515-000000-123.jsonl' "$parsed" || ok=0
+  grep -qx 'last=/repo/.agent-trace/codex-20260515-000000-123.last' "$parsed" || ok=0
+  grep -qx 'stderr=/repo/.agent-trace/codex-20260515-000000-123.stderr' "$parsed" || ok=0
+  grep -qx 'exit=0' "$parsed" || ok=0
+  rm -rf "$tmp"
+  [[ "$ok" -eq 1 ]]
+}
+
+# Behavior: Leading whitespace in metadata values is rejected.
+# Steps:
+#   1. Validate a value with leading whitespace.
+#   2. Assert the reject audit names the field.
+metadata_value_leading_whitespace_rejects_case() {
+  expect_reject working_dir handover_validate_metadata_value working_dir " $REPO_ROOT"
+}
+
+# Behavior: Trailing whitespace in metadata values is rejected.
+# Steps:
+#   1. Validate a value with trailing whitespace.
+#   2. Assert the reject audit names the field.
+metadata_value_trailing_whitespace_rejects_case() {
+  expect_reject working_dir handover_validate_metadata_value working_dir "$REPO_ROOT "
+}
+
+# Behavior: Carriage returns in metadata values are rejected.
+# Steps:
+#   1. Validate a value containing CR.
+#   2. Assert the reject audit names the field.
+metadata_value_cr_injection_rejects_case() {
+  expect_reject working_dir handover_validate_metadata_value working_dir $'/tmp/a\rb'
+}
+
+# Behavior: Line feeds in metadata values are rejected.
+# Steps:
+#   1. Validate a value containing LF.
+#   2. Assert the reject audit names the field.
+metadata_value_lf_injection_rejects_case() {
+  expect_reject working_dir handover_validate_metadata_value working_dir $'/tmp/a\nb'
+}
+
+# Behavior: Wrong arity when calling metadata validation is rejected.
+# Steps:
+#   1. Call handover_validate_metadata_value with one argument.
+#   2. Assert the reject audit names the supplied field.
+metadata_value_wrong_arity_rejects_case() {
+  expect_reject working_dir handover_validate_metadata_value working_dir
+}
+
+# Behavior: Handover version 1 is accepted.
+# Steps:
+#   1. Validate handover_version value 1.
+#   2. Assert validation succeeds.
+handover_version_one_accepts_case() {
+  handover_validate_handover_version 1 >/dev/null 2>&1
+}
+
+# Behavior: Handover version 2 is rejected.
+# Steps:
+#   1. Validate handover_version value 2.
+#   2. Assert the reject audit names handover_version.
+handover_version_two_rejects_case() {
+  expect_reject handover_version handover_validate_handover_version 2
+}
+
+# Behavior: The main-thread Bash dispatch route is accepted.
+# Steps:
+#   1. Validate main_thread_bash_background.
+#   2. Assert validation succeeds.
+dispatch_route_bash_accepts_case() {
+  handover_validate_dispatch_route main_thread_bash_background >/dev/null 2>&1
+}
+
+# Behavior: The codex executor fallback route is accepted.
+# Steps:
+#   1. Validate agent_codex_executor.
+#   2. Assert validation succeeds.
+dispatch_route_agent_accepts_case() {
+  handover_validate_dispatch_route agent_codex_executor >/dev/null 2>&1
+}
+
+# Behavior: Unknown dispatch route values are rejected by the route allowlist.
+# Steps:
+#   1. Validate an unknown dispatch route.
+#   2. Assert the reject audit names dispatch_route.
+dispatch_route_unknown_value_rejects_case() {
+  expect_reject dispatch_route handover_validate_dispatch_route mystery_route
+}
+
+# Behavior: workspace-write sandbox is accepted.
+# Steps:
+#   1. Validate sandbox workspace-write.
+#   2. Assert validation succeeds.
+sandbox_workspace_write_accepts_case() {
+  handover_validate_sandbox workspace-write >/dev/null 2>&1
+}
+
+# Behavior: read-only sandbox is accepted.
+# Steps:
+#   1. Validate sandbox read-only.
+#   2. Assert validation succeeds.
+sandbox_read_only_accepts_case() {
+  handover_validate_sandbox read-only >/dev/null 2>&1
+}
+
+# Behavior: danger-full-access sandbox is rejected without explicit authorization.
+# Steps:
+#   1. Validate sandbox danger-full-access.
+#   2. Assert the reject audit names sandbox.
+sandbox_danger_full_access_rejects_case() {
+  expect_reject sandbox handover_validate_sandbox danger-full-access
+}
+
+# Behavior: approval never is accepted.
+# Steps:
+#   1. Validate approval never.
+#   2. Assert validation succeeds.
+approval_never_accepts_case() {
+  handover_validate_approval never >/dev/null 2>&1
+}
+
+# Behavior: approval on-failure is rejected without explicit authorization.
+# Steps:
+#   1. Validate approval on-failure.
+#   2. Assert the reject audit names approval.
+approval_on_failure_rejects_case() {
+  expect_reject approval handover_validate_approval on-failure
+}
+
+# Behavior: approval on-request is rejected without explicit authorization.
+# Steps:
+#   1. Validate approval on-request.
+#   2. Assert the reject audit names approval.
+approval_on_request_rejects_case() {
+  expect_reject approval handover_validate_approval on-request
+}
+
+# Behavior: skip_git_check false is accepted.
+# Steps:
+#   1. Validate skip_git_check false.
+#   2. Assert validation succeeds.
+skip_git_check_false_accepts_case() {
+  handover_validate_skip_git_check false >/dev/null 2>&1
+}
+
+# Behavior: skip_git_check true is rejected without explicit authorization.
+# Steps:
+#   1. Validate skip_git_check true.
+#   2. Assert the reject audit names skip_git_check.
+skip_git_check_true_rejects_case() {
+  expect_reject skip_git_check handover_validate_skip_git_check true
+}
+
+# Behavior: Timeout 1200 is accepted.
+# Steps:
+#   1. Validate timeout 1200.
+#   2. Assert validation succeeds.
+timeout_1200_accepts_case() {
+  handover_validate_timeout 1200 >/dev/null 2>&1
+}
+
+# Behavior: Timeout below the minimum is rejected.
+# Steps:
+#   1. Validate timeout 29.
+#   2. Assert the reject audit names timeout.
+timeout_below_minimum_rejects_case() {
+  expect_reject timeout handover_validate_timeout 29
+}
+
+# Behavior: Timeout above the maximum is rejected.
+# Steps:
+#   1. Validate timeout 3601.
+#   2. Assert the reject audit names timeout.
+timeout_above_maximum_rejects_case() {
+  expect_reject timeout handover_validate_timeout 3601
+}
+
+# Behavior: Non-integer timeout is rejected.
+# Steps:
+#   1. Validate timeout abc.
+#   2. Assert the reject audit names timeout.
+timeout_non_integer_rejects_case() {
+  expect_reject timeout handover_validate_timeout abc
+}
+
+# Behavior: A /tmp/brief-*.md path is accepted.
+# Steps:
+#   1. Validate /tmp/brief-x.md.
+#   2. Assert validation succeeds.
+brief_file_tmp_prefix_md_accepts_case() {
+  handover_validate_brief_file /tmp/brief-x.md >/dev/null 2>&1
+}
+
+# Behavior: Relative brief_file paths are rejected.
+# Steps:
+#   1. Validate a relative brief_file path.
+#   2. Assert the reject audit names brief_file.
+brief_file_relative_path_rejects_case() {
+  expect_reject brief_file handover_validate_brief_file brief-x.md
+}
+
+# Behavior: brief_file paths outside /tmp/brief- are rejected.
+# Steps:
+#   1. Validate /etc/passwd.
+#   2. Assert the reject audit names brief_file.
+brief_file_outside_tmp_prefix_rejects_case() {
+  expect_reject brief_file handover_validate_brief_file /etc/passwd
+}
+
+# Behavior: brief_file paths containing dot-dot segments are rejected.
+# Steps:
+#   1. Validate a /tmp/brief- path containing ..
+#   2. Assert the reject audit names brief_file.
+brief_file_dotdot_rejects_case() {
+  expect_reject brief_file handover_validate_brief_file /tmp/brief-../x.md
+}
+
+# Behavior: brief_file paths without .md suffix are rejected.
+# Steps:
+#   1. Validate a /tmp/brief- path ending in .txt.
+#   2. Assert the reject audit names brief_file.
+brief_file_suffix_rejects_case() {
+  expect_reject brief_file handover_validate_brief_file /tmp/brief-x.txt
+}
+
+# Behavior: default model is accepted.
+# Steps:
+#   1. Validate model default.
+#   2. Assert validation succeeds.
+model_default_accepts_case() {
+  handover_validate_model default >/dev/null 2>&1
+}
+
+# Behavior: Codex-shaped model names are accepted.
+# Steps:
+#   1. Validate model codex-spark.
+#   2. Assert validation succeeds.
+model_codex_spark_accepts_case() {
+  handover_validate_model codex-spark >/dev/null 2>&1
+}
+
+# Behavior: Bad model name shapes are rejected.
+# Steps:
+#   1. Validate a model with uppercase and punctuation.
+#   2. Assert the reject audit names model.
+model_bad_shape_rejects_case() {
+  expect_reject model handover_validate_model Codex_Spark!
+}
+
+# Behavior: fallback_allowed true is accepted.
+# Steps:
+#   1. Validate fallback_allowed true.
+#   2. Assert validation succeeds.
+fallback_allowed_true_accepts_case() {
+  handover_validate_fallback_allowed true >/dev/null 2>&1
+}
+
+# Behavior: Invalid fallback_allowed values are rejected.
+# Steps:
+#   1. Validate fallback_allowed maybe.
+#   2. Assert the reject audit names fallback_allowed.
+fallback_allowed_invalid_rejects_case() {
+  expect_reject fallback_allowed handover_validate_fallback_allowed maybe
+}
+
+# Behavior: Composite valid metadata passes all field validators.
+# Steps:
+#   1. Build a complete metadata fixture.
+#   2. Assert handover_validate_all_metadata accepts it.
+all_metadata_valid_accepts_case() {
+  handover_validate_all_metadata "$(metadata_fixture "$REPO_ROOT" /tmp/brief-valid-composite.md)" >/dev/null 2>&1
+}
+
+# Behavior: Composite metadata with one invalid field returns that field's reject reason.
+# Steps:
+#   1. Build metadata with sandbox danger-full-access.
+#   2. Assert handover_validate_all_metadata rejects and names sandbox.
+all_metadata_invalid_field_rejects_case() {
+  expect_reject sandbox handover_validate_all_metadata "$(metadata_fixture "$REPO_ROOT" /tmp/brief-invalid-composite.md | sed 's/^sandbox: .*/sandbox: danger-full-access/')"
+}
+
+# Behavior: Required-field validation accepts complete metadata.
+# Steps:
+#   1. Build a complete metadata fixture.
+#   2. Assert handover_validate_required_fields succeeds.
+required_fields_all_present_accepts_case() {
+  handover_validate_required_fields "$(metadata_fixture)" >/dev/null 2>&1
+}
+
+# Behavior: Required-field validation rejects missing dispatch_route.
+# Steps:
+#   1. Remove dispatch_route from a metadata fixture.
+#   2. Assert the reject audit names dispatch_route.
+required_fields_missing_dispatch_route_rejects_case() {
+  expect_reject dispatch_route handover_validate_required_fields "$(metadata_fixture | sed '/^dispatch_route: /d')"
+}
+
+# Behavior: Matching metadata and body working_dir values are accepted.
+# Steps:
+#   1. Pass equal working_dir strings to the shared match validator.
+#   2. Assert validation succeeds.
+working_dir_match_accepts_case() {
+  handover_validate_working_dir_match "$REPO_ROOT" "$REPO_ROOT" >/dev/null 2>&1
+}
+
+# Behavior: Mismatched metadata and body working_dir values are rejected.
+# Steps:
+#   1. Pass different working_dir strings to the shared match validator.
+#   2. Assert the reject audit names working_dir.
+working_dir_match_mismatch_rejects_case() {
+  expect_reject working_dir handover_validate_working_dir_match "$REPO_ROOT" /tmp/other
+}
+
+# Behavior: Present handover blocks extract only fenced block content.
+# Steps:
+#   1. Extract a block from content with prose before and after the fence.
+#   2. Assert the block includes metadata and excludes surrounding prose.
+extract_block_present_echoes_content_case() {
+  local input block
+  input=$'before\n```codex_dispatch_handover_v1\nhandover_version: 1\n---\ngoal: x\n```\nafter'
+  block="$(handover_extract_block "$input")" || return 1
+  grep -q '^handover_version: 1$' <<<"$block" || return 1
+  grep -q '^goal: x$' <<<"$block" || return 1
+  ! grep -q '^before$' <<<"$block" && ! grep -q '^after$' <<<"$block"
+}
+
+# Behavior: Missing handover blocks are rejected by the shared extractor.
+# Steps:
+#   1. Extract from content without a handover fence.
+#   2. Assert extraction fails.
+extract_block_missing_rejects_case() {
+  ! handover_extract_block 'no fenced block here' >/dev/null 2>&1
+}
+
+# Behavior: Metadata and body extraction can round-trip a block around the separator.
+# Steps:
+#   1. Split a block into metadata and body with the shared extractors.
+#   2. Assert reconstructing with --- matches the original block.
+extract_metadata_body_round_trips_case() {
+  local block metadata body reconstructed
+  block="$(metadata_fixture "$REPO_ROOT" /tmp/brief-round-trip.md)"$'\n---\nworking_dir: '"$REPO_ROOT"$'\ngoal: Round trip.'
+  metadata="$(handover_extract_metadata "$block")" || return 1
+  body="$(handover_extract_body "$block")" || return 1
+  reconstructed="$metadata"$'\n---\n'"$body"
+  [[ "$reconstructed" == "$block" ]]
+}
+
+run_case "handover/valid block extracts metadata and body" valid_handover_extracts_metadata_and_body_case
+run_case "handover/working_dir mismatch rejects" working_dir_mismatch_rejects_case
+run_case "handover/working_dir shell metacharacters reject" working_dir_shell_metacharacters_reject_case
+run_case "handover/brief_file shell metacharacter rejects" brief_file_shell_metacharacter_rejects_case
+run_case "handover/unknown dispatch_route rejects" unknown_dispatch_route_rejects_case
+run_case "handover/missing block yields empty extraction" missing_block_rejects_with_empty_extraction_case
+run_case "handover/safe argv quoting round-trips" safe_argv_round_trips_internal_space_case
+run_case "handover/footer parse extracts trace last stderr exit" footer_parse_extracts_paths_and_exit_case
+run_case "handover/metadata leading whitespace rejects" metadata_value_leading_whitespace_rejects_case
+run_case "handover/metadata trailing whitespace rejects" metadata_value_trailing_whitespace_rejects_case
+run_case "handover/metadata CR injection rejects" metadata_value_cr_injection_rejects_case
+run_case "handover/metadata LF injection rejects" metadata_value_lf_injection_rejects_case
+run_case "handover/metadata wrong arity rejects" metadata_value_wrong_arity_rejects_case
+run_case "handover/version one accepts" handover_version_one_accepts_case
+run_case "handover/version two rejects" handover_version_two_rejects_case
+run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
+run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
+run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case
+run_case "handover/sandbox workspace-write accepts" sandbox_workspace_write_accepts_case
+run_case "handover/sandbox read-only accepts" sandbox_read_only_accepts_case
+run_case "handover/sandbox danger-full-access rejects" sandbox_danger_full_access_rejects_case
+run_case "handover/approval never accepts" approval_never_accepts_case
+run_case "handover/approval on-failure rejects" approval_on_failure_rejects_case
+run_case "handover/approval on-request rejects" approval_on_request_rejects_case
+run_case "handover/skip_git_check false accepts" skip_git_check_false_accepts_case
+run_case "handover/skip_git_check true rejects" skip_git_check_true_rejects_case
+run_case "handover/timeout 1200 accepts" timeout_1200_accepts_case
+run_case "handover/timeout below min rejects" timeout_below_minimum_rejects_case
+run_case "handover/timeout above max rejects" timeout_above_maximum_rejects_case
+run_case "handover/timeout non-integer rejects" timeout_non_integer_rejects_case
+run_case "handover/brief_file tmp prefix md accepts" brief_file_tmp_prefix_md_accepts_case
+run_case "handover/brief_file relative rejects" brief_file_relative_path_rejects_case
+run_case "handover/brief_file outside tmp prefix rejects" brief_file_outside_tmp_prefix_rejects_case
+run_case "handover/brief_file dotdot rejects" brief_file_dotdot_rejects_case
+run_case "handover/brief_file suffix rejects" brief_file_suffix_rejects_case
+run_case "handover/model default accepts" model_default_accepts_case
+run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
+run_case "handover/model bad shape rejects" model_bad_shape_rejects_case
+run_case "handover/fallback_allowed true accepts" fallback_allowed_true_accepts_case
+run_case "handover/fallback_allowed invalid rejects" fallback_allowed_invalid_rejects_case
+run_case "handover/all metadata valid accepts" all_metadata_valid_accepts_case
+run_case "handover/all metadata invalid field rejects" all_metadata_invalid_field_rejects_case
+run_case "handover/required fields all present accepts" required_fields_all_present_accepts_case
+run_case "handover/required fields missing dispatch_route rejects" required_fields_missing_dispatch_route_rejects_case
+run_case "handover/working_dir match accepts" working_dir_match_accepts_case
+run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
+run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case
+run_case "handover/extract block missing rejects" extract_block_missing_rejects_case
+run_case "handover/extract metadata body round-trips" extract_metadata_body_round_trips_case
 
 echo "----"
 echo "$PASS passed, $FAIL failed"
+if [[ "$FAIL" -ne 0 ]]; then
+  printf 'Failed cases:\n' >&2
+  printf '  %s\n' "${FAILED_CASES[@]}" >&2
+fi
 [[ "$FAIL" -eq 0 ]]
