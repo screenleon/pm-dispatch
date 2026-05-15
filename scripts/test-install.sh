@@ -489,6 +489,57 @@ JSON
   pass "$name"
 }
 
+test_install_hooks_preserves_unrelated_same_basename_hook() {
+  # Verifies that install-hooks.sh does NOT overwrite hooks from unrelated tools
+  # that share a managed hook basename but live at a non-standard path (parent
+  # directory is not "scripts/"). Such entries must be preserved unchanged.
+  #
+  # Steps:
+  #   1. Create settings.json with an unrelated Stop hook at /some/tool/hook-log-claude-usage.sh
+  #      (basename matches managed hook; parent dir is "tool", not "scripts")
+  #   2. Run install-hooks.sh
+  #   3. Assert the unrelated hook is still present at its original path (not overwritten)
+  #   4. Assert our managed hook was appended as a separate entry (not collapsed into the unrelated one)
+  local name="install-hooks-preserves-unrelated-same-basename-hook"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  local unrelated_path="/some/unrelated/tool/hook-log-claude-usage.sh"
+
+  cat > "$home/.claude/settings.json" <<JSON
+{
+  "permissions": {},
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "$unrelated_path"}]}
+    ]
+  }
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  local settings="$home/.claude/settings.json"
+
+  # Unrelated hook must still be present at original path
+  assert_contains "$name" "$settings" "$unrelated_path" || return
+
+  # Our managed hook must also be present (appended, not merged)
+  assert_contains "$name" "$settings" "hook-log-claude-usage.sh" || return
+
+  # Count occurrences of the basename — must be exactly 2
+  # (unrelated path + our managed path)
+  local count
+  count=$(grep -o "hook-log-claude-usage.sh" "$settings" | wc -l | tr -d ' ')
+  if [[ "$count" -ne 2 ]]; then
+    fail "$name" "hook-log-claude-usage.sh appears $count times (want 2: unrelated + managed)"
+    return
+  fi
+
+  pass "$name"
+}
+
 test_userpromptsubmit_install_wires_hook() {
   # Verifies install-hooks.sh wires hook-inject-memory.sh into UserPromptSubmit.
   # Steps:
@@ -853,6 +904,7 @@ test_install_sh_wires_hooks
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
 test_install_hooks_updates_stale_paths_after_rename
+test_install_hooks_preserves_unrelated_same_basename_hook
 test_userpromptsubmit_install_wires_hook
 test_userpromptsubmit_uninstall_removes_hook
 test_userpromptsubmit_install_idempotent

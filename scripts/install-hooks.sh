@@ -97,37 +97,38 @@ jq \
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
-  # Helper: an entry already exists if any matcher block has a hook with the same command basename.
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last)) ] | length ) as $pm_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last)) ] | length ) as $cx_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last)) ] | length ) as $cxw_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last)) ] | length ) as $stop_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last)) ] | length ) as $session_present |
-  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last)) ] | length ) as $inject_present |
+  # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
 
-  # Refresh stale command paths (basename match, full-path update — survives repo rename/move)
+  # Refresh stale command paths for managed hooks (scripts/<basename> path shape).
   .hooks.PreToolUse |= map(
     .hooks |= map(
-      if   (.command | split("/") | last) == ($pm  | split("/") | last) then .command = $pm
-      elif (.command | split("/") | last) == ($cx  | split("/") | last) then .command = $cx
-      elif (.command | split("/") | last) == ($cxw | split("/") | last) then .command = $cxw
+      if   ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
+      elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
+      elif ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cxw
       else . end
     )
   ) |
   .hooks.Stop |= map(
     .hooks |= map(
-      if   (.command | split("/") | last) == ($stop    | split("/") | last) then .command = $stop
-      elif (.command | split("/") | last) == ($session | split("/") | last) then .command = $session
+      if   ((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $stop
+      elif ((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $session
       else . end
     )
   ) |
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(
-      if (.command | split("/") | last) == ($inject | split("/") | last) then .command = $inject
+      if ((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $inject
       else . end
     )
   ) |
-  ( if ((.statusLine.command? // "") | split("/") | last) == ($statusline | split("/") | last) then
+  ( if (((.statusLine.command? // "") | split("/") | last) == ($statusline | split("/") | last)
+        and ((.statusLine.command? // "") | split("/") | .[-2]) == "scripts") then
       .statusLine.command = $statusline
     else . end
   ) |
