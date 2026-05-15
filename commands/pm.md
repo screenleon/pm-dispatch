@@ -15,15 +15,7 @@ Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.s
 
 Before constructing the command, source `scripts/lib/handover-validate.sh`, validate every metadata-derived value with `handover_validate_metadata_value`, and insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
-Use `Agent(codex-executor)` only as the documented fallback, preserving existing callers that still depend on executor validation. The fallback allowlist is:
-
-| Condition | Rationale |
-|---|---|
-| Strict pre-flight validation is the primary need. | `codex-executor` hard-rejects malformed briefs before a long dispatch runs. |
-| Main-thread context is near-full. | Validation and completion parsing move out of the main thread when context pressure is the limiting factor. |
-| Sync workflow must remain serialized. | Some composed flows need foreground sequencing rather than async completion notifications. |
-| Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or no usable Bash tool means the primary route cannot run. |
-| User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when safety rules still hold. |
+Use `Agent(codex-executor)` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
 
 If fallback is selected, say why in one sentence, then dispatch `Agent(codex-executor)` with the pre-written brief file path. Otherwise, record the Bash task id and parse completion using the footer documented in `docs/codex-brief.md`.
 

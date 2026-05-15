@@ -6,7 +6,7 @@ tools: Bash, Read
 
 Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
 
-> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `codex_dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
+> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `codex_dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/codex-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
 # Validation
 
@@ -113,7 +113,7 @@ The Write tool is NOT available to codex-executor subagents (the Agent tool does
 
 Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `codex_dispatch_handover_v1` block, the main thread should write `brief_file` and run `scripts/codex-dispatch.sh` directly with `run_in_background:true`. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
 
-Use this agent only when one of these fallback conditions is true:
+Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/codex-brief.md` §Fallback remains the canonical dispatch policy.
 
 | Condition | Why fallback is allowed |
 |---|---|

@@ -113,15 +113,7 @@ acceptance:
   - ...
 ```
 
-Use direct background Bash by default. Set `dispatch_route: agent_codex_executor` only for this allowlist, and state the reason in one sentence outside the fence:
-
-| Condition | Why fallback is allowed |
-|---|---|
-| Strict pre-flight validation is the primary need. | `codex-executor` catches missing required fields, missing file-writing `self_verify`, and ambiguous file scope before dispatch. |
-| Main-thread context is near-full. | The fallback moves validation and completion parsing out of the main thread when context pressure is the limiting factor. |
-| Sync workflow must remain serialized. | Some composed flows need foreground sequencing instead of async completion notifications. |
-| Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or no usable Bash tool means the primary route cannot run. |
-| User explicitly requests codex-executor validation. | User intent overrides the default when it does not conflict with safety rules. |
+Use direct background Bash by default. Set `dispatch_route: agent_codex_executor` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, and state the reason in one sentence outside the fence.
 
 You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not run `scripts/codex-dispatch.sh`; do not write the brief file yourself. Main thread extracts the `codex_dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
 

@@ -314,6 +314,8 @@ Dispatch stderr: <none | concise warning summary>
 
 If the completion notification does not arrive within `<timeout>+30s`, run the diagnostic checklist from `[[feedback_codex_dispatch_foreground]]`: check for a live `codex-dispatch` process, inspect `.agent-trace/latest.*` mtimes, and decide whether the task is still running or orphaned before retrying. If the direct Bash route exits 124, retry exactly once with the same brief and flags after the diagnostic check; do not retry other non-zero exits without main-thread review.
 
+### Fallback
+
 Use `Agent(codex-executor)` only for this fallback allowlist:
 
 | Condition | Rationale |
@@ -350,9 +352,9 @@ EOF
 - `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
 - Inline `-- <brief>` is kept only for trivial smoke checks. Do not use it for real implementation briefs.
 
-## Main-thread Agent call checklist
+## Fallback Agent Call Checklist
 
-Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)`, verify all four:
+Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)` as a fallback route, verify these checks:
 
 | Check | Rule | Why |
 |---|---|---|
