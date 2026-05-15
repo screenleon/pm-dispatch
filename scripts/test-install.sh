@@ -540,6 +540,63 @@ JSON
   pass "$name"
 }
 
+test_install_hooks_uninstall_stale_paths_after_rename() {
+  # Verifies that uninstall-hooks.sh removes stale managed hook paths (e.g. from
+  # a repo rename) by basename+scripts/ match, not by exact full path.
+  #
+  # Steps:
+  #   1. Create settings.json with managed hooks at /fake/old-repo/scripts/
+  #   2. Run uninstall-hooks.sh (current repo_root; paths differ from settings)
+  #   3. Assert all managed hook basenames are gone from settings.json
+  local name="install-hooks-uninstall-stale-paths-after-rename"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  cat > "$home/.claude/settings.json" <<'JSON'
+{
+  "permissions": {},
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-inject-memory.sh"}]}
+    ]
+  },
+  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/hook-save-rate-limits.sh"}
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+
+  local settings="$home/.claude/settings.json"
+
+  # All managed hook basenames must be gone
+  for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
+              hook-log-claude-usage.sh hook-session-summary.sh \
+              hook-inject-memory.sh hook-save-rate-limits.sh; do
+    if grep -q "$hook" "$settings"; then
+      fail "$name" "$hook still present in settings.json after uninstall of stale paths"
+      return
+    fi
+  done
+
+  # No /fake/old-repo/ paths should remain
+  if grep -q "/fake/old-repo/" "$settings"; then
+    fail "$name" "stale /fake/old-repo/ path still present after uninstall"
+    return
+  fi
+
+  pass "$name"
+}
+
 test_userpromptsubmit_install_wires_hook() {
   # Verifies install-hooks.sh wires hook-inject-memory.sh into UserPromptSubmit.
   # Steps:
@@ -905,6 +962,7 @@ test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
 test_install_hooks_updates_stale_paths_after_rename
 test_install_hooks_preserves_unrelated_same_basename_hook
+test_install_hooks_uninstall_stale_paths_after_rename
 test_userpromptsubmit_install_wires_hook
 test_userpromptsubmit_uninstall_removes_hook
 test_userpromptsubmit_install_idempotent
