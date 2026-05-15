@@ -48,6 +48,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-036 | 🔵 active | `/pm` dispatch async ergonomics restore：classify+brief 仍走 subagent；execute 改 main-thread `Bash(codex-dispatch.sh, run_in_background:true)` 直派；恢復 dispatch + 完成通知並行 | ux/process | 2026-05-15 | — |
 | CC-037 | 🔵 active | `hook-routing-log.sh` concurrent append race：並行 PostToolUse 可能 silent-drop routing row | ux/memory | 2026-05-15 | pr:#55 |
 | CC-038 | ⏸ deferred | Windows / cross-platform 鎖機制：`flock` Linux-only，未來支援 Windows/macOS 需替代方案 | ops/portability | 2026-05-15 | CC-037 follow-up |
+| CC-040 | ⏸ deferred | agent-agnostic dispatch schema rename：`docs/codex-brief.md` → `docs/dispatch-brief.md` + `codex_dispatch_handover_v1` → `dispatch_handover_v1` + `executor:` 欄位（為未來非 codex executor 預留） | arch/process | 2026-05-15 | CC-036 follow-up |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` rotation/retention policy（max sessions vs bytes vs archive） | ux/memory | 2026-05-15 | — |
 
 ---
@@ -323,6 +324,43 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Requirement**: 任一方向皆可：(1) 抽象層 `scripts/lib/lock.sh`，依平台選 `flock` (Linux) / `shlock` (macOS 內建) / PowerShell `Mutex` 或 atomic file create loop (Windows)，hook 透過 wrapper 取得鎖；(2) Portable 替代：用 `mkdir`-based atomic locking 取代 flock，所有平台 portable，但需顯式 stale-lock cleanup；(3) 限制範圍：明確聲明 pm-dispatch 僅支援 POSIX（Linux + macOS via Homebrew util-linux），Windows 走 WSL2，寫進 `README.md` + `docs/platform-support.md`。
 **Cross-link**: triggered by CC-037 implementation choice (flock). 不阻塞當前 release。所有 hook scripts (`hook-routing-log.sh`, `hook-tool-trace.sh`, `hook-codex-bash-guard.sh`, `hook-pm-write-guard.sh` 等) 共用同一個 portability 平面，啟動時應一次性盤點所有 Linux-isms。
 **Source**: 2026-05-15 user 在 CC-037 收尾階段點出「之後可能需要支援 Windows」。
+
+## CC-040 — agent-agnostic dispatch schema rename（deferred）
+
+**Problem**: CC-036 ships the new dispatch flow with **codex-specific naming throughout**：
+- `docs/codex-brief.md` (schema doc)
+- `codex_dispatch_handover_v1` (handover block tag, PM→main-thread)
+- 多處 cross-reference 寫死 "codex"
+
+But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` / `self_verify` / `acceptance`）是通用的——任何 coding executor（aider、openhands、未來的 in-house tools）都能消費同樣形狀。把命名綁死在 codex 上，未來新增 executor 就要做大範圍 rename + 跨檔 sync，成本被推遲到那時。
+
+**Why**: 2026-05-15 user 在 CC-036 設計階段點出「brief.md 好像不需要特別寫給 codex 這樣之後其他的 agent 都可以順利套用 而不是被固定給 Codex」。當下 CC-036 流程已 in-flight、scope 已凍結，所以決議「先不全改、寫進 backlog」— 保留命名一致性、避免 CC-036 PR 範圍爆炸。但通用化是正確方向，留著當下次自然 trigger 時的改造機會。
+
+**Trigger conditions**（什麼時候真的該動）：
+1. 新增第二個 executor（例如 aider/openhands/in-house worker）— 強 trigger
+2. 對外開源前 polishing — `codex-brief` 在外部觀感上把 pm-dispatch 跟單一商業工具綁死
+3. 任何時候有人想 retire codex CLI 換成別的工具 — 強 trigger
+
+**Requirement**: 三組工作：
+1. **檔案重命名 + handover tag 重命名**：
+   - `git mv docs/codex-brief.md docs/dispatch-brief.md`
+   - 所有引用 `docs/codex-brief.md` 的檔案改路徑（grep -rl）
+   - `codex_dispatch_handover_v1` → `dispatch_handover_v1`（doc + agent + 任何 hook 內的 string match）
+2. **Handover schema 加 `executor:` 欄位**：
+   - 預設值 `codex`；新欄位寫入 `agents/project-pm.md` instruction、`commands/pm.md` doc、`docs/dispatch-brief.md` schema
+   - 對應 mapping：`executor: codex` → `scripts/codex-dispatch.sh` (bash route) / `agents/codex-executor.md` (agent route)
+   - 顯式聲明「目前僅支援 codex；其他 executor 需新增對應 dispatch script + agent」
+3. **保留 codex-specific 命名的範圍**：
+   - `scripts/codex-dispatch.sh` 不重命名（**這支腳本就是包 codex CLI**）
+   - `agents/codex-executor.md` 不重命名（這個 agent 知道 codex 124 retry / .last 0.128 quirk）
+   - `feedback_codex_dispatch_lifecycle_leak` memory 保留（leak **就是** codex-specific bug）
+
+**Migration safety**: 因 handover tag rename 涉及 PM agent 的 prompt template，**現役 session 在 transition 期間可能看到舊 PM 回新 tag 或新 PM 回舊 tag**。建議在同一 PR 中：
+- 同步改 PM agent + 改 main-thread parser（commands/pm.md）
+- 避免老 episodes.jsonl replay — hard cutover
+- 加 `handover_version: 2`（可選）標示 schema 變動，main-thread parser 可同時識別 v1 與 v2
+
+**Cross-link**: triggered by CC-036 design discussion 2026-05-15。CC-036 本身用 codex-specific 命名 ship，由本條目記錄通用化欠款。**不阻塞當前 release**。
 
 ## CC-044 — `tool-trace.jsonl` rotation/retention policy upgrade（deferred）
 
