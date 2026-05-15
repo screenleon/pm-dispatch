@@ -354,6 +354,26 @@ metadata_value_lf_injection_rejects_case() {
   expect_reject working_dir handover_validate_metadata_value working_dir $'/tmp/a\nb'
 }
 
+# Behavior: Every shell metacharacter in metadata values is rejected.
+# Steps:
+#   1. Validate one otherwise safe value for each denylisted shell metacharacter.
+#   2. Assert every rejection names the field and reports a shell metacharacter.
+metadata_value_full_denylist_rejects_case() {
+  local labels=(double_quote backtick ampersand pipe less_than greater_than open_paren close_paren open_brace close_brace backslash)
+  local chars=('"' '`' '&' '|' '<' '>' '(' ')' '{' '}' '\')
+  local i value ok=1
+
+  for i in "${!chars[@]}"; do
+    value="/tmp/x${chars[$i]}y"
+    expect_reject_reason test "shell metacharacter" handover_validate_metadata_value test "$value" || {
+      printf 'metadata denylist char was not rejected: %s\n' "${labels[$i]}" >&2
+      ok=0
+    }
+  done
+
+  [[ "$ok" -eq 1 ]]
+}
+
 # Behavior: Wrong arity when calling metadata validation is rejected.
 # Steps:
 #   1. Call handover_validate_metadata_value with one argument.
@@ -550,17 +570,18 @@ brief_file_subdirectory_rejects_case() {
 # Steps:
 #   1. Create a temporary /tmp/brief-*.md symlink.
 #   2. Assert the reject audit says symlink paths are not allowed, then clean up.
-brief_file_symlink_rejects_case() {
-  local target link ok=1
-  target="/tmp/brief-target-$$.md"
-  link="/tmp/brief-link-$$.md"
-  rm -f "$target" "$link"
+brief_file_symlink_rejects_case() (
+  local tmp target link ok=1
+  tmp="$(mktemp -d -t dispatch-handover-brief-symlink.XXXXXX)"
+  trap 'rm -rf "$tmp"; rm -f "$link"' EXIT
+  target="$tmp/target.md"
+  link="/tmp/brief-$(basename "$tmp").md"
+
   printf 'temporary brief target\n' > "$target"
   ln -s "$target" "$link"
   expect_reject_reason brief_file "symlink path is not allowed" handover_validate_brief_file "$link" || ok=0
-  rm -f "$target" "$link"
   [[ "$ok" -eq 1 ]]
-}
+)
 
 # Behavior: default model is accepted.
 # Steps:
@@ -730,6 +751,7 @@ run_case "handover/metadata leading whitespace rejects" metadata_value_leading_w
 run_case "handover/metadata trailing whitespace rejects" metadata_value_trailing_whitespace_rejects_case
 run_case "handover/metadata CR injection rejects" metadata_value_cr_injection_rejects_case
 run_case "handover/metadata LF injection rejects" metadata_value_lf_injection_rejects_case
+run_case "handover/metadata full denylist rejects" metadata_value_full_denylist_rejects_case
 run_case "handover/metadata wrong arity rejects" metadata_value_wrong_arity_rejects_case
 run_case "handover/version one accepts" handover_version_one_accepts_case
 run_case "handover/version two rejects" handover_version_two_rejects_case
