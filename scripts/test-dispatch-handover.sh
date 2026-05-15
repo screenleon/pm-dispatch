@@ -140,6 +140,19 @@ expect_reject() {
   grep -q "handover-validate: reject $field:" <<<"$output"
 }
 
+expect_reject_reason() {
+  local field=$1
+  local reason=$2
+  shift 2
+  local output
+
+  if output="$("$@" 2>&1 >/dev/null)"; then
+    return 1
+  fi
+  grep -q "handover-validate: reject $field:" <<<"$output" || return 1
+  grep -q "$reason" <<<"$output"
+}
+
 # Behavior: A valid handover block extracts metadata and body and passes the shared contract validators.
 # Steps:
 #   1. Write a valid fenced handover block to a temp file and extract it through the lib helpers.
@@ -189,6 +202,42 @@ working_dir_shell_metacharacters_reject_case() {
     handover_validate_metadata_value working_dir "$bad" >/dev/null 2>&1 && return 1
   done
   return 0
+}
+
+# Behavior: Relative working_dir values are rejected.
+# Steps:
+#   1. Validate a working_dir without a leading slash.
+#   2. Assert the reject audit says the path must be absolute.
+working_dir_not_absolute_rejects_case() {
+  expect_reject_reason working_dir "must be an absolute path" handover_validate_working_dir foo/bar
+}
+
+# Behavior: Overlong working_dir values are rejected.
+# Steps:
+#   1. Validate an absolute working_dir longer than 4096 bytes.
+#   2. Assert the reject audit says the path is too long.
+working_dir_too_long_rejects_case() {
+  local long_path
+  long_path="/tmp/$(printf 'a%.0s' {1..4097})"
+  expect_reject_reason working_dir "longer than 4096" handover_validate_working_dir "$long_path"
+}
+
+# Behavior: working_dir values containing dot-dot path segments are rejected.
+# Steps:
+#   1. Validate an absolute working_dir containing /../.
+#   2. Assert the reject audit says dot-dot path segments are not allowed.
+working_dir_dotdot_rejects_case() {
+  expect_reject_reason working_dir "dot-dot path segment" handover_validate_working_dir /tmp/foo/../bar
+}
+
+# Behavior: Nonexistent working_dir values are rejected.
+# Steps:
+#   1. Validate an absolute path that does not exist.
+#   2. Assert the reject audit says the directory does not exist.
+working_dir_nonexistent_rejects_case() {
+  local missing="/tmp/this-path-does-not-exist-handover-test-$$"
+  rm -rf "$missing"
+  expect_reject_reason working_dir "directory does not exist" handover_validate_working_dir "$missing"
 }
 
 # Behavior: Shell metacharacters in brief_file are rejected.
@@ -489,6 +538,30 @@ brief_file_suffix_rejects_case() {
   expect_reject brief_file handover_validate_brief_file /tmp/brief-x.txt
 }
 
+# Behavior: brief_file paths below subdirectories are rejected.
+# Steps:
+#   1. Validate a /tmp/brief-* path containing an additional slash.
+#   2. Assert the reject audit says subdirectories are not allowed.
+brief_file_subdirectory_rejects_case() {
+  expect_reject_reason brief_file "subdirectories are not allowed" handover_validate_brief_file /tmp/brief-x/y.md
+}
+
+# Behavior: brief_file symlink paths are rejected.
+# Steps:
+#   1. Create a temporary /tmp/brief-*.md symlink.
+#   2. Assert the reject audit says symlink paths are not allowed, then clean up.
+brief_file_symlink_rejects_case() {
+  local target link ok=1
+  target="/tmp/brief-target-$$.md"
+  link="/tmp/brief-link-$$.md"
+  rm -f "$target" "$link"
+  printf 'temporary brief target\n' > "$target"
+  ln -s "$target" "$link"
+  expect_reject_reason brief_file "symlink path is not allowed" handover_validate_brief_file "$link" || ok=0
+  rm -f "$target" "$link"
+  [[ "$ok" -eq 1 ]]
+}
+
 # Behavior: default model is accepted.
 # Steps:
 #   1. Validate model default.
@@ -598,6 +671,36 @@ extract_block_missing_rejects_case() {
   ! handover_extract_block 'no fenced block here' >/dev/null 2>&1
 }
 
+# Behavior: Unterminated handover blocks are rejected by the shared extractor.
+# Steps:
+#   1. Extract from content with an opening handover fence and no closing fence.
+#   2. Assert extraction fails with an audit message mentioning unterminated.
+extract_block_unterminated_fence_rejects_case() {
+  local input output
+  input=$'```codex_dispatch_handover_v1\nhandover_version: 1\n---\ngoal: x'
+  if output="$(printf '%s\n' "$input" | handover_extract_block 2>&1 >/dev/null)"; then
+    return 1
+  fi
+  grep -q "handover-validate: reject handover_block:" <<<"$output" || return 1
+  grep -q "unterminated" <<<"$output"
+}
+
+# Behavior: Metadata extraction rejects blocks without a standalone separator.
+# Steps:
+#   1. Extract metadata from a block with no standalone --- line.
+#   2. Assert extraction fails.
+extract_metadata_missing_separator_rejects_case() {
+  ! handover_extract_metadata $'handover_version: 1\ngoal: x' >/dev/null 2>&1
+}
+
+# Behavior: Body extraction rejects blocks without a standalone separator.
+# Steps:
+#   1. Extract body from a block with no standalone --- line.
+#   2. Assert extraction fails.
+extract_body_missing_separator_rejects_case() {
+  ! handover_extract_body $'handover_version: 1\ngoal: x' >/dev/null 2>&1
+}
+
 # Behavior: Metadata and body extraction can round-trip a block around the separator.
 # Steps:
 #   1. Split a block into metadata and body with the shared extractors.
@@ -614,6 +717,10 @@ extract_metadata_body_round_trips_case() {
 run_case "handover/valid block extracts metadata and body" valid_handover_extracts_metadata_and_body_case
 run_case "handover/working_dir mismatch rejects" working_dir_mismatch_rejects_case
 run_case "handover/working_dir shell metacharacters reject" working_dir_shell_metacharacters_reject_case
+run_case "working_dir_not_absolute_rejects_case" working_dir_not_absolute_rejects_case
+run_case "working_dir_too_long_rejects_case" working_dir_too_long_rejects_case
+run_case "working_dir_dotdot_rejects_case" working_dir_dotdot_rejects_case
+run_case "working_dir_nonexistent_rejects_case" working_dir_nonexistent_rejects_case
 run_case "handover/brief_file shell metacharacter rejects" brief_file_shell_metacharacter_rejects_case
 run_case "handover/unknown dispatch_route rejects" unknown_dispatch_route_rejects_case
 run_case "handover/missing block yields empty extraction" missing_block_rejects_with_empty_extraction_case
@@ -646,6 +753,8 @@ run_case "handover/brief_file relative rejects" brief_file_relative_path_rejects
 run_case "handover/brief_file outside tmp prefix rejects" brief_file_outside_tmp_prefix_rejects_case
 run_case "handover/brief_file dotdot rejects" brief_file_dotdot_rejects_case
 run_case "handover/brief_file suffix rejects" brief_file_suffix_rejects_case
+run_case "brief_file_subdirectory_rejects_case" brief_file_subdirectory_rejects_case
+run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case
 run_case "handover/model default accepts" model_default_accepts_case
 run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
 run_case "handover/model bad shape rejects" model_bad_shape_rejects_case
@@ -659,6 +768,9 @@ run_case "handover/working_dir match accepts" working_dir_match_accepts_case
 run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
 run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case
 run_case "handover/extract block missing rejects" extract_block_missing_rejects_case
+run_case "extract_block_unterminated_fence_rejects_case" extract_block_unterminated_fence_rejects_case
+run_case "extract_metadata_missing_separator_rejects_case" extract_metadata_missing_separator_rejects_case
+run_case "extract_body_missing_separator_rejects_case" extract_body_missing_separator_rejects_case
 run_case "handover/extract metadata body round-trips" extract_metadata_body_round_trips_case
 
 echo "----"

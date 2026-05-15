@@ -48,12 +48,22 @@ handover_has_dotdot_segment() {
 handover_extract_block() {
   local input=${1-}
 
+  if [[ $# -eq 0 ]]; then
+    input="$(cat)"
+  fi
+
   awk '
-    BEGIN { in_block = 0; found = 0 }
+    BEGIN { in_block = 0; found = 0; closed = 0; block = "" }
     /^```codex_dispatch_handover_v1$/ { in_block = 1; found = 1; next }
-    in_block && /^```$/ { exit }
-    in_block { print; next }
-    END { if (!found) exit 1 }
+    in_block && /^```$/ { closed = 1; printf "%s", block; exit }
+    in_block { block = block $0 ORS; next }
+    END {
+      if (!found) exit 1
+      if (in_block && !closed) {
+        print "handover-validate: reject handover_block: unterminated fence" > "/dev/stderr"
+        exit 1
+      }
+    }
   ' <<<"$input"
 }
 
