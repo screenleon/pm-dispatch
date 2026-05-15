@@ -13,6 +13,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - `commands/codex-pr-gate.md` and `commands/pr-gate.md` merged into a single `commands/pr-gate.md` that invokes `scripts/pr-gate.sh`; the old Agent-subagent approach is replaced by the script's `--parallel` mode
 
 ### Added
+- `scripts/hook-routing-log.sh` (CC-028): PostToolUse hook that auto-appends one
+  JSONL row per Brief/Dispatch routing decision to the active project's
+  `routing_log.md` (inside a marker-fenced auto-block); triggers on Bash
+  `codex-dispatch.sh` invocations and Agent dispatches whose `subagent_type` is
+  `codex-executor` (or aliases). Mirrors CC-027's `hook-tool-trace.sh` design
+  family — metadata-only, non-blocking, multi-path JSON hedge, single-archive
+  1 MiB rotation. `q_hit` / `second_thoughts` fields stay null at hook time;
+  post-classification deferred to a future `/routing-distill`.
+- `scripts/migrate-routing-log.sh` (CC-028): one-time migrator invoked by
+  `install-hooks.sh` on first wire-in; converts existing free-form bullet
+  sections in `routing_log.md` into JSONL rows inside the new auto-block,
+  preserves the legacy markdown table byte-for-byte, writes a
+  `routing_log.md.bak` atomic backup before any modification.
 - `scripts/pr-gate.sh`: **parallel mode** (`--parallel`) — one independent
   codex session per reviewer followed by a project-pm synthesis session; avoids
   shared-context anchoring and token pressure between reviewers. Default remains

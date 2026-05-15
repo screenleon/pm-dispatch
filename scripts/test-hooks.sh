@@ -2913,6 +2913,222 @@ meta_filter_no_match_exits_nonzero() {
   fi
 }
 
+# =============================================================================
+# hook-routing-log
+# =============================================================================
+
+make_routing_log() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/routing_log.md" <<'EOF'
+---
+name: routing_log
+type: log
+---
+
+| date | task | routed to | Q hit | second-thoughts |
+|------|------|-----------|-------|-----------------|
+| 2026-05-15 | fixture | Codex | Q1 | no |
+
+<!-- routing-log:auto-block:start -->
+<!-- routing-log:auto-block:end -->
+EOF
+}
+
+routing_rows() {
+  awk '/<!-- routing-log:auto-block:start -->/{in_block=1; next} /<!-- routing-log:auto-block:end -->/{in_block=0} in_block && /^\{/' "$1/routing_log.md"
+}
+
+routing_count() {
+  routing_rows "$1" | grep -c '^{' 2>/dev/null || true
+}
+
+assert_routing_schema() {
+  local name="$1" dir="$2"
+  should_run "$name" || return 0
+  if routing_rows "$dir" | jq -e 'keys == ["brief_file","goal_excerpt","kind","q_hit","second_thoughts","session_id","subagent_type","ts"] and (.kind | IN("bash-dispatch","agent-dispatch")) and has("subagent_type") and has("brief_file") and has("goal_excerpt") and has("q_hit") and has("second_thoughts")' >/dev/null; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (routing JSON schema mismatch)\n' "$name"
+  fi
+}
+
+routing_hook_case() {
+  local name="$1" payload="$2" expect_count="$3" jq_expr="$4"
+  should_run "$name" || return 0
+  local root mem before after
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing.XXXXXX")"
+  mem="$root/proj-routing-log/-home-screenleon-github-pm-dispatch/memory"
+  make_routing_log "$mem"
+  before="$(routing_count "$mem")"
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  after="$(routing_count "$mem")"
+  if [[ "$((after - before))" == "$expect_count" ]] && { [[ -z "$jq_expr" ]] || routing_rows "$mem" | tail -n 1 | jq -e "$jq_expr" >/dev/null; }; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (before=%s after=%s expected_delta=%s)\n' "$name" "$before" "$after" "$expect_count"
+  fi
+}
+
+routing_missing_file_case() {
+  local name="routing: missing routing_log.md creates minimal file and appends"
+  should_run "$name" || return 0
+  local root mem payload
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-missing.XXXXXX")"
+  mem="$root/memory"
+  mkdir -p "$mem"
+  payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s7","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  if [[ -f "$mem/routing_log.md" ]] && [[ "$(routing_count "$mem")" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+  fi
+}
+
+routing_missing_marker_case() {
+  local name="routing: existing log without auto-block audits and leaves file unmodified"
+  should_run "$name" || return 0
+  local root mem before payload
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-nomarker.XXXXXX")"
+  mem="$root/memory"
+  mkdir -p "$mem"
+  printf 'legacy only\n' > "$mem/routing_log.md"
+  cp "$mem/routing_log.md" "$mem/routing_log.md.before"
+  payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s8","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  if cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && grep -Eq 'auto-block.*missing' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+  fi
+}
+
+routing_rotation_case() {
+  local name="routing: rotates over 1MiB preserving header and fresh block"
+  should_run "$name" || return 0
+  local root mem payload
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate.XXXXXX")"
+  mem="$root/memory"
+  make_routing_log "$mem"
+  perl -0pi -e 's/<!-- routing-log:auto-block:start -->/"x" x 1049000 . "\n<!-- routing-log:auto-block:start -->"/e' "$mem/routing_log.md"
+  payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r1","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  if [[ -f "$mem/routing_log.md.1" ]] && [[ "$(routing_count "$mem")" == "1" ]] && grep -q '^| 2026-05-15 | fixture |' "$mem/routing_log.md"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+  fi
+}
+
+routing_rotation_fail_case() {
+  local name="routing: rotation failure audits and skips append"
+  should_run "$name" || return 0
+  local root mem payload before after
+  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate-fail.XXXXXX")"
+  mem="$root/memory"
+  make_routing_log "$mem"
+  perl -0pi -e 's/<!-- routing-log:auto-block:start -->/"x" x 1049000 . "\n<!-- routing-log:auto-block:start -->"/e' "$mem/routing_log.md"
+  before="$(routing_count "$mem")"
+  chmod 500 "$mem"
+  payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r2","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  chmod 700 "$mem"
+  after="$(routing_count "$mem")"
+  if [[ "$before" == "$after" ]] && grep -q 'rotation' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+  fi
+}
+
+install_routing_dry_run_case() {
+  local name="routing: install-hooks dry-run wires PostToolUse Bash|Agent"
+  should_run "$name" || return 0
+  local home out
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$home/.claude/settings.json"
+  out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run 2>&1)"
+  if [[ "$out" == *'"PostToolUse"'* && "$out" == *'"matcher": "Bash|Agent"'* && "$out" == *'hook-routing-log.sh'* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s\n' "$name"
+  fi
+}
+
+install_routing_idempotent_case() {
+  local name="routing: install-hooks already-wired exits cleanly"
+  should_run "$name" || return 0
+  local home out
+  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-idem.XXXXXX")"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$home/.claude/settings.json"
+  HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" >/dev/null 2>&1
+  out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
+  if [[ "$out" == *"install-hooks: already wired, nothing to do"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — out=%q\n' "$name" "$out"
+  fi
+}
+
+$LIST || echo "== hook-routing-log =="
+ROUTING_BRIEF1="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief1.XXXXXX.md")"
+ROUTING_BRIEF2="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief2.XXXXXX.md")"
+printf 'goal:\n  first routing goal from brief\n' > "$ROUTING_BRIEF1"
+printf 'goal: second routing goal from brief\n' > "$ROUTING_BRIEF2"
+routing_hook_case "routing: Bash relative scripts/codex-dispatch with absolute brief" \
+  "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s1\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"scripts/codex-dispatch.sh --brief-file $ROUTING_BRIEF1\"}}" \
+  1 ".kind == \"bash-dispatch\" and .subagent_type == null and .brief_file == \"$ROUTING_BRIEF1\" and .goal_excerpt == \"first routing goal from brief\""
+routing_hook_case "routing: Bash absolute scripts/codex-dispatch with absolute brief" \
+  "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --brief-file $ROUTING_BRIEF2\"}}" \
+  1 ".kind == \"bash-dispatch\" and .brief_file == \"$ROUTING_BRIEF2\" and .goal_excerpt == \"second routing goal from brief\""
+routing_hook_case "routing: Bash dispatch with relative brief writes null brief fields" \
+  '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s3","tool_name":"Bash","tool_input":{"command":"scripts/codex-dispatch.sh --brief-file briefs/foo.md"}}' \
+  1 '.kind == "bash-dispatch" and .brief_file == null and .goal_excerpt == null'
+routing_hook_case "routing: Bash non-dispatch skips" \
+  '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s4","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}' \
+  0 ""
+routing_hook_case "routing: Agent codex-executor writes row" \
+  '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s5","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}' \
+  1 '.kind == "agent-dispatch" and .subagent_type == "codex-executor" and .brief_file == null and .goal_excerpt == null'
+for reviewer in critic qa-tester security-reviewer risk-reviewer architecture-reviewer; do
+  routing_hook_case "routing: Agent reviewer $reviewer skips" \
+    "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s6\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"$reviewer\"}}" \
+    0 ""
+done
+routing_missing_file_case
+routing_missing_marker_case
+routing_rotation_case
+routing_rotation_fail_case
+install_routing_dry_run_case
+install_routing_idempotent_case
+
 meta_filter_runs_only_matching
 meta_list_exits_zero_with_count
 meta_filter_no_match_exits_nonzero

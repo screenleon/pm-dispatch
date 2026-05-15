@@ -7,10 +7,12 @@
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #   - matcher "*"          → scripts/hook-tool-trace.sh
+#   - matcher "Bash|Agent" → scripts/hook-routing-log.sh
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
 #   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
+#   - one-shot routing_log.md legacy bullet migrator after settings write
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
@@ -41,6 +43,8 @@ pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 trace_cmd="$repo_root/scripts/hook-tool-trace.sh"
+routing_cmd="$repo_root/scripts/hook-routing-log.sh"
+migrate_routing_cmd="$repo_root/scripts/migrate-routing-log.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
@@ -48,12 +52,14 @@ inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$migrate_routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
   echo "  $trace_cmd" >&2
+  echo "  $routing_cmd" >&2
+  echo "  $migrate_routing_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -81,6 +87,7 @@ jq \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
   --arg trace "$trace_cmd" \
+  --arg routing "$routing_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd" \
@@ -91,6 +98,7 @@ jq \
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
   .hooks.PreToolUse //= [] |
+  .hooks.PostToolUse //= [] |
   .hooks.Stop //= [] |
   .hooks.UserPromptSubmit //= [] |
 
@@ -106,6 +114,7 @@ jq \
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $trace_present |
+  ( [ .hooks.PostToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $routing_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
@@ -117,6 +126,12 @@ jq \
       elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
       elif ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cxw
       elif ((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $trace
+      else . end
+    )
+  ) |
+  .hooks.PostToolUse |= map(
+    .hooks |= map(
+      if ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $routing
       else . end
     )
   ) |
@@ -167,6 +182,13 @@ jq \
       }]
     else . end
   ) |
+  ( if $routing_present == 0 then
+      .hooks.PostToolUse += [{
+        "matcher": "Bash|Agent",
+        "hooks": [{"type": "command", "command": $routing}]
+      }]
+    else . end
+  ) |
   ( if $stop_present == 0 then
       .hooks.Stop += [{"hooks": [{"type": "command", "command": $stop}]}]
     else . end
@@ -202,3 +224,12 @@ mv "$tmp_new" "$settings"
 trap - EXIT
 echo "install-hooks: wrote $settings"
 echo "install-hooks: backup at $backup"
+
+routing_log="$HOME/.claude/projects/-home-screenleon-github/memory/routing_log.md"
+if [[ -f "$routing_log" ]]; then
+  if grep -q -F '<!-- routing-log:auto-block:start -->' "$routing_log" 2>/dev/null; then
+    echo "install-hooks: routing-log already migrated, skipping migrator"
+  else
+    "$migrate_routing_cmd"
+  fi
+fi
