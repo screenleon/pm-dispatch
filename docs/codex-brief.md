@@ -257,7 +257,20 @@ Direct Bash dispatch shape:
 Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, run `handover_validate_metadata_value <field> <value>` on every metadata-derived argument, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
+Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
+
+`handover_validate_all_metadata` applies these field validators:
+
+- `handover_validate_handover_version`
+- `handover_validate_dispatch_route`
+- `handover_validate_working_dir`
+- `handover_validate_brief_file`
+- `handover_validate_sandbox`
+- `handover_validate_approval`
+- `handover_validate_timeout`
+- `handover_validate_model`
+- `handover_validate_skip_git_check`
+- `handover_validate_fallback_allowed`
 
 Rejected example:
 
@@ -266,6 +279,23 @@ working_dir: /tmp/x'; touch /tmp/pwned; #
 ```
 
 Reject this before command construction because `working_dir` contains shell metacharacters.
+
+Control-field reject examples:
+
+```text
+handover_version: 2
+dispatch_route: mystery_route
+working_dir: relative/path
+brief_file: /etc/passwd
+sandbox: danger-full-access
+approval: on-request
+timeout: 3601
+model: Codex_Spark!
+skip_git_check: true
+fallback_allowed: maybe
+```
+
+Each example above must reject before command construction through the corresponding field validator.
 
 Argument order is stable:
 

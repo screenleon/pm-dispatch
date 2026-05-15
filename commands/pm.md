@@ -13,7 +13,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-Before constructing the command, source `scripts/lib/handover-validate.sh`, validate every metadata-derived value with `handover_validate_metadata_value`, and insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
+Before constructing the command, source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header with `handover_validate_all_metadata`, confirm the metadata/body `working_dir` match, and insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
 Use `Agent(codex-executor)` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
 
