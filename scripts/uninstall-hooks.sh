@@ -54,7 +54,13 @@ jq \
   (if (.hooks // {}).PreToolUse then
     # Remove individual hook entries matching any managed command.
     .hooks.PreToolUse |= map(
-      .hooks |= map(select(.command != $pm and .command != $cx and .command != $cxw))
+      .hooks |= map(select(
+        ([
+          ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
+          ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
+          ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
+        ] | any) | not
+      ))
     ) |
     # Drop matcher blocks whose hooks list is now empty.
     .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
@@ -63,19 +69,28 @@ jq \
   else . end) |
   (if (.hooks // {}).Stop then
     .hooks.Stop |= map(
-      .hooks |= map(select(.command != $stop and .command != $old_stop and .command != $session))
+      .hooks |= map(select(
+        ([
+          ((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
+          ((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
+          (.command == $old_stop)
+        ] | any) | not
+      ))
     ) |
     .hooks.Stop |= map(select((.hooks | length) > 0)) |
     if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
   else . end) |
   (if (.hooks // {}).UserPromptSubmit then
     .hooks.UserPromptSubmit |= map(
-      .hooks |= map(select(.command != $inject))
+      .hooks |= map(select(
+        ((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") | not
+      ))
     ) |
     .hooks.UserPromptSubmit |= map(select((.hooks | length) > 0)) |
     if (.hooks.UserPromptSubmit | length) == 0 then del(.hooks.UserPromptSubmit) else . end
   else . end) |
-  (if (.statusLine.command // "") == $statusline then
+  (if ( ((.statusLine.command // "") | split("/") | last) == ($statusline | split("/") | last)
+        and ((.statusLine.command // "") | split("/") | .[-2]) == "scripts" ) then
     if $chain_target != "" then
       .statusLine = {"type": "command", "command": $chain_target}
     else
