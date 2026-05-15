@@ -122,6 +122,13 @@ if [[ -x "$REPO_ROOT/scripts/test-hooks.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; the
   echo
 fi
 
+# Pre-flight: routing log migrator regression suite
+if [[ -x "$REPO_ROOT/scripts/test-migrate-routing-log.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
+  echo "==> test migrate routing log"
+  "$REPO_ROOT/scripts/test-migrate-routing-log.sh"
+  echo
+fi
+
 # Pre-flight: installer regression suite (symlink/conflict behavior)
 if [[ -x "$REPO_ROOT/scripts/test-install.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> test install"
