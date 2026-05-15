@@ -6,6 +6,7 @@
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
+#   - matcher "*"          → scripts/hook-tool-trace.sh
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
@@ -39,6 +40,7 @@ fi
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
+trace_cmd="$repo_root/scripts/hook-tool-trace.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
@@ -46,11 +48,12 @@ inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
+  echo "  $trace_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -77,6 +80,7 @@ jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
+  --arg trace "$trace_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd" \
@@ -101,6 +105,7 @@ jq \
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $trace_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
@@ -111,6 +116,7 @@ jq \
       if   ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
       elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
       elif ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cxw
+      elif ((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $trace
       else . end
     )
   ) |
@@ -151,6 +157,13 @@ jq \
       .hooks.PreToolUse += [{
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": $cx}]
+      }]
+    else . end
+  ) |
+  ( if $trace_present == 0 then
+      .hooks.PreToolUse += [{
+        "matcher": "*",
+        "hooks": [{"type": "command", "command": $trace}]
       }]
     else . end
   ) |
