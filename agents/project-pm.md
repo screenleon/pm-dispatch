@@ -84,6 +84,8 @@ The canonical schema lives in `~/github/pm-dispatch/docs/codex-brief.md`. Briefs
 
 Return exactly one fenced `codex_dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
 
+Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `scripts/lib/handover-validate.sh` before constructing Bash argv.
+
 ```codex_dispatch_handover_v1
 handover_version: 1
 dispatch_route: main_thread_bash_background

@@ -243,7 +243,7 @@ Metadata fields:
 | `handover_version` | yes | Currently `1`; bump on shape change. |
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_codex_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
-| `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread writes this file. |
+| `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `sandbox` | yes | `workspace-write` default unless caller authorized another value. |
 | `approval` | yes | `never` default unless caller authorized another value. |
 | `timeout` | yes | `1200` default, in seconds. |
@@ -254,23 +254,34 @@ Metadata fields:
 Direct Bash dispatch shape:
 
 ```text
-Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd '<working_dir>' --sandbox '<sandbox>' --approval '<approval>' --timeout '<timeout>' --brief-file '<brief_file>'", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
+
+Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, run `handover_validate_metadata_value <field> <value>` on every metadata-derived argument, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
+
+Rejected example:
+
+```text
+working_dir: /tmp/x'; touch /tmp/pwned; #
+```
+
+Reject this before command construction because `working_dir` contains shell metacharacters.
 
 Argument order is stable:
 
 1. `bash <abs path>/scripts/codex-dispatch.sh`
-2. `--cd '<working_dir>'`
-3. `--model '<model>'` only if `model` is not `default`
-4. `--sandbox '<sandbox>'`
-5. `--approval '<approval>'`
+2. `--cd <safe working_dir>`
+3. `--model <safe model>` only if `model` is not `default`
+4. `--sandbox <safe sandbox>`
+5. `--approval <safe approval>`
 6. `--skip-git-check` only if `skip_git_check: true`
-7. `--timeout '<timeout>'`
-8. `--brief-file '<brief_file>'`
+7. `--timeout <safe timeout>`
+8. `--brief-file <safe brief_file>`
 
 Quoting and command-shape rules:
 
-- Single quotes around path values.
+- Validate metadata first with `scripts/lib/handover-validate.sh`; never insert raw metadata into the Bash command.
+- Use `handover_safe_argv` output for every metadata-derived argv value.
 - Single physical line, with no `\` continuation.
 - No `cd <dir> && ...` compounds; this avoids the stale agent-context lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 - No inline `-- <brief>` form; always dispatch a file-backed brief.
@@ -375,10 +386,10 @@ acceptance:
   - git status --short is unchanged.
 ```
 
-Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md`, then launch one physical line:
+Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `scripts/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
 
 ```text
-Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd '/home/screenleon/github/pm-dispatch' --sandbox 'workspace-write' --approval 'never' --timeout '1200' --brief-file '/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md'", run_in_background: true, description: "Dispatch codex for cc036-smoke")
+Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd /home/screenleon/github/pm-dispatch --sandbox workspace-write --approval never --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
 ```
 
 Expected sequence:
