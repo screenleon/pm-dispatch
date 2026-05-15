@@ -286,12 +286,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 此 bug 不阻擋一般使用；列為 ops 維護債。
 **Source**: 2026-05-15 對話 — PR #51 改名 cutover 時 observed。
 
-## CC-044 — `tool-trace.jsonl` rotation/retention policy（deferred）
+## CC-044 — `tool-trace.jsonl` rotation/retention policy upgrade（deferred）
 
-**Problem**: CC-027 intentionally ships append-only `tool-trace.jsonl` without log rotation. Long-running projects need a retention policy before the trace file grows without bound.
-**Why**: Rotation needs a separate design choice: retain by last N sessions, max bytes, or gzip/archive windows. Mixing that policy into CC-027 would make the signal-layer MVP larger and harder to validate.
-**Requirement**: Design and implement rotation/retention for `tool-trace.jsonl`, including tests for boundary behavior and non-blocking failure.
-**Source**: 2026-05-15 CC-027 implementation brief.
+**Current baseline (shipped in CC-027)**: 4 MiB single-archive rotation — when `tool-trace.jsonl` exceeds 4 MiB, it is renamed to `tool-trace.jsonl.1` (overwriting any prior `.1`) and a fresh main file is started. Retention semantics: "current file plus one overwritten archive". Constant-time stat check, non-blocking on rotation failure.
+**Problem**: The 4 MiB single-archive baseline bounds growth (clears the unbounded-growth risk) but overwrites prior trace history on each rotation. For long-running projects or post-hoc analysis of CC-025/CC-026 signals, multi-window retention may be needed.
+**Why**: Multi-tier retention needs a separate design choice: retain by last N sessions, gzip/archive windows, or time-based eviction. The MVP baseline keeps blast radius low while CC-025/026 consumers are not yet implemented.
+**Requirement**: Design and implement the upgrade from "current + one overwritten archive" to a multi-window retention policy (proposal: N rotated archives with gzip, or daily archive directory). Include tests for boundary behavior, archive integrity, and non-blocking failure.
+**Source**: 2026-05-15 CC-027 implementation brief + PR-gate critic/arch/risk advise on rotation/retention contract clarification.
 
 ## CC-027b — `tool-trace.jsonl` health signal（deferred）
 

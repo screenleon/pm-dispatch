@@ -1404,6 +1404,34 @@ tool_trace_install_hooks_idempotent() {
 }
 tool_trace_install_hooks_idempotent
 
+# Behavior: hook-tool-trace.sh stays under the documented hot-path budget so it can be safely wired with matcher "*".
+# Steps: 1. Fire 100 valid Bash payloads through the hook; 2. Measure wall time; 3. Assert total < 3500ms (≈ 35ms/call cap — generous for slow CI runners; local observed 9–10ms/call).
+tool_trace_performance_budget() {
+  local name="tool-trace/performance_budget" trace_dir payload start_ms end_ms elapsed_ms
+  should_run "$name" || return 0
+  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  payload='{"session_id":"perf","cwd":"'"$REPO_ROOT"'","tool_name":"Bash","tool_input":{"command":"git status"}}'
+  start_ms=$(( $(date +%s%N) / 1000000 ))
+  local i
+  for ((i=0; i<100; i++)); do
+    printf '%s' "$payload" | CLAUDE_TOOL_TRACE_DIR="$trace_dir" "$SCRIPT_DIR/hook-tool-trace.sh"
+  done
+  end_ms=$(( $(date +%s%N) / 1000000 ))
+  elapsed_ms=$((end_ms - start_ms))
+  local lines
+  lines="$(wc -l < "$trace_dir/tool-trace.jsonl" 2>/dev/null || echo 0)"
+  if [[ "$lines" == "100" && "$elapsed_ms" -lt "3500" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s — %d ms / 100 calls (%d ms/call avg)\n' "$name" "$elapsed_ms" "$((elapsed_ms / 100))"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — elapsed_ms=%d lines=%s (budget 3500ms / 100 calls)\n' "$name" "$elapsed_ms" "$lines"
+  fi
+  rm -rf "$trace_dir"
+}
+tool_trace_performance_budget
+
 # =============================================================================
 # hook-log-claude-usage
 # =============================================================================

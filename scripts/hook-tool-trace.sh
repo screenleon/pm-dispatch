@@ -71,23 +71,6 @@ json_escape_into() {
   printf -v "$target" '%s' "$value"
 }
 
-json_string_after_stdout() {
-  local haystack="$1" anchor="$2" key="$3" scoped
-  scoped="$haystack"
-  if [[ -n "$anchor" ]]; then
-    case "$scoped" in
-      *"\"$anchor\""*) scoped="${scoped#*"\"$anchor\""}" ;;
-      *) return 1 ;;
-    esac
-  fi
-
-  if [[ "$scoped" =~ \"$key\"[[:space:]]*:[[:space:]]*\"(([^\"\\]|\\.)*)\" ]]; then
-    json_unescape "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  return 1
-}
-
 json_string_after() {
   local target="$1" haystack="$2" anchor="$3" key="$4" scoped
   scoped="$haystack"
@@ -105,29 +88,9 @@ json_string_after() {
   return 1
 }
 
-first_nonempty() {
-  local value
-  for value in "$@"; do
-    if [[ -n "$value" ]]; then
-      printf '%s' "$value"
-      return 0
-    fi
-  done
-  return 1
-}
-
 truncate80() {
   local value="$1"
   printf '%s' "${value:0:80}"
-}
-
-home_abbrev() {
-  local path="$1"
-  case "$path" in
-    "$HOME") printf '~' ;;
-    "$HOME"/*) printf '~/%s' "${path#"$HOME/"}" ;;
-    *) printf '%s' "$path" ;;
-  esac
 }
 
 find_memory_dir() {
