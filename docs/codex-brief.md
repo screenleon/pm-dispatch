@@ -394,7 +394,7 @@ Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "co
 | brief file pre-written | **Required before the Agent call** | codex-executor has no Write tool, so it cannot create `/tmp/brief-*.md` for itself |
 | `qa_checklist` in brief | **Required when ≥ 3 behavioral units introduced** | Without it, `qa-tester` blocks in gate round 1 for missing coverage; fixing after the fact adds 1–2 extra gate rounds |
 
-Failing any check wastes the agent invocation before a single tool call is made. Check all four before sending.
+Failing any check wastes the agent invocation before a single tool call is made. Check every item before sending.
 
 ## Style notes
 
