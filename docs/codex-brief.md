@@ -304,9 +304,10 @@ Argument order is stable:
 3. `--model <safe model>` only if `model` is not `default`
 4. `--sandbox <safe sandbox>`
 5. `--approval <safe approval>`
-6. `--skip-git-check` only if `skip_git_check: true`
-7. `--timeout <safe timeout>`
-8. `--brief-file <safe brief_file>`
+6. `--timeout <safe timeout>`
+7. `--brief-file <safe brief_file>`
+
+The Bash route never emits `--skip-git-check`. Validator hard-rejects `skip_git_check: true`; callers needing this flag must use the Agent(codex-executor) fallback, which passes it through `codex-executor`'s own override mechanism.
 
 Quoting and command-shape rules:
 
