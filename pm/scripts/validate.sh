@@ -80,13 +80,6 @@ function emit(code, ctx) {
   bad = 1
 }
 
-function date_token(line) {
-  if (match(line, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
-    return substr(line, RSTART, RLENGTH)
-  }
-  return ""
-}
-
 function note_body_closure_date(id, raw, date) {
   date = raw
   if (date ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ \t]*$/) {
@@ -287,6 +280,11 @@ function emit(code, ctx) {
   bad = 1
 }
 
+# Shared schema v1 PR token grammar for both backlog refs and [Unreleased] scan.
+BEGIN {
+  pr_token_re = "pr:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9][0-9]*"
+}
+
 function note_pr_status(tok, status) {
   if (!(tok in pr_status) || pr_status[tok] != "closed") pr_status[tok] = status
 }
@@ -312,7 +310,7 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
   }
   refs = trim(f[7])
   s = refs
-  while (match(s, /pr:#[0-9][0-9]*/)) {
+  while (match(s, pr_token_re)) {
     tok = substr(s, RSTART, RLENGTH)
     note_pr_status(tok, status)
     s = substr(s, RSTART + RLENGTH)
@@ -321,7 +319,7 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
 
 function note_changelog_prs(line, s, tok) {
   s = line
-  while (match(s, /pr:#[0-9][0-9]*/)) {
+  while (match(s, pr_token_re)) {
     tok = substr(s, RSTART, RLENGTH)
     changelog_pr[tok] = 1
     s = substr(s, RSTART + RLENGTH)
