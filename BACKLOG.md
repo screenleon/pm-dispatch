@@ -452,7 +452,7 @@ But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` /
    - 讀 `rules/global/*.md` + `rules/domain/<domain>.md`
    - 列出與本 brief 相關的 NNN-rules（API-002 / UI-003 等）
    - 明確將每條 rule 對應的檢查放進 brief constraints
-3. 在 `docs/codex-brief.md` 或 `agents/project-pm.md` 加入 **fix-brief 撰寫指引**：
+3. 在 `docs/dispatch-brief.md` 或 `agents/project-pm.md` 加入 **fix-brief 撰寫指引**：
    - 不只 address 上輪 finding，主動跑 1 個 follow-up 思考：「這次修動是否觸發更深層議題？」
    - 範例 trigger：修 ADR supersede → 同步掃 ADR 全文舊範例；升級 lint → 掃 spec/code 對齊；改 wire shape → 掃 API version、cache、external-client 影響。
 
@@ -465,11 +465,11 @@ But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` /
 **Problem**: Brief author 目前對 `timeout` 沒有明確啟發法 — 多半以 edit size 為單一估算依據。但 Codex 預設行為是先吃完整個 target repo 的 onboarding chain（AGENTS.md / rules/global / rules/domain / 跨 repo playbook docs）再動工。對 playbook 深的 repo 即使只改 ~10 行也會在 prelude 階段燒掉 200s+，超薄 timeout 直接 SIGKILL 在 research 階段。
 **Why**: 2026-05-16 japanese-site `chore/js-100-split-js-113` 修 yml/md parity（~10 yml + 4 md 行 mechanical sync）走 codex-dispatch.sh `--timeout 240`，exit 124；trace 顯示 11 個 `command_execution` 全是 doc read（`prompt-budget.yml`、`../agent-playbook-template/docs/{rules-quickstart,operating-rules,agent-playbook}.md`、`DECISIONS.md`、`project/project-manifest.md`、`rules/global/{security-baseline,prompt-injection}.md`、`rules/domain/*.md`），未進編輯階段。**根因**：brief author 把「edit 14 行 ≈ 240s」推估時未把 playbook depth 算進去。
 **Requirement**:
-1. `docs/codex-brief.md` brief schema 文件加 `timeout` 啟發法 guidance：
+1. `docs/dispatch-brief.md` brief schema 文件加 `timeout` 啟發法 guidance：
    - flat repo（無 `rules/`、無 `AGENTS.md`、無 cross-repo playbook 連結）：mechanical edit 240–600s OK
    - shallow playbook（單一 `AGENTS.md` 或 `<10` 條 rules）：mechanical edit 600–900s
    - deep playbook（`rules/global` + `rules/domain` 或跨 repo playbook refs，例：japanese-site）：mechanical edit **最低 900s**；judgment-heavy（editorial / schema）1500s+
-2. brief context 加可選短路 clause 模板：`"Constraints captured in this brief; do NOT re-read AGENTS.md / rules/ / playbook docs"` — 對 self-contained brief + mechanical edit 直接砍 5–10 個 read 命令。需在 `docs/codex-brief.md` 給範例。
+2. brief context 加可選短路 clause 模板：`"Constraints captured in this brief; do NOT re-read AGENTS.md / rules/ / playbook docs"` — 對 self-contained brief + mechanical edit 直接砍 5–10 個 read 命令。需在 `docs/dispatch-brief.md` 給範例。
 3. （可選 / 第二階段）`scripts/codex-dispatch.sh` 啟動時偵測 `<working_dir>/rules/` 或 `<working_dir>/AGENTS.md` 存在且 `--timeout < 900` 時 emit stderr WARNING（不阻擋），surface author 設置錯誤於 SIGKILL 之前。
 4. 觀察 N≥2 次 cross-session 重現後，promote 為 `feedback_brief_timeout_playbook_depth` memory（[[known-bug backlog rule]] + [[Codex routing preferences]] 衍生）。
 **Source**: 2026-05-16 cross-session diagnostic — japanese-site dispatch exit 124 with 240s timeout，trace `.agent-trace/codex-20260516-193626-47431.jsonl`。

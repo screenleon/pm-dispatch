@@ -44,7 +44,7 @@ project-pm: blocked by $HOOK_NAME — $reason
   allowed:   ${ALLOWED_BASE}/<project>/memory/**
 
 If a code change is needed, hand a brief back to the main thread for codex-executor
-dispatch (schema: ~/github/pm-dispatch/docs/codex-brief.md).
+dispatch (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
 
 Bypass for one turn: set CLAUDE_HOOK_PM_GUARD=off (logged).
 EOF

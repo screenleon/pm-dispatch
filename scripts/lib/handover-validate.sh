@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourceable validation helpers for codex_dispatch_handover_v1 metadata.
+# Sourceable validation helpers for dispatch_handover_v1 metadata.
 # No shell options are set here; callers own their execution policy.
 
 METADATA_REJECT_CHARS=${METADATA_REJECT_CHARS:-'single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (< >), parens, braces, backslash, CR, LF, leading/trailing whitespace'}
@@ -9,22 +9,22 @@ handover_validate_metadata_value() {
   local value=${2-}
 
   if [[ $# -ne 2 ]]; then
-    printf 'handover-validate: reject %s: expected field_name and value\n' "${field_name:-<unknown>}" >&2
+    printf 'handover-validate: reject %s: E-METADATA-ARITY: expected field_name and value\n' "${field_name:-<unknown>}" >&2
     return 1
   fi
 
   if [[ "$value" != "${value#"${value%%[![:space:]]*}"}" || "$value" != "${value%"${value##*[![:space:]]}"}" ]]; then
-    printf 'handover-validate: reject %s: leading or trailing whitespace is not allowed\n' "$field_name" >&2
+    printf 'handover-validate: reject %s: E-METADATA-WHITESPACE: leading or trailing whitespace is not allowed\n' "$field_name" >&2
     return 1
   fi
 
   if [[ "$value" == *$'\r'* || "$value" == *$'\n'* ]]; then
-    printf 'handover-validate: reject %s: control newline is not allowed\n' "$field_name" >&2
+    printf 'handover-validate: reject %s: E-METADATA-NEWLINE: control newline is not allowed\n' "$field_name" >&2
     return 1
   fi
 
   if [[ "$value" == *["'\"\`\$\;\&\|\<\>\(\)\{\}\\"]* ]]; then
-    printf 'handover-validate: reject %s: shell metacharacter is not allowed\n' "$field_name" >&2
+    printf 'handover-validate: reject %s: E-METADATA-METACHAR: shell metacharacter is not allowed\n' "$field_name" >&2
     return 1
   fi
 
@@ -35,6 +35,9 @@ handover_reject() {
   local field_name=${1-<unknown>}
   local reason=${2-}
 
+  if [[ "$reason" != E-[A-Z0-9-]*:* ]]; then
+    reason="E-HANDOVER-INVALID: $reason"
+  fi
   printf 'handover-validate: reject %s: %s\n' "$field_name" "$reason" >&2
   return 1
 }
@@ -54,13 +57,13 @@ handover_extract_block() {
 
   awk '
     BEGIN { in_block = 0; found = 0; closed = 0; block = "" }
-    /^```codex_dispatch_handover_v1$/ { in_block = 1; found = 1; next }
+    /^```dispatch_handover_v1$/ { in_block = 1; found = 1; next }
     in_block && /^```$/ { closed = 1; printf "%s", block; exit }
     in_block { block = block $0 ORS; next }
     END {
       if (!found) exit 1
       if (in_block && !closed) {
-        print "handover-validate: reject handover_block: unterminated fence" > "/dev/stderr"
+        print "handover-validate: reject handover_block: E-HANDOVER-BLOCK: unterminated fence" > "/dev/stderr"
         exit 1
       }
     }
@@ -108,7 +111,17 @@ handover_validate_handover_version() {
   local value=${1-}
 
   handover_validate_metadata_value handover_version "$value" || return 1
-  [[ "$value" == "1" ]] || handover_reject handover_version "only version 1 is accepted"
+  [[ "$value" == "2" ]] || handover_reject handover_version "only version 2 is accepted"
+}
+
+handover_validate_executor() {
+  local value=${1-}
+
+  handover_validate_metadata_value executor "$value" || return 1
+  case "$value" in
+    codex) return 0 ;;
+    *) handover_reject executor "unknown executor" ;;
+  esac
 }
 
 handover_validate_dispatch_route() {
@@ -116,7 +129,7 @@ handover_validate_dispatch_route() {
 
   handover_validate_metadata_value dispatch_route "$value" || return 1
   case "$value" in
-    main_thread_bash_background|agent_codex_executor) return 0 ;;
+    main_thread_bash_background|agent_executor) return 0 ;;
     *) handover_reject dispatch_route "unknown dispatch route" ;;
   esac
 }
@@ -149,7 +162,7 @@ handover_validate_sandbox() {
   handover_validate_metadata_value sandbox "$value" || return 1
   case "$value" in
     workspace-write|read-only) return 0 ;;
-    danger-full-access) handover_reject sandbox "danger-full-access not supported by bash route; use Agent(codex-executor) fallback" ;;
+    danger-full-access) handover_reject sandbox "danger-full-access not supported by bash route; use executor fallback" ;;
     *) handover_reject sandbox "unsupported sandbox value" ;;
   esac
 }
@@ -160,7 +173,7 @@ handover_validate_approval() {
   handover_validate_metadata_value approval "$value" || return 1
   case "$value" in
     never) return 0 ;;
-    on-failure|on-request|untrusted) handover_reject approval "approval value not supported by bash route; use Agent(codex-executor) fallback" ;;
+    on-failure|on-request|untrusted) handover_reject approval "approval value not supported by bash route; use executor fallback" ;;
     *) handover_reject approval "unsupported approval value" ;;
   esac
 }
@@ -187,7 +200,7 @@ handover_validate_skip_git_check() {
   handover_validate_metadata_value skip_git_check "$value" || return 1
   case "$value" in
     false) return 0 ;;
-    true) handover_reject skip_git_check "skip_git_check:true not supported by bash route; use Agent(codex-executor) fallback" ;;
+    true) handover_reject skip_git_check "skip_git_check:true not supported by bash route; use executor fallback" ;;
     *) handover_reject skip_git_check "must be false by default" ;;
   esac
 }
@@ -206,7 +219,7 @@ handover_validate_required_fields() {
   local metadata=${1-}
   local field
 
-  for field in handover_version dispatch_route working_dir brief_file sandbox approval timeout model skip_git_check fallback_allowed; do
+  for field in handover_version executor dispatch_route working_dir brief_file sandbox approval timeout model skip_git_check fallback_allowed; do
     handover_get_field "$metadata" "$field" >/dev/null || return 1
   done
 }
@@ -219,6 +232,8 @@ handover_validate_all_metadata() {
 
   value="$(handover_get_field "$metadata" handover_version)" || return 1
   handover_validate_handover_version "$value" || return 1
+  value="$(handover_get_field "$metadata" executor)" || return 1
+  handover_validate_executor "$value" || return 1
   value="$(handover_get_field "$metadata" dispatch_route)" || return 1
   handover_validate_dispatch_route "$value" || return 1
   value="$(handover_get_field "$metadata" working_dir)" || return 1
@@ -268,6 +283,7 @@ export -f handover_extract_body
 export -f handover_get_field
 export -f handover_validate_metadata_value
 export -f handover_validate_handover_version
+export -f handover_validate_executor
 export -f handover_validate_dispatch_route
 export -f handover_validate_working_dir
 export -f handover_validate_brief_file

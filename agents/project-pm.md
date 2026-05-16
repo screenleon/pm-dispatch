@@ -20,7 +20,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 |---|---|
 | **Analysis** | Read code, answer. Update memory only on non-obvious findings. No dispatch. |
 | **Planning** | Decompose into work items, brief per item, confirm with user before dispatch. |
-| **Brief** | Write a complete brief and return one `codex_dispatch_handover_v1` block to the main thread. After main thread relays the codex report, review it against `git diff` and update memory. PM has no Dispatch action — main thread dispatches. |
+| **Brief** | Write a complete brief and return one `dispatch_handover_v1` block to the main thread. After main thread relays the codex report, review it against `git diff` and update memory. PM has no Dispatch action — main thread dispatches. |
 | **Status** | Read memory + git state across projects, summarize. |
 | **Memory update** | User told you something worth remembering — write it. |
 | **PR gate** | Run review pipeline below. |
@@ -74,7 +74,7 @@ Record the split decision in project memory and surface it to the user. Never le
 
 # Writing a brief for codex-executor
 
-The canonical schema lives in `~/github/pm-dispatch/docs/codex-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
+The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
 
 **`qa_checklist` rule**: when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error branches), add a `qa_checklist` section listing each unit and its expected test name or scenario. Without it, `qa-tester` will block in gate round 1 — writing it upfront prevents 1–2 extra gate/fix cycles. A "behavioral unit" is any code path that can be independently exercised by a test.
 
@@ -82,14 +82,15 @@ The canonical schema lives in `~/github/pm-dispatch/docs/codex-brief.md`. Briefs
 
 **Dispatch model selection**: default to the standard Codex model. Use `--model codex-spark` only when all three criteria are met: (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. Spark has a lower context ceiling — misrouting a large task degrades output quality without a loud failure signal.
 
-Return exactly one fenced `codex_dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
+Return exactly one fenced `dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
 
 Never emit metadata values containing forbidden shell characters: single quote, double quote, backtick, dollar, semicolon, ampersand, pipe, redirect chars (`<` `>`), parens, braces, backslash, CR, LF, or whitespace at the start/end of the value. The main thread enforces this with `scripts/lib/handover-validate.sh` before constructing Bash argv.
 
 The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
 
-```codex_dispatch_handover_v1
-handover_version: 1
+```dispatch_handover_v1
+handover_version: 2
+executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: /home/screenleon/github/pm-dispatch
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
@@ -113,9 +114,9 @@ acceptance:
   - ...
 ```
 
-Use direct background Bash by default. Set `dispatch_route: agent_codex_executor` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, and state the reason in one sentence outside the fence.
+Use direct background Bash by default. Set `dispatch_route: agent_executor` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, and state the reason in one sentence outside the fence.
 
-You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not run `scripts/codex-dispatch.sh`; do not write the brief file yourself. Main thread extracts the `codex_dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
+You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not run `scripts/codex-dispatch.sh`; do not write the brief file yourself. Main thread extracts the `dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
 
 # Per-project memory shape
 

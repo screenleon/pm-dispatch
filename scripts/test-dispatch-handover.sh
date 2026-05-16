@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for codex_dispatch_handover_v1 extraction and validation.
+# Regression tests for dispatch_handover_v1 extraction and validation.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +32,8 @@ metadata_fixture() {
   local brief_file=${2:-/tmp/brief-pm-dispatch-test.md}
 
   cat <<EOF
-handover_version: 1
+handover_version: 2
+executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
 brief_file: $brief_file
@@ -53,8 +54,9 @@ write_valid_handover() {
   cat > "$out" <<EOF
 PM summary outside fence.
 
-\`\`\`codex_dispatch_handover_v1
-handover_version: 1
+\`\`\`dispatch_handover_v1
+handover_version: 2
+executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
 brief_file: $brief_file
@@ -151,6 +153,36 @@ expect_reject_reason() {
   fi
   grep -q "handover-validate: reject $field:" <<<"$output" || return 1
   grep -q "$reason" <<<"$output"
+}
+
+expect_code_token() {
+  local want_code=$1
+  local want_token=$2
+  shift 2
+  local output
+  local rc
+
+  set +e
+  output="$("$@" 2>&1 >/dev/null)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq "$want_code" ]] || return 1
+  grep -q "$want_token" <<<"$output"
+}
+
+expect_code_without_token() {
+  local want_code=$1
+  local want_token=$2
+  shift 2
+  local output
+  local rc
+
+  set +e
+  output="$("$@" 2>&1 >/dev/null)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq "$want_code" ]] || return 1
+  ! grep -q "$want_token" <<<"$output"
 }
 
 # Behavior: A valid handover block extracts metadata and body and passes the shared contract validators.
@@ -268,7 +300,7 @@ unknown_dispatch_route_rejects_case() {
 
 # Behavior: Missing handover fences fail extraction without writing metadata or body content.
 # Steps:
-#   1. Attempt extraction from prose with no codex_dispatch_handover_v1 block.
+#   1. Attempt extraction from prose with no dispatch_handover_v1 block.
 #   2. Assert extraction fails and output files remain empty.
 missing_block_rejects_with_empty_extraction_case() {
   local tmp input meta body ok=1
@@ -382,20 +414,54 @@ metadata_value_wrong_arity_rejects_case() {
   expect_reject working_dir handover_validate_metadata_value working_dir
 }
 
-# Behavior: Handover version 1 is accepted.
+# Behavior: Handover version 1 is rejected.
 # Steps:
 #   1. Validate handover_version value 1.
-#   2. Assert validation succeeds.
-handover_version_one_accepts_case() {
-  handover_validate_handover_version 1 >/dev/null 2>&1
+#   2. Assert the reject audit names handover_version and carries the generic invalid token.
+handover_version_one_rejects_case() {
+  local want_code=1
+  local want_token=E-HANDOVER-INVALID
+  expect_code_token "$want_code" "$want_token" handover_validate_handover_version 1
 }
 
-# Behavior: Handover version 2 is rejected.
+# Behavior: Handover version 2 is accepted.
 # Steps:
 #   1. Validate handover_version value 2.
-#   2. Assert the reject audit names handover_version.
-handover_version_two_rejects_case() {
-  expect_reject handover_version handover_validate_handover_version 2
+#   2. Assert validation succeeds.
+handover_version_two_accepts_case() {
+  local want_code=0
+  local want_token=E-HANDOVER-INVALID
+  expect_code_without_token "$want_code" "$want_token" handover_validate_handover_version 2
+}
+
+# Behavior: Executor metadata is required.
+# Steps:
+#   1. Remove executor from a metadata fixture.
+#   2. Assert required-field validation rejects it with the generic invalid token.
+executor_missing_rejects_case() {
+  local want_code=1
+  local want_token=E-HANDOVER-INVALID
+  expect_code_token "$want_code" "$want_token" handover_validate_required_fields "$(metadata_fixture | sed '/^executor: /d')"
+}
+
+# Behavior: Unknown executor values are rejected by the closed enum.
+# Steps:
+#   1. Validate executor claude.
+#   2. Assert the reject audit carries the generic invalid token.
+executor_unknown_rejects_case() {
+  local want_code=1
+  local want_token=E-HANDOVER-INVALID
+  expect_code_token "$want_code" "$want_token" handover_validate_executor claude
+}
+
+# Behavior: Executor codex is accepted.
+# Steps:
+#   1. Validate executor codex.
+#   2. Assert validation succeeds.
+executor_codex_accepts_case() {
+  local want_code=0
+  local want_token=E-HANDOVER-INVALID
+  expect_code_without_token "$want_code" "$want_token" handover_validate_executor codex
 }
 
 # Behavior: The main-thread Bash dispatch route is accepted.
@@ -406,12 +472,12 @@ dispatch_route_bash_accepts_case() {
   handover_validate_dispatch_route main_thread_bash_background >/dev/null 2>&1
 }
 
-# Behavior: The codex executor fallback route is accepted.
+# Behavior: The executor fallback route is accepted.
 # Steps:
-#   1. Validate agent_codex_executor.
+#   1. Validate agent_executor.
 #   2. Assert validation succeeds.
 dispatch_route_agent_accepts_case() {
-  handover_validate_dispatch_route agent_codex_executor >/dev/null 2>&1
+  handover_validate_dispatch_route agent_executor >/dev/null 2>&1
 }
 
 # Behavior: Unknown dispatch route values are rejected by the route allowlist.
@@ -438,7 +504,7 @@ sandbox_read_only_accepts_case() {
   handover_validate_sandbox read-only >/dev/null 2>&1
 }
 
-# Behavior: danger-full-access sandbox is rejected by the bash route (use Agent(codex-executor) fallback).
+# Behavior: danger-full-access sandbox is rejected by the bash route.
 # Steps:
 #   1. Validate sandbox danger-full-access.
 #   2. Assert the reject audit names sandbox.
@@ -454,7 +520,7 @@ approval_never_accepts_case() {
   handover_validate_approval never >/dev/null 2>&1
 }
 
-# Behavior: approval on-failure is rejected by the bash route (use Agent(codex-executor) fallback).
+# Behavior: approval on-failure is rejected by the bash route.
 # Steps:
 #   1. Validate approval on-failure.
 #   2. Assert the reject audit names approval.
@@ -677,9 +743,9 @@ working_dir_match_mismatch_rejects_case() {
 #   2. Assert the block includes metadata and excludes surrounding prose.
 extract_block_present_echoes_content_case() {
   local input block
-  input=$'before\n```codex_dispatch_handover_v1\nhandover_version: 1\n---\ngoal: x\n```\nafter'
+  input=$'before\n```dispatch_handover_v1\nhandover_version: 2\n---\ngoal: x\n```\nafter'
   block="$(handover_extract_block "$input")" || return 1
-  grep -q '^handover_version: 1$' <<<"$block" || return 1
+  grep -q '^handover_version: 2$' <<<"$block" || return 1
   grep -q '^goal: x$' <<<"$block" || return 1
   ! grep -q '^before$' <<<"$block" && ! grep -q '^after$' <<<"$block"
 }
@@ -698,7 +764,7 @@ extract_block_missing_rejects_case() {
 #   2. Assert extraction fails with an audit message mentioning unterminated.
 extract_block_unterminated_fence_rejects_case() {
   local input output
-  input=$'```codex_dispatch_handover_v1\nhandover_version: 1\n---\ngoal: x'
+  input=$'```dispatch_handover_v1\nhandover_version: 2\n---\ngoal: x'
   if output="$(printf '%s\n' "$input" | handover_extract_block 2>&1 >/dev/null)"; then
     return 1
   fi
@@ -711,7 +777,7 @@ extract_block_unterminated_fence_rejects_case() {
 #   1. Extract metadata from a block with no standalone --- line.
 #   2. Assert extraction fails.
 extract_metadata_missing_separator_rejects_case() {
-  ! handover_extract_metadata $'handover_version: 1\ngoal: x' >/dev/null 2>&1
+  ! handover_extract_metadata $'handover_version: 2\ngoal: x' >/dev/null 2>&1
 }
 
 # Behavior: Body extraction rejects blocks without a standalone separator.
@@ -719,7 +785,7 @@ extract_metadata_missing_separator_rejects_case() {
 #   1. Extract body from a block with no standalone --- line.
 #   2. Assert extraction fails.
 extract_body_missing_separator_rejects_case() {
-  ! handover_extract_body $'handover_version: 1\ngoal: x' >/dev/null 2>&1
+  ! handover_extract_body $'handover_version: 2\ngoal: x' >/dev/null 2>&1
 }
 
 # Behavior: Metadata and body extraction can round-trip a block around the separator.
@@ -753,8 +819,11 @@ run_case "handover/metadata CR injection rejects" metadata_value_cr_injection_re
 run_case "handover/metadata LF injection rejects" metadata_value_lf_injection_rejects_case
 run_case "handover/metadata full denylist rejects" metadata_value_full_denylist_rejects_case
 run_case "handover/metadata wrong arity rejects" metadata_value_wrong_arity_rejects_case
-run_case "handover/version one accepts" handover_version_one_accepts_case
-run_case "handover/version two rejects" handover_version_two_rejects_case
+run_case "handover/version one rejects" handover_version_one_rejects_case
+run_case "handover/version two accepts" handover_version_two_accepts_case
+run_case "handover/executor missing rejects" executor_missing_rejects_case
+run_case "handover/executor unknown rejects" executor_unknown_rejects_case
+run_case "handover/executor codex accepts" executor_codex_accepts_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case
