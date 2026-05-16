@@ -13,7 +13,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. Insert `--skip-git-check` only when validated metadata has `skip_git_check: true`; the default is `false`, so omit the flag.
+The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. The bash route never emits `--skip-git-check`: validator hard-rejects `skip_git_check: true`, so callers needing that flag must take the `Agent(codex-executor)` fallback instead.
 
 Before constructing the command, source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header with `handover_validate_all_metadata`, confirm the metadata/body `working_dir` match, and insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 Write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
