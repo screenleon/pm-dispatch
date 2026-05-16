@@ -38,7 +38,7 @@ if [ -n "$changelog" ] && [ ! -f "$changelog" ]; then
   exit 2
 fi
 
-if [ -z "$decisions" ] && [ -z "$changelog" ]; then
+if [ -z "$changelog" ]; then
   candidate_changelog=$(CDPATH= cd -- "$(dirname -- "$backlog")" && pwd)/CHANGELOG.md
   if [ -f "$candidate_changelog" ]; then
     changelog=$candidate_changelog
