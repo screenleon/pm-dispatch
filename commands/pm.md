@@ -7,7 +7,7 @@ Invoke `project-pm` via Agent. Do not force a model — inherit the main-thread 
 
 Relay the PM's user-facing summary. Do not do the PM's job yourself.
 
-**Codex dispatch route**: Subagents cannot spawn subagents. If PM returns a `codex_dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, and dispatches with direct background Bash as the primary route:
+**Dispatch route**: Subagents cannot spawn subagents. If PM returns a `dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, reads `executor`, and dispatches the matching executor-specific script with direct background Bash as the primary route. The only supported executor today is `executor: codex`:
 
 ```text
 Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
@@ -18,9 +18,9 @@ The template above shows the default-safe stable argument order; omit `--model <
 Before constructing the command, source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header with `handover_validate_all_metadata`, confirm the metadata/body `working_dir` match, and insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 Write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
 
-Use `Agent(codex-executor)` only per the fallback allowlist in `docs/codex-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
+Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
 
-If fallback is selected, say why in one sentence, then dispatch `Agent(codex-executor)` with the pre-written brief file path. Otherwise, record the Bash task id and parse completion using the footer documented in `docs/codex-brief.md`.
+If fallback is selected, say why in one sentence, then dispatch `Agent(codex-executor)` with the pre-written brief file path. Otherwise, record the Bash task id and parse completion using the footer documented in `docs/dispatch-brief.md`.
 
 Main-thread completion handling for the Bash route:
 
@@ -35,7 +35,7 @@ Main-thread completion handling for the Bash route:
 9. On exit 124, run the foreground diagnostic checklist, then retry exactly once with the same `brief_file` and flags.
 10. On any other non-zero exit, stop and report the trace, stderr, and footer exit code for main-thread review.
 
-Briefs must follow the schema at `docs/codex-brief.md` (working_dir / goal / files / acceptance, plus self_verify required for file-writing briefs and optional only for read-only briefs where every files entry is explicitly tagged `read:`). codex-executor rejects briefs missing the required fields.
+Briefs must follow the schema at `docs/dispatch-brief.md` (working_dir / goal / files / acceptance, plus self_verify required for file-writing briefs and optional only for read-only briefs where every files entry is explicitly tagged `read:`). codex-executor rejects briefs missing the required fields.
 
 Use `base` as the PR integration branch when the caller names one; otherwise resolve it with `git merge-base --fork-point origin/main HEAD` and fall back to `origin/main` if no fork point is available. The handover extraction, validation, safe argv, and footer parsing contract is covered by `scripts/test-dispatch-handover.sh`.
 

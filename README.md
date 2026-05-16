@@ -12,7 +12,7 @@ scripts/                            hook wrappers (called by absolute path) + us
              → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
-docs/                               policy documents (model-tier-policy.md, codex-brief.md)
+docs/                               policy documents (model-tier-policy.md, dispatch-brief.md)
 ```
 
 ## pm-schema (`pm/`)
@@ -136,9 +136,9 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Codex briefs
 
-Schema and reusable self-verify macros: [`docs/codex-brief.md`](docs/codex-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.
+Schema and reusable self-verify macros: [`docs/dispatch-brief.md`](docs/dispatch-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.
 
-- `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains an entry tagged `write:` or `new:`, or any entry without an explicit `read:` tag; when in doubt, treat as file-writing). Optional only for read-only briefs where *every* `files:` entry is explicitly tagged `read:`. See [`docs/codex-brief.md`](docs/codex-brief.md) for the canonical definition.
+- `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains an entry tagged `write:` or `new:`, or any entry without an explicit `read:` tag; when in doubt, treat as file-writing). Optional only for read-only briefs where *every* `files:` entry is explicitly tagged `read:`. See [`docs/dispatch-brief.md`](docs/dispatch-brief.md) for the canonical definition.
 
 ### Watching a long dispatch
 

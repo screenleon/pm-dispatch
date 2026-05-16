@@ -6,11 +6,11 @@ tools: Bash, Read
 
 Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
 
-> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `codex_dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/codex-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
+> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/dispatch-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
 # Validation
 
-Before dispatching, validate the brief against the schema at `~/github/pm-dispatch/docs/codex-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
+Before dispatching, validate the brief against the schema at `~/github/pm-dispatch/docs/dispatch-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
 
 | Field | Required when |
 |---|---|
@@ -45,7 +45,7 @@ If the path is present but the file does not exist on disk (Read tool returns no
 
 **Step 1 — read and validate the brief file (path provided by main thread):**
 
-The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/pm-dispatch/docs/codex-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
+The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/pm-dispatch/docs/dispatch-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
 
 **Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
@@ -111,9 +111,9 @@ The Write tool is NOT available to codex-executor subagents (the Agent tool does
 
 # When NOT to use this agent
 
-Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `codex_dispatch_handover_v1` block, the main thread should write `brief_file` and run `scripts/codex-dispatch.sh` directly with `run_in_background:true`. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
+Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `dispatch_handover_v1` block, the main thread should write `brief_file` and run `scripts/codex-dispatch.sh` directly with `run_in_background:true`. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
 
-Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/codex-brief.md` §Fallback remains the canonical dispatch policy.
+Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/dispatch-brief.md` §Fallback remains the canonical dispatch policy.
 
 | Condition | Why fallback is allowed |
 |---|---|
@@ -123,11 +123,11 @@ Use this agent only when one of these fallback conditions is true. This table is
 | Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or no usable Bash tool means the primary route cannot run. |
 | User explicitly requests codex-executor validation. | User intent overrides the default when it does not conflict with safety rules. |
 
-If none of those conditions applies, do not spawn this agent; use the main-thread Bash route documented in `docs/codex-brief.md`.
+If none of those conditions applies, do not spawn this agent; use the main-thread Bash route documented in `docs/dispatch-brief.md`.
 
 Caller decision checklist:
 
-1. If PM returned a valid `codex_dispatch_handover_v1` block and no fallback condition is true, do not call this agent.
+1. If PM returned a valid `dispatch_handover_v1` block and no fallback condition is true, do not call this agent.
 2. If the only reason for this agent is habit from the old `/pm` route, stop and use main-thread Bash instead.
 3. If the brief is schema-sensitive, include the exact validation concern in the agent prompt.
 4. If context pressure is the reason, pass only the brief file path and the minimum caller context needed for reporting.

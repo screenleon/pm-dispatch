@@ -1,4 +1,4 @@
-# Codex brief schema
+# Dispatch brief schema
 
 The canonical structure for any brief dispatched to `codex-executor` (directly via Agent, or indirectly via `scripts/codex-dispatch.sh`).
 
@@ -198,12 +198,13 @@ output_format: markdown with three grouped sections (## OK / ## needs review / #
 
 No working_dir, no files, no acceptance criteria. Codex would have to guess what corpus, what sources, how to verify, where to write the report. Reject and ask.
 
-## Main-thread dispatch via codex_dispatch_handover_v1
+## Main-thread dispatch via dispatch_handover_v1
 
-`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `codex_dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches `scripts/codex-dispatch.sh` directly with Bash in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
+`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches `scripts/codex-dispatch.sh` directly with Bash in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
 
-```codex_dispatch_handover_v1
-handover_version: 1
+```dispatch_handover_v1
+handover_version: 2
+executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: /home/screenleon/github/pm-dispatch
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
@@ -229,7 +230,7 @@ acceptance:
 
 Extraction rules:
 
-1. Read the fenced block tagged exactly `codex_dispatch_handover_v1`.
+1. Read the fenced block tagged exactly `dispatch_handover_v1`.
 2. Treat the metadata header as dispatch-control data only.
 3. Treat everything after the first standalone `---` line as the brief body to write to `brief_file`.
 4. Validate `working_dir` in metadata matches `working_dir` in the brief body.
@@ -240,8 +241,9 @@ Metadata fields:
 
 | Field | Required | Notes |
 |---|---|---|
-| `handover_version` | yes | Currently `1`; bump on shape change. |
-| `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_codex_executor` for fallback. |
+| `handover_version` | yes | Currently `2`; bump on shape change. |
+| `executor` | yes | Closed enum. Currently only `codex`; main-thread dispatch uses this field to choose the executor-specific dispatcher. |
+| `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `sandbox` | yes | Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
@@ -262,6 +264,7 @@ Before constructing this Bash command, the dispatcher MUST source `scripts/lib/h
 `handover_validate_all_metadata` applies these field validators:
 
 - `handover_validate_handover_version`
+- `handover_validate_executor`
 - `handover_validate_dispatch_route`
 - `handover_validate_working_dir`
 - `handover_validate_brief_file`
@@ -284,6 +287,7 @@ Control-field reject examples:
 
 ```text
 handover_version: 2
+executor: claude
 dispatch_route: mystery_route
 working_dir: relative/path
 brief_file: /etc/passwd
@@ -358,7 +362,7 @@ Use `Agent(codex-executor)` only for this fallback allowlist:
 | Brief requires skip_git_check: true, sandbox: danger-full-access, or approval other than never. | Bash route validator hard-rejects these values with no override channel; the Agent route accepts them via codex-executor's documented override flags. |
 | User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
 
-When using fallback, set `dispatch_route: agent_codex_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
+When using fallback, set `dispatch_route: agent_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
 
 ## Dispatching a brief
 
