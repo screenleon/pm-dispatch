@@ -105,8 +105,11 @@ run_validate_case "validate bad-refs-prefix" "$fixtures/bad-refs-prefix/BACKLOG.
 run_validate_case "validate bad-tags-format" "$fixtures/bad-tags-format/BACKLOG.md" 1 "E-TAGS-FORMAT"
 run_validate_case "validate bad-closure-no-see" "$fixtures/bad-closure-no-see/BACKLOG.md" 1 "E-CLOSURE-NO-SEE"
 run_validate_case "validate bad-closure-date-mismatch" "$fixtures/bad-closure-date-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate bad-closure-date-trailing-junk" "$fixtures/bad-closure-date-trailing-junk/BACKLOG.md" 1 "E-DATE-FORMAT"
+run_validate_case "validate bad-outcome-date-misplaced" "$fixtures/bad-outcome-date-misplaced/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
 run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
+run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
 run_validate_case_multi "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
 # DECISIONS.md is intentionally only an existing file; validate.sh does not parse it yet.
 run_validate_case_multi "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"

@@ -89,11 +89,13 @@ function date_token(line) {
 
 function note_body_closure_date(id, raw, date) {
   date = raw
-  if (date ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) {
+  if (date ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ \t]*$/) {
     body_marker_date[id] = substr(date, 1, 10)
     return
   }
+  # A body heading marker must end after the date; trailing junk is stub shape, not a date mismatch.
   body_marker_date[id] = raw
+  body_marker_invalid[id] = 1
   if (!valid_date(raw)) emit("E-DATE-FORMAT", id " invalid body marker date: " raw)
 }
 
@@ -114,11 +116,11 @@ function parse_refs(id, refs, raw, n, i, tok, p) {
 }
 
 function note_outcome_date(id, line, s, d) {
-  s = line
-  while (match(s, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
-    d = substr(s, RSTART, RLENGTH)
+  if (line ~ /^\*\*Outcome\*\*: [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]([ \t]|$)/) {
+    d = line
+    sub(/^\*\*Outcome\*\*: /, "", d)
+    d = substr(d, 1, 10)
     body_outcome_dates[id] = body_outcome_dates[id] " " d
-    s = substr(s, RSTART + RLENGTH)
   }
 }
 
@@ -246,8 +248,10 @@ END {
     if (row_kind[id] == "closed" || row_kind[id] == "dropped") {
       body_done_date = "missing"
       if (id in body_marker_date) {
-        body_done_date = body_marker_date[id]
-        if (body_done_date != row_done_date[id]) {
+        if (!(id in body_marker_invalid)) {
+          body_done_date = body_marker_date[id]
+        }
+        if (!(id in body_marker_invalid) && body_done_date != row_done_date[id]) {
           emit("E-CLOSURE-DATE-MISMATCH", id " index=" row_done_date[id] " body=" body_done_date)
         }
       } else if (id in body_outcome_dates) {
