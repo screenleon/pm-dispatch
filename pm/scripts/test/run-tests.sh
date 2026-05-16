@@ -67,6 +67,8 @@ run_validate_case "validate bad-date-format" "$fixtures/bad-date-format/BACKLOG.
 run_validate_case "validate bad-refs-prefix" "$fixtures/bad-refs-prefix/BACKLOG.md" 1 "E-REFS-PREFIX"
 run_validate_case "validate bad-tags-format" "$fixtures/bad-tags-format/BACKLOG.md" 1 "E-TAGS-FORMAT"
 run_validate_case "validate bad-closure-no-see" "$fixtures/bad-closure-no-see/BACKLOG.md" 1 "E-CLOSURE-NO-SEE"
+run_validate_case "validate bad-closure-date-mismatch" "$fixtures/bad-closure-date-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 
 # rollup.sh 彙整案例。
 rollup_out=$(mktemp)

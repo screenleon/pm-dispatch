@@ -11,16 +11,17 @@ if [ -e "$HOME/.claude/.pm" ] && [ ! -L "$HOME/.claude/.pm" ] && ! ps -o args= -
 fi
 
 usage() {
-  printf 'Usage: validate.sh <BACKLOG.md> [DECISIONS.md]\n' >&2
+  printf 'Usage: validate.sh <BACKLOG.md> [DECISIONS.md] [CHANGELOG.md]\n' >&2
 }
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
   usage
   exit 1
 fi
 
 backlog=$1
 decisions=${2:-}
+changelog=${3:-}
 
 if [ ! -f "$backlog" ]; then
   printf 'E-SCHEMA-HEADER: file not found: %s\n' "$backlog" >&2
@@ -32,12 +33,25 @@ if [ -n "$decisions" ] && [ ! -f "$decisions" ]; then
   exit 2
 fi
 
+if [ -n "$changelog" ] && [ ! -f "$changelog" ]; then
+  printf 'E-SCHEMA-HEADER: changelog file not found: %s\n' "$changelog" >&2
+  exit 2
+fi
+
+if [ -z "$decisions" ] && [ -z "$changelog" ]; then
+  candidate_changelog=$(CDPATH= cd -- "$(dirname -- "$backlog")" && pwd)/CHANGELOG.md
+  if [ -f "$candidate_changelog" ]; then
+    changelog=$candidate_changelog
+  fi
+fi
+
 # schema 宣告是解析前提，缺少時立即停止。
 if ! sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
   printf 'E-SCHEMA-HEADER: missing pm-schema v1 marker in first 5 lines: %s\n' "$backlog" >&2
   exit 2
 fi
 
+set +e
 awk '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
@@ -64,6 +78,23 @@ function valid_area_token(s) {
 function emit(code, ctx) {
   print code ": " ctx > "/dev/stderr"
   bad = 1
+}
+
+function date_token(line) {
+  if (match(line, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
+    return substr(line, RSTART, RLENGTH)
+  }
+  return ""
+}
+
+function note_body_closure_date(id, raw, date) {
+  date = raw
+  if (date ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) {
+    body_marker_date[id] = substr(date, 1, 10)
+    return
+  }
+  body_marker_date[id] = raw
+  if (!valid_date(raw)) emit("E-DATE-FORMAT", id " invalid body marker date: " raw)
 }
 
 function parse_refs(id, refs, raw, n, i, tok, p) {
@@ -155,13 +186,13 @@ function note_body_id(line, id) {
       body_stub[id] = 1
       done_date = line
       sub(/^.*✅[ \t]*/, "", done_date)
-      if (!valid_date(done_date)) emit("E-DATE-FORMAT", id " invalid body marker date: " done_date)
+      note_body_closure_date(id, done_date)
     }
     if (line ~ /🚫/) {
       body_stub[id] = 1
       done_date = line
       sub(/^.*🚫[ \t]*/, "", done_date)
-      if (!valid_date(done_date)) emit("E-DATE-FORMAT", id " invalid body marker date: " done_date)
+      note_body_closure_date(id, done_date)
     }
   } else if (line ~ /^## /) {
     current_id = ""
@@ -194,6 +225,7 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs) {
   note_body_id(line)
   if (current_id != "" && line ~ /^\*\*Tags\*\*:/) parse_tags(current_id, line)
   if (current_id != "" && line ~ /^\*\*See\*\*:/) body_see[current_id] = 1
+  if (current_id != "" && !(current_id in body_section_date) && date_token(line) != "") body_section_date[current_id] = date_token(line)
 }
 
 END {
@@ -202,6 +234,17 @@ END {
     if ((row_kind[id] == "closed" || row_kind[id] == "dropped" || body_stub[id]) && !body_see[id]) {
       emit("E-CLOSURE-NO-SEE", id " closed/dropped stub missing See")
     }
+    if (row_kind[id] == "closed" || row_kind[id] == "dropped") {
+      body_done_date = "missing"
+      if (id in body_marker_date) {
+        body_done_date = body_marker_date[id]
+      } else if (id in body_section_date) {
+        body_done_date = body_section_date[id]
+      }
+      if (body_done_date != row_done_date[id]) {
+        emit("E-CLOSURE-DATE-MISMATCH", id " index=" row_done_date[id] " body=" body_done_date)
+      }
+    }
   }
   for (id in body_seen) {
     if (!(id in index_seen)) emit("E-INDEX-MISMATCH", id " present in body but missing from index")
@@ -209,3 +252,81 @@ END {
   exit bad ? 1 : 0
 }
 ' "$backlog"
+backlog_rc=$?
+set -e
+
+drift_rc=0
+if [ -n "$changelog" ]; then
+  set +e
+  awk -v backlog_file="$backlog" -v changelog_file="$changelog" '
+function trim(s) {
+  gsub(/^[ \t\r\n]+/, "", s)
+  gsub(/[ \t\r\n]+$/, "", s)
+  return s
+}
+
+function emit(code, ctx) {
+  print code ": " ctx > "/dev/stderr"
+  bad = 1
+}
+
+function note_index_refs(line, n, f, id, refs, i, tok) {
+  n = split(line, f, "|")
+  if (n < 7) return
+  id = trim(f[2])
+  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  refs = trim(f[7])
+  n = split(refs, parts, ",")
+  for (i = 1; i <= n; i++) {
+    tok = trim(parts[i])
+    if (tok ~ /^pr:#[0-9][0-9]*$/) backlog_pr[tok] = 1
+  }
+}
+
+function note_changelog_prs(line, s, tok) {
+  s = line
+  while (match(s, /pr:#[0-9][0-9]*/)) {
+    tok = substr(s, RSTART, RLENGTH)
+    changelog_pr[tok] = 1
+    s = substr(s, RSTART + RLENGTH)
+  }
+}
+
+FILENAME == backlog_file {
+  note_index_refs($0)
+  next
+}
+
+FILENAME == changelog_file {
+  if ($0 ~ /^## +\[Unreleased\]/) {
+    in_unreleased = 1
+    found_unreleased = 1
+    next
+  }
+  if (in_unreleased && $0 ~ /^## +/) {
+    in_unreleased = 0
+  }
+  if (in_unreleased) note_changelog_prs($0)
+}
+
+END {
+  if (!found_unreleased) exit 0
+  for (tok in changelog_pr) {
+    if (!(tok in backlog_pr)) {
+      emit("E-CHANGELOG-DRIFT", tok " referenced in [Unreleased] but no backlog row references it")
+    }
+  }
+  exit bad ? 1 : 0
+}
+' "$backlog" "$changelog"
+  drift_rc=$?
+  set -e
+fi
+
+if [ "$backlog_rc" -eq 2 ] || [ "$drift_rc" -eq 2 ]; then
+  exit 2
+fi
+if [ "$backlog_rc" -ne 0 ] || [ "$drift_rc" -ne 0 ]; then
+  exit 1
+fi
+exit 0
