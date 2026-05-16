@@ -438,12 +438,12 @@ sandbox_read_only_accepts_case() {
   handover_validate_sandbox read-only >/dev/null 2>&1
 }
 
-# Behavior: danger-full-access sandbox is rejected without explicit authorization.
+# Behavior: danger-full-access sandbox is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate sandbox danger-full-access.
 #   2. Assert the reject audit names sandbox.
 sandbox_danger_full_access_rejects_case() {
-  expect_reject sandbox handover_validate_sandbox danger-full-access
+  expect_reject_reason sandbox "not supported by bash route" handover_validate_sandbox danger-full-access
 }
 
 # Behavior: approval never is accepted.
@@ -454,20 +454,20 @@ approval_never_accepts_case() {
   handover_validate_approval never >/dev/null 2>&1
 }
 
-# Behavior: approval on-failure is rejected without explicit authorization.
+# Behavior: approval on-failure is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate approval on-failure.
 #   2. Assert the reject audit names approval.
 approval_on_failure_rejects_case() {
-  expect_reject approval handover_validate_approval on-failure
+  expect_reject_reason approval "not supported by bash route" handover_validate_approval on-failure
 }
 
-# Behavior: approval on-request is rejected without explicit authorization.
+# Behavior: approval on-request is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate approval on-request.
 #   2. Assert the reject audit names approval.
 approval_on_request_rejects_case() {
-  expect_reject approval handover_validate_approval on-request
+  expect_reject_reason approval "not supported by bash route" handover_validate_approval on-request
 }
 
 # Behavior: skip_git_check false is accepted.
@@ -478,12 +478,12 @@ skip_git_check_false_accepts_case() {
   handover_validate_skip_git_check false >/dev/null 2>&1
 }
 
-# Behavior: skip_git_check true is rejected without explicit authorization.
+# Behavior: skip_git_check true is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate skip_git_check true.
 #   2. Assert the reject audit names skip_git_check.
 skip_git_check_true_rejects_case() {
-  expect_reject skip_git_check handover_validate_skip_git_check true
+  expect_reject_reason skip_git_check "not supported by bash route" handover_validate_skip_git_check true
 }
 
 # Behavior: Timeout 1200 is accepted.
