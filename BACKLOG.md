@@ -212,7 +212,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 4. `install-hooks.sh` wire PreToolUse；`scripts/test-hooks.sh` 加對應 case 驗證 append 結構、效能不退化、不阻擋。
 **Note**: blocks **CC-025**, **CC-026**。在這條落地前，CC-025/026 不應啟動。
 **Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A2）。
-**Outcome**: Added metadata-only PreToolUse `hook-tool-trace.sh`, install wiring, and hook regression coverage; PR #54.
+**Outcome**: 2026-05-15 — Added metadata-only PreToolUse `hook-tool-trace.sh`, install wiring, and hook regression coverage; PR #54.
 **See**: pr:#54
 
 ## CC-028 — PostToolUse `hook-routing-log.sh` 自動 append routing_log
@@ -225,7 +225,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 3. `q_hit` 為選填，MVP 可只記 raw metadata，由 `/mem-distill` 或新增的 `/routing-distill` 後製判斷 Q1/Q2/Q3 hit。
 4. `scripts/test-hooks.sh` 加對應 case：dispatch 觸發、非 dispatch Bash 不觸發、append 結構正確、append 失敗不能阻擋 dispatch 結果。
 **Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A1）。對應 [[routing_log]] 與 [[feedback_codex_routing]] 設計目標。
-**Outcome**: Added PostToolUse `hook-routing-log.sh` + one-time migrator `migrate-routing-log.sh` (3 existing bullet entries → JSONL); install wiring, 19 routing hook/installer regression cases, 5 migrator cases; 298/298 + 5/5 green. MVP fields: brief_file + goal_excerpt only; brief_id / file_count deferred to `/routing-distill`-side computation. Per-hook q_hit/second_thoughts left null — post-classification deferred to a later `/routing-distill`. PR #55.
+**Outcome**: 2026-05-15 — Added PostToolUse `hook-routing-log.sh` + one-time migrator `migrate-routing-log.sh` (3 existing bullet entries → JSONL); install wiring, 19 routing hook/installer regression cases, 5 migrator cases; 298/298 + 5/5 green. MVP fields: brief_file + goal_excerpt only; brief_id / file_count deferred to `/routing-distill`-side computation. Per-hook q_hit/second_thoughts left null — post-classification deferred to a later `/routing-distill`. PR #55.
 **See**: pr:#55
 
 ## CC-029 — `test-codex-dispatch.sh` 加入 CI
@@ -297,6 +297,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 5. 注意 statusLine 處理：目前 chain logic 已用 `_statusline_already_wired` 條件存在判斷，basename 改造需確認 chain 不被誤刪。
 **Note**: 此 bug 不阻擋一般使用；列為 ops 維護債。
 **Source**: 2026-05-15 對話 — PR #51 改名 cutover 時 observed。
+**Outcome**: 2026-05-15 — `install-hooks.sh` + `uninstall-hooks.sh` 改 basename match；test-hooks.sh 加跨路徑 fixture；statusLine chain 安全保留。PR #53.
 **See**: pr:#53
 
 ## CC-036 — `/pm` dispatch async ergonomics restore
