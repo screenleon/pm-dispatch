@@ -56,6 +56,43 @@ run_validate_case() {
   pass "$name"
 }
 
+run_validate_case_multi() {
+  name=$1
+  want_code=$2
+  want_token=$3
+  shift 3
+  err=$(mktemp)
+  set +e
+  bash "$root_dir/validate.sh" "$@" >/dev/null 2>"$err"
+  got_code=$?
+  set -e
+  if [ "$got_code" -ne "$want_code" ]; then
+    fail "$name" "exit $got_code, expected $want_code"
+    rm -f "$err"
+    return
+  fi
+  if [ -n "$want_token" ] && ! grep -q "$want_token" "$err"; then
+    fail "$name" "missing $want_token"
+    rm -f "$err"
+    return
+  fi
+  if [ "$want_code" -eq 1 ]; then
+    tokens=$(grep -o 'E-[A-Z0-9-]*' "$err" | sort | uniq | tr '\n' ' ')
+    if [ "$tokens" != "$want_token " ]; then
+      fail "$name" "unexpected rule tokens: $tokens"
+      rm -f "$err"
+      return
+    fi
+  fi
+  if [ "$want_code" -eq 0 ] && [ -s "$err" ]; then
+    fail "$name" "stderr was not empty"
+    rm -f "$err"
+    return
+  fi
+  rm -f "$err"
+  pass "$name"
+}
+
 # validate.sh 基本案例。
 run_validate_case "validate good" "$fixtures/good/BACKLOG.md" 0 ""
 run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
@@ -67,6 +104,19 @@ run_validate_case "validate bad-date-format" "$fixtures/bad-date-format/BACKLOG.
 run_validate_case "validate bad-refs-prefix" "$fixtures/bad-refs-prefix/BACKLOG.md" 1 "E-REFS-PREFIX"
 run_validate_case "validate bad-tags-format" "$fixtures/bad-tags-format/BACKLOG.md" 1 "E-TAGS-FORMAT"
 run_validate_case "validate bad-closure-no-see" "$fixtures/bad-closure-no-see/BACKLOG.md" 1 "E-CLOSURE-NO-SEE"
+run_validate_case "validate bad-closure-date-mismatch" "$fixtures/bad-closure-date-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate bad-closure-date-dropped-mismatch" "$fixtures/bad-closure-date-dropped-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate bad-closure-date-trailing-junk" "$fixtures/bad-closure-date-trailing-junk/BACKLOG.md" 1 "E-DATE-FORMAT"
+run_validate_case "validate bad-outcome-date-misplaced" "$fixtures/bad-outcome-date-misplaced/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate good-closure-outcome-date" "$fixtures/good-closure-outcome-date/BACKLOG.md" 0 ""
+run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
+run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
+run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
+run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
+run_validate_case_multi "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
+# DECISIONS.md is intentionally only an existing file; validate.sh does not parse it yet.
+run_validate_case_multi "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"
+run_validate_case_multi "validate bad-changelog-missing explicit arg" 2 "E-SCHEMA-HEADER: changelog file not found:" "$fixtures/bad-changelog-drift/BACKLOG.md" "" "/nonexistent/path/CHANGELOG.md"
 
 # rollup.sh 彙整案例。
 rollup_out=$(mktemp)
