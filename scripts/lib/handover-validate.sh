@@ -149,7 +149,7 @@ handover_validate_sandbox() {
   handover_validate_metadata_value sandbox "$value" || return 1
   case "$value" in
     workspace-write|read-only) return 0 ;;
-    danger-full-access) handover_reject sandbox "danger-full-access requires explicit authorization" ;;
+    danger-full-access) handover_reject sandbox "danger-full-access not supported by bash route; use Agent(codex-executor) fallback" ;;
     *) handover_reject sandbox "unsupported sandbox value" ;;
   esac
 }
@@ -160,7 +160,7 @@ handover_validate_approval() {
   handover_validate_metadata_value approval "$value" || return 1
   case "$value" in
     never) return 0 ;;
-    on-failure|on-request|untrusted) handover_reject approval "approval escalation requires explicit authorization" ;;
+    on-failure|on-request|untrusted) handover_reject approval "approval value not supported by bash route; use Agent(codex-executor) fallback" ;;
     *) handover_reject approval "unsupported approval value" ;;
   esac
 }
@@ -187,7 +187,7 @@ handover_validate_skip_git_check() {
   handover_validate_metadata_value skip_git_check "$value" || return 1
   case "$value" in
     false) return 0 ;;
-    true) handover_reject skip_git_check "true requires explicit authorization" ;;
+    true) handover_reject skip_git_check "skip_git_check:true not supported by bash route; use Agent(codex-executor) fallback" ;;
     *) handover_reject skip_git_check "must be false by default" ;;
   esac
 }

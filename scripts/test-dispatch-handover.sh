@@ -438,7 +438,7 @@ sandbox_read_only_accepts_case() {
   handover_validate_sandbox read-only >/dev/null 2>&1
 }
 
-# Behavior: danger-full-access sandbox is rejected without explicit authorization.
+# Behavior: danger-full-access sandbox is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate sandbox danger-full-access.
 #   2. Assert the reject audit names sandbox.
@@ -454,7 +454,7 @@ approval_never_accepts_case() {
   handover_validate_approval never >/dev/null 2>&1
 }
 
-# Behavior: approval on-failure is rejected without explicit authorization.
+# Behavior: approval on-failure is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate approval on-failure.
 #   2. Assert the reject audit names approval.
@@ -462,7 +462,7 @@ approval_on_failure_rejects_case() {
   expect_reject approval handover_validate_approval on-failure
 }
 
-# Behavior: approval on-request is rejected without explicit authorization.
+# Behavior: approval on-request is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate approval on-request.
 #   2. Assert the reject audit names approval.
@@ -478,7 +478,7 @@ skip_git_check_false_accepts_case() {
   handover_validate_skip_git_check false >/dev/null 2>&1
 }
 
-# Behavior: skip_git_check true is rejected without explicit authorization.
+# Behavior: skip_git_check true is rejected by the bash route (use Agent(codex-executor) fallback).
 # Steps:
 #   1. Validate skip_git_check true.
 #   2. Assert the reject audit names skip_git_check.

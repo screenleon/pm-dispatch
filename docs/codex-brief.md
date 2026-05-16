@@ -244,11 +244,11 @@ Metadata fields:
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_codex_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
-| `sandbox` | yes | `workspace-write` default unless caller authorized another value. |
-| `approval` | yes | `never` default unless caller authorized another value. |
+| `sandbox` | yes | Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
+| `approval` | yes | Bash route accepts only `never`; other values require Agent(codex-executor) fallback. |
 | `timeout` | yes | `1200` default, in seconds. |
 | `model` | yes | `default` or a specific Codex model name. |
-| `skip_git_check` | yes | `false` default; use `true` only for caller-approved non-git workdirs. |
+| `skip_git_check` | yes | Bash route accepts only `false`; `true` requires Agent(codex-executor) fallback. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
 
 Direct Bash dispatch shape:
@@ -354,6 +354,7 @@ Use `Agent(codex-executor)` only for this fallback allowlist:
 | Main-thread context is near-full. | The fallback moves validation, trace-reading, and result verification out of the main thread when the conversation window is the limiting factor. |
 | Sync workflow must remain serialized. | Some composed flows need foreground sequencing and artifact validation rather than an asynchronous completion notification. |
 | Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or an unavailable Bash tool means the documented primary route cannot run. |
+| Brief requires skip_git_check: true, sandbox: danger-full-access, or approval other than never. | Bash route validator hard-rejects these values with no override channel; the Agent route accepts them via codex-executor's documented override flags. |
 | User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
 
 When using fallback, set `dispatch_route: agent_codex_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
