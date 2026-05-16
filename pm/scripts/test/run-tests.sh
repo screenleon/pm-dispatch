@@ -108,6 +108,7 @@ run_validate_case "validate bad-closure-date-mismatch" "$fixtures/bad-closure-da
 run_validate_case "validate bad-closure-date-dropped-mismatch" "$fixtures/bad-closure-date-dropped-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
 run_validate_case "validate bad-closure-date-trailing-junk" "$fixtures/bad-closure-date-trailing-junk/BACKLOG.md" 1 "E-DATE-FORMAT"
 run_validate_case "validate bad-outcome-date-misplaced" "$fixtures/bad-outcome-date-misplaced/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
+run_validate_case "validate good-closure-outcome-date" "$fixtures/good-closure-outcome-date/BACKLOG.md" 0 ""
 run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
