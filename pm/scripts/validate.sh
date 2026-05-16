@@ -113,6 +113,15 @@ function parse_refs(id, refs, raw, n, i, tok, p) {
   }
 }
 
+function note_outcome_date(id, line, s, d) {
+  s = line
+  while (match(s, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
+    d = substr(s, RSTART, RLENGTH)
+    body_outcome_dates[id] = body_outcome_dates[id] " " d
+    s = substr(s, RSTART + RLENGTH)
+  }
+}
+
 function parse_area(id, area, n, i, tok) {
   area = trim(area)
   n = split(area, bits, "/")
@@ -225,7 +234,7 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs) {
   note_body_id(line)
   if (current_id != "" && line ~ /^\*\*Tags\*\*:/) parse_tags(current_id, line)
   if (current_id != "" && line ~ /^\*\*See\*\*:/) body_see[current_id] = 1
-  if (current_id != "" && !(current_id in body_section_date) && date_token(line) != "") body_section_date[current_id] = date_token(line)
+  if (current_id != "" && line ~ /^\*\*Outcome\*\*:/) note_outcome_date(current_id, line)
 }
 
 END {
@@ -238,10 +247,14 @@ END {
       body_done_date = "missing"
       if (id in body_marker_date) {
         body_done_date = body_marker_date[id]
-      } else if (id in body_section_date) {
-        body_done_date = body_section_date[id]
-      }
-      if (body_done_date != row_done_date[id]) {
+        if (body_done_date != row_done_date[id]) {
+          emit("E-CLOSURE-DATE-MISMATCH", id " index=" row_done_date[id] " body=" body_done_date)
+        }
+      } else if (id in body_outcome_dates) {
+        if (index(body_outcome_dates[id] " ", " " row_done_date[id] " ") == 0) {
+          emit("E-CLOSURE-DATE-MISMATCH", id " index=" row_done_date[id] " body=" trim(body_outcome_dates[id]))
+        }
+      } else {
         emit("E-CLOSURE-DATE-MISMATCH", id " index=" row_done_date[id] " body=" body_done_date)
       }
     }
@@ -270,16 +283,35 @@ function emit(code, ctx) {
   bad = 1
 }
 
-function note_index_refs(line, n, f, id, refs, i, tok) {
+function note_pr_status(tok, status) {
+  if (!(tok in pr_status) || pr_status[tok] != "closed") pr_status[tok] = status
+}
+
+function note_index_refs(line, n, f, id, refs, status, s, tok) {
   n = split(line, f, "|")
   if (n < 7) return
   id = trim(f[2])
   if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  status = trim(f[3])
+  if (status ~ /^✅ closed /) {
+    status = "closed"
+  } else if (status == "🔵 active") {
+    status = "active"
+  } else if (status == "✅ done") {
+    status = "done"
+  } else if (status == "⏸ deferred" || status == "🟡 deferred") {
+    status = "deferred"
+  } else if (status ~ /^🚫 dropped /) {
+    status = "dropped"
+  } else {
+    status = "unknown"
+  }
   refs = trim(f[7])
-  n = split(refs, parts, ",")
-  for (i = 1; i <= n; i++) {
-    tok = trim(parts[i])
-    if (tok ~ /^pr:#[0-9][0-9]*$/) backlog_pr[tok] = 1
+  s = refs
+  while (match(s, /pr:#[0-9][0-9]*/)) {
+    tok = substr(s, RSTART, RLENGTH)
+    note_pr_status(tok, status)
+    s = substr(s, RSTART + RLENGTH)
   }
 }
 
@@ -312,8 +344,10 @@ FILENAME == changelog_file {
 END {
   if (!found_unreleased) exit 0
   for (tok in changelog_pr) {
-    if (!(tok in backlog_pr)) {
+    if (!(tok in pr_status)) {
       emit("E-CHANGELOG-DRIFT", tok " referenced in [Unreleased] but no backlog row references it")
+    } else if (pr_status[tok] != "closed") {
+      emit("E-CHANGELOG-DRIFT", tok " referenced in [Unreleased] but backlog row status is " pr_status[tok])
     }
   }
   exit bad ? 1 : 0
