@@ -237,7 +237,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 2. 確認 snapshot fixtures 不依賴本機 `$HOME` 絕對路徑、不依賴外部 secret；若有則先補 fixture isolation 再進 CI。
 3. 與 CC-024 同 PR 處理。
 **Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A3）。
-**Outcome**: PR #57 合併 2026-05-15；`lint.yml` 加入 `test-codex-dispatch` 與 `test-usage-weekly` 兩個 job，fixture-driven 無外部依賴。後續 PR #58 (CC-036) 再追加 `test-dispatch-handover` job。
+**Outcome**: 2026-05-15 — PR #57 合併；`lint.yml` 加入 `test-codex-dispatch` 與 `test-usage-weekly` 兩個 job，fixture-driven 無外部依賴。後續 PR #58 (CC-036) 再追加 `test-dispatch-handover` job。
 **See**: pr:#57
 
 ## CC-030 — `pm/scripts/validate.sh` Index↔Section 雙向一致性 + CHANGELOG drift
