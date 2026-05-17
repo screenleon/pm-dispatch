@@ -13,6 +13,22 @@ PM **must** run `/pre-impl` before writing a Codex brief whenever the brief intr
 
 The design constraint list produced here should be pasted into the brief's `constraints:` field so Codex implements with the constraints from the start, not after an architecture-reviewer flag.
 
+## What
+
+`/pre-impl` produces a short constraint list for broader changes so implementation work stays within a safe boundary.
+
+## When to use
+
+- Before introducing three or more new behavioral units.
+- Before touching shared modules, schema files, or reviewer flow surfaces.
+- When a design guardrail is needed before dispatch to avoid avoidable PR-gate rework.
+
+## Example
+
+```sh
+/pre-impl "add onboarding docs for first-time fork users"
+```
+
 ## Step 1 — Understand the codebase entry points
 
 Scan the current working directory to build a minimal structural picture. Run the following (adjust depth if the repo is large):

@@ -1,7 +1,14 @@
 # pm-dispatch
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Personal Claude Code configuration: subagents, slash commands, skills, and dispatch scripts. Source of truth lives in this repo; entries are symlinked into `~/.claude/` by `install.sh`.
+Personal Claude Code configuration for forks: subagents, slash commands, skills, and dispatch scripts with a stable installer.
+
+This repository is designed for a single maintainer working on their own adaptation. It is source-available for reading and forking, while remaining explicitly private-maintainer scoped for this operational track.
+
+## Onboarding
+
+- [Getting Started](docs/GETTING_STARTED.md)
+- [Core concepts](docs/CONCEPTS.md)
 
 ## Path placeholders
 

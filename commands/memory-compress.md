@@ -5,6 +5,22 @@ argument-hint: "[--dry-run]"
 
 Compress the MEMORY.md index for the current project's memory directory. Follow these steps exactly.
 
+## What
+
+`/memory-compress` rewrites the `MEMORY.md` index into a shorter, cheaper-to-load shape without changing the underlying memory facts.
+
+## When to use
+
+- When your inject footprint gets too large for routine sessions.
+- Before sharing a fork to keep memory continuity efficient.
+- Periodically, after repeated `/mem-distill` runs add new entries.
+
+## Example
+
+```sh
+/memory-compress --dry-run
+```
+
 ## Step 1 — Locate memory directory
 
 Run:
