@@ -79,6 +79,13 @@ jobs:
             uninstall-hooks.sh
             usage-weekly.sh
 
+  test-portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: portable helper regression suite
+        run: ./scripts/test-portable.sh
+
   test-setup-project:
     runs-on: ubuntu-latest
     steps:

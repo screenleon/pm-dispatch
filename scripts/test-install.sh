@@ -414,6 +414,87 @@ test_install_sh_profile_full_wires_codex_hooks() {
   pass "$name"
 }
 
+test_install_hooks_windows_profile_full_downgrades_to_minimal() {
+  # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
+  # Codex hooks are not wired; base managed hooks still are. The expected warning
+  # about fallback to minimal is also required.
+  local name="install-hooks-windows-full-downgraded-to-minimal"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local out err
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full >"$out" 2>"$err"
+  local code=$?
+  set -e
+
+  if [ "$code" -ne 0 ]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+
+  if ! grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
+    fail "$name" "missing profile downgrade warning"
+    return
+  fi
+
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
+test_install_hooks_windows_profile_minimal_silent() {
+  # Proves PM_DISPATCH_PLATFORM=windows and --profile minimal does not emit the
+  # full-profile downgrade warning and does not wire codex hooks.
+  local name="install-hooks-windows-minimal-silent"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local out err
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal >"$out" 2>"$err"
+  local code=$?
+  set -e
+
+  if [ "$code" -ne 0 ]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+
+  if grep -q 'platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal' "$err"; then
+    fail "$name" "unexpected downgrade warning on minimal profile"
+    return
+  fi
+
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
 test_install_hooks_profile_downgrade_removes_codex() {
   # Proves that running install-hooks.sh with --profile full and then again
   # with --profile minimal converges to the minimal hook set — codex guards
@@ -1100,6 +1181,8 @@ test_install_sh_profile_full_wires_codex_hooks
 test_install_hooks_profile_downgrade_removes_codex
 test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
+test_install_hooks_windows_profile_full_downgrades_to_minimal
+test_install_hooks_windows_profile_minimal_silent
 test_install_hooks_profile_invalid_value_rejected
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle

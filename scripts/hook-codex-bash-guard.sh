@@ -36,6 +36,11 @@
 
 set -uo pipefail
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/portable.sh
+. "$_SCRIPT_DIR/lib/portable.sh"
+unset _SCRIPT_DIR
+
 HOOK_NAME="hook-codex-bash-guard"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
@@ -120,12 +125,12 @@ allow() {
 
 is_under_read_root() {
   local p="$1" abs r
-  abs="$(realpath -m -- "$p" 2>/dev/null)" || return 1
+  abs="$(realpath_m "$p" 2>/dev/null)" || return 1
   for r in "${READ_ROOTS[@]}"; do
     [[ -z "$r" ]] && continue
     # Normalize root and ensure trailing slash so /foo doesn't match /foobar.
     local r_abs
-    r_abs="$(realpath -m -- "$r" 2>/dev/null)" || continue
+    r_abs="$(realpath_m "$r" 2>/dev/null)" || continue
     [[ "$r_abs" != */ ]] && r_abs="$r_abs/"
     case "$abs/" in
       "$r_abs"*) return 0 ;;
@@ -250,7 +255,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! command -v realpath >/dev/null 2>&1; then
+if [[ "$(detect_platform)" != "windows" ]] && ! command -v realpath >/dev/null 2>&1; then
   echo "$HOOK_NAME: realpath missing on PATH — install coreutils or set CLAUDE_HOOK_CODEX_GUARD=off" >&2
   exit 2
 fi

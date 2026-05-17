@@ -18,6 +18,11 @@
 
 set -uo pipefail
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/portable.sh
+. "$_SCRIPT_DIR/lib/portable.sh"
+unset _SCRIPT_DIR
+
 HOOK_NAME="hook-codex-write-guard"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
@@ -63,7 +68,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! command -v realpath >/dev/null 2>&1; then
+if [[ "$(detect_platform)" != "windows" ]] && ! command -v realpath >/dev/null 2>&1; then
   echo "$HOOK_NAME: realpath missing on PATH — install coreutils or set CLAUDE_HOOK_CODEX_WRITE_GUARD=off" >&2
   exit 2
 fi
@@ -106,7 +111,7 @@ if [[ "$file_path" != /* ]]; then
 fi
 
 # Normalize path (tolerates non-existent Write targets).
-abs_path="$(realpath -m -- "$file_path" 2>/dev/null)" || {
+abs_path="$(realpath_m "$file_path" 2>/dev/null)" || {
   deny "realpath failed on file_path"
 }
 
@@ -125,7 +130,10 @@ fi
 
 # Verify the parent directory resolves to /tmp (guards against /tmp itself
 # being a symlink or path traversal via dirname).
-real_parent="$(realpath -- "$(dirname "$abs_path")" 2>/dev/null)" || {
+if ! [[ -d "$(dirname "$abs_path")" ]]; then
+  deny "parent directory does not exist (resolved to $(dirname "$abs_path"))"
+fi
+real_parent="$(realpath_m "$(dirname "$abs_path")" 2>/dev/null)" || {
   deny "realpath of parent directory failed"
 }
 [[ "$real_parent" == "/tmp" ]] || deny "parent directory resolves outside /tmp (got: $real_parent)"

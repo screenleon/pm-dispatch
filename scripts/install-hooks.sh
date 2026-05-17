@@ -33,8 +33,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
+
 DRY_RUN=0
 PROFILE=""
+PLATFORM="auto"
+ROUTE_LOG_ENABLED=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -44,6 +51,12 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --profile=*) PROFILE="${1#--profile=}"; shift ;;
+    --platform)
+      [[ $# -ge 2 ]] || { echo "install-hooks: --platform requires a value" >&2; exit 2; }
+      PLATFORM="$2"
+      shift 2
+      ;;
+    --platform=*) PLATFORM="${1#--platform=}"; shift ;;
     *) echo "install-hooks: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +64,11 @@ done
 case "$PROFILE" in
   ""|minimal|full) ;;
   *) echo "install-hooks: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
+esac
+
+case "$PLATFORM" in
+  ""|auto|linux|macos|windows) ;;
+  *) echo "install-hooks: --platform must be auto|linux|macos|windows (got: $PLATFORM)" >&2; exit 2 ;;
 esac
 
 if [[ -z "$PROFILE" ]]; then
@@ -61,10 +79,23 @@ if [[ -z "$PROFILE" ]]; then
   fi
 fi
 
+if [[ "$PLATFORM" == "auto" ]]; then
+  PLATFORM="$(detect_platform)"
+fi
+
+if [[ "$PLATFORM" == "windows" && "$PROFILE" == "full" ]]; then
+  echo "install-hooks: platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal" >&2
+  PROFILE=minimal
+fi
+
 repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 settings="$HOME/.claude/settings.json"
 # shellcheck source=scripts/lib/memory-dir.sh
 . "$repo_root/scripts/lib/memory-dir.sh"
+
+if [[ "$PLATFORM" == "windows" ]] && ! command -v jq >/dev/null 2>&1; then
+  ROUTE_LOG_ENABLED=0
+fi
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "install-hooks: jq is required" >&2
@@ -131,6 +162,7 @@ jq \
   --arg inject "$inject_cmd" \
   --arg statusline "$statusline_cmd" \
   --argjson sl_present "$_statusline_already_wired" \
+  --argjson route_enabled "$ROUTE_LOG_ENABLED" \
   --arg profile "$PROFILE" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
@@ -152,7 +184,7 @@ jq \
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $trace_present |
-  ( [ .hooks.PostToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $routing_present |
+  ( if $route_enabled == 1 then ( [ .hooks.PostToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) else 0 end ) as $routing_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
@@ -167,11 +199,14 @@ jq \
       else . end
     )
   ) |
-  .hooks.PostToolUse |= map(
-    .hooks |= map(
-      if ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $routing
-      else . end
-    )
+  ( if $route_enabled == 1 then
+      .hooks.PostToolUse |= map(
+        .hooks |= map(
+          if ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $routing
+          else . end
+        )
+      )
+    else . end
   ) |
   .hooks.Stop |= map(
     .hooks |= map(
@@ -238,7 +273,7 @@ jq \
       }]
     else . end
   ) |
-  ( if $routing_present == 0 then
+  ( if $route_enabled == 1 and $routing_present == 0 then
       .hooks.PostToolUse += [{
         "matcher": "Bash|Agent",
         "hooks": [{"type": "command", "command": $routing}]
@@ -263,12 +298,13 @@ jq \
   )
   ' "$settings" > "$tmp_new"
 
+echo "install-hooks: profile=$PROFILE"
+echo "install-hooks: platform=$PLATFORM"
+
 if cmp -s "$settings" "$tmp_new"; then
   echo "install-hooks: already wired, nothing to do (profile=$PROFILE)"
   exit 0
 fi
-
-echo "install-hooks: profile=$PROFILE"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "install-hooks: would apply the following change:"
@@ -281,7 +317,7 @@ if routing_memory_dir="$(find_memory_dir "$repo_root")"; then
   routing_log="$routing_memory_dir/routing_log.md"
 fi
 
-if [[ -n "$routing_log" && -f "$routing_log" ]]; then
+if [[ "$ROUTE_LOG_ENABLED" == "1" && -n "$routing_log" && -f "$routing_log" ]]; then
   if grep -q -F '<!-- routing-log:auto-block:start -->' "$routing_log" 2>/dev/null; then
     echo "install-hooks: routing-log already migrated, skipping migrator"
   else
