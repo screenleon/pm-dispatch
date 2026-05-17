@@ -661,6 +661,41 @@ test_install_hooks_profile_invalid_value_rejected() {
   fi
 }
 
+test_install_hooks_jq_missing_prints_platform_hints() {
+  # Proves install-hooks.sh exits non-zero with platform-aware install
+  # hints (winget / brew / apt / etc.) when jq is missing on PATH.
+  # Stub PATH must contain the small set of utilities the script uses
+  # before its jq check (cd / dirname / uname / command / cat etc.); we
+  # symlink them from the live PATH into stub_bin, excluding jq.
+  local name="install-hooks-jq-missing-prints-platform-hints"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  local stub_bin="$home/.stub-bin"
+  mkdir -p "$stub_bin"
+  local util
+  for util in dirname uname cat sed awk grep cut tr basename; do
+    local src
+    src="$(command -v "$util" 2>/dev/null)" || continue
+    ln -sf "$src" "$stub_bin/$util"
+  done
+  # Deliberately do NOT symlink jq into stub_bin.
+
+  local out rc
+  out="$(HOME="$home" PATH="$stub_bin" /bin/bash "$REPO_ROOT/scripts/install-hooks.sh" 2>&1)" && rc=0 || rc=$?
+  if [[ $rc -ne 0 ]] \
+    && [[ "$out" == *"jq is required"* ]] \
+    && [[ "$out" == *"apt install jq"* ]] \
+    && [[ "$out" == *"brew install jq"* ]] \
+    && [[ "$out" == *"winget install"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit + jq install hints for apt/brew/winget; got rc=$rc, out=$out"
+  fi
+}
+
 test_install_sh_wires_hooks_no_settings() {
   # First-time install with no pre-existing settings.json — install.sh must
   # create a minimal settings.json and wire all hooks before the Write-enabled
@@ -1259,6 +1294,7 @@ test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected
 test_install_hooks_profile_invalid_value_rejected
+test_install_hooks_jq_missing_prints_platform_hints
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
 test_install_hooks_updates_stale_paths_after_rename
