@@ -253,6 +253,18 @@ Metadata fields:
 | `skip_git_check` | yes | Bash route accepts only `false`; `true` requires Agent(codex-executor) fallback. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
 
+## Model aliases
+
+PM short-form model aliases are mapped to wire-format model IDs inside
+`scripts/codex-dispatch.sh` before invoking `codex exec`.
+
+| PM-facing alias | Wire-format model ID | reasoning effort |
+|---|---|---|
+| `codex-spark` | `gpt-5.3-codex-spark` | `high` |
+
+This table is hardcoded in `scripts/codex-dispatch.sh` and must be kept in
+sync if CLI alias behavior or Codex model availability changes.
+
 Direct Bash dispatch shape:
 
 ```text

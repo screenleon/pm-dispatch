@@ -12,10 +12,13 @@
 # Usage:
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] --brief-file <path>
+#                     [--timeout <seconds>] [--print-cmd] --brief-file <path>
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] -- <brief...>
+#                     [--timeout <seconds>] [--print-cmd] -- <brief...>
+#
+# --print-cmd prints the final CMD array (`CMD=${CMD[*]}`) and exits 0
+# before invoking codex.
 #
 # Prefer --brief-file for all real dispatches. The inline -- <brief...> form is
 # retained only for trivial smoke checks; shell quoting, hook validation, and
@@ -67,6 +70,7 @@ TIMEOUT="${CODEX_DISPATCH_TIMEOUT:-1200}"
 BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
+PRINT_CMD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +80,7 @@ while [[ $# -gt 0 ]]; do
     --approval) APPROVAL="$2"; shift 2;;
     --skip-git-check) SKIP_GIT_CHECK=1; shift;;
     --timeout) TIMEOUT="$2"; shift 2;;
+    --print-cmd) PRINT_CMD=1; shift;;
     --brief-file) BRIEF_FILE="$2"; shift 2;;
     --) shift; BRIEF="$*"; BRIEF_FROM_ARGV=1; break;;
     -h|--help)
@@ -117,12 +122,45 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-TRACE_DIR="$WORK_DIR/.agent-trace"
-mkdir -p "$TRACE_DIR"
+# PM-facing alias → wire-format model mapping used by dispatch.
+# Source-of-truth user config (confirmed via PM): /home/screenleon/.codex/config.toml
+declare -A MODEL_ALIAS_TO_ID=(
+  [codex-spark]="gpt-5.3-codex-spark"
+)
+declare -A MODEL_ALIAS_TO_EFFORT=(
+  [codex-spark]="high"
+)
+
+MODEL_RESOLVED="$MODEL"
+MODEL_RESOLVED_EFFORT=""
+MODEL_ALIAS_MATCH=0
+if [[ -n "$MODEL" ]]; then
+  if [[ -n "${MODEL_ALIAS_TO_ID[$MODEL]+x}" ]]; then
+    MODEL_RESOLVED="${MODEL_ALIAS_TO_ID[$MODEL]}"
+    MODEL_RESOLVED_EFFORT="${MODEL_ALIAS_TO_EFFORT[$MODEL]}"
+    MODEL_ALIAS_MATCH=1
+  fi
+fi
+
+MODEL_DISPLAY="$MODEL"
+if [[ -z "$MODEL_DISPLAY" ]]; then
+  MODEL_DISPLAY="<default>"
+elif [[ "$MODEL_ALIAS_MATCH" -eq 1 ]]; then
+  MODEL_DISPLAY="$MODEL → $MODEL_RESOLVED (effort=$MODEL_RESOLVED_EFFORT)"
+fi
+
 TS=$(date +%Y%m%d-%H%M%S)-$$
-TRACE="$TRACE_DIR/codex-$TS.jsonl"
-LAST="$TRACE_DIR/codex-$TS.last"
-STDERR_LOG="$TRACE_DIR/codex-$TS.stderr"
+LAST="/dev/null"
+STDERR_LOG="/dev/null"
+TRACE="<print-only>"
+
+if [[ "$PRINT_CMD" -ne 1 ]]; then
+  TRACE_DIR="$WORK_DIR/.agent-trace"
+  mkdir -p "$TRACE_DIR"
+  TRACE="$TRACE_DIR/codex-$TS.jsonl"
+  LAST="$TRACE_DIR/codex-$TS.last"
+  STDERR_LOG="$TRACE_DIR/codex-$TS.stderr"
+fi
 
 CMD=(codex exec
   --cd "$WORK_DIR"
@@ -131,7 +169,8 @@ CMD=(codex exec
   --json
   --output-last-message "$LAST"
 )
-[[ -n "$MODEL" ]] && CMD+=(-m "$MODEL")
+[[ -n "$MODEL" ]] && CMD+=(-m "$MODEL_RESOLVED")
+[[ -n "$MODEL_RESOLVED_EFFORT" ]] && CMD+=(-c "model_reasoning_effort=\"$MODEL_RESOLVED_EFFORT\"")
 [[ "$SKIP_GIT_CHECK" -eq 1 ]] && CMD+=(--skip-git-repo-check)
 # Pass brief via stdin ("-") to avoid codex treating a multi-line positional
 # argument as an incomplete prompt and blocking on stdin.
@@ -141,7 +180,7 @@ CMD+=("-")
 {
   echo "[$(date -Is)] codex-dispatch starting"
   echo "  cwd:      $WORK_DIR"
-  echo "  model:    ${MODEL:-<default>}"
+  echo "  model:    $MODEL_DISPLAY"
   echo "  sandbox:  $SANDBOX"
   echo "  approval: $APPROVAL"
   echo "  timeout:  ${TIMEOUT}s"
@@ -152,6 +191,11 @@ CMD+=("-")
     echo "  brief:    $BRIEF"
   fi
 } | tee -a "$STDERR_LOG" >&2
+
+if [[ "$PRINT_CMD" -eq 1 ]]; then
+  echo "CMD=${CMD[*]}"
+  exit 0
+fi
 
 # Refresh latest.* symlinks before launch so observers can attach immediately.
 ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"
@@ -183,6 +227,8 @@ print(0)
 " "$TRACE" 2>/dev/null || echo 0)
   if [[ "$_CODEX_TOKENS" -gt 0 ]]; then
     _POOL="codex"
+    # Pooling uses the user-facing MODEL token (pre-resolution) to preserve
+    # existing routing semantics in the PM dispatch contract and existing tests.
     [[ "${MODEL:-}" == *spark* ]] && _POOL="spark"
     _NOTE="auto: $(basename "$WORK_DIR")"
     bash "${HOME}/.claude/scripts/log-usage.sh" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
