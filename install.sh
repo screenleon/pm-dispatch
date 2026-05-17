@@ -5,12 +5,34 @@
 # Per-file symlinks: ~/.claude/agents/ may contain agents from other sources alongside.
 #
 # Usage:
-#   ./install.sh [--dry-run]
+#   ./install.sh [--dry-run] [--profile minimal|full]
+#
+# --profile selects the hook set:
+#   full     wire all hooks including codex-* guards (use when you run codex CLI)
+#   minimal  skip codex-* guards (claude-only setup)
+#   (omit)   auto-detect: codex on PATH → full, else minimal
 
 set -euo pipefail
 
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+PROFILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --profile)
+      [[ $# -ge 2 ]] || { echo "install: --profile requires a value" >&2; exit 2; }
+      PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*) PROFILE="${1#--profile=}"; shift ;;
+    *) echo "install: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$PROFILE" in
+  ""|minimal|full) ;;
+  *) echo "install: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
+esac
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_HOME="$HOME/.claude"
@@ -249,7 +271,11 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "  would create $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
     echo "  (hook wiring dry-run skipped — settings.json would be created first)"
   else
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+    if [[ -n "$PROFILE" ]]; then
+      bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile "$PROFILE"
+    else
+      bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+    fi
   fi
 else
   if [[ ! -f "$CLAUDE_HOME/settings.json" ]]; then
@@ -257,7 +283,11 @@ else
     printf '{}\n' > "$CLAUDE_HOME/settings.json"
     echo "  created $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
   fi
-  bash "$REPO_ROOT/scripts/install-hooks.sh"
+  if [[ -n "$PROFILE" ]]; then
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile "$PROFILE"
+  else
+    bash "$REPO_ROOT/scripts/install-hooks.sh"
+  fi
 fi
 echo
 

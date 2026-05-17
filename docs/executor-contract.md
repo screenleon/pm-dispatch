@@ -48,7 +48,7 @@ The diff is the source of truth for work completion. The report is narrative con
 | Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | Same reviewer pipeline should be triggered by the main-thread path once implementation lands. |
 | Install requirement | `codex` install profile (current operational mode). | `claude-main` install profile (lightweight; no codex binary workflow dependency). |
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
-| Status in this spike | Implemented as of current branch. | Designed in CC-101; **IMPLEMENTED in CC-102**. |
+| Status | Implemented (primary route since CC-036). | Implemented in CC-102 — `agents/claude-executor.md` + `executor: claude-main` enum + `install.sh --profile minimal\|full`. |
 
 ## Selection
 
@@ -56,4 +56,4 @@ Executor profile is an install-time choice (`codex` full profile versus `claude-
 
 ## Forward-compat notes
 
-Today, `scripts/lib/handover-validate.sh` keeps the `executor` enum closed at `{codex}`. CC-102 will open this enum and add the `claude-main` adapter. `docs/executor-contract.md` is the behavioral contract that CC-102 must implement without changing this file’s core contract semantics.
+As of CC-102, `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude-main`; any other value is rejected. The `claude-main` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.
