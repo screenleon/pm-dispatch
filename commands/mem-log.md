@@ -5,6 +5,22 @@ argument-hint: "[brief note to include in summary]"
 
 Record what happened in this session to the episodic memory layer. Follow these steps.
 
+## What
+
+`/mem-log` records the active session summary into episodic memory so future sessions can recall what was decided and why.
+
+## When to use
+
+- When a session adds durable context for later continuity or `/mem-recall`.
+- When a brief, evidence-based summary is needed before handoff.
+- When you need a durable fallback when session recall is the only memory source.
+
+## Example
+
+```sh
+/mem-log "Session delivered first-pass migration plan and closed a hook exception."
+```
+
 ## Step 1 — Find episodes.jsonl
 
 Run the same project-lookup as the memory inject hook:

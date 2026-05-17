@@ -5,6 +5,22 @@ argument-hint: "[N=5]"
 
 Read and inject the most recent episodic memory entries into the current context.
 
+## What
+
+`/mem-recall` injects the most recent episodic summaries into the current context for continuity.
+
+## When to use
+
+- Before work where project state has drifted and you need a short memory refresh.
+- When `/pm` or `/pr-gate` should inherit session-level context.
+- When there is no confidence that you remember why a recent decision was made.
+
+## Example
+
+```sh
+/mem-recall 8
+```
+
 ## Step 1 — Find episodes.jsonl
 
 ```bash

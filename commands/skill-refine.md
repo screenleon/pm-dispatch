@@ -7,6 +7,22 @@ Run the M1 skill-refine signal bundler for exactly one named skill.
 
 This command supports single-skill invocation only. Do not use `--all`, multiple skill names, or globs.
 
+## What
+
+`/skill-refine` runs the one-skill feedback bundling path to produce concrete refinement output for a single target command or skill.
+
+## When to use
+
+- When a named skill has stale scope, unclear constraints, or repeated feedback signals.
+- Before drafting a revision pass for a specific skill.
+- When you need signal packaging before opening a follow-up refinement brief.
+
+## Example
+
+```sh
+/skill-refine mem-recall
+```
+
 ## Validate arguments
 
 If `$ARGUMENTS` is empty, stop and say:

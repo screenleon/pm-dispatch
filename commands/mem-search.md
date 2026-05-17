@@ -5,6 +5,22 @@ argument-hint: "<query>"
 
 Search the project memory for `$ARGUMENTS`. If no query is provided, ask the user what to search for.
 
+## What
+
+`/mem-search` performs keyword and semantic lookup across the memory directory so you can answer "what did we learn" for a topic.
+
+## When to use
+
+- When you need a quick answer from existing memory cards before rewriting flow.
+- When an implementation question depends on past decisions in this project.
+- When a query has no clear file path and needs semantic triage.
+
+## Example
+
+```sh
+/mem-search "hook bypass policy"
+```
+
 ## Step 1 — Find memory directory
 
 ```bash

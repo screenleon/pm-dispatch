@@ -5,6 +5,22 @@ argument-hint: "[--dry-run]"
 
 Review recent session episodes and propose changes to the permanent memory index. Follow these steps.
 
+## What
+
+`/mem-distill` turns recent `/mem-log` sessions into a durable MEMORY index plan, proposing add/update/remove actions without writing until confirmed.
+
+## When to use
+
+- When a session produced new rules that should persist beyond one recall window.
+- Before creating or editing `MEMORY.md` to avoid duplicating long-lived facts.
+- When you want a clean handoff from episodic notes to durable cards.
+
+## Example
+
+```sh
+/mem-distill --dry-run
+```
+
 ## Step 1 — Find memory directory
 
 ```bash
