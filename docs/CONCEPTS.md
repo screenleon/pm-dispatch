@@ -37,7 +37,7 @@ Two examples:
 
 - **`hook-pm-write-guard.sh`** — blocks the `project-pm` subagent from writing to anywhere except the memory directory and a small allowlist. The PM agent is supposed to plan and write briefs, not edit production code. If a PM session tries to `Write(src/api.go)`, the hook denies the call and the user sees why. Without the hook this is a strong suggestion in the prompt; with the hook it is structural.
 
-- **`hook-codex-bash-guard.sh`** — blocks the `codex-executor` subagent from spawning `codex-dispatch.sh` in the background (subagents can't reliably background processes; see `feedback_codex_dispatch_foreground.md`). The hook turns a footgun into a hard error.
+- **`hook-codex-bash-guard.sh`** — blocks the `codex-executor` subagent from spawning `codex-dispatch.sh` in the background. The harness can kill a subagent's background processes when the subagent returns, so this rule must be structural — see Concept 3 below for the underlying mechanic. The hook turns a footgun into a hard error.
 
 The general shape is: identify a recurring "you should not have done that" moment in your workflow, write the rule once as a hook, and the harness enforces it forever after. The cost of writing the hook is paid once; the policy then applies to every future session, including the ones you don't remember.
 
@@ -105,9 +105,9 @@ Subagents can do things the main thread shouldn't have to do: long research, opi
 
 ### Two rules subagents always obey
 
-- **A subagent cannot spawn another subagent.** Claude Code prevents nested `Agent` calls. The main thread is the only orchestrator. If you want a pipeline of three reviewers, the *main thread* invokes them; the reviewers don't invoke each other. (See `feedback_subagents_no_nested.md`.)
+- **A subagent cannot spawn another subagent.** Claude Code prevents nested `Agent` calls. The main thread is the only orchestrator. If you want a pipeline of three reviewers, the *main thread* invokes them; the reviewers don't invoke each other.
 
-- **A subagent's Bash calls cannot reliably run in the background.** The harness can kill the subagent process when its `Agent` call returns, taking the background process with it. The fix in this repo is to run long Bash from the main thread instead. (See `feedback_codex_dispatch_foreground.md`.)
+- **A subagent's Bash calls cannot reliably run in the background.** The harness can kill the subagent process when its `Agent` call returns, taking the background process with it. The fix in this repo is to run long Bash from the main thread instead — see `commands/pr-gate.md` for how `/pr-gate` runs its long-running review pipeline from the main thread with `run_in_background: true`.
 
 These two rules shape how every workflow in this repo is wired. The main thread is not just an orchestrator by convention — it's the orchestrator by structural necessity.
 
