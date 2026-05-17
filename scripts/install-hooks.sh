@@ -98,7 +98,20 @@ if [[ "$PLATFORM" == "windows" ]] && ! command -v jq >/dev/null 2>&1; then
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "install-hooks: jq is required" >&2
+  cat >&2 <<EOF
+install-hooks: jq is required but not found on PATH.
+
+Install it for your platform, then re-run ./install.sh:
+
+  Linux (Debian/Ubuntu):  sudo apt install jq
+  Linux (Fedora/RHEL):    sudo dnf install jq
+  Linux (Arch):           sudo pacman -S jq
+  macOS (Homebrew):       brew install jq
+  Windows (winget):       winget install jqlang.jq
+  Windows (Chocolatey):   choco install jq -y
+
+Detected platform: $PLATFORM
+EOF
   exit 2
 fi
 
