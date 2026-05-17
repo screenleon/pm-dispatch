@@ -8,9 +8,54 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_No unreleased entries._
+
+## [0.1.0] — 2026-05-17
+
+First public release. The repo was made source-available (public read/fork; external PRs not accepted at this time). This release bundles the **CC-OSS** epic that prepared the codebase for that transition.
+
+### Added
+- **`agents/claude-executor.md`** — second concrete executor (alongside `codex-executor`) so the repo runs without the Codex CLI. The five reviewer agents (critic / qa-tester / architecture-reviewer / security-reviewer / risk-reviewer) were always Claude-native; codex was only the runner wrapper.
+- **`install.sh --profile minimal|full`** — install profile flag. `minimal` skips the codex-only guard hooks; `full` wires every hook. Auto-detect when unset: `command -v codex` present → `full`, else `minimal`.
+- **`scripts/lib/portable.sh`** — cross-platform shim: `realpath_m()` / `safe_tmpdir()` / `mkdir_lock()` (replaces `flock`) / `detect_platform()` / `file_size_bytes()` (GNU/BSD/`wc -c` fallback). Makes Windows Git Bash + macOS + Linux uniform.
+- **`scripts/codex-dispatch.sh` `--model` alias mapping** — PM-facing short alias `codex-spark` resolves to wire-format `gpt-5.3-codex-spark` + reasoning effort `high`; unknown aliases fall through unchanged.
+- **`/pr-gate` `--executor codex|claude|auto`** — gate orchestration mirrors the `/pm` executor split; minimal-profile users can run the gate via main-thread `Agent()` calls. New `pr-gate-handover_v1` fenced schema for claude-mode reviewer fan-out.
+- **`docs/executor-contract.md`** — abstract executor interface (input / output / profiles / forward-compat).
+- **`docs/pr-gate-handover-schema.md`** — handover schema for the `/pr-gate` claude path.
+- **`docs/platform-support.md`** — Linux/macOS/WSL2 first-class; Windows Git Bash + minimal profile supported; install dependency table.
+- **`docs/GETTING_STARTED.md`** — clone → install → first `/pm` walkthrough for new readers.
+- **`docs/CONCEPTS.md`** — explains the four Claude Code extensibility surfaces (hooks-as-policy / slash commands / subagents / memory tiers) with a worked `/pm` example.
+- **`docs/memory-system.md`** — memory dir layout + four tiers + bootstrap-empty pattern.
+- **`CONTRIBUTING.md`** + **`CODE_OF_CONDUCT.md`** — source-available stance + Contributor Covenant 2.1.
+- **`commands/skill-refine.md`** (CC-025) — `/skill-refine <skill-name>` slash command wraps `scripts/skill-refine.sh` feedback-signal bundler.
+- **`commands/*.md`** — `## What / ## When to use / ## Example` sections on 7 commands (mem-distill / mem-log / mem-recall / mem-search / memory-compress / pre-impl / skill-refine).
+
 ### Changed
-- `scripts/codex-pr-gate.sh` renamed to `scripts/pr-gate.sh`; `scripts/test-codex-pr-gate.sh` renamed to `scripts/test-pr-gate.sh`
-- `commands/codex-pr-gate.md` and `commands/pr-gate.md` merged into a single `commands/pr-gate.md` that invokes `scripts/pr-gate.sh`; the old Agent-subagent approach is replaced by the script's `--parallel` mode
+- All hardcoded `/home/screenleon/github/pm-dispatch` paths in production docs/agents/commands replaced with `${PM_DISPATCH_REPO}` placeholder; `install-hooks.sh` auto-derives it from `git rev-parse --show-toplevel` when unset.
+- README intro reframed for first-time public readers (source-available stance + top-of-file links to `GETTING_STARTED.md` and `CONCEPTS.md`).
+- `scripts/codex-pr-gate.sh` renamed to `scripts/pr-gate.sh`; `scripts/test-codex-pr-gate.sh` renamed to `scripts/test-pr-gate.sh`.
+- `commands/codex-pr-gate.md` and `commands/pr-gate.md` merged into a single `commands/pr-gate.md` that invokes `scripts/pr-gate.sh`; the old Agent-subagent approach is replaced by the script's `--parallel` mode.
+- `scripts/lib/handover-validate.sh` `executor` enum opens from `{codex}` to `{codex, claude}`; codex-only metadata fields (`sandbox`/`approval`/`skip_git_check`) remain required for schema stability but are accepted-as-no-op by `claude`.
+- `scripts/hook-routing-log.sh` `flock` + fd9 pattern replaced by `mkdir_lock`; audit message strings preserved verbatim for log compatibility.
+
+### Fixed
+- `scripts/hook-routing-log.sh` rotation: `stat -c %s` was Linux-only and silently no-op'd on macOS/BSD (rotation never triggered). Now uses `file_size_bytes()` shim (GNU stat → BSD stat → `wc -c` fallback).
+
+### Known limitations
+- Codex CLI not validated on Windows; `--profile full` falls back to `minimal` automatically on Windows with a stderr warning.
+- External PRs are not accepted at this time. Issues are welcome but have no SLA. See `CONTRIBUTING.md`.
+- `CC-200..CC-204` are surfaced architectural reuse-debt items deferred to post-release: shared executor-router, profile-detect shim, handover validator framework, test-harness shared lib, hook framework.
+
+### Test coverage
+- 299 hook regression cases
+- 16 codex-dispatch cases (CC-047 model alias mapping)
+- 63 dispatch-handover schema cases
+- 43 install / profile cases
+- 4 claude-executor cases
+- 15 portable shim cases
+- 41 pr-gate cases
+- 9 pr-gate-profile (executor split) cases
+- **Total: 490 cases**, plus `lint-scripts` (37 files) and `lint-agents` (8 agents).
 
 ### Added
 - `scripts/hook-routing-log.sh` (CC-028): PostToolUse hook that auto-appends one
