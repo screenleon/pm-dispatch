@@ -8,6 +8,11 @@
 
 set -uo pipefail
 
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/portable.sh
+. "$_SCRIPT_DIR/lib/portable.sh"
+unset _SCRIPT_DIR
+
 HOOK_NAME="hook-routing-log"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/routing-log.err"
@@ -59,7 +64,7 @@ json_string_after() {
   scoped="$haystack"
   if [[ -n "$anchor" ]]; then
     case "$scoped" in
-      *"\"$anchor\""*) scoped="${scoped#*"\"$anchor\""}" ;;
+      *"\"$anchor\""*) scoped="${scoped#*\"$anchor\"}" ;;
       *) return 1 ;;
     esac
   fi
@@ -148,7 +153,7 @@ create_minimal_log() {
 rotate_if_needed() {
   local target="$1" size tmp
   [[ -f "$target" ]] || return 0
-  size=$(stat -c %s "$target" 2>/dev/null || echo 0)
+  size=$(file_size_bytes "$target" 2>/dev/null || echo 0)
   (( size > MAX_SIZE )) || return 0
 
   if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null; then
@@ -188,59 +193,69 @@ rotate_if_needed() {
 
 append_inside_block() {
   local target="$1" line="$2" tmp lockfile lockdir
-  lockfile="${target}.lock"
+  lockfile="${target}.lockdir"
   lockdir="$(dirname "$target")"
   mkdir -p "$lockdir" 2>/dev/null || {
     audit "lock directory failed" "$target"
     return 1
   }
 
-  { exec 9>"$lockfile"; } 2>/dev/null || {
-    audit "append/rotation lock open failed" "$target"
+  if [[ -e "${target}.lock" ]]; then
+    audit "lock timeout" "$target"
+    return 1
+  fi
+
+  if ! mkdir_lock "$lockfile" 2; then
+    if [[ -e "$lockfile" ]]; then
+      audit "lock timeout" "$target"
+    else
+      audit "append/rotation lock open failed" "$target"
+    fi
+    return 1
+  fi
+
+  if [[ ! -f "$target" ]]; then
+    if ! create_minimal_log "$target" 2>/dev/null; then
+      rmdir "$lockfile"
+      audit "create routing log failed" "$target"
+      return 1
+    fi
+  fi
+
+  if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
+    rmdir "$lockfile"
+    audit "auto-block missing; run migrator first" "$target"
+    return 1
+  fi
+
+  if ! rotate_if_needed "$target"; then
+    rmdir "$lockfile"
+    return 1
+  fi
+
+  tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
+    rmdir "$lockfile"
+    audit "append temp failed" "$target"
     return 1
   }
+  if ! awk -v end="$AUTO_END" -v row="$line" '
+    $0 == end && !done { print row; done=1 }
+    { print }
+  ' "$target" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    rmdir "$lockfile"
+    audit "append rewrite failed" "$target"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$target" 2>/dev/null; then
+    rm -f "$tmp"
+    rmdir "$lockfile"
+    audit "append move failed" "$target"
+    return 1
+  fi
 
-  (
-    flock -x -w 2 9 || {
-      audit "lock timeout" "$target"
-      exit 1
-    }
-
-    if [[ ! -f "$target" ]]; then
-      create_minimal_log "$target" 2>/dev/null || {
-        audit "create routing log failed" "$target"
-        exit 1
-      }
-    fi
-    if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
-      audit "auto-block missing; run migrator first" "$target"
-      exit 1
-    fi
-
-    rotate_if_needed "$target" || exit 1
-
-    tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
-      audit "append temp failed" "$target"
-      exit 1
-    }
-    awk -v end="$AUTO_END" -v row="$line" '
-      $0 == end && !done { print row; done=1 }
-      { print }
-    ' "$target" > "$tmp" 2>/dev/null || {
-      rm -f "$tmp"
-      audit "append rewrite failed" "$target"
-      exit 1
-    }
-    mv -f "$tmp" "$target" 2>/dev/null || {
-      rm -f "$tmp"
-      audit "append move failed" "$target"
-      exit 1
-    }
-    exit 0
-  )
-  local locked_status=$?
-  exec 9>&-
-  return "$locked_status"
+  rmdir "$lockfile"
+  return 0
 }
 
 [[ "${CLAUDE_ROUTING_LOG_DISABLE:-}" == "1" ]] && exit 0
@@ -314,6 +329,8 @@ esac
 memory_dir="$(find_memory_dir "$cwd" 2>/dev/null)" || exit 0
 [[ -n "$memory_dir" ]] || exit 0
 
+# shellcheck disable=SC2155
+memory_file="${memory_dir}/routing_log.md"
 printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts="$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)"
 json_escape_into ts_json "$ts"
 json_escape_into session_id_json "$session_id"
@@ -338,5 +355,5 @@ fi
 printf -v line '{"ts":"%s","session_id":"%s","kind":"%s","subagent_type":%s,"brief_file":%s,"goal_excerpt":%s,"q_hit":null,"second_thoughts":null}' \
   "$ts_json" "$session_id_json" "$kind_json" "$subagent_json" "$brief_json" "$goal_json"
 
-append_inside_block "$memory_dir/routing_log.md" "$line" || exit 0
+append_inside_block "$memory_file" "$line" || exit 0
 exit 0
