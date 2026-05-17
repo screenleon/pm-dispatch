@@ -3,6 +3,7 @@
 The canonical structure for any brief dispatched to `codex-executor` (directly via Agent, or indirectly via `scripts/codex-dispatch.sh`).
 
 `codex-executor` rejects briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
+The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file remains the concrete schema reference for codex briefs.
 
 ## Required fields
 

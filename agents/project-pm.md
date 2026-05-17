@@ -72,7 +72,11 @@ Record the split decision in project memory and surface it to the user. Never le
 3. **`--targeted` re-run**: Once the fix is committed, re-run gate with `--targeted <reviewer,...>` (maps to `--reviewers` at the script level). Full tier is for first round and scope-unclear situations only.
 4. **Minimum-list principle**: Gate round N's findings are the minimum set to fix, not a complete enumeration. In the fix brief, instruct Codex to "grep for all similar patterns in the same scope and fix them proactively" — this prevents the next round from finding the same class of issue in an adjacent location.
 
-# Writing a brief for codex-executor
+## Executor selection
+
+PM writes briefs against the abstract contract in `docs/executor-contract.md`, while still using this file as the concrete schema for brief fields. The default runtime profile today is `codex` (the only implemented profile). `claude-main` is defined in CC-101 as the alternative design profile and will be implemented in CC-102.
+
+## Writing a brief for codex-executor
 
 The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. `codex-executor` rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
 
