@@ -5,12 +5,12 @@ argument-hint: [express|standard|full] [--targeted r1,r2] [--scope context] [--p
 
 Run the PR gate via `scripts/pr-gate.sh`.
 
-**Sequential mode (default)**: all reviewers run in order inside one combined codex session.
+**Sequential mode (default):** all reviewers run in one combined session.
 Low main-thread token cost (~5k dispatch + read result).
 
-**Parallel mode (`--parallel`)**: each reviewer runs in its own independent codex session
-followed by a PM synthesis session. Eliminates shared-context anchoring bias.
-Higher token cost — use for auth/payment/migration paths or when reviewer independence matters.
+**Parallel mode (`--parallel`):** each reviewer runs in its own independent session
+followed by a PM synthesis session. Higher token cost — use for auth/payment/migration
+paths or when reviewer independence matters.
 
 | Situation | Args |
 |---|---|
@@ -31,36 +31,19 @@ GATE_SCRIPT="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/scripts/pr-gate.sh"
 
 ## Step 2 - Parse args and launch in background
 
-Parse `$ARGUMENTS`, build the gate args, then **fire the gate script via the
-Bash tool with the tool parameter `run_in_background: true`** so the main
-thread is free while codex runs the reviewers (~3-5 min). The gate script
-owns tier detection, changed-file analysis, reviewer selection, brief
-generation, and dispatch.
+Parse `$ARGUMENTS`, build the gate args, then launch via `run_in_background: true`
+so the main thread is free while `/pr-gate` runs.
 
-> **CRITICAL — `run_in_background: true` is a Bash TOOL PARAMETER, not a
-> shell flag.** When you invoke the Bash tool to run the gate script, set
-> `run_in_background: true` as a sibling of `command:` in the tool call,
-> NOT as a flag inside the command string. Shape:
->
-> ```
-> Bash(
->   command: 'bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1',
->   run_in_background: true   ← TOOL PARAMETER (not inside the command)
-> )
-> ```
->
-> The shell snippet shown in the code block below is just the contents of
-> the `command:` field. The background-mode signal lives at the tool-call
-> level, one layer above the shell.
+### Executor routing is passed by flag only
 
-> **Why background mode here is safe — and required.** The gate script's
-> internal `codex-dispatch.sh` is still foreground-only (enforced by
-> `hook-codex-bash-guard.sh` on the codex-executor subagent), but **this
-> skill is running from the main thread, not from a subagent**. The main
-> thread is not killed when its Bash call returns, so backgrounding the
-> outer gate-script invocation correctly frees the user to continue while
-> codex churns. The harness sends a completion notification when the
-> backgrounded Bash exits.
+This command should pass exactly one of these explicit modes when known:
+
+- `--executor codex` for codex route (or when `command -v codex` is true and user explicitly requested)
+- `--executor claude` for claude-only path
+- `--executor auto` for default behavior (`command -v codex` decides)
+
+`--executor auto` is the default; keep that shape here for parity with existing
+`/pm` profile defaults and `scripts/install-hooks.sh` auto-detect.
 
 ```bash
 RAW_ARGS="${ARGUMENTS:-}"
@@ -107,37 +90,70 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
 done
 
 SCOPE="${SCOPE_TOKENS[*]:-}"
-GATE_ARGS=(--cd "$PWD")
+GATE_ARGS=(--cd "$PWD" --executor auto)
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
 [[ "$PARALLEL" == "true" ]] && GATE_ARGS+=(--parallel)
 
 # Fire with run_in_background: true. The harness captures stdout/stderr and
-# emits a completion notification when the gate script exits.
+# emits a completion notification when this Bash call exits.
 bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1
 ```
 
-After firing, end the turn with one short status line, e.g.:
+After firing, reply with one short status line, e.g.:
 
 > `PR-gate launched in background (tier <T>, ~3-5 min). Main thread free; I'll relay the verdict when it finishes.`
 
-Do NOT poll, sleep, or call `BashOutput` immediately. The harness will notify.
+Do not poll, sleep, or call `BashOutput` immediately.
+
+## Route A — `executor: codex` (default for full profile)
+
+This is the current codex-dispatch primary path. Gate writes one brief per dispatch,
+invokes `scripts/codex-dispatch.sh`, and waits for `result: <path>` in stdout.
+
+- Dispatch shape: one Bash route per codex session.
+- Completion handling: open the result file directly from the footer path.
+- Failure surface: codex session exit non-zero or result validation failure.
+
+The command shape is stable and already implemented by `scripts/pr-gate.sh`.
+
+## Route B — `executor: claude` (main-thread fan-out path)
+
+This route does **not** invoke `scripts/codex-dispatch.sh` at any point.
+
+- Dispatch shape: `scripts/pr-gate.sh` writes a `pr-gate-handover_v1` fenced block
+  listing reviewer briefs and output files.
+- Completion handling: this skill parses that block and fans out `Agent(subagent_type:
+  "claude-executor")` for each `role: reviewer` entry, then one final fan-out
+  for the synthesis entry when present.
+- Failure surface: block parser failure, malformed entry, or a missing `output_file`
+  path; treat as partial/fail and stop fan-out.
+
+`scripts/pr-gate.sh` does not mutate working tree directly on this path; the
+calling skill owns execution orchestration.
 
 ## Step 3 - Receive completion and relay the result
 
-When the background-Bash completion notification arrives:
+When the background Bash completion notification arrives:
 
-1. Fetch the full stdout via `BashOutput(bash_id: <id from notification>)`.
-2. Parse the result file path from the captured stdout:
+1. Fetch full stdout via `BashOutput(bash_id: <id>)`.
+2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
-3. If the bash exit was non-zero, surface a brief failure summary (exit code +
-   last ~20 lines of stdout) instead of pretending success.
-4. On exit 0, read the result file at the parsed path.
-5. Prepend one line: `PR-gate complete.`
-6. Relay the result file contents verbatim.
-
-Do not collapse blocks into "looks good". Relay NO-GO findings completely.
+3. If exit code is non-zero, surface a brief failure summary (exit code + last ~20
+   lines of stdout).
+4. If stdout contains a `pr-gate-handover_v1` block, follow the claude fan-out path:
+   - Parse the block entries with the parser used for handover metadata.
+   - For each `role: reviewer` entry:
+     - run `Agent(subagent_type: "claude-executor", prompt: "<brief_file>")` in parallel.
+     - read `<output_file>` after each fan-out.
+   - If a synthesis entry exists, run one final `Agent(subagent_type: "claude-executor")`.
+   - Read `result_file` from the same path and relay it.
+5. If no handover block is present, this is Route A: read `result_file` directly.
+6. Prepend `PR-gate complete.` to completion relay and include the full gate
+   result (including `Final: GO` / `Final: NO-GO`) unchanged.
+7. On failure, avoid collapsing findings; relay the actual stderr summary and
+   exit 0 from `/pm` only if needed by the conversation protocol.
 
 ## Local verification after gate findings
 
@@ -158,9 +174,10 @@ bash scripts/test-hooks.sh && bash scripts/test-install.sh
 ```
 
 `--filter <pattern>` runs only cases whose name contains `<pattern>`.
-`--list` prints all case names and exits 0 — useful for finding the right pattern.
-Full suites are still required in the gate; `--filter` is for local iteration speed only.
+`--list` prints all case names and exits 0.
+Full suites are still required in the gate; `--filter` is for local iteration speed.
 
 **Warning**: if the pattern matches zero cases, the harness exits nonzero and prints
-`no tests matched filter <pattern>`. A typo in the filter produces a hard failure, not a
-false green. Use `--list` first to confirm the case name before running `--filter`.
+`no tests matched filter <pattern>`. A typo in the filter produces a hard failure,
+not a false green. Use `--list` first to confirm the case name before running
+`--filter`.
