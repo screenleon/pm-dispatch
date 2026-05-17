@@ -64,6 +64,10 @@ For every file-writing or schema-affecting PR, run:
 - `bash scripts/test-hooks.sh`
 - `bash scripts/test-codex-dispatch.sh`
 - `bash scripts/test-dispatch-handover.sh`
+- `bash scripts/test-install.sh`
+- `bash scripts/test-claude-executor.sh`
+- `bash scripts/lint-scripts.sh`
+- `bash scripts/lint-agents.sh`
 
 Run with default environment unless a script documents different fixtures or temporary overrides.
 

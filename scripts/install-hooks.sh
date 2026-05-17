@@ -192,6 +192,24 @@ jq \
     else . end
   ) |
 
+  # Profile downgrade: when --profile minimal, REMOVE managed codex guards
+  # if they were previously installed. The basename + "scripts" parent
+  # match is the same shape used elsewhere in this file to identify
+  # managed entries; out-of-scope codex hooks installed via other means
+  # are left untouched.
+  ( if $profile == "minimal" then
+      .hooks.PreToolUse |= map(
+        .hooks |= map(select(
+          (
+            ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") or
+            ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
+          ) | not
+        ))
+      ) |
+      .hooks.PreToolUse |= map(select((.hooks | length) > 0))
+    else . end
+  ) |
+
   ( if $pm_present == 0 then
       .hooks.PreToolUse += [{
         "matcher": "Edit|Write",
