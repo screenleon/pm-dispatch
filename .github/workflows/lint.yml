@@ -72,6 +72,9 @@ jobs:
             test-migrate-routing-log.sh
             test-patch-gitignore.sh
             test-pr-gate.sh
+            test-pr-gate-profile.sh
+            test-portable.sh
+            test-claude-executor.sh
             test-setup-project.sh
             test-usage-tracker.sh
             test-usage-weekly.sh

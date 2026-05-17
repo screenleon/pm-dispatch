@@ -128,30 +128,42 @@ case_mkdir_lock_contention() {
   local name="portable-mkdir-lock-contention-timeout"
   should_run "$name" || return 0
   local lock="$tmp_root/lock-contention"
-  local marker="$tmp_root/lock-contention.acquired"
+  # FIFO/named-pipe handshake — pure event synchronization. The holder
+  # subshell writes to the FIFO AFTER acquiring the lock; the foreground
+  # blocks on `read` until that write happens. No `sleep` involved in the
+  # readiness wait, so the test is independent of scheduler latency on
+  # any platform (addresses CC-104g gate r1 critic+qa advise).
+  local fifo="$tmp_root/lock-contention.ready"
+  if ! mkfifo "$fifo" 2>/dev/null; then
+    printf 'SKIP: %s (mkfifo unavailable on this platform)\n' "$name"
+    return
+  fi
+
   (
-    mkdir_lock "$lock" 2 || exit 1
-    : > "$marker"
+    if mkdir_lock "$lock" 2; then
+      echo ok > "$fifo"
+    else
+      echo fail > "$fifo"
+      exit 1
+    fi
     sleep 1.2
     rmdir "$lock"
   ) &
   local holder_pid=$!
 
-  # Wait for the subshell to actually hold the lock before contending.
-  # Previously used a flat `sleep 0.1`, which was racy on slow / Windows
-  # process schedulers — the foreground sometimes ran mkdir_lock before
-  # the subshell got its turn, succeeded, and the test reported the lock
-  # primitive as broken when really the race-prevention was broken.
-  local waited=0
-  while [[ ! -e "$marker" ]]; do
-    sleep 0.05
-    waited=$((waited + 1))
-    if (( waited > 40 )); then  # 2s ceiling
-      kill "$holder_pid" 2>/dev/null || true
-      fail "$name" "holder subshell never acquired lock (marker missing)"
-      return
-    fi
-  done
+  local signal=""
+  if ! IFS= read -r signal < "$fifo"; then
+    kill "$holder_pid" 2>/dev/null || true
+    rm -f "$fifo"
+    fail "$name" "FIFO read failed waiting for holder readiness"
+    return
+  fi
+  rm -f "$fifo"
+  if [[ "$signal" != "ok" ]]; then
+    kill "$holder_pid" 2>/dev/null || true
+    fail "$name" "holder subshell failed to acquire lock (signal=$signal)"
+    return
+  fi
 
   if mkdir_lock "$lock" 1; then
     rmdir "$lock"

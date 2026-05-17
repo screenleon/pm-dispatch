@@ -31,6 +31,19 @@ should_run() {
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
 
+# CC-102 introduced install-hooks.sh profile auto-detection via
+# `command -v codex`. Tests in this file written before that change
+# expect "full" profile (all six hooks wired). On CI runners codex is
+# absent, so without a stub auto-detect picks "minimal" and the
+# all-six-hooks assertions fail. Prepend a stub `codex` bin to PATH so
+# auto-detect picks "full" for legacy tests; new profile-specific
+# tests still pass explicit --profile flags and are unaffected.
+_codex_stub_bin="$tmp_root/.codex-stub-bin"
+mkdir -p "$_codex_stub_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
+chmod +x "$_codex_stub_bin/codex"
+export PATH="$_codex_stub_bin:$PATH"
+
 PASS=0
 FAIL=0
 FAILED_CASES=()
@@ -347,6 +360,10 @@ test_legacy_stale_symlinks_removed() {
 test_install_sh_wires_hooks() {
   # Proves that the primary install.sh path wires all six managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
+  # Pre-CC-102 this test relied on the host having codex on PATH to pick
+  # "full" profile auto-detection; on CI runners codex is absent, so the
+  # test now passes --profile full explicitly to preserve its original
+  # all-six-hooks assertion regardless of host codex availability.
   local name="install-sh-wires-hooks"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
@@ -356,7 +373,7 @@ test_install_sh_wires_hooks() {
   HOME="$home" \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    bash "$REPO_ROOT/install.sh" > /dev/null 2>&1
+    bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -657,7 +674,7 @@ test_install_sh_wires_hooks_no_settings() {
   HOME="$home" \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    bash "$REPO_ROOT/install.sh" > /dev/null 2>&1
+    bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   if [[ ! -f "$home/.claude/settings.json" ]]; then
     fail "$name" "settings.json was not created during first-time install"
@@ -679,7 +696,7 @@ test_hooks_install_uninstall_lifecycle() {
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
