@@ -128,13 +128,30 @@ case_mkdir_lock_contention() {
   local name="portable-mkdir-lock-contention-timeout"
   should_run "$name" || return 0
   local lock="$tmp_root/lock-contention"
+  local marker="$tmp_root/lock-contention.acquired"
   (
     mkdir_lock "$lock" 2 || exit 1
+    : > "$marker"
     sleep 1.2
     rmdir "$lock"
   ) &
   local holder_pid=$!
-  sleep 0.1
+
+  # Wait for the subshell to actually hold the lock before contending.
+  # Previously used a flat `sleep 0.1`, which was racy on slow / Windows
+  # process schedulers — the foreground sometimes ran mkdir_lock before
+  # the subshell got its turn, succeeded, and the test reported the lock
+  # primitive as broken when really the race-prevention was broken.
+  local waited=0
+  while [[ ! -e "$marker" ]]; do
+    sleep 0.05
+    waited=$((waited + 1))
+    if (( waited > 40 )); then  # 2s ceiling
+      kill "$holder_pid" 2>/dev/null || true
+      fail "$name" "holder subshell never acquired lock (marker missing)"
+      return
+    fi
+  done
 
   if mkdir_lock "$lock" 1; then
     rmdir "$lock"
@@ -194,8 +211,12 @@ case_detect_platform_override_windows() {
   fi
 }
 
-case_detect_platform_host_linux() {
-  local name="portable-detect-platform-host-linux"
+case_detect_platform_host_native() {
+  # Previously this test asserted `got == linux` regardless of host
+  # platform, which made it a guaranteed FAIL on macOS and Windows. The
+  # assertion is reframed: detect_platform must return SOME valid value
+  # AND that value must agree with a direct OSTYPE/uname check.
+  local name="portable-detect-platform-host-native"
   should_run "$name" || return 0
   local got
   local old_ostype
@@ -223,10 +244,27 @@ case_detect_platform_host_linux() {
     unset OSTYPE
   fi
 
-  if [[ "$got" == "linux" ]]; then
+  # Derive the expected value independently using the same priority order
+  # the shim uses (OSTYPE prefix, then uname fallback).
+  local expected
+  case "${OSTYPE:-}" in
+    linux-gnu*) expected=linux ;;
+    darwin*)    expected=macos ;;
+    msys*|cygwin*|mingw*) expected=windows ;;
+    *)
+      case "$(uname -s 2>/dev/null)" in
+        Linux*)  expected=linux ;;
+        Darwin*) expected=macos ;;
+        MINGW*|MSYS*|CYGWIN*) expected=windows ;;
+        *) expected=unknown ;;
+      esac
+      ;;
+  esac
+
+  if [[ "$got" == "$expected" ]]; then
     pass "$name"
   else
-    fail "$name" "got $got"
+    fail "$name" "got '$got', expected '$expected' (OSTYPE=${OSTYPE:-unset}, uname=$(uname -s 2>/dev/null || echo unknown))"
   fi
 }
 
@@ -273,6 +311,14 @@ case_realpath_m_symlink_resolves() {
   mkdir -p "$root/target"
   printf 'ok\n' > "$root/target/file.txt"
   ln -s "$root/target" "$root/link"
+  # Skip when ln -s did not actually create a symlink (Git Bash on Windows
+  # without `MSYS=winsymlinks:nativestrict` + Developer Mode falls back to
+  # copying the directory). The shim's symlink semantics are still tested
+  # natively on Linux/macOS/WSL CI; on Windows the precondition fails.
+  if [[ ! -L "$root/link" ]]; then
+    printf 'SKIP: %s (ln -s did not create a symlink on this platform)\n' "$name"
+    return
+  fi
   local got
   got="$(realpath_m "$root/link/file.txt")"
   if [[ "$got" == "$root/target/file.txt" ]]; then
@@ -353,7 +399,7 @@ case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
 case_detect_platform_override_windows
-case_detect_platform_host_linux
+case_detect_platform_host_native
 case_detect_platform_ostype_msys
 case_file_size_bytes_returns_size
 case_file_size_bytes_missing_file

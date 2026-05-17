@@ -148,10 +148,64 @@ handover_validate_brief_file() {
   local value=${1-}
 
   handover_validate_metadata_value brief_file "$value" || return 1
-  [[ "$value" == /* ]] || handover_reject brief_file "must be an absolute path" || return 1
-  [[ "$value" == /tmp/brief-* ]] || handover_reject brief_file "must start with /tmp/brief-" || return 1
-  [[ "$value" == /tmp/brief-*.md ]] || handover_reject brief_file "must end with .md" || return 1
-  [[ "$value" != /tmp/brief-*/* ]] || handover_reject brief_file "subdirectories are not allowed" || return 1
+
+  # Path may be POSIX (/tmp/brief-X.md) or Windows-native
+  # (C:\Users\...\AppData\Local\Temp\brief-X.md or C:/.../brief-X.md).
+  # Normalize backslashes to forward slashes for pattern matching only;
+  # the stored metadata value itself is NOT mutated.
+  local normalized="${value//\\//}"
+
+  # Absolute-path check: POSIX (/...) or Windows drive-letter (X:/...).
+  if [[ "$normalized" != /* && ! "$normalized" =~ ^[A-Za-z]:/ ]]; then
+    handover_reject brief_file "must be an absolute path"
+    return 1
+  fi
+
+  local matched=0
+
+  # POSIX-shape: /tmp/brief-X.md, no subdirs after the brief- prefix.
+  if [[ "$normalized" == /tmp/brief-*.md ]] \
+    && [[ "$normalized" != /tmp/brief-*/* ]]; then
+    matched=1
+  fi
+
+  # Env-derived tmpdir shape (Windows TMPDIR/TEMP/TMP). Each var may be
+  # POSIX-style (/tmp) or Windows-native (C:/Users/<u>/AppData/Local/Temp
+  # or C:\Users\<u>\AppData\Local\Temp). Trailing slash stripped before
+  # comparison.
+  if (( matched == 0 )); then
+    local raw_prefix norm_prefix
+    for raw_prefix in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}"; do
+      [[ -n "$raw_prefix" ]] || continue
+      norm_prefix="${raw_prefix//\\//}"
+      norm_prefix="${norm_prefix%/}"
+      if [[ "$normalized" == "$norm_prefix"/brief-*.md ]] \
+        && [[ "$normalized" != "$norm_prefix"/brief-*/* ]]; then
+        matched=1
+        break
+      fi
+    done
+  fi
+
+  if (( matched == 0 )); then
+    # Surface the more specific "subdirectory" reason when the path looks
+    # like a brief-prefix file but lives under a brief-prefix subdirectory
+    # (e.g., /tmp/brief-x/y.md, $TEMP/brief-x/y.md). Matches the legacy
+    # rejection message that existing tests assert on.
+    local raw_prefix norm_prefix
+    for raw_prefix in "/tmp" "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}"; do
+      [[ -n "$raw_prefix" ]] || continue
+      norm_prefix="${raw_prefix//\\//}"
+      norm_prefix="${norm_prefix%/}"
+      if [[ "$normalized" == "$norm_prefix"/brief-*/* ]]; then
+        handover_reject brief_file "subdirectories are not allowed"
+        return 1
+      fi
+    done
+    handover_reject brief_file "must be /brief-*.md under /tmp or \$TMPDIR / \$TEMP / \$TMP"
+    return 1
+  fi
+
   ! handover_has_dotdot_segment "$value" || handover_reject brief_file "dot-dot path segment is not allowed" || return 1
   [[ ! -L "$value" ]] || handover_reject brief_file "symlink path is not allowed"
 }

@@ -1,5 +1,13 @@
 # Platform support
 
+> **Status (2026-05-17, v0.1.0)**: a first-Windows-user dogfood run uncovered
+> several blockers that downgrade Windows from "minimal-supported" to
+> **experimental**. Known issues are tracked as CC-104c..CC-104i in `BACKLOG.md`.
+> If you are on Windows, prefer **WSL2** (treated as Linux, first-class) until
+> CC-104c (install.sh symlink → copy fallback) lands. Native Windows Git Bash
+> currently fails at install — `ln -s` silently copies files instead of
+> creating symlinks without Developer Mode + `MSYS=winsymlinks:nativestrict`.
+
 ## Summary
 
 `pm-dispatch` ships one script installer and multiple hook wrappers.
@@ -14,7 +22,7 @@ core safe-guard behavior.
 | Linux                                 | **First-class**      | Full profile + minimal profile |
 | macOS                                 | **First-class**      | Requires GNU `realpath` (`coreutils`) |
 | WSL2                                  | **First-class**      | Treated as Linux |
-| Windows Git Bash (`msys2/mingw`)      | **Minimal only**     | `--profile full` downgrades to minimal |
+| Windows Git Bash (`msys2/mingw`)      | **Experimental** (see CC-104c..CC-104i) | Install currently broken: `ln -s` falls back to file copy without Developer Mode + `MSYS=winsymlinks:nativestrict`; prefer WSL2 |
 | Other/unrecognized platforms           | Best effort          | Install may succeed or fail depending on tool availability |
 
 ## Windows quickstart (minimal profile)
