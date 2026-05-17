@@ -1,0 +1,59 @@
+# Executor contract (PM handoff abstraction)
+
+## Purpose
+
+The PM handoff flow needs a stable, profile-agnostic contract so implementation can be swapped without redesigning every brief. This contract lets the owner/peer install profile choose how execution happens (codex today, others later) while keeping the handoff inputs and expected outputs consistent. It also allows future executors to coexist under the same dispatch protocol without redefining PM behavior or brief authoring discipline.
+
+## Input contract
+
+Every executor receives:
+
+1. Brief markdown body in the existing dispatch schema (`docs/dispatch-brief.md`).
+2. A `dispatch_handover_v1` metadata header written by PM.
+
+Executor-agnostic metadata (must be interpreted by all concrete profiles):
+
+- `working_dir`: absolute repo path the executor executes against
+- `brief_file`: temporary file path containing the brief body
+- `timeout`: dispatch SLA budget in seconds
+- `model`: wire model alias requested by PM
+
+Executor-specific metadata subsets:
+
+- `sandbox`, `approval`, `skip_git_check`: codex-profile-only today (current validator and CLI assumptions).
+- `claude-main`: no concrete metadata subset yet; CC-102 defines and ships its own minimal subset, using main-thread semantics.
+
+Executors should ignore unrecognized metadata keys unless they are intentionally documented for that profile.
+
+## Output contract
+
+Every executor must produce these three artifacts in its report:
+
+- `diff`: file-level delta proving changes, with verification rooted in `git diff` from the PM main thread.
+- `test evidence`: concrete outputs or artifact references for self-verify checks, and these must be cross-referenced by the report.
+- `report`: narrative status record with:
+  - `status` (`success`, `partial`, `blocked`)
+  - `summary` (what changed and why)
+  - `deferred_followups` (open work that should be done next)
+
+The diff is the source of truth for work completion. The report is narrative context and must not replace file-level evidence.
+
+## Executor profiles
+
+| Aspect | codex profile | claude-main profile |
+|---|---|---|
+| Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
+| Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract in CC-101. |
+| Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
+| Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | Same reviewer pipeline should be triggered by the main-thread path once implementation lands. |
+| Install requirement | `codex` install profile (current operational mode). | `claude-main` install profile (lightweight; no codex binary workflow dependency). |
+| Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
+| Status in this spike | Implemented as of current branch. | Designed in CC-101; **IMPLEMENTED in CC-102**. |
+
+## Selection
+
+Executor profile is an install-time choice (`codex` full profile versus `claude-main` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract and is intended to become available when CC-102 ships the `claude-main` enum and adapter.
+
+## Forward-compat notes
+
+Today, `scripts/lib/handover-validate.sh` keeps the `executor` enum closed at `{codex}`. CC-102 will open this enum and add the `claude-main` adapter. `docs/executor-contract.md` is the behavioral contract that CC-102 must implement without changing this file’s core contract semantics.
