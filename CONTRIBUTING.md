@@ -66,6 +66,8 @@ For every file-writing or schema-affecting PR, run:
 - `bash scripts/test-dispatch-handover.sh`
 - `bash scripts/test-install.sh`
 - `bash scripts/test-claude-executor.sh`
+- `bash scripts/test-portable.sh`
+- `bash scripts/test-pr-gate-profile.sh`
 - `bash scripts/lint-scripts.sh`
 - `bash scripts/lint-agents.sh`
 

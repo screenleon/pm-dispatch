@@ -86,6 +86,13 @@ jobs:
       - name: portable helper regression suite
         run: ./scripts/test-portable.sh
 
+  test-pr-gate-profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pr-gate executor split regression suite
+        run: ./scripts/test-pr-gate-profile.sh
+
   test-setup-project:
     runs-on: ubuntu-latest
     steps:

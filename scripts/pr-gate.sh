@@ -29,6 +29,7 @@ set -euo pipefail
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
+#   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
@@ -41,6 +42,7 @@ BASE_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
+EXECUTOR_OPTION="auto"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --scope)      SCOPE="$2";              shift 2;;
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
+    --executor)   EXECUTOR_OPTION="$2";    shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
@@ -65,6 +68,24 @@ if [[ -z "$WORK_DIR" ]]; then
 fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
+fi
+
+case "$EXECUTOR_OPTION" in
+  auto|codex|claude) ;;
+  *)
+    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$EXECUTOR_OPTION" == "auto" ]]; then
+  if command -v codex >/dev/null 2>&1; then
+    EXECUTOR="codex"
+  else
+    EXECUTOR="claude"
+  fi
+else
+  EXECUTOR="$EXECUTOR_OPTION"
 fi
 
 cd "$WORK_DIR"
@@ -203,11 +224,36 @@ unset _self _self_dir
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
 cleanup_briefs() {
+  [[ "${EXECUTOR:-}" == "codex" ]] || return 0
   for bf in "${BRIEF_FILES[@]:-}"; do
     rm -f "$bf"
   done
 }
 trap cleanup_briefs EXIT
+
+SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
+[[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$SYNTHESIS_BRIEF")
+
+PR_GATE_HANDOVER_ENTRIES=()
+add_pr_gate_handover_entry() {
+  local role="$1" reviewer_name="$2" brief_file="$3" output_file="$4"
+  PR_GATE_HANDOVER_ENTRIES+=("- role: $role")
+  [[ -n "$reviewer_name" ]] && PR_GATE_HANDOVER_ENTRIES+=("  reviewer_name: $reviewer_name")
+  PR_GATE_HANDOVER_ENTRIES+=("  brief_file: $brief_file")
+  PR_GATE_HANDOVER_ENTRIES+=("  output_file: $output_file")
+}
+
+emit_pr_gate_handover_block() {
+  local out
+  if [[ "${EXECUTOR:-}" != "claude" || "${#PR_GATE_HANDOVER_ENTRIES[@]}" -eq 0 ]]; then
+    return
+  fi
+  printf '```pr-gate-handover_v1\n'
+  for out in "${PR_GATE_HANDOVER_ENTRIES[@]}"; do
+    printf '%s\n' "$out"
+  done
+  printf '```\n'
+}
 
 # ── Find adjacent test files not in the diff ─────────────────────────────────
 # For each changed source file, locate its companion test file if it exists and
@@ -282,8 +328,12 @@ if [[ "$SEQUENTIAL" == "true" ]]; then
     AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}"$'\n'
   done
 
-  BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
-  BRIEF_FILES+=("$BRIEF_FILE")
+  if [[ "$EXECUTOR" == "codex" ]]; then
+    BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
+    BRIEF_FILES+=("$BRIEF_FILE")
+  else
+    BRIEF_FILE="$BRIEF_DIR/pr-gate-claude-${TIMESTAMP}-combined.md"
+  fi
 
   cat > "$BRIEF_FILE" << BRIEF_EOF
 working_dir: ${WORK_DIR}
@@ -355,27 +405,31 @@ self_verify:
   - file-exists: ${OUTPUT_FILE}
   - has-conclusion: grep -c 'Final' ${OUTPUT_FILE} should be >= 1
 
-acceptance:
+  acceptance:
   - ${OUTPUT_FILE} exists with a verdict section for each of the ${NUM_REVIEWERS} reviewers
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
 BRIEF_EOF
 
-  bash "$SCRIPT_DIR/codex-dispatch.sh" \
-    --cd "$WORK_DIR" \
-    --timeout "$TIMEOUT" \
-    --brief-file "$BRIEF_FILE"
+  if [[ "$EXECUTOR" == "codex" ]]; then
+    bash "$SCRIPT_DIR/codex-dispatch.sh" \
+      --cd "$WORK_DIR" \
+      --timeout "$TIMEOUT" \
+      --brief-file "$BRIEF_FILE"
 
-  # Validate sequential output: must exist, be non-empty, contain exactly one
-  # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
-  if [[ ! -s "$OUTPUT_FILE" ]]; then
-    printf 'Error: sequential gate did not produce the result file: %s\n' "$OUTPUT_FILE" >&2
-    printf 'Gate aborted — codex session may have exited 0 without completing.\n' >&2
-    exit 1
-  fi
-  SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
-  if [[ "$SEQ_FINAL_COUNT" -ne 1 ]]; then
-    printf 'Error: gate result file must contain exactly one %s: GO/NO-GO line (found %d).\n' "Final" "$SEQ_FINAL_COUNT" >&2
-    exit 1
+    # Validate sequential output: must exist, be non-empty, contain exactly one
+    # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
+    if [[ ! -s "$OUTPUT_FILE" ]]; then
+      printf 'Error: sequential gate did not produce the result file: %s\n' "$OUTPUT_FILE" >&2
+      printf 'Gate aborted — codex session may have exited 0 without completing.\n' >&2
+      exit 1
+    fi
+    SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
+    if [[ "$SEQ_FINAL_COUNT" -ne 1 ]]; then
+      printf 'Error: gate result file must contain exactly one %s: GO/NO-GO line (found %d).\n' "Final" "$SEQ_FINAL_COUNT" >&2
+      exit 1
+    fi
+  else
+    add_pr_gate_handover_entry reviewer combined "$BRIEF_FILE" "$OUTPUT_FILE"
   fi
 
 else
@@ -417,10 +471,14 @@ else
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
-    REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
+    if [[ "$EXECUTOR" == "codex" ]]; then
+      REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
+    else
+      REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-claude-${TIMESTAMP}-${r}.md"
+    fi
     DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
-    BRIEF_FILES+=("$REVIEWER_BRIEF")
+    [[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$REVIEWER_BRIEF")
     REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")
     REVIEWER_NAMES+=("$r")
 
@@ -473,99 +531,105 @@ acceptance:
   - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
 RBRIEF_EOF
 
-    bash "$SCRIPT_DIR/codex-dispatch.sh" \
-      --cd "$WORK_DIR" \
-      --timeout "$TIMEOUT" \
-      --brief-file "$REVIEWER_BRIEF" \
-      > "$DISPATCH_LOG" 2>&1 &
-    DISPATCH_PIDS+=($!)
-    printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
-  done
-
-  printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
-
-  # Wait for all reviewer sessions. Any non-zero exit aborts the gate — an
-  # incomplete review cannot certify a valid gate result.
-  # Hash each reviewer output immediately after its PID exits so we capture
-  # the content before any concurrently-running reviewer session can modify it.
-  FAILED_REVIEWERS=()
-  REVIEWER_POST_WAIT_HASHES=()
-  for i in "${!DISPATCH_PIDS[@]}"; do
-    pid="${DISPATCH_PIDS[$i]}"
-    r="${REVIEWER_NAMES[$i]}"
-    rf="${REVIEWER_OUTPUT_FILES[$i]}"
-    if ! wait "$pid"; then
-      FAILED_REVIEWERS+=("$r")
-      REVIEWER_POST_WAIT_HASHES+=("none")
+    if [[ "$EXECUTOR" == "codex" ]]; then
+      bash "$SCRIPT_DIR/codex-dispatch.sh" \
+        --cd "$WORK_DIR" \
+        --timeout "$TIMEOUT" \
+        --brief-file "$REVIEWER_BRIEF" \
+        > "$DISPATCH_LOG" 2>&1 &
+      DISPATCH_PIDS+=($!)
+      printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
     else
-      REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')")
+      add_pr_gate_handover_entry reviewer "$r" "$REVIEWER_BRIEF" "$REVIEWER_OUTPUT"
+      printf '  [parallel] queued reviewer %s (claude handover)\n' "$r"
     fi
   done
 
-  if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
-    printf 'Error: %d reviewer session(s) failed: %s\n' \
-      "${#FAILED_REVIEWERS[@]}" "${FAILED_REVIEWERS[*]}" >&2
-    printf 'Gate aborted — fix the failing session or use --sequential to diagnose.\n' >&2
-    exit 1
-  fi
+  if [[ "$EXECUTOR" == "codex" ]]; then
+    printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
-  # Verify every reviewer wrote a non-empty output file — a codex session can
-  # exit 0 without completing its task, which would leave the synthesis brief
-  # with nothing to consolidate and could produce a spurious GO.
-  MISSING_OUTPUTS=()
-  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
-    rf="${REVIEWER_OUTPUT_FILES[$i]}"
-    r="${REVIEWER_NAMES[$i]}"
-    if [[ ! -s "$rf" ]]; then
-      MISSING_OUTPUTS+=("$r")
-    fi
-  done
-  if [[ "${#MISSING_OUTPUTS[@]}" -gt 0 ]]; then
-    printf 'Error: reviewer output missing or empty for: %s\n' "${MISSING_OUTPUTS[*]}" >&2
-    printf 'A reviewer session may have exited 0 without writing its findings file.\n' >&2
-    printf 'Gate aborted — use --sequential to diagnose.\n' >&2
-    exit 1
-  fi
+    # Wait for all reviewer sessions. Any non-zero exit aborts the gate — an
+    # incomplete review cannot certify a valid gate result.
+    # Hash each reviewer output immediately after its PID exits so we capture
+    # the content before any concurrently-running reviewer session can modify it.
+    FAILED_REVIEWERS=()
+    REVIEWER_POST_WAIT_HASHES=()
+    for i in "${!DISPATCH_PIDS[@]}"; do
+      pid="${DISPATCH_PIDS[$i]}"
+      r="${REVIEWER_NAMES[$i]}"
+      rf="${REVIEWER_OUTPUT_FILES[$i]}"
+      if ! wait "$pid"; then
+        FAILED_REVIEWERS+=("$r")
+        REVIEWER_POST_WAIT_HASHES+=("none")
+      else
+        REVIEWER_POST_WAIT_HASHES+=("$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')")
+      fi
+    done
 
-  # Verify every reviewer output contains exactly one parseable verdict line before synthesis.
-  # Zero lines → malformed output; two or more lines → ambiguous (first-match would silently
-  # ignore a later more-severe verdict). Both cases must be rejected fail-closed.
-  INVALID_OUTPUTS=()
-  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
-    rf="${REVIEWER_OUTPUT_FILES[$i]}"
-    r="${REVIEWER_NAMES[$i]}"
-    verdict_count=$(grep -cE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" || true)
-    if [[ "$verdict_count" -ne 1 ]]; then
-      INVALID_OUTPUTS+=("$r (found $verdict_count)")
+    if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
+      printf 'Error: %d reviewer session(s) failed: %s\n' \
+        "${#FAILED_REVIEWERS[@]}" "${FAILED_REVIEWERS[*]}" >&2
+      printf 'Gate aborted — fix the failing session or use --sequential to diagnose.\n' >&2
+      exit 1
     fi
-  done
-  if [[ "${#INVALID_OUTPUTS[@]}" -gt 0 ]]; then
-    printf 'Error: reviewer output must contain exactly one valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
-    printf 'Expected: exactly one of: Verdict: approve|advise|block-soft|block\n' >&2
-    printf 'Gate aborted — use --sequential to diagnose.\n' >&2
-    exit 1
-  fi
 
-  # Cross-reviewer artifact tamper detection: re-hash every reviewer output and
-  # compare with the hash captured immediately after that reviewer's PID exited.
-  # A mismatch means a concurrently-running reviewer session modified this file
-  # after it was completed — fail closed before synthesis can run on tainted data.
-  CROSS_TAMPERED=()
-  for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
-    rf="${REVIEWER_OUTPUT_FILES[$i]}"
-    r="${REVIEWER_NAMES[$i]}"
-    expected="${REVIEWER_POST_WAIT_HASHES[$i]}"
-    [[ "$expected" == "none" ]] && continue
-    current="$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')"
-    if [[ "$current" != "$expected" ]]; then
-      CROSS_TAMPERED+=("$r")
+    # Verify every reviewer wrote a non-empty output file — a codex session can
+    # exit 0 without completing its task, which would leave the synthesis brief
+    # with nothing to consolidate and could produce a spurious GO.
+    MISSING_OUTPUTS=()
+    for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+      rf="${REVIEWER_OUTPUT_FILES[$i]}"
+      r="${REVIEWER_NAMES[$i]}"
+      if [[ ! -s "$rf" ]]; then
+        MISSING_OUTPUTS+=("$r")
+      fi
+    done
+    if [[ "${#MISSING_OUTPUTS[@]}" -gt 0 ]]; then
+      printf 'Error: reviewer output missing or empty for: %s\n' "${MISSING_OUTPUTS[*]}" >&2
+      printf 'A reviewer session may have exited 0 without writing its findings file.\n' >&2
+      printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+      exit 1
     fi
-  done
-  if [[ "${#CROSS_TAMPERED[@]}" -gt 0 ]]; then
-    printf 'Error: reviewer artifact modified after that reviewer session completed: %s\n' "${CROSS_TAMPERED[*]}" >&2
-    printf 'Possible cross-reviewer artifact tampering in --parallel mode. Gate aborted.\n' >&2
-    exit 1
-  fi
+
+    # Verify every reviewer output contains exactly one parseable verdict line before synthesis.
+    # Zero lines → malformed output; two or more lines → ambiguous (first-match would silently
+    # ignore a later more-severe verdict). Both cases must be rejected fail-closed.
+    INVALID_OUTPUTS=()
+    for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+      rf="${REVIEWER_OUTPUT_FILES[$i]}"
+      r="${REVIEWER_NAMES[$i]}"
+      verdict_count=$(grep -cE '^Verdict: (approve|advise|block-soft|block)([. ]|$)' "$rf" || true)
+      if [[ "$verdict_count" -ne 1 ]]; then
+        INVALID_OUTPUTS+=("$r (found $verdict_count)")
+      fi
+    done
+    if [[ "${#INVALID_OUTPUTS[@]}" -gt 0 ]]; then
+      printf 'Error: reviewer output must contain exactly one valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
+      printf 'Expected: exactly one of: Verdict: approve|advise|block-soft|block\n' >&2
+      printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+      exit 1
+    fi
+
+    # Cross-reviewer artifact tamper detection: re-hash every reviewer output and
+    # compare with the hash captured immediately after that reviewer's PID exited.
+    # A mismatch means a concurrently-running reviewer session modified this file
+    # after it was completed — fail closed before synthesis can run on tainted data.
+    CROSS_TAMPERED=()
+    for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
+      rf="${REVIEWER_OUTPUT_FILES[$i]}"
+      r="${REVIEWER_NAMES[$i]}"
+      expected="${REVIEWER_POST_WAIT_HASHES[$i]}"
+      [[ "$expected" == "none" ]] && continue
+      current="$(cat "$rf" 2>/dev/null | $_HASH_CMD || echo 'missing')"
+      if [[ "$current" != "$expected" ]]; then
+        CROSS_TAMPERED+=("$r")
+      fi
+    done
+    if [[ "${#CROSS_TAMPERED[@]}" -gt 0 ]]; then
+      printf 'Error: reviewer artifact modified after that reviewer session completed: %s\n' "${CROSS_TAMPERED[*]}" >&2
+      printf 'Possible cross-reviewer artifact tampering in --parallel mode. Gate aborted.\n' >&2
+      exit 1
+    fi
 
   # Worktree integrity check — detect prompt-injected tracked-file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
@@ -606,8 +670,6 @@ RBRIEF_EOF
   fi
 
   # ── PM synthesis ─────────────────────────────────────────────────────────────
-  SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
-  BRIEF_FILES+=("$SYNTHESIS_BRIEF")
 
   # Write synthesis brief in segments so reviewer content is appended with `cat`
   # (no heredoc expansion) rather than embedded in an unquoted heredoc.
@@ -757,8 +819,12 @@ SBRIEF_P2
     printf 'Error: synthesis session modified working tree — possible prompt injection.\n' >&2
     exit 1
   fi
+  else
+    add_pr_gate_handover_entry synthesis "" "$SYNTHESIS_BRIEF" "$OUTPUT_FILE"
+  fi
 
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────
+emit_pr_gate_handover_block
 printf '\nresult: %s\n' "$OUTPUT_FILE"

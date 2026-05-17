@@ -61,8 +61,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-102 | 🔵 active | **[CC-OSS Phase 2 impl]** `claude-executor` agent + `install.sh --profile minimal\|full`：minimal profile 跳過 codex hooks，預設 executor=claude；既有 codex flow 全 regression pass | arch/install | 2026-05-17 | — |
 | CC-102b | ✅ closed 2026-05-17 | CC-102 PR-gate advisory follow-ups：(a) 直接 e2e regression test 覆蓋 `install.sh --profile minimal\|full` + auto-detect；(b) install-hooks.sh minimal profile downgrade — fold-in 進 CC-102 同 PR（qa-tester r2 升 block；都已修） | ops/install | 2026-05-17 | pr:#TBD |
 | CC-103 | 🔵 active | **[CC-OSS Phase 3]** `scripts/lib/portable.sh` shim（`realpath_m` / `safe_tmpdir` / `mkdir_lock`）+ `docs/platform-support.md`；改寫 3 個 hook 用 shim；`install-hooks.sh` 偵測 platform 跳過 Linux-only hook | ops/portable | 2026-05-17 | — |
+| CC-103b | ✅ closed 2026-05-17 | CC-103 follow-up: `/pr-gate` executor split — `--executor codex|claude|auto`; mirror CC-102 `/pm` route split so minimal-profile users can run the gate | arch/install | 2026-05-17 | pr:#TBD |
 | CC-104 | 🔵 active | **[CC-OSS Phase 4]** Onboarding docs batch：README rewrite + `docs/GETTING_STARTED.md` + `docs/CONCEPTS.md` + `docs/memory-system.md` + 既有 `commands/*.md` 補 what/when/example 三段 | docs/ux | 2026-05-17 | — |
 | CC-105 | 🔵 active | **[CC-OSS Phase 5]** BACKLOG cleanup + v0.1.0 release：移除/標 personal CC items（CC-011/CC-012 等）；`.agent-trace/` / `.codex-briefs/` / `.gate-results/` 入 `.gitignore`；private→public + `CHANGELOG.md` v0.1.0 + GitHub release tag | process/release | 2026-05-17 | — |
+| CC-200 | ⏸ deferred | **[Reuse debt]** `scripts/lib/executor-router.sh` — 抽出共用 codex/claude routing logic（目前 `/pm`、`/pr-gate` 各寫一套，未來 N=3 consumer 痛點） | arch/reuse | 2026-05-17 | — |
+| CC-201 | ⏸ deferred | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | — |
+| CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — |
+| CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — |
+| CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — |
 
 ---
 
@@ -637,6 +643,28 @@ But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` /
 **Note**: 切 public 是**不可逆**操作（star/fork 後 history 永遠 public）。Step 4 dry-run 是 hard requirement，不能跳。
 **Stance**: pm-dispatch 採 **source-available** 模式（policy 已寫入 CONTRIBUTING.md 2026-05-17）— public for visibility，外部 PR 不受理，issue 開放無 SLA。本 ticket 因此**不**包含 GitHub issue/PR templates / CODEOWNERS / require-PR branch protection（這些是 open-contributor 模式才需要）。若未來轉 open-contributor，補開 follow-up ticket。
 **Cross-link**: [[gate-architecture-not-data]]（這票多數是 docs/config 改動，gate 找對 reviewer 即可，不要對 BACKLOG 條目重審）。
+
+## CC-103b — /pr-gate executor split (closed 2026-05-17)
+
+**Outcome 2026-05-17**: `/pr-gate` now routes through `executor` selection via
+`--executor codex|claude|auto`; minimal-profile users can run the full gate workflow
+without `codex` installed.
+
+1. `scripts/pr-gate.sh` added route-aware dispatch for all `codex-dispatch.sh`
+   call sites.
+2. `--executor auto` resolves by `command -v codex` and remains the default.
+3. New `pr-gate-handover_v1` schema documented in `docs/pr-gate-handover-schema.md`.
+4. `commands/pr-gate.md` updated with Route A (codex) and Route B (claude) orchestration.
+5. Direct e2e regression coverage added in `scripts/test-pr-gate-profile.sh`.
+
+**Problem**: CC-103 made `/pm` portable, but `/pr-gate` still hard-depended on
+codex dispatch and had no main-thread fan-out shape for minimal-profile users.
+
+**Why**: This blocks the same portability objective CC-102 delivered for PM: users
+with minimal profile still needed codex for gate execution and could not complete PR
+review cycles in-place.
+
+**Cross-link**: CC-102 + CC-103 + [[project_pm-dispatch]]
 
 ## CC-102b — CC-102 PR-gate advisory follow-ups（closed 2026-05-17）
 

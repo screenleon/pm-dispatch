@@ -45,7 +45,7 @@ The diff is the source of truth for work completion. The report is narrative con
 | Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
 | Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract in CC-101. |
 | Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
-| Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | Same reviewer pipeline should be triggered by the main-thread path once implementation lands. |
+| Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | `/pr-gate` now routes through `executor` selection: existing codex path continues unchanged, and claude path fan-outs `pr-gate-handover_v1` entries to `claude-executor` then runs the synthesis flow. |
 | Install requirement | `codex` install profile (current operational mode). | `claude` install profile (lightweight; no codex binary workflow dependency). |
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
 | Status | Implemented (primary route since CC-036). | Implemented in CC-102 — `agents/claude-executor.md` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
