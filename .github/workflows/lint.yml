@@ -34,6 +34,51 @@ jobs:
       - name: pr-gate regression suite
         run: ./scripts/test-pr-gate.sh
 
+  test-skill-refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: skill-refine regression suite
+        run: bash scripts/test-skill-refine.sh
+      - name: skill-refine shellcheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag 2.0.0
+        with:
+          scandir: ./scripts
+          ignore_names: >-
+            handover-validate.sh
+            codex-dispatch.sh
+            codex-watch.sh
+            hook-codex-bash-guard.sh
+            hook-codex-write-guard.sh
+            hook-inject-memory.sh
+            hook-log-claude-usage.sh
+            hook-pm-write-guard.sh
+            hook-routing-log.sh
+            hook-save-rate-limits.sh
+            hook-session-summary.sh
+            hook-tool-trace.sh
+            install-hooks.sh
+            lint-agents.sh
+            lint-scripts.sh
+            log-usage.sh
+            migrate-routing-log.sh
+            patch-gitignore.sh
+            pr-gate.sh
+            setup-project.sh
+            test-codex-dispatch.sh
+            test-dispatch-handover.sh
+            test-hooks.sh
+            test-install.sh
+            test-migrate-routing-log.sh
+            test-patch-gitignore.sh
+            test-pr-gate.sh
+            test-setup-project.sh
+            test-usage-tracker.sh
+            test-usage-weekly.sh
+            token-usage.sh
+            uninstall-hooks.sh
+            usage-weekly.sh
+
   test-setup-project:
     runs-on: ubuntu-latest
     steps:
