@@ -286,6 +286,76 @@ fi
 rm -rf "$_fake_bin13" "$_home13" "$_work13"
 rm -f "$_brief13"
 
+# ---- 14: alias-resolution-spark prints resolved CMD with effort and resolved banner ----
+_work14="$(mktemp -d)"
+git init -q "$_work14"
+mkdir -p "$_work14/.agent-trace"
+
+_brief14="$(mktemp --suffix=.md)"
+printf 'goal: print cmd alias resolution test\n' > "$_brief14"
+
+_before14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
+_stderr14="$(mktemp)"
+set +e
+_output14="$("$DISPATCH" --cd "$_work14" --brief-file "$_brief14" --model codex-spark --print-cmd 2>"$_stderr14")"
+_exit14=$?
+set -e
+_after14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
+
+if [[ "$_exit14" -eq 0 ]] \
+  && [[ "$_output14" == *"-m gpt-5.3-codex-spark"* ]] \
+  && [[ "$_output14" == *'-c model_reasoning_effort="high"'* ]] \
+  && [[ "$_before14" == "$_after14" ]] \
+  && grep -q "model:    codex-spark → gpt-5.3-codex-spark (effort=high)" "$_stderr14"; then
+  t_pass "alias-resolution-spark prints resolved model + effort + banner + no trace files"
+else
+  t_fail "alias-resolution-spark — exit=$_exit14 output='$(printf '%q' "$_output14")' trace_before=${_before14} trace_after=${_after14}"
+fi
+rm -rf "$_work14"
+rm -f "$_brief14" "$_stderr14"
+
+# ---- 15: full-form-passthrough keeps model and no effort ----
+_work15="$(mktemp -d)"
+git init -q "$_work15"
+
+_brief15="$(mktemp --suffix=.md)"
+printf 'goal: print cmd full-form passthrough test\n' > "$_brief15"
+
+set +e
+_output15="$("$DISPATCH" --cd "$_work15" --brief-file "$_brief15" --model gpt-5.3-codex-spark --print-cmd)"
+_exit15=$?
+set -e
+if [[ "$_exit15" -eq 0 ]] \
+  && [[ "$_output15" == *"-m gpt-5.3-codex-spark"* ]] \
+  && [[ "$_output15" != *"model_reasoning_effort=\"high\""* ]]; then
+  t_pass "full-form-passthrough keeps full model and no injected effort"
+else
+  t_fail "full-form-passthrough — exit=$_exit15 output='$(printf '%q' "$_output15")'"
+fi
+rm -rf "$_work15"
+rm -f "$_brief15"
+
+# ---- 16: unknown-alias-fallback keeps raw model and no effort ----
+_work16="$(mktemp -d)"
+git init -q "$_work16"
+
+_brief16="$(mktemp --suffix=.md)"
+printf 'goal: print cmd unknown alias fallback test\n' > "$_brief16"
+
+set +e
+_output16="$("$DISPATCH" --cd "$_work16" --brief-file "$_brief16" --model unknown-tag --print-cmd)"
+_exit16=$?
+set -e
+if [[ "$_exit16" -eq 0 ]] \
+  && [[ "$_output16" == *"-m unknown-tag"* ]] \
+  && [[ "$_output16" != *"model_reasoning_effort="* ]] ; then
+  t_pass "unknown-alias-fallback keeps raw model and no injected effort"
+else
+  t_fail "unknown-alias-fallback — exit=$_exit16 output='$(printf '%q' "$_output16")'"
+fi
+rm -rf "$_work16"
+rm -f "$_brief16"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

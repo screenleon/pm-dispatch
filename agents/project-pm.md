@@ -80,7 +80,7 @@ The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Bri
 
 **`/pre-impl` rule**: when the brief introduces ≥ 3 behavioral units, run `/pre-impl "<feature description>"` **before** writing the brief. Paste the output's design constraint list into the brief's `constraints:` field. This prevents architecture-reviewer blocks caused by boundary/dependency issues that could have been caught before implementation started.
 
-**Dispatch model selection**: default to the standard Codex model. Use `--model codex-spark` only when all three criteria are met: (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. Spark has a lower context ceiling — misrouting a large task degrades output quality without a loud failure signal.
+**Dispatch model selection**: default to the standard Codex model. Use `--model codex-spark` only when all three criteria are met: (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. Spark has a lower context ceiling — misrouting a large task degrades output quality without a loud failure signal. Alias-to-wire-format mapping is documented in `docs/dispatch-brief.md` §Model aliases so PM-facing short names remain stable while dispatch uses wire format internally.
 
 Return exactly one fenced `dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
 
