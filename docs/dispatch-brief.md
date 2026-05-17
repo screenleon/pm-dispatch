@@ -206,7 +206,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 handover_version: 2
 executor: codex
 dispatch_route: main_thread_bash_background
-working_dir: /home/screenleon/github/pm-dispatch
+working_dir: ${PM_DISPATCH_REPO}
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
 sandbox: workspace-write
 approval: never
@@ -215,7 +215,7 @@ model: default
 skip_git_check: false
 fallback_allowed: true
 ---
-working_dir: /home/screenleon/github/pm-dispatch
+working_dir: ${PM_DISPATCH_REPO}
 goal: ...
 files:
   - read: ...
@@ -268,7 +268,7 @@ sync if CLI alias behavior or Codex model availability changes.
 Direct Bash dispatch shape:
 
 ```text
-Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
 Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
@@ -427,7 +427,7 @@ Use this smoke recipe after changing dispatch policy. It should complete without
 Minimal no-op brief body:
 
 ```yaml
-working_dir: /home/screenleon/github/pm-dispatch
+working_dir: ${PM_DISPATCH_REPO}
 goal: Confirm codex-dispatch can run a read-only no-op brief and report cleanly.
 files:
   - read: README.md
@@ -441,7 +441,7 @@ acceptance:
 Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `scripts/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
 
 ```text
-Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd /home/screenleon/github/pm-dispatch --sandbox workspace-write --approval never --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
+Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd ${PM_DISPATCH_REPO} --sandbox workspace-write --approval never --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
 ```
 
 Expected sequence:
@@ -451,5 +451,5 @@ Expected sequence:
 3. Main thread reads `BashOutput(bash_id: <id>)`.
 4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from `scripts/codex-dispatch.sh:203-207`.
 5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start banner from `scripts/codex-dispatch.sh:142-154` and finish banner from `scripts/codex-dispatch.sh:196-199`.
-6. Main thread runs `git -C /home/screenleon/github/pm-dispatch status --short` and confirms no unexpected changes.
+6. Main thread runs `git -C ${PM_DISPATCH_REPO} status --short` and confirms no unexpected changes.
 7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook; the future CC-036b schema extension may add `dispatch_route` after two weeks of telemetry.

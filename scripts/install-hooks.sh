@@ -26,7 +26,7 @@ set -euo pipefail
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 settings="$HOME/.claude/settings.json"
 # shellcheck source=scripts/lib/memory-dir.sh
 . "$repo_root/scripts/lib/memory-dir.sh"

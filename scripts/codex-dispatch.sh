@@ -123,7 +123,7 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
 fi
 
 # PM-facing alias → wire-format model mapping used by dispatch.
-# Source-of-truth user config (confirmed via PM): /home/screenleon/.codex/config.toml
+# Source-of-truth: each user's `~/.codex/config.toml` `model` + `model_reasoning_effort` keys.
 declare -A MODEL_ALIAS_TO_ID=(
   [codex-spark]="gpt-5.3-codex-spark"
 )
