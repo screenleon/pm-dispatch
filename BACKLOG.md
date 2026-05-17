@@ -58,7 +58,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-047 | ✅ closed 2026-05-17 | `scripts/codex-dispatch.sh` model alias mapping：`--model codex-spark` 透傳給 codex CLI 後得到 400 invalid_request_error（API 只認 `gpt-5.3-codex-spark`），需要 alias 表把短名映射到 codex CLI 接受的全名 + reasoning effort | ops/dispatch | 2026-05-17 | pr:#69 |
 | CC-100 | 🔵 active | **[CC-OSS Phase 1]** Sanitize personal paths + OSS-baseline docs：拔 `/home/screenleon` 硬編碼 → `${PM_DISPATCH_REPO}` env contract；新增 `CONTRIBUTING.md` + `CODE_OF_CONDUCT.md`；LICENSE 已存在 | process/docs | 2026-05-17 | — |
 | CC-101 | 🔵 active | **[CC-OSS Phase 2 spike]** Executor-contract schema + adapter design：brief schema 加 `executor: claude-main \| codex` 欄位；`docs/executor-contract.md`；CC-040 schema rename 延伸 | arch/process | 2026-05-17 | — |
-| CC-102 | 🔵 active | **[CC-OSS Phase 2 impl]** `claude-executor` agent + `install.sh --profile minimal\|full`：minimal profile 跳過 codex hooks，預設 executor=claude-main；既有 codex flow 全 regression pass | arch/install | 2026-05-17 | — |
+| CC-102 | 🔵 active | **[CC-OSS Phase 2 impl]** `claude-executor` agent + `install.sh --profile minimal\|full`：minimal profile 跳過 codex hooks，預設 executor=claude；既有 codex flow 全 regression pass | arch/install | 2026-05-17 | — |
+| CC-102b | ✅ closed 2026-05-17 | CC-102 PR-gate advisory follow-ups：(a) 直接 e2e regression test 覆蓋 `install.sh --profile minimal\|full` + auto-detect；(b) install-hooks.sh minimal profile downgrade — fold-in 進 CC-102 同 PR（qa-tester r2 升 block；都已修） | ops/install | 2026-05-17 | pr:#TBD |
 | CC-103 | 🔵 active | **[CC-OSS Phase 3]** `scripts/lib/portable.sh` shim（`realpath_m` / `safe_tmpdir` / `mkdir_lock`）+ `docs/platform-support.md`；改寫 3 個 hook 用 shim；`install-hooks.sh` 偵測 platform 跳過 Linux-only hook | ops/portable | 2026-05-17 | — |
 | CC-104 | 🔵 active | **[CC-OSS Phase 4]** Onboarding docs batch：README rewrite + `docs/GETTING_STARTED.md` + `docs/CONCEPTS.md` + `docs/memory-system.md` + 既有 `commands/*.md` 補 what/when/example 三段 | docs/ux | 2026-05-17 | — |
 | CC-105 | 🔵 active | **[CC-OSS Phase 5]** BACKLOG cleanup + v0.1.0 release：移除/標 personal CC items（CC-011/CC-012 等）；`.agent-trace/` / `.codex-briefs/` / `.gate-results/` 入 `.gitignore`；private→public + `CHANGELOG.md` v0.1.0 + GitHub release tag | process/release | 2026-05-17 | — |
@@ -636,3 +637,16 @@ But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` /
 **Note**: 切 public 是**不可逆**操作（star/fork 後 history 永遠 public）。Step 4 dry-run 是 hard requirement，不能跳。
 **Stance**: pm-dispatch 採 **source-available** 模式（policy 已寫入 CONTRIBUTING.md 2026-05-17）— public for visibility，外部 PR 不受理，issue 開放無 SLA。本 ticket 因此**不**包含 GitHub issue/PR templates / CODEOWNERS / require-PR branch protection（這些是 open-contributor 模式才需要）。若未來轉 open-contributor，補開 follow-up ticket。
 **Cross-link**: [[gate-architecture-not-data]]（這票多數是 docs/config 改動，gate 找對 reviewer 即可，不要對 BACKLOG 條目重審）。
+
+## CC-102b — CC-102 PR-gate advisory follow-ups（closed 2026-05-17）
+
+**Outcome 2026-05-17**: CC-102 PR-gate r2 升 block；advisory 全 fold-in 進 CC-102 同 PR：
+- `scripts/install-hooks.sh` jq 段加 minimal profile downgrade pass（match basename + scripts/ parent，remove 既有 codex guard hooks + 清空 matcher block）
+- `scripts/test-install.sh` 加 4 case：`install-sh-profile-minimal-skips-codex-hooks` / `install-sh-profile-full-wires-codex-hooks` / `install-hooks-profile-downgrade-removes-codex` / `install-hooks-profile-invalid-value-rejected`
+- `CONTRIBUTING.md` test inventory 加 `test-install.sh` / `test-claude-executor.sh` / `lint-scripts.sh` / `lint-agents.sh`
+
+**原始 Problem** (CC-102 PR-gate gate-20260517-202651.md r1 留下；r2 gate-20260517-203505.md qa-tester 升 high block，依 gate-driven design 必須 fix in-PR)：
+1. (qa-tester) `install.sh --profile minimal|full` + auto-detect (`command -v codex`) 沒有直接 e2e regression test
+2. (architecture-reviewer) `scripts/install-hooks.sh` minimal profile 只 skip 插入 codex guard hooks，不會 remove 已存在的；用 `--profile full` 安裝後再 `--profile minimal` rerun，settings.json 不會 converge 到 minimal contract
+**Why**: qa-tester r2 verdict: "add regression tests for --profile minimal/full installer behavior and reversible/downgrade semantics" 是 NO-GO 必修。
+**Cross-link**: [[feedback_known_bug_backlog]] — backlog-only deferral 不足以滿足 qa-tester；future code-affecting advisory 應直接 fold-in 同 PR。

@@ -1,9 +1,13 @@
 # Dispatch brief schema
 
-The canonical structure for any brief dispatched to `codex-executor` (directly via Agent, or indirectly via `scripts/codex-dispatch.sh`).
+The canonical structure for any brief dispatched to an executor (`codex-executor` via Agent or `scripts/codex-dispatch.sh`, or `claude-executor` via Agent).
 
-`codex-executor` rejects briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
-The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file remains the concrete schema reference for codex briefs.
+Both executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
+The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
+
+## Selecting an executor
+
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) are still required for schema stability but are accepted-as-no-op by `claude`; use canonical values (`workspace-write`, `never`, `false`).
 
 ## Required fields
 

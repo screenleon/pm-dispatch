@@ -18,13 +18,48 @@
 # them. Backs up settings.json once per run if any change is staged.
 #
 # Usage:
-#   scripts/install-hooks.sh           # apply
-#   scripts/install-hooks.sh --dry-run # show what would change
+#   scripts/install-hooks.sh                       # apply, profile auto-detected
+#   scripts/install-hooks.sh --dry-run             # show what would change
+#   scripts/install-hooks.sh --profile minimal     # claude-only profile; skip codex hooks
+#   scripts/install-hooks.sh --profile full        # explicit full profile (all hooks)
+#
+# Profile auto-detection (when --profile omitted):
+#   `command -v codex` succeeds  → profile=full
+#   otherwise                     → profile=minimal
+# Minimal profile skips registering hook-codex-bash-guard.sh and
+# hook-codex-write-guard.sh in settings.json. Other hooks (pm-write-guard,
+# tool-trace, routing-log, session-summary, inject-memory, save-rate-limits)
+# stay wired in both profiles.
 
 set -euo pipefail
 
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+PROFILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --profile)
+      [[ $# -ge 2 ]] || { echo "install-hooks: --profile requires a value" >&2; exit 2; }
+      PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*) PROFILE="${1#--profile=}"; shift ;;
+    *) echo "install-hooks: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$PROFILE" in
+  ""|minimal|full) ;;
+  *) echo "install-hooks: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
+esac
+
+if [[ -z "$PROFILE" ]]; then
+  if command -v codex >/dev/null 2>&1; then
+    PROFILE=full
+  else
+    PROFILE=minimal
+  fi
+fi
 
 repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 settings="$HOME/.claude/settings.json"
@@ -96,6 +131,7 @@ jq \
   --arg inject "$inject_cmd" \
   --arg statusline "$statusline_cmd" \
   --argjson sl_present "$_statusline_already_wired" \
+  --arg profile "$PROFILE" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
   .hooks //= {} |
@@ -156,6 +192,24 @@ jq \
     else . end
   ) |
 
+  # Profile downgrade: when --profile minimal, REMOVE managed codex guards
+  # if they were previously installed. The basename + "scripts" parent
+  # match is the same shape used elsewhere in this file to identify
+  # managed entries; out-of-scope codex hooks installed via other means
+  # are left untouched.
+  ( if $profile == "minimal" then
+      .hooks.PreToolUse |= map(
+        .hooks |= map(select(
+          (
+            ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") or
+            ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
+          ) | not
+        ))
+      ) |
+      .hooks.PreToolUse |= map(select((.hooks | length) > 0))
+    else . end
+  ) |
+
   ( if $pm_present == 0 then
       .hooks.PreToolUse += [{
         "matcher": "Edit|Write",
@@ -163,14 +217,14 @@ jq \
       }]
     else . end
   ) |
-  ( if $cxw_present == 0 then
+  ( if $cxw_present == 0 and $profile == "full" then
       .hooks.PreToolUse += [{
         "matcher": "Edit|Write",
         "hooks": [{"type": "command", "command": $cxw}]
       }]
     else . end
   ) |
-  ( if $cx_present == 0 then
+  ( if $cx_present == 0 and $profile == "full" then
       .hooks.PreToolUse += [{
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": $cx}]
@@ -210,9 +264,11 @@ jq \
   ' "$settings" > "$tmp_new"
 
 if cmp -s "$settings" "$tmp_new"; then
-  echo "install-hooks: already wired, nothing to do"
+  echo "install-hooks: already wired, nothing to do (profile=$PROFILE)"
   exit 0
 fi
+
+echo "install-hooks: profile=$PROFILE"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "install-hooks: would apply the following change:"

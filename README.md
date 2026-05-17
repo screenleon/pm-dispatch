@@ -48,11 +48,15 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 ## Install
 
 ```sh
-./install.sh --dry-run   # preview
-./install.sh             # apply
+./install.sh --dry-run                # preview
+./install.sh                          # apply (auto-detect profile)
+./install.sh --profile minimal        # claude-only setup; skip codex hooks
+./install.sh --profile full           # explicit codex setup
 ```
 
 Idempotent — re-run safely after adding files. Per-file symlinks so other tools' agents in `~/.claude/agents/` are not clobbered. If a destination already exists and is not our symlink, it is skipped with a CONFLICT warning.
+
+**Profile**: `full` wires every hook including the codex-* guards (use when you run the [Codex CLI](https://github.com/openai/codex) for dispatch). `minimal` skips the codex-* guards (use when you only use Claude Code; the `claude` executor handles dispatch). Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
 
 ## What's here
 
