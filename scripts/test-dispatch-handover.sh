@@ -464,14 +464,14 @@ executor_codex_accepts_case() {
   expect_code_without_token "$want_code" "$want_token" handover_validate_executor codex
 }
 
-# Behavior: Executor claude-main is accepted (CC-102).
+# Behavior: Executor claude is accepted (CC-102).
 # Steps:
-#   1. Validate executor claude-main.
+#   1. Validate executor claude.
 #   2. Assert validation succeeds.
-executor_claude_main_accepts_case() {
+executor_claude_accepts_case() {
   local want_code=0
   local want_token=E-HANDOVER-INVALID
-  expect_code_without_token "$want_code" "$want_token" handover_validate_executor claude-main
+  expect_code_without_token "$want_code" "$want_token" handover_validate_executor claude
 }
 
 # Behavior: The main-thread Bash dispatch route is accepted.
@@ -834,7 +834,7 @@ run_case "handover/version two accepts" handover_version_two_accepts_case
 run_case "handover/executor missing rejects" executor_missing_rejects_case
 run_case "handover/executor unknown rejects" executor_unknown_rejects_case
 run_case "handover/executor codex accepts" executor_codex_accepts_case
-run_case "handover/executor claude-main accepts" executor_claude_main_accepts_case
+run_case "handover/executor claude accepts" executor_claude_accepts_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case

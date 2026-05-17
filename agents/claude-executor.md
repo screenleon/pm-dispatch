@@ -1,6 +1,6 @@
 ---
 name: claude-executor
-description: Self-executing main-thread tool surface — reads a pre-written brief file, performs the edits/commands itself, runs self_verify, and reports back. Use when the install profile is minimal (no codex CLI) or the PM brief explicitly sets `executor: claude-main`. NOT a planning agent.
+description: Self-executing main-thread tool surface — reads a pre-written brief file, performs the edits/commands itself, runs self_verify, and reports back. Use when the install profile is minimal (no codex CLI) or the PM brief explicitly sets `executor: claude`. NOT a planning agent.
 tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 
@@ -45,15 +45,15 @@ If the path is present but the file does not exist, STOP:
 5. Verify acceptance criteria one by one. Use `Bash` for `grep` / `test` / `git status` style assertions.
 6. Report back in the shape below.
 
-# Metadata fields ignored by claude-main
+# Metadata fields ignored by claude
 
-The brief's metadata header (`dispatch_handover_v1`) carries fields that are **codex-specific** and are accepted-but-ignored by claude-main for schema stability:
+The brief's metadata header (`dispatch_handover_v1`) carries fields that are **codex-specific** and are accepted-but-ignored by claude for schema stability:
 
-- `sandbox` — codex sandbox model; claude-main runs inside the Claude Code harness's existing tool boundaries
-- `approval` — codex CLI approval policy; claude-main uses the harness's permission prompts
-- `skip_git_check` — codex pre-flight; claude-main does not have an equivalent guard
+- `sandbox` — codex sandbox model; claude runs inside the Claude Code harness's existing tool boundaries
+- `approval` — codex CLI approval policy; claude uses the harness's permission prompts
+- `skip_git_check` — codex pre-flight; claude does not have an equivalent guard
 
-For canonical no-op values, briefs targeting claude-main should set `sandbox: workspace-write`, `approval: never`, `skip_git_check: false`. Do not warn about these values being unused — the schema requires them.
+For canonical no-op values, briefs targeting claude should set `sandbox: workspace-write`, `approval: never`, `skip_git_check: false`. Do not warn about these values being unused — the schema requires them.
 
 # Verify
 

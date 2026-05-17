@@ -7,7 +7,7 @@ The executor-level abstraction is defined in [docs/executor-contract.md](docs/ex
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude-main`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude-main`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) are still required for schema stability but are accepted-as-no-op by `claude-main`; use canonical values (`workspace-write`, `never`, `false`).
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) are still required for schema stability but are accepted-as-no-op by `claude`; use canonical values (`workspace-write`, `never`, `false`).
 
 ## Required fields
 

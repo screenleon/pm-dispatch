@@ -21,7 +21,7 @@ Executor-agnostic metadata (must be interpreted by all concrete profiles):
 Executor-specific metadata subsets:
 
 - `sandbox`, `approval`, `skip_git_check`: codex-profile-only today (current validator and CLI assumptions).
-- `claude-main`: no concrete metadata subset yet; CC-102 defines and ships its own minimal subset, using main-thread semantics.
+- `claude`: no concrete metadata subset yet; CC-102 defines and ships its own minimal subset, using main-thread semantics.
 
 Executors should ignore unrecognized metadata keys unless they are intentionally documented for that profile.
 
@@ -40,20 +40,20 @@ The diff is the source of truth for work completion. The report is narrative con
 
 ## Executor profiles
 
-| Aspect | codex profile | claude-main profile |
+| Aspect | codex profile | claude profile |
 |---|---|---|
 | Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
 | Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract in CC-101. |
 | Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
 | Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | Same reviewer pipeline should be triggered by the main-thread path once implementation lands. |
-| Install requirement | `codex` install profile (current operational mode). | `claude-main` install profile (lightweight; no codex binary workflow dependency). |
+| Install requirement | `codex` install profile (current operational mode). | `claude` install profile (lightweight; no codex binary workflow dependency). |
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
-| Status | Implemented (primary route since CC-036). | Implemented in CC-102 — `agents/claude-executor.md` + `executor: claude-main` enum + `install.sh --profile minimal\|full`. |
+| Status | Implemented (primary route since CC-036). | Implemented in CC-102 — `agents/claude-executor.md` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
 
 ## Selection
 
-Executor profile is an install-time choice (`codex` full profile versus `claude-main` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract and is intended to become available when CC-102 ships the `claude-main` enum and adapter.
+Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract and is intended to become available when CC-102 ships the `claude` enum and adapter.
 
 ## Forward-compat notes
 
-As of CC-102, `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude-main`; any other value is rejected. The `claude-main` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.
+As of CC-102, `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.

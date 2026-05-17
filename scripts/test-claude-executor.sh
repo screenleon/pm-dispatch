@@ -3,9 +3,9 @@
 #
 # Cannot invoke Agent(subagent_type: "claude-executor") from a shell — that's
 # only available inside Claude Code's tool surface. This test asserts the
-# format-level prerequisites for a claude-main dispatch:
-#   - the brief schema validator accepts a representative claude-main metadata
-#     header (executor: claude-main + canonical no-op codex fields)
+# format-level prerequisites for a claude dispatch:
+#   - the brief schema validator accepts a representative claude metadata
+#     header (executor: claude + canonical no-op codex fields)
 #   - the brief body's self_verify commands can be shell-executed and exit 0
 #     against a trivial goal
 #   - no repo files leak into git status; no ~/.claude/ touched
@@ -25,7 +25,14 @@ FILTER=""
 LIST=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --filter) FILTER="${2:-}"; shift 2 ;;
+    --filter)
+      if [[ $# -lt 2 ]]; then
+        echo "test-claude-executor: --filter requires a pattern argument" >&2
+        exit 2
+      fi
+      FILTER="$2"
+      shift 2
+      ;;
     --list)   LIST=true; shift ;;
     *) shift ;;
   esac
@@ -52,16 +59,16 @@ FAILED_CASES=()
 pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf 'FAIL: %s: %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); }
 
-# ── case 1: validator accepts a claude-main metadata header ──────────────────
+# ── case 1: validator accepts a claude metadata header ──────────────────
 
-claude_main_metadata_validates() {
-  local name="claude-executor/metadata claude-main accepts"
+claude_metadata_validates() {
+  local name="claude-executor/metadata claude accepts"
   should_run "$name" || return 0
 
   local metadata
   metadata=$(cat <<META
 handover_version: 2
-executor: claude-main
+executor: claude
 dispatch_route: main_thread_bash_background
 working_dir: $scratch
 brief_file: $brief_file
@@ -76,7 +83,7 @@ META
   if handover_validate_all_metadata "$metadata" 2>/dev/null; then
     pass "$name"
   else
-    fail "$name" "validator rejected canonical claude-main metadata"
+    fail "$name" "validator rejected canonical claude metadata"
   fi
 }
 
@@ -153,7 +160,7 @@ scratch_isolation() {
 
 # ── runner ────────────────────────────────────────────────────────────────────
 
-claude_main_metadata_validates
+claude_metadata_validates
 unknown_executor_rejected
 self_verify_executes
 scratch_isolation

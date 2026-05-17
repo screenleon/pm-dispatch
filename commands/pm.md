@@ -10,7 +10,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 **Dispatch route**: Subagents cannot spawn subagents. If PM returns a `dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, reads `executor`, validates metadata with `handover_validate_all_metadata`, and then routes by `executor` value:
 
 - `executor: codex` → main-thread Bash to `scripts/codex-dispatch.sh` (primary route)
-- `executor: claude-main` → main-thread `Agent(subagent_type: "claude-executor")` with the pre-written brief file path
+- `executor: claude` → main-thread `Agent(subagent_type: "claude-executor")` with the pre-written brief file path
 - any other value is rejected by the validator before this point
 
 The abstract contract both routes implement is documented in `docs/executor-contract.md`. Always source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
@@ -25,7 +25,7 @@ The template above shows the default-safe stable argument order; omit `--model <
 
 Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
 
-### Route B — `executor: claude-main`
+### Route B — `executor: claude`
 
 ```text
 Agent(subagent_type: "claude-executor", prompt: "<safe brief_file abs path>", run_in_background: true, description: "Run claude-executor for <slug>")
