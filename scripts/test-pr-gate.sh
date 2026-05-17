@@ -7,6 +7,20 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# CC-103b introduced `--executor codex|claude|auto` on pr-gate.sh with
+# auto-detect via `command -v codex`. Existing tests in this file
+# assume the codex execution path (brief file written, dispatch stub
+# invoked). On CI runners codex is absent, so auto-detect picks claude
+# mode → emits handover instead of brief.md → tests fail. Prepend a
+# stub `codex` bin to PATH so auto-detect picks codex for legacy
+# tests. test-pr-gate-profile.sh remains the canonical coverage for
+# claude / auto-detect / explicit --executor behaviors.
+_codex_stub_bin="$TMP_ROOT/.codex-stub-bin"
+mkdir -p "$_codex_stub_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
+chmod +x "$_codex_stub_bin/codex"
+export PATH="$_codex_stub_bin:$PATH"
+
 PASS=0
 FAIL=0
 FAILED_CASES=()

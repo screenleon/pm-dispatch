@@ -602,6 +602,31 @@ brief_file_tmp_prefix_md_accepts_case() {
   handover_validate_brief_file /tmp/brief-x.md >/dev/null 2>&1
 }
 
+# Behavior: A Windows MSYS-style brief_file path under $TEMP is accepted.
+# Steps:
+#   1. Export TEMP to a synthetic Git Bash style path.
+#   2. Validate a brief path under that prefix.
+#   3. Assert validation succeeds.
+brief_file_windows_msys_temp_accepts_case() {
+  TEMP=/c/Users/test/AppData/Local/Temp \
+    handover_validate_brief_file /c/Users/test/AppData/Local/Temp/brief-x.md >/dev/null 2>&1
+}
+
+# Behavior: A brief_file outside $TEMP (or /tmp) is still rejected even
+# when TEMP is set elsewhere — security-relevant under Windows.
+# Steps:
+#   1. Export TEMP to a tmp-like path.
+#   2. Validate a brief at a path NOT under TEMP nor /tmp.
+#   3. Assert the reject audit names brief_file with the legacy-style
+#      "must be /brief-*.md under" message (or subdirectory if path nests).
+brief_file_windows_outside_temp_rejects_case() {
+  local want_code=1
+  local want_token=E-HANDOVER-INVALID
+  TEMP=/c/Users/test/AppData/Local/Temp \
+    expect_code_token "$want_code" "$want_token" \
+      handover_validate_brief_file /c/Users/test/Documents/brief-x.md
+}
+
 # Behavior: Relative brief_file paths are rejected.
 # Steps:
 #   1. Validate a relative brief_file path.
@@ -851,6 +876,8 @@ run_case "handover/timeout below min rejects" timeout_below_minimum_rejects_case
 run_case "handover/timeout above max rejects" timeout_above_maximum_rejects_case
 run_case "handover/timeout non-integer rejects" timeout_non_integer_rejects_case
 run_case "handover/brief_file tmp prefix md accepts" brief_file_tmp_prefix_md_accepts_case
+run_case "handover/brief_file windows msys temp accepts" brief_file_windows_msys_temp_accepts_case
+run_case "handover/brief_file windows outside temp rejects" brief_file_windows_outside_temp_rejects_case
 run_case "handover/brief_file relative rejects" brief_file_relative_path_rejects_case
 run_case "handover/brief_file outside tmp prefix rejects" brief_file_outside_tmp_prefix_rejects_case
 run_case "handover/brief_file dotdot rejects" brief_file_dotdot_rejects_case
