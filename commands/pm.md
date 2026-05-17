@@ -10,7 +10,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 **Dispatch route**: Subagents cannot spawn subagents. If PM returns a `dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, reads `executor`, and dispatches the matching executor-specific script with direct background Bash as the primary route. The only supported executor today is `executor: codex`:
 
 ```text
-Bash(command: "bash /home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
 The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. The bash route never emits `--skip-git-check`: validator hard-rejects `skip_git_check: true`, so callers needing that flag must take the `Agent(codex-executor)` fallback instead.

@@ -92,7 +92,7 @@ The handover extraction and validation contract is covered by `scripts/test-disp
 handover_version: 2
 executor: codex
 dispatch_route: main_thread_bash_background
-working_dir: /home/screenleon/github/pm-dispatch
+working_dir: ${PM_DISPATCH_REPO}
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
 sandbox: workspace-write
 approval: never
@@ -101,7 +101,7 @@ model: default
 skip_git_check: false
 fallback_allowed: true
 ---
-working_dir: /home/screenleon/github/pm-dispatch
+working_dir: ${PM_DISPATCH_REPO}
 goal: ...
 files:
   - read: ...

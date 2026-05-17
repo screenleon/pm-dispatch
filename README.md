@@ -1,6 +1,13 @@
 # pm-dispatch
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Personal Claude Code configuration: subagents, slash commands, skills, and dispatch scripts. Source of truth lives in this repo; entries are symlinked into `~/.claude/` by `install.sh`.
+
+## Path placeholders
+
+Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, `scripts/install-hooks.sh` derives it automatically from the git toplevel with:
+
+`repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"`
 
 ## Layout
 
