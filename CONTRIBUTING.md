@@ -1,6 +1,15 @@
 # Contributing to pm-dispatch
 
-Welcome! This project is maintained for cross-user use, and PRs should be easy for external contributors to follow.
+`pm-dispatch` is published as **source-available**: the code is public so anyone can read it, fork it, and adapt it to their own workflow, but the upstream repository is currently maintained for personal use and does **not accept external pull requests**.
+
+## Contribution policy
+
+- **Pull requests from non-maintainers are not accepted at this time.** PRs opened against this repository may be closed without review. Please fork the project and apply your changes there.
+- **Issues are welcome but have no SLA.** Bug reports, feature ideas, and questions are useful signal; we'll respond when we can. There is no commitment to triage, fix, or implement.
+- **The Code of Conduct still applies** to issues and any other interaction in this repository — see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- **This policy may change.** If external contribution interest emerges and there is bandwidth to maintain a reviewer relationship, the policy may be revisited. For now, the bar is "demonstrated interest via thoughtful issues" before any reopening.
+
+The rest of this document describes the **internal workflow** the maintainers use. It is included here so that anyone reading their own fork can follow the same conventions if they want to keep their fork close to upstream.
 
 ## Branch flow
 
@@ -83,11 +92,15 @@ Do not add personal absolute paths in docs or examples.
 
 Project-specific checks run from installer and PR-gate flow may fail fast if conventions or hook contracts drift. If a check fails, include a minimal repro and evidence in your PR notes.
 
-## Communication
+## Communication (for forks / future maintainers)
 
-For larger refactors, include:
+If you maintain a fork and want to keep diffs reviewable, include in each significant change:
 
 - the motivating issue/ticket id,
 - expected impact,
 - rollback plan,
 - and any migration caveats.
+
+## If you've found a bug in upstream
+
+Open an issue describing the smallest reproduction you can produce and the workaround you used in your fork. Even though external PRs are not accepted, useful bug reports help shape future versions and are the primary signal we use to consider reopening contributions.
