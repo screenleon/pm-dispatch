@@ -437,6 +437,59 @@ test_install_hooks_profile_downgrade_removes_codex() {
   pass "$name"
 }
 
+test_install_hooks_auto_detect_with_codex_wires_full() {
+  # Proves omitted --profile flag + codex on PATH resolves to full
+  # (wires the two codex-* guards). Uses a stub codex binary in a
+  # tmp bin dir prepended to PATH so the test does not depend on the
+  # host having codex installed.
+  local name="install-hooks-auto-detect-codex-present-wires-full"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  local stub_bin="$home/.stub-bin"
+  mkdir -p "$stub_bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_bin/codex"
+  chmod +x "$stub_bin/codex"
+
+  HOME="$home" PATH="$stub_bin:$PATH" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
+test_install_hooks_auto_detect_without_codex_wires_minimal() {
+  # Proves omitted --profile flag + codex absent from PATH resolves to
+  # minimal (skips codex-* guards). Uses a minimal PATH that excludes
+  # any user-local bin dirs where codex might live.
+  local name="install-hooks-auto-detect-codex-absent-wires-minimal"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  local minimal_path="/usr/bin:/bin"
+  if PATH="$minimal_path" command -v codex >/dev/null 2>&1; then
+    fail "$name" "precondition failed: codex unexpectedly visible in minimal PATH"
+    return
+  fi
+  if ! PATH="$minimal_path" command -v jq >/dev/null 2>&1; then
+    fail "$name" "precondition failed: jq missing from minimal PATH (install-hooks.sh needs it)"
+    return
+  fi
+
+  HOME="$home" PATH="$minimal_path" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  pass "$name"
+}
+
 test_install_hooks_profile_invalid_value_rejected() {
   # Proves install-hooks.sh rejects an unknown profile value with exit 2
   # and a clear stderr message.
@@ -1045,6 +1098,8 @@ test_install_sh_wires_hooks
 test_install_sh_profile_minimal_skips_codex_hooks
 test_install_sh_profile_full_wires_codex_hooks
 test_install_hooks_profile_downgrade_removes_codex
+test_install_hooks_auto_detect_with_codex_wires_full
+test_install_hooks_auto_detect_without_codex_wires_minimal
 test_install_hooks_profile_invalid_value_rejected
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
