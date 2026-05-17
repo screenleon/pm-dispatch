@@ -571,6 +571,61 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
   pass "$name"
 }
 
+test_install_hooks_dry_run_does_not_modify() {
+  # Proves --dry-run prints a diff but does not modify settings.json.
+  local name="install-hooks-dry-run-does-not-modify-settings"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  local before_hash
+  before_hash="$(sha256sum < "$home/.claude/settings.json" | awk '{print $1}')"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile minimal > /dev/null
+
+  local after_hash
+  after_hash="$(sha256sum < "$home/.claude/settings.json" | awk '{print $1}')"
+  if [[ "$before_hash" == "$after_hash" ]]; then
+    pass "$name"
+  else
+    fail "$name" "settings.json was modified despite --dry-run"
+  fi
+}
+
+test_install_hooks_platform_linux_explicit() {
+  # Proves --platform linux works (explicit, not auto) and wires hooks
+  # the same way auto-detect on a Linux host would.
+  local name="install-hooks-platform-linux-explicit-wires-normally"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform linux --profile full > /dev/null
+
+  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  pass "$name"
+}
+
+test_install_hooks_platform_invalid_value_rejected() {
+  # Proves --platform with an unknown value is rejected with exit 2.
+  local name="install-hooks-platform-invalid-value-rejected"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  local out rc
+  out="$(HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform xtreme 2>&1)" && rc=0 || rc=$?
+  if [[ $rc -ne 0 ]] && [[ "$out" == *"platform"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit and 'platform' in stderr; got rc=$rc, out=$out"
+  fi
+}
+
 test_install_hooks_profile_invalid_value_rejected() {
   # Proves install-hooks.sh rejects an unknown profile value with exit 2
   # and a clear stderr message.
@@ -1183,6 +1238,9 @@ test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
 test_install_hooks_windows_profile_full_downgrades_to_minimal
 test_install_hooks_windows_profile_minimal_silent
+test_install_hooks_dry_run_does_not_modify
+test_install_hooks_platform_linux_explicit
+test_install_hooks_platform_invalid_value_rejected
 test_install_hooks_profile_invalid_value_rejected
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle

@@ -153,7 +153,7 @@ create_minimal_log() {
 rotate_if_needed() {
   local target="$1" size tmp
   [[ -f "$target" ]] || return 0
-  size=$(stat -c %s "$target" 2>/dev/null || echo 0)
+  size=$(file_size_bytes "$target" 2>/dev/null || echo 0)
   (( size > MAX_SIZE )) || return 0
 
   if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null; then

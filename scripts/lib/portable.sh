@@ -123,6 +123,33 @@ mkdir_lock() {
   return 1
 }
 
+# file_size_bytes <file>
+# Print file size in bytes on stdout. Portable across GNU stat (linux),
+# BSD stat (macos), and wc -c fallback (any). Returns 1 (and prints
+# nothing) if file does not exist or all three methods fail.
+file_size_bytes() {
+  local f="$1"
+  [[ -n "$f" && -f "$f" ]] || return 1
+
+  local n
+  if n=$(stat -c %s -- "$f" 2>/dev/null); then
+    printf '%s\n' "$n"
+    return 0
+  fi
+  if n=$(stat -f %z -- "$f" 2>/dev/null); then
+    printf '%s\n' "$n"
+    return 0
+  fi
+  if n=$(wc -c < "$f" 2>/dev/null); then
+    # wc may emit leading whitespace on some platforms; trim.
+    n="${n#"${n%%[![:space:]]*}"}"
+    n="${n%"${n##*[![:space:]]}"}"
+    printf '%s\n' "$n"
+    return 0
+  fi
+  return 1
+}
+
 # Helpers below are private.
 
 # shellcheck disable=SC2155

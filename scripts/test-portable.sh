@@ -266,16 +266,97 @@ case_detect_platform_ostype_msys() {
   fi
 }
 
+case_realpath_m_symlink_resolves() {
+  local name="portable-realpath-m-symlink-resolves"
+  should_run "$name" || return 0
+  local root="$tmp_root/sym"
+  mkdir -p "$root/target"
+  printf 'ok\n' > "$root/target/file.txt"
+  ln -s "$root/target" "$root/link"
+  local got
+  got="$(realpath_m "$root/link/file.txt")"
+  if [[ "$got" == "$root/target/file.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got $got"
+  fi
+}
+
+case_realpath_m_windows_mode_normalizes() {
+  # Forces the pure-bash code path by simulating windows platform.
+  local name="portable-realpath-m-windows-mode-collapses-dots"
+  should_run "$name" || return 0
+  local root="$tmp_root/winmode"
+  mkdir -p "$root/a/b"
+  printf 'ok\n' > "$root/a/b/file.txt"
+  local raw="$root/a/./b/../b/file.txt"
+  local got
+  got="$(PM_DISPATCH_PLATFORM=windows realpath_m "$raw")"
+  if [[ "$got" == "$root/a/b/file.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got $got"
+  fi
+}
+
+case_realpath_m_windows_mode_relative_path() {
+  # Relative input under windows simulation should resolve against PWD.
+  local name="portable-realpath-m-windows-mode-relative-uses-pwd"
+  should_run "$name" || return 0
+  local root="$tmp_root/winrel"
+  mkdir -p "$root/sub"
+  printf 'ok\n' > "$root/sub/f.txt"
+  local got
+  got="$(cd "$root" && PM_DISPATCH_PLATFORM=windows realpath_m "sub/f.txt")"
+  if [[ "$got" == "$root/sub/f.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got $got"
+  fi
+}
+
+case_file_size_bytes_returns_size() {
+  local name="portable-file-size-bytes-returns-size"
+  should_run "$name" || return 0
+  local root="$tmp_root/fsize"
+  mkdir -p "$root"
+  local f="$root/probe.bin"
+  printf 'hello\n' > "$f"   # 6 bytes
+  local got
+  got="$(file_size_bytes "$f")"
+  if [[ "$got" == "6" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 6 got '$got'"
+  fi
+}
+
+case_file_size_bytes_missing_file() {
+  local name="portable-file-size-bytes-missing-file-returns-nonzero"
+  should_run "$name" || return 0
+  local f="$tmp_root/does-not-exist-$$.bin"
+  if file_size_bytes "$f" >/dev/null 2>&1; then
+    fail "$name" "expected non-zero exit for missing file"
+  else
+    pass "$name"
+  fi
+}
+
 case_realpath_m_existing_abs
 case_realpath_m_parent_dots
 case_realpath_m_nonexistent_leaf
 case_realpath_m_empty_fails
+case_realpath_m_symlink_resolves
+case_realpath_m_windows_mode_normalizes
+case_realpath_m_windows_mode_relative_path
 case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
 case_detect_platform_override_windows
 case_detect_platform_host_linux
 case_detect_platform_ostype_msys
+case_file_size_bytes_returns_size
+case_file_size_bytes_missing_file
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
