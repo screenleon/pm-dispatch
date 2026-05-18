@@ -155,17 +155,47 @@ assert_contains "caveman: rules section for lite"  "$CAVEMAN" "^### Rules: lite"
 assert_contains "caveman: rules section for full"  "$CAVEMAN" "^### Rules: full"
 assert_contains "caveman: rules section for ultra" "$CAVEMAN" "^### Rules: ultra"
 
-# Per-mode rule content — key rule bullets present in caveman.md
-assert_contains "caveman: Rules: lite contains no-opening-sentence rule" \
+# Per-mode rule content — every documented rule bullet for each mode
+# Rules: off
+assert_contains "caveman: Rules: off says no changes" \
+  "$CAVEMAN" "No changes"
+# Rules: lite (5 bullets)
+assert_contains "caveman: Rules: lite — no opening sentence" \
   "$CAVEMAN" "No opening sentence"
-assert_contains "caveman: Rules: full contains No preamble rule" \
+assert_contains "caveman: Rules: lite — no trailing summary" \
+  "$CAVEMAN" "No trailing summary"
+assert_contains "caveman: Rules: lite — prefer bullets over prose" \
+  "$CAVEMAN" "Prefer bullet"
+assert_contains "caveman: Rules: lite — keep code blocks unchanged" \
+  "$CAVEMAN" "Keep code blocks"
+assert_contains "caveman: Rules: lite — tool description one short clause" \
+  "$CAVEMAN" "one short clause"
+# Rules: full (6 bullets)
+assert_contains "caveman: Rules: full — bullets only" \
+  "$CAVEMAN" "Bullets only"
+assert_contains "caveman: Rules: full — no section headers unless" \
+  "$CAVEMAN" "No section headers unless"
+assert_contains "caveman: Rules: full — no preamble" \
   "$CAVEMAN" "No preamble"
-assert_contains "caveman: Rules: full contains No closing summary rule" \
+assert_contains "caveman: Rules: full — no closing summary" \
   "$CAVEMAN" "No closing summary"
-assert_contains "caveman: Rules: ultra contains No bullet symbols rule" \
+assert_contains "caveman: Rules: full — show diff skip explanation" \
+  "$CAVEMAN" "Show the diff or code block"
+assert_contains "caveman: Rules: full — tool description 3 words max" \
+  "$CAVEMAN" "3 words max"
+# Rules: ultra (6 bullets)
+assert_contains "caveman: Rules: ultra — fragment sentences acceptable" \
+  "$CAVEMAN" "Fragment sentences"
+assert_contains "caveman: Rules: ultra — skip articles" \
+  "$CAVEMAN" "Skip articles"
+assert_contains "caveman: Rules: ultra — no bullet symbols" \
   "$CAVEMAN" "No bullet symbols"
-assert_contains "caveman: Rules: ultra contains No headers rule" \
+assert_contains "caveman: Rules: ultra — no headers" \
   "$CAVEMAN" "No headers"
+assert_contains "caveman: Rules: ultra — single-word acknowledgements" \
+  "$CAVEMAN" "Single-word acknowledgements"
+assert_contains "caveman: Rules: ultra — tool description omit entirely" \
+  "$CAVEMAN" "omit entirely"
 
 # ── caveman-commit.md contract ───────────────────────────────────────────────
 
@@ -227,6 +257,48 @@ assert_contains "caveman-commit: no body unless breaking change or constraint" \
 # BREAKING CHANGE footer format must be documented
 assert_contains "caveman-commit: BREAKING CHANGE footer documented" \
   "$COMMIT" "BREAKING CHANGE:"
+
+# Step 1 staged-diff read commands must be documented
+assert_contains "caveman-commit: reads git diff --cached --stat" \
+  "$COMMIT" "git diff --cached --stat"
+assert_contains "caveman-commit: reads git diff --cached" \
+  "$COMMIT" "git diff --cached"
+
+# Output format shape must be documented
+assert_contains "caveman-commit: output format has type placeholder" \
+  "$COMMIT" "<type>"
+assert_contains "caveman-commit: output format has subject placeholder" \
+  "$COMMIT" "<subject>"
+
+# Breaking-change trigger conditions must be enumerated
+assert_contains "caveman-commit: breaking-change trigger removes public interface" \
+  "$COMMIT" "removes a public interface"
+assert_contains "caveman-commit: breaking-change trigger renames hook script" \
+  "$COMMIT" "renames a hook script"
+assert_contains "caveman-commit: breaking-change trigger changes required schema field" \
+  "$COMMIT" "changes a required schema field"
+
+# Non-obvious constraint body exception one-line max
+assert_contains "caveman-commit: non-obvious constraint body exception" \
+  "$COMMIT" "non-obvious constraint"
+
+# ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
+
+PRE_IMPL="$COMMANDS_DIR/pre-impl.md"
+
+assert_frontmatter "pre-impl: frontmatter valid" "$PRE_IMPL"
+assert_contains "pre-impl: Q4 heading present" \
+  "$PRE_IMPL" "Q4"
+assert_contains "pre-impl: Q4 skip condition documented" \
+  "$PRE_IMPL" "Skip this question if the brief only modifies"
+assert_contains "pre-impl: Q4 enumerates input states" \
+  "$PRE_IMPL" "input state"
+assert_contains "pre-impl: Q4 enumerates output formats" \
+  "$PRE_IMPL" "output format"
+assert_contains "pre-impl: Q4 enumerates rule sections" \
+  "$PRE_IMPL" "rule section"
+assert_contains "pre-impl: Q4 enumerates stop conditions" \
+  "$PRE_IMPL" "stop condition"
 
 # ── agent output-brevity contract ────────────────────────────────────────────
 
