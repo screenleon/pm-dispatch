@@ -82,7 +82,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 |
-| CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
+| CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
 | CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
 | CC-053 | ✅ closed 2026-05-18 | `test-commands.sh` CLI self-test coverage | test | 2026-05-18 | pr:#84 |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 |
@@ -100,6 +100,23 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-066 | 🟡 deferred | **[P2]** Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 |
 
 ---
+
+## Convention
+
+**ID scheme**: `CC-NNN` sequential. `CC-1NN` (CC-100–CC-199) are CC-OSS epic markers; `CC-2NN` (CC-200–CC-299) are reuse-debt markers. These are semantic groupings — ID gaps between unrelated tickets are normal.
+
+**Sub-letter IDs**: `CC-NNNa`, `CC-NNNb`, `CC-NNNc` are follow-up tickets to a parent `CC-NNN`, with independent lifecycles.
+
+**Status legend**:
+- `🔵 active` — in backlog (not-started / in-progress / blocked)
+- `✅ closed YYYY-MM-DD` — shipped; body collapsed to closed stub
+- `🚫 dropped YYYY-MM-DD` — will not do; body stubs to DECISIONS
+- `✅ done` — soft-close; no PR or date needed
+- `⏸ deferred` / `🟡 deferred` — waiting on external condition, not scheduled
+- `🟢 someday` — valid idea, no expected schedule
+- `⚠️ partial YYYY-MM-DD` — partially shipped; sub-items remain open (see body)
+
+**Closed stubs**: When inflation policy triggers, closed bodies move to `BACKLOG-ARCHIVE.md`; index row + `**See**: BACKLOG-ARCHIVE.md` stub remain here.
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
@@ -457,11 +474,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **See**: BACKLOG-ARCHIVE.md
 
-## CC-051 — BACKLOG schema convention preamble（deferred）
+## CC-051 — BACKLOG schema convention preamble ✅ 2026-05-18
 
-**Problem**: BACKLOG.md uses ID gaps, sub-letter IDs, and multiple status emoji without a compact convention preamble.
-**Why**: Fork readers need to understand that CC-1NN and CC-2NN are semantic groupings, and that sub-letter IDs are follow-ups to parent tickets.
-**Requirement**: Add a schema convention preamble covering ID convention, sub-letter convention, and status emoji legend.
+**See**: BACKLOG-ARCHIVE.md
 
 ## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
 

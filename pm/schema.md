@@ -32,7 +32,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 ### 2.3 Status enum
 
-七個可接受 status token：
+八個可接受 status token：
 
 - `🔵 active` — 仍在 backlog，包含尚未開工 / 進行中 / 阻塞中（細節寫在 body）
 - `✅ closed YYYY-MM-DD` — 已 ship，body 折疊為 closed stub（§2.6）
@@ -41,6 +41,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - `⏸ deferred` — **延後**：不是不做，而是等待外部條件（依賴項、時機）再推進。body 保持 active 格式；與 `🔵 active` 的差異是「現在刻意不排程」。
 - `🟡 deferred` — **明確延後（alternate）**：`⏸ deferred` 的同義視覺變體；語義相同，validator 兩者皆接受。
 - `🟢 someday` — **有朝一日**：概念有效但優先級極低、暫無預期排程；不等外部條件，只是「未來某天再做」。
+- `⚠️ partial YYYY-MM-DD` — **部分完成**：本條目主體已 ship，但仍有 sub-items 尚未完成（見 body 說明）。body 保持 active 格式；`YYYY-MM-DD` 為首批交付日期。
 
 不再使用 `todo / doing / done / blocked` 等舊四態；`doing / blocked` 屬於 active 內的暫態，記在 body。
 
