@@ -3159,11 +3159,10 @@ routing_concurrent_append_case() {
   lock_release="$root/lock-release"
   mkfifo "$lock_release"
   (
-    exec 8>"$lockfile"
-    flock -x 8
+    mkdir "$lockfile"
     : > "$ready"
     cat "$lock_release" >/dev/null
-    exec 8>&-
+    rmdir "$lockfile"
   ) &
   holder="$!"
   while [[ ! -e "$ready" ]]; do
