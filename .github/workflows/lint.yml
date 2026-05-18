@@ -96,6 +96,7 @@ jobs:
             test-dispatch-handover.sh
             test-hooks.sh
             test-install.sh
+            test-lint-frontmatter.sh
             test-migrate-routing-log.sh
             test-patch-gitignore.sh
             test-pr-gate.sh
