@@ -190,7 +190,10 @@ assert_contains "caveman-commit: type ci present"       "$COMMIT" "\`ci\`"
 assert_contains "caveman-commit: scope optional for broad changes" \
   "$COMMIT" "omit if change spans"
 
-# Subject length cap (must reference 50)
+# Subject contract: imperative, lowercase, ≤ 50 chars, no trailing period
+assert_contains "caveman-commit: subject imperative rule" "$COMMIT" "imperative"
+assert_contains "caveman-commit: subject lowercase rule" "$COMMIT" "lowercase"
+assert_contains "caveman-commit: subject no-trailing-period rule" "$COMMIT" "no trailing period"
 assert_contains "caveman-commit: subject 50-char cap" "$COMMIT" "50 char"
 
 # Breaking-change rule: must say "append ! to type/scope" (not "prefix subject")

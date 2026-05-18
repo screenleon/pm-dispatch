@@ -18,6 +18,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to the NO-GO fix-loop protocol; added new contract test script rule to the brief-writing section (CC-039).
 - **`commands/pre-impl.md`** — added Q4 (contract test completeness) to Step 2; updated heading to reflect Q1–Q4 (CC-039).
 
+### Removed
+- **`[1.0.0]` and `[1.1.0]` changelog sections** — these were accidentally written during project setup before the repo's official public release (v0.1.0 on 2026-05-17). They contained internal scaffolding notes, not user-visible releases. Removed per maintainer decision; full history remains in `git log`.
+
 ## [0.1.0] — 2026-05-17
 
 First public release. The repo was made source-available (public read/fork; external PRs not accepted at this time). This release bundles the **CC-OSS** epic that prepared the codebase for that transition.
