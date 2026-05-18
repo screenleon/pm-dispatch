@@ -77,17 +77,14 @@ assert_contains() {
   fi
 }
 
-assert_first_line_not() {
-  local name="$1" file="$2" forbidden="$3" first_line
-  first_line="$(sed -n '1p' "$file")"
-  if [[ -z "$first_line" ]]; then
-    fail_case "$name" "expected first output line, got empty stdout"
-    return 1
-  fi
-  if [[ "$first_line" == "$forbidden" ]]; then
-    fail_case "$name" "unexpected first line: $first_line"
-    return 1
-  fi
+assert_all_case_lines_match() {
+  local file="$1" line_pattern="$2" required_substring="$3" line
+  while IFS= read -r line; do
+    if [[ "$line" != *"$required_substring"* ]]; then
+      printf 'expected filtered case line to contain %q, got: %s\n' "$required_substring" "$line"
+      return 1
+    fi
+  done < <(grep -E "$line_pattern" "$file" || true)
 }
 
 run_test_commands() {
@@ -97,37 +94,64 @@ run_test_commands() {
   RUN_STATUS=$?
 }
 
-# Behavior: --list prints case names without the normal banner line.
-# Steps: 1. Invoke test-commands.sh with --list; 2. Assert exit 0; 3. Assert first stdout line is not the banner.
+# Behavior: --list prints only real case names.
+# Steps: 1. Invoke test-commands.sh with --list; 2. Assert exit 0; 3. Assert every non-blank stdout line exists in real verbose case lines.
 case_list_mode_starts_with_case_name() {
-  local name="cli-list-mode-starts-with-case-name" out err status
+  local name="cli-list-mode-starts-with-case-name" out err verbose_out real_cases status list_line list_count real_count
   should_run "$name" || return 0
   out="$TMP_ROOT/$name.out"
   err="$TMP_ROOT/$name.err"
+  verbose_out="$TMP_ROOT/$name.verbose.out"
+  real_cases="$TMP_ROOT/$name.real-cases"
 
-  run_test_commands "$out" "$err" --list
-  status=$RUN_STATUS
+  bash "$SCRIPT_UNDER_TEST" --list > "$out" 2> "$err"
+  status=$?
 
   assert_exit "$name" "$status" 0 || return 0
-  assert_first_line_not "$name" "$out" "test-commands.sh" || return 0
+  VERBOSE=1 bash "$SCRIPT_UNDER_TEST" > "$verbose_out" 2> /dev/null || true
+  sed -n -E 's/^  (PASS|FAIL) //p' "$verbose_out" > "$real_cases"
+  if [[ ! -s "$real_cases" ]]; then
+    fail_case "$name" "expected at least one real case name, got none"
+    return 0
+  fi
+  list_count=$(grep -c '[^[:space:]]' "$out" 2>/dev/null || true)
+  list_count=${list_count:-0}
+  if [[ "$list_count" -eq 0 ]]; then
+    fail_case "$name" "expected non-empty --list output, got empty"
+    return 0
+  fi
+  while IFS= read -r list_line; do
+    [[ -z "$list_line" ]] && continue
+    if ! grep -Fx -- "$list_line" "$real_cases" > /dev/null; then
+      fail_case "$name" "list output line is not a real case name: $list_line"
+      return 0
+    fi
+  done < "$out"
+  real_count=$(wc -l < "$real_cases" | tr -d '[:space:]')
+  if [[ "$list_count" -ne "$real_count" ]]; then
+    fail_case "$name" "list output has $list_count case names but verbose run shows $real_count real cases"
+    return 0
+  fi
   pass_case "$name"
 }
 
-# Behavior: --filter with a matching pattern runs matching cases and reports passes.
-# Steps: 1. Invoke test-commands.sh with --filter caveman; 2. Assert exit 0; 3. Assert the reported pass count is greater than zero.
+# Behavior: --filter with a middle-of-name pattern proves contains-substring matching, not prefix matching.
+# Steps: 1. Invoke test-commands.sh with VERBOSE=1 and --filter "Rules:"; 2. Assert exit 0; 3. Assert per-case PASS/FAIL lines include "Rules:" and exclude non-matching cases.
 case_filter_valid_pattern_passes() {
-  local name="cli-filter-valid-pattern-passes" out err status pass_count
+  local name="cli-filter-valid-pattern-passes" out err case_lines status detail
   should_run "$name" || return 0
   out="$TMP_ROOT/$name.out"
   err="$TMP_ROOT/$name.err"
+  case_lines="$TMP_ROOT/$name.case-lines"
 
-  run_test_commands "$out" "$err" --filter caveman
-  status=$RUN_STATUS
+  VERBOSE=1 bash "$SCRIPT_UNDER_TEST" --filter "Rules:" > "$out" 2> "$err"
+  status=$?
 
   assert_exit "$name" "$status" 0 || return 0
-  pass_count="$(awk '/^[0-9]+ passed, [0-9]+ failed$/ { print $1; exit }' "$out")"
-  if [[ -z "$pass_count" || "$pass_count" -le 0 ]]; then
-    fail_case "$name" "expected PASS count > 0, got ${pass_count:-empty}"
+  grep -E '^  (PASS|FAIL) ' "$out" > "$case_lines" || true
+  assert_contains "$name" "$case_lines" "Rules:" || return 0
+  if ! detail="$(assert_all_case_lines_match "$out" '^  (PASS|FAIL) ' "Rules:")"; then
+    fail_case "$name" "$detail"
     return 0
   fi
   pass_case "$name"
