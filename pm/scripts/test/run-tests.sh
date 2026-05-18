@@ -113,6 +113,23 @@ run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/
 run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
+run_validate_case "validate good-deferred-someday" "$fixtures/good-deferred-someday/BACKLOG.md" 0 ""
+run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACKLOG.md" 0 ""
+# Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
+# Uses baseline comparison — any error not in the known pre-existing set is a regression.
+# Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-052 will fix them).
+repo_backlog=$(CDPATH= cd -- "$script_dir/../../.." && pwd)/BACKLOG.md
+baseline="$script_dir/BACKLOG_validator_baseline.txt"
+if [ -f "$repo_backlog" ] && [ -f "$baseline" ]; then
+  new_errs=$(comm -23 \
+    <(bash "$root_dir/validate.sh" "$repo_backlog" 2>&1 | sort) \
+    <(sort "$baseline"))
+  if [ -z "$new_errs" ]; then
+    pass "validate BACKLOG.md no new errors (archive smoke)"
+  else
+    fail "validate BACKLOG.md no new errors (archive smoke)" "$(printf '%s' "$new_errs" | head -3)"
+  fi
+fi
 run_validate_case_multi "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
 # DECISIONS.md is intentionally only an existing file; validate.sh does not parse it yet.
 run_validate_case_multi "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"

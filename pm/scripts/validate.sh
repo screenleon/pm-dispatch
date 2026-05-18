@@ -147,6 +147,14 @@ function parse_status(id, status, d) {
     row_kind[id] = "deferred"
     return
   }
+  if (status == "🟡 deferred") {
+    row_kind[id] = "deferred"
+    return
+  }
+  if (status == "🟢 someday") {
+    row_kind[id] = "deferred"
+    return
+  }
   if (status ~ /^✅ closed /) {
     d = status
     sub(/^✅ closed /, "", d)
@@ -301,7 +309,7 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
     status = "active"
   } else if (status == "✅ done") {
     status = "done"
-  } else if (status == "⏸ deferred" || status == "🟡 deferred") {
+  } else if (status == "⏸ deferred" || status == "🟡 deferred" || status == "🟢 someday") {
     status = "deferred"
   } else if (status ~ /^🚫 dropped /) {
     status = "dropped"
