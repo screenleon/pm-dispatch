@@ -6,7 +6,7 @@
 # test Claude's runtime behaviour (that's untestable here).
 #
 # Usage:
-#   scripts/test-commands.sh           # silent unless failures
+#   scripts/test-commands.sh           # prints header + summary; VERBOSE=1 prints every case
 #   VERBOSE=1 scripts/test-commands.sh # print every case
 #   scripts/test-commands.sh --filter caveman
 #   scripts/test-commands.sh --list
@@ -192,6 +192,10 @@ assert_contains "caveman-commit: unscoped breaking-change example" \
   "$COMMIT" "feat!:"
 assert_contains "caveman-commit: scoped breaking-change example" \
   "$COMMIT" "feat\(.*\)!:"
+
+# $ARGUMENTS hint path must be documented
+assert_contains "caveman-commit: arguments hint for subject" \
+  "$COMMIT" "\\\$ARGUMENTS.*hint"
 
 # Output must be plain text, no fences
 assert_contains "caveman-commit: no markdown fences in output" \
