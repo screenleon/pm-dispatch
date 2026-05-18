@@ -22,13 +22,19 @@ FILTER=""
 LIST=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --filter) FILTER="${2:-}"; shift 2 ;;
-    --list)   LIST=true; shift ;;
+    --filter)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --filter requires an argument" >&2; exit 1
+      fi
+      FILTER="$2"; shift 2 ;;
+    --list) LIST=true; shift ;;
     *) shift ;;
   esac
 done
 
 ALL_CASES=()
+FAILED_CASES=()
+
 should_run() {
   if $LIST; then ALL_CASES+=("$1"); return 1; fi
   [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
@@ -48,26 +54,44 @@ run_case() {
     return 0
   fi
   FAIL=$((FAIL+1))
+  FAILED_CASES+=("$name")
   echo "  FAIL $name (exit $rc)"
   [[ -n "$out" ]] && echo "$out" | sed 's/^/    /'
 }
 
-# Helper: assert file contains string
+# Helper: assert file contains pattern (grep -E)
 assert_contains() {
   local name="$1" file="$2" pattern="$3"
   should_run "$name" || return 0
-  if grep -q "$pattern" "$file" 2>/dev/null; then
+  if grep -qE "$pattern" "$file" 2>/dev/null; then
     PASS=$((PASS+1))
     ${VERBOSE:+echo "  PASS $name"}
   else
     FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
     echo "  FAIL $name"
     echo "    expected pattern: $pattern"
     echo "    in file: $file"
   fi
 }
 
-# Helper: assert file has valid YAML frontmatter (--- block)
+# Helper: assert file does NOT contain pattern
+assert_not_contains() {
+  local name="$1" file="$2" pattern="$3"
+  should_run "$name" || return 0
+  if ! grep -qE "$pattern" "$file" 2>/dev/null; then
+    PASS=$((PASS+1))
+    ${VERBOSE:+echo "  PASS $name"}
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    echo "  FAIL $name"
+    echo "    unexpected pattern present: $pattern"
+    echo "    in file: $file"
+  fi
+}
+
+# Helper: assert file has valid YAML frontmatter (--- block + description field)
 assert_frontmatter() {
   local name="$1" file="$2"
   should_run "$name" || return 0
@@ -76,6 +100,7 @@ assert_frontmatter() {
     ${VERBOSE:+echo "  PASS $name"}
   else
     FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
     echo "  FAIL $name — missing or malformed frontmatter in $file"
   fi
 }
@@ -88,23 +113,35 @@ CAVEMAN="$COMMANDS_DIR/caveman.md"
 
 assert_frontmatter "caveman: frontmatter valid" "$CAVEMAN"
 
-assert_contains "caveman: lists all four modes" "$CAVEMAN" "off.*lite.*full.*ultra"
+# All four modes must appear in the mode table
+assert_contains "caveman: mode table has off"   "$CAVEMAN" "^\| \`off\`"
+assert_contains "caveman: mode table has lite"  "$CAVEMAN" "^\| \`lite\`"
+assert_contains "caveman: mode table has full"  "$CAVEMAN" "^\| \`full\`"
+assert_contains "caveman: mode table has ultra" "$CAVEMAN" "^\| \`ultra\`"
 
-assert_contains "caveman: documents empty-arg stop" "$CAVEMAN" "No active mode"
+# Empty-arg behavior must be explicit and honest
+assert_contains "caveman: empty-arg prints No active mode" \
+  "$CAVEMAN" "No active mode\. Available:"
+assert_contains "caveman: no-state-tracking notice" \
+  "$CAVEMAN" "No session-state tracking"
 
-assert_contains "caveman: documents unrecognized-arg stop" "$CAVEMAN" "Unknown mode"
+# Unrecognized arg behavior
+assert_contains "caveman: unrecognized-arg message format" \
+  "$CAVEMAN" "Unknown mode:.*Available:"
 
-assert_contains "caveman: no-state-tracking notice" "$CAVEMAN" "No session-state tracking"
+# Must stop before Step 2 for both bad-arg cases
+assert_contains "caveman: stop before Step 2 on empty/invalid" \
+  "$CAVEMAN" "do not proceed to Step 2"
 
-assert_contains "caveman: off rules present" "$CAVEMAN" "Rules: off"
+# Must NOT claim to track or report current mode
+assert_not_contains "caveman: no false current-mode promise" \
+  "$CAVEMAN" "print current mode"
 
-assert_contains "caveman: lite rules present" "$CAVEMAN" "Rules: lite"
-
-assert_contains "caveman: full rules present" "$CAVEMAN" "Rules: full"
-
-assert_contains "caveman: ultra rules present" "$CAVEMAN" "Rules: ultra"
-
-assert_contains "caveman: confirms stop before Step 2 on empty/invalid" "$CAVEMAN" "do not proceed to Step 2"
+# Each mode must have its own Rules section
+assert_contains "caveman: rules section for off"   "$CAVEMAN" "^### Rules: off"
+assert_contains "caveman: rules section for lite"  "$CAVEMAN" "^### Rules: lite"
+assert_contains "caveman: rules section for full"  "$CAVEMAN" "^### Rules: full"
+assert_contains "caveman: rules section for ultra" "$CAVEMAN" "^### Rules: ultra"
 
 # ── caveman-commit.md contract ───────────────────────────────────────────────
 
@@ -112,28 +149,48 @@ COMMIT="$COMMANDS_DIR/caveman-commit.md"
 
 assert_frontmatter "caveman-commit: frontmatter valid" "$COMMIT"
 
-assert_contains "caveman-commit: nothing-staged stop message" "$COMMIT" "Nothing staged"
+# Nothing-staged must stop with exact message
+assert_contains "caveman-commit: nothing-staged stop message" \
+  "$COMMIT" "Nothing staged\. Run git add first"
 
-assert_contains "caveman-commit: conventional commit type list" "$COMMIT" "feat.*fix.*docs.*chore"
+# Must document all required conventional commit types
+assert_contains "caveman-commit: type feat present"   "$COMMIT" "\`feat\`"
+assert_contains "caveman-commit: type fix present"    "$COMMIT" "\`fix\`"
+assert_contains "caveman-commit: type chore present"  "$COMMIT" "\`chore\`"
 
-assert_contains "caveman-commit: scope optional rule" "$COMMIT" "omit if change spans"
+# Scope optional rule
+assert_contains "caveman-commit: scope optional for broad changes" \
+  "$COMMIT" "omit if change spans"
 
-assert_contains "caveman-commit: subject length cap" "$COMMIT" "50 char"
+# Subject length cap (must reference 50)
+assert_contains "caveman-commit: subject 50-char cap" "$COMMIT" "50 char"
 
-assert_contains "caveman-commit: breaking-change append rule" "$COMMIT" "append \`!\` to the type/scope"
+# Breaking-change rule: must say "append ! to type/scope" (not "prefix subject")
+assert_contains "caveman-commit: breaking-change uses append wording" \
+  "$COMMIT" "append \`!\` to the type/scope"
+assert_not_contains "caveman-commit: no stale prefix-subject wording" \
+  "$COMMIT" "prefix subject with"
 
-assert_contains "caveman-commit: unscoped breaking-change example" "$COMMIT" "feat!:"
+# Both scoped and unscoped examples must be present
+assert_contains "caveman-commit: unscoped breaking-change example" \
+  "$COMMIT" "feat!:"
+assert_contains "caveman-commit: scoped breaking-change example" \
+  "$COMMIT" "feat\(.*\)!:"
 
-assert_contains "caveman-commit: scoped breaking-change example" "$COMMIT" "feat(.*)\!:"
-
-assert_contains "caveman-commit: no markdown fences in output" "$COMMIT" "No markdown fences"
+# Output must be plain text, no fences
+assert_contains "caveman-commit: no markdown fences in output" \
+  "$COMMIT" "No markdown fences"
 
 # ── agent output-brevity contract ────────────────────────────────────────────
 
 for agent_file in "$AGENTS_DIR"/*.md; do
   agent_name="$(basename "$agent_file" .md)"
   assert_contains "agent/$agent_name: has Output brevity section" \
-    "$agent_file" "# Output brevity"
+    "$agent_file" "^# Output brevity"
+  assert_contains "agent/$agent_name: brevity section says No preamble" \
+    "$agent_file" "No preamble"
+  assert_contains "agent/$agent_name: brevity section says English only" \
+    "$agent_file" "English only"
 done
 
 # ── summary ──────────────────────────────────────────────────────────────────
@@ -143,6 +200,21 @@ if $LIST; then
   exit 0
 fi
 
-TOTAL=$((PASS+FAIL))
-echo "$PASS passed, $FAIL failed (total $TOTAL)"
-[[ $FAIL -eq 0 ]]
+# Fail if --filter matched nothing (prevents silent false-green on typos)
+if [[ -n "$FILTER" && $((PASS+FAIL)) -eq 0 ]]; then
+  printf 'no tests matched filter %q — check --list for available case names\n' \
+    "$FILTER" >&2
+  exit 1
+fi
+
+echo ""
+echo "----"
+echo "$PASS passed, $FAIL failed"
+if [[ $FAIL -gt 0 ]]; then
+  echo "failed cases:"
+  for c in "${FAILED_CASES[@]}"; do
+    echo "  - $c"
+  done
+  exit 1
+fi
+exit 0
