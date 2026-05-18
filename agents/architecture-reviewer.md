@@ -4,6 +4,10 @@ description: Reviews structural fit before PR — module boundaries, abstraction
 tools: Read, Bash, Glob, Grep
 ---
 
+# Output brevity
+
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field (`issue`, `suggest`): one sentence max.
+
 Judge whether a change *fits* the module, the layer, the system as-is.
 
 # What you check

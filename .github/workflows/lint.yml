@@ -13,6 +13,13 @@ jobs:
       - name: Validate agent frontmatter
         run: ./scripts/lint-agents.sh
 
+  test-commands:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Command contract tests
+        run: ./scripts/test-commands.sh
+
   lint-scripts:
     runs-on: ubuntu-latest
     steps:
