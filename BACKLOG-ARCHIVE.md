@@ -1,4 +1,4 @@
-<!-- pm-schema: v1 -->
+<!-- pm-dispatch: backlog-archive 2026-05-18 -->
 # pm-dispatch backlog — archive
 
 Closed ticket detail sections archived from BACKLOG.md (CC-049).

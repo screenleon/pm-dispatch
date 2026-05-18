@@ -115,11 +115,15 @@ run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-c
 run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
 run_validate_case "validate good-deferred-someday" "$fixtures/good-deferred-someday/BACKLOG.md" 0 ""
 run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACKLOG.md" 0 ""
-# Smoke: repo BACKLOG.md archive/stub changes introduce no new validator error types.
-# Pre-existing E-AREA-ENUM / E-REFS-PREFIX / E-DATE-FORMAT errors predate this PR; CC-052 will address them.
+# Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
+# Uses baseline comparison — any error not in the known pre-existing set is a regression.
+# Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-052 will fix them).
 repo_backlog=$(CDPATH= cd -- "$script_dir/../../.." && pwd)/BACKLOG.md
-if [ -f "$repo_backlog" ]; then
-  new_errs=$(bash "$root_dir/validate.sh" "$repo_backlog" 2>&1 | grep -v "E-AREA-ENUM\|E-REFS-PREFIX\|E-DATE-FORMAT" || true)
+baseline="$script_dir/BACKLOG_validator_baseline.txt"
+if [ -f "$repo_backlog" ] && [ -f "$baseline" ]; then
+  new_errs=$(comm -23 \
+    <(bash "$root_dir/validate.sh" "$repo_backlog" 2>&1 | sort) \
+    <(sort "$baseline"))
   if [ -z "$new_errs" ]; then
     pass "validate BACKLOG.md no new errors (archive smoke)"
   else
