@@ -17,8 +17,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
       - name: Validate frontmatter YAML
         run: ./scripts/lint-frontmatter.sh
+
+  test-lint-frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+      - name: lint-frontmatter regression suite
+        run: bash scripts/test-lint-frontmatter.sh
 
   test-commands:
     runs-on: ubuntu-latest
