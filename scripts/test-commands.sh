@@ -262,7 +262,7 @@ assert_contains "caveman-commit: BREAKING CHANGE footer documented" \
 assert_contains "caveman-commit: reads git diff --cached --stat" \
   "$COMMIT" "git diff --cached --stat"
 assert_contains "caveman-commit: reads git diff --cached" \
-  "$COMMIT" "git diff --cached"
+  "$COMMIT" "^git diff --cached$"
 
 # Output format shape must be documented
 assert_contains "caveman-commit: output format has type placeholder" \
