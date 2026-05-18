@@ -400,6 +400,229 @@ case_file_size_bytes_missing_file() {
   fi
 }
 
+case_link_or_copy_symlink_success() {
+  local name="link-or-copy-symlink-success"
+  should_run "$name" || return 0
+
+  local old_home="$HOME"
+  local root="$tmp_root/link-or-copy-symlink-success"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest_home="$tmp_root/link-or-copy-symlink-success-home"
+  local manifest
+  local src_abs dst_abs
+  local code
+  local out
+  local out_file
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local old_bogus="${FAKE_SYMLINK_BOGUS-0}"
+
+  rm -rf "$tmp_root/link-or-copy-symlink-success-home"
+  HOME="$manifest_home"
+  mkdir -p "$HOME/.claude/.pm-dispatch"
+  mkdir -p "$root"
+  printf 'ok\n' > "$src"
+
+  set +e
+  out_file="$root/link-or-copy.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code=$?
+  set -e
+  out="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  FAKE_SYMLINK_BOGUS="$old_bogus"
+  manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  HOME="$old_home"
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "rc=$code (want 0)"
+    return
+  fi
+  if ! [[ -L "$dst" ]]; then
+    fail "$name" "$dst is not a symlink"
+    return
+  fi
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  if ! grep -q '\"src\"' "$manifest" >/dev/null 2>&1; then
+    fail "$name" "manifest has no entries"
+    return
+  fi
+  src_abs="$(realpath_m "$src")"
+  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest"; then
+    fail "$name" "manifest missing src entry $src_abs"
+    return
+  fi
+  if ! grep -Fq "\"dst\":\"$dst_abs\"" "$manifest"; then
+    fail "$name" "manifest missing dst entry $dst_abs"
+    return
+  fi
+  if ! grep -Fq '"mode":"symlink"' "$manifest"; then
+    fail "$name" "manifest entry mode is not symlink"
+    return
+  fi
+  if grep -q '"sha256"' "$manifest"; then
+    fail "$name" "symlink-mode entry contains sha256"
+    return
+  fi
+  if grep -q '"fallback_reason"' "$manifest"; then
+    fail "$name" "symlink-mode entry contains fallback_reason"
+    return
+  fi
+  pass "$name"
+}
+
+case_link_or_copy_post_check_reject() {
+  local name="link-or-copy-post-check-reject"
+  should_run "$name" || return 0
+
+  local old_home="$HOME"
+  local root="$tmp_root/link-or-copy-post-check-reject"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest_home="$tmp_root/link-or-copy-post-check-reject-home"
+  local manifest
+  local src_abs dst_abs
+  local code
+  local out
+  local out_file
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local old_bogus="${FAKE_SYMLINK_BOGUS-0}"
+
+  rm -rf "$tmp_root/link-or-copy-post-check-reject-home"
+  HOME="$manifest_home"
+  mkdir -p "$HOME/.claude/.pm-dispatch"
+  mkdir -p "$root"
+  printf 'ok\n' > "$src"
+  FAKE_SYMLINK_BOGUS=1
+
+  set +e
+  out_file="$root/link-or-copy.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code=$?
+  set -e
+  out="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  FAKE_SYMLINK_BOGUS="$old_bogus"
+  manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  HOME="$old_home"
+
+  if [[ "$code" -ne 1 ]]; then
+    fail "$name" "rc=$code (want 1)"
+    return
+  fi
+  if [[ -L "$dst" ]]; then
+    fail "$name" "$dst is still a symlink"
+    return
+  fi
+  if ! grep -q 'symlink post-check failed' <<< "$out"; then
+    fail "$name" "no post-check fallback warning"
+    return
+  fi
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  if ! grep -Fq '"mode":"copy"' "$manifest"; then
+    fail "$name" "manifest entry mode is not copy"
+    return
+  fi
+  if ! grep -Fq '"sha256":"' "$manifest" || ! grep -Eq '\"sha256\":\"[0-9a-f]{64}\"' "$manifest"; then
+    fail "$name" "manifest copy entry missing valid sha256"
+    return
+  fi
+  if ! grep -Fq '"fallback_reason":"symlink post-check failed"' "$manifest"; then
+    fail "$name" "manifest copy entry fallback_reason incorrect"
+    return
+  fi
+  if ! [[ -f "$dst" ]]; then
+    fail "$name" "$dst not copied"
+    return
+  fi
+  src_abs="$(realpath_m "$src")"
+  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest" || ! grep -Fq "\"dst\":\"$dst_abs\"" "$manifest"; then
+    fail "$name" "manifest copy entry lacks src/dst"
+    return
+  fi
+  pass "$name"
+}
+
+case_link_or_copy_copy_fallback() {
+  local name="link-or-copy-copy-fallback"
+  should_run "$name" || return 0
+
+  local old_home="$HOME"
+  local root="$tmp_root/link-or-copy-copy-fallback"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest_home="$tmp_root/link-or-copy-copy-fallback-home"
+  local manifest
+  local src_abs dst_abs
+  local code
+  local out
+  local out_file
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local old_bogus="${FAKE_SYMLINK_BOGUS-0}"
+
+  rm -rf "$tmp_root/link-or-copy-copy-fallback-home"
+  HOME="$manifest_home"
+  mkdir -p "$HOME/.claude/.pm-dispatch"
+  mkdir -p "$root"
+  printf 'ok\n' > "$src"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  set +e
+  out_file="$root/link-or-copy.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code=$?
+  set -e
+  out="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  FAKE_SYMLINK_BOGUS="$old_bogus"
+  manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  HOME="$old_home"
+
+  if [[ "$code" -ne 1 ]]; then
+    fail "$name" "rc=$code (want 1)"
+    return
+  fi
+  if [[ -L "$dst" ]]; then
+    fail "$name" "$dst is still a symlink"
+    return
+  fi
+  if ! grep -q 'symlink unsupported on host' <<< "$out"; then
+    fail "$name" "no unsupported fallback warning"
+    return
+  fi
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  if ! grep -Fq '"mode":"copy"' "$manifest"; then
+    fail "$name" "manifest entry mode is not copy"
+    return
+  fi
+  if ! grep -Fq '"sha256":"' "$manifest" || ! grep -Eq '\"sha256\":\"[0-9a-f]{64}\"' "$manifest"; then
+    fail "$name" "manifest copy entry missing valid sha256"
+    return
+  fi
+  if ! grep -Fq '"fallback_reason":"symlink unsupported on host"' "$manifest"; then
+    fail "$name" "manifest copy entry fallback_reason incorrect"
+    return
+  fi
+  if ! [[ -f "$dst" ]]; then
+    fail "$name" "$dst not copied"
+    return
+  fi
+  src_abs="$(realpath_m "$src")"
+  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  if ! grep -Fq "\"src\":\"$src_abs\"" "$manifest" || ! grep -Fq "\"dst\":\"$dst_abs\"" "$manifest"; then
+    fail "$name" "manifest copy entry lacks src/dst"
+    return
+  fi
+  pass "$name"
+}
+
 case_realpath_m_existing_abs
 case_realpath_m_parent_dots
 case_realpath_m_nonexistent_leaf
@@ -415,6 +638,9 @@ case_detect_platform_host_native
 case_detect_platform_ostype_msys
 case_file_size_bytes_returns_size
 case_file_size_bytes_missing_file
+case_link_or_copy_symlink_success
+case_link_or_copy_post_check_reject
+case_link_or_copy_copy_fallback
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"

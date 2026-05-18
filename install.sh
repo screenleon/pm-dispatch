@@ -37,28 +37,19 @@ esac
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_HOME="$HOME/.claude"
 
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/lib/portable.sh"
+
 link() {
   local src="$1" dest="$2"
-  if [[ -L "$dest" ]]; then
-    local current
-    current="$(readlink "$dest")"
-    if [[ "$current" == "$src" ]]; then
-      echo "  ok    $dest"
-      return 0
-    fi
-    echo "  CONFLICT $dest -> $current (expected $src)" >&2
-    return 1
-  fi
-  if [[ -e "$dest" ]]; then
-    echo "  CONFLICT $dest exists and is not a symlink — skipping" >&2
-    return 1
-  fi
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "  would  $dest -> $src"
-  else
-    ln -s "$src" "$dest"
-    echo "  link   $dest -> $src"
-  fi
+  local rc
+  link_or_copy "$src" "$dest"
+  rc=$?
+  case "$rc" in
+    0|1) return 0 ;;
+    2|3) return 1 ;;
+    *) return 1 ;;
+  esac
 }
 
 remove_legacy_symlink() {
@@ -294,4 +285,9 @@ echo
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
+fi
+
+if ! manifest_flush "$HOME/.claude/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
+  echo "install: manifest write failed" >&2
+  exit 3
 fi
