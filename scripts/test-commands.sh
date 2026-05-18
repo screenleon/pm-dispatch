@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
       fi
       FILTER="$2"; shift 2 ;;
     --list) LIST=true; shift ;;
-    *) shift ;;
+    *) echo "error: unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
@@ -42,22 +42,6 @@ should_run() {
 
 PASS=0
 FAIL=0
-
-run_case() {
-  local name="$1" expect="$2"; shift 2
-  should_run "$name" || return 0
-  local out
-  out=$("$@" 2>&1); local rc=$?
-  if [[ "$expect" == "0" && "$rc" -eq 0 ]] || [[ "$expect" != "0" && "$rc" -ne 0 ]]; then
-    PASS=$((PASS+1))
-    ${VERBOSE:+echo "  PASS $name"}
-    return 0
-  fi
-  FAIL=$((FAIL+1))
-  FAILED_CASES+=("$name")
-  echo "  FAIL $name (exit $rc)"
-  [[ -n "$out" ]] && echo "$out" | sed 's/^/    /'
-}
 
 # Helper: assert file contains pattern (grep -E)
 assert_contains() {
@@ -91,17 +75,41 @@ assert_not_contains() {
   fi
 }
 
-# Helper: assert file has valid YAML frontmatter (--- block + description field)
+# Helper: assert file has complete YAML frontmatter (opening ---, closing ---, description field)
 assert_frontmatter() {
   local name="$1" file="$2"
   should_run "$name" || return 0
-  if head -1 "$file" | grep -q "^---$" && grep -q "^description:" "$file"; then
+  # opening --- on line 1, at least one more --- (closing delimiter), description: field
+  local has_open has_close has_desc
+  has_open=$(head -1 "$file" | grep -c "^---$" || true)
+  has_close=$(awk '/^---$/{c++} c==2{found=1;exit} END{print (found ? 1 : 0)}' "$file")
+  has_desc=$(grep -c "^description:" "$file" || true)
+  if [[ "$has_open" -ge 1 && "$has_close" -eq 1 && "$has_desc" -ge 1 ]]; then
     PASS=$((PASS+1))
     ${VERBOSE:+echo "  PASS $name"}
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    echo "  FAIL $name — missing or malformed frontmatter in $file"
+    echo "  FAIL $name — incomplete frontmatter (open=$has_open close=$has_close desc=$has_desc) in $file"
+  fi
+}
+
+# Helper: assert pattern appears WITHIN a named section (after "# <section>" heading)
+assert_in_section() {
+  local name="$1" file="$2" section="$3" pattern="$4"
+  should_run "$name" || return 0
+  # Extract lines from the section heading to the next same-level heading
+  local found
+  found=$(awk "/^# ${section}/{in_sec=1; next} in_sec && /^# /{exit} in_sec && /${pattern}/{found=1} END{print (found ? 1 : 0)}" "$file")
+  if [[ "$found" -eq 1 ]]; then
+    PASS=$((PASS+1))
+    ${VERBOSE:+echo "  PASS $name"}
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    echo "  FAIL $name"
+    echo "    expected pattern '$pattern' inside '# ${section}' section"
+    echo "    in file: $file"
   fi
 }
 
@@ -187,10 +195,10 @@ for agent_file in "$AGENTS_DIR"/*.md; do
   agent_name="$(basename "$agent_file" .md)"
   assert_contains "agent/$agent_name: has Output brevity section" \
     "$agent_file" "^# Output brevity"
-  assert_contains "agent/$agent_name: brevity section says No preamble" \
-    "$agent_file" "No preamble"
-  assert_contains "agent/$agent_name: brevity section says English only" \
-    "$agent_file" "English only"
+  assert_in_section "agent/$agent_name: brevity section says No preamble" \
+    "$agent_file" "Output brevity" "No preamble"
+  assert_in_section "agent/$agent_name: brevity section says English only" \
+    "$agent_file" "Output brevity" "English only"
 done
 
 # ── summary ──────────────────────────────────────────────────────────────────
