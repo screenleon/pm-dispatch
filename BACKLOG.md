@@ -12,7 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|
 | CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 |
-| CC-005 | 🔵 active | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
+| CC-005 | ⏸ deferred | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
 | CC-006 | ✅ closed 2026-05-13 | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ closed 2026-05-13 | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
 | CC-008 | ✅ closed 2026-05-13 | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
@@ -49,7 +49,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-036 | ✅ closed 2026-05-18 | `/pm` dispatch async ergonomics restore：classify+brief 仍走 subagent；execute 改 main-thread `Bash(codex-dispatch.sh, run_in_background:true)` 直派；恢復 dispatch + 完成通知並行 | ux/process | 2026-05-15 | — |
 | CC-037 | ✅ closed 2026-05-18 | `hook-routing-log.sh` concurrent append race：並行 PostToolUse 可能 silent-drop routing row | ux/memory | 2026-05-15 | — |
 | CC-038 | ⏸ deferred | Windows / cross-platform 鎖機制：`flock` Linux-only，未來支援 Windows/macOS 需替代方案 | ops/portability | 2026-05-15 | CC-037 follow-up |
-| CC-039 | 🔵 active | shared-schema brief enrichment + `/pre-impl` Q4 repo-rule audit + 每輪 fix brief next-layer sweep（JS-110、CC-013 兩次 7 輪 gate 後驗證） | process | 2026-05-15 | — |
+| CC-039 | ✅ closed 2026-05-18 | shared-schema brief enrichment + `/pre-impl` Q4 repo-rule audit + 每輪 fix brief next-layer sweep（JS-110、CC-013 兩次 7 輪 gate 後驗證） | process | 2026-05-15 | pr:#83 |
 | CC-036b | ✅ closed 2026-05-16 | dispatch handover authorized-override reconciliation：spec 允許 caller-authorized `skip_git_check:true` / `sandbox:danger-full-access` / `approval:on-request`，但 validator 預設 hard-reject 無 override channel；docs/commands example 也需 default-safe 化 | arch/process | 2026-05-16 | CC-036 follow-up |
 | CC-040 | ✅ closed 2026-05-16 | agent-agnostic dispatch schema rename：`docs/codex-brief.md` → `docs/dispatch-brief.md` + `codex_dispatch_handover_v1` → `dispatch_handover_v1` + `executor:` 欄位（為未來非 codex executor 預留） | arch/process | 2026-05-15 | pr:#66 |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` rotation/retention policy（max sessions vs bytes vs archive） | ux/memory | 2026-05-15 | — |
@@ -84,7 +84,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-050 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Audit stale deferred tickets CC-011/012/013/014/015 (memory-sync / SessionStart pull / `/caveman` / using-git-worktrees skill / systematic-debugging skill) from 2026-05-14. Post-CC-OSS public, some may be obsolete or low-priority; mark `🟢 backlog-for-someday` or drop with reasoning recorded | process/docs | 2026-05-17 | — |
 | CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
 | CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
-| CC-053 | ⏸ deferred | `test-commands.sh` CLI self-test coverage：`--filter` / `--list` / unknown / zero-match behavior not self-tested；introduced in PR #82, pre-existing relative to `feat/cc039-cc025b-v2` | test | 2026-05-18 | — |
+| CC-053 | 🔵 active | `test-commands.sh` CLI self-test coverage：`--filter` / `--list` / unknown / zero-match behavior not self-tested；introduced in PR #82, pre-existing relative to `feat/cc039-cc025b-v2` | test | 2026-05-18 | feat/cc053-cli-selftest |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 |
 
 ---
@@ -480,6 +480,9 @@ But the brief SCHEMA itself（`working_dir` / `goal` / `files` / `constraints` /
 
 ## CC-039 — shared-schema brief enrichment + `/pre-impl` Q4 repo-rule audit + fix-brief next-layer sweep
 
+**Outcome**: 2026-05-18 — PR #83 implemented the shared-schema checklist, `/pre-impl` Q4 repo-rule audit, and fix-brief next-layer sweep guidance.
+**See**: pr:#83
+
 **Problem**: japanese-site JS-110（furigana.title_ja `Pair[]` → `Token[]` shared-schema spike）即使在 `/pre-impl` + 既有 `[[shared_schema_briefs]]` 規則加持下，仍跑了 6 輪 PR gate 才達到 GO 狀態。每輪 emerging finding 中相當比例可追溯到三個系統性 brief-authoring 缺口：
 
 1. **Brief 漏項（5/6 輪可預先寫入）**：
@@ -757,14 +760,14 @@ review cycles in-place.
 **Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
 **Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
 
-## CC-053 — `test-commands.sh` CLI self-test coverage（deferred）
+## CC-053 — `test-commands.sh` CLI self-test coverage（active: feat/cc053-cli-selftest）
 
 **Problem**: `scripts/test-commands.sh` gained CLI behavior for `--filter`, `--list`, unknown options, and zero-match filters, but the test script does not self-test those command-line paths.
 **Why**: PR #82 increased `/caveman` contract coverage and raised the assertion count, but the harness-level CLI behavior remains a pre-existing coverage gap relative to `feat/cc039-cc025b-v2`. If those entry points regress, the suite can still appear healthy while filtering/listing behavior is broken.
 **Requirement**:
 1. Add focused self-tests for `scripts/test-commands.sh --list`.
 2. Add focused self-tests for `scripts/test-commands.sh --filter <pattern>` including a matching case and a zero-match case.
-3. Add an unknown-option case that asserts non-zero exit and actionable usage output.
+3. Add an unknown-option case that asserts non-zero exit and an error message (e.g. "error: unknown option"); actionable usage text is out of scope for this PR.
 4. Keep the tests deterministic and avoid changing unrelated `/caveman` command contracts.
 **Source**: 2026-05-18 backlog correction for PR #82 follow-up; gap introduced with `scripts/test-commands.sh` CLI behavior and observed while closing `feat/cc039-cc025b-v2`.
 

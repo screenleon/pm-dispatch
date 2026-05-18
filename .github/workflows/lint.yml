@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Command contract tests
         run: ./scripts/test-commands.sh
+      - name: Command runner CLI tests
+        run: ./scripts/test-commands-runner.sh
 
   lint-scripts:
     runs-on: ubuntu-latest
