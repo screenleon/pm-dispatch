@@ -101,6 +101,164 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 ---
 
+<!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
+
+## CC-005 — install.sh preflight 改為 opt-in via `--verify` ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-006 — statusLine hook 自動寫入 rate-limits ✅ 2026-05-13
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-007 — brief qa_checklist 指引 ✅ 2026-05-13
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-008 — Spark routing 判斷標準 ✅ 2026-05-13
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-009 — UserPromptSubmit hook inject MEMORY.md ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-010 — `/memory-compress` 指令 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-013 — `/caveman` token 壓縮 skill ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-016 — gate NO-GO fix-loop 效率 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-017 — 前端 UI 實作前置流程 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-019 — Episodic memory 層 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-020 — `/mem-search` 跨 memory 搜尋 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-021 — test scripts `--filter` / `--list` ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-022 — `/pre-impl` 開發前設計評審 ✅ 2026-05-14
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-025 — `/skill-refine` skill 自我精修 ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-025b — `/skill-refine` M1+M2 advisory follow-ups ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-027 — PreToolUse `hook-tool-trace.sh` ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-028 — PostToolUse `hook-routing-log.sh` ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-029 — `test-codex-dispatch.sh` 加入 CI ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-034 — `install-hooks.sh` 改名/移動 bug ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-036 — `/pm` dispatch async ergonomics restore ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-036b — dispatch handover authorized-override reconciliation ✅ 2026-05-16
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-037 — `hook-routing-log.sh` concurrent append race ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-039 — shared-schema brief enrichment + `/pre-impl` Q4 audit ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-040 — agent-agnostic dispatch schema rename ✅ 2026-05-16
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-047 — `scripts/codex-dispatch.sh` model alias mapping ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-053 — `test-commands.sh` CLI self-test coverage ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-055 — `commands/pr-gate.md` frontmatter YAML fixed ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-056 — `scripts/lint-frontmatter.sh` + CI job ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-057 — README `skills/` layout row removed ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-100 — [CC-OSS Phase 1] Sanitize personal paths ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-101 — [CC-OSS Phase 2 spike] Executor-contract schema ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-102 — [CC-OSS Phase 2 impl] `claude-executor` agent + install profile ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-102b — CC-102 PR-gate advisory follow-ups ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-103 — [CC-OSS Phase 3] Portability shim ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-103b — /pr-gate executor split ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104 — [CC-OSS Phase 4] Onboarding docs batch ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104h — CC-104 handover schema docs ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104i — CC-104 install.sh profile docs ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-105 — [CC-OSS Phase 5] BACKLOG cleanup + v0.1.0 release ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
 ## CC-003 — parallel-gate artifact-ignore 前置檢查
 
 **Problem**: scripts/pr-gate.sh parallel mode 在 line 410/414 對 git status --porcelain 取 fingerprint，但 fingerprint 取樣後 gate 本身會寫入 .agent-trace/ / .codex-briefs/ / .gate-results/。若 target repo 沒跑過 setup-project.sh 或這三個路徑未在 .gitignore，gate 自己的寫入就會改動 status hash，觸發 line 575 的 fail-closed integrity check，在原本健康的 repo 卡住 PR review。
@@ -214,6 +372,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 依賴 **CC-031**, **CC-032** 完成；本條為「最後一哩」與後續評估。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 
+## CC-035 — install/uninstall-hooks basename+scripts/ collision edge case
+
+**Problem**: install/uninstall hooks 目前以 basename + `scripts/` heuristic 判斷既有 hook 是否屬於 pm-dispatch，但另一個工具若也在 `scripts/` 下使用同名 hook，仍可能 collision。
+**Why**: CC-034 修掉 full-path 比對造成的 append-not-replace bug，但 basename heuristic 仍不是完整 ownership model。
+**Requirement**: 設計更明確的 hook ownership marker 或 install manifest，讓 uninstall/replace 只影響 pm-dispatch 自己寫入的 hook entry。
+**Source**: CC-034 follow-up from PR #53.
+
 ## CC-038 — Windows / cross-platform locking primitive（deferred）
 
 **Problem**: CC-037 用 `flock -x -w 2` 序列化 `hook-routing-log.sh` 的 append/rotation 路徑。`flock` 是 Linux util-linux 工具，Windows（純 PowerShell / Git Bash 無 util-linux）與 macOS（預設不裝 util-linux，需 `brew install flock`）都不能直接使用。除了 hook-routing-log，整個 `scripts/` 樹大量依賴 Linux-isms（GNU awk、GNU sed、`printf -v`、`procfs`、`/dev/null` 重導向細節等），整體 portability 是一塊待面對的工作面，不只這一支腳本。
@@ -281,6 +446,24 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Source**: 2026-05-16 gate-20260516-205441 (r5) + gate-20260516-205833 (r6) advisory findings。CC-030 直接 follow-up。
 **Note**: 安全 refactor，無 schema 變動；建議 fixture 增加之前先做 dedup，否則新 case 又繞 helper 重複一次。
 **Cross-link**: 跟 [[shared_schema_briefs]] 同精神 — 把 schema-grammar 集中在單一處避免 drift。
+
+## CC-049 — BACKLOG hygiene Tier 1 archive closed detail sections（deferred）
+
+**Problem**: Closed ticket detail sections clutter BACKLOG.md and make active scanning slower.
+**Why**: The index status emoji and PR refs are enough for normal scanning; full closed prose can live in BACKLOG-ARCHIVE.md.
+**Requirement**: Move closed ticket detail sections to BACKLOG-ARCHIVE.md while preserving index rows, closure dates, PR refs, and validator-compatible archived stubs in BACKLOG.md.
+
+## CC-050 — BACKLOG hygiene Tier 1 stale deferred audit（deferred）
+
+**Problem**: Stale deferred tickets CC-011/012/013/014/015 were recorded before the OSS cleanup and may no longer reflect current priority.
+**Why**: Post-public-roadmap cleanup should distinguish truly deferred work from someday/personal/obsolete work.
+**Requirement**: Audit those stale memory-sync and skill-related entries, then mark them as someday/deferred/drop with reasoning preserved in the backlog.
+
+## CC-051 — BACKLOG schema convention preamble（deferred）
+
+**Problem**: BACKLOG.md uses ID gaps, sub-letter IDs, and multiple status emoji without a compact convention preamble.
+**Why**: Fork readers need to understand that CC-1NN and CC-2NN are semantic groupings, and that sub-letter IDs are follow-ups to parent tickets.
+**Requirement**: Add a schema convention preamble covering ID convention, sub-letter convention, and status emoji legend.
 
 ## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
 
@@ -358,3 +541,33 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: `hook-codex-bash-guard.sh` 的 git allowlist、read path allowlist、shell metacharacter blocklist 等 policy 直接寫在 shell script 邏輯中；per-repo override 不可能，policy 審計需要讀 shell code。
 **Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
 **Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
+
+## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
+
+**Problem**: `/pm` and `/pr-gate` each encode codex/claude routing logic separately.
+**Why**: A third consumer would turn the duplicated route logic into a maintenance cost and make executor behavior easier to drift.
+**Requirement**: Extract shared codex/claude routing into `scripts/lib/executor-router.sh`, preserving existing CLI behavior for current callers.
+
+## CC-201 — Reuse debt: `detect_executor_profile()` shim（deferred）
+
+**Problem**: `install-hooks.sh` and `pr-gate.sh` both repeat `command -v codex` style executor-profile detection.
+**Why**: Profile detection should be consistent across install and dispatch paths.
+**Requirement**: Move executor-profile detection into a shared shim, likely `scripts/lib/portable.sh` or a focused executor helper, and update both consumers.
+
+## CC-202 — Reuse debt: handover validator framework（deferred）
+
+**Problem**: `dispatch_handover_v1` and `pr-gate-handover_v1` validators duplicate fence, metadata, and body validation structure.
+**Why**: Future handover schemas should not require hand-written validation boilerplate for every shared grammar rule.
+**Requirement**: Extract a reusable handover validator framework that schema-specific validators can configure.
+
+## CC-203 — Reuse debt: `scripts/lib/test-harness.sh`（deferred）
+
+**Problem**: Eight or more `test-*.sh` scripts each implement their own `--filter`, `--list`, `should_run()`, pass/fail counter, and scratch-dir handling.
+**Why**: Test harness behavior should be consistent, and fixes to CLI test behavior should not require repeated edits across scripts.
+**Requirement**: Create a source-able `scripts/lib/test-harness.sh` and migrate test scripts incrementally.
+
+## CC-204 — Reuse debt: hook framework（deferred）
+
+**Problem**: pm-write-guard, codex-bash-guard, codex-write-guard, and routing-log hooks repeat stdin JSON parsing, decision matrix, and audit-log structure.
+**Why**: The hook layer has enough shared behavior that copy-paste-modify makes policy and logging drift likely.
+**Requirement**: Extract a shared hook framework for stdin JSON parsing, policy decisions, and audit logging, while preserving hook-specific policy rules.

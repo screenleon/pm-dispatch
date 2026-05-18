@@ -7,11 +7,10 @@ Last archived: 2026-05-18
 
 ---
 
-## CC-005 — install.sh preflight 改為 opt-in（active: feat/cc005-install-verify-opt-in）
+## CC-005 — install.sh preflight 改為 opt-in via --verify ✅ 2026-05-18
 
-**Problem**: install.sh 預設跑所有 preflight 測試套件（11 個），test suite 越來越大（現 100+ cases），新用戶 install 體驗差——他們只想使用工具，不需要看 regression output。
-**Why**: 測試套件驗「工具邏輯是否正確」，不是「剛才的安裝有沒有壞掉」；CI 已涵蓋所有測試，從 main 安裝的用戶不需要再跑一遍。
-**Requirement**: 把 preflight 改成 opt-in：`./install.sh` 預設跳過測試，`./install.sh --verify` 才跑全套。`CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1` escape hatch 不動。CI 不受影響（直接跑 `test-install.sh`，不依賴 install.sh 跑 preflights）。
+**Outcome**: `./install.sh` now skips tests by default; `./install.sh --verify` runs the full suite. `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1` escape hatch unchanged. CI unaffected.
+**See**: pr:#85
 
 ## CC-006 — statusLine hook 自動寫入 rate-limits ✅ 2026-05-13
 
@@ -487,31 +486,22 @@ review cycles in-place.
 **Why**: qa-tester r2 verdict: "add regression tests for --profile minimal/full installer behavior and reversible/downgrade semantics" 是 NO-GO 必修。
 **Cross-link**: [[feedback_known_bug_backlog]] — backlog-only deferral 不足以滿足 qa-tester；future code-affecting advisory 應直接 fold-in 同 PR。
 
-## CC-053 — `test-commands.sh` CLI self-test coverage（active: feat/cc053-cli-selftest）
+## CC-053 — `test-commands.sh` CLI self-test coverage ✅ 2026-05-18
 
-**Problem**: `scripts/test-commands.sh` gained CLI behavior for `--filter`, `--list`, unknown options, and zero-match filters, but the test script does not self-test those command-line paths.
-**Why**: PR #82 increased `/caveman` contract coverage and raised the assertion count, but the harness-level CLI behavior remains a pre-existing coverage gap relative to `feat/cc039-cc025b-v2`. If those entry points regress, the suite can still appear healthy while filtering/listing behavior is broken.
-**Requirement**:
-1. Add focused self-tests for `scripts/test-commands.sh --list`.
-2. Add focused self-tests for `scripts/test-commands.sh --filter <pattern>` including a matching case and a zero-match case.
-3. Add an unknown-option case that asserts non-zero exit and an error message (e.g. "error: unknown option"); actionable usage text is out of scope for this PR.
-4. Keep the tests deterministic and avoid changing unrelated `/caveman` command contracts.
-**Source**: 2026-05-18 backlog correction for PR #82 follow-up; gap introduced with `scripts/test-commands.sh` CLI behavior and observed while closing `feat/cc039-cc025b-v2`.
+**Outcome**: Added self-tests for `--filter`, `--list`, unknown option (non-zero + error message), and zero-match filter behavior in `scripts/test-commands.sh`.
+**See**: pr:#84
 
-## CC-055 — [P0] commands/pr-gate.md frontmatter YAML parse error
+## CC-055 — `commands/pr-gate.md` frontmatter YAML syntax fixed ✅ 2026-05-18
 
-**Problem**: `commands/pr-gate.md` frontmatter 的 `argument-hint` 值含未 quote 的 `[...]`（`[express|standard|full] [--targeted r1,r2]...`），YAML flow sequence 語法使 GitHub YAML parser 顯示 parse error。`agents/claude-executor.md` description 含 `` `executor: claude` ``（backtick 內含 `: `），部分嚴格 YAML parser 也會報錯。
-**Why**: frontmatter parse error 可能影響 Claude Code command discovery（command metadata 讀取失敗）及 GitHub UI 顯示；是低成本、高確信的修復。
-**Requirement**: 把 `commands/pr-gate.md` 的 `argument-hint` 改成 quoted string；確認 `agents/claude-executor.md` description 的 YAML 合法性。修復後加入 CC-056 lint 防止再發生。
+**Outcome**: `argument-hint` value in `commands/pr-gate.md` frontmatter quoted as YAML string, resolving GitHub YAML parse error.
+**See**: pr:#86
 
-## CC-056 — [P0] scripts/lint-frontmatter.sh + CI job
+## CC-056 — `scripts/lint-frontmatter.sh` + CI job + 12 regression tests ✅ 2026-05-18
 
-**Problem**: 沒有 CI 自動驗證 `agents/*.md` / `commands/*.md` frontmatter YAML 是否合法；CC-055 類問題須等到 GitHub 顯示錯誤才發現。
-**Why**: frontmatter 是 Claude Code 的 command/agent metadata 入口；invalid YAML 會靜默失效（command 不被 discover），不會有明顯錯誤。
-**Requirement**: 新增 `scripts/lint-frontmatter.sh`，掃 `agents/*.md` / `commands/*.md`，用 `python3 -c 'import yaml; yaml.safe_load()'` 或 `yq` 驗 frontmatter；CI 新增一個 lint job 跑此腳本。失敗時輸出精確的檔名 + 錯誤行。
+**Outcome**: New `scripts/lint-frontmatter.sh` validates YAML frontmatter in `agents/*.md` and `commands/*.md`. CI `lint-frontmatter` and `test-lint-frontmatter` jobs added. PyYAML dep declared.
+**See**: pr:#86
 
-## CC-057 — [P0] README ↔ 實際目錄同步（skills/ 聲稱但不存在）
+## CC-057 — README `skills/` layout row + `update-config` ref removed ✅ 2026-05-18
 
-**Problem**: README 顯式列出 `skills/ → ~/.claude/skills/ invocable skills` 為頂層目錄結構的一部分，並在後文提到 `update-config` skill；但 `skills/` 目錄與任何 SKILL.md 均不存在於 repo。外部讀者 fork 後找不到宣稱的目錄，造成 onboarding confusion。
-**Why**: 文件與實際結構不符是低信任度信號；已公開的 repo（v0.1.0）裡存在會被 fork 的使用者注意。
-**Requirement**: 二選一：(A) 從 README 移除 `skills/` 一行及 `update-config` 引用，直到 CC-061 完成；(B) 建立 `skills/.gitkeep` + 一個最小 placeholder SKILL.md，讓目錄結構名符其實。先做 (A)，CC-061 完成後轉 (B)。
+**Outcome**: Removed `skills/      → ~/.claude/skills/` row from README layout table and `(or use the `update-config` skill)` parenthetical. Pending CC-061 to create the actual directory.
+**See**: pr:#86
