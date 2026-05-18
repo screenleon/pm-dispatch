@@ -5,20 +5,25 @@
 # Per-file symlinks: ~/.claude/agents/ may contain agents from other sources alongside.
 #
 # Usage:
-#   ./install.sh [--dry-run] [--profile minimal|full]
+#   ./install.sh [--dry-run] [--profile minimal|full] [--verify]
 #
 # --profile selects the hook set:
 #   full     wire all hooks including codex-* guards (use when you run codex CLI)
 #   minimal  skip codex-* guards (claude-only setup)
 #   (omit)   auto-detect: codex on PATH → full, else minimal
+#
+# --verify runs all preflight test suites before installing.
+#   Skipped by default; recommended when contributing or after updating.
 
 set -euo pipefail
 
 DRY_RUN=0
+VERIFY=0
 PROFILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --verify) VERIFY=1; shift ;;
     --profile)
       [[ $# -ge 2 ]] || { echo "install: --profile requires a value" >&2; exit 2; }
       PROFILE="$2"
@@ -114,12 +119,17 @@ echo "  claude home: $CLAUDE_HOME"
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:        DRY RUN"; fi
 echo
 
-# All pre-flight checks are skipped when called from test-install.sh
-# (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1) to avoid running the full suite for
-# every install.sh invocation in the installer test suite (~9 calls × N tests).
-_SKIP_PREFLIGHT="${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}"
-if [[ "$_SKIP_PREFLIGHT" == "1" ]]; then
+# Preflight tests run only when explicitly requested with --verify.
+# Skipped when called from test-install.sh (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1).
+if [[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" == "1" ]]; then
+  _SKIP_PREFLIGHT=1
   echo "  [preflight skipped: CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1]"
+  echo
+elif [[ "$VERIFY" -eq 1 ]]; then
+  _SKIP_PREFLIGHT=0
+else
+  _SKIP_PREFLIGHT=1
+  echo "  [preflight tests skipped — pass --verify to run them]"
   echo
 fi
 

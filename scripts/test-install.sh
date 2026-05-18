@@ -1282,6 +1282,117 @@ test_skip_preflight_skips_all_tests() {
   $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
 }
 
+test_default_install_skips_preflights() {
+  # Verifies that ./install.sh without --verify skips all preflights by default
+  # and prints the new opt-in hint message.
+  # Steps:
+  #   1. Create a sandbox settings.json
+  #   2. Run install.sh --dry-run (no CLAUDE_CONFIG_TEST_INSTALL_RUNNING, no --verify)
+  #   3. Assert output contains the skip hint message
+  #   4. Assert output contains NO "==>" preflight section headers
+  local name="default-install-skips-preflights"
+  should_run "$name" || return 0
+  local home out
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  out=$(env -u CLAUDE_CONFIG_TEST_INSTALL_RUNNING HOME="$home" \
+    bash "$REPO_ROOT/install.sh" --dry-run 2>&1)
+
+  local ok=true
+  if [[ "$out" != *"preflight tests skipped"* ]]; then
+    ok=false
+    printf '  FAIL  %s — expected skip hint message not found in output\n' "$name" >&2
+  fi
+  for label in "test hooks" "test migrate routing log" "test install" "test usage" \
+               "test pm" "test codex" "test pr-gate" "test setup-project" \
+               "test patch-gitignore" "lint agents" "lint scripts"; do
+    if [[ "$out" == *"==> $label"* ]]; then
+      ok=false
+      printf '  FAIL  %s — unexpected preflight section with default flags: "==> %s"\n' "$name" "$label" >&2
+    fi
+  done
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
+}
+
+test_verify_flag_runs_preflights() {
+  # Verifies that ./install.sh --verify causes all 12 preflight suites to run.
+  # When this test runs inside install.sh's own preflight suite
+  # (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1), invoking install.sh --verify would
+  # recurse infinitely. Guard by passing immediately in that context; the real
+  # assertion runs when this suite is invoked directly.
+  local name="verify-flag-runs-preflights"
+  should_run "$name" || return 0
+  if [[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" == "1" ]]; then
+    pass "$name"
+    return 0
+  fi
+  local home out exit_code=0
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  # Use || exit_code=$? so set -euo pipefail does not abort on nonzero exit;
+  # exit_code captures the actual status for the explicit failure assertion.
+  out=$(HOME="$home" CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" \
+    bash "$REPO_ROOT/install.sh" --verify --dry-run 2>&1) || exit_code=$?
+
+  local ok=true
+  if [[ $exit_code -ne 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — install.sh --verify exited %d; failing preflight shown above\n' "$name" "$exit_code" >&2
+  fi
+  for label in "lint agents" "lint scripts" "test hooks" "test migrate routing log" \
+               "test install" "test usage weekly" "test usage tracker" "test pm scripts" \
+               "test codex-dispatch" "test pr-gate" "test setup-project" \
+               "test patch-gitignore"; do
+    if [[ "$out" != *"==> $label"* ]]; then
+      ok=false
+      printf '  FAIL  %s — expected preflight section "==> %s" not found\n' "$name" "$label" >&2
+    fi
+  done
+  if [[ "$out" == *"preflight tests skipped"* ]]; then
+    ok=false
+    printf '  FAIL  %s — skip message should not appear when --verify is passed\n' "$name" >&2
+  fi
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
+}
+
+test_escape_hatch_overrides_verify() {
+  # Verifies CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 takes precedence over --verify;
+  # preflights must be skipped even when --verify is passed.
+  local name="escape-hatch-overrides-verify"
+  should_run "$name" || return 0
+  local home out exit_code=0
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+
+  out=$(CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 HOME="$home" \
+    bash "$REPO_ROOT/install.sh" --verify --dry-run 2>&1) || exit_code=$?
+
+  local ok=true
+  if [[ $exit_code -ne 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — install.sh exited %d unexpectedly\n' "$name" "$exit_code" >&2
+  fi
+  if [[ "$out" != *"preflight skipped: CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1"* ]]; then
+    ok=false
+    printf '  FAIL  %s — escape hatch skip message not found\n' "$name" >&2
+  fi
+  for label in "lint agents" "lint scripts" "test hooks" "test migrate routing log" \
+               "test install" "test usage weekly" "test usage tracker" "test pm scripts" \
+               "test codex-dispatch" "test pr-gate" "test setup-project" \
+               "test patch-gitignore"; do
+    if [[ "$out" == *"==> $label"* ]]; then
+      ok=false
+      printf '  FAIL  %s — unexpected preflight section "==> %s" ran despite escape hatch\n' "$name" "$label" >&2
+    fi
+  done
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
+}
+
 test_install_sh_wires_hooks
 test_install_sh_profile_minimal_skips_codex_hooks
 test_install_sh_profile_full_wires_codex_hooks
@@ -1334,6 +1445,9 @@ test_filter_no_match_exits_nonzero() {
 }
 
 test_skip_preflight_skips_all_tests
+test_default_install_skips_preflights
+test_verify_flag_runs_preflights
+test_escape_hatch_overrides_verify
 test_filter_no_match_exits_nonzero
 
 if $LIST; then
