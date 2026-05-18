@@ -83,7 +83,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-049 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Archive closed CC ticket detail sections → `BACKLOG-ARCHIVE.md`. Currently 26 closed sections cluttering 688-line BACKLOG body; index status emoji + PR ref preserved in main file, full prose moved to archive. Goal: reduce active BACKLOG to ~350 lines for faster scan | process/docs | 2026-05-17 | — |
 | CC-050 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Audit stale deferred tickets CC-011/012/013/014/015 (memory-sync / SessionStart pull / `/caveman` / using-git-worktrees skill / systematic-debugging skill) from 2026-05-14. Post-CC-OSS public, some may be obsolete or low-priority; mark `🟢 backlog-for-someday` or drop with reasoning recorded | process/docs | 2026-05-17 | — |
 | CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
-| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** Tier 2 alternative: `pm-schema v1.1` adds `epic:` field — sequential IDs (CC-048..) with `epic: oss` / `epic: reuse-debt` as orthogonal grouping. Retroactive renumbering of CC-100/200 series + PR/commit refs is expensive; only do if multi-month signal that the ID-gap convention is causing real confusion. CC-051 (preamble) is the cheaper resolution | process/schema | 2026-05-17 | — |
+| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
 
 ---
 
@@ -741,3 +741,15 @@ review cycles in-place.
 2. (architecture-reviewer) `scripts/install-hooks.sh` minimal profile 只 skip 插入 codex guard hooks，不會 remove 已存在的；用 `--profile full` 安裝後再 `--profile minimal` rerun，settings.json 不會 converge 到 minimal contract
 **Why**: qa-tester r2 verdict: "add regression tests for --profile minimal/full installer behavior and reversible/downgrade semantics" 是 NO-GO 必修。
 **Cross-link**: [[feedback_known_bug_backlog]] — backlog-only deferral 不足以滿足 qa-tester；future code-affecting advisory 應直接 fold-in 同 PR。
+
+## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
+
+**Problem**: 目前 BACKLOG index table 有三個結構性缺口：(1) 無優先度欄位——`P1/P2/P3` tags 只在 body section 以 `**Tags**: P1` 記錄，掃 index 時不可見、不可排序；(2) ID gap 慣例（CC-1NN = OSS epic、CC-2NN = reuse-debt）對 fork 用戶不透明，CC-051 preamble 只能靠文字說明；(3) epic/分組資訊無法機器化查詢。
+**Why**: 使用者決策（2026-05-18）：希望 index-level 優先度可見，納入 CC-052 schema upgrade 範圍，與 epic 欄一起升版而非分別處理。
+**Requirement**:
+1. `pm-schema v1.1` index table 新增兩欄：`priority`（P1/P2/P3；未設為空）、`epic`（`oss`/`reuse-debt`/`hygiene` 或空）。
+2. `pm/scripts/validate.sh` 對應更新：新欄格式驗證；向下相容（舊 v1 列無新欄時 emit warning 而非 error，允許漸進補齊）。
+3. 全現有 index 列補 priority 欄（依當時判斷填入或留空）；CC-1NN 補 `epic: oss`、CC-2NN 補 `epic: reuse-debt`。
+4. BACKLOG schema preamble（CC-051 工作）同步更新，說明新欄慣例。
+**Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
+**Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
