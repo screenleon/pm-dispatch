@@ -515,3 +515,10 @@ review cycles in-place.
 
 **Outcome**: CC-011/012 → `🟢 someday`, CC-014/015 → `🟡 deferred` with CC-050 audit status notes. Five pending PR status corrections applied: CC-005 (pr:#85), CC-053 (pr:#84), CC-055/056/057 (pr:#86).
 **See**: pr:#87
+
+## CC-051 — BACKLOG schema convention preamble ✅ 2026-05-18
+
+**Problem**: BACKLOG.md uses ID gaps, sub-letter IDs, and multiple status emoji without a compact convention preamble. Fork readers have no way to understand the naming conventions.
+**Why**: Conventions emerged organically. Without documentation, `CC-1NN`/`CC-2NN` groupings and sub-letter IDs look like random gaps and typos to fork users.
+**Requirement**: A `## Convention` prose section at the top of BACKLOG.md explains: ID scheme, sub-letter convention, status legend (all 8 tokens), and closed-stub format. Section must appear before archived stubs.
+**See**: pr:#88

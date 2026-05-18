@@ -155,6 +155,13 @@ function parse_status(id, status, d) {
     row_kind[id] = "deferred"
     return
   }
+  if (status ~ /^⚠️ partial /) {
+    d = status
+    sub(/^⚠️ partial /, "", d)
+    row_kind[id] = "active"
+    if (!valid_date(d)) emit("E-DATE-FORMAT", id " invalid partial date: " d)
+    return
+  }
   if (status ~ /^✅ closed /) {
     d = status
     sub(/^✅ closed /, "", d)
@@ -311,6 +318,8 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
     status = "done"
   } else if (status == "⏸ deferred" || status == "🟡 deferred" || status == "🟢 someday") {
     status = "deferred"
+  } else if (status ~ /^⚠️ partial /) {
+    status = "active"
   } else if (status ~ /^🚫 dropped /) {
     status = "dropped"
   } else {

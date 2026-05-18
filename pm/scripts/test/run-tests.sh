@@ -115,6 +115,9 @@ run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-c
 run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
 run_validate_case "validate good-deferred-someday" "$fixtures/good-deferred-someday/BACKLOG.md" 0 ""
 run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACKLOG.md" 0 ""
+run_validate_case "validate good-partial" "$fixtures/good-partial/BACKLOG.md" 0 ""
+run_validate_case "validate bad-partial-date" "$fixtures/bad-partial-date/BACKLOG.md" 1 "E-DATE-FORMAT"
+run_validate_case "validate bad-changelog-drift partial-row" "$fixtures/bad-changelog-drift-partial/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 # Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
 # Uses baseline comparison — any error not in the known pre-existing set is a regression.
 # Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-052 will fix them).
