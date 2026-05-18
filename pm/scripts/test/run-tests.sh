@@ -113,6 +113,19 @@ run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/
 run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
+run_validate_case "validate good-deferred-someday" "$fixtures/good-deferred-someday/BACKLOG.md" 0 ""
+run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACKLOG.md" 0 ""
+# Smoke: repo BACKLOG.md archive/stub changes introduce no new validator error types.
+# Pre-existing E-AREA-ENUM / E-REFS-PREFIX / E-DATE-FORMAT errors predate this PR; CC-052 will address them.
+repo_backlog=$(CDPATH= cd -- "$script_dir/../../.." && pwd)/BACKLOG.md
+if [ -f "$repo_backlog" ]; then
+  new_errs=$(bash "$root_dir/validate.sh" "$repo_backlog" 2>&1 | grep -v "E-AREA-ENUM\|E-REFS-PREFIX\|E-DATE-FORMAT" || true)
+  if [ -z "$new_errs" ]; then
+    pass "validate BACKLOG.md no new errors (archive smoke)"
+  else
+    fail "validate BACKLOG.md no new errors (archive smoke)" "$(printf '%s' "$new_errs" | head -3)"
+  fi
+fi
 run_validate_case_multi "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
 # DECISIONS.md is intentionally only an existing file; validate.sh does not parse it yet.
 run_validate_case_multi "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"

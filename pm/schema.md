@@ -9,7 +9,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 - `BACKLOG.md` — 工作條目單一真理（active + 近期 closed stub）
 - `DECISIONS.md` — 已沉澱的設計決策日誌（既有檔案沿用）
-- `BACKLOG_CLOSED.md` — 歸檔倉，僅在膨脹政策觸發時建立
+- `BACKLOG-ARCHIVE.md` — 歸檔倉，僅在膨脹政策觸發時建立
 
 跨 repo 或 cross-cutting 的決策放 `~/.claude/.pm/DECISIONS.md`（自身），不汙染個別 repo 的 DECISIONS.md。
 
@@ -32,13 +32,15 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 ### 2.3 Status enum
 
-五值：
+七個可接受 status token：
 
 - `🔵 active` — 仍在 backlog，包含尚未開工 / 進行中 / 阻塞中（細節寫在 body）
 - `✅ closed YYYY-MM-DD` — 已 ship，body 折疊為 closed stub（§2.6）
 - `🚫 dropped YYYY-MM-DD` — 不做了，body 折疊為 stub 並指向 DECISIONS
 - `✅ done` — **soft-close**：已完成但不需要 PR 追蹤或具體日期的項目（例：文件新增、config 設定）。body 保持 active 格式（Problem/Why/Requirement），不需折疊為 stub；不需要 `See:` 引用。
 - `⏸ deferred` — **延後**：不是不做，而是等待外部條件（依賴項、時機）再推進。body 保持 active 格式；與 `🔵 active` 的差異是「現在刻意不排程」。
+- `🟡 deferred` — **明確延後（alternate）**：`⏸ deferred` 的同義視覺變體；語義相同，validator 兩者皆接受。
+- `🟢 someday` — **有朝一日**：概念有效但優先級極低、暫無預期排程；不等外部條件，只是「未來某天再做」。
 
 不再使用 `todo / doing / done / blocked` 等舊四態；`doing / blocked` 屬於 active 內的暫態，記在 body。
 
@@ -50,7 +52,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 |----|--------|------|--------|----------|------|
 
 - **#**：條目 ID
-- **Status**：上述五值之一
+- **Status**：上述可接受 token 之一
 - **主題**：6–12 字標題
 - **影響面**：見下方 area enum；單值或斜線複合
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
@@ -157,8 +159,8 @@ closed 條目折疊為 3–5 行：
 對 BACKLOG.md：
 
 - 行數 > 500 **或** closed/dropped 條目佔比 > 50% 時，觸發歸檔。
-- 歸檔動作：將最舊的 closed/dropped stubs 整段移至 `BACKLOG_CLOSED.md`（同檔案結構：索引 + stubs），index table 同步移除這些列。
-- BACKLOG.md 永遠保留**最近 30 天內** closed 的 stub，方便 PR review 對照。
+- 歸檔動作：將 closed/dropped 條目的 body section 整段移至 `BACKLOG-ARCHIVE.md`；在 BACKLOG.md 原位留下 **closed stub**（heading 含 `✅ YYYY-MM-DD` 或 `🚫 YYYY-MM-DD`，加 `**See**: BACKLOG-ARCHIVE.md` 指標）；index row 保留、不移除。
+- BACKLOG.md 永遠保留 index table 及 closed stubs，方便一眼掃描所有條目的狀態；完整歷史在 `BACKLOG-ARCHIVE.md`。
 - DECISIONS.md 不歸檔（決策不過期）。
 
 ## 5. 跨 repo 採用規則
