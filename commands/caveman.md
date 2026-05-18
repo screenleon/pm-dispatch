@@ -1,5 +1,5 @@
 ---
-description: Switch response compression mode to reduce token usage in long sessions. Modes: off / lite / full / ultra.
+description: "Switch response compression mode to reduce token usage in long sessions. Modes: off / lite / full / ultra."
 argument-hint: "[off|lite|full|ultra]"
 ---
 

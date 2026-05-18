@@ -1,6 +1,6 @@
 ---
 name: claude-executor
-description: Self-executing main-thread tool surface — reads a pre-written brief file, performs the edits/commands itself, runs self_verify, and reports back. Use when the install profile is minimal (no codex CLI) or the PM brief explicitly sets `executor: claude`. NOT a planning agent.
+description: "Self-executing main-thread tool surface — reads a pre-written brief file, performs the edits/commands itself, runs self_verify, and reports back. Use when the install profile is minimal (no codex CLI) or the PM brief explicitly sets `executor: claude`. NOT a planning agent."
 tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 

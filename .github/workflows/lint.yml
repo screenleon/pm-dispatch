@@ -13,6 +13,13 @@ jobs:
       - name: Validate agent frontmatter
         run: ./scripts/lint-agents.sh
 
+  lint-frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate frontmatter YAML
+        run: ./scripts/lint-frontmatter.sh
+
   test-commands:
     runs-on: ubuntu-latest
     steps:
