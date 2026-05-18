@@ -55,9 +55,9 @@ Replace `KEYWORD` with the most specific noun from `$ARGUMENTS` (e.g., for "add 
 
 Read the 2–4 most relevant files found. Focus on: public function signatures, interface definitions, existing dependency imports.
 
-## Step 2 — Answer the three mandatory design questions
+## Step 2 — Answer the mandatory design questions (Q1–Q3 always; Q4 when a new test script is added)
 
-You **must** answer all three before producing output. Do not skip or merge questions.
+You **must** answer Q1–Q3 before producing output. Answer Q4 when the brief adds a new contract test script. Do not skip or merge questions.
 
 ### Q1 — Responsibility boundary
 > "What is the **single responsibility** of this module/feature? What is explicitly **out of scope**?"
@@ -79,6 +79,19 @@ You **must** answer all three before producing output. Do not skip or merge ques
 - Name the most volatile part (e.g., "the auth provider could be swapped", "the schema format is not final").
 - State what interface or boundary must exist so that change is isolated.
 - If no seam is needed, explicitly say "no seam needed because X".
+
+### Q4 — Contract test completeness (applies only when a new test script is added in the same PR)
+> "If this PR introduces both a new command/feature AND a new contract test script, enumerate every behavioral contract before writing any assertion."
+
+Skip this question if the brief only modifies existing tests.
+
+When applicable, list:
+- Every **input state** the command accepts: empty arg, each valid value, unrecognized/invalid values
+- Every **output format** the command specifies: success path confirmation, each error message, each mode or type variant
+- Every **rule section** the command documents: per-mode rules, per-type rules, per-section invariants
+- Every **stop condition**: steps that must not proceed on bad input
+
+For each entry in the list, confirm there is a corresponding assertion in the test script before dispatch. `qa-tester` treats each uncovered behavioral contract as a missing-coverage block — finding gaps one per gate round. This enumeration costs five minutes and prevents 4–6 extra rounds.
 
 ## Step 3 — Produce the design constraint list
 

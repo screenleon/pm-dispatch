@@ -8,7 +8,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased entries._
+### Added
+- **`commands/skill-refine.md`** — added Prerequisites section documenting `CLAUDE_MEMORY_DIR` requirement and export example (CC-025b).
+- **`scripts/test-skill-refine.sh`** — added `case_no_args_exits_2_with_usage` and `case_multi_args_exits_2_with_usage` guard tests (CC-025b).
+- **`scripts/test-commands.sh`** — new contract-lint script asserting `/caveman` and `/caveman-commit` behavioral contracts; wired into CI (`lint.yml`).
+- **`.github/workflows/lint.yml`** — added `test-commands` CI job.
+
+### Changed
+- **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to the NO-GO fix-loop protocol; added new contract test script rule to the brief-writing section (CC-039).
+- **`commands/pre-impl.md`** — added Q4 (contract test completeness) to Step 2; updated heading to reflect Q1–Q4 (CC-039).
+
+### Removed
+- **`[1.0.0]` and `[1.1.0]` changelog sections** — these were accidentally written during project setup before the repo's official public release (v0.1.0 on 2026-05-17). They contained internal scaffolding notes, not user-visible releases. Removed per maintainer decision; full history remains in `git log`.
 
 ## [0.1.0] — 2026-05-17
 
@@ -86,49 +97,3 @@ First public release. The repo was made source-available (public read/fork; exte
   Mode C — the reviewer must enumerate every new behavioral unit (function,
   param, field, handler) from the diff and verify adjacent test coverage before
   proceeding to the audit; missing coverage is a blocking finding.
-
----
-
-## [1.1.0] - 2026-05-12
-
-### Added
-- `scripts/patch-gitignore.sh`: shared helper that idempotently appends Claude
-  output dirs (`.agent-trace/`, `.codex-briefs/`, `.gate-results/`, `.agents/`)
-  under a guarded header block in any git repo's `.gitignore`; supports
-  `--dry-run`; exits silently if the directory is not a git repo
-- `scripts/codex-dispatch.sh` and `scripts/pr-gate.sh` now call
-  `patch-gitignore.sh` automatically so every project gets the entries without
-  manual setup
-- `scripts/setup-project.sh` now calls `patch-gitignore.sh` for the same
-  idempotent bootstrap path
-
-### Fixed
-- `.agents/` (created by Claude Code's Agent tool) added to the auto-patch
-  entry list so the directory is always ignored without manual action
-- Duplicate `mkdir -p "$(dirname "$OUTPUT_FILE")"` call removed from
-  `pr-gate.sh`
-
----
-
-## [1.0.0] - 2026-05-12 (initial public release)
-
-### Added
-- MIT License (`LICENSE`)
-- Two-tier agent model: hot-path `AGENT.md` entrypoint + reference files
-- Agent definitions: `project-pm`, `critic`, `architecture-reviewer`,
-  `security-reviewer`, `risk-reviewer`, `qa-tester`, `codex-executor`
-- `scripts/codex-dispatch.sh`: sandboxed Codex CLI dispatch with approval gate,
-  trace capture, and hook guard
-- `scripts/pr-gate.sh`: sequential PR-gate via a single codex session
-  (express / standard / full tier auto-detection)
-- `scripts/setup-project.sh`: per-project bootstrap (`.gitignore`, brief dir)
-- `/pr-gate`, `/pm` skill commands
-- `docs/codex-brief.md`: brief schema reference
-- `docs/model-tier-policy.md`: model selection rules per agent type
-
-### Changed
-- Memory paths in agent definitions use generic `<claude-project-id>` form
-  instead of hardcoded user paths (public-release safety, PR #36)
-- `agents/qa-tester.md`: qa-testing-rules path configurable via `QA_RULES_DIR`
-  env var (PR #36)
-- Planning consistency fixes across agent definitions (PR #36)

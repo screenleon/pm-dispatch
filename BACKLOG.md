@@ -20,7 +20,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-010 | ✅ closed 2026-05-14 | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | pr:#45 |
 | CC-011 | ⏸ deferred | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — |
 | CC-012 | ⏸ deferred | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — |
-| CC-013 | ✅ closed 2026-05-18 | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | gate:GO R7 |
+| CC-013 | ✅ closed 2026-05-18 | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | pr:#82 |
 | CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — |
 | CC-015 | 🔵 active | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — |
 | CC-016 | ✅ closed 2026-05-14 | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 |
@@ -32,8 +32,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-022 | ✅ closed 2026-05-14 | `/pre-impl` 指令：開發前設計評審，強制定義邊界/依賴/變動點，減少事後重構 | ux/arch | 2026-05-14 | pr:#46 |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — |
 | CC-024 | 🔵 active | `test-usage-weekly.sh` 加入 GitHub Actions CI（lint.yml 新增 job） | ops/test | 2026-05-14 | pr:#48 |
-| CC-025 | 🔵 active | `/skill-refine`：讀 skill 執行 episodes + 後續更正訊號，提 diff 自我精修 | ux/memory | 2026-05-15 | pr:#67 |
-| CC-025b | 🟡 deferred | `/skill-refine` M1+M2 advisory follow-ups：M1 usage-guard tests + `CLAUDE_MEMORY_DIR` 環境契約文件化/repo-default fallback | ux/memory/test | 2026-05-17 | — |
+| CC-025 | ✅ closed 2026-05-18 | `/skill-refine`：讀 skill 執行 episodes + 後續更正訊號，提 diff 自我精修 | ux/memory | 2026-05-15 | pr:#67,pr:#68 |
+| CC-025b | ✅ closed 2026-05-18 | `/skill-refine` M1+M2 advisory follow-ups：M1 usage-guard tests + `CLAUDE_MEMORY_DIR` 環境契約文件化/repo-default fallback | ux/memory/test | 2026-05-17 | pr:#83 |
 | CC-026 | 🔵 active | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — |
 | CC-027 | ✅ closed 2026-05-15 | PreToolUse `hook-tool-trace.sh`：tool/skill 觸發落 tool-trace.jsonl（CC-025/CC-026 前置） | ux/memory | 2026-05-15 | pr:#54 |
 | CC-027b | 🟡 deferred | `tool-trace.jsonl` health signal：bounded error counter + downstream warning | ux/memory | 2026-05-15 | — |
@@ -46,8 +46,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — |
 | CC-034 | ✅ closed 2026-05-15 | `install-hooks.sh` 改名/移動 checkout 後 append-not-replace bug：以 hook script basename 取代 full-path 比對 | ops | 2026-05-15 | pr:#53 |
 | CC-035 | 🔵 active | install/uninstall-hooks basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 |
-| CC-036 | 🔵 active | `/pm` dispatch async ergonomics restore：classify+brief 仍走 subagent；execute 改 main-thread `Bash(codex-dispatch.sh, run_in_background:true)` 直派；恢復 dispatch + 完成通知並行 | ux/process | 2026-05-15 | — |
-| CC-037 | 🔵 active | `hook-routing-log.sh` concurrent append race：並行 PostToolUse 可能 silent-drop routing row | ux/memory | 2026-05-15 | pr:#55 |
+| CC-036 | ✅ closed 2026-05-18 | `/pm` dispatch async ergonomics restore：classify+brief 仍走 subagent；execute 改 main-thread `Bash(codex-dispatch.sh, run_in_background:true)` 直派；恢復 dispatch + 完成通知並行 | ux/process | 2026-05-15 | — |
+| CC-037 | ✅ closed 2026-05-18 | `hook-routing-log.sh` concurrent append race：並行 PostToolUse 可能 silent-drop routing row | ux/memory | 2026-05-15 | — |
 | CC-038 | ⏸ deferred | Windows / cross-platform 鎖機制：`flock` Linux-only，未來支援 Windows/macOS 需替代方案 | ops/portability | 2026-05-15 | CC-037 follow-up |
 | CC-039 | 🔵 active | shared-schema brief enrichment + `/pre-impl` Q4 repo-rule audit + 每輪 fix brief next-layer sweep（JS-110、CC-013 兩次 7 輪 gate 後驗證） | process | 2026-05-15 | — |
 | CC-036b | ✅ closed 2026-05-16 | dispatch handover authorized-override reconciliation：spec 允許 caller-authorized `skip_git_check:true` / `sandbox:danger-full-access` / `approval:on-request`，但 validator 預設 hard-reject 無 override channel；docs/commands example 也需 default-safe 化 | arch/process | 2026-05-16 | CC-036 follow-up |
@@ -83,7 +83,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-049 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Archive closed CC ticket detail sections → `BACKLOG-ARCHIVE.md`. Currently 26 closed sections cluttering 688-line BACKLOG body; index status emoji + PR ref preserved in main file, full prose moved to archive. Goal: reduce active BACKLOG to ~350 lines for faster scan | process/docs | 2026-05-17 | — |
 | CC-050 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Audit stale deferred tickets CC-011/012/013/014/015 (memory-sync / SessionStart pull / `/caveman` / using-git-worktrees skill / systematic-debugging skill) from 2026-05-14. Post-CC-OSS public, some may be obsolete or low-priority; mark `🟢 backlog-for-someday` or drop with reasoning recorded | process/docs | 2026-05-17 | — |
 | CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
-| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** Tier 2 alternative: `pm-schema v1.1` adds `epic:` field — sequential IDs (CC-048..) with `epic: oss` / `epic: reuse-debt` as orthogonal grouping. Retroactive renumbering of CC-100/200 series + PR/commit refs is expensive; only do if multi-month signal that the ID-gap convention is causing real confusion. CC-051 (preamble) is the cheaper resolution | process/schema | 2026-05-17 | — |
+| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
+| CC-053 | ⏸ deferred | `test-commands.sh` CLI self-test coverage：`--filter` / `--list` / unknown / zero-match behavior not self-tested；introduced in PR #82, pre-existing relative to `feat/cc039-cc025b-v2` | test | 2026-05-18 | — |
+| CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 |
 
 ---
 
@@ -153,9 +155,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - `commands/caveman.md`：off/lite/full/ultra 四模式切換；空參/無效參數各有明確 stop-before-Step-2 行為；Step 2 輸出固定格式 `Caveman mode: <MODE>`
 - `commands/caveman-commit.md`：讀 `git diff --cached` → 推斷 type/scope/subject → 純文字輸出；breaking-change 用 `!` append 到 type/scope；`$ARGUMENTS` 作 hint
 - 8 個 agent 檔全部加入 `# Output brevity` section（agent-to-agent 壓縮常態化；`/caveman` 僅影響對用戶的回應）
-- `scripts/test-commands.sh`：66 個 contract assertions；CI job 已接入 `.github/workflows/lint.yml`
+- `scripts/test-commands.sh`：103 個 contract assertions；CI job 已接入 `.github/workflows/lint.yml`
 
 **Post-mortem（7 輪 gate）**：屬於 CC-039 記錄的「洋蔥剝皮」模式的第二個案例。具體觸發條件：同一 PR 同時新增功能檔案 + 對應的 contract test script，qa-tester 對 test script 的完整性要求與對功能本身同等嚴格，但無事先 behavioral contract 清單，導致每輪只補 1–2 個缺口。見 CC-039 補充分析。
+
+**See**: pr:#82
 
 ## CC-014 — `using-git-worktrees` skill
 
@@ -216,7 +220,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: `usage-weekly.sh` 是 read-only 報告工具，迴歸影響面低但覆蓋率現在是靠手動 gate 維持，長期不穩固。qa-tester 在 gate-20260514-174657 發出 advisory（non-blocking）。
 **Requirement**: 在 `.github/workflows/lint.yml` 加入一個 `test-usage-weekly` job，執行 `bash scripts/test-usage-weekly.sh`；失敗 → CI 阻擋。
 
-## CC-025 — `/skill-refine` skill 自我精修
+## CC-025 — `/skill-refine` skill 自我精修 ✅ 2026-05-18
+
+**Outcome**: 2026-05-18 — M1 spike (`scripts/skill-refine.sh` + `commands/skill-refine.md`) 已合併；PR #67 實作 shell script，PR #68 追加 contract tests + 環境契約文件化。M2（diff 生成）留 CC-025b 後續。
+
+**See**: pr:#67,pr:#68
 
 **Problem**: skill / command（`/pr-gate`、`/codex-pr-gate`、`/pm`、`/pre-impl` 等）的 .md 內容是手寫的，使用過程中遇到的卡點與更正只會沉澱成 feedback memory（例：[[feedback_gate_on_stacked_branches]]、[[feedback_stale_binary_before_smoke]]），不會回流到 skill 本身。下次同個 skill 的 fresh 使用者（包含未來的自己）仍會踩同樣的洞。
 **Why**: PR #45 已落地 `episodes.jsonl` + `/mem-log` + `/mem-distill`，episode 層已包含「該 session 用了哪些 skill / 是否有後續更正」的原始訊號 — 缺的是把這個訊號針對「skill 本身」做 diff 提議的閉環。Hermes Agent README 把這條稱作 "skills self-improve during use"，是 self-improvement loop 中 pm-dispatch 最明顯的缺口。預期 ROI 最高，因為 PR-gate / Codex routing 是高頻使用的 skill，每一條 feedback rule 沉澱回 skill 都能直接降低未來 fix-loop 輪數（對應 [[feedback_shared_schema_briefs]] 的根本痛點）。
@@ -341,7 +349,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Outcome**: 2026-05-15 — `install-hooks.sh` + `uninstall-hooks.sh` 改 basename match；test-hooks.sh 加跨路徑 fixture；statusLine chain 安全保留。PR #53.
 **See**: pr:#53
 
-## CC-036 — `/pm` dispatch async ergonomics restore
+## CC-036 — `/pm` dispatch async ergonomics restore ✅ 2026-05-18
 
 **Problem**: 從 2026-05-09 PR #33（landed `[[feedback_codex_dispatch_foreground]]`）之後，`/pm` 工作流預設把所有 codex 派發都導去 `Agent(subagent_type:"codex-executor")`。subagent foreground-only rule 是正確的（防 orphan），但同時也讓 main thread 在 dispatch 期間完全停擺（觀察過 10.8 分鐘 idle window）。修法前的舊體驗——main-thread 直接 `Bash(codex-dispatch.sh, run_in_background:true)` 派、利用 harness PID-tracking + 完成通知並行做別的事——還在能用，但目前的命令路由完全不走那條，等於把「能 async 的場景」也強制 sync。
 **Why**: foreground rule 是 **subagent 限制**（subagent session 結束時 codex 被 SIGKILL → orphan）。**Main-thread 沒有 session 結束問題**，harness 會等 background 完成發通知。被 misroute 的不是規則本身、是消費路徑。User 2026-05-15 觀察：「之前 orphan 完成之後會自動通知 一樣可以完整把資料回收 但是不知道為什麼最近更新之後 反而會一直等待」——點出此 regression。
@@ -355,7 +363,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 設計變動（不是 mechanical patch），實作前須跑 `/pre-impl` 把「commands/pm.md 既有結構 + brief→main-thread handover 介面 + fallback 條件」釐清；不適合直接走 codex execution。
 **Cross-link**: **CC-037 必須在 CC-036 同 PR 或之前 merge**。CC-036 把 dispatch 改成 main-thread `run_in_background` 後，並行 dispatch 機率上升，CC-037 的 concurrent-append race 才會真正觸發 silent row loss。在序列 foreground dispatch 的當前狀態下 race 無法發生，所以 CC-037 defer 是安全的；CC-036 落地當下若 CC-037 仍 open，必須先補 flock 再開 async dispatch。
 
-## CC-037 — `hook-routing-log.sh` concurrent append race
+**Outcome（2026-05-18 驗證）**: 功能已在先前某 PR 實作並落地——`commands/pm.md` 已以 Route A（main-thread Bash `run_in_background:true`）為 primary route；`Agent(codex-executor)` 已降為 fallback allowlist；`docs/dispatch-brief.md §Fallback` 已明列 4 條 fallback 條件。本票不需新 PR，直接 verified-in-place close。⚠️ CC-037（hook race）隨著 CC-036 上線，race surface 已從理論轉為實際，應盡快排入。
+
+**See**: (verified-in-place — implementation already in `commands/pm.md`; no separate PR)
+
+## CC-037 — `hook-routing-log.sh` concurrent append race ✅ 2026-05-18
+
+**Outcome**: 2026-05-18 — `scripts/hook-routing-log.sh` 已透過 `lib/portable.sh` 的 `mkdir_lock()` 取代 `flock`，append race 已序列化；concurrent writes 有 stale-lock GC。verified-in-place（`mkdir_lock` 實作隨 CC-038 portability work 落地）。
+
+**See**: (verified-in-place — `scripts/hook-routing-log.sh` uses `mkdir_lock` from `lib/portable.sh`)
 
 **Problem**: risk-reviewer's 2026-05-15 PR #55 finding at `scripts/hook-routing-log.sh:204`: the append path rewrites the whole file via temp + `mv` without a lock. Concurrent PostToolUse invocations can race, silently losing one routing row. Blast radius is bounded because this is calibration telemetry, but the loss mode is silent.
 **Why**: `routing_log.md` is the feedback source for future routing calibration. If parallel dispatches drop rows under normal concurrent hook execution, downstream `/routing-distill` metrics can undercount exactly the high-concurrency cases that need calibration.
@@ -571,6 +587,7 @@ CC-013 的七輪逐步修補路徑（每輪 1–2 個缺口）：
 **Source**: 2026-05-17 gate-20260517-155611.md（M2 PR-gate r1 GO advisory）。
 **Note**: 兩條 advise 共享 root cause（env contract 沒文件化），所以同票處理；fix 後 M2 follow-up close。
 **Cross-link**: [[feedback_known_bug_backlog]] / [[feedback_native_perspective]] 衍生「文件化 user contract」原則。
+**M2 follow-up**: diff generation and Claude-assisted refinement scope is tracked under CC-054.
 
 ## CC-047 — `scripts/codex-dispatch.sh` model alias mapping
 
@@ -727,3 +744,37 @@ review cycles in-place.
 2. (architecture-reviewer) `scripts/install-hooks.sh` minimal profile 只 skip 插入 codex guard hooks，不會 remove 已存在的；用 `--profile full` 安裝後再 `--profile minimal` rerun，settings.json 不會 converge 到 minimal contract
 **Why**: qa-tester r2 verdict: "add regression tests for --profile minimal/full installer behavior and reversible/downgrade semantics" 是 NO-GO 必修。
 **Cross-link**: [[feedback_known_bug_backlog]] — backlog-only deferral 不足以滿足 qa-tester；future code-affecting advisory 應直接 fold-in 同 PR。
+
+## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
+
+**Problem**: 目前 BACKLOG index table 有三個結構性缺口：(1) 無優先度欄位——`P1/P2/P3` tags 只在 body section 以 `**Tags**: P1` 記錄，掃 index 時不可見、不可排序；(2) ID gap 慣例（CC-1NN = OSS epic、CC-2NN = reuse-debt）對 fork 用戶不透明，CC-051 preamble 只能靠文字說明；(3) epic/分組資訊無法機器化查詢。
+**Why**: 使用者決策（2026-05-18）：希望 index-level 優先度可見，納入 CC-052 schema upgrade 範圍，與 epic 欄一起升版而非分別處理。
+**Requirement**:
+1. `pm-schema v1.1` index table 新增兩欄：`priority`（P1/P2/P3；未設為空）、`epic`（`oss`/`reuse-debt`/`hygiene` 或空）。
+2. `pm/scripts/validate.sh` 對應更新：新欄格式驗證；向下相容（舊 v1 列無新欄時 emit warning 而非 error，允許漸進補齊）。
+3. 全現有 index 列補 priority 欄（依當時判斷填入或留空）；CC-1NN 補 `epic: oss`、CC-2NN 補 `epic: reuse-debt`。
+4. BACKLOG schema preamble（CC-051 工作）同步更新，說明新欄慣例。
+**Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
+**Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
+
+## CC-053 — `test-commands.sh` CLI self-test coverage（deferred）
+
+**Problem**: `scripts/test-commands.sh` gained CLI behavior for `--filter`, `--list`, unknown options, and zero-match filters, but the test script does not self-test those command-line paths.
+**Why**: PR #82 increased `/caveman` contract coverage and raised the assertion count, but the harness-level CLI behavior remains a pre-existing coverage gap relative to `feat/cc039-cc025b-v2`. If those entry points regress, the suite can still appear healthy while filtering/listing behavior is broken.
+**Requirement**:
+1. Add focused self-tests for `scripts/test-commands.sh --list`.
+2. Add focused self-tests for `scripts/test-commands.sh --filter <pattern>` including a matching case and a zero-match case.
+3. Add an unknown-option case that asserts non-zero exit and actionable usage output.
+4. Keep the tests deterministic and avoid changing unrelated `/caveman` command contracts.
+**Source**: 2026-05-18 backlog correction for PR #82 follow-up; gap introduced with `scripts/test-commands.sh` CLI behavior and observed while closing `feat/cc039-cc025b-v2`.
+
+## CC-054 — CC-025 M2 `/skill-refine` diff generation（deferred）
+
+**Problem**: CC-025 delivered the M1 read-only signal bundle and CC-025b closed the usage-guard plus `CLAUDE_MEMORY_DIR` contract follow-ups, but the original M2 scope for `/skill-refine` diff generation remains unimplemented.
+**Why**: The useful product loop is not complete until the tool can turn skill feedback signals into a reviewable refinement diff. Closing CC-025b without a separate M2 tracker would make that deferred scope easy to lose.
+**Requirement**:
+1. Extend `/skill-refine` so it can generate a proposed diff for the target skill or command from curated memory/feedback signals.
+2. Keep the default behavior review-first: emit the diff for user or main-thread approval rather than directly rewriting skill files.
+3. Include Claude-assisted refinement guidance in `commands/skill-refine.md`, with clear dry-run and apply boundaries.
+4. Add contract tests for diff-generation behavior and no-direct-write safety.
+**Source**: PR #67 CC-025 M1 implementation and 2026-05-18 CC-025b closure decision in `feat/cc039-cc025b-v2`.
