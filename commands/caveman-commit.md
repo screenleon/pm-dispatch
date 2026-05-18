@@ -41,7 +41,7 @@ Determine:
 
 If `$ARGUMENTS` is non-empty, use it as a hint for the subject.
 
-Breaking change rule: if the diff removes a public interface, renames a hook script, or changes a required schema field — prefix subject with `!` after type, e.g. `feat(hooks)!: rename write-guard`.
+Breaking change rule: if the diff removes a public interface, renames a hook script, or changes a required schema field — append `!` to the type/scope block (before the colon). Examples: `feat!: drop legacy flag` (no scope) or `feat(hooks)!: rename write-guard` (with scope).
 
 ## Step 3 — Output
 

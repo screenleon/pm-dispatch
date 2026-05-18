@@ -3,7 +3,7 @@ description: Switch response compression mode to reduce token usage in long sess
 argument-hint: "[off|lite|full|ultra]"
 ---
 
-Set response compression mode for this session. If no argument is given, print current mode and available options.
+Set response compression mode for this session. If no argument is given, show available modes — this command has no session-state tracking, so it cannot report a previously set mode.
 
 > **Note:** Agent-to-agent communication (briefs, reviewer findings, handover blocks) is already compact by default — that's baked into the agent instruction files. `/caveman` only affects responses Claude sends *to you* in the main session. Use it when you personally want shorter replies, not to save inter-agent tokens.
 
@@ -30,21 +30,27 @@ Set response compression mode for this session. If no argument is given, print c
 /caveman lite       # set lite mode for this session
 /caveman full       # escalate mid-session
 /caveman off        # restore normal verbosity
-/caveman            # show current mode
+/caveman            # show available modes
 ```
 
 ## Step 1 — Parse argument
 
 Read `$ARGUMENTS` (trimmed). Valid values: `off`, `lite`, `full`, `ultra`.
 
-If empty or unrecognized, print:
+If empty, print:
 
 ```
-Caveman mode: off (default)
-Available: off | lite | full | ultra
+No active mode. Available: off | lite | full | ultra
+(No session-state tracking — invoke with a mode to set it.)
 ```
 
-Then stop — do not proceed to Step 2.
+If unrecognized, print:
+
+```
+Unknown mode: <VALUE>. Available: off | lite | full | ultra
+```
+
+Then stop — do not proceed to Step 2 in either case.
 
 ## Step 2 — Confirm and apply
 
