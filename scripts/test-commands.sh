@@ -145,6 +145,10 @@ assert_contains "caveman: stop before Step 2 on empty/invalid" \
 assert_not_contains "caveman: no false current-mode promise" \
   "$CAVEMAN" "print current mode"
 
+# Step 2 success-path confirmation format
+assert_contains "caveman: valid-mode confirmation format" \
+  "$CAVEMAN" "Caveman mode: <MODE>"
+
 # Each mode must have its own Rules section
 assert_contains "caveman: rules section for off"   "$CAVEMAN" "^### Rules: off"
 assert_contains "caveman: rules section for lite"  "$CAVEMAN" "^### Rules: lite"
@@ -162,9 +166,13 @@ assert_contains "caveman-commit: nothing-staged stop message" \
   "$COMMIT" "Nothing staged\. Run git add first"
 
 # Must document all required conventional commit types
-assert_contains "caveman-commit: type feat present"   "$COMMIT" "\`feat\`"
-assert_contains "caveman-commit: type fix present"    "$COMMIT" "\`fix\`"
-assert_contains "caveman-commit: type chore present"  "$COMMIT" "\`chore\`"
+assert_contains "caveman-commit: type feat present"     "$COMMIT" "\`feat\`"
+assert_contains "caveman-commit: type fix present"      "$COMMIT" "\`fix\`"
+assert_contains "caveman-commit: type docs present"     "$COMMIT" "\`docs\`"
+assert_contains "caveman-commit: type chore present"    "$COMMIT" "\`chore\`"
+assert_contains "caveman-commit: type refactor present" "$COMMIT" "\`refactor\`"
+assert_contains "caveman-commit: type test present"     "$COMMIT" "\`test\`"
+assert_contains "caveman-commit: type ci present"       "$COMMIT" "\`ci\`"
 
 # Scope optional rule
 assert_contains "caveman-commit: scope optional for broad changes" \
