@@ -221,6 +221,88 @@ run_install_case "scripts-absent-real-run" script-absent 0
 run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
 run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 
+test_install_manifest_atomic() {
+  local name="install-manifest-atomic"
+  should_run "$name" || return 0
+
+  local home="$tmp_root/$name"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
+  local manifest
+  local expected_entries=0
+  local actual_entries
+
+  mkdir -p "$home/.claude"
+
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$out" 2>"$err"
+  local got_code=$?
+  set -e
+
+  if [[ "$got_code" -ne 0 ]]; then
+    fail "$name" "exit $got_code, expected 0"
+    return
+  fi
+
+  shopt -s nullglob
+  for subdir in agents skills commands; do
+    [[ -d "$REPO_ROOT/$subdir" ]] || continue
+    for _ in "$REPO_ROOT/$subdir"/*; do
+      expected_entries=$((expected_entries + 1))
+    done
+  done
+  for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
+    [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
+  done
+  [[ -d "$REPO_ROOT/pm" ]] && expected_entries=$((expected_entries + 1))
+  shopt -u nullglob
+
+  manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  if [[ ! -f "$manifest" ]]; then
+    fail "$name" "missing manifest file $manifest"
+    return
+  fi
+  if compgen -G "$home/.claude/.pm-dispatch/.install-manifest.*" >/dev/null 2>&1; then
+    fail "$name" "temporary manifest file leak suggests non-atomic write"
+    return
+  fi
+  if ! jq -e --argjson expected "$expected_entries" '
+    .manifest_version == 1 and
+    (.installed_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+    ((.entries | type) == "array") and
+    ((.entries | length) == $expected) and
+    (.entries | all(
+      has("src") and has("dst") and has("mode") and
+      (.src != .dst) and
+      (
+        (.mode == "symlink"
+         and (has("sha256") | not)
+         and (has("fallback_reason") | not))
+        or
+        (.mode == "copy"
+         and has("sha256")
+         and (.sha256 | test("^[0-9a-f]{64}$"))
+         and has("fallback_reason")
+         and (.fallback_reason != ""))
+      )
+    )) and
+    (.entries | all(.mode == "copy" or .mode == "symlink"))
+  ' "$manifest" >/dev/null 2>&1; then
+    fail "$name" "manifest shape/content invalid"
+    return
+  fi
+
+  actual_entries="$(jq -r '.entries | length' "$manifest")"
+  if [[ "$actual_entries" != "$expected_entries" ]]; then
+    fail "$name" "expected $expected_entries manifest entries, got $actual_entries"
+    return
+  fi
+  pass "$name"
+}
+
 test_legacy_pm_left_untouched() {
   local name="legacy-github-pm-left-untouched"
   should_run "$name" || return 0
@@ -1449,6 +1531,7 @@ test_default_install_skips_preflights
 test_verify_flag_runs_preflights
 test_escape_hatch_overrides_verify
 test_filter_no_match_exits_nonzero
+test_install_manifest_atomic
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
