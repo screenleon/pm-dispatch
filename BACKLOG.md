@@ -80,8 +80,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — |
 | CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — |
-| CC-049 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Archive closed CC ticket detail sections → `BACKLOG-ARCHIVE.md`. Currently 26 closed sections cluttering 688-line BACKLOG body; index status emoji + PR ref preserved in main file, full prose moved to archive. Goal: reduce active BACKLOG to ~350 lines for faster scan | process/docs | 2026-05-17 | — |
-| CC-050 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Audit stale deferred tickets CC-011/012/013/014/015 (memory-sync / SessionStart pull / `/caveman` / using-git-worktrees skill / systematic-debugging skill) from 2026-05-14. Post-CC-OSS public, some may be obsolete or low-priority; mark `🟢 backlog-for-someday` or drop with reasoning recorded | process/docs | 2026-05-17 | — |
+| CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 |
+| CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 |
 | CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
 | CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
 | CC-053 | ✅ closed 2026-05-18 | `test-commands.sh` CLI self-test coverage | test | 2026-05-18 | pr:#84 |
@@ -449,17 +449,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 安全 refactor，無 schema 變動；建議 fixture 增加之前先做 dedup，否則新 case 又繞 helper 重複一次。
 **Cross-link**: 跟 [[shared_schema_briefs]] 同精神 — 把 schema-grammar 集中在單一處避免 drift。
 
-## CC-049 — BACKLOG hygiene Tier 1 archive closed detail sections（deferred）
+## CC-049 — BACKLOG hygiene Tier 1 archive closed detail sections ✅ 2026-05-18
 
-**Problem**: Closed ticket detail sections clutter BACKLOG.md and make active scanning slower.
-**Why**: The index status emoji and PR refs are enough for normal scanning; full closed prose can live in BACKLOG-ARCHIVE.md.
-**Requirement**: Move closed ticket detail sections to BACKLOG-ARCHIVE.md while preserving index rows, closure dates, PR refs, and validator-compatible archived stubs in BACKLOG.md.
+**See**: BACKLOG-ARCHIVE.md
 
-## CC-050 — BACKLOG hygiene Tier 1 stale deferred audit（deferred）
+## CC-050 — BACKLOG hygiene Tier 1 stale deferred audit ✅ 2026-05-18
 
-**Problem**: Stale deferred tickets CC-011/012/013/014/015 were recorded before the OSS cleanup and may no longer reflect current priority.
-**Why**: Post-public-roadmap cleanup should distinguish truly deferred work from someday/personal/obsolete work.
-**Requirement**: Audit those stale memory-sync and skill-related entries, then mark them as someday/deferred/drop with reasoning preserved in the backlog.
+**See**: BACKLOG-ARCHIVE.md
 
 ## CC-051 — BACKLOG schema convention preamble（deferred）
 

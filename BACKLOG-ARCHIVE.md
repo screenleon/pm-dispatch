@@ -505,3 +505,13 @@ review cycles in-place.
 
 **Outcome**: Removed `skills/      → ~/.claude/skills/` row from README layout table and `(or use the `update-config` skill)` parenthetical. Pending CC-061 to create the actual directory.
 **See**: pr:#86
+
+## CC-049 — BACKLOG hygiene Tier 1 archive closed detail sections ✅ 2026-05-18
+
+**Outcome**: Moved 37 closed ticket body sections to BACKLOG-ARCHIVE.md; added archive stubs with `**See**: BACKLOG-ARCHIVE.md` for all 39 closed tickets. Reduced BACKLOG.md from 867 → 573 lines. Validator updated with `🟡 deferred` / `🟢 someday` status tokens; pm/schema.md and test fixtures updated.
+**See**: pr:#87
+
+## CC-050 — BACKLOG hygiene Tier 1 stale deferred audit ✅ 2026-05-18
+
+**Outcome**: CC-011/012 → `🟢 someday`, CC-014/015 → `🟡 deferred` with CC-050 audit status notes. Five pending PR status corrections applied: CC-005 (pr:#85), CC-053 (pr:#84), CC-055/056/057 (pr:#86).
+**See**: pr:#87

@@ -123,7 +123,9 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 
 ### 2.6 Closed / dropped stub
 
-closed 條目折疊為 3–5 行：
+closed 條目有兩種折疊形式：
+
+**DECISIONS-backed stub**（預設）：outcome 已沉澱到 DECISIONS.md 時使用。
 
 ```
 ## JS-008 — Japanese-first 文法解釋契約 ✅ 2026-04-30
@@ -132,7 +134,15 @@ closed 條目折疊為 3–5 行：
 **See**: DECISIONS.md#2026-04-30-japanese-first-explanations-with-chinese-reveal
 ```
 
-`Why / Requirement` 不再保留，避免雙真理；想知道理由去 DECISIONS。
+**Archive-backed stub**（膨脹觸發後的批量歸檔）：完整 prose 已移至 `BACKLOG-ARCHIVE.md` 時使用；只需 `**See**:` 指標，無需 `**Outcome**`。
+
+```
+## CC-NNN — title ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+```
+
+`Why / Requirement` 兩種形式均不保留，避免雙真理。
 
 ### 2.7 Code TODO 追蹤條目（optional pattern）
 
