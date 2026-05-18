@@ -7,6 +7,16 @@ Run the M1 skill-refine signal bundler for exactly one named skill.
 
 This command supports single-skill invocation only. Do not use `--all`, multiple skill names, or globs.
 
+## Prerequisites
+
+`CLAUDE_MEMORY_DIR` must be exported and point to an existing memory directory before invoking this command. Example path: `${HOME}/.claude/projects/-home-<user>-github/memory`. Claude Code sets this automatically; if running from a bare shell, export it first:
+
+```sh
+export CLAUDE_MEMORY_DIR="${HOME}/.claude/projects/-home-$(whoami)-github/memory"
+```
+
+If `CLAUDE_MEMORY_DIR` is unset or points to a nonexistent directory, `scripts/skill-refine.sh` will exit 2 with a clear error.
+
 ## What
 
 `/skill-refine` runs the one-skill feedback bundling path to produce concrete refinement output for a single target command or skill.

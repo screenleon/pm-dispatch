@@ -274,6 +274,36 @@ case_invalid_skill_name() {
   pass_case "$name"
 }
 
+# Behavior: Invoking skill-refine with no arguments exits 2 and prints Usage: to stderr.
+case_no_args_exits_2_with_usage() {
+  local name="no_args_exits_2_with_usage" repo out err
+  repo="$(make_repo "$name")"
+  out="$TMP_ROOT/$name.out"
+  err="$TMP_ROOT/$name.err"
+  set +e
+  bash "$repo/scripts/skill-refine.sh" > "$out" 2> "$err"
+  local status=$?
+  set -e
+  assert_exit "$name" "$status" 2
+  assert_contains "$name" "$err" "Usage:"
+  pass_case "$name"
+}
+
+# Behavior: Invoking skill-refine with multiple arguments exits 2 and prints Usage: to stderr.
+case_multi_args_exits_2_with_usage() {
+  local name="multi_args_exits_2_with_usage" repo out err
+  repo="$(make_repo "$name")"
+  out="$TMP_ROOT/$name.out"
+  err="$TMP_ROOT/$name.err"
+  set +e
+  bash "$repo/scripts/skill-refine.sh" foo bar > "$out" 2> "$err"
+  local status=$?
+  set -e
+  assert_exit "$name" "$status" 2
+  assert_contains "$name" "$err" "Usage:"
+  pass_case "$name"
+}
+
 case_happy_path
 case_deterministic_order
 case_missing_command_file
@@ -282,5 +312,7 @@ case_zero_candidates
 case_missing_fields
 case_env_set_success
 case_invalid_skill_name
+case_no_args_exits_2_with_usage
+case_multi_args_exits_2_with_usage
 
 printf 'skill-refine tests passed: %s\n' "$PASS"

@@ -80,6 +80,19 @@ You **must** answer all three before producing output. Do not skip or merge ques
 - State what interface or boundary must exist so that change is isolated.
 - If no seam is needed, explicitly say "no seam needed because X".
 
+### Q4 — Contract test completeness (applies only when a new test script is added in the same PR)
+> "If this PR introduces both a new command/feature AND a new contract test script, enumerate every behavioral contract before writing any assertion."
+
+Skip this question if the brief only modifies existing tests.
+
+When applicable, list:
+- Every **input state** the command accepts: empty arg, each valid value, unrecognized/invalid values
+- Every **output format** the command specifies: success path confirmation, each error message, each mode or type variant
+- Every **rule section** the command documents: per-mode rules, per-type rules, per-section invariants
+- Every **stop condition**: steps that must not proceed on bad input
+
+For each entry in the list, confirm there is a corresponding assertion in the test script before dispatch. `qa-tester` treats each uncovered behavioral contract as a missing-coverage block — finding gaps one per gate round. This enumeration costs five minutes and prevents 4–6 extra rounds.
+
 ## Step 3 — Produce the design constraint list
 
 Based on the three answers above, synthesize 3–5 constraints. Each constraint must be:
