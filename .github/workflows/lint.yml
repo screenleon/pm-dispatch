@@ -13,6 +13,24 @@ jobs:
       - name: Validate agent frontmatter
         run: ./scripts/lint-agents.sh
 
+  lint-frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+      - name: Validate frontmatter YAML
+        run: ./scripts/lint-frontmatter.sh
+
+  test-lint-frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+      - name: lint-frontmatter regression suite
+        run: bash scripts/test-lint-frontmatter.sh
+
   test-commands:
     runs-on: ubuntu-latest
     steps:
@@ -78,6 +96,7 @@ jobs:
             test-dispatch-handover.sh
             test-hooks.sh
             test-install.sh
+            test-lint-frontmatter.sh
             test-migrate-routing-log.sh
             test-patch-gitignore.sh
             test-pr-gate.sh

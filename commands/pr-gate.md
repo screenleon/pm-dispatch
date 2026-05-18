@@ -1,6 +1,6 @@
 ---
 description: Run the tiered pre-PR review pipeline on the current branch.
-argument-hint: [express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]
+argument-hint: "[express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]"
 ---
 
 Run the PR gate via `scripts/pr-gate.sh`.

@@ -20,7 +20,6 @@ Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, 
 
 ```
 agents/      → ~/.claude/agents/    subagents callable via the Agent tool
-skills/      → ~/.claude/skills/    invocable skills
 commands/    → ~/.claude/commands/  /slash commands
 scripts/                            hook wrappers (called by absolute path) + usage tracking scripts
              → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
@@ -150,7 +149,7 @@ MIT. See [`LICENSE`](LICENSE).
 - New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`. **Don't include `Agent` in `tools:`** — `scripts/lint-agents.sh` will reject the install.
 - New command: drop a `name.md` into `commands/`, re-run `install.sh`.
 - New hook: drop a `scripts/hook-<name>.sh` and add a corresponding `PreToolUse` entry by re-running `scripts/install-hooks.sh` (extend the splice if it's a new pair); don't hand-edit `settings.json` if it can be avoided. Add test cases to `scripts/test-hooks.sh` — security-relevant scripts ship with regression coverage.
-- Settings allowlist additions: edit `~/.claude/settings.json` directly (or use the `update-config` skill); don't try to symlink settings.
+- Settings allowlist additions: edit `~/.claude/settings.json` directly; don't try to symlink settings.
 
 ## Codex briefs
 
