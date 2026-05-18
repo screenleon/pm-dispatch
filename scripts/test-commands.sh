@@ -201,6 +201,14 @@ assert_contains "caveman-commit: arguments hint for subject" \
 assert_contains "caveman-commit: no markdown fences in output" \
   "$COMMIT" "No markdown fences"
 
+# Body is suppressed by default; only allowed for breaking change or non-obvious constraint
+assert_contains "caveman-commit: no body unless breaking change or constraint" \
+  "$COMMIT" "No body unless"
+
+# BREAKING CHANGE footer format must be documented
+assert_contains "caveman-commit: BREAKING CHANGE footer documented" \
+  "$COMMIT" "BREAKING CHANGE:"
+
 # ── agent output-brevity contract ────────────────────────────────────────────
 
 for agent_file in "$AGENTS_DIR"/*.md; do
@@ -209,6 +217,8 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     "$agent_file" "^# Output brevity"
   assert_in_section "agent/$agent_name: brevity section says No preamble" \
     "$agent_file" "Output brevity" "No preamble"
+  assert_in_section "agent/$agent_name: brevity section says no closing summary" \
+    "$agent_file" "Output brevity" "closing summary"
   assert_in_section "agent/$agent_name: brevity section says English only" \
     "$agent_file" "Output brevity" "English only"
 done
