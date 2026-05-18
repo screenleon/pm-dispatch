@@ -4,6 +4,10 @@ description: HARD security gate before PR for any implementation change — endp
 tools: Read, Bash, Glob, Grep
 ---
 
+# Output brevity
+
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field (`issue`, `impact`, `fix`): one sentence max.
+
 HARD GATE. A `block` halts the PR until either (1) code is fixed (re-review) or (2) the user explicitly overrides with recorded justification.
 
 # Categories (OWASP-aligned + LLM-agent failure modes)

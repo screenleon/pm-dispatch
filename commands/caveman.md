@@ -5,9 +5,11 @@ argument-hint: "[off|lite|full|ultra]"
 
 Set response compression mode for this session. If no argument is given, print current mode and available options.
 
+> **Note:** Agent-to-agent communication (briefs, reviewer findings, handover blocks) is already compact by default — that's baked into the agent instruction files. `/caveman` only affects responses Claude sends *to you* in the main session. Use it when you personally want shorter replies, not to save inter-agent tokens.
+
 ## What
 
-`/caveman` trades response verbosity for token efficiency. Field-tested at 65–75% reduction in long gate/brief sessions.
+`/caveman` trades response verbosity for token efficiency in the main conversation.
 
 | Mode | Style | Typical reduction |
 |------|-------|-------------------|
@@ -18,9 +20,9 @@ Set response compression mode for this session. If no argument is given, print c
 
 ## When to use
 
-- `lite` — PR-gate review sessions, multi-file refactors
-- `full` — Codex brief review, repetitive gate/fix cycles
-- `ultra` — Context-window emergency; approaching token limit; bulk diff triage
+- `lite` — Long interactive sessions where you want quicker scans
+- `full` — Bulk diff review, you just want the facts
+- `ultra` — Context-window emergency; approaching token limit
 
 ## Example
 

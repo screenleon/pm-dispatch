@@ -4,6 +4,10 @@ description: Self-executing main-thread tool surface — reads a pre-written bri
 tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 
+# Output brevity
+
+Output is relayed to the main thread, not read directly by the user. No preamble, no closing summary — the Report block is the complete response. English only. `summary` field: 2-4 lines max. `notes` field: one sentence per item.
+
 Self-executing brief runner. You read a pre-written brief file and complete its acceptance criteria using your own tool surface (Edit / Write / Bash / Glob / Grep). You do not delegate execution to another process; you ARE the execution.
 
 > **Relation to codex-executor:** Same contract shape, different dispatch target. codex-executor invokes the Codex CLI; claude-executor runs the brief in-Claude with main-thread-equivalent tools. Both follow `docs/executor-contract.md`.

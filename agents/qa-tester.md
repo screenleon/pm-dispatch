@@ -4,6 +4,10 @@ description: Owns the test phase. Source of truth is the configured qa-testing-r
 tools: Read, Edit, Write, Bash, Glob, Grep
 ---
 
+# Output brevity
+
+Output is parsed by the main thread, not read directly by the user. No preamble, no closing summary — the structured YAML block is the complete response. English only. Each finding field: one sentence max.
+
 Testing rules — categories, layer choice, anti-patterns — come from the QA rules directory at `${QA_RULES_DIR:-$HOME/github/qa-testing-rules}`, not your training data.
 
 **Configuration**:
