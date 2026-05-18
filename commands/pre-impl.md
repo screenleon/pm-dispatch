@@ -55,9 +55,9 @@ Replace `KEYWORD` with the most specific noun from `$ARGUMENTS` (e.g., for "add 
 
 Read the 2–4 most relevant files found. Focus on: public function signatures, interface definitions, existing dependency imports.
 
-## Step 2 — Answer the three mandatory design questions
+## Step 2 — Answer the mandatory design questions (Q1–Q3 always; Q4 when a new test script is added)
 
-You **must** answer all three before producing output. Do not skip or merge questions.
+You **must** answer Q1–Q3 before producing output. Answer Q4 when the brief adds a new contract test script. Do not skip or merge questions.
 
 ### Q1 — Responsibility boundary
 > "What is the **single responsibility** of this module/feature? What is explicitly **out of scope**?"

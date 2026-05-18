@@ -8,7 +8,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_No unreleased entries._
+### Added
+- **`commands/skill-refine.md`** — added Prerequisites section documenting `CLAUDE_MEMORY_DIR` requirement and export example (CC-025b).
+- **`scripts/test-skill-refine.sh`** — added `case_no_args_exits_2_with_usage` and `case_multi_args_exits_2_with_usage` guard tests (CC-025b).
+- **`scripts/test-commands.sh`** — new contract-lint script asserting `/caveman` and `/caveman-commit` behavioral contracts; wired into CI (`lint.yml`).
+- **`.github/workflows/lint.yml`** — added `test-commands` CI job.
+
+### Changed
+- **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to the NO-GO fix-loop protocol; added new contract test script rule to the brief-writing section (CC-039).
+- **`commands/pre-impl.md`** — added Q4 (contract test completeness) to Step 2; updated heading to reflect Q1–Q4 (CC-039).
 
 ## [0.1.0] — 2026-05-17
 

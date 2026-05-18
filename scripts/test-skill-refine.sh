@@ -275,6 +275,10 @@ case_invalid_skill_name() {
 }
 
 # Behavior: Invoking skill-refine with no arguments exits 2 and prints Usage: to stderr.
+# Steps:
+#   1. Stage a fixture repo with a valid command file.
+#   2. Invoke skill-refine with no arguments.
+#   3. Assert exit 2 and that stderr contains "Usage:".
 case_no_args_exits_2_with_usage() {
   local name="no_args_exits_2_with_usage" repo out err
   repo="$(make_repo "$name")"
@@ -290,6 +294,10 @@ case_no_args_exits_2_with_usage() {
 }
 
 # Behavior: Invoking skill-refine with multiple arguments exits 2 and prints Usage: to stderr.
+# Steps:
+#   1. Stage a fixture repo with a valid command file.
+#   2. Invoke skill-refine with two arguments (foo bar).
+#   3. Assert exit 2 and that stderr contains "Usage:".
 case_multi_args_exits_2_with_usage() {
   local name="multi_args_exits_2_with_usage" repo out err
   repo="$(make_repo "$name")"

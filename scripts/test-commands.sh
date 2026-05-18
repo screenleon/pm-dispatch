@@ -155,6 +155,18 @@ assert_contains "caveman: rules section for lite"  "$CAVEMAN" "^### Rules: lite"
 assert_contains "caveman: rules section for full"  "$CAVEMAN" "^### Rules: full"
 assert_contains "caveman: rules section for ultra" "$CAVEMAN" "^### Rules: ultra"
 
+# Per-mode rule content — key rule bullets present in caveman.md
+assert_contains "caveman: Rules: lite contains no-opening-sentence rule" \
+  "$CAVEMAN" "No opening sentence"
+assert_contains "caveman: Rules: full contains No preamble rule" \
+  "$CAVEMAN" "No preamble"
+assert_contains "caveman: Rules: full contains No closing summary rule" \
+  "$CAVEMAN" "No closing summary"
+assert_contains "caveman: Rules: ultra contains No bullet symbols rule" \
+  "$CAVEMAN" "No bullet symbols"
+assert_contains "caveman: Rules: ultra contains No headers rule" \
+  "$CAVEMAN" "No headers"
+
 # ── caveman-commit.md contract ───────────────────────────────────────────────
 
 COMMIT="$COMMANDS_DIR/caveman-commit.md"
@@ -200,6 +212,10 @@ assert_contains "caveman-commit: arguments hint for subject" \
 # Output must be plain text, no fences
 assert_contains "caveman-commit: no markdown fences in output" \
   "$COMMIT" "No markdown fences"
+
+# Co-Authored-By trailer must not appear (caller adds it separately)
+assert_contains "caveman-commit: no Co-Authored-By trailer" \
+  "$COMMIT" "No.*Co-Authored-By.*trailer"
 
 # Body is suppressed by default; only allowed for breaking change or non-obvious constraint
 assert_contains "caveman-commit: no body unless breaking change or constraint" \
