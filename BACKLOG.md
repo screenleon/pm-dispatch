@@ -12,7 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|
 | CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 |
-| CC-005 | ⏸ deferred | install.sh preflight 跑 test-pr-gate 增加延遲 | ops | 2026-05-12 | pr:#38 |
+| CC-005 | 🔵 active | install.sh preflight 改為 opt-in via `--verify` | ops | 2026-05-12 | feat/cc005-install-verify-opt-in |
 | CC-006 | ✅ closed 2026-05-13 | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 |
 | CC-007 | ✅ closed 2026-05-13 | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 |
 | CC-008 | ✅ closed 2026-05-13 | Spark routing 判斷標準寫入 agents/project-pm.md | arch | 2026-05-13 | pr:#41 |
@@ -86,6 +86,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
 | CC-053 | 🔵 active | `test-commands.sh` CLI self-test coverage：`--filter` / `--list` / unknown / zero-match behavior not self-tested；introduced in PR #82, pre-existing relative to `feat/cc039-cc025b-v2` | test | 2026-05-18 | feat/cc053-cli-selftest |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 |
+| CC-055 | ⏸ deferred | **[P0]** `commands/pr-gate.md` frontmatter YAML syntax error：`argument-hint` value 含未 quote 的 `[...]` — GitHub YAML parser 顯示 parse error；需 quote 成字串 | ops/DX | 2026-05-18 | — |
+| CC-056 | ⏸ deferred | **[P0]** `scripts/lint-frontmatter.sh` + CI job：掃 `agents/*.md` / `commands/*.md` frontmatter，驗 YAML 可 parse；防止 CC-055 類錯誤再發生 | ops/test | 2026-05-18 | — |
+| CC-057 | ⏸ deferred | **[P0]** README ↔ 實際目錄同步：README 聲稱 `skills/ → ~/.claude/skills/` + 提到 `update-config` skill，但 `skills/` 目錄與 skill 均不存在；需修正文件或建立最小 stubs | docs/DX | 2026-05-18 | CC-031 |
+| CC-058 | ⏸ deferred | `scripts/doctor.sh`：安裝前後環境健康檢查（claude/codex/jq 存在、hooks 已裝、memory dir、scripts executable、frontmatter lint）；每項失敗給出可操作修復步驟 | ops/DX | 2026-05-18 | — |
+| CC-059 | ⏸ deferred | Thin `/pm.md` command：把 brief 建立 / handover validation / dispatch / BashOutput tracking / diff verify 等 runtime 邏輯移入 `scripts/pm-dispatch-runner.sh` 等腳本；pm.md 只保留意圖描述與行為約束 | arch/ops | 2026-05-18 | CC-200 |
+| CC-060 | ⏸ deferred | Codex model/config 外部化：把 hardcoded 模型名稱、sandbox policy、approval policy 抽到 config file（`defaults/codex.toml` 或 `.env.defaults`）；commands 與 scripts 讀 config 而非寫死 | arch/config | 2026-05-18 | CC-047 |
+| CC-061 | ⏸ deferred | 建立 `skills/` 目錄 + 2–3 個 starter SKILL.md：`dispatch-brief/SKILL.md`、`pr-gate-review/SKILL.md`（對齊 Anthropic Skills spec；README 已聲稱支援但目錄不存在）；與 CC-014/CC-015/CC-026 技能定義解耦，這條處理目錄結構 | arch/ux | 2026-05-18 | CC-057 |
+| CC-062 | ⏸ deferred | codex-bash-guard policy test matrix：建立 `tests/policy/codex-bash-guard/` 結構化 allow/deny JSON fixtures；讓安全 policy 從「很聰明的 shell parser」變「可驗證的 test matrix」 | ops/security | 2026-05-18 | — |
+| CC-063 | 🟡 deferred | **[P2]** Trace / token / gate metrics dashboard：`.agent-trace/*.jsonl` + `rate-limits*.json` + `.gate-results/*.md` 已有足夠資料；可視化 per-session token、gate pass rate、routing_log 校準趨勢 | ux/ops | 2026-05-18 | — |
+| CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | CC-031 |
+| CC-065 | 🟡 deferred | **[P2]** Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — |
+| CC-066 | 🟡 deferred | **[P2]** Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 |
 
 ---
 
@@ -101,11 +113,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: tests 本身 behavior-named、deterministic，功能無虞，純為 audit-quality / 一致性問題。長期會讓新人讀測試時樣式不一。
 **Requirement**: 把新增 test functions 的開頭註解改寫成與既有 hook tests 一致的 behavior/Steps docstring 結構。不改測試邏輯。
 
-## CC-005 — install.sh preflight 跑 test-pr-gate 增加延遲
+## CC-005 — install.sh preflight 改為 opt-in（active: feat/cc005-install-verify-opt-in）
 
-**Problem**: install.sh:151 把展開後完整的 test-pr-gate.sh 加入 preflight 套件，install 整體時間變長。
-**Why**: 風險面是低的（失敗 loud、rollback = revert 該行 preflight），但每次 install 都付出代價。如果未來 test-pr-gate 套件繼續長大，install 體驗會持續惡化，現在留個 entry 以便未來決策時有歷史。
-**Requirement**: 監測 install 端到端時間；若 preflight 變成 dev 體驗瓶頸，考慮 (a) 拆 fast / slow tiers、(b) 預設 fast，full 由 env var 觸發、(c) 在 CI 跑 full 而 install 只跑 smoke 子集。目前不需立即動作。
+**Problem**: install.sh 預設跑所有 preflight 測試套件（11 個），test suite 越來越大（現 100+ cases），新用戶 install 體驗差——他們只想使用工具，不需要看 regression output。
+**Why**: 測試套件驗「工具邏輯是否正確」，不是「剛才的安裝有沒有壞掉」；CI 已涵蓋所有測試，從 main 安裝的用戶不需要再跑一遍。
+**Requirement**: 把 preflight 改成 opt-in：`./install.sh` 預設跳過測試，`./install.sh --verify` 才跑全套。`CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1` escape hatch 不動。CI 不受影響（直接跑 `test-install.sh`，不依賴 install.sh 跑 preflights）。
 
 ## CC-006 — statusLine hook 自動寫入 rate-limits ✅ 2026-05-13
 
@@ -781,3 +793,75 @@ review cycles in-place.
 3. Include Claude-assisted refinement guidance in `commands/skill-refine.md`, with clear dry-run and apply boundaries.
 4. Add contract tests for diff-generation behavior and no-direct-write safety.
 **Source**: PR #67 CC-025 M1 implementation and 2026-05-18 CC-025b closure decision in `feat/cc039-cc025b-v2`.
+
+## CC-055 — [P0] commands/pr-gate.md frontmatter YAML parse error
+
+**Problem**: `commands/pr-gate.md` frontmatter 的 `argument-hint` 值含未 quote 的 `[...]`（`[express|standard|full] [--targeted r1,r2]...`），YAML flow sequence 語法使 GitHub YAML parser 顯示 parse error。`agents/claude-executor.md` description 含 `` `executor: claude` ``（backtick 內含 `: `），部分嚴格 YAML parser 也會報錯。
+**Why**: frontmatter parse error 可能影響 Claude Code command discovery（command metadata 讀取失敗）及 GitHub UI 顯示；是低成本、高確信的修復。
+**Requirement**: 把 `commands/pr-gate.md` 的 `argument-hint` 改成 quoted string；確認 `agents/claude-executor.md` description 的 YAML 合法性。修復後加入 CC-056 lint 防止再發生。
+
+## CC-056 — [P0] scripts/lint-frontmatter.sh + CI job
+
+**Problem**: 沒有 CI 自動驗證 `agents/*.md` / `commands/*.md` frontmatter YAML 是否合法；CC-055 類問題須等到 GitHub 顯示錯誤才發現。
+**Why**: frontmatter 是 Claude Code 的 command/agent metadata 入口；invalid YAML 會靜默失效（command 不被 discover），不會有明顯錯誤。
+**Requirement**: 新增 `scripts/lint-frontmatter.sh`，掃 `agents/*.md` / `commands/*.md`，用 `python3 -c 'import yaml; yaml.safe_load()'` 或 `yq` 驗 frontmatter；CI 新增一個 lint job 跑此腳本。失敗時輸出精確的檔名 + 錯誤行。
+
+## CC-057 — [P0] README ↔ 實際目錄同步（skills/ 聲稱但不存在）
+
+**Problem**: README 顯式列出 `skills/ → ~/.claude/skills/ invocable skills` 為頂層目錄結構的一部分，並在後文提到 `update-config` skill；但 `skills/` 目錄與任何 SKILL.md 均不存在於 repo。外部讀者 fork 後找不到宣稱的目錄，造成 onboarding confusion。
+**Why**: 文件與實際結構不符是低信任度信號；已公開的 repo（v0.1.0）裡存在會被 fork 的使用者注意。
+**Requirement**: 二選一：(A) 從 README 移除 `skills/` 一行及 `update-config` 引用，直到 CC-061 完成；(B) 建立 `skills/.gitkeep` + 一個最小 placeholder SKILL.md，讓目錄結構名符其實。先做 (A)，CC-061 完成後轉 (B)。
+
+## CC-058 — scripts/doctor.sh：環境健康檢查
+
+**Problem**: 沒有單一指令能驗證「pm-dispatch 能否正常工作」。使用者需要逐一排查 claude/codex/jq 是否安裝、hooks 是否已 wire、memory dir 是否存在、scripts 是否 executable、frontmatter 是否合法。
+**Why**: install.sh 處理「安裝」，但不處理「診斷」；新用戶在環境不完整時只能看到含糊的錯誤訊息。`scripts/doctor.sh` 是標準 toolchain 慣例（Homebrew `doctor`、Volta `doctor` 等）。
+**Requirement**: `scripts/doctor.sh` 逐項檢查：(1) `claude` 是否在 PATH；(2) `codex` 是否在 PATH（warn 非 error）；(3) `jq` 是否存在；(4) hooks 是否 installed（讀 settings.json hooks 欄位）；(5) `~/.claude/projects/.../memory/` 目錄是否存在；(6) `scripts/*.sh` 是否 executable；(7) frontmatter lint（呼叫 CC-056）。每項 OK / WARN / FAIL 附修復指令。整體 exit 0（OK/WARN only）或 exit 1（any FAIL）。
+
+## CC-059 — Thin /pm.md：把 runtime 執行邏輯移入 scripts
+
+**Problem**: `commands/pm.md` 包含 brief file 建立、handover validation、Codex dispatch、background mode、BashOutput tracking、stderr parsing、git diff verify、exit 124 retry 等大量流程邏輯。markdown command 逐漸變成「半程式碼、半 prompt、半 policy」的混合體。
+**Why**: 當 Codex CLI、Claude Code hooks 或 scripts 行為改變時，markdown command 很容易與實際腳本 drift。script 有測試；markdown 沒有。
+**Requirement**: 識別 pm.md 中可搬到 shell script 的 runtime 步驟（特別是 handover extraction + validation + dispatch 命令組裝）；移入 `scripts/pm-dispatch-runner.sh`（或直接加強 `scripts/lib/`）；pm.md 只保留「什麼情境呼叫什麼腳本」的意圖描述與 trigger 條件。依賴 CC-200（executor-router.sh）。
+
+## CC-060 — Codex model/config 外部化
+
+**Problem**: Codex model 名稱（`gpt-5.3-codex-spark`）、sandbox policy（`workspace-write`）、approval policy（`never`）、timeout（1200s）等參數分散硬碼在 commands/*.md 與 scripts 中。Codex CLI model alias 已在 CC-047 修過一次；未來 OpenAI/Anthropic 改動 API 時又要逐一搜改。
+**Why**: config drift 是 toolchain maintenance 的主要成本之一；config file + script 讀取比 grep-and-replace 更可靠。
+**Requirement**: 建立 `defaults/codex.toml`（或 `.env.defaults`）收納模型名稱、sandbox、approval、timeout；scripts/codex-dispatch.sh 讀 config；commands 只引用語意名稱（`codex_spark`），不寫死 API 字串。依賴 CC-047（已關）。
+
+## CC-061 — 建立 skills/ 目錄 + starter SKILL.md
+
+**Problem**: README 和 CC-057 指出 `skills/` 目錄不存在，但 Anthropic Skills spec 定義 SKILL.md 為可重用能力包（只在需要時載入 context）。現有 `commands/pm.md`、`commands/pr-gate.md` 有大量重用邏輯，天然適合轉成 skills。CC-014（using-git-worktrees）、CC-015（systematic-debugging）、CC-026（/skill-distill）均等待 skills/ 基礎建設。
+**Why**: skills 比 commands 更輕量（context on-demand），且是 Anthropic 現在主推的擴展方式。建立 2–3 個 starter skills 能讓 CC-014/015/026 有落地路徑，也修正 README 現有聲明。
+**Requirement**: 建立 `skills/dispatch-brief/SKILL.md`（封裝 brief 建立 + handover validate 流程）和 `skills/pr-gate-review/SKILL.md`（封裝 reviewer 派發流程）；在 install.sh 的 helper scripts 區段加入 `skills/` symlink；README skills/ 目錄說明改為實際有內容。先行條件：CC-057 (A) 完成後執行此條。
+
+## CC-062 — codex-bash-guard policy test matrix
+
+**Problem**: `hook-codex-bash-guard.sh` 的允許/拒絕邏輯非常複雜（newline 檢查、quote 檢查、shell metacharacters、background mode、git form allowlist、read path allowlist）。目前有 test-hooks.sh 的整合測試，但沒有結構化的 per-rule fixtures；policy 改動的影響面不透明。
+**Why**: shell-based policy parser 有兩種失效模式：過度阻擋合法工作流，以及漏過某些 bypass。只有可讀的 allow/deny test matrix 能讓安全 policy 從「很聰明」變「可驗證」。
+**Requirement**: 建立 `tests/policy/codex-bash-guard/` 目錄，以 JSON fixtures（每個 fixture 含 `input`、`expected: allow|deny`、`reason`）描述每條規則的 allow 和 deny case；`scripts/test-codex-bash-guard.sh` 讀 fixtures 執行；CI 加入此 job。
+
+## CC-063 — [P2] Trace / token / gate metrics dashboard
+
+**Problem**: `.agent-trace/*.jsonl`、`rate-limits*.json`、`.gate-results/*.md` 已積累豐富資料（per-session token、gate pass/fail、routing_log 校準記錄），但沒有視覺化介面；只能手動 grep。
+**Why**: token 趨勢、gate 通過率、routing 準確度對長期 workflow 最佳化很有價值；資料已在，缺的是 consumer。
+**Requirement**: `scripts/dashboard.sh`（或 HTML report）：讀取 `.agent-trace/*.jsonl` 統計 per-session input/output token；讀 `.gate-results/*.md` 統計 GO/NO-GO rate；讀 `routing_log/*.csv` 計算 Q1/Q2/Q3 準確度。輸出 terminal-friendly 摘要表。
+
+## CC-064 — [P2] Project bootstrap wizard
+
+**Problem**: 新 repo 接入 pm-dispatch 需要手讀 GETTING_STARTED.md、手跑多個指令（`setup-project.sh`、memory init、rules 建立、PM schema 建立）；沒有一鍵引導流程。
+**Why**: 降低接入門檻是 OSS 擴散的關鍵；現有 install.sh 處理 Claude 工具安裝，但不處理「把 pm-dispatch 接入現有 project」的 onboarding。
+**Requirement**: `scripts/setup-project.sh --init <project-path>` 互動式引導：建立 `.claude/memory/`、`rules/` 骨架、`pm/BACKLOG.md` 模板、`.gitignore` 追加 artifact paths；結束時輸出「下一步」checklist。
+
+## CC-065 — [P2] Per-repo configurable gate pipeline
+
+**Problem**: 所有 repo 共用同一組 reviewer（architecture-reviewer、critic、qa-tester、risk-reviewer、security-reviewer）和 tier 預設。某些 repo（如純文件、seed data）不需要 security-reviewer；某些高風險 repo 應強制 full tier。
+**Why**: 目前唯一的調整方式是每次手動傳 `--targeted` 或 `--tier`，無法設為 repo 級預設值。
+**Requirement**: `.pm-dispatch/gate.toml`（per-repo）支援設定 `default_tier`、`required_reviewers`、`skip_reviewers`；`scripts/pr-gate.sh` 讀取此 config 做為預設值（CLI flags 仍可 override）。
+
+## CC-066 — [P2] Declarative policy.yml for hook allowlist
+
+**Problem**: `hook-codex-bash-guard.sh` 的 git allowlist、read path allowlist、shell metacharacter blocklist 等 policy 直接寫在 shell script 邏輯中；per-repo override 不可能，policy 審計需要讀 shell code。
+**Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
+**Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
