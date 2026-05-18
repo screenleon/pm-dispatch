@@ -113,7 +113,7 @@ assert_in_section() {
   fi
 }
 
-echo "test-commands.sh"
+$LIST || echo "test-commands.sh"
 
 # ── caveman.md contract ──────────────────────────────────────────────────────
 

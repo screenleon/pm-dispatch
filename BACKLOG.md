@@ -84,6 +84,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-050 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Audit stale deferred tickets CC-011/012/013/014/015 (memory-sync / SessionStart pull / `/caveman` / using-git-worktrees skill / systematic-debugging skill) from 2026-05-14. Post-CC-OSS public, some may be obsolete or low-priority; mark `🟢 backlog-for-someday` or drop with reasoning recorded | process/docs | 2026-05-17 | — |
 | CC-051 | 🟡 deferred | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — |
 | CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — |
+| CC-053 | ⏸ deferred | `test-commands.sh` CLI self-test coverage：`--filter` / `--list` / unknown / zero-match behavior not self-tested；introduced in PR #82, pre-existing relative to `feat/cc039-cc025b-v2` | test | 2026-05-18 | — |
+| CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 |
 
 ---
 
@@ -153,7 +155,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - `commands/caveman.md`：off/lite/full/ultra 四模式切換；空參/無效參數各有明確 stop-before-Step-2 行為；Step 2 輸出固定格式 `Caveman mode: <MODE>`
 - `commands/caveman-commit.md`：讀 `git diff --cached` → 推斷 type/scope/subject → 純文字輸出；breaking-change 用 `!` append 到 type/scope；`$ARGUMENTS` 作 hint
 - 8 個 agent 檔全部加入 `# Output brevity` section（agent-to-agent 壓縮常態化；`/caveman` 僅影響對用戶的回應）
-- `scripts/test-commands.sh`：72 個 contract assertions；CI job 已接入 `.github/workflows/lint.yml`
+- `scripts/test-commands.sh`：103 個 contract assertions；CI job 已接入 `.github/workflows/lint.yml`
 
 **Post-mortem（7 輪 gate）**：屬於 CC-039 記錄的「洋蔥剝皮」模式的第二個案例。具體觸發條件：同一 PR 同時新增功能檔案 + 對應的 contract test script，qa-tester 對 test script 的完整性要求與對功能本身同等嚴格，但無事先 behavioral contract 清單，導致每輪只補 1–2 個缺口。見 CC-039 補充分析。
 
@@ -585,6 +587,7 @@ CC-013 的七輪逐步修補路徑（每輪 1–2 個缺口）：
 **Source**: 2026-05-17 gate-20260517-155611.md（M2 PR-gate r1 GO advisory）。
 **Note**: 兩條 advise 共享 root cause（env contract 沒文件化），所以同票處理；fix 後 M2 follow-up close。
 **Cross-link**: [[feedback_known_bug_backlog]] / [[feedback_native_perspective]] 衍生「文件化 user contract」原則。
+**M2 follow-up**: diff generation and Claude-assisted refinement scope is tracked under CC-054.
 
 ## CC-047 — `scripts/codex-dispatch.sh` model alias mapping
 
@@ -753,3 +756,25 @@ review cycles in-place.
 4. BACKLOG schema preamble（CC-051 工作）同步更新，說明新欄慣例。
 **Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
 **Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
+
+## CC-053 — `test-commands.sh` CLI self-test coverage（deferred）
+
+**Problem**: `scripts/test-commands.sh` gained CLI behavior for `--filter`, `--list`, unknown options, and zero-match filters, but the test script does not self-test those command-line paths.
+**Why**: PR #82 increased `/caveman` contract coverage and raised the assertion count, but the harness-level CLI behavior remains a pre-existing coverage gap relative to `feat/cc039-cc025b-v2`. If those entry points regress, the suite can still appear healthy while filtering/listing behavior is broken.
+**Requirement**:
+1. Add focused self-tests for `scripts/test-commands.sh --list`.
+2. Add focused self-tests for `scripts/test-commands.sh --filter <pattern>` including a matching case and a zero-match case.
+3. Add an unknown-option case that asserts non-zero exit and actionable usage output.
+4. Keep the tests deterministic and avoid changing unrelated `/caveman` command contracts.
+**Source**: 2026-05-18 backlog correction for PR #82 follow-up; gap introduced with `scripts/test-commands.sh` CLI behavior and observed while closing `feat/cc039-cc025b-v2`.
+
+## CC-054 — CC-025 M2 `/skill-refine` diff generation（deferred）
+
+**Problem**: CC-025 delivered the M1 read-only signal bundle and CC-025b closed the usage-guard plus `CLAUDE_MEMORY_DIR` contract follow-ups, but the original M2 scope for `/skill-refine` diff generation remains unimplemented.
+**Why**: The useful product loop is not complete until the tool can turn skill feedback signals into a reviewable refinement diff. Closing CC-025b without a separate M2 tracker would make that deferred scope easy to lose.
+**Requirement**:
+1. Extend `/skill-refine` so it can generate a proposed diff for the target skill or command from curated memory/feedback signals.
+2. Keep the default behavior review-first: emit the diff for user or main-thread approval rather than directly rewriting skill files.
+3. Include Claude-assisted refinement guidance in `commands/skill-refine.md`, with clear dry-run and apply boundaries.
+4. Add contract tests for diff-generation behavior and no-direct-write safety.
+**Source**: PR #67 CC-025 M1 implementation and 2026-05-18 CC-025b closure decision in `feat/cc039-cc025b-v2`.
