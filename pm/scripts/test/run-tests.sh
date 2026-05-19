@@ -119,6 +119,8 @@ run_validate_case "v1.1 good" "$fixtures/good-v11/BACKLOG.md" 0 ""
 run_validate_case "v1.1 bad-priority-enum" "$fixtures/bad-priority-enum/BACKLOG.md" 1 "E-PRIORITY-ENUM"
 run_validate_case "v1.1 bad-epic-enum" "$fixtures/bad-epic-enum/BACKLOG.md" 1 "E-EPIC-ENUM"
 run_validate_case_warn "v1.1 warn-missing-cols" "$fixtures/warn-missing-cols/BACKLOG.md" "W-MISSING-COLS"
+run_validate_case "v1.1 good-subletter" "$fixtures/good-v11-subletter/BACKLOG.md" 0 ""
+run_validate_case "v1.1 bad-priority-subletter" "$fixtures/bad-priority-subletter/BACKLOG.md" 1 "E-PRIORITY-ENUM"
 run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
 run_validate_case "validate bad-index-mismatch" "$fixtures/bad-index-mismatch/BACKLOG.md" 1 "E-INDEX-MISMATCH"
 run_validate_case "validate bad-dup-id" "$fixtures/bad-dup-id/BACKLOG.md" 1 "E-DUP-ID"
@@ -176,12 +178,16 @@ elif ! grep -q '^### repo-a$' "$rollup_out"; then
   fail "rollup fixtures" "missing repo-a section"
 elif ! grep -q '^### repo-b$' "$rollup_out"; then
   fail "rollup fixtures" "missing repo-b section"
+elif ! grep -q '^### repo-v11$' "$rollup_out"; then
+  fail "rollup fixtures" "missing repo-v11 section"
 elif grep -q 'repo-c-no-marker' "$rollup_out"; then
   fail "rollup fixtures" "included unmarked repo"
 elif ! grep -q '| repo-a | 3 | 1 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-a summary mismatch"
 elif ! grep -q '| repo-b | 2 | 0 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-b summary mismatch"
+elif ! grep -q '| repo-v11 | 2 | 1 |' "$rollup_out"; then
+  fail "rollup fixtures" "repo-v11 summary mismatch"
 else
   pass "rollup fixtures"
 fi

@@ -87,11 +87,11 @@ function valid_date(s) {
 }
 
 function valid_priority(s) {
-  return (s == "P1" || s == "P2" || s == "P3" || s == "\xe2\x80\x94" || s == "-" || s == "—")
+  return (s == "P1" || s == "P2" || s == "P3" || s == "—")
 }
 
 function valid_epic(s) {
-  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "\xe2\x80\x94" || s == "-" || s == "—")
+  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "—")
 }
 
 function norm_area(s) {
@@ -229,7 +229,7 @@ function parse_tags(id, text, n, i, tok) {
 }
 
 function note_body_id(line, id) {
-  if (line ~ /^## +[A-Z][A-Z0-9]*-[0-9][0-9][0-9] +—/) {
+  if (line ~ /^## +[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]* +—/) {
     id = line
     sub(/^## +/, "", id)
     sub(/ +—.*/, "", id)
@@ -257,7 +257,7 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs, priorit
   n = split_md_row(line, f)
   if (n < 7) return
   id = trim(f[2])
-  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
 
   index_seen[id]++
   if (index_seen[id] == 2) emit("E-DUP-ID", id " appears more than once in index")
@@ -354,7 +354,7 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
   n = split(line, f, "|")
   if (n < 7) return
   id = trim(f[2])
-  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
   status = trim(f[3])
   if (status ~ /^✅ closed /) {
     status = "closed"

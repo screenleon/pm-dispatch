@@ -1,3 +1,4 @@
+E-AREA-ENUM: CC-025b invalid area: ux/memory/test
 E-AREA-ENUM: CC-038 invalid area: ops/portability
 E-AREA-ENUM: CC-047 invalid area: ops/dispatch
 E-AREA-ENUM: CC-049 invalid area: process/docs
@@ -10,17 +11,65 @@ E-AREA-ENUM: CC-062 invalid area: ops/security
 E-AREA-ENUM: CC-066 invalid area: arch/security
 E-AREA-ENUM: CC-100 invalid area: process/docs
 E-AREA-ENUM: CC-102 invalid area: arch/install
+E-AREA-ENUM: CC-102b invalid area: ops/install
 E-AREA-ENUM: CC-103 invalid area: ops/portable
+E-AREA-ENUM: CC-103b invalid area: arch/install
 E-AREA-ENUM: CC-104 invalid area: docs/ux
+E-AREA-ENUM: CC-104b invalid area: ops/install
+E-AREA-ENUM: CC-104c invalid area: arch/install
+E-AREA-ENUM: CC-104d invalid area: ops/hook
+E-AREA-ENUM: CC-104f invalid area: arch/dep
+E-AREA-ENUM: CC-104h invalid area: ops/validator
+E-AREA-ENUM: CC-104i invalid area: ops/repo
+E-AREA-ENUM: CC-104k invalid area: filesystem/caveat
+E-AREA-ENUM: CC-104l invalid area: ops/install/ux
+E-AREA-ENUM: CC-104m invalid area: arch/install/platform
+E-AREA-ENUM: CC-104n invalid area: ops/install/risk
+E-AREA-ENUM: CC-104o invalid area: ops/install/portability
+E-AREA-ENUM: CC-104p invalid area: arch/portable
+E-AREA-ENUM: CC-104q invalid area: ops/test/ux
+E-AREA-ENUM: CC-104r invalid area: docs/ops
+E-AREA-ENUM: CC-104s invalid area: ops/trace/portability
+E-AREA-ENUM: CC-104t invalid area: arch/hook/portability
+E-AREA-ENUM: CC-104u invalid area: ops/install/correctness
+E-AREA-ENUM: CC-104v invalid area: docs/install/ux
 E-AREA-ENUM: CC-105 invalid area: process/release
 E-AREA-ENUM: CC-200 invalid area: arch/reuse
 E-AREA-ENUM: CC-201 invalid area: arch/reuse
 E-AREA-ENUM: CC-202 invalid area: arch/reuse
 E-AREA-ENUM: CC-203 invalid area: ops/test/reuse
 E-AREA-ENUM: CC-204 invalid area: arch/hook/reuse
+E-CLOSURE-DATE-MISMATCH: CC-104p index=by this-PR body=missing
+E-CLOSURE-NO-SEE: CC-104p closed/dropped stub missing See
+E-DATE-FORMAT: CC-104p invalid closure date: by this-PR
+E-INDEX-MISMATCH: CC-104b present in index but missing from body
+E-INDEX-MISMATCH: CC-104c present in index but missing from body
+E-INDEX-MISMATCH: CC-104d present in index but missing from body
+E-INDEX-MISMATCH: CC-104e present in index but missing from body
+E-INDEX-MISMATCH: CC-104f present in index but missing from body
+E-INDEX-MISMATCH: CC-104g present in index but missing from body
+E-INDEX-MISMATCH: CC-104j present in index but missing from body
+E-INDEX-MISMATCH: CC-104k present in index but missing from body
+E-INDEX-MISMATCH: CC-104l present in index but missing from body
+E-INDEX-MISMATCH: CC-104m present in index but missing from body
+E-INDEX-MISMATCH: CC-104n present in index but missing from body
+E-INDEX-MISMATCH: CC-104o present in index but missing from body
+E-INDEX-MISMATCH: CC-104p present in index but missing from body
+E-INDEX-MISMATCH: CC-104q present in index but missing from body
+E-INDEX-MISMATCH: CC-104r present in index but missing from body
+E-INDEX-MISMATCH: CC-104s present in index but missing from body
+E-INDEX-MISMATCH: CC-104t present in index but missing from body
+E-INDEX-MISMATCH: CC-104u present in index but missing from body
+E-INDEX-MISMATCH: CC-104v present in index but missing from body
 E-REFS-PREFIX: CC-038 invalid ref: CC-037 follow-up
 E-REFS-PREFIX: CC-059 invalid ref: CC-200
 E-REFS-PREFIX: CC-060 invalid ref: CC-047
 E-REFS-PREFIX: CC-061 invalid ref: CC-057
 E-REFS-PREFIX: CC-064 invalid ref: CC-031
 E-REFS-PREFIX: CC-066 invalid ref: CC-204
+E-REFS-PREFIX: CC-104k invalid ref: CC-104r
+E-REFS-PREFIX: CC-104p invalid ref: CC-104k
+E-REFS-PREFIX: CC-104q invalid ref: CC-104n
+E-STATUS-ENUM: CC-104c invalid status: 🟢 in-flight
+E-STATUS-ENUM: CC-104r invalid status: 🟢 deferred
+E-STATUS-ENUM: CC-104v invalid status: 🟢 deferred
