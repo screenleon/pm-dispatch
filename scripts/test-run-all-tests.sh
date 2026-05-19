@@ -308,11 +308,18 @@ test_dispatch_install_running_flag() {
 
 test_dispatch_pm_scripts_via_bash() {
   # Behavior: aggregator invokes pm/scripts/test/run-tests.sh via explicit bash call.
-  # Steps: write a stub at the pm-scripts path; run aggregator; assert PASS test-pm-scripts.
+  # Steps: write a #!/bin/false stub at pm/scripts/test/run-tests.sh (direct execution exits 1);
+  #        run aggregator which uses bash "$script" (ignores shebang, exits 0);
+  #        assert PASS test-pm-scripts, proving bash invocation is used.
   local name="dispatch-pm-scripts-via-bash"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
+
+  # Override pm-scripts stub: #!/bin/false shebang fails under direct exec but not bash
+  local pm_stub="$repo/pm/scripts/test/run-tests.sh"
+  printf '#!/bin/false\nexit 0\n' > "$pm_stub"
+  chmod +x "$pm_stub"
 
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
