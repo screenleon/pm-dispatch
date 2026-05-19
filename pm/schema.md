@@ -110,7 +110,7 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 
 #### 2.4.5 Epic enum
 
-`oss`（CC-OSS 公開源碼系列，CC-1NN）/ `reuse-debt`（技術債重用，CC-2NN）/ `hygiene`（流程/schema 維護）/ `—`（未分組）。
+`oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程/schema 維護）/ `—`（未分組）。
 新 repo 可以擴充此 enum；擴充需同步更新 `pm/schema.md` 並 bump patch version。
 
 ### 2.5 條目 body 三層格式

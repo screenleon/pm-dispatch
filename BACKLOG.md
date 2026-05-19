@@ -93,7 +93,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
-| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — | P1 | hygiene |
+| CC-052 | ✅ closed 2026-05-19 | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | pr:#93 | — | hygiene |
 | CC-053 | ✅ closed 2026-05-18 | `test-commands.sh` CLI self-test coverage | test | 2026-05-18 | pr:#84 | — | hygiene |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 | — | — |
 | CC-055 | ✅ closed 2026-05-18 | `commands/pr-gate.md` frontmatter YAML syntax error fixed | ops/DX | 2026-05-18 | pr:#86 | — | hygiene |
@@ -108,13 +108,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | CC-031 | P2 | — |
 | CC-065 | 🟡 deferred | **[P2]** Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P2 | — |
 | CC-066 | 🟡 deferred | **[P2]** Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P2 | — |
-| CC-067 | 🔵 active | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | — | P2 | hygiene |
+| CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
 
 ---
 
 ## Convention
 
-**ID scheme**: `CC-NNN` sequential. `CC-1NN` (CC-100–CC-199) are CC-OSS epic markers; `CC-2NN` (CC-200–CC-299) are reuse-debt markers. These are semantic groupings — ID gaps between unrelated tickets are normal.
+**ID scheme**: `CC-NNN` sequential. ID gaps are normal — use the `epic` column (see `pm/schema.md §2.4.5`) for semantic grouping instead of ID ranges. The `CC-1NN`/`CC-2NN` range-reservation convention is deprecated (see `DECISIONS.md#2026-05-19-deprecate-id-gap-convention`).
 
 **Sub-letter IDs**: `CC-NNNa`, `CC-NNNb`, `CC-NNNc` are follow-up tickets to a parent `CC-NNN`, with independent lifecycles.
 
@@ -493,17 +493,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **See**: BACKLOG-ARCHIVE.md
 
-## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
+## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade ✅ 2026-05-19
 
-**Problem**: 目前 BACKLOG index table 有三個結構性缺口：(1) 無優先度欄位——`P1/P2/P3` tags 只在 body section 以 `**Tags**: P1` 記錄，掃 index 時不可見、不可排序；(2) ID gap 慣例（CC-1NN = OSS epic、CC-2NN = reuse-debt）對 fork 用戶不透明，CC-051 preamble 只能靠文字說明；(3) epic/分組資訊無法機器化查詢。
-**Why**: 使用者決策（2026-05-18）：希望 index-level 優先度可見，納入 CC-052 schema upgrade 範圍，與 epic 欄一起升版而非分別處理。
-**Requirement**:
-1. `pm-schema v1.1` index table 新增兩欄：`priority`（P1/P2/P3；未設為空）、`epic`（`oss`/`reuse-debt`/`hygiene` 或空）。
-2. `pm/scripts/validate.sh` 對應更新：新欄格式驗證；向下相容（舊 v1 列無新欄時 emit warning 而非 error，允許漸進補齊）。
-3. 全現有 index 列補 priority 欄（依當時判斷填入或留空）；CC-1NN 補 `epic: oss`、CC-2NN 補 `epic: reuse-debt`。
-4. BACKLOG schema preamble（CC-051 工作）同步更新，說明新欄慣例。
-**Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
-**Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
+**Outcome**: pm-schema v1.1 shipped — `Priority` + `Epic` index columns, validator checks (E-PRIORITY-ENUM / E-EPIC-ENUM / W-MISSING-COLS), all rows backfilled. 36 tests pass.
+**See**: pr:#93
 
 ## CC-054 — CC-025 M2 `/skill-refine` diff generation（deferred）
 
@@ -570,11 +563,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
 **Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
 
-## CC-067 — [schema cleanup] 廢棄 ID gap 慣例
+## CC-067 — [schema cleanup] 廢棄 ID gap 慣例 ✅ 2026-05-19
 
-**Problem**: `pm/schema.md` §2.2 和 BACKLOG preamble 記載「CC-1NN = OSS epic、CC-2NN = reuse-debt」的保留範圍慣例。隨著 ticket 自然增長至 CC-100，普通流水號與「語義保留範圍」將正面衝突。
-**Why**: v1.1 的 `epic` 欄位已是顯式、機器可讀的分組依據；ID gap 慣例是 Epic 欄位存在前的 workaround，現在已多餘且有碰撞風險。現有 CC-1NN/CC-2NN ID 不動（歷史穩定），只廢棄「保留範圍」的文件規範。
-**Requirement**: (1) `pm/schema.md` §2.2 移除 CC-1NN/CC-2NN 保留說明；(2) BACKLOG Convention 區段移除 ID gap 說明；(3) `DECISIONS.md` 新增決策記錄（context: v1.1 Epic column 取代 ID gap；decision: epic column is authoritative grouping signal）。無 validator 變更。
+**Outcome**: `pm/schema.md §2.4.5` 移除 CC-1NN/CC-2NN 範圍標注；BACKLOG.md Convention 移除保留範圍說明並指向 DECISIONS.md；新建 DECISIONS.md 記錄決策。
+**See**: DECISIONS.md#2026-05-19-deprecate-id-gap-convention
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
