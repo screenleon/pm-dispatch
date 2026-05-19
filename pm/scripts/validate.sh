@@ -350,27 +350,23 @@ function note_pr_status(tok, status) {
   if (!(tok in pr_status) || pr_status[tok] != "closed") pr_status[tok] = status
 }
 
+function status_kind(raw) {
+  raw = trim(raw)
+  if (raw == "🔵 active") return "active"
+  if (raw == "✅ done") return "done"
+  if (raw == "⏸ deferred" || raw == "🟡 deferred" || raw == "🟢 someday") return "deferred"
+  if (raw ~ /^⚠️ partial /) return "active"
+  if (raw ~ /^✅ closed /) return "closed"
+  if (raw ~ /^🚫 dropped /) return "dropped"
+  return "unknown"
+}
+
 function note_index_refs(line, n, f, id, refs, status, s, tok) {
   n = split(line, f, "|")
   if (n < 7) return
   id = trim(f[2])
   if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
-  status = trim(f[3])
-  if (status ~ /^✅ closed /) {
-    status = "closed"
-  } else if (status == "🔵 active") {
-    status = "active"
-  } else if (status == "✅ done") {
-    status = "done"
-  } else if (status == "⏸ deferred" || status == "🟡 deferred" || status == "🟢 someday") {
-    status = "deferred"
-  } else if (status ~ /^⚠️ partial /) {
-    status = "active"
-  } else if (status ~ /^🚫 dropped /) {
-    status = "dropped"
-  } else {
-    status = "unknown"
-  }
+  status = status_kind(trim(f[3]))
   # Read Refs relative to end to tolerate extra pipe chars in topic field.
   # v1:   row ends with ...Refs | "" -> Refs = f[n-1]
   # v1.1: row ends with ...Refs | Priority | Epic | "" -> Refs = f[n-3]

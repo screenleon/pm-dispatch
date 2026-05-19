@@ -21,12 +21,12 @@ fail() {
 
 run_validate_case() {
   name=$1
-  file=$2
-  want_code=$3
-  want_token=$4
+  want_code=$2
+  want_token=$3
+  shift 3
   err=$(mktemp)
   set +e
-  bash "$root_dir/validate.sh" "$file" >/dev/null 2>"$err"
+  bash "$root_dir/validate.sh" "$@" >/dev/null 2>"$err"
   got_code=$?
   set -e
   if [ "$got_code" -ne "$want_code" ]; then
@@ -80,76 +80,39 @@ run_validate_case_warn() {
   pass "$name"
 }
 
-run_validate_case_multi() {
-  name=$1
-  want_code=$2
-  want_token=$3
-  shift 3
-  err=$(mktemp)
-  set +e
-  bash "$root_dir/validate.sh" "$@" >/dev/null 2>"$err"
-  got_code=$?
-  set -e
-  if [ "$got_code" -ne "$want_code" ]; then
-    fail "$name" "exit $got_code, expected $want_code"
-    rm -f "$err"
-    return
-  fi
-  if [ -n "$want_token" ] && ! grep -q "$want_token" "$err"; then
-    fail "$name" "missing $want_token"
-    rm -f "$err"
-    return
-  fi
-  if [ "$want_code" -eq 1 ]; then
-    tokens=$(grep -o 'E-[A-Z0-9-]*' "$err" | sort | uniq | tr '\n' ' ')
-    if [ "$tokens" != "$want_token " ]; then
-      fail "$name" "unexpected rule tokens: $tokens"
-      rm -f "$err"
-      return
-    fi
-  fi
-  if [ "$want_code" -eq 0 ] && [ -s "$err" ]; then
-    fail "$name" "stderr was not empty"
-    rm -f "$err"
-    return
-  fi
-  rm -f "$err"
-  pass "$name"
-}
-
 # validate.sh 基本案例。
-run_validate_case "validate good" "$fixtures/good/BACKLOG.md" 0 ""
-run_validate_case "v1.1 good" "$fixtures/good-v11/BACKLOG.md" 0 ""
-run_validate_case "v1.1 bad-priority-enum" "$fixtures/bad-priority-enum/BACKLOG.md" 1 "E-PRIORITY-ENUM"
-run_validate_case "v1.1 bad-epic-enum" "$fixtures/bad-epic-enum/BACKLOG.md" 1 "E-EPIC-ENUM"
+run_validate_case "validate good" 0 "" "$fixtures/good/BACKLOG.md"
+run_validate_case "v1.1 good" 0 "" "$fixtures/good-v11/BACKLOG.md"
+run_validate_case "v1.1 bad-priority-enum" 1 "E-PRIORITY-ENUM" "$fixtures/bad-priority-enum/BACKLOG.md"
+run_validate_case "v1.1 bad-epic-enum" 1 "E-EPIC-ENUM" "$fixtures/bad-epic-enum/BACKLOG.md"
 run_validate_case_warn "v1.1 warn-missing-cols" "$fixtures/warn-missing-cols/BACKLOG.md" "W-MISSING-COLS"
-run_validate_case "v1.1 good-subletter" "$fixtures/good-v11-subletter/BACKLOG.md" 0 ""
-run_validate_case "v1.1 bad-priority-subletter" "$fixtures/bad-priority-subletter/BACKLOG.md" 1 "E-PRIORITY-ENUM"
-run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
-run_validate_case "validate bad-index-mismatch" "$fixtures/bad-index-mismatch/BACKLOG.md" 1 "E-INDEX-MISMATCH"
-run_validate_case "validate bad-orphan-section" "$fixtures/bad-orphan-section/BACKLOG.md" 1 "E-INDEX-MISMATCH"
-run_validate_case "validate bad-dup-id" "$fixtures/bad-dup-id/BACKLOG.md" 1 "E-DUP-ID"
-run_validate_case "validate bad-status-enum" "$fixtures/bad-status-enum/BACKLOG.md" 1 "E-STATUS-ENUM"
-run_validate_case "validate bad-area-enum" "$fixtures/bad-area-enum/BACKLOG.md" 1 "E-AREA-ENUM"
-run_validate_case "validate bad-date-format" "$fixtures/bad-date-format/BACKLOG.md" 1 "E-DATE-FORMAT"
-run_validate_case "validate bad-refs-prefix" "$fixtures/bad-refs-prefix/BACKLOG.md" 1 "E-REFS-PREFIX"
-run_validate_case "validate bad-tags-format" "$fixtures/bad-tags-format/BACKLOG.md" 1 "E-TAGS-FORMAT"
-run_validate_case "validate bad-closure-no-see" "$fixtures/bad-closure-no-see/BACKLOG.md" 1 "E-CLOSURE-NO-SEE"
-run_validate_case "validate bad-closure-date-mismatch" "$fixtures/bad-closure-date-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
-run_validate_case "validate bad-closure-date-dropped-mismatch" "$fixtures/bad-closure-date-dropped-mismatch/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
-run_validate_case "validate bad-closure-date-trailing-junk" "$fixtures/bad-closure-date-trailing-junk/BACKLOG.md" 1 "E-DATE-FORMAT"
-run_validate_case "validate bad-outcome-date-misplaced" "$fixtures/bad-outcome-date-misplaced/BACKLOG.md" 1 "E-CLOSURE-DATE-MISMATCH"
-run_validate_case "validate good-closure-outcome-date" "$fixtures/good-closure-outcome-date/BACKLOG.md" 0 ""
-run_validate_case "validate bad-changelog-drift" "$fixtures/bad-changelog-drift/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
-run_validate_case "validate bad-changelog-drift-active-ref" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
-run_validate_case "validate bad-changelog-drift-cross-repo-ref" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
-run_validate_case "validate good-changelog-closed-ref" "$fixtures/good-changelog-closed-ref/BACKLOG.md" 0 ""
-run_validate_case "validate good-deferred-someday" "$fixtures/good-deferred-someday/BACKLOG.md" 0 ""
-run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACKLOG.md" 0 ""
-run_validate_case "validate good-partial" "$fixtures/good-partial/BACKLOG.md" 0 ""
-run_validate_case "validate bad-partial-date" "$fixtures/bad-partial-date/BACKLOG.md" 1 "E-DATE-FORMAT"
-run_validate_case "validate bad-changelog-drift partial-row" "$fixtures/bad-changelog-drift-partial/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
-run_validate_case_multi "v1.1 drift-pipe-topic" 0 "" "$fixtures/good-drift-v11-pipe/BACKLOG.md" "" "$fixtures/good-drift-v11-pipe/CHANGELOG.md"
+run_validate_case "v1.1 good-subletter" 0 "" "$fixtures/good-v11-subletter/BACKLOG.md"
+run_validate_case "v1.1 bad-priority-subletter" 1 "E-PRIORITY-ENUM" "$fixtures/bad-priority-subletter/BACKLOG.md"
+run_validate_case "validate bad-no-header" 2 "E-SCHEMA-HEADER" "$fixtures/bad-no-header/BACKLOG.md"
+run_validate_case "validate bad-index-mismatch" 1 "E-INDEX-MISMATCH" "$fixtures/bad-index-mismatch/BACKLOG.md"
+run_validate_case "validate bad-orphan-section" 1 "E-INDEX-MISMATCH" "$fixtures/bad-orphan-section/BACKLOG.md"
+run_validate_case "validate bad-dup-id" 1 "E-DUP-ID" "$fixtures/bad-dup-id/BACKLOG.md"
+run_validate_case "validate bad-status-enum" 1 "E-STATUS-ENUM" "$fixtures/bad-status-enum/BACKLOG.md"
+run_validate_case "validate bad-area-enum" 1 "E-AREA-ENUM" "$fixtures/bad-area-enum/BACKLOG.md"
+run_validate_case "validate bad-date-format" 1 "E-DATE-FORMAT" "$fixtures/bad-date-format/BACKLOG.md"
+run_validate_case "validate bad-refs-prefix" 1 "E-REFS-PREFIX" "$fixtures/bad-refs-prefix/BACKLOG.md"
+run_validate_case "validate bad-tags-format" 1 "E-TAGS-FORMAT" "$fixtures/bad-tags-format/BACKLOG.md"
+run_validate_case "validate bad-closure-no-see" 1 "E-CLOSURE-NO-SEE" "$fixtures/bad-closure-no-see/BACKLOG.md"
+run_validate_case "validate bad-closure-date-mismatch" 1 "E-CLOSURE-DATE-MISMATCH" "$fixtures/bad-closure-date-mismatch/BACKLOG.md"
+run_validate_case "validate bad-closure-date-dropped-mismatch" 1 "E-CLOSURE-DATE-MISMATCH" "$fixtures/bad-closure-date-dropped-mismatch/BACKLOG.md"
+run_validate_case "validate bad-closure-date-trailing-junk" 1 "E-DATE-FORMAT" "$fixtures/bad-closure-date-trailing-junk/BACKLOG.md"
+run_validate_case "validate bad-outcome-date-misplaced" 1 "E-CLOSURE-DATE-MISMATCH" "$fixtures/bad-outcome-date-misplaced/BACKLOG.md"
+run_validate_case "validate good-closure-outcome-date" 0 "" "$fixtures/good-closure-outcome-date/BACKLOG.md"
+run_validate_case "validate bad-changelog-drift" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md"
+run_validate_case "validate bad-changelog-drift-active-ref" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift-active-ref/BACKLOG.md"
+run_validate_case "validate bad-changelog-drift-cross-repo-ref" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift-cross-repo-ref/BACKLOG.md"
+run_validate_case "validate good-changelog-closed-ref" 0 "" "$fixtures/good-changelog-closed-ref/BACKLOG.md"
+run_validate_case "validate good-deferred-someday" 0 "" "$fixtures/good-deferred-someday/BACKLOG.md"
+run_validate_case "validate good-archive-stub" 0 "" "$fixtures/good-archive-stub/BACKLOG.md"
+run_validate_case "validate good-partial" 0 "" "$fixtures/good-partial/BACKLOG.md"
+run_validate_case "validate bad-partial-date" 1 "E-DATE-FORMAT" "$fixtures/bad-partial-date/BACKLOG.md"
+run_validate_case "validate bad-changelog-drift partial-row" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift-partial/BACKLOG.md"
+run_validate_case "v1.1 drift-pipe-topic" 0 "" "$fixtures/good-drift-v11-pipe/BACKLOG.md" "" "$fixtures/good-drift-v11-pipe/CHANGELOG.md"
 # Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
 # Uses baseline comparison — any error not in the known pre-existing set is a regression.
 # Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-030 owns cleanup).
@@ -165,10 +128,10 @@ if [ -f "$repo_backlog" ] && [ -f "$baseline" ]; then
     fail "validate BACKLOG.md no new errors (archive smoke)" "$(printf '%s' "$new_errs" | head -3)"
   fi
 fi
-run_validate_case_multi "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
+run_validate_case "validate bad-changelog-drift explicit args" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md" "$fixtures/bad-changelog-drift/CHANGELOG.md"
 # DECISIONS.md is intentionally only an existing file; validate.sh does not parse it yet.
-run_validate_case_multi "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"
-run_validate_case_multi "validate bad-changelog-missing explicit arg" 2 "E-SCHEMA-HEADER: changelog file not found:" "$fixtures/bad-changelog-drift/BACKLOG.md" "" "/nonexistent/path/CHANGELOG.md"
+run_validate_case "validate bad-changelog-drift legacy decisions arg" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift/BACKLOG.md" "$fixtures/bad-changelog-drift/DECISIONS.md"
+run_validate_case "validate bad-changelog-missing explicit arg" 2 "E-SCHEMA-HEADER: changelog file not found:" "$fixtures/bad-changelog-drift/BACKLOG.md" "" "/nonexistent/path/CHANGELOG.md"
 
 # rollup.sh 彙整案例。
 rollup_out=$(mktemp)

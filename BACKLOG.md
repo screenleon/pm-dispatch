@@ -54,7 +54,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-040 | ✅ closed 2026-05-16 | agent-agnostic dispatch schema rename：`docs/codex-brief.md` → `docs/dispatch-brief.md` + `codex_dispatch_handover_v1` → `dispatch_handover_v1` + `executor:` 欄位（為未來非 codex executor 預留） | arch/process | 2026-05-15 | pr:#66 | — | — |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` rotation/retention policy（max sessions vs bytes vs archive） | ux/memory | 2026-05-15 | — | — | — |
 | CC-045 | ⏸ deferred | brief timeout heuristic：依 target repo playbook depth 設 timeout，不能只看 edit size；brief context 可加「skip playbook re-read」短路指令；codex-dispatch.sh 可選 warn 當 repo 有 `rules/`/`AGENTS.md` 且 timeout < 900s | process/DX | 2026-05-16 | — | — | — |
-| CC-046 | ⏸ deferred | validate.sh + run-tests.sh dedup：(a) 第二個 awk pass (changelog drift) 重複解析 backlog index status / refs，shared parsing 抽出；(b) `run_validate_case_multi` 與 `run_validate_case` assertion body 高度重複，改 varargs 單一 helper | ops/test | 2026-05-16 | — | P2 | — |
+| CC-046 | ✅ closed 2026-05-19 | validate.sh + run-tests.sh dedup：(a) 第二個 awk pass (changelog drift) 重複解析 backlog index status / refs，shared parsing 抽出；(b) `run_validate_case_multi` 與 `run_validate_case` assertion body 高度重複，改 varargs 單一 helper | ops/test | 2026-05-16 | decisions:#cc046-validate-dedup | P2 | — |
 | CC-047 | ✅ closed 2026-05-17 | `scripts/codex-dispatch.sh` model alias mapping：`--model codex-spark` 透傳給 codex CLI 後得到 400 invalid_request_error（API 只認 `gpt-5.3-codex-spark`），需要 alias 表把短名映射到 codex CLI 接受的全名 + reasoning effort | ops/dispatch | 2026-05-17 | pr:#69 | — | — |
 | CC-100 | ✅ closed 2026-05-17 | **[CC-OSS Phase 1]** Sanitize personal paths + OSS-baseline docs：拔 `/home/<user>` 硬編碼 → `${PM_DISPATCH_REPO}` env contract；新增 `CONTRIBUTING.md` + `CODE_OF_CONDUCT.md`；LICENSE 已存在 | process/docs | 2026-05-17 | pr:#71 | — | oss |
 | CC-101 | ✅ closed 2026-05-17 | **[CC-OSS Phase 2 spike]** Executor-contract schema + adapter design：brief schema 加 `executor:` 欄位；`docs/executor-contract.md`；CC-040 schema rename 延伸 | arch/process | 2026-05-17 | pr:#72 | — | oss |
@@ -461,7 +461,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 立即 workaround 是 brief author 對 deep playbook repo 預設 timeout=1500s；本條 ticket 是把這條 workaround 升級為文件化規則 + 可選 wrapper-side warning。
 **Cross-link**: [[Codex routing preferences]] 路由表 / [[known-bug backlog rule]] 補登原則。
 
-## CC-046 — validate.sh + run-tests.sh dedup（deferred）
+## CC-046 — validate.sh + run-tests.sh dedup（deferred） ✅ 2026-05-19
+
+**See**: decisions:#cc046-validate-dedup
 
 **Problem**: CC-030 (PR-gate r6 GO) 落地後留兩個 cross-overlap advisory (critic + architecture-reviewer)：
 1. `pm/scripts/validate.sh` 第二個 awk pass（CHANGELOG drift）獨立解析 backlog index 的 status / refs 而非 reuse 第一 pass 結果。當前不影響正確性，但 schema status 或 ref grammar 未來變動時兩 pass 容易 drift。

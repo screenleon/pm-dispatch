@@ -55,3 +55,21 @@ pm-schema v1.1（CC-052，PR #93）在 BACKLOG index table 引入顯式 `epic` �
 
 - 新增 ticket 不可為語義分組跳號或保留 ID 空間；`epic` 欄位是唯一分組機制。
 - 若未來需要新增 epic 類型，依 `pm/schema.md §2.4.5` 規定更新 schema 並 bump patch version。
+
+---
+
+## 2026-05-19: cc046-validate-dedup
+
+Closes: CC-046
+
+**Context**: validate.sh Pass 2 (`note_index_refs`) re-implemented the
+status emoji→kind mapping that Pass 1's `parse_status()` already covers.
+`run_validate_case_multi` in run-tests.sh was a copy-paste of
+`run_validate_case` with only arg-order differences.
+
+**Decision**: Extract `status_kind()` helper in Pass 2's awk block; merge
+`run_validate_case_multi` into a varargs `run_validate_case` and migrate
+all 34 call sites. No behavior change — pure dedup.
+
+**Constraints**: Tests (run-tests.sh) must remain green; no new fixtures
+needed; no schema version bump.
