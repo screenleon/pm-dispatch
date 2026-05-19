@@ -1399,7 +1399,7 @@ test_default_install_skips_preflights() {
 }
 
 test_verify_flag_runs_preflights() {
-  # Verifies that ./install.sh --verify causes all 12 preflight suites to run.
+  # Verifies that ./install.sh --verify delegates to scripts/run-all-tests.sh (21 suites).
   # When this test runs inside install.sh's own preflight suite
   # (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1), invoking install.sh --verify would
   # recurse infinitely. Guard by passing immediately in that context; the real

@@ -663,6 +663,73 @@ case_link_or_copy_dst_is_real_dir() {
   pass "$name"
 }
 
+case_link_or_copy_copy_fallback_dir_idempotent() {
+  local name="link-or-copy-copy-fallback-dir-idempotent"
+  should_run "$name" || return 0
+
+  local old_home="$HOME"
+  local root="$tmp_root/$name"
+  local src_dir="$root/src_dir"
+  local dst_dir="$root/dst_dir"
+  local manifest_home="$tmp_root/$name-home"
+  local manifest
+  local code1 code2 out1 out2 out_file
+
+  rm -rf "$manifest_home"
+  HOME="$manifest_home"
+  mkdir -p "$HOME/.claude/.pm-dispatch"
+  mkdir -p "$src_dir"
+  printf 'hello\n' > "$src_dir/file.txt"
+
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  # First install: copy fallback creates dst_dir (rc=1)
+  set +e
+  out_file="$root/first.out"
+  link_or_copy "$src_dir" "$dst_dir" > "$out_file" 2>&1
+  code1=$?
+  set -e
+  out1="$(cat "$out_file")"
+
+  manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+
+  # Second install: idempotent re-run (rc=0, "ok")
+  set +e
+  out_file="$root/second.out"
+  link_or_copy "$src_dir" "$dst_dir" > "$out_file" 2>&1
+  code2=$?
+  set -e
+  out2="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  HOME="$old_home"
+
+  if [[ "$code1" -ne 1 ]]; then
+    fail "$name" "first install rc=$code1 (want 1)"
+    return
+  fi
+  if [[ "$code2" -ne 0 ]]; then
+    fail "$name" "second install rc=$code2 (want 0 — idempotent); out=$out2"
+    return
+  fi
+  if [[ "$out2" != *"ok"* ]]; then
+    fail "$name" "second install did not print 'ok'; out=$out2"
+    return
+  fi
+  if ! [[ -d "$dst_dir" && ! -L "$dst_dir" ]]; then
+    fail "$name" "dst_dir is not a real directory after idempotent re-run"
+    return
+  fi
+  if ! [[ -f "$dst_dir/file.txt" ]]; then
+    fail "$name" "dst_dir/file.txt missing after re-run"
+    return
+  fi
+  pass "$name"
+}
+
 case_realpath_m_existing_abs
 case_realpath_m_parent_dots
 case_realpath_m_nonexistent_leaf
@@ -682,6 +749,7 @@ case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
 case_link_or_copy_dst_is_real_dir
+case_link_or_copy_copy_fallback_dir_idempotent
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
