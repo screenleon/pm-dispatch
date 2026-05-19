@@ -107,7 +107,6 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 #### 2.4.4 Priority enum
 
 `P1`（本週必做）/ `P2`（本 sprint 內）/ `P3`（backlog 中排隊）/ `—`（未設定）。
-closed / dropped / deferred 條目使用 `—`。
 
 #### 2.4.5 Epic enum
 

@@ -84,6 +84,8 @@ for backlog in "$root"/*/BACKLOG.md; do
     return total + d
   }
   function parse_row(line, n, f, id, status, topic, area, refs, closed_date) {
+    # Normalize escaped ASCII pipes before field split
+    gsub(/\\[|]/, "｜", line)
     n = split(line, f, "|")
     if (n < 7) return
     id = trim(f[2])
