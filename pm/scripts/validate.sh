@@ -46,21 +46,52 @@ if [ -z "$changelog" ]; then
 fi
 
 # schema 宣告是解析前提，缺少時立即停止。
-if ! sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
-  printf 'E-SCHEMA-HEADER: missing pm-schema v1 marker in first 5 lines: %s\n' "$backlog" >&2
+schema_ver=""
+if sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.1 -->'; then
+  schema_ver="v1.1"
+elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
+  schema_ver="v1"
+else
+  printf 'E-SCHEMA-HEADER: missing pm-schema v1/v1.1 marker in first 5 lines: %s\n' "$backlog" >&2
   exit 2
 fi
 
 set +e
-awk '
+awk -v schema_ver="$schema_ver" '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
   gsub(/[ \t\r\n]+$/, "", s)
   return s
 }
 
+function split_md_row(line, f, i, c, prev, n) {
+  delete f
+  n = 1
+  f[n] = ""
+  prev = ""
+  for (i = 1; i <= length(line); i++) {
+    c = substr(line, i, 1)
+    if (c == "|" && prev != "\\") {
+      n++
+      f[n] = ""
+    } else {
+      f[n] = f[n] c
+    }
+    prev = c
+  }
+  return n
+}
+
 function valid_date(s) {
   return s ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/
+}
+
+function valid_priority(s) {
+  return (s == "P1" || s == "P2" || s == "P3" || s == "\xe2\x80\x94" || s == "-" || s == "—")
+}
+
+function valid_epic(s) {
+  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "\xe2\x80\x94" || s == "-" || s == "—")
 }
 
 function norm_area(s) {
@@ -78,6 +109,10 @@ function valid_area_token(s) {
 function emit(code, ctx) {
   print code ": " ctx > "/dev/stderr"
   bad = 1
+}
+
+function warn(code, ctx) {
+  print code ": " ctx > "/dev/stderr"
 }
 
 function note_body_closure_date(id, raw, date) {
@@ -218,8 +253,8 @@ function note_body_id(line, id) {
   }
 }
 
-function parse_index_row(line, n, f, id, status, first_date, area, refs) {
-  n = split(line, f, "|")
+function parse_index_row(line, n, f, id, status, first_date, area, refs, priority, epic) {
+  n = split_md_row(line, f)
   if (n < 7) return
   id = trim(f[2])
   if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
@@ -236,6 +271,17 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs) {
   parse_area(id, area)
   if (!valid_date(first_date)) emit("E-DATE-FORMAT", id " invalid first-record date: " first_date)
   parse_refs(id, refs)
+
+  if (schema_ver == "v1.1") {
+    if (n < 10) {
+      warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1 file)")
+    } else {
+      priority = trim(f[8])
+      epic     = trim(f[9])
+      if (!valid_priority(priority)) emit("E-PRIORITY-ENUM", id " invalid priority: " priority)
+      if (!valid_epic(epic))         emit("E-EPIC-ENUM",     id " invalid epic: " epic)
+    }
+  }
 }
 
 {
