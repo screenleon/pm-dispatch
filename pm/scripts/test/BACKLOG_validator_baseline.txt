@@ -9,7 +9,7 @@ E-AREA-ENUM: CC-060 invalid area: arch/config
 E-AREA-ENUM: CC-062 invalid area: ops/security
 E-AREA-ENUM: CC-066 invalid area: arch/security
 E-AREA-ENUM: CC-100 invalid area: process/docs
-E-AREA-ENUM: CC-102 invalid area: full`：minimal profile 跳過 codex hooks，預設 executor=claude；既有 codex flow 全 regression pass
+E-AREA-ENUM: CC-102 invalid area: arch/install
 E-AREA-ENUM: CC-103 invalid area: ops/portable
 E-AREA-ENUM: CC-104 invalid area: docs/ux
 E-AREA-ENUM: CC-105 invalid area: process/release
@@ -18,11 +18,9 @@ E-AREA-ENUM: CC-201 invalid area: arch/reuse
 E-AREA-ENUM: CC-202 invalid area: arch/reuse
 E-AREA-ENUM: CC-203 invalid area: ops/test/reuse
 E-AREA-ENUM: CC-204 invalid area: arch/hook/reuse
-E-DATE-FORMAT: CC-102 invalid first-record date: arch/install
 E-REFS-PREFIX: CC-038 invalid ref: CC-037 follow-up
 E-REFS-PREFIX: CC-059 invalid ref: CC-200
 E-REFS-PREFIX: CC-060 invalid ref: CC-047
 E-REFS-PREFIX: CC-061 invalid ref: CC-057
 E-REFS-PREFIX: CC-064 invalid ref: CC-031
 E-REFS-PREFIX: CC-066 invalid ref: CC-204
-E-REFS-PREFIX: CC-102 invalid ref: 2026-05-17
