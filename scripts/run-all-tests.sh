@@ -20,6 +20,14 @@ SUITE_NAMES=(
   test-pr-gate
   test-setup-project
   test-patch-gitignore
+  test-portable
+  test-lint-frontmatter
+  test-commands
+  test-commands-runner
+  test-dispatch-handover
+  test-skill-refine
+  test-pr-gate-profile
+  test-claude-executor
   test-run-all-tests
 )
 
@@ -36,6 +44,14 @@ declare -A SUITE_PATHS=(
   [test-pr-gate]="scripts/test-pr-gate.sh"
   [test-setup-project]="scripts/test-setup-project.sh"
   [test-patch-gitignore]="scripts/test-patch-gitignore.sh"
+  [test-portable]="scripts/test-portable.sh"
+  [test-lint-frontmatter]="scripts/test-lint-frontmatter.sh"
+  [test-commands]="scripts/test-commands.sh"
+  [test-commands-runner]="scripts/test-commands-runner.sh"
+  [test-dispatch-handover]="scripts/test-dispatch-handover.sh"
+  [test-skill-refine]="scripts/test-skill-refine.sh"
+  [test-pr-gate-profile]="scripts/test-pr-gate-profile.sh"
+  [test-claude-executor]="scripts/test-claude-executor.sh"
   [test-run-all-tests]="scripts/test-run-all-tests.sh"
 )
 

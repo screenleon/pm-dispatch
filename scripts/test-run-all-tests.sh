@@ -25,6 +25,14 @@ SUITE_NAMES=(
   test-pr-gate
   test-setup-project
   test-patch-gitignore
+  test-portable
+  test-lint-frontmatter
+  test-commands
+  test-commands-runner
+  test-dispatch-handover
+  test-skill-refine
+  test-pr-gate-profile
+  test-claude-executor
   test-run-all-tests
 )
 
@@ -61,6 +69,14 @@ suite_path() {
     test-pr-gate) printf 'scripts/test-pr-gate.sh\n' ;;
     test-setup-project) printf 'scripts/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'scripts/test-patch-gitignore.sh\n' ;;
+    test-portable) printf 'scripts/test-portable.sh\n' ;;
+    test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
+    test-commands) printf 'scripts/test-commands.sh\n' ;;
+    test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
+    test-dispatch-handover) printf 'scripts/test-dispatch-handover.sh\n' ;;
+    test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
+    test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
+    test-claude-executor) printf 'scripts/test-claude-executor.sh\n' ;;
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
     *) return 1 ;;
   esac
@@ -134,7 +150,7 @@ test_skip_unknown_suite() {
   write_pass_stubs "$repo"
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip nonexistent-suite 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"13 passed, 0 failed, 0 skipped"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"21 passed, 0 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -150,7 +166,7 @@ test_skip_known_suite() {
   out=$(PATH="$path" run_aggregator "$repo" --skip lint-agents 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP lint-agents (requested)"* &&
-        "$out" == *"12 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"20 passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -166,7 +182,7 @@ test_suite_not_found_skip() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL lint-scripts (not found or not executable)"* &&
-        "$out" == *"12 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"20 passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -182,7 +198,7 @@ test_codex_missing_skips_codex_dispatch() {
   out=$(PATH="$path" /usr/bin/bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
-        "$out" == *"12 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"20 passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -199,7 +215,7 @@ test_fail_on_suite_error() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL test-pr-gate"* &&
-        "$out" == *"12 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"20 passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
