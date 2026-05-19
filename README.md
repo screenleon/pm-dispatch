@@ -73,7 +73,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 ## Testing
 
 ```bash
-bash scripts/run-all-tests.sh         # run all 21 suites
+bash scripts/run-all-tests.sh         # run all suites (test-codex-dispatch auto-skips when Codex is absent)
 bash scripts/run-all-tests.sh --list  # show registered suites without running
 bash scripts/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
 ```

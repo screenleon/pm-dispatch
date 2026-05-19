@@ -77,7 +77,7 @@ Additionally, for any BACKLOG.md or CHANGELOG.md changes:
 bash pm/scripts/validate.sh BACKLOG.md CHANGELOG.md
 ```
 
-Include exit code and summary line in your PR notes.
+Expected exit code is 0. Pre-existing E-AREA-ENUM warnings in the output are known baseline debt and do not block a PR — focus on not introducing new `ERROR:` lines. Include the summary line in your PR notes.
 
 **Why `--no-verify` is not acceptable**: pre-commit hooks enforce schema validation and
 hook-guard contract tests. Bypassing them lets malformed entries or broken hook policies

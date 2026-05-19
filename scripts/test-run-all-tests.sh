@@ -205,7 +205,7 @@ test_codex_missing_skips_codex_dispatch() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   path="$(make_path_without_codex "$repo/bin")"
-  out=$(PATH="$path" /usr/bin/bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
+  out=$(PATH="$path" bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
         "$out" == *"20 passed, 0 failed, 1 skipped"* ]]; then
