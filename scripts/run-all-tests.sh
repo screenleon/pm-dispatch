@@ -20,6 +20,7 @@ SUITE_NAMES=(
   test-pr-gate
   test-setup-project
   test-patch-gitignore
+  test-run-all-tests
 )
 
 declare -A SUITE_PATHS=(
@@ -35,6 +36,7 @@ declare -A SUITE_PATHS=(
   [test-pr-gate]="scripts/test-pr-gate.sh"
   [test-setup-project]="scripts/test-setup-project.sh"
   [test-patch-gitignore]="scripts/test-patch-gitignore.sh"
+  [test-run-all-tests]="scripts/test-run-all-tests.sh"
 )
 
 declare -A SKIP_REQUESTED=()
@@ -104,8 +106,8 @@ for name in "${SUITE_NAMES[@]}"; do
 
   script="$REPO_ROOT/${SUITE_PATHS[$name]}"
   if [[ ! -x "$script" ]]; then
-    printf 'SKIP %s (not found)\n' "$name"
-    skipped=$((skipped + 1))
+    printf 'FAIL %s (not found or not executable)\n' "$name"
+    failed=$((failed + 1))
     continue
   fi
 
