@@ -10,8 +10,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 | P2 | — |
-| CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P2 | — |
+| CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 | P3 | — |
+| CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
 | CC-005 | ✅ closed 2026-05-18 | install.sh preflight 改為 opt-in via `--verify` | ops | 2026-05-12 | pr:#85 | — | — |
 | CC-006 | ✅ closed 2026-05-13 | statusLine hook 自動寫入 rate-limits，`--remaining` 免手動輸入 | ux | 2026-05-13 | pr:#42 | — | — |
 | CC-007 | ✅ closed 2026-05-13 | brief qa_checklist 指引寫入 docs/codex-brief.md + agents/project-pm.md | process | 2026-05-13 | pr:#42 | — | — |
@@ -42,8 +42,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-029 | ✅ closed 2026-05-15 | `test-codex-dispatch.sh` 加入 CI（與 CC-024 並行做 lint.yml 補完） | ops/test | 2026-05-15 | pr:#57 | — | — |
 | CC-030 | 🔵 active | `pm/scripts/validate.sh` 補 Index ↔ Section 雙向一致性 + CHANGELOG drift 檢查 | ops/process | 2026-05-15 | — | P1 | — |
 | CC-031 | 🔵 active | 開源前置：`CONTRIBUTING.md` + `SECURITY.md` + README 工作語言聲明 | process/DX | 2026-05-15 | — | P2 | — |
-| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — | P2 | — |
-| CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — | P2 | — |
+| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — | P3 | — |
+| CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — | P3 | — |
 | CC-034 | ✅ closed 2026-05-15 | `install-hooks.sh` 改名/移動 checkout 後 append-not-replace bug：以 hook script basename 取代 full-path 比對 | ops | 2026-05-15 | pr:#53 | — | — |
 | CC-035 | 🔵 active | install/uninstall-hooks basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-036 | ✅ closed 2026-05-18 | `/pm` dispatch async ergonomics restore：classify+brief 仍走 subagent；execute 改 main-thread `Bash(codex-dispatch.sh, run_in_background:true)` 直派；恢復 dispatch + 完成通知並行 | ux/process | 2026-05-15 | pr:#58 | — | — |
@@ -54,7 +54,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-040 | ✅ closed 2026-05-16 | agent-agnostic dispatch schema rename：`docs/codex-brief.md` → `docs/dispatch-brief.md` + `codex_dispatch_handover_v1` → `dispatch_handover_v1` + `executor:` 欄位（為未來非 codex executor 預留） | arch/process | 2026-05-15 | pr:#66 | — | — |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` rotation/retention policy（max sessions vs bytes vs archive） | ux/memory | 2026-05-15 | — | — | — |
 | CC-045 | ⏸ deferred | brief timeout heuristic：依 target repo playbook depth 設 timeout，不能只看 edit size；brief context 可加「skip playbook re-read」短路指令；codex-dispatch.sh 可選 warn 當 repo 有 `rules/`/`AGENTS.md` 且 timeout < 900s | process/DX | 2026-05-16 | — | — | — |
-| CC-046 | ⏸ deferred | validate.sh + run-tests.sh dedup：(a) 第二個 awk pass (changelog drift) 重複解析 backlog index status / refs，shared parsing 抽出；(b) `run_validate_case_multi` 與 `run_validate_case` assertion body 高度重複，改 varargs 單一 helper | ops/test | 2026-05-16 | — | — | — |
+| CC-046 | ⏸ deferred | validate.sh + run-tests.sh dedup：(a) 第二個 awk pass (changelog drift) 重複解析 backlog index status / refs，shared parsing 抽出；(b) `run_validate_case_multi` 與 `run_validate_case` assertion body 高度重複，改 varargs 單一 helper | ops/test | 2026-05-16 | — | P2 | — |
 | CC-047 | ✅ closed 2026-05-17 | `scripts/codex-dispatch.sh` model alias mapping：`--model codex-spark` 透傳給 codex CLI 後得到 400 invalid_request_error（API 只認 `gpt-5.3-codex-spark`），需要 alias 表把短名映射到 codex CLI 接受的全名 + reasoning effort | ops/dispatch | 2026-05-17 | pr:#69 | — | — |
 | CC-100 | ✅ closed 2026-05-17 | **[CC-OSS Phase 1]** Sanitize personal paths + OSS-baseline docs：拔 `/home/<user>` 硬編碼 → `${PM_DISPATCH_REPO}` env contract；新增 `CONTRIBUTING.md` + `CODE_OF_CONDUCT.md`；LICENSE 已存在 | process/docs | 2026-05-17 | pr:#71 | — | oss |
 | CC-101 | ✅ closed 2026-05-17 | **[CC-OSS Phase 2 spike]** Executor-contract schema + adapter design：brief schema 加 `executor:` 欄位；`docs/executor-contract.md`；CC-040 schema rename 延伸 | arch/process | 2026-05-17 | pr:#72 | — | oss |
@@ -64,7 +64,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-103b | ✅ closed 2026-05-17 | CC-103 follow-up: `/pr-gate` executor split — `--executor codex\|claude\|auto`; mirror CC-102 `/pm` route split so minimal-profile users can run the gate | arch/install | 2026-05-17 | pr:#75 | — | oss |
 | CC-104 | ✅ closed 2026-05-17 | **[CC-OSS Phase 4]** Onboarding docs batch：README intro rewrite + `docs/GETTING_STARTED.md` + `docs/memory-system.md` + 7 個 `commands/*.md` 補 what/when/example 三段（pm.md / pr-gate.md 已含 Route A/B 故跳過） | docs/ux | 2026-05-17 | pr:#76 | — | oss |
 | CC-105 | ✅ closed 2026-05-17 | **[CC-OSS Phase 5]** v0.1.0 release：`CHANGELOG.md` [0.1.0] section + BACKLOG status flip + private→public visibility + tag v0.1.0 + GitHub release + main branch protection（require linear history） | process/release | 2026-05-17 | pr:#77 | — | oss |
-| CC-104b | 🔵 active | **[Windows dogfood r1 fixes]** install-hooks jq error → platform-aware install hints | ops/install | 2026-05-17 | pr:#79 | — | oss |
+| CC-104b | 🔵 active | **[Windows dogfood r1 fixes]** install-hooks jq error → platform-aware install hints | ops/install | 2026-05-17 | pr:#79 | P2 | oss |
 | CC-104c | 🟢 in-flight | **[Windows dogfood r1 fixes]** install.sh `link()` → `link_or_copy()`: try `ln -s` + `[[ -L ]]` post-check (catches Git Bash silent-copy disguise); fall back to `cp -p` + warn-to-stderr; manifest at `~/.claude/.pm-dispatch/install-manifest.json` (manifest_version=1, atomic mktemp+mv write); sha256 idempotency for copy-mode entries; FAKE_SYMLINK_UNSUPPORTED / FAKE_SYMLINK_BOGUS test shims. OUT: `--update` (CC-104d), `--uninstall` (CC-104e), mkdir_lock (CC-104k), Experimental→Supported doc flip (separate doc PR after CC-104c + CC-104k both merge) | arch/install | 2026-05-18 | pr:#TBD | — | oss |
 | CC-104d | 🟡 deferred | **[Windows dogfood r1 findings]** Hardcoded `$HOME/github` read root default in `hook-codex-bash-guard.sh:54`; `CLAUDE_HOOK_CODEX_READ_ROOTS` env override exists but default is wrong on Windows where repos live under `~/Documents/github/` or arbitrary paths. Should be derived from `PM_DISPATCH_REPO` parent or removed | ops/hook | 2026-05-17 | — | — | oss |
 | CC-104e | 🟡 deferred | **[Windows dogfood r1 findings]** WSL ↔ Windows `~/.claude/projects/<project-id>/memory/` divergence: project ID is path-sanitization of working dir. Same repo cloned at `~/github/pm-dispatch` (WSL) and `C:\Users\<user>\Documents\github\pm-dispatch` (Windows) produces different IDs → memory partitioned. Harness-level (Claude Code) issue; document workaround (symlink, or PM_DISPATCH_PROJECT_ID override) | ux/memory | 2026-05-17 | — | — | oss |
@@ -82,8 +82,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104q | 🟡 deferred | **[Windows dogfood r3 finding]** test-hooks preflight runs codex-dispatch cases (`cxw: Write to existing symlink /tmp/brief-*.md → deny`, `dispatch_brief_file_reads_file`) even when codex is not on PATH → 2 cases FAIL with `codex: command not found`. `install.sh --profile minimal` skips codex hooks but preflight still tests them. Fix: test-hooks should SKIP (not FAIL) codex-* cases when `command -v codex` is false. Folds well with **CC-104n** preflight `--skip-preflight=<name>` mechanism — could land in same PR | ops/test/ux | 2026-05-18 | CC-104n | — | oss |
 | CC-104r | 🟢 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh` performance_budget assertion: 27990 ms actual vs 3500 ms budget on Windows native filesystem (WSL UNC path `\\wsl.localhost\...` is ~8× slower than local disk). Not a pm-dispatch bug — physical filesystem characteristic. Fix is two-part: (a) `docs/platform-support.md` warns "install on local disk, avoid cross-WSL/native FS boundaries"; (b) preflight detects UNC path → prints warning and skips budget assertion (10 lines). Polish, not blocker | docs/ops | 2026-05-18 | — | — | oss |
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/trace/portability | 2026-05-18 | — | — | oss |
-| CC-104t | 🟡 deferred | **[python→jq replacement — supersedes CC-104o]** Hook scripts call `python3` in 4 places (`hook-log-claude-usage.sh` 2 heredocs; `hook-inject-memory.sh`, `hook-session-summary.sh`, `hook-save-rate-limits.sh` 1 each) for JSON/JSONL parsing + simple date arithmetic. Rewrite to use jq (already a required dep) + bash filesystem walking, eliminating python3 entirely. Pros: (a) closes 36 Windows hook FAILs caused by Microsoft Store python3 reparse-point stub (root cause, not workaround), (b) shrinks install footprint to jq-only, (c) consistent with CC-104b jq-as-canonical-dep direction, (d) no Claude Code session-restart required when PATH changes. Cons: ~250 LoC refactor across 4 hooks; date arithmetic via `jq fromdateiso8601` (1.6+) or `date -d` shim. **Required ≥4 behavioral units → `/pre-impl` mandatory.** Once landed, mark CC-104o `🟢 superseded by CC-104t` | arch/hook/portability | 2026-05-18 | — | — | oss |
-| CC-104u | 🟡 deferred | **[Windows dogfood r4 finding]** `install.sh` `link()` semantics bug on existing-directory dst: when `dst` is already a directory (e.g. `~/.claude/.pm` is a real dir from a prior install or manual setup), `ln -s "$src" "$dst"` is interpreted as "create link inside the dir named $(basename "$src")" → produces `dst/basename(src)` (e.g. `.pm/pm`) instead of failing cleanly. CC-104c's link_or_copy inherits this from `ln`. Observed: `ln: failed to create symbolic link '/c/Users/Lien Chen/.claude/.pm/pm': File exists`. Copy fallback masked the symptom but `manifest` records a wrong dst. Fix: `link_or_copy` should `[[ -d "$dst" && ! -L "$dst" ]]` precheck → return CONFLICT (rc=2) with clear message, OR use `ln -sn` (no-dereference) consistently. Also audit `pm-schema` install block path-handling | ops/install/correctness | 2026-05-18 | — | — | oss |
+| CC-104t | 🟡 deferred | **[python→jq replacement — supersedes CC-104o]** Hook scripts call `python3` in 4 places (`hook-log-claude-usage.sh` 2 heredocs; `hook-inject-memory.sh`, `hook-session-summary.sh`, `hook-save-rate-limits.sh` 1 each) for JSON/JSONL parsing + simple date arithmetic. Rewrite to use jq (already a required dep) + bash filesystem walking, eliminating python3 entirely. Pros: (a) closes 36 Windows hook FAILs caused by Microsoft Store python3 reparse-point stub (root cause, not workaround), (b) shrinks install footprint to jq-only, (c) consistent with CC-104b jq-as-canonical-dep direction, (d) no Claude Code session-restart required when PATH changes. Cons: ~250 LoC refactor across 4 hooks; date arithmetic via `jq fromdateiso8601` (1.6+) or `date -d` shim. **Required ≥4 behavioral units → `/pre-impl` mandatory.** Once landed, mark CC-104o `🟢 superseded by CC-104t` | arch/hook/portability | 2026-05-18 | — | P2 | oss |
+| CC-104u | 🟡 deferred | **[Windows dogfood r4 finding]** `install.sh` `link()` semantics bug on existing-directory dst: when `dst` is already a directory (e.g. `~/.claude/.pm` is a real dir from a prior install or manual setup), `ln -s "$src" "$dst"` is interpreted as "create link inside the dir named $(basename "$src")" → produces `dst/basename(src)` (e.g. `.pm/pm`) instead of failing cleanly. CC-104c's link_or_copy inherits this from `ln`. Observed: `ln: failed to create symbolic link '/c/Users/Lien Chen/.claude/.pm/pm': File exists`. Copy fallback masked the symptom but `manifest` records a wrong dst. Fix: `link_or_copy` should `[[ -d "$dst" && ! -L "$dst" ]]` precheck → return CONFLICT (rc=2) with clear message, OR use `ln -sn` (no-dereference) consistently. Also audit `pm-schema` install block path-handling | ops/install/correctness | 2026-05-18 | — | P2 | oss |
 | CC-104v | 🟢 deferred | **[Windows dogfood r4 — docs]** Document copy-mode install snapshot semantics: when `link_or_copy` falls back to copy (Git Bash without dev-mode), changes to source repo do NOT propagate to install dst — user must re-run `install.sh` after any source edit. Currently surfaced only via per-file `portable: fallback copy path ... symlink post-check failed` stderr. Add a single summary banner at end of install when copy-mode entries > 0 (`N files installed via copy fallback; source edits will require re-install`). Also add section to `docs/platform-support.md` Windows page. UX, not correctness | docs/install/ux | 2026-05-18 | — | — | oss |
 | CC-200 | ⏸ deferred | **[Reuse debt]** `scripts/lib/executor-router.sh` — 抽出共用 codex/claude routing logic（目前 `/pm`、`/pr-gate` 各寫一套，未來 N=3 consumer 痛點） | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-201 | ⏸ deferred | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
@@ -93,7 +93,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
-| CC-052 | 🟡 deferred | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | — | P1 | hygiene |
+| CC-052 | ✅ closed 2026-05-19 | **[BACKLOG schema upgrade]** `pm-schema v1.1`：index table 新增 `priority` 欄（P1/P2/P3）+ `epic:` 欄（正交分組取代 ID gap 慣例）；validator 同步更新；全列補欄。CC-051（preamble）先行；CC-052 在 CC-051 落地後啟動 | process/schema | 2026-05-17 | pr:#93 | — | hygiene |
 | CC-053 | ✅ closed 2026-05-18 | `test-commands.sh` CLI self-test coverage | test | 2026-05-18 | pr:#84 | — | hygiene |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 | — | — |
 | CC-055 | ✅ closed 2026-05-18 | `commands/pr-gate.md` frontmatter YAML syntax error fixed | ops/DX | 2026-05-18 | pr:#86 | — | hygiene |
@@ -104,17 +104,17 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-060 | ⏸ deferred | Codex model/config 外部化：把 hardcoded 模型名稱、sandbox policy、approval policy 抽到 config file（`defaults/codex.toml` 或 `.env.defaults`）；commands 與 scripts 讀 config 而非寫死 | arch/config | 2026-05-18 | CC-047 | — | — |
 | CC-061 | ⏸ deferred | 建立 `skills/` 目錄 + 2–3 個 starter SKILL.md：`dispatch-brief/SKILL.md`、`pr-gate-review/SKILL.md`（對齊 Anthropic Skills spec；README 已聲稱支援但目錄不存在）；與 CC-014/CC-015/CC-026 技能定義解耦，這條處理目錄結構 | arch/ux | 2026-05-18 | CC-057 | — | — |
 | CC-062 | ⏸ deferred | codex-bash-guard policy test matrix：建立 `tests/policy/codex-bash-guard/` 結構化 allow/deny JSON fixtures；讓安全 policy 從「很聰明的 shell parser」變「可驗證的 test matrix」 | ops/security | 2026-05-18 | — | — | — |
-| CC-063 | 🟡 deferred | **[P2]** Trace / token / gate metrics dashboard：`.agent-trace/*.jsonl` + `rate-limits*.json` + `.gate-results/*.md` 已有足夠資料；可視化 per-session token、gate pass rate、routing_log 校準趨勢 | ux/ops | 2026-05-18 | — | P2 | — |
+| CC-063 | 🟡 deferred | Trace / token / gate metrics dashboard：`.agent-trace/*.jsonl` + `rate-limits*.json` + `.gate-results/*.md` 已有足夠資料；可視化 per-session token、gate pass rate、routing_log 校準趨勢 | ux/ops | 2026-05-18 | — | P3 | — |
 | CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | CC-031 | P2 | — |
-| CC-065 | 🟡 deferred | **[P2]** Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P2 | — |
-| CC-066 | 🟡 deferred | **[P2]** Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P2 | — |
-| CC-067 | 🔵 active | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | — | P2 | hygiene |
+| CC-065 | 🟡 deferred | Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P3 | — |
+| CC-066 | 🟡 deferred | Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P3 | — |
+| CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
 
 ---
 
 ## Convention
 
-**ID scheme**: `CC-NNN` sequential. `CC-1NN` (CC-100–CC-199) are CC-OSS epic markers; `CC-2NN` (CC-200–CC-299) are reuse-debt markers. These are semantic groupings — ID gaps between unrelated tickets are normal.
+**ID scheme**: `CC-NNN` sequential. ID gaps are normal — use the `epic` column (see `pm/schema.md §2.4.5`) for semantic grouping instead of ID ranges. The `CC-1NN`/`CC-2NN` range-reservation convention is deprecated (see `DECISIONS.md#2026-05-19-deprecate-id-gap-convention`).
 
 **Sub-letter IDs**: `CC-NNNa`, `CC-NNNb`, `CC-NNNc` are follow-up tickets to a parent `CC-NNN`, with independent lifecycles.
 
@@ -130,7 +130,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Closed stubs**: When inflation policy triggers, closed bodies move to `BACKLOG-ARCHIVE.md`; index row + `**See**: BACKLOG-ARCHIVE.md` stub remain here.
 
 **Priority column**: `P1`（本週必做）/ `P2`（本 sprint）/ `P3`（排隊）/ `—`（未設）。
-**Epic column**: `oss`（CC-1NN OSS 系列）/ `reuse-debt`（CC-2NN 技術債）/ `hygiene`（流程維護）/ `—`（其他）。
+**Epic column**: `oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程維護）/ `—`（其他）。
 向下相容：v1.1 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
@@ -493,17 +493,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **See**: BACKLOG-ARCHIVE.md
 
-## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade（deferred）
+## CC-052 — `pm-schema v1.1` BACKLOG schema upgrade ✅ 2026-05-19
 
-**Problem**: 目前 BACKLOG index table 有三個結構性缺口：(1) 無優先度欄位——`P1/P2/P3` tags 只在 body section 以 `**Tags**: P1` 記錄，掃 index 時不可見、不可排序；(2) ID gap 慣例（CC-1NN = OSS epic、CC-2NN = reuse-debt）對 fork 用戶不透明，CC-051 preamble 只能靠文字說明；(3) epic/分組資訊無法機器化查詢。
-**Why**: 使用者決策（2026-05-18）：希望 index-level 優先度可見，納入 CC-052 schema upgrade 範圍，與 epic 欄一起升版而非分別處理。
-**Requirement**:
-1. `pm-schema v1.1` index table 新增兩欄：`priority`（P1/P2/P3；未設為空）、`epic`（`oss`/`reuse-debt`/`hygiene` 或空）。
-2. `pm/scripts/validate.sh` 對應更新：新欄格式驗證；向下相容（舊 v1 列無新欄時 emit warning 而非 error，允許漸進補齊）。
-3. 全現有 index 列補 priority 欄（依當時判斷填入或留空）；CC-1NN 補 `epic: oss`、CC-2NN 補 `epic: reuse-debt`。
-4. BACKLOG schema preamble（CC-051 工作）同步更新，說明新欄慣例。
-**Prerequisite**: CC-051（schema preamble）先行，CC-052 在 CC-051 落地後啟動；不要同 PR 合並。
-**Source**: 2026-05-18 使用者方向決策：index-level priority 可見性優先於 epic 欄分組。
+**Outcome**: pm-schema v1.1 shipped — `Priority` + `Epic` index columns, validator checks (E-PRIORITY-ENUM / E-EPIC-ENUM / W-MISSING-COLS), all rows backfilled. 36 tests pass.
+**See**: pr:#93
 
 ## CC-054 — CC-025 M2 `/skill-refine` diff generation（deferred）
 
@@ -570,11 +563,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
 **Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
 
-## CC-067 — [schema cleanup] 廢棄 ID gap 慣例
+## CC-067 — [schema cleanup] 廢棄 ID gap 慣例 ✅ 2026-05-19
 
-**Problem**: `pm/schema.md` §2.2 和 BACKLOG preamble 記載「CC-1NN = OSS epic、CC-2NN = reuse-debt」的保留範圍慣例。隨著 ticket 自然增長至 CC-100，普通流水號與「語義保留範圍」將正面衝突。
-**Why**: v1.1 的 `epic` 欄位已是顯式、機器可讀的分組依據；ID gap 慣例是 Epic 欄位存在前的 workaround，現在已多餘且有碰撞風險。現有 CC-1NN/CC-2NN ID 不動（歷史穩定），只廢棄「保留範圍」的文件規範。
-**Requirement**: (1) `pm/schema.md` §2.2 移除 CC-1NN/CC-2NN 保留說明；(2) BACKLOG Convention 區段移除 ID gap 說明；(3) `DECISIONS.md` 新增決策記錄（context: v1.1 Epic column 取代 ID gap；decision: epic column is authoritative grouping signal）。無 validator 變更。
+**Outcome**: `pm/schema.md §2.4.5` 移除 CC-1NN/CC-2NN 範圍標注；BACKLOG.md Convention 移除保留範圍說明並指向 DECISIONS.md；新建 DECISIONS.md 記錄決策。
+**See**: DECISIONS.md#2026-05-19-deprecate-id-gap-convention
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 

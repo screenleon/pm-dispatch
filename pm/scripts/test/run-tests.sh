@@ -200,5 +200,21 @@ else
 fi
 rm -f "$rollup_out"
 
+# Deprecation invariant: CC-NNN ID-range-to-epic mapping must not reappear in
+# pm/schema.md or BACKLOG.md Convention section after CC-067 removed the guidance.
+# BACKLOG.md is scoped to the Convention meta-block only (excludes index rows and
+# archived stubs) so CC-051's historical description does not produce false positives.
+_repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
+_convention_block=$(awk '/^## Convention$/{f=1} f && /^<!-- archived stubs/{exit} f{print}' \
+  "$_repo_root/BACKLOG.md")
+_deprecated_pat='CC-1NN 列填|CC-2NN 列填|CC-1NN OSS 系列|CC-2NN 技術債|CC-100.*CC-199|CC-200.*CC-299|CC-1NN.*CC-OSS epic|CC-2NN.*reuse-debt markers'
+if { printf '%s\n' "$_convention_block"; cat "$_repo_root/pm/schema.md"; } \
+    | grep -qE "$_deprecated_pat"; then
+  fail "deprecation-invariant: no CC-NNN epic-grouping guidance in schema/convention" \
+    "deprecated ID-range epic mapping still present"
+else
+  pass "deprecation-invariant: no CC-NNN epic-grouping guidance in schema/convention"
+fi
+
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
