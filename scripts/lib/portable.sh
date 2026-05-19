@@ -698,6 +698,12 @@ link_or_copy() {
     return 2
   fi
 
+  # Guard: dst is a real directory (not a symlink) — ln would create a link inside it
+  if [[ -d "$dst" && ! -L "$dst" ]]; then
+    printf '  CONFLICT %s is a real directory — expected a file or symlink target\n' "$dst" >&2
+    return 2
+  fi
+
   prev_sha="$(_portable_manifest_prev_sha256 "$dst_abs" || true)"
   if [[ -e "$dst" ]]; then
     if [[ -n "$prev_sha" ]] && _portable_sha256_path "$dst" >/dev/null 2>&1; then
