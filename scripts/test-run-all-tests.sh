@@ -131,6 +131,8 @@ run_aggregator() {
 
 test_list() {
   local name="list"
+  # Behavior: --list prints all registered suite names and exits 0.
+  # Steps: invoke --list; assert each SUITE_NAMES entry appears in output.
   local out status=0 suite
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   if [[ "$status" -ne 0 ]]; then
@@ -145,6 +147,8 @@ test_list() {
 
 test_skip_unknown_suite() {
   local name="skip-unknown-suite"
+  # Behavior: --skip with an unknown suite name is a no-op; all registered suites run.
+  # Steps: invoke --skip nonexistent-suite with all pass-stubs; assert 21 passed, 0 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -159,6 +163,8 @@ test_skip_unknown_suite() {
 
 test_skip_known_suite() {
   local name="skip-known-suite"
+  # Behavior: --skip with a known suite name causes exactly that suite to be skipped.
+  # Steps: invoke --skip lint-agents; assert SKIP message and 20 passed 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -175,6 +181,8 @@ test_skip_known_suite() {
 
 test_suite_not_found_skip() {
   local name="suite-not-found-skip"
+  # Behavior: a registered suite whose file is missing or non-executable produces FAIL not SKIP.
+  # Steps: omit the lint-scripts stub; run aggregator; assert FAIL lint-scripts and exit 1.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo" lint-scripts
@@ -191,6 +199,8 @@ test_suite_not_found_skip() {
 
 test_codex_missing_skips_codex_dispatch() {
   local name="codex-missing-skips-codex-dispatch"
+  # Behavior: test-codex-dispatch is auto-skipped when codex is absent from PATH.
+  # Steps: put codex-absent PATH; assert SKIP test-codex-dispatch and 20 passed 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -207,6 +217,8 @@ test_codex_missing_skips_codex_dispatch() {
 
 test_fail_on_suite_error() {
   local name="fail-on-suite-error"
+  # Behavior: a suite that exits non-zero causes FAIL in output and overall exit 1.
+  # Steps: write test-pr-gate stub as exit 1; run aggregator; assert FAIL and exit 1.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -222,12 +234,106 @@ test_fail_on_suite_error() {
   fi
 }
 
+test_skip_missing_arg() {
+  # Behavior: --skip without a suite name argument exits 2 with an error message.
+  # Steps: invoke run-all-tests.sh with --skip as the last arg; assert exit 2 and message.
+  local name="skip-missing-arg"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --skip 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--skip requires a suite name"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_unknown_flag() {
+  # Behavior: an unrecognised flag exits 2 with "unknown flag" in stderr.
+  # Steps: invoke run-all-tests.sh with --foobar; assert exit 2 and message.
+  local name="unknown-flag"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --foobar 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"unknown flag"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_dispatch_hooks_home_override() {
+  # Behavior: aggregator sets HOME to CLAUDE_CONFIG_TEST_PREFLIGHT_HOME when invoking test-hooks.
+  # Steps: write a test-hooks stub that echoes its HOME; run aggregator with
+  #        CLAUDE_CONFIG_TEST_PREFLIGHT_HOME=/sentinel/home; assert stub output contains the sentinel.
+  local name="dispatch-hooks-home-override"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo" test-hooks
+
+  local hooks_path="$repo/scripts/test-hooks.sh"
+  mkdir -p "$(dirname "$hooks_path")"
+  printf '#!/bin/sh\nprintf "HOME_IS=%%s\\n" "$HOME"\nexit 0\n' > "$hooks_path"
+  chmod +x "$hooks_path"
+
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(CLAUDE_CONFIG_TEST_PREFLIGHT_HOME=/sentinel/home PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"HOME_IS=/sentinel/home"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_dispatch_install_running_flag() {
+  # Behavior: aggregator sets CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 when invoking test-install.
+  # Steps: write a test-install stub that exits 0 iff the flag is set; run aggregator;
+  #        assert PASS test-install in output.
+  local name="dispatch-install-running-flag"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo" test-install
+
+  local install_path="$repo/scripts/test-install.sh"
+  mkdir -p "$(dirname "$install_path")"
+  printf '#!/bin/sh\n[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" = "1" ] || exit 1\nexit 0\n' > "$install_path"
+  chmod +x "$install_path"
+
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"PASS test-install"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_dispatch_pm_scripts_via_bash() {
+  # Behavior: aggregator invokes pm/scripts/test/run-tests.sh via explicit bash call.
+  # Steps: write a stub at the pm-scripts path; run aggregator; assert PASS test-pm-scripts.
+  local name="dispatch-pm-scripts-via-bash"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"PASS test-pm-scripts"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_list
 test_skip_unknown_suite
 test_skip_known_suite
 test_suite_not_found_skip
 test_codex_missing_skips_codex_dispatch
 test_fail_on_suite_error
+test_skip_missing_arg
+test_unknown_flag
+test_dispatch_hooks_home_override
+test_dispatch_install_running_flag
+test_dispatch_pm_scripts_via_bash
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

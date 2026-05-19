@@ -626,6 +626,8 @@ case_link_or_copy_copy_fallback() {
 case_link_or_copy_dst_is_real_dir() {
   local name="link-or-copy-dst-is-real-dir"
   should_run "$name" || return 0
+  # Behavior: link_or_copy returns 2 (CONFLICT) when dst is a pre-existing unmanaged real directory.
+  # Steps: mkdir dst; call link_or_copy; assert rc=2, CONFLICT message, dst unchanged.
 
   local root="$tmp_root/link-or-copy-dst-is-real-dir"
   local src="$root/src.txt"
@@ -666,6 +668,9 @@ case_link_or_copy_dst_is_real_dir() {
 case_link_or_copy_copy_fallback_dir_idempotent() {
   local name="link-or-copy-copy-fallback-dir-idempotent"
   should_run "$name" || return 0
+  # Behavior: second link_or_copy call for a manifest-managed copied directory returns 0 (ok).
+  # Steps: first call with FAKE_SYMLINK_UNSUPPORTED=1 installs dir (rc=1); second call sees
+  #        manifest entry, matches SHA, and returns 0 without CONFLICT.
 
   local old_home="$HOME"
   local root="$tmp_root/$name"
