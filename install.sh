@@ -124,87 +124,9 @@ else
   echo
 fi
 
-# Pre-flight: agent frontmatter must not declare Agent (subagents can't spawn subagents)
-if [[ -x "$REPO_ROOT/scripts/lint-agents.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> lint agents"
-  "$REPO_ROOT/scripts/lint-agents.sh"
-  echo
-fi
-
-# Pre-flight: scripts/*.sh hygiene (executable bit, shebang, parses, set line)
-if [[ -x "$REPO_ROOT/scripts/lint-scripts.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> lint scripts"
-  "$REPO_ROOT/scripts/lint-scripts.sh"
-  echo
-fi
-
-# Pre-flight: hook regression suite (security-relevant; must be green to install)
-if [[ -x "$REPO_ROOT/scripts/test-hooks.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test hooks"
-  HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" "$REPO_ROOT/scripts/test-hooks.sh"
-  echo
-fi
-
-# Pre-flight: routing log migrator regression suite
-if [[ -x "$REPO_ROOT/scripts/test-migrate-routing-log.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test migrate routing log"
-  "$REPO_ROOT/scripts/test-migrate-routing-log.sh"
-  echo
-fi
-
-# Pre-flight: installer regression suite (symlink/conflict behavior)
-if [[ -x "$REPO_ROOT/scripts/test-install.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test install"
-  CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 bash "$REPO_ROOT/scripts/test-install.sh"
-  echo
-fi
-
-# Pre-flight: usage report regression suite (read-only fixture coverage)
-if [[ -x "$REPO_ROOT/scripts/test-usage-weekly.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test usage weekly"
-  "$REPO_ROOT/scripts/test-usage-weekly.sh"
-  echo
-fi
-
-# Pre-flight: usage tracker regression suite (log-usage.sh + token-usage.sh)
-if [[ -x "$REPO_ROOT/scripts/test-usage-tracker.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test usage tracker"
-  "$REPO_ROOT/scripts/test-usage-tracker.sh"
-  echo
-fi
-
-# Pre-flight: pm schema scripts regression suite
-if [[ -x "$REPO_ROOT/pm/scripts/test/run-tests.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test pm scripts"
-  bash "$REPO_ROOT/pm/scripts/test/run-tests.sh"
-  echo
-fi
-
-# Pre-flight: codex-dispatch self-snapshot regression suite
-if [[ -x "$REPO_ROOT/scripts/test-codex-dispatch.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test codex-dispatch"
-  "$REPO_ROOT/scripts/test-codex-dispatch.sh"
-  echo
-fi
-
-# Pre-flight: pr-gate regression suite
-if [[ -x "$REPO_ROOT/scripts/test-pr-gate.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test pr-gate"
-  "$REPO_ROOT/scripts/test-pr-gate.sh"
-  echo
-fi
-
-# Pre-flight: setup-project regression suite
-if [[ -x "$REPO_ROOT/scripts/test-setup-project.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test setup-project"
-  "$REPO_ROOT/scripts/test-setup-project.sh"
-  echo
-fi
-
-# Pre-flight: gitignore patch helper regression suite
-if [[ -x "$REPO_ROOT/scripts/test-patch-gitignore.sh" && "$_SKIP_PREFLIGHT" != "1" ]]; then
-  echo "==> test patch-gitignore"
-  "$REPO_ROOT/scripts/test-patch-gitignore.sh"
+if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
+  echo "==> preflight tests"
+  bash "$REPO_ROOT/scripts/run-all-tests.sh"
   echo
 fi
 
