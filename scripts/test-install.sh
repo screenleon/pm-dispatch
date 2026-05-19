@@ -184,12 +184,12 @@ run_install_case() {
       ;;
     pm-real-dir-real-run)
       assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "is not a symlink" || return
+      assert_contains "$name" "$err" "is a real directory" || return
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     pm-real-dir-dry-run)
       assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "is not a symlink" || return
+      assert_contains "$name" "$err" "is a real directory" || return
       assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;

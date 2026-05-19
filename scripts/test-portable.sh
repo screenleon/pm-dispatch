@@ -623,6 +623,46 @@ case_link_or_copy_copy_fallback() {
   pass "$name"
 }
 
+case_link_or_copy_dst_is_real_dir() {
+  local name="link-or-copy-dst-is-real-dir"
+  should_run "$name" || return 0
+
+  local root="$tmp_root/link-or-copy-dst-is-real-dir"
+  local src="$root/src.txt"
+  local dst="$root/dst"
+  local code
+  local out
+  local out_file
+
+  mkdir -p "$dst"
+  printf 'ok\n' > "$src"
+
+  set +e
+  out_file="$root/link-or-copy.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code=$?
+  set -e
+  out="$(cat "$out_file")"
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "rc=$code (want 2)"
+    return
+  fi
+  if ! grep -q 'CONFLICT' <<< "$out" || ! grep -q 'real directory' <<< "$out"; then
+    fail "$name" "missing real-directory conflict message"
+    return
+  fi
+  if ! [[ -d "$dst" && ! -L "$dst" ]]; then
+    fail "$name" "$dst was replaced"
+    return
+  fi
+  if [[ -e "$dst/$(basename "$src")" ]]; then
+    fail "$name" "created entry inside real-directory dst"
+    return
+  fi
+  pass "$name"
+}
+
 case_realpath_m_existing_abs
 case_realpath_m_parent_dots
 case_realpath_m_nonexistent_leaf
@@ -641,6 +681,7 @@ case_file_size_bytes_missing_file
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
+case_link_or_copy_dst_is_real_dir
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
