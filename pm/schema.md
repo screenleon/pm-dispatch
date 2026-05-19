@@ -1,4 +1,4 @@
-# pm-schema: v1
+# pm-schema: v1.1
 
 Cross-repo planning convention for `~/github/*` managed product repos.
 Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` is a symlink alias maintained by `pm-dispatch/install.sh`.
@@ -20,7 +20,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 ### 2.1 頂部 metadata
 
 ```
-<!-- pm-schema: v1 -->
+<!-- pm-schema: v1.1 -->
 # <repo-name> backlog
 ```
 
@@ -49,8 +49,8 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 緊接在標題之後，欄位固定：
 
-| #  | Status | 主題 | 影響面 | 首次記錄 | Refs |
-|----|--------|------|--------|----------|------|
+| #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
+|----|--------|------|--------|----------|------|----------|------|
 
 - **#**：條目 ID
 - **Status**：上述可接受 token 之一
@@ -58,6 +58,8 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - **影響面**：見下方 area enum；單值或斜線複合
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
 - **Refs**：結構化引用，語法見 §2.4.3；空則 `—`
+- **Priority**：`P1` / `P2` / `P3` / `—`（優先度；未設為 `—`）。向下相容：v1.1 file 中缺此欄的列 emit W-MISSING-COLS。
+- **Epic**：`oss` / `reuse-debt` / `hygiene` / `—`（語義分組；空則 `—`）。CC-1NN 列填 `oss`，CC-2NN 列填 `reuse-debt`，流程維護類填 `hygiene`，其餘 `—`。
 
 索引必須與 body 條目一一對應，順序按 ID 升冪。
 
@@ -102,6 +104,16 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 
 多筆：index 欄以 `, ` 分隔，≤ 3 條；溢出寫 body `**Refs**:` 行（見 §2.5）。缺值 `—`。未列前綴一律不接受；新類型先升 schema。
 
+#### 2.4.4 Priority enum
+
+`P1`（本週必做）/ `P2`（本 sprint 內）/ `P3`（backlog 中排隊）/ `—`（未設定）。
+closed / dropped / deferred 條目使用 `—`。
+
+#### 2.4.5 Epic enum
+
+`oss`（CC-OSS 公開源碼系列，CC-1NN）/ `reuse-debt`（技術債重用，CC-2NN）/ `hygiene`（流程/schema 維護）/ `—`（未分組）。
+新 repo 可以擴充此 enum；擴充需同步更新 `pm/schema.md` 並 bump patch version。
+
 ### 2.5 條目 body 三層格式
 
 每個 active 條目 body 固定三節 Problem / Why / Requirement，**只寫到這三層為止**。後接可選的 `Tags` 行與溢出用的 `Refs` 行：
@@ -116,7 +128,7 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 **Refs**: pr:#42, feedback:2026-04-30
 ```
 
-- `Tags`：放 `priority` / `milestone` 等次要維度。寫法 `P{1-3}` / `M{n}`；多個以 `, ` 分隔；無則整行省略（不寫 `—`）。priority/milestone 不進 index 欄，避免熱點欄位過寬。
+- `Tags`：放 `priority` / `milestone` 等次要維度。寫法 `P{1-3}` / `M{n}`；多個以 `, ` 分隔；無則整行省略（不寫 `—`）。priority 已有專屬 index 欄（§2.4.4）；milestone 仍僅在 Tags 行。
   - **Variant — closed-enum milestone + theme axis**：採用 repo 可改以封閉 enum（如 `{M1, M3, M4, DX}`）約束 `milestone:`，並另加 sibling `theme:` 欄位承載 topic / content 軸（free-form lowercase-kebab-case，single token，ASCII）。此變體下 `milestone:` 在無 release commitment 時整行省略；`theme:` 開放擴充、不需 schema bump。project-alpha 於 2026-05-07 採用此模式（含 yml-level validator），參考 `../project-alpha/DECISIONS.md#2026-05-07-pm-schema-v1-milestone-theme-split`。
 - `Refs`：僅在 index 欄已塞滿（>3 條）或需註記非主要引用時出現；語法同 §2.4.3。索引欄裡的 ref 不必在 body 重複。
 - **不寫實作細節**：不指定具體欄位、API 路徑、檔案改動方式。實作走 codex 的 brief，brief 是 ephemeral，不入 BACKLOG。
@@ -178,7 +190,7 @@ closed 條目有兩種折疊形式：
 
 - **採用**：active product repo（current: project-alpha, project-beta, project-gamma 等有持續開發的 repo）。
 - **跳過**：純 sandbox / 一次性實驗 / 純內容 repo（看個案決定）。
-- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1 -->`，否則 PM agent 視為未採用、不解析。
+- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.1 -->`（v1.1 為當前版本；v1 file 仍被 validator 接受，但不驗證新欄），否則 PM agent 視為未採用、不解析。
 - schema 升級（v2 等）時，`.pm/schema.md` bump 版本，受管 repo 逐個遷移；混用版本期間 PM agent 依個別檔頂部宣告解析。
 
 ## 6. 與 PM agent 互動契約
