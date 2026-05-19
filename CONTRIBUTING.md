@@ -66,8 +66,10 @@ bash scripts/run-all-tests.sh
 ```
 
 This runs all suites (hooks, install, portable, pr-gate, usage, pm-scripts, etc.) and
-prints a pass/fail/skip summary. To run only the affected suite in isolation, use
-`--skip` for everything else or call the individual `scripts/test-*.sh` directly.
+prints a pass/fail/skip summary. For a focused run on one suite, invoke it directly,
+for example `bash scripts/test-hooks.sh` or `bash scripts/test-install.sh`. Use
+`--skip <suite>` to opt out of environment-specific suites, such as
+`--skip test-codex-dispatch` when the Codex CLI is not installed.
 
 Additionally, for any BACKLOG.md or CHANGELOG.md changes:
 
