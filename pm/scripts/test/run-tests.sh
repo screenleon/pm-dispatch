@@ -127,6 +127,7 @@ run_validate_case "v1.1 good-subletter" "$fixtures/good-v11-subletter/BACKLOG.md
 run_validate_case "v1.1 bad-priority-subletter" "$fixtures/bad-priority-subletter/BACKLOG.md" 1 "E-PRIORITY-ENUM"
 run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
 run_validate_case "validate bad-index-mismatch" "$fixtures/bad-index-mismatch/BACKLOG.md" 1 "E-INDEX-MISMATCH"
+run_validate_case "validate bad-orphan-section" "$fixtures/bad-orphan-section/BACKLOG.md" 1 "E-INDEX-MISMATCH"
 run_validate_case "validate bad-dup-id" "$fixtures/bad-dup-id/BACKLOG.md" 1 "E-DUP-ID"
 run_validate_case "validate bad-status-enum" "$fixtures/bad-status-enum/BACKLOG.md" 1 "E-STATUS-ENUM"
 run_validate_case "validate bad-area-enum" "$fixtures/bad-area-enum/BACKLOG.md" 1 "E-AREA-ENUM"

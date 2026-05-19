@@ -7,6 +7,33 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-05-19: cc030-validate-bidirectional
+
+Closes: BACKLOG.md#CC-030
+
+### Context
+
+validate.sh 原本只做 Index→Body 的單向一致性檢查（index row 有對應 body section 才合法）。
+Body→Index 方向（孤立 section 沒有 index row）、closure date 對齊（E-CLOSURE-DATE-MISMATCH）、以及 CHANGELOG drift（E-CHANGELOG-DRIFT）均已在 PR #93（CC-052）前後陸續實作。
+
+CC-030 的目標是確認雙向一致性全覆蓋，並補充缺漏的 fixture。
+
+### Decision
+
+透過程式結構驗證（validate.sh）實施雙向 Index↔Section 一致性，而不依賴 reviewer 紀律。
+補充 `bad-orphan-section` fixture 驗證 direction (b)：body section 存在但 index row 缺失 → E-INDEX-MISMATCH。
+38 tests pass（含新 fixture）。
+
+### Alternatives considered
+
+- 只文件化規範、靠 PM agent 紀律維持 — 無法在 CI 被偵測，drift 會隨時間累積。
+- 在 PM agent 提示詞加 lint 提醒 — prompt 層 enforcement 不可靠，結構 validator 是唯一穩固邊界。
+
+### Constraints introduced
+
+- validate.sh E-INDEX-MISMATCH 同時涵蓋兩個方向；fixture 需兩者皆有對應測試案例。
+- 新 fixture 命名規範：`bad-orphan-section`（body-only 孤立 section）、`bad-index-mismatch`（index-only 孤立 row）。
+
 ## 2026-05-19: Deprecate ID-gap convention
 
 Closes: BACKLOG.md#CC-067
