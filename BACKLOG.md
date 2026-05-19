@@ -108,6 +108,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | CC-031 | P2 | — |
 | CC-065 | 🟡 deferred | **[P2]** Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P2 | — |
 | CC-066 | 🟡 deferred | **[P2]** Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P2 | — |
+| CC-067 | 🔵 active | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process/schema | 2026-05-19 | — | P2 | hygiene |
 
 ---
 
@@ -568,6 +569,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Problem**: `hook-codex-bash-guard.sh` 的 git allowlist、read path allowlist、shell metacharacter blocklist 等 policy 直接寫在 shell script 邏輯中；per-repo override 不可能，policy 審計需要讀 shell code。
 **Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
 **Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
+
+## CC-067 — [schema cleanup] 廢棄 ID gap 慣例
+
+**Problem**: `pm/schema.md` §2.2 和 BACKLOG preamble 記載「CC-1NN = OSS epic、CC-2NN = reuse-debt」的保留範圍慣例。隨著 ticket 自然增長至 CC-100，普通流水號與「語義保留範圍」將正面衝突。
+**Why**: v1.1 的 `epic` 欄位已是顯式、機器可讀的分組依據；ID gap 慣例是 Epic 欄位存在前的 workaround，現在已多餘且有碰撞風險。現有 CC-1NN/CC-2NN ID 不動（歷史穩定），只廢棄「保留範圍」的文件規範。
+**Requirement**: (1) `pm/schema.md` §2.2 移除 CC-1NN/CC-2NN 保留說明；(2) BACKLOG Convention 區段移除 ID gap 說明；(3) `DECISIONS.md` 新增決策記錄（context: v1.1 Epic column 取代 ID gap；decision: epic column is authoritative grouping signal）。無 validator 變更。
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
