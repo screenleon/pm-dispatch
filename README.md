@@ -10,6 +10,12 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Getting Started](docs/GETTING_STARTED.md)
 - [Core concepts](docs/CONCEPTS.md)
 
+## Working language
+
+Primary working language is Mandarin Chinese. Commit messages and code identifiers are
+English. Issue threads may be bilingual; non-Mandarin contributors are welcome and should
+expect bilingual responses.
+
 ## Path placeholders
 
 Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, `scripts/install-hooks.sh` derives it automatically from the git toplevel with:
