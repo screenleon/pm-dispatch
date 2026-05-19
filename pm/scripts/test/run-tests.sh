@@ -56,6 +56,26 @@ run_validate_case() {
   pass "$name"
 }
 
+run_validate_case_warn() {
+  local name=$1 file=$2 want_token=$3
+  local err
+  err=$(mktemp)
+  set +e
+  bash "$root_dir/validate.sh" "$file" >/dev/null 2>"$err"
+  local got_code=$?
+  set -e
+  if [ "$got_code" -ne 0 ]; then
+    fail "$name" "exit $got_code, expected 0"
+    rm -f "$err"; return
+  fi
+  if ! grep -q "$want_token" "$err"; then
+    fail "$name" "missing $want_token in stderr"
+    rm -f "$err"; return
+  fi
+  rm -f "$err"
+  pass "$name"
+}
+
 run_validate_case_multi() {
   name=$1
   want_code=$2
@@ -95,6 +115,10 @@ run_validate_case_multi() {
 
 # validate.sh 基本案例。
 run_validate_case "validate good" "$fixtures/good/BACKLOG.md" 0 ""
+run_validate_case "v1.1 good" "$fixtures/good-v11/BACKLOG.md" 0 ""
+run_validate_case "v1.1 bad-priority-enum" "$fixtures/bad-priority-enum/BACKLOG.md" 1 "E-PRIORITY-ENUM"
+run_validate_case "v1.1 bad-epic-enum" "$fixtures/bad-epic-enum/BACKLOG.md" 1 "E-EPIC-ENUM"
+run_validate_case_warn "v1.1 warn-missing-cols" "$fixtures/warn-missing-cols/BACKLOG.md" "W-MISSING-COLS"
 run_validate_case "validate bad-no-header" "$fixtures/bad-no-header/BACKLOG.md" 2 "E-SCHEMA-HEADER"
 run_validate_case "validate bad-index-mismatch" "$fixtures/bad-index-mismatch/BACKLOG.md" 1 "E-INDEX-MISMATCH"
 run_validate_case "validate bad-dup-id" "$fixtures/bad-dup-id/BACKLOG.md" 1 "E-DUP-ID"
@@ -120,7 +144,7 @@ run_validate_case "validate bad-partial-date" "$fixtures/bad-partial-date/BACKLO
 run_validate_case "validate bad-changelog-drift partial-row" "$fixtures/bad-changelog-drift-partial/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
 # Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
 # Uses baseline comparison — any error not in the known pre-existing set is a regression.
-# Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-052 will fix them).
+# Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-030 owns cleanup).
 repo_backlog=$(CDPATH= cd -- "$script_dir/../../.." && pwd)/BACKLOG.md
 baseline="$script_dir/BACKLOG_validator_baseline.txt"
 if [ -f "$repo_backlog" ] && [ -f "$baseline" ]; then
