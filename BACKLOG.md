@@ -40,7 +40,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-027c | 🟡 deferred | `hook-tool-trace.sh` strict JSON validation：jq inline cost ~25ms/call 超 budget；探索 async post-validation 或 sampled fraction | ux/memory | 2026-05-15 | — | — | — |
 | CC-028 | ✅ closed 2026-05-15 | PostToolUse `hook-routing-log.sh`：codex-dispatch 自動 append routing_log 記錄 Q1/Q2/Q3 校準資料 | ux/memory | 2026-05-15 | pr:#55 | — | — |
 | CC-029 | ✅ closed 2026-05-15 | `test-codex-dispatch.sh` 加入 CI（與 CC-024 並行做 lint.yml 補完） | ops/test | 2026-05-15 | pr:#57 | — | — |
-| CC-030 | 🔵 active | `pm/scripts/validate.sh` 補 Index ↔ Section 雙向一致性 + CHANGELOG drift 檢查 | ops/process | 2026-05-15 | — | P1 | — |
+| CC-030 | ✅ closed 2026-05-19 | `pm/scripts/validate.sh` 補 Index ↔ Section 雙向一致性 + CHANGELOG drift 檢查 | ops/process | 2026-05-15 | decisions:#2026-05-19-cc030-validate-bidirectional | P1 | — |
 | CC-031 | 🔵 active | 開源前置：`CONTRIBUTING.md` + `SECURITY.md` + README 工作語言聲明 | process/DX | 2026-05-15 | — | P2 | — |
 | CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — | P3 | — |
 | CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — | P3 | — |
@@ -361,16 +361,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 依賴 **CC-027** 與 **CC-025**。順序：CC-027 訊號層落地 → CC-025 驗證單一 skill 改進迴路 → CC-026 才有足夠資料做序列聚類。
 **Source**: 2026-05-15 對話討論 Hermes Agent self-improvement loop 與 pm-dispatch 的 gap 分析。
 
-## CC-030 — `pm/scripts/validate.sh` Index↔Section 雙向一致性 + CHANGELOG drift
+## CC-030 — `pm/scripts/validate.sh` Index↔Section 雙向一致性 + CHANGELOG drift ✅ 2026-05-19
 
-**Problem**: `pm/scripts/validate.sh` 只驗 Index 表格欄位格式，無法捕捉：(a) Index row 缺對應 `## CC-XXX —` detail section、(b) detail section 缺對應 Index row、(c) `[Unreleased]` CHANGELOG 條目與 BACKLOG 狀態歧義（active 但 [Unreleased] 引用 / closed 但仍出現於 active 表）。實際發生過：CC-024 retroactively 加入 Index、CC-003/004/005 status 與 [Unreleased] 對應不明。
-**Why**: [[feedback_known_bug_backlog]] 規則目前靠自律維持；schema 工具能把它升級為結構性保證，同精神於 PR #46 `/pre-impl` — 用工具強制流程，不靠 reviewer 抓。
-**Requirement**:
-1. `pm/scripts/validate.sh` 加雙向一致性：(a) 每筆 Index row 必須有同 ID 的 detail section、(b) 反之亦然、(c) closure marker 一致性 — 若 Index 標 `✅ closed YYYY-MM-DD`，對應 detail section 必須有 `✅ YYYY-MM-DD` 或 `**Outcome**:` 區段對齊日期。**title 與 status 文字不做嚴格字串相等比對**（detail section 目前 schema 不含 status 欄位；若未來要求 status 兩處相等需先做 schema migration 在 detail section 增列 status，並一次回填全部既有 entry）。
-2. CHANGELOG drift 檢查（可選 / 第二階段）：`[Unreleased]` 引用的 `pr:#NN` 對應 backlog row 必須是 `✅ closed` 狀態。
-3. 對應 `pm/scripts/test/fixtures/` 加 `bad-orphan-index/`、`bad-orphan-section/`、`bad-changelog-drift/` fixture；既有 `good/` fixture 通過。
-4. `.github/workflows/lint.yml` 既有 schema test 自動涵蓋，不需新 job。
-**Source**: 2026-05-15 對話 — pm-dispatch 改善分析（B2）。對應 [[feedback_known_bug_backlog]] 由 feedback rule 升級為結構性保證。
+**Outcome**: validate.sh 實施雙向 Index↔Section 一致性（E-INDEX-MISMATCH 雙向）、closure 日期對齊（E-CLOSURE-DATE-MISMATCH）、CHANGELOG drift（E-CHANGELOG-DRIFT）。bad-orphan-section fixture 補完 direction (b) 覆蓋。38 tests pass。
+**See**: DECISIONS.md#2026-05-19-cc030-validate-bidirectional
 
 ## CC-031 — 開源前置：CONTRIBUTING.md + SECURITY.md + README 工作語言聲明
 
