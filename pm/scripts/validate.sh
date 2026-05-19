@@ -329,7 +329,7 @@ set -e
 drift_rc=0
 if [ -n "$changelog" ]; then
   set +e
-  awk -v backlog_file="$backlog" -v changelog_file="$changelog" '
+  awk -v backlog_file="$backlog" -v changelog_file="$changelog" -v schema_ver="$schema_ver" '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
   gsub(/[ \t\r\n]+$/, "", s)
@@ -371,7 +371,14 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
   } else {
     status = "unknown"
   }
-  refs = trim(f[7])
+  # Read Refs relative to end to tolerate extra pipe chars in topic field.
+  # v1:   row ends with ...Refs | "" -> Refs = f[n-1]
+  # v1.1: row ends with ...Refs | Priority | Epic | "" -> Refs = f[n-3]
+  if (schema_ver == "v1.1") {
+    refs = trim(f[n-3])
+  } else {
+    refs = trim(f[n-1])
+  }
   s = refs
   while (match(s, pr_token_re)) {
     tok = substr(s, RSTART, RLENGTH)

@@ -68,6 +68,10 @@ run_validate_case_warn() {
     fail "$name" "exit $got_code, expected 0"
     rm -f "$err"; return
   fi
+  if grep -q '^E-' "$err"; then
+    fail "$name" "unexpected E-* errors in stderr: $(grep '^E-' "$err" | head -3)"
+    rm -f "$err"; return
+  fi
   if ! grep -q "$want_token" "$err"; then
     fail "$name" "missing $want_token in stderr"
     rm -f "$err"; return
@@ -144,6 +148,7 @@ run_validate_case "validate good-archive-stub" "$fixtures/good-archive-stub/BACK
 run_validate_case "validate good-partial" "$fixtures/good-partial/BACKLOG.md" 0 ""
 run_validate_case "validate bad-partial-date" "$fixtures/bad-partial-date/BACKLOG.md" 1 "E-DATE-FORMAT"
 run_validate_case "validate bad-changelog-drift partial-row" "$fixtures/bad-changelog-drift-partial/BACKLOG.md" 1 "E-CHANGELOG-DRIFT"
+run_validate_case_multi "v1.1 drift-pipe-topic" 0 "" "$fixtures/good-drift-v11-pipe/BACKLOG.md" "" "$fixtures/good-drift-v11-pipe/CHANGELOG.md"
 # Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.
 # Uses baseline comparison — any error not in the known pre-existing set is a regression.
 # Pre-existing errors are listed in BACKLOG_validator_baseline.txt (CC-030 owns cleanup).
@@ -186,7 +191,7 @@ elif ! grep -q '| repo-a | 3 | 1 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-a summary mismatch"
 elif ! grep -q '| repo-b | 2 | 0 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-b summary mismatch"
-elif ! grep -q '| repo-v11 | 2 | 1 |' "$rollup_out"; then
+elif ! grep -q '| repo-v11 | 3 | 1 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-v11 summary mismatch"
 else
   pass "rollup fixtures"

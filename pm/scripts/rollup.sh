@@ -87,7 +87,7 @@ for backlog in "$root"/*/BACKLOG.md; do
     n = split(line, f, "|")
     if (n < 7) return
     id = trim(f[2])
-    if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+    if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
     status = trim(f[3])
     topic = trim(f[4])
     area = trim(f[5])
