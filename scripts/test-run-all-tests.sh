@@ -271,7 +271,11 @@ test_dispatch_hooks_home_override() {
 
   local hooks_path="$repo/scripts/test-hooks.sh"
   mkdir -p "$(dirname "$hooks_path")"
-  printf '#!/bin/sh\nprintf "HOME_IS=%%s\\n" "$HOME"\nexit 0\n' > "$hooks_path"
+  cat > "$hooks_path" <<'STUB'
+#!/bin/sh
+printf "HOME_IS=%s\n" "$HOME"
+exit 0
+STUB
   chmod +x "$hooks_path"
 
   path="$(make_path_with_codex "$repo/bin")"
@@ -294,7 +298,11 @@ test_dispatch_install_running_flag() {
 
   local install_path="$repo/scripts/test-install.sh"
   mkdir -p "$(dirname "$install_path")"
-  printf '#!/bin/sh\n[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" = "1" ] || exit 1\nexit 0\n' > "$install_path"
+  cat > "$install_path" <<'STUB'
+#!/bin/sh
+[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" = "1" ] || exit 1
+exit 0
+STUB
   chmod +x "$install_path"
 
   path="$(make_path_with_codex "$repo/bin")"
