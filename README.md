@@ -64,6 +64,21 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 **Profile**: `full` wires every hook including the codex-* guards (use when you run the [Codex CLI](https://github.com/openai/codex) for dispatch). `minimal` skips the codex-* guards (use when you only use Claude Code; the `claude` executor handles dispatch). Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
 
+## Testing
+
+```bash
+bash scripts/run-all-tests.sh         # run all 21 suites
+bash scripts/run-all-tests.sh --list  # show registered suites without running
+bash scripts/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
+```
+
+Requires a complete developer checkout — any registered suite that is missing or
+not executable causes the aggregator to exit non-zero. Use `--skip <name>` to
+opt out of environment-specific suites (e.g., `test-codex-dispatch` if the Codex
+CLI is not installed).
+
+`install.sh --verify` delegates to this script.
+
 ## What's here
 
 ### Agents

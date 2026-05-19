@@ -1399,7 +1399,7 @@ test_default_install_skips_preflights() {
 }
 
 test_verify_flag_runs_preflights() {
-  # Verifies that ./install.sh --verify causes all 12 preflight suites to run.
+  # Verifies that ./install.sh --verify delegates to scripts/run-all-tests.sh (21 suites).
   # When this test runs inside install.sh's own preflight suite
   # (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1), invoking install.sh --verify would
   # recurse infinitely. Guard by passing immediately in that context; the real
@@ -1425,13 +1425,17 @@ test_verify_flag_runs_preflights() {
     ok=false
     printf '  FAIL  %s — install.sh --verify exited %d; failing preflight shown above\n' "$name" "$exit_code" >&2
   fi
-  for label in "lint agents" "lint scripts" "test hooks" "test migrate routing log" \
-               "test install" "test usage weekly" "test usage tracker" "test pm scripts" \
-               "test codex-dispatch" "test pr-gate" "test setup-project" \
-               "test patch-gitignore"; do
-    if [[ "$out" != *"==> $label"* ]]; then
+  if [[ "$out" != *"==> preflight tests"* ]]; then
+    ok=false
+    printf '  FAIL  %s — expected "==> preflight tests" header not found\n' "$name" >&2
+  fi
+  for suite in lint-agents lint-scripts test-hooks test-migrate test-install \
+               test-usage-weekly test-usage-tracker test-pm-scripts \
+               test-codex-dispatch test-pr-gate test-setup-project \
+               test-patch-gitignore test-run-all-tests; do
+    if [[ "$out" != *"$suite"* ]]; then
       ok=false
-      printf '  FAIL  %s — expected preflight section "==> %s" not found\n' "$name" "$label" >&2
+      printf '  FAIL  %s — expected suite "%s" not found in preflight output\n' "$name" "$suite" >&2
     fi
   done
   if [[ "$out" == *"preflight tests skipped"* ]]; then
