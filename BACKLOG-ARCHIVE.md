@@ -1,9 +1,9 @@
-<!-- pm-dispatch: backlog-archive 2026-05-18 -->
+<!-- pm-dispatch: backlog-archive 2026-05-19 -->
 # pm-dispatch backlog — archive
 
 Closed ticket detail sections archived from BACKLOG.md (CC-049).
 Index entries with ✅ status and PR refs remain in BACKLOG.md for scanning.
-Last archived: 2026-05-18
+Last archived: 2026-05-19
 
 ---
 
@@ -83,6 +83,15 @@ Last archived: 2026-05-18
 **Outcome**: `commands/pre-impl.md` 新增；強制回答職責邊界/依賴方向/變動接縫三個設計問題，輸出可貼入 brief `constraints:` 的約束清單。同時修正 `pm/scripts/validate.sh` schema drift（`✅ done`、`⏸ deferred`、topic-area tokens）並對齊 `pm/schema.md`、`pm/templates/BACKLOG.md`。
 **See**: pr:#46
 
+## CC-024 — `test-usage-weekly.sh` 加入 GitHub Actions CI
+
+**Problem**: `scripts/test-usage-weekly.sh`（20 tests）在 PR gate 手動執行通過，但 `.github/workflows/lint.yml` 未包含此 suite，merged PR 後無 CI 保護。
+**Why**: `usage-weekly.sh` 是 read-only 報告工具，迴歸影響面低但覆蓋率現在是靠手動 gate 維持，長期不穩固。qa-tester 在 gate-20260514-174657 發出 advisory（non-blocking）。
+**Requirement**: 在 `.github/workflows/lint.yml` 加入一個 `test-usage-weekly` job，執行 `bash scripts/test-usage-weekly.sh`；失敗 → CI 阻擋。
+**Source**: 2026-05-14 對話 — pm-dispatch 改善分析。與 CC-029（test-codex-dispatch）同 PR 處理。
+**Outcome**: 2026-05-15 — PR #57 合併（與 CC-029 同 PR）；`lint.yml` 加入 `test-usage-weekly` job，fixture-driven 無外部依賴，20 tests 通過。
+**See**: pr:#57
+
 ## CC-025 — `/skill-refine` skill 自我精修 ✅ 2026-05-18
 
 **Outcome**: 2026-05-18 — M1 spike (`scripts/skill-refine.sh` + `commands/skill-refine.md`) 已合併；PR #67 實作 shell script，PR #68 追加 contract tests + 環境契約文件化。M2（diff 生成）留 CC-025b 後續。
@@ -127,15 +136,6 @@ Last archived: 2026-05-18
 **Source**: 2026-05-15 對話 — pm-dispatch 改善分析（A1）。對應 [[routing_log]] 與 [[feedback_codex_routing]] 設計目標。
 **Outcome**: 2026-05-15 — Added PostToolUse `hook-routing-log.sh` + one-time migrator `migrate-routing-log.sh` (3 existing bullet entries → JSONL); install wiring, 19 routing hook/installer regression cases, 5 migrator cases; 298/298 + 5/5 green. MVP fields: brief_file + goal_excerpt only; brief_id / file_count deferred to `/routing-distill`-side computation. Per-hook q_hit/second_thoughts left null — post-classification deferred to a later `/routing-distill`. PR #55.
 **See**: pr:#55
-
-## CC-024 — `test-usage-weekly.sh` 加入 GitHub Actions CI
-
-**Problem**: `scripts/test-usage-weekly.sh`（20 tests）在 PR gate 手動執行通過，但 `.github/workflows/lint.yml` 未包含此 suite，merged PR 後無 CI 保護。
-**Why**: `usage-weekly.sh` 是 read-only 報告工具，迴歸影響面低但覆蓋率現在是靠手動 gate 維持，長期不穩固。qa-tester 在 gate-20260514-174657 發出 advisory（non-blocking）。
-**Requirement**: 在 `.github/workflows/lint.yml` 加入一個 `test-usage-weekly` job，執行 `bash scripts/test-usage-weekly.sh`；失敗 → CI 阻擋。
-**Source**: 2026-05-14 對話 — pm-dispatch 改善分析。與 CC-029（test-codex-dispatch）同 PR 處理。
-**Outcome**: 2026-05-15 — PR #57 合併（與 CC-029 同 PR）；`lint.yml` 加入 `test-usage-weekly` job，fixture-driven 無外部依賴，20 tests 通過。
-**See**: pr:#57
 
 ## CC-029 — `test-codex-dispatch.sh` 加入 CI
 
