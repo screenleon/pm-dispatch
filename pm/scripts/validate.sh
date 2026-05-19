@@ -57,7 +57,10 @@ else
 fi
 
 set +e
-awk -v schema_ver="$schema_ver" '
+awk -v backlog_file="$backlog" \
+    -v changelog_file="${changelog:-}" \
+    -v schema_ver="$schema_ver" \
+    '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
   gsub(/[ \t\r\n]+$/, "", s)
@@ -113,6 +116,10 @@ function emit(code, ctx) {
 
 function warn(code, ctx) {
   print code ": " ctx > "/dev/stderr"
+}
+
+BEGIN {
+  pr_token_re = "pr:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9][0-9]*"
 }
 
 function note_body_closure_date(id, raw, date) {
@@ -253,7 +260,20 @@ function note_body_id(line, id) {
   }
 }
 
-function parse_index_row(line, n, f, id, status, first_date, area, refs, priority, epic) {
+function note_pr_status(tok, status) {
+  if (!(tok in pr_status) || pr_status[tok] != "closed") pr_status[tok] = status
+}
+
+function note_changelog_prs(line, s, tok) {
+  s = line
+  while (match(s, pr_token_re)) {
+    tok = substr(s, RSTART, RLENGTH)
+    changelog_pr[tok] = 1
+    s = substr(s, RSTART + RLENGTH)
+  }
+}
+
+function parse_index_row(line, n, f, id, status, first_date, area, refs, priority, epic, kind, s, tok) {
   n = split_md_row(line, f)
   if (n < 7) return
   id = trim(f[2])
@@ -272,6 +292,14 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs, priorit
   if (!valid_date(first_date)) emit("E-DATE-FORMAT", id " invalid first-record date: " first_date)
   parse_refs(id, refs)
 
+  kind = (row_kind[id] != "" ? row_kind[id] : "unknown")
+  s = refs
+  while (match(s, pr_token_re)) {
+    tok = substr(s, RSTART, RLENGTH)
+    note_pr_status(tok, kind)
+    s = substr(s, RSTART + RLENGTH)
+  }
+
   if (schema_ver == "v1.1") {
     if (n < 10) {
       warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1 file)")
@@ -284,13 +312,26 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs, priorit
   }
 }
 
-{
+FILENAME == backlog_file {
   line = $0
   parse_index_row(line)
   note_body_id(line)
   if (current_id != "" && line ~ /^\*\*Tags\*\*:/) parse_tags(current_id, line)
   if (current_id != "" && line ~ /^\*\*See\*\*:/) body_see[current_id] = 1
   if (current_id != "" && line ~ /^\*\*Outcome\*\*:/) note_outcome_date(current_id, line)
+  next
+}
+
+FILENAME == changelog_file {
+  if ($0 ~ /^## +\[Unreleased\]/) {
+    in_unreleased = 1
+    found_unreleased = 1
+    next
+  }
+  if (in_unreleased && $0 ~ /^## +/) {
+    in_unreleased = 0
+  }
+  if (in_unreleased) note_changelog_prs($0)
 }
 
 END {
@@ -320,97 +361,8 @@ END {
   for (id in body_seen) {
     if (!(id in index_seen)) emit("E-INDEX-MISMATCH", id " present in body but missing from index")
   }
-  exit bad ? 1 : 0
-}
-' "$backlog"
-backlog_rc=$?
-set -e
 
-drift_rc=0
-if [ -n "$changelog" ]; then
-  set +e
-  awk -v backlog_file="$backlog" -v changelog_file="$changelog" -v schema_ver="$schema_ver" '
-function trim(s) {
-  gsub(/^[ \t\r\n]+/, "", s)
-  gsub(/[ \t\r\n]+$/, "", s)
-  return s
-}
-
-function emit(code, ctx) {
-  print code ": " ctx > "/dev/stderr"
-  bad = 1
-}
-
-# Shared schema v1 PR token grammar for both backlog refs and [Unreleased] scan.
-BEGIN {
-  pr_token_re = "pr:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9][0-9]*"
-}
-
-function note_pr_status(tok, status) {
-  if (!(tok in pr_status) || pr_status[tok] != "closed") pr_status[tok] = status
-}
-
-function status_kind(raw) {
-  raw = trim(raw)
-  if (raw == "🔵 active") return "active"
-  if (raw == "✅ done") return "done"
-  if (raw == "⏸ deferred" || raw == "🟡 deferred" || raw == "🟢 someday") return "deferred"
-  if (raw ~ /^⚠️ partial /) return "active"
-  if (raw ~ /^✅ closed /) return "closed"
-  if (raw ~ /^🚫 dropped /) return "dropped"
-  return "unknown"
-}
-
-function note_index_refs(line, n, f, id, refs, status, s, tok) {
-  n = split(line, f, "|")
-  if (n < 7) return
-  id = trim(f[2])
-  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
-  status = status_kind(trim(f[3]))
-  # Read Refs relative to end to tolerate extra pipe chars in topic field.
-  # v1:   row ends with ...Refs | "" -> Refs = f[n-1]
-  # v1.1: row ends with ...Refs | Priority | Epic | "" -> Refs = f[n-3]
-  if (schema_ver == "v1.1") {
-    refs = trim(f[n-3])
-  } else {
-    refs = trim(f[n-1])
-  }
-  s = refs
-  while (match(s, pr_token_re)) {
-    tok = substr(s, RSTART, RLENGTH)
-    note_pr_status(tok, status)
-    s = substr(s, RSTART + RLENGTH)
-  }
-}
-
-function note_changelog_prs(line, s, tok) {
-  s = line
-  while (match(s, pr_token_re)) {
-    tok = substr(s, RSTART, RLENGTH)
-    changelog_pr[tok] = 1
-    s = substr(s, RSTART + RLENGTH)
-  }
-}
-
-FILENAME == backlog_file {
-  note_index_refs($0)
-  next
-}
-
-FILENAME == changelog_file {
-  if ($0 ~ /^## +\[Unreleased\]/) {
-    in_unreleased = 1
-    found_unreleased = 1
-    next
-  }
-  if (in_unreleased && $0 ~ /^## +/) {
-    in_unreleased = 0
-  }
-  if (in_unreleased) note_changelog_prs($0)
-}
-
-END {
-  if (!found_unreleased) exit 0
+  if (!found_unreleased) exit bad ? 1 : 0
   for (tok in changelog_pr) {
     if (!(tok in pr_status)) {
       emit("E-CHANGELOG-DRIFT", tok " referenced in [Unreleased] but no backlog row references it")
@@ -420,15 +372,11 @@ END {
   }
   exit bad ? 1 : 0
 }
-' "$backlog" "$changelog"
-  drift_rc=$?
-  set -e
-fi
+' "$backlog" ${changelog:+"$changelog"}
+rc=$?
+set -e
 
-if [ "$backlog_rc" -eq 2 ] || [ "$drift_rc" -eq 2 ]; then
-  exit 2
-fi
-if [ "$backlog_rc" -ne 0 ] || [ "$drift_rc" -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 exit 0
