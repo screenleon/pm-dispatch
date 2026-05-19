@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Standalone test aggregator - run all pm-dispatch test suites.
 # Usage: scripts/run-all-tests.sh [--skip <name>] [--list]
+# Requires a complete developer checkout: registered suites that are missing or
+# non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
