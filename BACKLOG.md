@@ -461,21 +461,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Note**: 立即 workaround 是 brief author 對 deep playbook repo 預設 timeout=1500s；本條 ticket 是把這條 workaround 升級為文件化規則 + 可選 wrapper-side warning。
 **Cross-link**: [[Codex routing preferences]] 路由表 / [[known-bug backlog rule]] 補登原則。
 
-## CC-046 — validate.sh + run-tests.sh dedup（deferred） ✅ 2026-05-19
+## CC-046 — validate.sh + run-tests.sh dedup ✅ 2026-05-19
 
 **See**: decisions:#cc046-validate-dedup
 
-**Problem**: CC-030 (PR-gate r6 GO) 落地後留兩個 cross-overlap advisory (critic + architecture-reviewer)：
-1. `pm/scripts/validate.sh` 第二個 awk pass（CHANGELOG drift）獨立解析 backlog index 的 status / refs 而非 reuse 第一 pass 結果。當前不影響正確性，但 schema status 或 ref grammar 未來變動時兩 pass 容易 drift。
-2. `pm/scripts/test/run-tests.sh` 的 `run_validate_case_multi`（CC-030 fix-r2 引入）與既有 `run_validate_case` assertion body 高度重複（exit-code check / token extraction / stderr handling / cleanup 幾乎全 copy），增加 assertion drift 風險。
-**Why**: 兩條都是 maintainability advisory，非 release blocker（critic 標 advise、qa 標 approve、arch 標 advise）。當前 validator 範圍小、重複可控；若 CC-030 後續再加 cross-file 規則或 multi-arg test 形態，重複會變痛點。**Cohesion** 主因。
-**Requirement**:
-1. `pm/scripts/validate.sh`：抽 backlog index parsing（status + refs grammar）為 shared awk routine 或單一 awk 程式碼 block；CHANGELOG drift pass 改 consume 該 shared state，不重新 parse。
-2. `pm/scripts/test/run-tests.sh`：合併 `run_validate_case` 與 `run_validate_case_multi` 為單一 varargs helper（例：`run_validate_case <name> <code> <token> <validate-args>...`），既有 13 個 single-arg case 改為 forward-compatible 形式（preserve existing signature semantics 或一次性 migrate 全部 call sites）。
-3. 同時補 QA r5/r6 提到的 structured docstring 注解（behavior/Steps style）— 雖然是低優先，但既然在動 helper 不妨一起。
-**Source**: 2026-05-16 gate-20260516-205441 (r5) + gate-20260516-205833 (r6) advisory findings。CC-030 直接 follow-up。
-**Note**: 安全 refactor，無 schema 變動；建議 fixture 增加之前先做 dedup，否則新 case 又繞 helper 重複一次。
-**Cross-link**: 跟 [[shared_schema_briefs]] 同精神 — 把 schema-grammar 集中在單一處避免 drift。
+**Outcome**: (a) validate.sh 兩個 awk pass 合併為單一 awk 程式；`parse_status()` / `row_kind[]` 成為唯一的 status 解析路徑，CHANGELOG drift check 直接 consume 同一份 state。`note_index_refs()` 與 `status_kind()` 均刪除。(b) `run_validate_case_multi` 刪除，統一為 varargs `run_validate_case`，34 個 call site 全部遷移。38 tests pass。
+**Deferred**: structured behavior/Steps docstring 注解（原 Requirement 3，低優先）— 未做，不影響正確性。如後續認為值得補，可作為獨立 hygiene PR。
 
 ## CC-049 — BACKLOG hygiene Tier 1 archive closed detail sections ✅ 2026-05-18
 
