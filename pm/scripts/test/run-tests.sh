@@ -203,7 +203,7 @@ rm -f "$rollup_out"
 # Deprecation invariant: CC-NNN ID-range-to-epic mapping must not reappear in
 # schema.md or BACKLOG.md after CC-067 removed the guidance.
 _repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
-_deprecated_pat='CC-1NN 列填|CC-2NN 列填|CC-1NN OSS 系列|CC-2NN 技術債'
+_deprecated_pat='CC-1NN 列填|CC-2NN 列填|CC-1NN OSS 系列|CC-2NN 技術債|CC-100.*CC-199|CC-200.*CC-299'
 if grep -qE "$_deprecated_pat" "$_repo_root/pm/schema.md" "$_repo_root/BACKLOG.md" 2>/dev/null; then
   fail "deprecation-invariant: no CC-NNN epic-grouping guidance in schema/convention" \
     "deprecated ID-range epic mapping still present"
