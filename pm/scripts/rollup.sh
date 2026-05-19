@@ -55,7 +55,7 @@ today=$(date +%Y-%m-%d)
 # 掃描採用 schema marker 的 BACKLOG，未採用者安靜略過。
 for backlog in "$root"/*/BACKLOG.md; do
   [ -f "$backlog" ] || continue
-  if ! sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
+  if ! sed -n '1,5p' "$backlog" | grep -Eq '<!-- pm-schema: v1(\.1)? -->'; then
     continue
   fi
   repo=$(basename "$(dirname "$backlog")")
@@ -84,10 +84,12 @@ for backlog in "$root"/*/BACKLOG.md; do
     return total + d
   }
   function parse_row(line, n, f, id, status, topic, area, refs, closed_date) {
+    # Normalize escaped ASCII pipes before field split
+    gsub(/\\[|]/, "｜", line)
     n = split(line, f, "|")
     if (n < 7) return
     id = trim(f[2])
-    if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+    if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
     status = trim(f[3])
     topic = trim(f[4])
     area = trim(f[5])

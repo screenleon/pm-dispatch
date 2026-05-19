@@ -46,21 +46,52 @@ if [ -z "$changelog" ]; then
 fi
 
 # schema 宣告是解析前提，缺少時立即停止。
-if ! sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
-  printf 'E-SCHEMA-HEADER: missing pm-schema v1 marker in first 5 lines: %s\n' "$backlog" >&2
+schema_ver=""
+if sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.1 -->'; then
+  schema_ver="v1.1"
+elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
+  schema_ver="v1"
+else
+  printf 'E-SCHEMA-HEADER: missing pm-schema v1/v1.1 marker in first 5 lines: %s\n' "$backlog" >&2
   exit 2
 fi
 
 set +e
-awk '
+awk -v schema_ver="$schema_ver" '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
   gsub(/[ \t\r\n]+$/, "", s)
   return s
 }
 
+function split_md_row(line, f, i, c, prev, n) {
+  delete f
+  n = 1
+  f[n] = ""
+  prev = ""
+  for (i = 1; i <= length(line); i++) {
+    c = substr(line, i, 1)
+    if (c == "|" && prev != "\\") {
+      n++
+      f[n] = ""
+    } else {
+      f[n] = f[n] c
+    }
+    prev = c
+  }
+  return n
+}
+
 function valid_date(s) {
   return s ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/
+}
+
+function valid_priority(s) {
+  return (s == "P1" || s == "P2" || s == "P3" || s == "—")
+}
+
+function valid_epic(s) {
+  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "—")
 }
 
 function norm_area(s) {
@@ -78,6 +109,10 @@ function valid_area_token(s) {
 function emit(code, ctx) {
   print code ": " ctx > "/dev/stderr"
   bad = 1
+}
+
+function warn(code, ctx) {
+  print code ": " ctx > "/dev/stderr"
 }
 
 function note_body_closure_date(id, raw, date) {
@@ -194,7 +229,7 @@ function parse_tags(id, text, n, i, tok) {
 }
 
 function note_body_id(line, id) {
-  if (line ~ /^## +[A-Z][A-Z0-9]*-[0-9][0-9][0-9] +—/) {
+  if (line ~ /^## +[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]* +—/) {
     id = line
     sub(/^## +/, "", id)
     sub(/ +—.*/, "", id)
@@ -218,11 +253,11 @@ function note_body_id(line, id) {
   }
 }
 
-function parse_index_row(line, n, f, id, status, first_date, area, refs) {
-  n = split(line, f, "|")
+function parse_index_row(line, n, f, id, status, first_date, area, refs, priority, epic) {
+  n = split_md_row(line, f)
   if (n < 7) return
   id = trim(f[2])
-  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
 
   index_seen[id]++
   if (index_seen[id] == 2) emit("E-DUP-ID", id " appears more than once in index")
@@ -236,6 +271,17 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs) {
   parse_area(id, area)
   if (!valid_date(first_date)) emit("E-DATE-FORMAT", id " invalid first-record date: " first_date)
   parse_refs(id, refs)
+
+  if (schema_ver == "v1.1") {
+    if (n < 10) {
+      warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1 file)")
+    } else {
+      priority = trim(f[8])
+      epic     = trim(f[9])
+      if (!valid_priority(priority)) emit("E-PRIORITY-ENUM", id " invalid priority: " priority)
+      if (!valid_epic(epic))         emit("E-EPIC-ENUM",     id " invalid epic: " epic)
+    }
+  }
 }
 
 {
@@ -283,7 +329,7 @@ set -e
 drift_rc=0
 if [ -n "$changelog" ]; then
   set +e
-  awk -v backlog_file="$backlog" -v changelog_file="$changelog" '
+  awk -v backlog_file="$backlog" -v changelog_file="$changelog" -v schema_ver="$schema_ver" '
 function trim(s) {
   gsub(/^[ \t\r\n]+/, "", s)
   gsub(/[ \t\r\n]+$/, "", s)
@@ -308,7 +354,7 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
   n = split(line, f, "|")
   if (n < 7) return
   id = trim(f[2])
-  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9]$/) return
+  if (id !~ /^[A-Z][A-Z0-9]*-[0-9][0-9][0-9][a-z]*$/) return
   status = trim(f[3])
   if (status ~ /^✅ closed /) {
     status = "closed"
@@ -325,7 +371,14 @@ function note_index_refs(line, n, f, id, refs, status, s, tok) {
   } else {
     status = "unknown"
   }
-  refs = trim(f[7])
+  # Read Refs relative to end to tolerate extra pipe chars in topic field.
+  # v1:   row ends with ...Refs | "" -> Refs = f[n-1]
+  # v1.1: row ends with ...Refs | Priority | Epic | "" -> Refs = f[n-3]
+  if (schema_ver == "v1.1") {
+    refs = trim(f[n-3])
+  } else {
+    refs = trim(f[n-1])
+  }
   s = refs
   while (match(s, pr_token_re)) {
     tok = substr(s, RSTART, RLENGTH)
