@@ -21,7 +21,10 @@ memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
 memory_path="$memory_dir/MEMORY.md"
 [[ -f "$memory_path" ]] || exit 0
 
-mapfile -t index_lines < <(grep '^- ' "$memory_path" 2>/dev/null) || true
+index_lines=()
+while IFS= read -r _line; do
+  index_lines+=("$_line")
+done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
 [[ "${#index_lines[@]}" -gt 0 ]] || exit 0
 
 printf '=== auto-memory: MEMORY.md index ===\n'

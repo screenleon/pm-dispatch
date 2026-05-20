@@ -297,6 +297,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **See**: pr:#100
 
+## CC-104b — platform-aware install hints when jq is missing ✅ 2026-05-17
+
+**See**: pr:#79
+
+## CC-104c — link_or_copy() + install manifest for symlink-unavailable hosts ✅ 2026-05-17
+
+**See**: pr:#89
+
+## CC-104t — python3→jq hook refactor; extract scripts/lib/memory.sh ✅ 2026-05-20
+
+**See**: pr:#107
+
 ## CC-105 — [CC-OSS Phase 5] BACKLOG cleanup + v0.1.0 release ✅ 2026-05-17
 
 **See**: BACKLOG-ARCHIVE.md
