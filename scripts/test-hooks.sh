@@ -2453,6 +2453,37 @@ inject_hook_episode_fresh
 inject_hook_episode_stale_no_summary
 inject_hook_episode_stale_has_summary
 
+inject_hook_routing_dir_isolation() {
+  # Verifies inject hook uses project memory (CLAUDE_CONFIG_DIR) and ignores
+  # CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
+  # Steps:
+  #   1. Create project memory dir with MEMORY.md containing "- alpha"
+  #   2. Create a separate empty routing dir
+  #   3. Run hook with both CLAUDE_CONFIG_DIR and CLAUDE_ROUTING_LOG_DIR set
+  #   4. Assert exit 0 and output contains "alpha" (project memory, not routing dir)
+  local name="inject-hook/routing-dir-isolation"
+  should_run "$name" || return 0
+  local dir routing_dir cwd payload output status
+  dir="$(mktemp -d)"
+  routing_dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir" "$routing_dir"
+  if [[ "$status" == "0" && "$output" == *"alpha"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+inject_hook_routing_dir_isolation
+
 # =============================================================================
 # hook-session-summary
 # =============================================================================
@@ -2716,6 +2747,40 @@ session_hook_malformed_payload
 session_hook_empty_stdin
 session_hook_missing_session_id
 session_hook_non_string_session_id
+
+session_hook_routing_dir_isolation() {
+  # Verifies session hook writes episodes.jsonl to project memory (CLAUDE_CONFIG_DIR)
+  # and NOT to CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
+  # Steps:
+  #   1. Create project memory dir
+  #   2. Create a separate empty routing dir
+  #   3. Run hook with both CLAUDE_CONFIG_DIR and CLAUDE_ROUTING_LOG_DIR set
+  #   4. Assert exit 0, episodes.jsonl created in project memory dir, NOT in routing dir
+  local name="session-hook/routing-dir-isolation"
+  should_run "$name" || return 0
+  local dir routing_dir cwd payload status project_has_ep routing_has_ep
+  dir="$(mktemp -d)"
+  routing_dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"isolation-test\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  project_has_ep=false; routing_has_ep=false
+  [[ -f "$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl" ]] && project_has_ep=true
+  [[ -f "$routing_dir/episodes.jsonl" ]] && routing_has_ep=true
+  rm -rf "$dir" "$routing_dir"
+  if [[ "$status" == "0" && "$project_has_ep" == "true" && "$routing_has_ep" == "false" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s project_ep=%s routing_ep=%s\n' "$name" "$status" "$project_has_ep" "$routing_has_ep"
+  fi
+}
+session_hook_routing_dir_isolation
 
 # =============================================================================
 # command validators — /mem-recall injection format
