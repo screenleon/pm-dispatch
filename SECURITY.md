@@ -22,8 +22,7 @@ Use either of the following private channels:
   3. CVE: the maintainer may request a GitHub-issued CVE from within the advisory.
      If so, the CVE number will be shared with you before publication.
   4. Once a fix is merged and tagged, the maintainer will **publish** the advisory.
-     GitHub auto-notifies users who depend on this tool, if they have
-     notifications enabled.
+     GitHub may notify affected dependents where dependency graph alerts apply.
 
   What to include:
 
