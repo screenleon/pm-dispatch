@@ -4,6 +4,9 @@
 # /mem-log after the user explicitly runs it while the session is still active.
 set -euo pipefail
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/lib/memory.sh"
+
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
@@ -12,98 +15,80 @@ _tmp=$(mktemp)
 trap 'rm -f "$_tmp"' EXIT
 printf '%s' "$payload" > "$_tmp"
 
-python3 - "$_tmp" "$_config_dir" << 'PYEOF'
-import json, os, sys
-from datetime import datetime, timezone, timedelta
+SESSION_WINDOW_HOURS=4
 
-SESSION_WINDOW_HOURS = 4  # /mem-log entries older than this do not suppress new sessions
+cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/dev/null) || cwd=""
+[[ -n "$cwd" ]] || exit 0
 
-payload_file, config_dir = sys.argv[1], sys.argv[2]
+session_id=$(jq -r 'if (.session_id | type) == "string" then .session_id else empty end' "$_tmp" 2>/dev/null) || session_id=""
+[[ -n "$session_id" ]] || exit 0
 
-def encode_path(path):
-    return '-' + path.lstrip('/').replace('/', '-')
+memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
+episodes_file="$memory_dir/episodes.jsonl"
 
-try:
-    with open(payload_file) as f:
-        data = json.load(f)
-    cwd = data.get('cwd')
-    if not isinstance(cwd, str) or not cwd:
-        sys.exit(0)
-    session_id = data.get('session_id', '')
-    if not isinstance(session_id, str):
-        session_id = ''
-    # Require a non-empty session_id to write. /mem-log handles session_id=""
-    # entries; without a stable id the Stop hook cannot deduplicate safely.
-    if not session_id:
-        sys.exit(0)
+# Check for existing entry with this session_id
+if [[ -f "$episodes_file" ]]; then
+  if jq -eRs --arg sid "$session_id" \
+    'split("\n") | map(select(length>0) | try fromjson catch empty) | any(.session_id == $sid)' \
+    "$episodes_file" >/dev/null 2>&1; then
+    exit 0
+  fi
 
-    # Find project memory dir (same ancestor-walk as hook-inject-memory.sh)
-    projects_dir = os.path.join(config_dir, 'projects')
-    memory_dir = None
-    current = cwd.rstrip('/')
-    while True:
-        candidate = os.path.join(projects_dir, encode_path(current), 'memory')
-        if os.path.isdir(candidate):
-            memory_dir = candidate
-            break
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-    if not memory_dir:
-        sys.exit(0)
+  # Check: most recent cwd entry was written by /mem-log (session_id=="") within SESSION_WINDOW_HOURS
+  last_cwd_json=$(jq -cRs --arg cwd "$cwd" \
+    '[split("\n")[] | select(length>0) | try fromjson catch empty | select(.cwd == $cwd)] | last // empty' \
+    "$episodes_file" 2>/dev/null) || last_cwd_json=""
 
-    episodes_file = os.path.join(memory_dir, 'episodes.jsonl')
-    now = datetime.now(timezone.utc).isoformat()
+  if [[ -n "$last_cwd_json" ]]; then
+    last_sid=$(printf '%s' "$last_cwd_json" | jq -r '.session_id // empty' 2>/dev/null) || last_sid=""
+    last_summary=$(printf '%s' "$last_cwd_json" | jq -r '.summary // empty' 2>/dev/null) || last_summary=""
+    last_date=$(printf '%s' "$last_cwd_json" | jq -r '.date // empty' 2>/dev/null) || last_date=""
+    if [[ -z "$last_sid" && -n "${last_summary// }" && -n "$last_date" ]]; then
+      _d_norm="$last_date"
+      if [[ "$last_date" == *.*Z ]]; then
+        _d_norm="${last_date%%.*}Z"
+      elif [[ "$last_date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
+        _d_clean="${last_date%%.*}"
+        _d_frac_suffix="${last_date#*.}"
+        if [[ "$_d_frac_suffix" == *+* ]]; then
+          _d_norm="${_d_clean}+${_d_frac_suffix##*+}"
+        else
+          _d_norm="${_d_clean}-${_d_frac_suffix##*-}"
+        fi
+      elif [[ "$last_date" == *.* ]]; then
+        _d_norm="${last_date%%.*}Z"
+      elif [[ "$last_date" != *Z && ! "$last_date" =~ [+-][0-9][0-9]:[0-9][0-9]$ ]]; then
+        _d_norm="${last_date}Z"
+      fi
 
-    # Read existing entries to check for duplicates
-    entries = []
-    if os.path.isfile(episodes_file):
-        with open(episodes_file) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+      _d_base="$_d_norm"
+      _d_offset=0
+      if [[ "$_d_norm" == *[+-][0-9][0-9]:[0-9][0-9] ]]; then
+        _d_suffix="${_d_norm: -6}"
+        _d_base="${_d_norm:0:${#_d_norm}-6}"
+        _d_offset=$((10#${_d_suffix:1:2} * 3600 + 10#${_d_suffix:4:2} * 60))
+        [[ "${_d_suffix:0:1}" == "-" ]] && _d_offset=$((-_d_offset))
+      else
+        _d_base="${_d_norm%Z}"
+      fi
 
-    # Skip if any entry already records this session_id (with or without summary).
-    # /mem-log runs during the session and may have written a full entry already;
-    # the Stop hook should not add a duplicate skeleton in that case.
-    if session_id and any(e.get('session_id') == session_id for e in entries):
-        sys.exit(0)
+      age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
+        'try (($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600 catch 9999' 2>/dev/null) || age_hours=9999
+      if awk -v h="${age_hours:-9999}" "BEGIN{exit !(h+0 < $SESSION_WINDOW_HOURS)}"; then
+        exit 0
+      fi
+    fi
+  fi
+fi
 
-    # Also skip if the most recent entry for the same cwd was written by /mem-log
-    # (session_id="") within the last SESSION_WINDOW_HOURS hours and already has
-    # a non-empty summary. This covers /mem-log running before Stop in the same
-    # session. Time-bounded: an old /mem-log entry must not suppress later sessions.
-    cwd_entries = [e for e in entries if e.get('cwd') == cwd]
-    if cwd_entries:
-        last = cwd_entries[-1]
-        if (not last.get('session_id', '').strip() and last.get('summary', '').strip()):
-            try:
-                last_date = datetime.fromisoformat(last.get('date', ''))
-                if last_date.tzinfo is None:
-                    last_date = last_date.replace(tzinfo=timezone.utc)
-                age_hours = (datetime.now(timezone.utc) - last_date).total_seconds() / 3600
-                if age_hours < SESSION_WINDOW_HOURS:
-                    sys.exit(0)
-            except (ValueError, TypeError):
-                pass
-
-    # Append new metadata entry
-    entry = {
-        'date': now,
-        'cwd': cwd,
-        'session_id': session_id,
-        'summary': '',
-    }
-    with open(episodes_file, 'a') as f:
-        f.write(json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n')
-
-except Exception:
-    sys.exit(0)
-PYEOF
+# Write new skeleton entry
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+entry=$(jq -cn \
+  --arg date "$now" \
+  --arg cwd "$cwd" \
+  --arg session_id "$session_id" \
+  '{date: $date, cwd: $cwd, session_id: $session_id, summary: ""}')
+mkdir -p "$memory_dir"
+printf '%s\n' "$entry" >> "$episodes_file"
 
 exit 0

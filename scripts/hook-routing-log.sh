@@ -11,6 +11,8 @@ set -uo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
+# shellcheck source=scripts/lib/memory.sh
+. "$_SCRIPT_DIR/lib/memory.sh"
 unset _SCRIPT_DIR
 
 HOOK_NAME="hook-routing-log"
@@ -26,12 +28,6 @@ audit() {
   local ts
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
   printf '%s %s reason=%q detail=%q reason_text="%s"\n' "$ts" "$HOOK_NAME" "$reason" "$detail" "$reason" >> "$ERR_FILE" 2>/dev/null || true
-}
-
-encode_path() {
-  local cwd="$1" enc
-  enc="-${cwd#/}"
-  printf '%s' "${enc//\//-}"
 }
 
 json_unescape_into() {
@@ -73,32 +69,6 @@ json_string_after() {
     json_unescape_into "$target" "${BASH_REMATCH[1]}"
     return 0
   fi
-  return 1
-}
-
-find_memory_dir() {
-  local cwd="$1" config_dir projects_dir current candidate parent
-
-  if [[ -n "${CLAUDE_ROUTING_LOG_DIR:-}" ]]; then
-    [[ -d "$CLAUDE_ROUTING_LOG_DIR" ]] && printf '%s' "$CLAUDE_ROUTING_LOG_DIR"
-    return 0
-  fi
-
-  config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  projects_dir="$config_dir/projects"
-  current="${cwd%/}"
-
-  while [[ -n "$current" ]]; do
-    candidate="$projects_dir/$(encode_path "$current")/memory"
-    if [[ -d "$candidate" ]]; then
-      printf '%s' "$candidate"
-      return 0
-    fi
-    parent="$(dirname "$current")"
-    [[ "$parent" == "$current" ]] && break
-    current="$parent"
-  done
-
   return 1
 }
 
@@ -326,7 +296,11 @@ case "$tool_name" in
     ;;
 esac
 
-memory_dir="$(find_memory_dir "$cwd" 2>/dev/null)" || exit 0
+if [[ -n "${CLAUDE_ROUTING_LOG_DIR:-}" && -d "$CLAUDE_ROUTING_LOG_DIR" ]]; then
+  memory_dir="$CLAUDE_ROUTING_LOG_DIR"
+else
+  memory_dir="$(find_memory_dir "$cwd" 2>/dev/null)" || exit 0
+fi
 [[ -n "$memory_dir" ]] || exit 0
 
 # shellcheck disable=SC2155

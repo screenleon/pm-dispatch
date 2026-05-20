@@ -9,28 +9,12 @@ session_id=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null |
 
 [[ -z "$transcript" || ! -f "$transcript" ]] && exit 0
 
-tokens=$(python3 - "$transcript" << 'PYEOF'
-import json, sys
-total = 0
-try:
-    for line in open(sys.argv[1]):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            m = json.loads(line)
-            # Try multiple possible locations for usage data in Claude transcripts.
-            usage = (m.get('usage')
-                     or m.get('message', {}).get('usage', {})
-                     or {})
-            total += (usage.get('input_tokens', 0) + usage.get('output_tokens', 0))
-        except (json.JSONDecodeError, AttributeError):
-            continue
-except Exception:
-    pass
-print(total)
-PYEOF
-)
+tokens=$(jq -rRs '
+  [split("\n")[] | select(length>0) | try fromjson catch null | select(. != null) |
+   ((.usage.input_tokens // .message.usage.input_tokens // 0) +
+    (.usage.output_tokens // .message.usage.output_tokens // 0))]
+  | add // 0
+' "$transcript" 2>/dev/null) || tokens=0
 
 [[ "${tokens:-0}" -gt 0 ]] || exit 0
 # Require session_id: without a stable key we cannot deduplicate repeated Stop events.
@@ -41,25 +25,11 @@ PYEOF
 _tracker="${HOME}/.claude/usage-tracker.jsonl"
 _tokens_to_log="$tokens"
 if [[ -f "$_tracker" && -n "${session_id:-}" ]]; then
-    _already=$(python3 - "$_tracker" "$session_id" << 'PYEOF'
-import json, sys
-total = 0
-logfile = sys.argv[1]
-session_id = sys.argv[2]
-try:
-    for line in open(logfile):
-        try:
-            e = json.loads(line.strip())
-            if (e.get('session', '') == session_id
-                    and e.get('type') == 'session_total'):
-                total += e.get('tokens', 0)
-        except (json.JSONDecodeError, AttributeError):
-            continue
-except Exception:
-    pass
-print(total)
-PYEOF
-    )
+    _already=$(jq -rRs --arg sid "$session_id" '
+      [split("\n")[] | select(length>0) | try fromjson catch null | select(. != null) |
+       select(.session == $sid and .type == "session_total") | .tokens // 0]
+      | add // 0
+    ' "$_tracker" 2>/dev/null) || _already=0
     _tokens_to_log=$(( tokens - ${_already:-0} ))
 fi
 [[ "${_tokens_to_log:-0}" -gt 0 ]] || exit 0
