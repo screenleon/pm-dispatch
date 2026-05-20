@@ -2453,6 +2453,59 @@ inject_hook_episode_fresh
 inject_hook_episode_stale_no_summary
 inject_hook_episode_stale_has_summary
 
+inject_hook_episode_stale_fractional_iso() {
+  # Verifies stale episode (> 24h) with a Python-style fractional ISO timestamp
+  # (e.g. 2020-01-01T00:00:00.123456+00:00) is parsed correctly and triggers /mem-log.
+  local name="inject-hook/episode-stale-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"2020-01-01T00:00:00.123456+00:00\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$output" == *"/mem-log"* && "$output" == *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
+inject_hook_episode_fresh_fractional_iso() {
+  # Verifies fresh episode (< 24h) with a Python-style fractional ISO timestamp
+  # is parsed correctly and does NOT trigger a stale reminder.
+  local name="inject-hook/episode-fresh-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd payload output status now_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%S).123456+00:00"
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$now_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$output" == *"alpha"* && "$output" != *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+inject_hook_episode_stale_fractional_iso
+inject_hook_episode_fresh_fractional_iso
+
 inject_hook_routing_dir_isolation() {
   # Verifies inject hook uses project memory (CLAUDE_CONFIG_DIR) and ignores
   # CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
@@ -2919,6 +2972,65 @@ session_stop_appends_after_old_memlog_empty_session_id() {
 
 session_stop_skips_after_recent_memlog_empty_session_id
 session_stop_appends_after_old_memlog_empty_session_id
+
+cross_cmd_stop_skips_recent_fractional_iso() {
+  # Verifies Stop hook skips when the most recent session_id="" entry has a
+  # Python-style fractional ISO timestamp within the 4-hour session window.
+  local name="cross-cmd/stop-skips-recent-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count recent_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  recent_iso="$(date -u +%Y-%m-%dT%H:%M:%S).123456+00:00"
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Recent fractional entry."}\n' \
+    "$recent_iso" "$cwd" > "$episodes"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-frac\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+cross_cmd_stop_appends_old_fractional_iso() {
+  # Verifies Stop hook appends when the most recent session_id="" entry has a
+  # Python-style fractional ISO timestamp outside the 4-hour session window.
+  local name="cross-cmd/stop-appends-old-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '{"date":"2020-01-01T00:00:00.123456+00:00","cwd":"%s","session_id":"","summary":"Old fractional entry."}\n' \
+    "$cwd" > "$episodes"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session-frac\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
+  fi
+}
+cross_cmd_stop_skips_recent_fractional_iso
+cross_cmd_stop_appends_old_fractional_iso
 
 # =============================================================================
 # meta: --filter and --list self-verification
