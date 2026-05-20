@@ -17,11 +17,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+CLAUDE_HOME="$HOME/.claude"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
 
-MANIFEST="$HOME/.claude/.pm-dispatch/install-manifest.json"
+MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
 
 if [[ ! -f "$MANIFEST" ]]; then
   echo "uninstall: no manifest found at $MANIFEST — nothing to do"
@@ -69,6 +70,29 @@ remove_item() {
   removed=$((removed + 1))
 }
 
+is_under_managed_root() {
+  local path="$1"
+  local parent
+  local base
+  local managed_root
+  local resolved
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  # Resolve the parent without requiring it to exist (-m for missing), but do
+  # not follow the final symlink because installed dst symlinks point at repo files.
+  managed_root="$(realpath -m -- "$CLAUDE_HOME" 2>/dev/null || printf '%s' "$CLAUDE_HOME")"
+  resolved="$(realpath -m -- "$parent" 2>/dev/null || printf '%s' "$parent")/$base"
+  # Accept paths that are under $CLAUDE_HOME
+  case "$resolved" in
+    "$managed_root"/*|"$managed_root")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 echo "pm-dispatch uninstaller"
 echo "  repo:     $REPO_ROOT"
 echo "  manifest: $MANIFEST"
@@ -93,6 +117,11 @@ while IFS= read -r line; do
 
   case "$mode" in
     symlink)
+      if ! is_under_managed_root "$dst"; then
+        skipped=$((skipped + 1))
+        echo "  skip $dst (dst outside managed root — skipping for safety)"
+        continue
+      fi
       if [[ -L "$dst" ]]; then
         link_target="$(readlink "$dst")"
         if is_manifest_symlink_target "$src" "$dst" "$link_target"; then
@@ -107,6 +136,11 @@ while IFS= read -r line; do
       fi
       ;;
     copy)
+      if ! is_under_managed_root "$dst"; then
+        skipped=$((skipped + 1))
+        echo "  skip $dst (dst outside managed root — skipping for safety)"
+        continue
+      fi
       if [[ -f "$dst" || ( -d "$dst" && ! -L "$dst" ) ]]; then
         curr_sha="$(_portable_sha256_path "$dst")"
         if [[ "$curr_sha" == "$sha256" ]]; then
@@ -121,6 +155,11 @@ while IFS= read -r line; do
       fi
       ;;
     *)
+      if ! is_under_managed_root "$dst"; then
+        skipped=$((skipped + 1))
+        echo "  skip $dst (dst outside managed root — skipping for safety)"
+        continue
+      fi
       skipped=$((skipped + 1))
       echo "  skip $dst (unknown mode: $mode)"
       ;;

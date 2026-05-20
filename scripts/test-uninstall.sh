@@ -386,6 +386,7 @@ test_manifest_edge_branches() {
   local home="$tmp_root/home-manifest-edge-branches"
   local src="$tmp_root/manifest-edge-src"
   local copy_dst="$home/.claude/scripts/already-gone.sh"
+  local unknown_dst="$home/.claude/scripts/unknown-mode.sh"
   local relative_dst="$home/.claude/agents/relative.md"
   local relative_target="../source/relative.md"
   local out="$tmp_root/manifest-edge-branches.out"
@@ -394,7 +395,7 @@ test_manifest_edge_branches() {
   cp "$src" "$home/.claude/source/relative.md"
   ln -s "$relative_target" "$relative_dst"
   write_manifest "$home" \
-    '{"src":"/x","dst":"/y","mode":"badmode"}' \
+    "{\"src\":\"/x\",\"dst\":\"$(manifest_escape "$unknown_dst")\",\"mode\":\"badmode\"}" \
     '{"src":"/a","dst":"","mode":"symlink"}' \
     "$(copy_entry "$src" "$copy_dst" "$(_portable_sha256_path "$src")")" \
     "$(symlink_entry "$home/.claude/source/relative.md" "$relative_dst")"
@@ -470,6 +471,48 @@ test_skip_copy_preserves_manifest() {
   pass "$name"
 }
 
+test_out_of_root_dst_rejected() {
+  local name="TC-16 out-of-root-dst-rejected"
+  local home="$tmp_root/home-out-of-root-dst-rejected"
+  local outside_file="$tmp_root/outside16.txt"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/out-of-root-dst-rejected.out"
+  mkdir -p "$home/.claude" "$(dirname "$manifest")"
+  printf 'do not delete' > "$outside_file"
+  printf '{\n  "entries": [\n    {"src":"/fake/src","dst":"%s","mode":"symlink"}\n  ]\n}\n' \
+    "$(manifest_escape "$outside_file")" > "$manifest"
+
+  run_uninstall "$home" "$out" || true
+  if [[ ! -f "$outside_file" ]]; then
+    fail "$name" "file outside managed root was deleted"
+    return
+  fi
+  assert_contains "$name" "$out" "dst outside managed root" || return
+  pass "$name"
+}
+
+test_out_of_root_copy_rejected() {
+  local name="TC-17 out-of-root-copy-rejected"
+  local home="$tmp_root/home-out-of-root-copy-rejected"
+  local outside_dir="$tmp_root/outside17dir"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/out-of-root-copy-rejected.out"
+  local sha
+  mkdir -p "$home/.claude" "$outside_dir" "$(dirname "$manifest")"
+  printf 'keep me' > "$outside_dir/file.txt"
+  sha="$(_portable_sha256_path "$outside_dir")"
+  printf '{\n  "entries": [\n    {"src":"/fake/src","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"test"}\n  ]\n}\n' \
+    "$(manifest_escape "$outside_dir")" "$sha" > "$manifest"
+
+  run_uninstall "$home" "$out" || true
+  if [[ ! -d "$outside_dir" ]]; then
+    fail "$name" "directory outside managed root was deleted"
+    return
+  fi
+  assert_contains "$name" "$out" "dst outside managed root" || return
+  pass "$name"
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -485,6 +528,8 @@ test_unknown_flag
 test_manifest_edge_branches
 test_skip_preserves_manifest
 test_skip_copy_preserves_manifest
+test_out_of_root_dst_rejected
+test_out_of_root_copy_rejected
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
