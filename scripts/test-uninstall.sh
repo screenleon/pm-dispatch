@@ -629,6 +629,47 @@ test_symlink_parent_traversal_rejected() {
   fi
 }
 
+test_symlink_parent_no_realpath_rejected() {
+  local name="TC-22 symlink-parent-no-realpath-rejected"
+  local fake_home="$tmp_root/home22"
+  local mock_repo="$tmp_root/mock-repo22"
+  local outside_dir outside_file dst22 sha22 manifest22
+  mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
+  mkdir -p "$mock_repo/scripts/lib" "$mock_repo/bin"
+
+  # Set up a mock repo with a real uninstall.sh, portable helpers, and working hooks.
+  cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
+  cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-hooks.sh"
+  chmod +x "$mock_repo/scripts/uninstall-hooks.sh"
+
+  # Inject a fake realpath that always exits 1 with no output.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/bin/realpath"
+  chmod +x "$mock_repo/bin/realpath"
+
+  outside_dir="$tmp_root/outside22"
+  mkdir -p "$outside_dir"
+  outside_file="$outside_dir/precious22.md"
+  printf 'do not delete' > "$outside_file"
+  ln -s "$outside_dir" "$fake_home/.claude/linkdir22"
+
+  dst22="$fake_home/.claude/linkdir22/precious22.md"
+  sha22="$(sha256sum "$outside_file" 2>/dev/null | awk '{print $1}')"
+  [[ -z "$sha22" ]] && sha22="$(shasum -a 256 "$outside_file" 2>/dev/null | awk '{print $1}')"
+
+  manifest22="$fake_home/.claude/.pm-dispatch/install-manifest.json"
+  printf '{\n  "entries": [\n    {"src":"/fake","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"test"}\n  ]\n}\n' \
+    "$dst22" "$sha22" > "$manifest22"
+
+  HOME="$fake_home" PATH="$mock_repo/bin:$PATH" bash "$mock_repo/uninstall.sh" > /dev/null 2>&1 || true
+
+  if [[ ! -f "$outside_file" ]]; then
+    fail "$name" "file deleted outside managed root when realpath unavailable (fail-open)"
+  else
+    pass "$name"
+  fi
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -650,6 +691,7 @@ test_dot_dot_traversal_rejected
 test_hooks_failure_preserves_manifest
 test_multi_line_manifest_preserved
 test_symlink_parent_traversal_rejected
+test_symlink_parent_no_realpath_rejected
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"

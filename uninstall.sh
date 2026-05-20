@@ -87,19 +87,25 @@ is_under_managed_root() {
     return 1
   fi
 
-  # Step 2: symlink resolution — use realpath to resolve symlinked parent directories.
+  # Step 2: symlink resolution — physically resolve to prevent symlinked-parent traversal.
   # A dst such as $HOME/.claude/linkdir/file passes the lexical check but resolves
   # outside the managed root when linkdir is a symlink to an outside directory.
   if resolved="$(realpath -- "$normalized" 2>/dev/null)" && [[ -n "$resolved" ]]; then
-    # Path exists on filesystem: use fully-resolved real location
+    # realpath succeeded: use the physically-resolved location
     normalized="$resolved"
+  elif [[ -e "$normalized" ]]; then
+    # Path EXISTS on the filesystem but realpath failed or is unavailable.
+    # We cannot safely verify ownership without physical resolution — fail closed.
+    return 1
   else
-    # Path does not exist (e.g. already deleted): resolve nearest existing parent
+    # Path does NOT exist (e.g. already removed in a prior run).
+    # Attempt to resolve the nearest existing parent to catch symlinked ancestor dirs.
     parent="$(dirname "$normalized")"
     if real_parent="$(realpath -- "$parent" 2>/dev/null)" && [[ -n "$real_parent" ]]; then
       normalized="$real_parent/$(basename "$normalized")"
     fi
-    # If parent also cannot be resolved, continue with lexical result (fail-closed below)
+    # If parent is also unresolvable: path truly does not exist yet, so there is no
+    # symlinked directory to traverse through — lexical normalization is safe.
   fi
 
   # Resolve CLAUDE_HOME itself in case ~/.claude is a symlink
