@@ -12,6 +12,9 @@ find_memory_dir() {
   local cwd="$1"
   local config_dir="${2:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}}"
   local projects_dir current candidate parent
+  if [[ -n "${CLAUDE_ROUTING_LOG_DIR:-}" ]]; then
+    [[ -d "$CLAUDE_ROUTING_LOG_DIR" ]] && { printf '%s' "$CLAUDE_ROUTING_LOG_DIR"; return 0; }
+  fi
   projects_dir="$config_dir/projects"
   current="${cwd%/}"
   while true; do
