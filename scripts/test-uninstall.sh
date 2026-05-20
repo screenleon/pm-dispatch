@@ -413,6 +413,63 @@ test_manifest_edge_branches() {
   pass "$name"
 }
 
+test_skip_preserves_manifest() {
+  local name="TC-14 skip-preserves-manifest"
+  local home="$tmp_root/home-skip-preserves-manifest"
+  local src="$tmp_root/skip-preserves-manifest-src"
+  local dst="$home/.claude/agents/foreign14.md"
+  local out="$tmp_root/skip-preserves-manifest.out"
+  local out2="$tmp_root/skip-preserves-manifest-rerun.out"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  mkdir -p "$(dirname "$dst")"
+  printf 'original' > "$src"
+  ln -s "/some/other/path" "$dst"
+  write_manifest "$home" "$(symlink_entry "$src" "$dst")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -f "$manifest" ]]; then
+    fail "$name" "manifest was deleted despite skipped entries"
+    return
+  fi
+
+  if ! run_uninstall "$home" "$out2"; then
+    fail "$name" "second uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -f "$manifest" ]]; then
+    fail "$name" "manifest deleted on second run"
+    return
+  fi
+  assert_contains "$name" "$out2" "not our symlink" || return
+  pass "$name"
+}
+
+test_skip_copy_preserves_manifest() {
+  local name="TC-15 skip-copy-preserves-manifest"
+  local home="$tmp_root/home-skip-copy-preserves-manifest"
+  local src="$tmp_root/skip-copy-preserves-manifest-src"
+  local dst="$home/.claude/agents/modified15.md"
+  local out="$tmp_root/skip-copy-preserves-manifest.out"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  mkdir -p "$(dirname "$dst")"
+  printf 'original' > "$src"
+  printf 'different content' > "$dst"
+  write_manifest "$home" "$(copy_entry "$src" "$dst" "deadbeef")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -f "$manifest" ]]; then
+    fail "$name" "manifest was deleted despite skipped modified copy"
+    return
+  fi
+  pass "$name"
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -426,6 +483,8 @@ test_copy_dir_sha_mismatch
 test_dry_run_copy
 test_unknown_flag
 test_manifest_edge_branches
+test_skip_preserves_manifest
+test_skip_copy_preserves_manifest
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"

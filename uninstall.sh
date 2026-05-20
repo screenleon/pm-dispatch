@@ -136,7 +136,12 @@ else
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then
-  rm -rf "$HOME/.claude/.pm-dispatch"
+  if [[ "$skipped" -eq 0 ]]; then
+    rm -rf "$HOME/.claude/.pm-dispatch"
+  else
+    echo "  note: $skipped item(s) could not be removed — manifest preserved for re-run"
+    echo "  resolve conflicts manually, then re-run uninstall.sh"
+  fi
   for d in "$HOME/.claude/agents" "$HOME/.claude/commands" "$HOME/.claude/skills" "$HOME/.claude/scripts"; do
     rmdir "$d" 2>/dev/null || true
   done
