@@ -12,7 +12,7 @@
 | Platform                         | Profile support      | Notes |
 | -------------------------------- | -------------------- | ----- |
 | Linux                            | **First-class**      | Full profile + minimal profile |
-| macOS                            | **First-class**      | Requires GNU `realpath` (`brew install coreutils`) |
+| macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
 | WSL2                             | **First-class**      | Treated as Linux |
 | Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; install copies rather than symlinks (CC-207); re-run `bash install.sh` after updates |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
@@ -162,6 +162,10 @@ rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
 ## Quickstarts
 
 ### macOS
+
+> **Note:** macOS install steps follow the same code path as Linux and are
+> documented based on that, but have not been verified by a dogfood run.
+> Please report any issues you encounter.
 
 ```bash
 brew install jq coreutils
