@@ -83,9 +83,13 @@ run_validate_case_warn() {
 # validate.sh 基本案例。
 run_validate_case "validate good" 0 "" "$fixtures/good/BACKLOG.md"
 run_validate_case "v1.1 good" 0 "" "$fixtures/good-v11/BACKLOG.md"
+run_validate_case "v1.2 good" 0 "" "$fixtures/good-v12/BACKLOG.md"
+run_validate_case "v1.1 design-epic good" 0 "" "$fixtures/good-v11-design/BACKLOG.md"
 run_validate_case "v1.1 bad-priority-enum" 1 "E-PRIORITY-ENUM" "$fixtures/bad-priority-enum/BACKLOG.md"
 run_validate_case "v1.1 bad-epic-enum" 1 "E-EPIC-ENUM" "$fixtures/bad-epic-enum/BACKLOG.md"
+run_validate_case "v1.2 bad-epic-enum" 1 "E-EPIC-ENUM" "$fixtures/bad-v12-epic/BACKLOG.md"
 run_validate_case_warn "v1.1 warn-missing-cols" "$fixtures/warn-missing-cols/BACKLOG.md" "W-MISSING-COLS"
+run_validate_case_warn "v1.2 warn-missing-cols" "$fixtures/warn-missing-cols-v12/BACKLOG.md" "W-MISSING-COLS"
 run_validate_case "v1.1 good-subletter" 0 "" "$fixtures/good-v11-subletter/BACKLOG.md"
 run_validate_case "v1.1 bad-priority-subletter" 1 "E-PRIORITY-ENUM" "$fixtures/bad-priority-subletter/BACKLOG.md"
 run_validate_case "validate bad-no-header" 2 "E-SCHEMA-HEADER" "$fixtures/bad-no-header/BACKLOG.md"
@@ -159,6 +163,10 @@ elif ! grep -q '| repo-v11 | 4 | 1 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-v11 summary mismatch"
 elif ! grep -q 'RV-004' "$rollup_out"; then
   fail "rollup fixtures" "RV-004 escaped-pipe row missing from rollup"
+elif ! grep -q '^### repo-v12$' "$rollup_out"; then
+  fail "rollup fixtures" "missing repo-v12 section (v1.2 backlog not included)"
+elif ! grep -q '| repo-v12 | 1 | 0 |' "$rollup_out"; then
+  fail "rollup fixtures" "repo-v12 summary mismatch"
 else
   pass "rollup fixtures"
 fi

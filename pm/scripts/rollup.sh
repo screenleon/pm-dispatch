@@ -55,7 +55,7 @@ today=$(date +%Y-%m-%d)
 # 掃描採用 schema marker 的 BACKLOG，未採用者安靜略過。
 for backlog in "$root"/*/BACKLOG.md; do
   [ -f "$backlog" ] || continue
-  if ! sed -n '1,5p' "$backlog" | grep -Eq '<!-- pm-schema: v1(\.1)? -->'; then
+  if ! sed -n '1,5p' "$backlog" | grep -Eq '<!-- pm-schema: v1(\.(1|2))? -->'; then
     continue
   fi
   repo=$(basename "$(dirname "$backlog")")
