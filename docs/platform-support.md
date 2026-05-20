@@ -21,6 +21,13 @@
 
 ## Install
 
+> **Repo path:** clone to any location you prefer. Set `PM_DISPATCH_REPO` to that
+> path before running the commands below, or substitute it inline.
+>
+> ```bash
+> export PM_DISPATCH_REPO="$HOME/github/pm-dispatch"   # or wherever you cloned it
+> ```
+
 ### Prerequisites
 
 | Tool | Linux/macOS | Windows (Git Bash) | WSL2 |
@@ -34,8 +41,8 @@
 
 ```bash
 # 1. Clone
-git clone https://github.com/screenleon/pm-dispatch ~/github/pm-dispatch
-cd ~/github/pm-dispatch
+git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
+cd "${PM_DISPATCH_REPO}"
 
 # 2. Install managed files (agents, commands, scripts, .pm schema)
 bash install.sh
@@ -56,8 +63,8 @@ winget install jqlang.jq
 winget install Git.Git          # provides Git Bash
 
 # Then in Git Bash:
-git clone https://github.com/screenleon/pm-dispatch ~/github/pm-dispatch
-cd ~/github/pm-dispatch
+git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
+cd "${PM_DISPATCH_REPO}"
 
 bash install.sh
 bash scripts/install-hooks.sh
@@ -77,7 +84,7 @@ bash scripts/install-hooks.sh
 Because files are symlinked, a `git pull` is all that is needed:
 
 ```bash
-cd ~/github/pm-dispatch
+cd "${PM_DISPATCH_REPO}"
 git pull
 ```
 
@@ -91,7 +98,7 @@ once to create any missing symlinks.
 Because files are copied rather than symlinked:
 
 ```bash
-cd ~/github/pm-dispatch
+cd "${PM_DISPATCH_REPO}"
 git pull
 bash install.sh        # re-sync all copies
 ```
@@ -111,9 +118,9 @@ Removes pm-dispatch hooks from `~/.claude/settings.json`. Safe to run at any tim
 leaves all other settings untouched.
 
 ```bash
-bash ~/github/pm-dispatch/scripts/uninstall-hooks.sh
+bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh"
 # or with preview:
-bash ~/github/pm-dispatch/scripts/uninstall-hooks.sh --dry-run
+bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh" --dry-run
 ```
 
 ### Part 2 — remove managed files from ~/.claude
@@ -169,8 +176,8 @@ rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
 
 ```bash
 brew install jq coreutils
-git clone https://github.com/screenleon/pm-dispatch ~/github/pm-dispatch
-cd ~/github/pm-dispatch
+git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
+cd "${PM_DISPATCH_REPO}"
 bash install.sh && bash scripts/install-hooks.sh
 ```
 
@@ -181,8 +188,8 @@ bash install.sh && bash scripts/install-hooks.sh
 winget install jqlang.jq Git.Git
 
 # Then in Git Bash:
-git clone https://github.com/screenleon/pm-dispatch ~/github/pm-dispatch
-cd ~/github/pm-dispatch
+git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
+cd "${PM_DISPATCH_REPO}"
 bash install.sh
 bash scripts/install-hooks.sh --profile minimal
 ```
@@ -191,8 +198,8 @@ bash scripts/install-hooks.sh --profile minimal
 
 ```bash
 sudo apt update && sudo apt install -y jq
-git clone https://github.com/screenleon/pm-dispatch ~/github/pm-dispatch
-cd ~/github/pm-dispatch
+git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
+cd "${PM_DISPATCH_REPO}"
 bash install.sh && bash scripts/install-hooks.sh
 ```
 
