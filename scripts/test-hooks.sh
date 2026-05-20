@@ -1617,17 +1617,7 @@ stop_idempotent_double_call() {
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   # Sum all session_total entries for this session - must equal 1700, not 3400
-  total=$(python3 -c "
-import json
-total = 0
-for line in open('$logfile'):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'session_total':
-            total += e.get('tokens', 0)
-    except: pass
-print(total)
-" 2>/dev/null || echo 0)
+  total=$(jq -Rs '[split("\n")[] | select(length>0) | try fromjson catch null | select(. != null and .type=="session_total") | .tokens // 0] | add // 0' "$logfile" 2>/dev/null || echo 0)
   if [[ "$status" == "0" && "$total" == "1700" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -1721,7 +1711,7 @@ rl_hook_happy_path() {
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
-  if [[ -f "$rl_home/rate-limits.json" ]] && python3 -c "import json; d=json.load(open('$rl_home/rate-limits.json')); assert d['five_hour']['used_percentage']==25; assert d['seven_day']['used_percentage']==10; assert 'updated_at' in d"; then
+  if [[ -f "$rl_home/rate-limits.json" ]] && jq -e '.five_hour.used_percentage == 25 and .seven_day.used_percentage == 10 and (.updated_at | type) == "number"' "$rl_home/rate-limits.json" >/dev/null 2>&1; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -2384,7 +2374,7 @@ inject_hook_episode_fresh() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  now_iso="$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).isoformat())')"
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$now_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2413,7 +2403,7 @@ inject_hook_episode_stale_no_summary() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  old_iso="$(jq -rn 'now - 172800 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2442,7 +2432,7 @@ inject_hook_episode_stale_has_summary() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  old_iso="$(jq -rn 'now - 172800 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"Previous session summary.\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2462,6 +2452,98 @@ inject_hook_episode_no_file
 inject_hook_episode_fresh
 inject_hook_episode_stale_no_summary
 inject_hook_episode_stale_has_summary
+
+inject_hook_episode_stale_fractional_iso() {
+  # Verifies stale episode (> 24h) with a Python-style fractional ISO timestamp
+  # (e.g. 2020-01-01T00:00:00.123456+00:00) is parsed correctly and triggers /mem-log.
+  # Steps:
+  #   1. Create episodes.jsonl with entry dated 2020-01-01 using fractional-offset format
+  #   2. Run inject hook with CLAUDE_CONFIG_DIR set
+  #   3. Assert exit 0, output contains 💡 and /mem-log reminder
+  local name="inject-hook/episode-stale-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd payload output status
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"2020-01-01T00:00:00.123456+00:00\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$output" == *"/mem-log"* && "$output" == *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+
+inject_hook_episode_fresh_fractional_iso() {
+  # Verifies fresh episode (< 24h) with a Python-style fractional ISO timestamp
+  # is parsed correctly and does NOT trigger a stale reminder.
+  # Steps:
+  #   1. Create episodes.jsonl with entry dated now using fractional-offset format
+  #   2. Run inject hook with CLAUDE_CONFIG_DIR set
+  #   3. Assert exit 0, output contains memory content but NOT 💡 reminder
+  local name="inject-hook/episode-fresh-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd payload output status now_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%S).123456+00:00"
+  write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$now_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$output" == *"alpha"* && "$output" != *"💡"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+inject_hook_episode_stale_fractional_iso
+inject_hook_episode_fresh_fractional_iso
+
+inject_hook_routing_dir_isolation() {
+  # Verifies inject hook uses project memory (CLAUDE_CONFIG_DIR) and ignores
+  # CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
+  # Steps:
+  #   1. Create project memory dir with MEMORY.md containing "- alpha"
+  #   2. Create a separate empty routing dir
+  #   3. Run hook with both CLAUDE_CONFIG_DIR and CLAUDE_ROUTING_LOG_DIR set
+  #   4. Assert exit 0 and output contains "alpha" (project memory, not routing dir)
+  local name="inject-hook/routing-dir-isolation"
+  should_run "$name" || return 0
+  local dir routing_dir cwd payload output status
+  dir="$(mktemp -d)"
+  routing_dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  rm -rf "$dir" "$routing_dir"
+  if [[ "$status" == "0" && "$output" == *"alpha"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+}
+inject_hook_routing_dir_isolation
 
 # =============================================================================
 # hook-session-summary
@@ -2727,6 +2809,40 @@ session_hook_empty_stdin
 session_hook_missing_session_id
 session_hook_non_string_session_id
 
+session_hook_routing_dir_isolation() {
+  # Verifies session hook writes episodes.jsonl to project memory (CLAUDE_CONFIG_DIR)
+  # and NOT to CLAUDE_ROUTING_LOG_DIR, which is installer/migrator-only behavior.
+  # Steps:
+  #   1. Create project memory dir
+  #   2. Create a separate empty routing dir
+  #   3. Run hook with both CLAUDE_CONFIG_DIR and CLAUDE_ROUTING_LOG_DIR set
+  #   4. Assert exit 0, episodes.jsonl created in project memory dir, NOT in routing dir
+  local name="session-hook/routing-dir-isolation"
+  should_run "$name" || return 0
+  local dir routing_dir cwd payload status project_has_ep routing_has_ep
+  dir="$(mktemp -d)"
+  routing_dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"isolation-test\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" CLAUDE_ROUTING_LOG_DIR="$routing_dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  project_has_ep=false; routing_has_ep=false
+  [[ -f "$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl" ]] && project_has_ep=true
+  [[ -f "$routing_dir/episodes.jsonl" ]] && routing_has_ep=true
+  rm -rf "$dir" "$routing_dir"
+  if [[ "$status" == "0" && "$project_has_ep" == "true" && "$routing_has_ep" == "false" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s project_ep=%s routing_ep=%s\n' "$name" "$status" "$project_has_ep" "$routing_has_ep"
+  fi
+}
+session_hook_routing_dir_isolation
+
 # =============================================================================
 # command validators — /mem-recall injection format
 # =============================================================================
@@ -2751,32 +2867,13 @@ mem_recall_format_validator() {
   printf '{"date":"2026-01-02T00:00:00+00:00","cwd":"/proj","session_id":"s2","summary":""}\n' >> "$episodes"
   printf '{"date":"2026-01-03T00:00:00+00:00","cwd":"/proj","session_id":"s3","summary":"Third session: added feature Y."}\n' >> "$episodes"
 
-  result=$(python3 - "$episodes" 5 << 'PYEOF'
-import json, sys
-episodes_file, raw_n = sys.argv[1], sys.argv[2]
-n = int(raw_n)
-entries = []
-with open(episodes_file) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if e.get('summary', '').strip():
-            entries.append(e)
-recent = entries[-n:]
-print(f'== Recent episodes (last {len(recent)}) ==')
-print()
-for e in recent:
-    print(f'[{e["date"]}] {e["cwd"]}')
-    print(e['summary'])
-    print()
-print('== end episodes ==')
-PYEOF
-)
+  result=$(jq -Rrs '
+    [split("\n")[] | select(length > 0) | try fromjson catch null | select(. != null and ((.summary // "") | length) > 0)]
+    | .[-5:] as $recent
+    | "== Recent episodes (last \($recent | length)) ==\n\n"
+      + ($recent | map("[\(.date)] \(.cwd)\n\(.summary)\n\n") | join(""))
+      + "== end episodes =="
+  ' "$episodes" 2>/dev/null)
 
   local ok=true
   [[ "$result" == *"== Recent episodes (last 2) =="* ]] || ok=false
@@ -2823,7 +2920,7 @@ session_stop_skips_after_recent_memlog_empty_session_id() {
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   # Recent /mem-log entry (1 hour ago) with empty session_id
-  recent_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=1)).isoformat())")
+  recent_iso=$(jq -rn 'now - 3600 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
   printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
     "$recent_iso" "$cwd" > "$episodes"
 
@@ -2861,7 +2958,7 @@ session_stop_appends_after_old_memlog_empty_session_id() {
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   # Old /mem-log entry (10 hours ago) with empty session_id
-  old_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=10)).isoformat())")
+  old_iso=$(jq -rn 'now - 36000 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
   printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Old session summary."}\n' \
     "$old_iso" "$cwd" > "$episodes"
 
@@ -2883,6 +2980,73 @@ session_stop_appends_after_old_memlog_empty_session_id() {
 
 session_stop_skips_after_recent_memlog_empty_session_id
 session_stop_appends_after_old_memlog_empty_session_id
+
+cross_cmd_stop_skips_recent_fractional_iso() {
+  # Verifies Stop hook skips when the most recent session_id="" entry has a
+  # Python-style fractional ISO timestamp within the 4-hour session window.
+  # Steps:
+  #   1. Create episodes.jsonl with session_id="" entry dated now, fractional-offset format
+  #   2. Run session stop hook with a real session_id
+  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (not appended)
+  local name="cross-cmd/stop-skips-recent-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count recent_iso
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  recent_iso="$(date -u +%Y-%m-%dT%H:%M:%S).123456+00:00"
+  printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Recent fractional entry."}\n' \
+    "$recent_iso" "$cwd" > "$episodes"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"real-session-frac\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$line_count" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 1)\n' "$name" "$status" "$line_count"
+  fi
+}
+
+cross_cmd_stop_appends_old_fractional_iso() {
+  # Verifies Stop hook appends when the most recent session_id="" entry has a
+  # Python-style fractional ISO timestamp outside the 4-hour session window.
+  # Steps:
+  #   1. Create episodes.jsonl with session_id="" entry dated 2020-01-01, fractional-offset format
+  #   2. Run session stop hook with a new real session_id
+  #   3. Assert exit 0 and episodes.jsonl has exactly 2 lines (new entry appended)
+  local name="cross-cmd/stop-appends-old-fractional-iso"
+  should_run "$name" || return 0
+  local dir cwd episodes payload status line_count
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  write_inject_memory "$dir" "$cwd" $'- alpha\n'
+  episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
+  printf '{"date":"2020-01-01T00:00:00.123456+00:00","cwd":"%s","session_id":"","summary":"Old fractional entry."}\n' \
+    "$cwd" > "$episodes"
+  payload="{\"cwd\":\"$cwd\",\"session_id\":\"new-real-session-frac\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$SESSION_HOOK" 2>/dev/null
+  status=$?
+  line_count=$(wc -l < "$episodes" 2>/dev/null || echo 0)
+  rm -rf "$dir"
+  if [[ "$status" == "0" && "$line_count" == "2" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s lines=%s (expected 2)\n' "$name" "$status" "$line_count"
+  fi
+}
+cross_cmd_stop_skips_recent_fractional_iso
+cross_cmd_stop_appends_old_fractional_iso
 
 # =============================================================================
 # meta: --filter and --list self-verification

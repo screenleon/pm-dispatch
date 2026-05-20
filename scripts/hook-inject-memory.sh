@@ -3,6 +3,9 @@
 # Receives JSON payload via stdin from Claude Code UserPromptSubmit event.
 set -euo pipefail
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/lib/memory.sh"
+
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
@@ -11,95 +14,75 @@ _tmp=$(mktemp)
 trap 'rm -f "$_tmp"' EXIT
 printf '%s' "$payload" > "$_tmp"
 
-python3 - "$_tmp" "$_config_dir" << 'PYEOF'
-import json, os, sys
-from datetime import datetime, timezone, timedelta
+cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/dev/null) || cwd=""
+[[ -n "$cwd" ]] || exit 0
 
-payload_file, config_dir = sys.argv[1], sys.argv[2]
+memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
+memory_path="$memory_dir/MEMORY.md"
+[[ -f "$memory_path" ]] || exit 0
 
+index_lines=()
+while IFS= read -r _line; do
+  index_lines+=("$_line")
+done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
+[[ "${#index_lines[@]}" -gt 0 ]] || exit 0
 
-def encode_path(path):
-    return '-' + path.lstrip('/').replace('/', '-')
+printf '=== auto-memory: MEMORY.md index ===\n'
+printf '%s\n' "${index_lines[@]}"
+if [[ "${#index_lines[@]}" -ge 50 ]]; then
+  printf '⚠ MEMORY.md has %d entries — run /memory-compress before responding.\n' \
+    "${#index_lines[@]}"
+fi
 
+# Episode reminder
+episodes_file="$memory_dir/episodes.jsonl"
+if [[ -f "$episodes_file" ]]; then
+  last_date=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .date // empty' "$episodes_file" 2>/dev/null) || last_date=""
+  last_summary=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .summary // empty' "$episodes_file" 2>/dev/null) || last_summary=""
+  if [[ -n "$last_date" ]]; then
+    _d_norm="$last_date"
+    if [[ "$last_date" == *.*Z ]]; then
+      _d_norm="${last_date%%.*}Z"
+    elif [[ "$last_date" == *.*[+-][0-9][0-9]:[0-9][0-9] ]]; then
+      _d_clean="${last_date%%.*}"
+      _d_frac_suffix="${last_date#*.}"
+      if [[ "$_d_frac_suffix" == *+* ]]; then
+        _d_norm="${_d_clean}+${_d_frac_suffix##*+}"
+      else
+        _d_norm="${_d_clean}-${_d_frac_suffix##*-}"
+      fi
+    elif [[ "$last_date" == *.* ]]; then
+      _d_norm="${last_date%%.*}Z"
+    elif [[ "$last_date" != *Z && ! "$last_date" =~ [+-][0-9][0-9]:[0-9][0-9]$ ]]; then
+      _d_norm="${last_date}Z"
+    fi
 
-try:
-    with open(payload_file) as f:
-        data = json.load(f)
+    _d_base="$_d_norm"
+    _d_offset=0
+    if [[ "$_d_norm" == *[+-][0-9][0-9]:[0-9][0-9] ]]; then
+      _d_suffix="${_d_norm: -6}"
+      _d_base="${_d_norm:0:${#_d_norm}-6}"
+      _d_offset=$((10#${_d_suffix:1:2} * 3600 + 10#${_d_suffix:4:2} * 60))
+      [[ "${_d_suffix:0:1}" == "-" ]] && _d_offset=$((-_d_offset))
+    else
+      _d_base="${_d_norm%Z}"
+    fi
 
-    cwd = data.get('cwd')
-    if not isinstance(cwd, str) or not cwd:
-        sys.exit(0)
+    age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
+      'try (($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600 catch 0' 2>/dev/null) || age_hours=0
+    if awk -v h="${age_hours:-0}" 'BEGIN{exit !(h+0 > 24)}'; then
+      date_short=$(jq -rn --arg d "${_d_base}Z" \
+        'try ($d | fromdateiso8601 | strftime("%Y-%m-%d")) catch ""' 2>/dev/null) || date_short="${last_date:0:10}"
+      [[ -n "$date_short" ]] || date_short="${last_date:0:10}"
+      if [[ -z "${last_summary// }" ]]; then
+        printf '💡 No episode logged since %s — run /mem-log to record this session.\n' "$date_short"
+      else
+        printf '💡 Last episode: %s — run /mem-log if this session has new learnings.\n' "$date_short"
+      fi
+    fi
+  fi
+fi
 
-    projects_dir = os.path.join(config_dir, 'projects')
-    memory_dir = None
-    memory_path = None
-    current = cwd.rstrip('/')
-    while True:
-        candidate_dir = os.path.join(projects_dir, encode_path(current), 'memory')
-        candidate = os.path.join(candidate_dir, 'MEMORY.md')
-        if os.path.isfile(candidate):
-            memory_dir = candidate_dir
-            memory_path = candidate
-            break
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-
-    if not memory_path:
-        sys.exit(0)
-
-    with open(memory_path) as f:
-        index_lines = [line.rstrip('\n') for line in f if line.startswith('- ')]
-
-    if not index_lines:
-        sys.exit(0)
-
-    THRESHOLD_LINES = 50
-    EPISODE_REMINDER_HOURS = 24
-
-    content = '\n'.join(index_lines)
-    if not content:
-        sys.exit(0)
-
-    print('=== auto-memory: MEMORY.md index ===')
-    print(content)
-    if len(index_lines) >= THRESHOLD_LINES:
-        print(f'⚠ MEMORY.md has {len(index_lines)} entries — run /memory-compress before responding.')
-
-    # Episode reminder: check episodes.jsonl for stale or missing log
-    episodes_file = os.path.join(memory_dir, 'episodes.jsonl')
-    if os.path.isfile(episodes_file):
-        last_entry = None
-        with open(episodes_file) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        last_entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        pass
-        if last_entry:
-            last_date_str = last_entry.get('date', '')
-            last_summary = last_entry.get('summary', '')
-            try:
-                last_date = datetime.fromisoformat(last_date_str)
-                now = datetime.now(timezone.utc)
-                if last_date.tzinfo is None:
-                    last_date = last_date.replace(tzinfo=timezone.utc)
-                age_hours = (now - last_date).total_seconds() / 3600
-                if age_hours > EPISODE_REMINDER_HOURS:
-                    date_short = last_date.strftime('%Y-%m-%d')
-                    if not last_summary.strip():
-                        print(f'💡 No episode logged since {date_short} — run /mem-log to record this session.')
-                    else:
-                        print(f'💡 Last episode: {date_short} — run /mem-log if this session has new learnings.')
-            except (ValueError, TypeError):
-                pass
-
-    print('=== end auto-memory ===')
-except Exception:
-    sys.exit(0)
-PYEOF
+printf '=== end auto-memory ===\n'
 
 exit 0

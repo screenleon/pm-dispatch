@@ -199,6 +199,13 @@ function parse_status(id, status, d) {
     row_kind[id] = "deferred"
     return
   }
+  if (status ~ /^🟢 superseded /) {
+    d = status
+    sub(/^🟢 superseded /, "", d)
+    row_kind[id] = "deferred"
+    if (!valid_date(d)) emit("E-DATE-FORMAT", id " invalid superseded date: " d)
+    return
+  }
   if (status ~ /^⚠️ partial /) {
     d = status
     sub(/^⚠️ partial /, "", d)

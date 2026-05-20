@@ -189,12 +189,32 @@ test_legacy_integrity() {
   fi
 }
 
+# Behavior: CLAUDE_ROUTING_LOG_DIR env var overrides project-memory directory discovery.
+# Steps:
+#   1. Write a fixture to $TMP_ROOT/m6/routing_log.md.
+#   2. Run migrator without CLAUDE_ROUTING_LOG_PATH, with CLAUDE_ROUTING_LOG_DIR pointing
+#      to $TMP_ROOT/m6, and with --cwd set to a path that has no .claude memory dir.
+#   3. Verify exit 0 — the override was respected and migration succeeded.
+test_routing_log_dir_override() {
+  local name="migrate: CLAUDE_ROUTING_LOG_DIR overrides memory discovery"
+  local path dir
+  dir="$TMP_ROOT/m6"
+  path="$dir/routing_log.md"
+  write_fixture "$path"
+  if CLAUDE_ROUTING_LOG_DIR="$dir" "$MIGRATOR" --cwd /tmp/no-such-cwd-cc104t 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "CLAUDE_ROUTING_LOG_DIR override not respected by find_memory_dir"
+  fi
+}
+
 echo "== migrate-routing-log =="
 test_fresh_migrates
 test_idempotent
 test_existing_backup_aborts
 test_malformed_skips
 test_legacy_integrity
+test_routing_log_dir_override
 
 echo
 echo "----"

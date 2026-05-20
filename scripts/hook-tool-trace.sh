@@ -7,6 +7,9 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/lib/memory.sh"
+
 HOOK_NAME="hook-tool-trace"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/tool-trace.err"
@@ -17,12 +20,6 @@ audit() {
   local ts
   printf -v ts '%(%Y-%m-%dT%H:%M:%S%z)T' -1 2>/dev/null || ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
   printf '%s %s reason=%q detail=%q\n' "$ts" "$HOOK_NAME" "$reason" "$detail" >> "$ERR_FILE" 2>/dev/null || true
-}
-
-encode_path() {
-  local cwd="$1" enc
-  enc="-${cwd#/}"
-  printf '%s' "${enc//\//-}"
 }
 
 json_unescape() {
@@ -93,32 +90,6 @@ truncate80() {
   printf '%s' "${value:0:80}"
 }
 
-find_memory_dir() {
-  local cwd="$1" config_dir projects_dir current candidate parent
-
-  if [[ -n "${CLAUDE_TOOL_TRACE_DIR:-}" ]]; then
-    [[ -d "$CLAUDE_TOOL_TRACE_DIR" ]] && printf '%s' "$CLAUDE_TOOL_TRACE_DIR"
-    return 0
-  fi
-
-  config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  projects_dir="$config_dir/projects"
-  current="${cwd%/}"
-
-  while [[ -n "$current" ]]; do
-    candidate="$projects_dir/$(encode_path "$current")/memory"
-    if [[ -d "$candidate" ]]; then
-      printf '%s' "$candidate"
-      return 0
-    fi
-    parent="$(dirname "$current")"
-    [[ "$parent" == "$current" ]] && break
-    current="$parent"
-  done
-
-  return 1
-}
-
 [[ "${CLAUDE_TOOL_TRACE_DISABLE:-}" == "1" ]] && exit 0
 
 input="$(cat)"
@@ -158,7 +129,11 @@ fi
 
 [[ -z "${cwd:-}" ]] && exit 0
 
-memory_dir="$(find_memory_dir "$cwd" 2>/dev/null)" || exit 0
+if [[ -n "${CLAUDE_TOOL_TRACE_DIR:-}" && -d "$CLAUDE_TOOL_TRACE_DIR" ]]; then
+  memory_dir="$CLAUDE_TOOL_TRACE_DIR"
+else
+  memory_dir="$(find_memory_dir "$cwd" 2>/dev/null)" || exit 0
+fi
 [[ -n "$memory_dir" ]] || exit 0
 
 first_arg=""

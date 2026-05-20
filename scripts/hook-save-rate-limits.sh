@@ -13,36 +13,31 @@ _tmp=$(mktemp)
 trap 'rm -f "$_tmp"' EXIT
 printf '%s' "$payload" > "$_tmp"
 
-python3 - "$_tmp" "$_config_dir" << 'PYEOF'
-import json, sys, time, os
+if jq -e '.rate_limits | objects | select(length > 0)' "$_tmp" >/dev/null 2>&1; then
+    now_ts=$(date +%s)
+    out=$(jq -cn \
+      --argjson rl "$(jq '.rate_limits' "$_tmp")" \
+      --argjson ts "$now_ts" \
+      '{updated_at: $ts}
+      + (if $rl.five_hour then {five_hour: {used_percentage: ($rl.five_hour.used_percentage // 0), resets_at: ($rl.five_hour.resets_at // 0)}} else {} end)
+      + (if $rl.seven_day then {seven_day: {used_percentage: ($rl.seven_day.used_percentage // 0), resets_at: ($rl.seven_day.resets_at // 0)}} else {} end)'
+    ) || out=""
 
-payload_file, config_dir = sys.argv[1], sys.argv[2]
-try:
-    with open(payload_file) as f:
-        data = json.load(f)
-except Exception:
-    sys.exit(0)
-
-rl = data.get('rate_limits')
-if not rl:
-    sys.exit(0)
-
-out = {'updated_at': int(time.time())}
-for key in ('five_hour', 'seven_day'):
-    part = rl.get(key)
-    if part:
-        out[key] = {'used_percentage': part.get('used_percentage', 0),
-                    'resets_at': part.get('resets_at', 0)}
-
-try:
-    os.makedirs(config_dir, exist_ok=True)
-    _tmp_path = os.path.join(config_dir, '.rate-limits.json.tmp')
-    with open(_tmp_path, 'w') as _f:
-        json.dump(out, _f)
-    os.replace(_tmp_path, os.path.join(config_dir, 'rate-limits.json'))
-except Exception as _ex:
-    sys.stderr.write(f'  (note: could not write rate-limits.json: {_ex})\n')
-PYEOF
+    if [[ -n "$out" ]]; then
+        _out_dir="$_config_dir"
+        mkdir -p "$_out_dir" 2>/dev/null || true
+        _rate_tmp=$(mktemp "${_out_dir}/.rate-limits.json.tmp.XXXXXX" 2>/dev/null) || _rate_tmp=""
+        if [[ -n "$_rate_tmp" ]]; then
+            printf '%s\n' "$out" > "$_rate_tmp"
+            mv "$_rate_tmp" "${_out_dir}/rate-limits.json" || {
+              printf '  (note: could not write rate-limits.json)\n' >&2
+              rm -f "$_rate_tmp"
+            }
+        else
+            printf '  (note: could not write rate-limits.json)\n' >&2
+        fi
+    fi
+fi
 
 # Chain to previous statusLine command if configured.
 # Use bash -c to preserve full command-string semantics (quoted args,
