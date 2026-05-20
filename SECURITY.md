@@ -13,6 +13,25 @@ Use either of the following private channels:
 - **GitHub Private Security Advisory** (preferred): open a draft advisory at
   https://github.com/screenleon/pm-dispatch/security/advisories/new — fix commits
   are automatically linked to the advisory record.
+
+  1. Open the advisory form link above and fill in the title, description,
+     severity (CVSS or qualitative), affected versions, and steps to reproduce.
+  2. Submit the draft. The maintainer will acknowledge it and may invite you to a
+     **temporary private fork** (GitHub's "Security Advisory private fork"
+     feature) to collaborate on a patch.
+  3. CVE: the maintainer may request a GitHub-issued CVE from within the advisory.
+     If so, the CVE number will be shared with you before publication.
+  4. Once a fix is merged and tagged, the maintainer will **publish** the advisory.
+     GitHub auto-notifies users who depend on this tool, if they have
+     notifications enabled.
+
+  What to include:
+
+  - Vulnerability type and affected component (file/hook name)
+  - CVSS score estimate (optional but helpful)
+  - Reproduction steps (minimal, ideally a one-liner or script)
+  - Proposed fix or mitigation (optional)
+  - Whether you need attribution or prefer to stay anonymous
 - **Email**: screen.leon@gmail.com
 
 Include:
