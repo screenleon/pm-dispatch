@@ -90,6 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
+| CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | — |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -578,6 +579,40 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - (d) CC-104q (codex-case skip logic) lands in the same PR as CC-104n
 
 **Related**: folds CC-104q; CC-104l (prereq ordering) is independent
+
+## CC-205 — `/pm` dual-executor planning + `--parallel-plan` mode（deferred）
+
+**Problem**: `/pm` 目前固定走單一 executor（codex 或 claude），沒有辦法對高影響任務
+取得兩個 planner 的獨立視角；routing 決策也是隱性的（PM agent 內部決定），無法從
+command 介面顯式控制。
+
+**Why**: 架構/跨模組/首次設計類任務，單一 planner 有盲點風險；兩個 planner 各自獨立
+規劃再合成，等同 pr-gate parallel reviewer 模式在計劃階段的對應。顯式 `--executor`
+flag 讓 routing 可見、可測試，與 pr-gate 介面對齊降低學習成本。
+
+**Requirement**:
+1. `/pm` 加 `--executor auto|codex|claude` flag（default: auto，行為與現行相同）
+2. `dispatch_handover_v1` schema 加 `executor` 欄位，PM skill 與 pr-gate skill 共用
+   同一 handover 解析路徑
+3. PM agent instructions 加偵測規則：task 符合下列任一條件時，在 dispatch 前暫停並
+   詢問用戶是否啟用 `--parallel-plan`：area 包含 arch/process/gate；task 涉及多個
+   subsystem 的 interface 設計；task 是「首次設計 X」而非「改現有 X」
+4. `--parallel-plan` mode：codex 與 claude 各自獨立 dispatch 同一規劃任務；兩份計劃
+   完成後，current model（synthesis pass）整合為一份 best-of 計劃輸出給用戶
+5. `/pm --parallel-plan <task>` 顯式 flag 跳過確認步驟，直接 parallel dispatch
+6. 一般查詢維持背景執行（run_in_background）；有 checkpoint 需求時切前景
+
+**Dependencies**: CC-200（executor-router.sh 共用 routing lib）、CC-059（thin pm.md
+script-layer）、CC-202（handover validator framework）
+
+**Acceptance criteria**:
+- [ ] `/pm --executor claude <task>` 強制走 claude-only 路徑
+- [ ] `/pm --executor codex <task>` 強制走 codex 路徑
+- [ ] PM 偵測到 arch task → 輸出 checkpoint 訊息並等待用戶確認
+- [ ] 用戶確認後 → codex + claude 各自規劃 → synthesis 輸出一份計劃
+- [ ] `/pm --parallel-plan <task>` 顯式 flag → 直接 parallel dispatch，無 checkpoint
+- [ ] `dispatch_handover_v1` block 含 `executor` 欄位，pr-gate skill 可解析同一格式
+- [ ] 一般 `/pm <task>`（無 arch 特徵）維持背景執行，行為不變
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
