@@ -2456,6 +2456,10 @@ inject_hook_episode_stale_has_summary
 inject_hook_episode_stale_fractional_iso() {
   # Verifies stale episode (> 24h) with a Python-style fractional ISO timestamp
   # (e.g. 2020-01-01T00:00:00.123456+00:00) is parsed correctly and triggers /mem-log.
+  # Steps:
+  #   1. Create episodes.jsonl with entry dated 2020-01-01 using fractional-offset format
+  #   2. Run inject hook with CLAUDE_CONFIG_DIR set
+  #   3. Assert exit 0, output contains 💡 and /mem-log reminder
   local name="inject-hook/episode-stale-fractional-iso"
   should_run "$name" || return 0
   local dir cwd payload output status
@@ -2481,6 +2485,10 @@ inject_hook_episode_stale_fractional_iso() {
 inject_hook_episode_fresh_fractional_iso() {
   # Verifies fresh episode (< 24h) with a Python-style fractional ISO timestamp
   # is parsed correctly and does NOT trigger a stale reminder.
+  # Steps:
+  #   1. Create episodes.jsonl with entry dated now using fractional-offset format
+  #   2. Run inject hook with CLAUDE_CONFIG_DIR set
+  #   3. Assert exit 0, output contains memory content but NOT 💡 reminder
   local name="inject-hook/episode-fresh-fractional-iso"
   should_run "$name" || return 0
   local dir cwd payload output status now_iso
@@ -2976,6 +2984,10 @@ session_stop_appends_after_old_memlog_empty_session_id
 cross_cmd_stop_skips_recent_fractional_iso() {
   # Verifies Stop hook skips when the most recent session_id="" entry has a
   # Python-style fractional ISO timestamp within the 4-hour session window.
+  # Steps:
+  #   1. Create episodes.jsonl with session_id="" entry dated now, fractional-offset format
+  #   2. Run session stop hook with a real session_id
+  #   3. Assert exit 0 and episodes.jsonl still has exactly 1 line (not appended)
   local name="cross-cmd/stop-skips-recent-fractional-iso"
   should_run "$name" || return 0
   local dir cwd episodes payload status line_count recent_iso
@@ -3005,6 +3017,10 @@ cross_cmd_stop_skips_recent_fractional_iso() {
 cross_cmd_stop_appends_old_fractional_iso() {
   # Verifies Stop hook appends when the most recent session_id="" entry has a
   # Python-style fractional ISO timestamp outside the 4-hour session window.
+  # Steps:
+  #   1. Create episodes.jsonl with session_id="" entry dated 2020-01-01, fractional-offset format
+  #   2. Run session stop hook with a new real session_id
+  #   3. Assert exit 0 and episodes.jsonl has exactly 2 lines (new entry appended)
   local name="cross-cmd/stop-appends-old-fractional-iso"
   should_run "$name" || return 0
   local dir cwd episodes payload status line_count

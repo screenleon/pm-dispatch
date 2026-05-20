@@ -127,6 +127,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 - `✅ done` — soft-close; no PR or date needed
 - `⏸ deferred` / `🟡 deferred` — waiting on external condition, not scheduled
 - `🟢 someday` — valid idea, no expected schedule
+- `🟢 superseded YYYY-MM-DD` — superseded by a later item; body stubs to successor CC-NNN
 - `⚠️ partial YYYY-MM-DD` — partially shipped; sub-items remain open (see body)
 
 **Closed stubs**: When inflation policy triggers, closed bodies move to `BACKLOG-ARCHIVE.md`; index row + `**See**: BACKLOG-ARCHIVE.md` stub remain here.
