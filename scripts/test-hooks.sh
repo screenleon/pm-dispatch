@@ -1617,17 +1617,7 @@ stop_idempotent_double_call() {
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   # Sum all session_total entries for this session - must equal 1700, not 3400
-  total=$(python3 -c "
-import json
-total = 0
-for line in open('$logfile'):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'session_total':
-            total += e.get('tokens', 0)
-    except: pass
-print(total)
-" 2>/dev/null || echo 0)
+  total=$(jq -Rs '[split("\n")[] | select(length>0) | try fromjson catch null | select(. != null and .type=="session_total") | .tokens // 0] | add // 0' "$logfile" 2>/dev/null || echo 0)
   if [[ "$status" == "0" && "$total" == "1700" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -1721,7 +1711,7 @@ rl_hook_happy_path() {
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}}' "$rl_home"
-  if [[ -f "$rl_home/rate-limits.json" ]] && python3 -c "import json; d=json.load(open('$rl_home/rate-limits.json')); assert d['five_hour']['used_percentage']==25; assert d['seven_day']['used_percentage']==10; assert 'updated_at' in d"; then
+  if [[ -f "$rl_home/rate-limits.json" ]] && jq -e '.five_hour.used_percentage == 25 and .seven_day.used_percentage == 10 and (.updated_at | type) == "number"' "$rl_home/rate-limits.json" >/dev/null 2>&1; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -2384,7 +2374,7 @@ inject_hook_episode_fresh() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  now_iso="$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).isoformat())')"
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$now_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2413,7 +2403,7 @@ inject_hook_episode_stale_no_summary() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  old_iso="$(jq -rn 'now - 172800 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2442,7 +2432,7 @@ inject_hook_episode_stale_has_summary() {
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
-  old_iso="$(python3 -c 'from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=48)).isoformat())')"
+  old_iso="$(jq -rn 'now - 172800 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')"
   write_episodes_jsonl "$dir" "$cwd" "{\"date\":\"$old_iso\",\"cwd\":\"$cwd\",\"session_id\":\"s1\",\"summary\":\"Previous session summary.\"}"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
@@ -2751,32 +2741,13 @@ mem_recall_format_validator() {
   printf '{"date":"2026-01-02T00:00:00+00:00","cwd":"/proj","session_id":"s2","summary":""}\n' >> "$episodes"
   printf '{"date":"2026-01-03T00:00:00+00:00","cwd":"/proj","session_id":"s3","summary":"Third session: added feature Y."}\n' >> "$episodes"
 
-  result=$(python3 - "$episodes" 5 << 'PYEOF'
-import json, sys
-episodes_file, raw_n = sys.argv[1], sys.argv[2]
-n = int(raw_n)
-entries = []
-with open(episodes_file) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if e.get('summary', '').strip():
-            entries.append(e)
-recent = entries[-n:]
-print(f'== Recent episodes (last {len(recent)}) ==')
-print()
-for e in recent:
-    print(f'[{e["date"]}] {e["cwd"]}')
-    print(e['summary'])
-    print()
-print('== end episodes ==')
-PYEOF
-)
+  result=$(jq -Rrs '
+    [split("\n")[] | select(length > 0) | try fromjson catch null | select(. != null and ((.summary // "") | length) > 0)]
+    | .[-5:] as $recent
+    | "== Recent episodes (last \($recent | length)) ==\n\n"
+      + ($recent | map("[\(.date)] \(.cwd)\n\(.summary)\n\n") | join(""))
+      + "== end episodes =="
+  ' "$episodes" 2>/dev/null)
 
   local ok=true
   [[ "$result" == *"== Recent episodes (last 2) =="* ]] || ok=false
@@ -2823,7 +2794,7 @@ session_stop_skips_after_recent_memlog_empty_session_id() {
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   # Recent /mem-log entry (1 hour ago) with empty session_id
-  recent_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=1)).isoformat())")
+  recent_iso=$(jq -rn 'now - 3600 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
   printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Fixed the widget bug."}\n' \
     "$recent_iso" "$cwd" > "$episodes"
 
@@ -2861,7 +2832,7 @@ session_stop_appends_after_old_memlog_empty_session_id() {
   write_inject_memory "$dir" "$cwd" $'- alpha\n'
   episodes="$dir/projects/$(inject_encoded_path "$cwd")/memory/episodes.jsonl"
   # Old /mem-log entry (10 hours ago) with empty session_id
-  old_iso=$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(hours=10)).isoformat())")
+  old_iso=$(jq -rn 'now - 36000 | strftime("%Y-%m-%dT%H:%M:%S") | . + "+00:00"')
   printf '{"date":"%s","cwd":"%s","session_id":"","summary":"Old session summary."}\n' \
     "$old_iso" "$cwd" > "$episodes"
 
