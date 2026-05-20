@@ -109,6 +109,8 @@ jobs:
             token-usage.sh
             uninstall-hooks.sh
             usage-weekly.sh
+            memory.sh
+            memory-dir.sh
 
   test-portable:
     runs-on: ubuntu-latest
