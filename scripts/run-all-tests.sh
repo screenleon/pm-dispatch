@@ -15,6 +15,7 @@ SUITE_NAMES=(
   test-hooks
   test-migrate
   test-install
+  test-uninstall
   test-usage-weekly
   test-usage-tracker
   test-pm-scripts
@@ -39,6 +40,7 @@ declare -A SUITE_PATHS=(
   [test-hooks]="scripts/test-hooks.sh"
   [test-migrate]="scripts/test-migrate-routing-log.sh"
   [test-install]="scripts/test-install.sh"
+  [test-uninstall]="scripts/test-uninstall.sh"
   [test-usage-weekly]="scripts/test-usage-weekly.sh"
   [test-usage-tracker]="scripts/test-usage-tracker.sh"
   [test-pm-scripts]="pm/scripts/test/run-tests.sh"
