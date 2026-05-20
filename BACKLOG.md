@@ -91,6 +91,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
+| CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | feedback:#103 | P2 | design |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -613,6 +614,28 @@ script-layer）、CC-202（handover validator framework）
 - [ ] `/pm --parallel-plan <task>` 顯式 flag → 直接 parallel dispatch，無 checkpoint
 - [ ] `dispatch_handover_v1` block 含 `executor` 欄位，pr-gate skill 可解析同一格式
 - [ ] 一般 `/pm <task>`（無 arch 特徵）維持背景執行，行為不變
+
+## CC-206 — gate lifecycle hook（deferred）
+
+**Problem**: Codex sandbox 無法存取 Docker socket，導致需要 Docker backed services（Postgres、Redis 等）的整合測試在 gate 中無法執行。主線程（Claude Code session）有 Docker 權限，但 pr-gate.sh 目前無法讓主線程在 dispatch 前後執行 repo-specific 操作。
+
+**Why**: 這是「主線程有能力 X，Codex sandbox 沒有」的通用問題，不只是 Docker。若直接在 pr-gate.sh 加 `--compose-file` flag 會把 Docker 耦合進 PM 工具；正確的分層是 pm-dispatch 提供 hook 點、repo 實作內容（與 git hooks 設計哲學相同）。
+
+**Requirement**:
+1. `pr-gate.sh` 在 dispatch reviewers 前，若 `.pm-dispatch/pre-gate.sh` 存在則執行（主線程）
+2. `pr-gate.sh` 在所有 reviewer sessions 完成後，若 `.pm-dispatch/post-gate.sh` 存在則執行（主線程）
+3. hook 執行失敗（exit non-zero）時 gate 中止並報錯，不繼續 dispatch
+4. hook 不存在時 gate 行為完全不變（backward compatible）
+5. 文件說明 hook 慣例，範例：Docker Compose 啟動/停止
+
+**Acceptance criteria**:
+- [ ] `.pm-dispatch/pre-gate.sh` 存在且可執行 → gate 在 dispatch 前執行它（主線程）
+- [ ] `.pm-dispatch/post-gate.sh` 存在 → gate 在所有 reviewer 完成後執行它
+- [ ] pre-gate hook exit 1 → gate 中止，不 dispatch reviewer
+- [ ] 兩個 hook 均不存在 → gate 行為與現行相同（無 regression）
+- [ ] CONTRIBUTING.md 或 docs/ 有使用範例（Docker Compose 場景）
+
+**See**: issue #103
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
