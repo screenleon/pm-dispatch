@@ -304,7 +304,7 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs, priorit
 
   if (schema_ver == "v1.1" || schema_ver == "v1.2") {
     if (n < 10) {
-      warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1 file)")
+      warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1/v1.2 file)")
     } else {
       priority = trim(f[8])
       epic     = trim(f[9])

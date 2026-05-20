@@ -132,7 +132,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **Priority column**: `P1`（本週必做）/ `P2`（本 sprint）/ `P3`（排隊）/ `—`（未設）。
 **Epic column**: `oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程維護）/ `design`（新功能架構設計與 interface 決策）/ `—`（其他）。
-向下相容：v1.1 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
+向下相容：v1.1/v1.2 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
