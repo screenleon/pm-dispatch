@@ -141,6 +141,10 @@ rm -f ~/.claude/commands/pr-gate.md
 # Helper scripts
 rm -f ~/.claude/scripts/token-usage.sh
 rm -f ~/.claude/scripts/log-usage.sh
+rm -f ~/.claude/scripts/pr-gate.sh
+rm -f ~/.claude/scripts/codex-dispatch.sh
+rm -f ~/.claude/scripts/setup-project.sh
+rm -f ~/.claude/scripts/patch-gitignore.sh
 
 # .pm schema
 rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely

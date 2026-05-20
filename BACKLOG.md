@@ -657,31 +657,25 @@ script-layer）、CC-202（handover validator framework）
 
 ## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh（deferred）
 
-**Reported**: 2026-05-20 (Windows dogfood r3, Git Bash / OSTYPE=msys)
+**Problem**: On Git Bash (OSTYPE=msys/cygwin), `ln -s` silently falls back to file
+copy rather than creating real symlinks. After pulling pm-dispatch updates, users
+must re-run `bash install.sh` to sync the copies (83 files across agents/, commands/,
+scripts/, .pm). This breaks the "pull = auto-sync" expectation that Linux/macOS/WSL2
+users have.
 
-**Symptom**: `install.sh` detects that `ln -s` fails and falls back to copying all
-managed directories. 83 files are copied rather than linked:
+**Why**: NTFS symlinks require Windows Developer Mode or `MSYS=winsymlinks:nativestrict`
+which cannot be assumed for all users. Directory junctions (`mklink /J`) are available
+without elevated privileges but require calling PowerShell from bash.
+The current copy fallback is correct as a safety net; the missing piece is an explicit
+Git Bash detection branch that uses junctions instead of silently falling back to copy.
 
-| Directory | Files | Status |
-|-----------|-------|--------|
-| agents/   | 8     | copied |
-| commands/ | 11    | copied |
-| scripts/  | 6     | copied |
-| .pm schema| 58    | copied |
-
-After pulling pm-dispatch updates, users must re-run `bash install.sh` manually.
-
-**Root cause**: On Git Bash (OSTYPE=msys/cygwin), `ln -s` either silently creates
-a Windows shortcut (not a real symlink) or fails outright. The existing copy fallback
-handles this gracefully but loses auto-sync semantics.
-
-**Proposed fix**:
-1. Detect Git Bash in `install.sh`: `[[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]`
-2. Use PowerShell directory junctions instead of `ln -s`:
-   `powershell.exe -Command "cmd /c mklink /J \"$TARGET\" \"$SOURCE\""`
+**Requirement**:
+1. `install.sh` detects Git Bash via `$OSTYPE == msys*` or `cygwin*`
+2. Uses `powershell.exe -Command "cmd /c mklink /J ..."` for each per-file link target
    (`mklink /J` = directory junction; no admin or developer mode required)
-3. Verify junction survives PATH resolution and Claude Code session startup
-4. Add smoke test in `test-install.sh` (skip on non-Windows)
+3. Verified: junction survives PATH resolution and Claude Code session startup on Windows
+4. `test-install.sh` gains a smoke test for the junction path (skip on non-Windows CI)
+5. `docs/platform-support.md` updated to reflect auto-sync is restored
 
 **Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
 
