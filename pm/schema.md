@@ -1,4 +1,4 @@
-# pm-schema: v1.1
+# pm-schema: v1.2
 
 Cross-repo planning convention for `~/github/*` managed product repos.
 Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` is a symlink alias maintained by `pm-dispatch/install.sh`.
@@ -20,7 +20,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 ### 2.1 頂部 metadata
 
 ```
-<!-- pm-schema: v1.1 -->
+<!-- pm-schema: v1.2 -->
 # <repo-name> backlog
 ```
 
@@ -189,7 +189,7 @@ closed 條目有兩種折疊形式：
 
 - **採用**：active product repo（current: project-alpha, project-beta, project-gamma 等有持續開發的 repo）。
 - **跳過**：純 sandbox / 一次性實驗 / 純內容 repo（看個案決定）。
-- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.1 -->`（v1.1 為當前版本；v1 file 仍被 validator 接受，但不驗證新欄），否則 PM agent 視為未採用、不解析。
+- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.2 -->`（v1.2 為當前版本；v1.1/v1 file 仍被 validator 接受，但 v1.1 file 不含 design epic 正式定義），否則 PM agent 視為未採用、不解析。
 - schema 升級（v2 等）時，`.pm/schema.md` bump 版本，受管 repo 逐個遷移；混用版本期間 PM agent 依個別檔頂部宣告解析。
 
 ## 6. 與 PM agent 互動契約

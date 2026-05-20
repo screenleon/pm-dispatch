@@ -47,7 +47,9 @@ fi
 
 # schema 宣告是解析前提，缺少時立即停止。
 schema_ver=""
-if sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.1 -->'; then
+if sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.2 -->'; then
+  schema_ver="v1.1"
+elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.1 -->'; then
   schema_ver="v1.1"
 elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
   schema_ver="v1"

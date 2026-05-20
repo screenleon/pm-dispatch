@@ -1,4 +1,4 @@
-<!-- pm-schema: v1.1 -->
+<!-- pm-schema: v1.2 -->
 # pm-dispatch backlog
 
 <!--
