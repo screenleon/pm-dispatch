@@ -163,6 +163,10 @@ elif ! grep -q '| repo-v11 | 4 | 1 |' "$rollup_out"; then
   fail "rollup fixtures" "repo-v11 summary mismatch"
 elif ! grep -q 'RV-004' "$rollup_out"; then
   fail "rollup fixtures" "RV-004 escaped-pipe row missing from rollup"
+elif ! grep -q '^### repo-v12$' "$rollup_out"; then
+  fail "rollup fixtures" "missing repo-v12 section (v1.2 backlog not included)"
+elif ! grep -q '| repo-v12 | 1 | 0 |' "$rollup_out"; then
+  fail "rollup fixtures" "repo-v12 summary mismatch"
 else
   pass "rollup fixtures"
 fi
