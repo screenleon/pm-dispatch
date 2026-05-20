@@ -115,6 +115,8 @@ run_validate_case "validate good-deferred-someday" 0 "" "$fixtures/good-deferred
 run_validate_case "validate good-archive-stub" 0 "" "$fixtures/good-archive-stub/BACKLOG.md"
 run_validate_case "validate good-partial" 0 "" "$fixtures/good-partial/BACKLOG.md"
 run_validate_case "validate bad-partial-date" 1 "E-DATE-FORMAT" "$fixtures/bad-partial-date/BACKLOG.md"
+run_validate_case "validate good-superseded" 0 "" "$fixtures/good-superseded/BACKLOG.md"
+run_validate_case "validate bad-superseded-date" 1 "E-DATE-FORMAT" "$fixtures/bad-superseded-date/BACKLOG.md"
 run_validate_case "validate bad-changelog-drift partial-row" 1 "E-CHANGELOG-DRIFT" "$fixtures/bad-changelog-drift-partial/BACKLOG.md"
 run_validate_case "v1.1 drift-pipe-topic" 0 "" "$fixtures/good-drift-v11-pipe/BACKLOG.md" "" "$fixtures/good-drift-v11-pipe/CHANGELOG.md"
 # Smoke: repo BACKLOG.md archive/stub changes introduce no new validator errors.

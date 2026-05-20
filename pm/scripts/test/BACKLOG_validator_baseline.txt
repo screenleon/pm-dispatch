@@ -25,7 +25,6 @@ E-AREA-ENUM: CC-104k invalid area: filesystem/caveat
 E-AREA-ENUM: CC-104l invalid area: ops/install/ux
 E-AREA-ENUM: CC-104m invalid area: arch/install/platform
 E-AREA-ENUM: CC-104n invalid area: ops/install/risk
-E-AREA-ENUM: CC-104o invalid area: ops/install/portability
 E-AREA-ENUM: CC-104p invalid area: arch/portable
 E-AREA-ENUM: CC-104q invalid area: ops/test/ux
 E-AREA-ENUM: CC-104r invalid area: docs/ops
