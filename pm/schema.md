@@ -58,7 +58,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - **影響面**：見下方 area enum；單值或斜線複合
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
 - **Refs**：結構化引用，語法見 §2.4.3；空則 `—`
-- **Priority**：`P1` / `P2` / `P3` / `—`（優先度；未設為 `—`）。向下相容：v1.1 file 中缺此欄的列 emit W-MISSING-COLS。
+- **Priority**：`P1` / `P2` / `P3` / `—`（優先度；未設為 `—`）。向下相容：v1.1/v1.2 file 中缺此欄的列 emit W-MISSING-COLS（patch version 不引入 breaking column enforcement）。
 - **Epic**：`oss` / `reuse-debt` / `hygiene` / `design` / `—`（語義分組；空則 `—`）。詳見 §2.4.5。
 
 索引必須與 body 條目一一對應，順序按 ID 升冪。
@@ -189,7 +189,7 @@ closed 條目有兩種折疊形式：
 
 - **採用**：active product repo（current: project-alpha, project-beta, project-gamma 等有持續開發的 repo）。
 - **跳過**：純 sandbox / 一次性實驗 / 純內容 repo（看個案決定）。
-- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.2 -->`（v1.2 為當前版本；v1.1/v1 file 仍被 validator 接受，但 v1.1 file 不含 design epic 正式定義），否則 PM agent 視為未採用、不解析。
+- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.2 -->`（v1.2 為當前版本；v1.1/v1 file 仍被 validator 接受；design epic 在所有 v1.x 版本中均有效），否則 PM agent 視為未採用、不解析。
 - schema 升級（v2 等）時，`.pm/schema.md` bump 版本，受管 repo 逐個遷移；混用版本期間 PM agent 依個別檔頂部宣告解析。
 
 ## 6. 與 PM agent 互動契約
