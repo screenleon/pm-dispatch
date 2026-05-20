@@ -59,21 +59,30 @@ If this repository adds changes to the dispatch pipeline, update this schema fir
 
 ## Testing and validation
 
-For every file-writing or schema-affecting PR, run:
+For every file-writing or schema-affecting PR, run the full test suite:
 
-- `bash scripts/test-hooks.sh`
-- `bash scripts/test-codex-dispatch.sh`
-- `bash scripts/test-dispatch-handover.sh`
-- `bash scripts/test-install.sh`
-- `bash scripts/test-claude-executor.sh`
-- `bash scripts/test-portable.sh`
-- `bash scripts/test-pr-gate-profile.sh`
-- `bash scripts/lint-scripts.sh`
-- `bash scripts/lint-agents.sh`
+```bash
+bash scripts/run-all-tests.sh
+```
 
-Run with default environment unless a script documents different fixtures or temporary overrides.
+This runs all suites (hooks, install, portable, pr-gate, usage, pm-scripts, etc.) and
+prints a pass/fail/skip summary. For a focused run on one suite, invoke it directly,
+for example `bash scripts/test-hooks.sh` or `bash scripts/test-install.sh`. Use
+`--skip <suite>` to opt out of environment-specific suites, such as
+`--skip test-codex-dispatch` when the Codex CLI is not installed.
 
-Include output or exit status in your PR notes.
+Additionally, for any BACKLOG.md or CHANGELOG.md changes:
+
+```bash
+bash pm/scripts/validate.sh BACKLOG.md CHANGELOG.md
+```
+
+The command may exit non-zero due to pre-existing baseline debt in `BACKLOG.md`: `E-AREA-ENUM` (compound area tokens not yet in enum), `E-INDEX-MISMATCH` (entries without body stubs), and legacy `E-STATUS-ENUM` / `E-DATE-FORMAT` on some CC-104x entries. The PR requirement is that your changes do not introduce **new** error lines beyond the pre-existing baseline. Run the command, capture the output, and confirm no new `E-*:` codes appear in the diff. Include the `validate.sh` output in your PR notes.
+
+**Why `--no-verify` is not acceptable**: pre-commit hooks enforce schema validation and
+hook-guard contract tests. Bypassing them lets malformed entries or broken hook policies
+reach `main` silently. If a hook blocks your commit, diagnose and fix the root cause —
+do not skip the hook.
 
 ## Path convention
 
@@ -106,6 +115,14 @@ If you maintain a fork and want to keep diffs reviewable, include in each signif
 - expected impact,
 - rollback plan,
 - and any migration caveats.
+
+## Working language
+
+Primary working language is Mandarin Chinese. Commit messages and code identifiers are
+English. Issue threads and PR descriptions may be bilingual; non-Mandarin contributors
+are welcome and should expect bilingual responses.
+
+Pre-commit hooks and shell scripts must remain in English for portability.
 
 ## If you've found a bug in upstream
 

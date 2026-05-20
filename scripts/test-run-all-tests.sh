@@ -205,7 +205,7 @@ test_codex_missing_skips_codex_dispatch() {
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   path="$(make_path_without_codex "$repo/bin")"
-  out=$(PATH="$path" /usr/bin/bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
+  out=$(PATH="$path" bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
         "$out" == *"20 passed, 0 failed, 1 skipped"* ]]; then
@@ -240,7 +240,7 @@ test_skip_missing_arg() {
   local name="skip-missing-arg"
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --skip 2>&1) || status=$?
-  if [[ "$status" -eq 2 && "$out" == *"--skip requires a suite name"* ]]; then
+  if [[ "$status" -eq 2 && "$out" == *"--skip requires a non-empty suite name"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -254,6 +254,38 @@ test_unknown_flag() {
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --foobar 2>&1) || status=$?
   if [[ "$status" -eq 2 && "$out" == *"unknown flag"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_skip_empty_arg() {
+  # Behavior: --skip with an empty string argument exits 2 with a usage error.
+  # Steps: run aggregator with --skip ''; assert exit 2 and usage error message.
+  local name="skip-empty-arg"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --skip '' 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--skip"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_skip_option_like_arg() {
+  # Behavior: --skip with an option-like value (e.g. --list) exits 2 with a usage error.
+  # Steps: run aggregator with --skip --list; assert exit 2 and usage error message.
+  local name="skip-option-like-arg"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --skip --list 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--skip"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -346,6 +378,8 @@ test_codex_missing_skips_codex_dispatch
 test_fail_on_suite_error
 test_skip_missing_arg
 test_unknown_flag
+test_skip_empty_arg
+test_skip_option_like_arg
 test_dispatch_hooks_home_override
 test_dispatch_install_running_flag
 test_dispatch_pm_scripts_via_bash

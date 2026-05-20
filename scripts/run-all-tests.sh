@@ -63,7 +63,11 @@ LIST=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip)
-      [[ $# -ge 2 ]] || { echo "run-all-tests: --skip requires a suite name" >&2; exit 2; }
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        printf 'usage: %s [--skip <suite-name>] [--list]\n' "$0" >&2
+        printf 'error: --skip requires a non-empty suite name (got: %q)\n' "${2:-}" >&2
+        exit 2
+      fi
       SKIP_REQUESTED["$2"]=1
       shift 2
       ;;

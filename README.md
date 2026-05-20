@@ -10,6 +10,12 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Getting Started](docs/GETTING_STARTED.md)
 - [Core concepts](docs/CONCEPTS.md)
 
+## Working language
+
+Primary working language is Mandarin Chinese. Commit messages and code identifiers are
+English. Issue threads may be bilingual; non-Mandarin contributors are welcome and should
+expect bilingual responses.
+
 ## Path placeholders
 
 Examples use `${PM_DISPATCH_REPO}` to refer to your local clone root. If unset, `scripts/install-hooks.sh` derives it automatically from the git toplevel with:
@@ -67,7 +73,7 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 ## Testing
 
 ```bash
-bash scripts/run-all-tests.sh         # run all 21 suites
+bash scripts/run-all-tests.sh         # run all suites (test-codex-dispatch auto-skips when Codex is absent)
 bash scripts/run-all-tests.sh --list  # show registered suites without running
 bash scripts/run-all-tests.sh --skip test-codex-dispatch  # skip one suite
 ```
