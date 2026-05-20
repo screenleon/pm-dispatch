@@ -92,6 +92,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
+| CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -653,6 +654,30 @@ script-layer）、CC-202（handover validator framework）
 - [ ] CONTRIBUTING.md 或 docs/ 有使用範例（Docker Compose 場景）
 
 **See**: issue #103
+
+## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh（deferred）
+
+**Problem**: On Git Bash (OSTYPE=msys/cygwin), `ln -s` silently falls back to file
+copy rather than creating real symlinks. After pulling pm-dispatch updates, users
+must re-run `bash install.sh` to sync the copies (83 files across agents/, commands/,
+scripts/, .pm). This breaks the "pull = auto-sync" expectation that Linux/macOS/WSL2
+users have.
+
+**Why**: NTFS symlinks require Windows Developer Mode or `MSYS=winsymlinks:nativestrict`
+which cannot be assumed for all users. Directory junctions (`mklink /J`) are available
+without elevated privileges but require calling PowerShell from bash.
+The current copy fallback is correct as a safety net; the missing piece is an explicit
+Git Bash detection branch that uses junctions instead of silently falling back to copy.
+
+**Requirement**:
+1. `install.sh` detects Git Bash via `$OSTYPE == msys*` or `cygwin*`
+2. Uses `powershell.exe -Command "cmd /c mklink /J ..."` for each per-file link target
+   (`mklink /J` = directory junction; no admin or developer mode required)
+3. Verified: junction survives PATH resolution and Claude Code session startup on Windows
+4. `test-install.sh` gains a smoke test for the junction path (skip on non-Windows CI)
+5. `docs/platform-support.md` updated to reflect auto-sync is restored
+
+**Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
