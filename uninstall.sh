@@ -31,6 +31,7 @@ fi
 
 removed=0
 skipped=0
+safety_skipped=0
 
 is_manifest_symlink_target() {
   local src="$1"
@@ -72,31 +73,64 @@ remove_item() {
 
 is_under_managed_root() {
   local path="$1"
-  local normalized
+  local normalized resolved real_claude_home parent real_parent
 
-  # Use portable pure-bash normalizer (resolves .. without requiring realpath).
-  # Sourced from scripts/lib/portable.sh via the . "$REPO_ROOT/scripts/lib/portable.sh" call above.
   # Handle relative paths: prepend PWD if not absolute.
   case "$path" in
     /*) ;;
     *) path="$PWD/$path" ;;
   esac
 
+  # Step 1: lexical normalization (resolves .. without requiring existence or symlink follow)
   normalized="$(_portable_normalize_path "$path" 2>/dev/null)"
+  if [[ -z "$normalized" ]]; then
+    return 1
+  fi
 
-  # Fail closed: if normalization returns empty, deny.
+  # Step 2: symlink resolution — use realpath to resolve symlinked parent directories.
+  # A dst such as $HOME/.claude/linkdir/file passes the lexical check but resolves
+  # outside the managed root when linkdir is a symlink to an outside directory.
+  if resolved="$(realpath -- "$normalized" 2>/dev/null)" && [[ -n "$resolved" ]]; then
+    # Path exists on filesystem: use fully-resolved real location
+    normalized="$resolved"
+  else
+    # Path does not exist (e.g. already deleted): resolve nearest existing parent
+    parent="$(dirname "$normalized")"
+    if real_parent="$(realpath -- "$parent" 2>/dev/null)" && [[ -n "$real_parent" ]]; then
+      normalized="$real_parent/$(basename "$normalized")"
+    fi
+    # If parent also cannot be resolved, continue with lexical result (fail-closed below)
+  fi
+
+  # Resolve CLAUDE_HOME itself in case ~/.claude is a symlink
+  real_claude_home="$(realpath -- "$CLAUDE_HOME" 2>/dev/null || printf '%s' "$CLAUDE_HOME")"
+
+  # Fail closed: if normalization yields empty after resolution, deny
   if [[ -z "$normalized" ]]; then
     return 1
   fi
 
   case "$normalized" in
-    "$CLAUDE_HOME"/*|"$CLAUDE_HOME")
+    "$real_claude_home"/*|"$real_claude_home")
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+is_symlink_dst_under_managed_root() {
+  local dst="$1"
+  local parent basename
+
+  parent="$(dirname "$dst")"
+  basename="$(basename "$dst")"
+
+  # For symlink entries, the final path may itself be a legitimate symlink to
+  # repo content outside ~/.claude. Check a non-existing sibling path so
+  # symlinked parent directories are resolved without following the final link.
+  is_under_managed_root "$parent/.pm-dispatch-uninstall-parent-check-$basename"
 }
 
 echo "pm-dispatch uninstaller"
@@ -125,8 +159,9 @@ while IFS= read -r line; do
 
   case "$mode" in
     symlink)
-      if ! is_under_managed_root "$dst"; then
+      if ! is_symlink_dst_under_managed_root "$dst"; then
         skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
         echo "  skip $dst (dst outside managed root — skipping for safety)"
         continue
       fi
@@ -136,16 +171,24 @@ while IFS= read -r line; do
           remove_item "$dst"
         else
           skipped=$((skipped + 1))
+          safety_skipped=$((safety_skipped + 1))
           echo "  skip $dst (not our symlink — skipping)"
         fi
-      else
+      elif [[ -e "$dst" ]]; then
+        # Path exists but is not a symlink — unexpected state
         skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
         echo "  skip $dst (not our symlink — skipping)"
+      else
+        # Path is gone entirely — not a safety concern
+        skipped=$((skipped + 1))
+        echo "  skip $dst (already gone)"
       fi
       ;;
     copy)
       if ! is_under_managed_root "$dst"; then
         skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
         echo "  skip $dst (dst outside managed root — skipping for safety)"
         continue
       fi
@@ -155,9 +198,11 @@ while IFS= read -r line; do
           remove_item "$dst"
         else
           skipped=$((skipped + 1))
+          safety_skipped=$((safety_skipped + 1))
           echo "  skip $dst (modified since install — skipping)"
         fi
       else
+        # Path not found — not a safety concern (normal after partial rerun)
         skipped=$((skipped + 1))
         echo "  skip $dst (already gone)"
       fi
@@ -165,10 +210,12 @@ while IFS= read -r line; do
     *)
       if ! is_under_managed_root "$dst"; then
         skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
         echo "  skip $dst (dst outside managed root — skipping for safety)"
         continue
       fi
       skipped=$((skipped + 1))
+      safety_skipped=$((safety_skipped + 1))
       echo "  skip $dst (unknown mode: $mode)"
       ;;
   esac
@@ -178,6 +225,7 @@ done < <(grep '"src"' "$MANIFEST" | grep '"dst"' || true)
 if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
   echo "  warning: manifest entries could not be parsed (check format — expected compact JSON)"
   skipped=$((skipped + 1))
+  safety_skipped=$((safety_skipped + 1))
 fi
 
 echo
@@ -189,10 +237,10 @@ else
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then
-  if [[ "$skipped" -eq 0 ]]; then
+  if [[ "$safety_skipped" -eq 0 ]]; then
     rm -rf "$HOME/.claude/.pm-dispatch"
   else
-    echo "  note: $skipped item(s) could not be removed — manifest preserved for re-run"
+    echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
   for d in "$HOME/.claude/agents" "$HOME/.claude/commands" "$HOME/.claude/skills" "$HOME/.claude/scripts"; do
@@ -204,5 +252,5 @@ echo
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Done. (no changes made — re-run without --dry-run to apply)"
 else
-  echo "Done. Removed $removed items, skipped $skipped items."
+  echo "Done. Removed $removed items, skipped $skipped items ($safety_skipped safety-skip)."
 fi

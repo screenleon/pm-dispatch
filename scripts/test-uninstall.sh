@@ -563,7 +563,16 @@ test_hooks_failure_preserves_manifest() {
   elif [[ ! -f "$manifest19" ]]; then
     fail "$name" "manifest deleted despite hooks failure - state is unrecoverable"
   else
-    pass "$name"
+    # First run correct: hooks failed, manifest preserved.
+    # Now fix the mock hooks and rerun — recovery should succeed.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-hooks.sh"
+    HOME="$fake_home" bash "$mock_repo/uninstall.sh" > /dev/null 2>&1 || true
+    # Entries are "already gone" (removed in first run) → safety_skipped=0 → manifest deleted
+    if [[ -f "$manifest19" ]]; then
+      fail "$name" "manifest not cleaned up after recovery rerun"
+    else
+      pass "$name"
+    fi
   fi
 }
 
@@ -579,6 +588,42 @@ test_multi_line_manifest_preserved() {
   HOME="$fake_home" bash "$UNINSTALL" > /dev/null 2>&1 || true
   if [[ ! -f "$manifest20" ]]; then
     fail "$name" "manifest deleted despite unparseable multi-line format"
+  else
+    pass "$name"
+  fi
+}
+
+test_symlink_parent_traversal_rejected() {
+  local name="TC-21 symlink-parent-traversal-rejected"
+  local fake_home="$tmp_root/home21"
+  local outside_dir outside_file dst21 sha21 manifest21
+  mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
+
+  # Create an "outside" file that a symlinked parent directory would target
+  outside_dir="$tmp_root/outside21"
+  mkdir -p "$outside_dir"
+  outside_file="$outside_dir/precious.md"
+  printf 'do not delete' > "$outside_file"
+
+  # Create a symlink inside .claude pointing to outside_dir
+  ln -s "$outside_dir" "$fake_home/.claude/linkdir"
+
+  # The dst lexically appears inside .claude (starts with $fake_home/.claude)
+  # but physically resolves to $outside_dir/precious.md (outside the managed root)
+  dst21="$fake_home/.claude/linkdir/precious.md"
+
+  # Compute sha256 of the actual file so it would pass the hash check
+  sha21="$(sha256sum "$outside_file" 2>/dev/null | awk '{print $1}')"
+  [[ -z "$sha21" ]] && sha21="$(shasum -a 256 "$outside_file" 2>/dev/null | awk '{print $1}')"
+
+  manifest21="$fake_home/.claude/.pm-dispatch/install-manifest.json"
+  printf '{\n  "entries": [\n    {"src":"/fake","dst":"%s","mode":"copy","sha256":"%s","fallback_reason":"test"}\n  ]\n}\n' \
+    "$dst21" "$sha21" > "$manifest21"
+
+  HOME="$fake_home" bash "$UNINSTALL" > /dev/null 2>&1 || true
+
+  if [[ ! -f "$outside_file" ]]; then
+    fail "$name" "file outside managed root deleted via symlinked parent dir"
   else
     pass "$name"
   fi
@@ -604,6 +649,7 @@ test_out_of_root_copy_rejected
 test_dot_dot_traversal_rejected
 test_hooks_failure_preserves_manifest
 test_multi_line_manifest_preserved
+test_symlink_parent_traversal_rejected
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
