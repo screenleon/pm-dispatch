@@ -90,7 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
-| CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | — |
+| CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -101,14 +101,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-056 | ✅ closed 2026-05-18 | `scripts/lint-frontmatter.sh` + CI job + 12 regression tests | ops/test | 2026-05-18 | pr:#86 | — | hygiene |
 | CC-057 | ✅ closed 2026-05-18 | README `skills/` layout row + `update-config` ref removed | docs/DX | 2026-05-18 | pr:#86 | — | hygiene |
 | CC-058 | ⏸ deferred | `scripts/doctor.sh`：安裝前後環境健康檢查（claude/codex/jq 存在、hooks 已裝、memory dir、scripts executable、frontmatter lint）；每項失敗給出可操作修復步驟 | ops/DX | 2026-05-18 | — | — | — |
-| CC-059 | ⏸ deferred | Thin `/pm.md` command：把 brief 建立 / handover validation / dispatch / BashOutput tracking / diff verify 等 runtime 邏輯移入 `scripts/pm-dispatch-runner.sh` 等腳本；pm.md 只保留意圖描述與行為約束 | arch/ops | 2026-05-18 | CC-200 | — | — |
+| CC-059 | ⏸ deferred | Thin `/pm.md` command：把 brief 建立 / handover validation / dispatch / BashOutput tracking / diff verify 等 runtime 邏輯移入 `scripts/pm-dispatch-runner.sh` 等腳本；pm.md 只保留意圖描述與行為約束 | arch/ops | 2026-05-18 | CC-200 | — | design |
 | CC-060 | ⏸ deferred | Codex model/config 外部化：把 hardcoded 模型名稱、sandbox policy、approval policy 抽到 config file（`defaults/codex.toml` 或 `.env.defaults`）；commands 與 scripts 讀 config 而非寫死 | arch/config | 2026-05-18 | CC-047 | — | — |
 | CC-061 | ⏸ deferred | 建立 `skills/` 目錄 + 2–3 個 starter SKILL.md：`dispatch-brief/SKILL.md`、`pr-gate-review/SKILL.md`（對齊 Anthropic Skills spec；README 已聲稱支援但目錄不存在）；與 CC-014/CC-015/CC-026 技能定義解耦，這條處理目錄結構 | arch/ux | 2026-05-18 | CC-057 | — | — |
 | CC-062 | ⏸ deferred | codex-bash-guard policy test matrix：建立 `tests/policy/codex-bash-guard/` 結構化 allow/deny JSON fixtures；讓安全 policy 從「很聰明的 shell parser」變「可驗證的 test matrix」 | ops/security | 2026-05-18 | — | — | — |
 | CC-063 | 🟡 deferred | Trace / token / gate metrics dashboard：`.agent-trace/*.jsonl` + `rate-limits*.json` + `.gate-results/*.md` 已有足夠資料；可視化 per-session token、gate pass rate、routing_log 校準趨勢 | ux/ops | 2026-05-18 | — | P3 | — |
 | CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | CC-031 | P2 | — |
 | CC-065 | 🟡 deferred | Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P3 | — |
-| CC-066 | 🟡 deferred | Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P3 | — |
+| CC-066 | 🟡 deferred | Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P3 | design |
 | CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
 
 ---
@@ -131,7 +131,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 **Closed stubs**: When inflation policy triggers, closed bodies move to `BACKLOG-ARCHIVE.md`; index row + `**See**: BACKLOG-ARCHIVE.md` stub remain here.
 
 **Priority column**: `P1`（本週必做）/ `P2`（本 sprint）/ `P3`（排隊）/ `—`（未設）。
-**Epic column**: `oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程維護）/ `—`（其他）。
+**Epic column**: `oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程維護）/ `design`（新功能架構設計與 interface 決策）/ `—`（其他）。
 向下相容：v1.1 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
