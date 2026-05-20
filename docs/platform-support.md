@@ -81,17 +81,18 @@ bash scripts/install-hooks.sh
 
 ### Linux / macOS / WSL2
 
-Because files are symlinked, a `git pull` is all that is needed:
+**Changes to existing files** take effect immediately because `~/.claude/agents/`,
+`~/.claude/commands/`, etc. contain per-file symlinks pointing into the repo.
+
+**New files** (e.g. a newly added agent or command) do **not** appear automatically —
+`install.sh` creates one symlink per file at install time and cannot know about
+files added later. Re-run `bash install.sh` after pulling to pick up new entries:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"
 git pull
+bash install.sh    # creates symlinks for any new files
 ```
-
-New agents, commands, or scripts added to the repo appear in `~/.claude/`
-immediately — no installer re-run required. If the install manifest itself
-changes (new directories, new top-level entries), re-run `bash install.sh`
-once to create any missing symlinks.
 
 ### Windows Git Bash
 
