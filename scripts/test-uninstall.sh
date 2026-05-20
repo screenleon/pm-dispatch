@@ -720,15 +720,17 @@ test_hooks_failure_preserves_manifest() {
 test_multi_line_manifest_preserved() {
   local name="TC-20 multi-line-manifest-preserved"
   local fake_home="$tmp_root/home20"
-  local manifest20
+  local manifest20 out20
   mkdir -p "$fake_home/.claude/.pm-dispatch"
   manifest20="$fake_home/.claude/.pm-dispatch/install-manifest.json"
   printf '{\n  "entries": [\n    {\n      "src": "/fake/src",\n      "dst": "%s/.claude/agents/f.md",\n      "mode": "symlink"\n    }\n  ]\n}\n' \
     "$fake_home" > "$manifest20"
 
-  HOME="$fake_home" bash "$UNINSTALL" > /dev/null 2>&1 || true
+  out20="$(HOME="$fake_home" bash "$UNINSTALL" 2>&1 || true)"
   if [[ ! -f "$manifest20" ]]; then
     fail "$name" "manifest deleted despite unparseable multi-line format"
+  elif ! printf '%s' "$out20" | grep -q "warning: manifest entries could not be parsed"; then
+    fail "$name" "expected warning about unparseable manifest, got: $out20"
   else
     pass "$name"
   fi
@@ -827,6 +829,42 @@ test_symlink_parent_no_realpath_rejected() {
   fi
 }
 
+# Verifies that when $HOME/.claude is itself a symlink, uninstall.sh correctly
+# resolves the managed root via realpath and can still remove entries that live
+# inside the resolved directory.
+#
+# Steps:
+#   1. Create a real directory outside fake HOME; make $HOME/.claude a symlink to it.
+#   2. Write a symlink manifest entry pointing inside the symlinked .claude.
+#   3. Run uninstall.sh and assert the symlink is removed (managed-root resolved OK).
+test_claude_home_symlink() {
+  local name="TC-23 claude-home-symlink"
+  local fake_home="$tmp_root/home23"
+  local real_claude="$tmp_root/real_claude_home23"
+  local src23 manifest23
+
+  # real_claude is the actual directory; $fake_home/.claude is a symlink to it
+  mkdir -p "$real_claude/.pm-dispatch" "$real_claude/agents"
+  mkdir -p "$fake_home"
+  ln -s "$real_claude" "$fake_home/.claude"
+
+  src23="$tmp_root/src23.md"
+  printf 'hello' > "$src23"
+  ln -s "$src23" "$real_claude/agents/tc23.md"
+
+  manifest23="$real_claude/.pm-dispatch/install-manifest.json"
+  printf '{"entries":[{"src":"%s","dst":"%s/.claude/agents/tc23.md","mode":"symlink"}]}\n' \
+    "$src23" "$fake_home" > "$manifest23"
+
+  HOME="$fake_home" bash "$UNINSTALL" > /dev/null 2>&1 || true
+
+  if [[ -L "$real_claude/agents/tc23.md" ]]; then
+    fail "$name" "symlink not removed when ~/.claude is itself a symlink"
+  else
+    pass "$name"
+  fi
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -849,6 +887,7 @@ test_hooks_failure_preserves_manifest
 test_multi_line_manifest_preserved
 test_symlink_parent_traversal_rejected
 test_symlink_parent_no_realpath_rejected
+test_claude_home_symlink
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
