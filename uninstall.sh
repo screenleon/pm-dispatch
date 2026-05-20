@@ -59,7 +59,11 @@ remove_item() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "  would remove $dst"
   else
-    rm "$dst"
+    if [[ -d "$dst" && ! -L "$dst" ]]; then
+      rm -rf "$dst"
+    else
+      rm "$dst"
+    fi
     echo "  remove $dst"
   fi
   removed=$((removed + 1))
@@ -103,7 +107,7 @@ while IFS= read -r line; do
       fi
       ;;
     copy)
-      if [[ -f "$dst" ]]; then
+      if [[ -f "$dst" || ( -d "$dst" && ! -L "$dst" ) ]]; then
         curr_sha="$(_portable_sha256_path "$dst")"
         if [[ "$curr_sha" == "$sha256" ]]; then
           remove_item "$dst"

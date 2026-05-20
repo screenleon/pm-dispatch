@@ -289,6 +289,130 @@ JSON
   pass "$name"
 }
 
+test_copy_dir_sha_match() {
+  local name="TC-09 copy-dir-sha-match"
+  local home="$tmp_root/home-copy-dir-sha-match"
+  local src_dir="$tmp_root/copy-dir-sha-match-src"
+  local dst_dir="$home/.claude/pm-copy-dir"
+  local out="$tmp_root/copy-dir-sha-match.out"
+  local sha
+  mkdir -p "$home/.claude" "$src_dir"
+  printf 'content' > "$src_dir/subfile.txt"
+  cp -a "$src_dir" "$dst_dir"
+  sha="$(_portable_sha256_path "$src_dir")"
+  write_manifest "$home" "$(copy_entry "$src_dir" "$dst_dir" "$sha")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ -d "$dst_dir" ]]; then
+    fail "$name" "$dst_dir should have been removed"
+    return
+  fi
+  pass "$name"
+}
+
+test_copy_dir_sha_mismatch() {
+  local name="TC-10 copy-dir-sha-mismatch"
+  local home="$tmp_root/home-copy-dir-sha-mismatch"
+  local src_dir="$tmp_root/copy-dir-sha-mismatch-src"
+  local dst_dir="$home/.claude/pm-copy-dir2"
+  local out="$tmp_root/copy-dir-sha-mismatch.out"
+  mkdir -p "$src_dir" "$dst_dir"
+  printf 'modified' > "$dst_dir/extra.txt"
+  write_manifest "$home" "$(copy_entry "$src_dir" "$dst_dir" "deadbeef0000")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -d "$dst_dir" ]]; then
+    fail "$name" "$dst_dir should not have been removed"
+    return
+  fi
+  assert_contains "$name" "$out" "modified since install" || return
+  pass "$name"
+}
+
+test_dry_run_copy() {
+  local name="TC-11 dry-run-copy"
+  local home="$tmp_root/home-dry-run-copy"
+  local src="$tmp_root/dry-run-copy-src"
+  local dst="$home/.claude/agents/file11.md"
+  local out="$tmp_root/dry-run-copy.out"
+  local sha
+  mkdir -p "$(dirname "$dst")"
+  printf 'hello' > "$src"
+  cp "$src" "$dst"
+  sha="$(_portable_sha256_path "$dst")"
+  write_manifest "$home" "$(copy_entry "$src" "$dst" "$sha")"
+
+  if ! run_uninstall "$home" "$out" --dry-run; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -f "$dst" ]]; then
+    fail "$name" "$dst should remain in dry-run"
+    return
+  fi
+  assert_contains "$name" "$out" "would remove" || return
+  pass "$name"
+}
+
+test_unknown_flag() {
+  local name="TC-12 unknown-flag"
+  local home="$tmp_root/home-unknown-flag"
+  local out="$tmp_root/unknown-flag.out"
+  local rc
+  mkdir -p "$home/.claude"
+
+  if run_uninstall "$home" "$out" --bogus-flag; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "expected exit 2, got $rc"
+    return
+  fi
+  assert_contains "$name" "$out" "unknown flag" || return
+  pass "$name"
+}
+
+test_manifest_edge_branches() {
+  local name="TC-13 manifest-edge-branches"
+  local home="$tmp_root/home-manifest-edge-branches"
+  local src="$tmp_root/manifest-edge-src"
+  local copy_dst="$home/.claude/scripts/already-gone.sh"
+  local relative_dst="$home/.claude/agents/relative.md"
+  local relative_target="../source/relative.md"
+  local out="$tmp_root/manifest-edge-branches.out"
+  mkdir -p "$(dirname "$copy_dst")" "$(dirname "$relative_dst")" "$home/.claude/source"
+  printf 'agent\n' > "$src"
+  cp "$src" "$home/.claude/source/relative.md"
+  ln -s "$relative_target" "$relative_dst"
+  write_manifest "$home" \
+    '{"src":"/x","dst":"/y","mode":"badmode"}' \
+    '{"src":"/a","dst":"","mode":"symlink"}' \
+    "$(copy_entry "$src" "$copy_dst" "$(_portable_sha256_path "$src")")" \
+    "$(symlink_entry "$home/.claude/source/relative.md" "$relative_dst")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  assert_contains "$name" "$out" "unknown mode" || return
+  assert_contains "$name" "$out" "invalid manifest entry" || return
+  assert_contains "$name" "$out" "already gone" || return
+  if [[ -e "$relative_dst" || -L "$relative_dst" ]]; then
+    fail "$name" "relative symlink target should have been removed"
+    return
+  fi
+  pass "$name"
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -297,6 +421,11 @@ test_copy_sha_mismatch
 test_dry_run
 test_empty_dir_removed
 test_hooks_called
+test_copy_dir_sha_match
+test_copy_dir_sha_mismatch
+test_dry_run_copy
+test_unknown_flag
+test_manifest_edge_branches
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
