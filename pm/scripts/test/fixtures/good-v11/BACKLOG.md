@@ -7,7 +7,6 @@
 |----|--------|------|--------|----------|------|----------|------|
 | XX-001 | 🔵 active | 測試項目 | ops | 2026-01-01 | — | P1 | hygiene |
 | XX-002 | ✅ closed 2026-02-01 | 已關閉項目 | test | 2026-01-15 | — | — | — |
-| XX-099 | ⏸ deferred | design epic acceptance smoke | process | 2026-05-20 | — | — | design |
 
 ## XX-001 — 測試項目
 
@@ -18,7 +17,3 @@
 ## XX-002 — 已關閉項目 ✅ 2026-02-01
 
 **See**: DECISIONS.md#2026-02-01-test
-
-## XX-099 — design epic acceptance smoke（deferred）
-
-**See**: N/A

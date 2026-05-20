@@ -48,13 +48,13 @@ fi
 # schema 宣告是解析前提，缺少時立即停止。
 schema_ver=""
 if sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.2 -->'; then
-  schema_ver="v1.1"
+  schema_ver="v1.2"
 elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1.1 -->'; then
   schema_ver="v1.1"
 elif sed -n '1,5p' "$backlog" | grep -Fxq '<!-- pm-schema: v1 -->'; then
   schema_ver="v1"
 else
-  printf 'E-SCHEMA-HEADER: missing pm-schema v1/v1.1 marker in first 5 lines: %s\n' "$backlog" >&2
+  printf 'E-SCHEMA-HEADER: missing pm-schema v1/v1.1/v1.2 marker in first 5 lines: %s\n' "$backlog" >&2
   exit 2
 fi
 
@@ -302,7 +302,7 @@ function parse_index_row(line, n, f, id, status, first_date, area, refs, priorit
     s = substr(s, RSTART + RLENGTH)
   }
 
-  if (schema_ver == "v1.1") {
+  if (schema_ver == "v1.1" || schema_ver == "v1.2") {
     if (n < 10) {
       warn("W-MISSING-COLS", id " missing priority and/or epic columns (v1.1 file)")
     } else {

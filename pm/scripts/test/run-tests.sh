@@ -83,6 +83,7 @@ run_validate_case_warn() {
 # validate.sh 基本案例。
 run_validate_case "validate good" 0 "" "$fixtures/good/BACKLOG.md"
 run_validate_case "v1.1 good" 0 "" "$fixtures/good-v11/BACKLOG.md"
+run_validate_case "v1.2 good" 0 "" "$fixtures/good-v12/BACKLOG.md"
 run_validate_case "v1.1 bad-priority-enum" 1 "E-PRIORITY-ENUM" "$fixtures/bad-priority-enum/BACKLOG.md"
 run_validate_case "v1.1 bad-epic-enum" 1 "E-EPIC-ENUM" "$fixtures/bad-epic-enum/BACKLOG.md"
 run_validate_case_warn "v1.1 warn-missing-cols" "$fixtures/warn-missing-cols/BACKLOG.md" "W-MISSING-COLS"
