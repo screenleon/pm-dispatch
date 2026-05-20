@@ -94,6 +94,13 @@ run_uninstall() {
   return "$rc"
 }
 
+# Verifies that uninstall exits 0 and reports "no manifest found" when no
+# install-manifest.json is present under $HOME/.claude/.pm-dispatch/.
+#
+# Steps:
+#   1. Create a fake HOME with no .claude/.pm-dispatch directory.
+#   2. Run uninstall.sh with that HOME.
+#   3. Assert exit 0 and output contains "no manifest found".
 test_no_manifest() {
   local name="TC-01 no-manifest"
   local home="$tmp_root/home-no-manifest"
@@ -108,6 +115,12 @@ test_no_manifest() {
   pass "$name"
 }
 
+# Verifies that a symlink whose target matches the manifest src is removed.
+#
+# Steps:
+#   1. Create a source file and a symlink inside $HOME/.claude pointing to it.
+#   2. Write a manifest entry for that symlink.
+#   3. Run uninstall.sh and assert the symlink is gone.
 test_symlink_removed() {
   local name="TC-02 symlink-removed"
   local home="$tmp_root/home-symlink-removed"
@@ -130,6 +143,13 @@ test_symlink_removed() {
   pass "$name"
 }
 
+# Verifies that a symlink pointing to a target other than the manifest src is
+# skipped and left on disk.
+#
+# Steps:
+#   1. Create a foreign symlink (points to a different file than the manifest src).
+#   2. Write a manifest entry with the correct src but the foreign symlink as dst.
+#   3. Run uninstall.sh and assert the symlink still exists.
 test_symlink_foreign() {
   local name="TC-03 symlink-foreign"
   local home="$tmp_root/home-symlink-foreign"
@@ -155,6 +175,12 @@ test_symlink_foreign() {
   pass "$name"
 }
 
+# Verifies that a copy-mode file whose sha256 matches the manifest record is removed.
+#
+# Steps:
+#   1. Copy a source file into $HOME/.claude; record its sha256 in the manifest.
+#   2. Run uninstall.sh.
+#   3. Assert the copied file no longer exists.
 test_copy_sha_match() {
   local name="TC-04 copy-sha-match"
   local home="$tmp_root/home-copy-sha-match"
@@ -179,6 +205,13 @@ test_copy_sha_match() {
   pass "$name"
 }
 
+# Verifies that a copy-mode file whose sha256 differs from the manifest record is
+# skipped and output reports "modified since install".
+#
+# Steps:
+#   1. Create a dst file with different content from the manifest sha256.
+#   2. Run uninstall.sh.
+#   3. Assert dst still exists and output contains "modified since install".
 test_copy_sha_mismatch() {
   local name="TC-05 copy-sha-mismatch"
   local home="$tmp_root/home-copy-sha-mismatch"
@@ -204,6 +237,12 @@ test_copy_sha_mismatch() {
   pass "$name"
 }
 
+# Verifies that --dry-run prints "would remove" and makes no filesystem changes.
+#
+# Steps:
+#   1. Create a symlink inside $HOME/.claude with a matching manifest entry.
+#   2. Run uninstall.sh --dry-run.
+#   3. Assert the symlink still exists and output contains "would remove".
 test_dry_run() {
   local name="TC-06 dry-run"
   local home="$tmp_root/home-dry-run"
@@ -227,6 +266,13 @@ test_dry_run() {
   pass "$name"
 }
 
+# Verifies that an empty managed directory (e.g. agents/) is removed with rmdir
+# after its last symlink entry is uninstalled.
+#
+# Steps:
+#   1. Create a symlink inside $HOME/.claude/agents/ with a matching manifest entry.
+#   2. Run uninstall.sh; the symlink is removed, leaving agents/ empty.
+#   3. Assert $HOME/.claude/agents/ no longer exists.
 test_empty_dir_removed() {
   local name="TC-07 empty-dir-removed"
   local home="$tmp_root/home-empty-dir-removed"
@@ -249,6 +295,14 @@ test_empty_dir_removed() {
   pass "$name"
 }
 
+# Verifies that uninstall-hooks.sh is invoked and removes pm-dispatch hook entries
+# from $HOME/.claude/settings.json.
+#
+# Steps:
+#   1. Write settings.json containing a pm-dispatch hook entry.
+#   2. Run uninstall.sh.
+#   3. Assert output contains "==> hooks" and "uninstall-hooks: wrote"; assert
+#      hook-pm-write-guard.sh is no longer referenced in settings.json.
 test_hooks_called() {
   local name="TC-08 hooks-called"
   if ! command -v jq >/dev/null 2>&1; then
@@ -289,6 +343,13 @@ JSON
   pass "$name"
 }
 
+# Verifies that a copy-mode directory whose sha256 matches the manifest record is
+# removed recursively with rm -rf.
+#
+# Steps:
+#   1. Copy a source directory tree into $HOME/.claude; record the directory sha256.
+#   2. Write a manifest entry for the directory.
+#   3. Run uninstall.sh and assert the directory tree no longer exists.
 test_copy_dir_sha_match() {
   local name="TC-09 copy-dir-sha-match"
   local home="$tmp_root/home-copy-dir-sha-match"
@@ -313,6 +374,13 @@ test_copy_dir_sha_match() {
   pass "$name"
 }
 
+# Verifies that a copy-mode directory whose sha256 differs from the manifest record
+# is skipped and output reports "modified since install".
+#
+# Steps:
+#   1. Create a dst directory whose contents produce a hash different from the manifest.
+#   2. Run uninstall.sh.
+#   3. Assert the directory still exists and output contains "modified since install".
 test_copy_dir_sha_mismatch() {
   local name="TC-10 copy-dir-sha-mismatch"
   local home="$tmp_root/home-copy-dir-sha-mismatch"
@@ -335,6 +403,13 @@ test_copy_dir_sha_mismatch() {
   pass "$name"
 }
 
+# Verifies that --dry-run with a copy-mode entry prints "would remove" and does
+# not delete the file.
+#
+# Steps:
+#   1. Copy a file into $HOME/.claude; record its sha256 in the manifest.
+#   2. Run uninstall.sh --dry-run.
+#   3. Assert the file still exists and output contains "would remove".
 test_dry_run_copy() {
   local name="TC-11 dry-run-copy"
   local home="$tmp_root/home-dry-run-copy"
@@ -360,6 +435,13 @@ test_dry_run_copy() {
   pass "$name"
 }
 
+# Verifies that an unrecognised CLI flag causes uninstall.sh to exit 2 with an
+# error message containing "unknown flag".
+#
+# Steps:
+#   1. Run uninstall.sh --bogus-flag and capture exit code and output.
+#   2. Assert exit code is 2.
+#   3. Assert output contains "unknown flag".
 test_unknown_flag() {
   local name="TC-12 unknown-flag"
   local home="$tmp_root/home-unknown-flag"
@@ -381,6 +463,13 @@ test_unknown_flag() {
   pass "$name"
 }
 
+# Verifies that manifest entries with an unknown mode or an empty dst are skipped
+# and reported rather than causing a crash or silent deletion.
+#
+# Steps:
+#   1. Write a manifest with one entry using mode "badmode" and one with an empty dst.
+#   2. Run uninstall.sh.
+#   3. Assert output contains "unknown mode" and "invalid manifest entry".
 test_manifest_edge_branches() {
   local name="TC-13 manifest-edge-branches"
   local home="$tmp_root/home-manifest-edge-branches"
@@ -414,6 +503,13 @@ test_manifest_edge_branches() {
   pass "$name"
 }
 
+# Verifies that when an entry is skipped for safety (foreign symlink), the manifest
+# is preserved on disk and a rerun produces a consistent result.
+#
+# Steps:
+#   1. Create a foreign symlink and write a manifest entry for it.
+#   2. Run uninstall.sh; assert manifest still exists (safety_skipped > 0).
+#   3. Rerun uninstall.sh; assert output still contains "not our symlink".
 test_skip_preserves_manifest() {
   local name="TC-14 skip-preserves-manifest"
   local home="$tmp_root/home-skip-preserves-manifest"
@@ -448,6 +544,13 @@ test_skip_preserves_manifest() {
   pass "$name"
 }
 
+# Verifies that when a copy-mode entry is skipped due to sha mismatch, the manifest
+# is preserved on disk for manual resolution and rerun.
+#
+# Steps:
+#   1. Create a dst file with different content than the manifest sha256.
+#   2. Run uninstall.sh.
+#   3. Assert manifest still exists.
 test_skip_copy_preserves_manifest() {
   local name="TC-15 skip-copy-preserves-manifest"
   local home="$tmp_root/home-skip-copy-preserves-manifest"
@@ -471,6 +574,13 @@ test_skip_copy_preserves_manifest() {
   pass "$name"
 }
 
+# Verifies that a symlink-mode manifest entry whose dst resolves outside
+# $HOME/.claude is rejected and the target file is left untouched.
+#
+# Steps:
+#   1. Write a manifest entry whose dst is an absolute path outside $HOME/.claude.
+#   2. Run uninstall.sh.
+#   3. Assert the outside file still exists.
 test_out_of_root_dst_rejected() {
   local name="TC-16 out-of-root-dst-rejected"
   local home="$tmp_root/home-out-of-root-dst-rejected"
@@ -491,6 +601,13 @@ test_out_of_root_dst_rejected() {
   pass "$name"
 }
 
+# Verifies that a copy-mode manifest entry whose dst resolves outside
+# $HOME/.claude is rejected and the target directory is left untouched.
+#
+# Steps:
+#   1. Write a manifest entry whose dst is a directory outside $HOME/.claude.
+#   2. Run uninstall.sh.
+#   3. Assert the outside directory still exists.
 test_out_of_root_copy_rejected() {
   local name="TC-17 out-of-root-copy-rejected"
   local home="$tmp_root/home-out-of-root-copy-rejected"
@@ -513,6 +630,14 @@ test_out_of_root_copy_rejected() {
   pass "$name"
 }
 
+# Verifies that a dst containing ".." components that resolve outside $HOME/.claude
+# is rejected by the managed-root guard and the target file is left untouched.
+#
+# Steps:
+#   1. Create a file in $HOME (parent of .claude) and write a manifest entry whose
+#      dst is $HOME/.claude/../<filename> (lexically inside .claude, resolves outside).
+#   2. Run uninstall.sh.
+#   3. Assert the outside file still exists.
 test_dot_dot_traversal_rejected() {
   local name="TC-18 dot-dot-traversal-rejected"
   local home="$tmp_root/home-dot-dot-traversal-rejected"
@@ -533,6 +658,14 @@ test_dot_dot_traversal_rejected() {
   pass "$name"
 }
 
+# Verifies that when uninstall-hooks.sh exits non-zero, the script exits non-zero
+# before deleting the manifest, leaving it available for a recovery rerun; and that
+# after the hook dependency is fixed a second run successfully cleans up.
+#
+# Steps:
+#   1. Set up a mock repo with a failing uninstall-hooks.sh (always exit 1).
+#   2. Run mock uninstall.sh; assert non-zero exit and manifest preserved.
+#   3. Fix mock hooks to exit 0; rerun; assert manifest is deleted (clean state).
 test_hooks_failure_preserves_manifest() {
   local name="TC-19 hooks-failure-preserves-manifest"
   local fake_home="$tmp_root/home19"
@@ -576,6 +709,14 @@ test_hooks_failure_preserves_manifest() {
   fi
 }
 
+# Verifies that a manifest containing pretty-printed (multi-line) JSON entries,
+# which the grep-based parser cannot match, causes a warning and preserves the
+# manifest rather than silently treating all entries as processed.
+#
+# Steps:
+#   1. Write a manifest whose entry fields each occupy a separate line.
+#   2. Run uninstall.sh.
+#   3. Assert manifest still exists (no silent empty-manifest deletion).
 test_multi_line_manifest_preserved() {
   local name="TC-20 multi-line-manifest-preserved"
   local fake_home="$tmp_root/home20"
@@ -593,6 +734,14 @@ test_multi_line_manifest_preserved() {
   fi
 }
 
+# Verifies that a copy-mode dst that lexically starts with $HOME/.claude but
+# whose realpath resolves outside the managed root (via a symlinked parent
+# directory) is rejected and the outside file is left untouched.
+#
+# Steps:
+#   1. Create a symlink inside $HOME/.claude pointing to an outside directory.
+#   2. Write a manifest copy-mode entry for a path through the symlinked parent.
+#   3. Run uninstall.sh and assert the outside file still exists.
 test_symlink_parent_traversal_rejected() {
   local name="TC-21 symlink-parent-traversal-rejected"
   local fake_home="$tmp_root/home21"
@@ -629,6 +778,14 @@ test_symlink_parent_traversal_rejected() {
   fi
 }
 
+# Verifies that symlinked-parent traversal is blocked even when realpath is
+# unavailable, by failing closed (return 1 from is_under_managed_root) when the
+# path exists on disk but cannot be physically resolved.
+#
+# Steps:
+#   1. Inject a fake realpath binary (always exits 1) earlier on PATH.
+#   2. Write a copy-mode manifest entry through a symlinked parent directory.
+#   3. Run uninstall.sh via a mock repo and assert the outside file is not deleted.
 test_symlink_parent_no_realpath_rejected() {
   local name="TC-22 symlink-parent-no-realpath-rejected"
   local fake_home="$tmp_root/home22"
