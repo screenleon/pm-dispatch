@@ -72,19 +72,25 @@ remove_item() {
 
 is_under_managed_root() {
   local path="$1"
-  local parent
-  local base
-  local managed_root
-  local resolved
-  parent="$(dirname "$path")"
-  base="$(basename "$path")"
-  # Resolve the parent without requiring it to exist (-m for missing), but do
-  # not follow the final symlink because installed dst symlinks point at repo files.
-  managed_root="$(realpath -m -- "$CLAUDE_HOME" 2>/dev/null || printf '%s' "$CLAUDE_HOME")"
-  resolved="$(realpath -m -- "$parent" 2>/dev/null || printf '%s' "$parent")/$base"
-  # Accept paths that are under $CLAUDE_HOME
-  case "$resolved" in
-    "$managed_root"/*|"$managed_root")
+  local normalized
+
+  # Use portable pure-bash normalizer (resolves .. without requiring realpath).
+  # Sourced from scripts/lib/portable.sh via the . "$REPO_ROOT/scripts/lib/portable.sh" call above.
+  # Handle relative paths: prepend PWD if not absolute.
+  case "$path" in
+    /*) ;;
+    *) path="$PWD/$path" ;;
+  esac
+
+  normalized="$(_portable_normalize_path "$path" 2>/dev/null)"
+
+  # Fail closed: if normalization returns empty, deny.
+  if [[ -z "$normalized" ]]; then
+    return 1
+  fi
+
+  case "$normalized" in
+    "$CLAUDE_HOME"/*|"$CLAUDE_HOME")
       return 0
       ;;
     *)

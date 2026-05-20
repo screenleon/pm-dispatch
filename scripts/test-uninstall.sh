@@ -513,6 +513,26 @@ test_out_of_root_copy_rejected() {
   pass "$name"
 }
 
+test_dot_dot_traversal_rejected() {
+  local name="TC-18 dot-dot-traversal-rejected"
+  local home="$tmp_root/home-dot-dot-traversal-rejected"
+  local outside_target="$home/should-not-be-deleted.txt"
+  local dotdot_dst="$home/.claude/../should-not-be-deleted.txt"
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/dot-dot-traversal-rejected.out"
+  mkdir -p "$home/.claude/.pm-dispatch"
+  printf 'do not delete' > "$outside_target"
+  printf '{\n  "entries": [\n    {"src":"/fake","dst":"%s","mode":"symlink"}\n  ]\n}\n' \
+    "$(manifest_escape "$dotdot_dst")" > "$manifest"
+
+  run_uninstall "$home" "$out" || true
+  if [[ ! -f "$outside_target" ]]; then
+    fail "$name" "dot-dot dst deleted file outside .claude/"
+    return
+  fi
+  pass "$name"
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -530,6 +550,7 @@ test_skip_preserves_manifest
 test_skip_copy_preserves_manifest
 test_out_of_root_dst_rejected
 test_out_of_root_copy_rejected
+test_dot_dot_traversal_rejected
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
