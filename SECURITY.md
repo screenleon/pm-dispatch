@@ -8,7 +8,12 @@ Security fixes are applied to the `main` branch only. No backport releases are p
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Email: **screen.leon@gmail.com**
+Use either of the following private channels:
+
+- **GitHub Private Security Advisory** (preferred): open a draft advisory at
+  https://github.com/screenleon/pm-dispatch/security/advisories/new — fix commits
+  are automatically linked to the advisory record.
+- **Email**: screen.leon@gmail.com
 
 Include:
 - A description of the vulnerability and its potential impact
