@@ -71,7 +71,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 `arch / backend / frontend / content / ops / connector / DX / product`
 
 **Topic tokens**（工具層 / 影響面）：
-`ux / process / memory / token / test / gate`
+`ux / process / memory / token / test / gate / portability`
 
 - `ux` — 使用者操作體驗、developer ergonomics
 - `process` — 開發流程、工作流、PM 規範
@@ -79,6 +79,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - `token` — token 用量追蹤、quota 管理
 - `test` — 測試基礎設施、test runner、fixture
 - `gate` — PR gate 工具、reviewer 流程
+- `portability` — 跨平台相容性、OS/shell 差異、Windows/macOS/Linux 行為
 
 Topic tokens 可與 layer tokens 複合（例：`ux/memory`、`ops/test`、`ops/gate`）。純 topic 也合法（例：`process`、`ux`）。
 

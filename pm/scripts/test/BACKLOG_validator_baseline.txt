@@ -1,5 +1,4 @@
 E-AREA-ENUM: CC-025b invalid area: ux/memory/test
-E-AREA-ENUM: CC-038 invalid area: ops/portability
 E-AREA-ENUM: CC-047 invalid area: ops/dispatch
 E-AREA-ENUM: CC-049 invalid area: process/docs
 E-AREA-ENUM: CC-050 invalid area: process/docs
