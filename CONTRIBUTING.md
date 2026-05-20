@@ -77,7 +77,7 @@ Additionally, for any BACKLOG.md or CHANGELOG.md changes:
 bash pm/scripts/validate.sh BACKLOG.md CHANGELOG.md
 ```
 
-Expected exit code is 0. Pre-existing E-AREA-ENUM warnings in the output are known baseline debt and do not block a PR — focus on not introducing new `ERROR:` lines. Include the summary line in your PR notes.
+The command may exit non-zero due to pre-existing baseline debt in `BACKLOG.md`: `E-AREA-ENUM` (compound area tokens not yet in enum), `E-INDEX-MISMATCH` (entries without body stubs), and legacy `E-STATUS-ENUM` / `E-DATE-FORMAT` on some CC-104x entries. The PR requirement is that your changes do not introduce **new** error lines beyond the pre-existing baseline. Run the command, capture the output, and confirm no new `E-*:` codes appear in the diff. Include the `validate.sh` output in your PR notes.
 
 **Why `--no-verify` is not acceptable**: pre-commit hooks enforce schema validation and
 hook-guard contract tests. Bypassing them lets malformed entries or broken hook policies
