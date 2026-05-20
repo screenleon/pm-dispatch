@@ -533,6 +533,57 @@ test_dot_dot_traversal_rejected() {
   pass "$name"
 }
 
+test_hooks_failure_preserves_manifest() {
+  local name="TC-19 hooks-failure-preserves-manifest"
+  local fake_home="$tmp_root/home19"
+  local mock_repo="$tmp_root/mock-repo19"
+  local src19 dst19 manifest19 rc
+  mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
+  mkdir -p "$mock_repo/scripts/lib"
+
+  cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
+  cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
+
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/scripts/uninstall-hooks.sh"
+  chmod +x "$mock_repo/scripts/uninstall-hooks.sh"
+
+  src19="$tmp_root/src19.md"
+  printf 'hello' > "$src19"
+  dst19="$fake_home/.claude/agents/link19.md"
+  ln -s "$src19" "$dst19"
+  manifest19="$fake_home/.claude/.pm-dispatch/install-manifest.json"
+  printf '{\n  "entries": [\n    {"src":"%s","dst":"%s","mode":"symlink"}\n  ]\n}\n' \
+    "$src19" "$dst19" > "$manifest19"
+
+  rc=0
+  HOME="$fake_home" bash "$mock_repo/uninstall.sh" > /dev/null 2>&1 || rc=$?
+
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when hooks fail, got 0"
+  elif [[ ! -f "$manifest19" ]]; then
+    fail "$name" "manifest deleted despite hooks failure - state is unrecoverable"
+  else
+    pass "$name"
+  fi
+}
+
+test_multi_line_manifest_preserved() {
+  local name="TC-20 multi-line-manifest-preserved"
+  local fake_home="$tmp_root/home20"
+  local manifest20
+  mkdir -p "$fake_home/.claude/.pm-dispatch"
+  manifest20="$fake_home/.claude/.pm-dispatch/install-manifest.json"
+  printf '{\n  "entries": [\n    {\n      "src": "/fake/src",\n      "dst": "%s/.claude/agents/f.md",\n      "mode": "symlink"\n    }\n  ]\n}\n' \
+    "$fake_home" > "$manifest20"
+
+  HOME="$fake_home" bash "$UNINSTALL" > /dev/null 2>&1 || true
+  if [[ ! -f "$manifest20" ]]; then
+    fail "$name" "manifest deleted despite unparseable multi-line format"
+  else
+    pass "$name"
+  fi
+}
+
 test_no_manifest
 test_symlink_removed
 test_symlink_foreign
@@ -551,6 +602,8 @@ test_skip_copy_preserves_manifest
 test_out_of_root_dst_rejected
 test_out_of_root_copy_rejected
 test_dot_dot_traversal_rejected
+test_hooks_failure_preserves_manifest
+test_multi_line_manifest_preserved
 
 if [[ "$FAIL" -gt 0 ]]; then
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"

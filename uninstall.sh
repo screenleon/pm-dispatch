@@ -106,9 +106,11 @@ if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:     DRY RUN"; fi
 echo
 
 echo "==> manifest entries"
+parsed_any=0
 while IFS= read -r line; do
   [[ "$line" == *'"src"'* ]] || continue
   [[ "$line" == *'"dst"'* ]] || continue
+  parsed_any=1
 
   src="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "src")")"
   dst="$(_portable_json_unescape "$(_portable_extract_json_field "$line" "dst")")"
@@ -171,6 +173,12 @@ while IFS= read -r line; do
       ;;
   esac
 done < <(grep '"src"' "$MANIFEST" | grep '"dst"' || true)
+
+# Fail closed: manifest has entries but nothing matched the grep-based parser
+if [[ "$parsed_any" -eq 0 ]] && grep -q '"mode"' "$MANIFEST" 2>/dev/null; then
+  echo "  warning: manifest entries could not be parsed (check format — expected compact JSON)"
+  skipped=$((skipped + 1))
+fi
 
 echo
 echo "==> hooks"
