@@ -59,6 +59,8 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 
 ## Install
 
+**Prerequisite**: `jq` must be on `$PATH`. Install: Linux/WSL2 `sudo apt install jq`, macOS `brew install jq`, Windows `winget install jqlang.jq`.
+
 ```sh
 ./install.sh --dry-run                # preview
 ./install.sh                          # apply (auto-detect profile)

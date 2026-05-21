@@ -39,8 +39,19 @@ case "$PROFILE" in
   *) echo "install: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
 esac
 
+# jq is required by hooks and install-hooks.sh; fail early with actionable hint.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "install: jq not found — install it first:" >&2
+  echo "  Linux/WSL2: sudo apt install jq" >&2
+  echo "  macOS:      brew install jq" >&2
+  echo "  Windows:    winget install jqlang.jq" >&2
+  echo "  See docs/platform-support.md for details." >&2
+  exit 1
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_HOME="$HOME/.claude"
+_COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
@@ -53,7 +64,8 @@ link() {
   link_or_copy "$src" "$dest"
   rc=$?
   case "$rc" in
-    0|1) return 0 ;;
+    0) return 0 ;;
+    1) _COPY_FALLBACK_COUNT=$((_COPY_FALLBACK_COUNT + 1)); return 0 ;;
     2|3) return 1 ;;
     *) return 1 ;;
   esac
@@ -283,6 +295,13 @@ else
   fi
 fi
 echo
+
+if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
+  echo
+  echo "Note: $_COPY_FALLBACK_COUNT file(s) installed via copy (symlink unavailable)."
+  echo "      Copied files do not auto-sync with source changes."
+  echo "      To pick up updates: bash uninstall.sh && bash install.sh"
+fi
 
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then

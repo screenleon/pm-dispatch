@@ -78,6 +78,11 @@ bash scripts/install-hooks.sh
 > paths auto-sync after pulling. Individual helper scripts are still copied.
 > See *Update* below.
 
+> **Copy-mode installs (no dev-mode):** Individual helper scripts (`scripts/*.sh`) are
+> always installed via copy on Git Bash. Copied files do not auto-sync with source
+> changes. To pick up updates run `bash uninstall.sh && bash install.sh`.
+> `install.sh` prints a summary banner listing how many files were installed via copy.
+
 ---
 
 ## Update
@@ -99,17 +104,20 @@ bash install.sh    # creates symlinks for any new files
 
 ### Windows Git Bash
 
-Pull and agents/commands/skills auto-sync via junction; only individual script
-files (`scripts/*.sh`) need re-run after updates:
+Pull and agents/commands/skills auto-sync via junction. Individual helper scripts
+(`scripts/*.sh`) are installed via copy and do **not** auto-sync. To pick up
+changes to copied files, uninstall and reinstall:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"
 git pull
-bash install.sh        # re-sync copied helper scripts when they change
+bash uninstall.sh      # remove stale copies
+bash install.sh        # reinstall with latest versions
 ```
 
-Re-running `install.sh` is idempotent; it refreshes copied helper scripts with
-the latest versions and is safe to run at any time.
+Re-running `install.sh` is idempotent and safe, but will **not** refresh already-copied
+helper scripts whose source has changed (see CC-221). Use uninstall+reinstall above
+to pick up source changes in copied files.
 
 ---
 
