@@ -47,7 +47,7 @@
 | #110 | — | uninstall-hooks.sh generic repo-root removal fix（49 tests） |
 | #111 | — | CC-209/CC-210/CC-211 BACKLOG entries + Epic enum fix |
 | #112 | CC-207 | Windows Git Bash directory junction support |
-| #TBD | CC-104l, CC-104v | install.sh jq prereq check + copy-mode banner |
+| #116 | CC-104l, CC-104v | install.sh jq prereq check + copy-mode banner |
 
 ### Planned
 
