@@ -48,7 +48,6 @@
 | #111 | — | CC-209/CC-210/CC-211 BACKLOG entries + Epic enum fix |
 | #112 | CC-207 | Windows Git Bash directory junction support |
 | #116 | CC-104l, CC-104v | install.sh jq prereq check + copy-mode banner |
-| #TBD | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） |
 
 ### Planned
 
@@ -57,7 +56,7 @@
 | CC-058 | `scripts/doctor.sh` — 環境健康檢查 | ⏳ |
 | CC-104l | install.sh 頂部加 jq 先決條件 check + README | ✅ |
 | CC-104v | copy-mode 安裝後顯示 summary banner | ✅ |
-| CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） | ✅ |
+| CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） | ⏳ |
 | CC-104p | flock → portable locking shim（Windows row-loss 修復） | ✅ |
 
 ---

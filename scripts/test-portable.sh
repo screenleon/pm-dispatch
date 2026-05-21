@@ -1085,6 +1085,72 @@ case_link_or_copy_copy_refresh_user_modified_conflict() {
   pass "$name"
 }
 
+case_link_or_copy_copy_refresh_dry_run() {
+  local name="link-or-copy-copy-refresh-dry-run"
+  should_run "$name" || return 0
+  # Behavior: DRY_RUN=1 on a stale-copy path returns 0, prints "would refresh",
+  #           and leaves dst unchanged.
+  # Steps:
+  #   1. First install (FAKE_SYMLINK_UNSUPPORTED=1) → dst copied with "v1"
+  #   2. Modify src to "v2"
+  #   3. Re-run with DRY_RUN=1 → rc=0, "would refresh" in output, dst still "v1"
+
+  local old_home="$HOME"
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local old_dryrun="${DRY_RUN-0}"
+  local root="$tmp_root/$name"
+  local manifest_home="$tmp_root/$name-home"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  local code1 code2 out2 out_file
+
+  rm -rf "$root" "$manifest_home"
+  mkdir -p "$root" "$manifest_home/.claude/.pm-dispatch"
+  printf 'version one\n' > "$src"
+  HOME="$manifest_home"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  set +e
+  out_file="$root/first.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code1=$?
+  set -e
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+
+  printf 'version two\n' > "$src"
+  DRY_RUN=1
+
+  set +e
+  out_file="$root/second.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code2=$?
+  set -e
+  out2="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  DRY_RUN="$old_dryrun"
+  HOME="$old_home"
+
+  if [[ "$code1" -ne 1 ]]; then
+    fail "$name" "first install rc=$code1 (want 1)"; return
+  fi
+  if [[ "$code2" -ne 0 ]]; then
+    fail "$name" "dry-run refresh rc=$code2 (want 0); out=$out2"; return
+  fi
+  if [[ "$out2" != *"would refresh"* ]]; then
+    fail "$name" "output missing 'would refresh'; out=$out2"; return
+  fi
+  local dst_content
+  dst_content="$(cat "$dst")"
+  if [[ "$dst_content" != "version one" ]]; then
+    fail "$name" "dry-run must not modify dst; got: $dst_content"; return
+  fi
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1093,6 +1159,7 @@ case_link_or_copy_copy_fallback_dir_idempotent
 case_link_or_copy_copy_refresh_stale
 case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
+case_link_or_copy_copy_refresh_dry_run
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
