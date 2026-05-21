@@ -228,7 +228,7 @@ us_count=0; us_conflicts=0
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
+for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh doctor.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else
