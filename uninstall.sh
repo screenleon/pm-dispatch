@@ -214,7 +214,7 @@ while IFS= read -r line; do
       fi
       ;;
     junction)
-      if ! is_under_managed_root "$dst"; then
+      if ! is_symlink_dst_under_managed_root "$dst"; then
         skipped=$((skipped + 1))
         safety_skipped=$((safety_skipped + 1))
         echo "  skip $dst (dst outside managed root — skipping for safety)"

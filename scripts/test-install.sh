@@ -1667,8 +1667,8 @@ test_uninstall_junction_mode_removes_dir() {
   dst="$managed/agents"
   mkdir -p "$managed/.pm-dispatch" "$src" "$dst"
   # Write a manifest entry with mode=junction pointing to dst (which is a real dir here).
-  printf '[{"src":"%s","dst":"%s","mode":"junction"}]\n' "$src" "$dst" \
-    > "$managed/.pm-dispatch/install-manifest.json"
+  printf '{"manifest_version":1,"installed_at":"2026-01-01T00:00:00Z","pm_dispatch_version":"test","entries":[\n{"src":"%s","dst":"%s","mode":"junction"}\n]}\n' \
+    "$src" "$dst" > "$managed/.pm-dispatch/install-manifest.json"
   HOME="$home" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
   if [[ ! -d "$dst" ]]; then
     pass "$name"
