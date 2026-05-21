@@ -78,7 +78,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104m | 🟡 deferred | **[Platform layout — post-v0.1.0]** pm-dispatch staging dir + multi-target projection: introduce `~/.pm-dispatch/content/` as canonical view, then symlink-project to `~/.claude/` and (future) `~/.codex/` etc. Today pm-dispatch is Claude-only by virtue of where install.sh lands; this re-shapes it as a tool-agnostic content platform. Touches install.sh, manifest schema (v0 → v1 with `target` field), uninstall semantics. Decided 2026-05-18 (CC-104c scope discussion, Path Y). Open until clear Codex/Cursor/Aider integration need surfaces | arch/install/platform | 2026-05-18 | — | — | oss |
 | CC-104n | ✅ closed 2026-05-19 | **[CC-104c risk-reviewer advise]** install.sh preflight hard-fail (`--verify` block) converts optional/local validation issues into full install blockers; transient or environment-specific tooling gaps (e.g. missing optional bin) abort entire install. Pre-existing behavior surfaced by CC-104c gate. Mitigation: gate non-essential preflight checks behind a best-effort path OR add explicit `--skip-preflight=<name>` opt-out switch. **Design direction**: extract `scripts/run-all-tests.sh` as standalone test aggregator (make-check / make-install boundary); install.sh `--verify` becomes a thin wrapper around it; folds CC-104q | ops/install/risk | 2026-05-18 | pr:#101 | P2 | oss |
 | CC-104o | 🟢 superseded 2026-05-20 | **[Windows dogfood r3 finding]** Microsoft Store python3 reparse-point stub (`/c/Users/<user>/AppData/Local/Microsoft/WindowsApps/python3.exe`) returns exit 49 in non-interactive contexts → 36 preflight cases FAIL (every `inject-hook/*`, `session-hook/*`, `rl-hook/*`, `stop_*`, `mem-recall/format-validator`, `cross-cmd/*` because hook scripts internally call python3). Fix: install.sh / install-hooks.sh preflight detects the MS Store stub via `python3 -c 'pass'` exit-49 probe, hard-fail with platform-aware hint (`winget install Python.Python.3.12` + "remove WindowsApps stub from PATH or order real Python first"). Required before Windows = Supported flag flip — fork users on Windows hit this on first install. Superseded by CC-104t which eliminates python3 entirely via jq rewrite. | ops | 2026-05-18 | — | — | oss |
-| CC-104p | ⏸ deferred | **[Windows dogfood r3 finding]** `flock` is Linux-only — Git Bash has no flock binary; `hook-routing-log.sh` directly calls flock (bypassing portable.sh abstraction) → 2 cases FAIL on Windows (`routing: rotation failure audits and skips append`, `routing: concurrent appends keep every row`). Strong dependency on **CC-104k** (mkdir_lock Git Bash atomicity) — fix should be one combined PR: (a) fix mkdir_lock atomicity per CC-104k, (b) add `scripts/lib/portable.sh::serialize_with_lock <path> <cmd>` shim that prefers `flock` when present else falls back to `mkdir_lock`, (c) rewrite hook-routing-log.sh to use shim. **Blocker** because CC-036's main-thread background dispatch makes concurrent routing-log appends real (no longer theoretical) → Windows row-loss = silent data corruption | arch/portable | 2026-05-18 | — | — | oss |
+| CC-104p | ✅ closed 2026-05-21 | **[Windows dogfood r3 finding]** `flock` is Linux-only — Git Bash has no flock binary; `hook-routing-log.sh` directly calls flock (bypassing portable.sh abstraction) → 2 cases FAIL on Windows (`routing: rotation failure audits and skips append`, `routing: concurrent appends keep every row`). Strong dependency on **CC-104k** (mkdir_lock Git Bash atomicity) — fix should be one combined PR: (a) fix mkdir_lock atomicity per CC-104k, (b) add `scripts/lib/portable.sh::serialize_with_lock <path> <cmd>` shim that prefers `flock` when present else falls back to `mkdir_lock`, (c) rewrite hook-routing-log.sh to use shim. **Blocker** because CC-036's main-thread background dispatch makes concurrent routing-log appends real (no longer theoretical) → Windows row-loss = silent data corruption | arch/portable | 2026-05-18 | pr:TBD | — | oss |
 | CC-104q | ✅ closed 2026-05-19 | **[Windows dogfood r3 finding]** test-hooks preflight runs codex-dispatch cases (`cxw: Write to existing symlink /tmp/brief-*.md → deny`, `dispatch_brief_file_reads_file`) even when codex is not on PATH → 2 cases FAIL with `codex: command not found`. `install.sh --profile minimal` skips codex hooks but preflight still tests them. Fix: test-hooks should SKIP (not FAIL) codex-* cases when `command -v codex` is false. Folds well with **CC-104n** preflight `--skip-preflight=<name>` mechanism — could land in same PR | ops/test/ux | 2026-05-18 | — | — | oss |
 | CC-104r | ⏸ deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh` performance_budget assertion: 27990 ms actual vs 3500 ms budget on Windows native filesystem (WSL UNC path `\\wsl.localhost\...` is ~8× slower than local disk). Not a pm-dispatch bug — physical filesystem characteristic. Fix is two-part: (a) `docs/platform-support.md` warns "install on local disk, avoid cross-WSL/native FS boundaries"; (b) preflight detects UNC path → prints warning and skips budget assertion (10 lines). Polish, not blocker | docs/ops | 2026-05-18 | — | — | oss |
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/trace/portability | 2026-05-18 | — | — | oss |
@@ -96,7 +96,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
 | CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | design |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
-| CC-211 | ⏸ deferred | **[adapter-layer split]** Formally separate pm-dispatch into (a) a CLI-agnostic core (`core/`: validate.sh, rollup.sh, pr-gate.sh, codex-dispatch.sh, lib/) and (b) per-tool adapter layers (`adapters/claude-code/` for hooks/agents/commands, `adapters/codex/` for future direct-invoke path, `adapters/generic/` for shell-alias entry points). The core scripts are already CLI-agnostic; the adapter split makes this explicit so new AI tools can integrate without touching core logic. Complements CC-059 (thin pm.md script-layer). | ops/portability | 2026-05-21 | — | — | design |
+| CC-211 | ⏸ deferred | **[multi-CLI platform architecture]** Re-frame pm-dispatch from "Claude Code personal config + Codex dispatch wrapper" to "agent-native PM orchestration toolkit" with 4 clean layers. `core/` — PM schema, task / decision / backlog / review models, reviewer policy, dispatch state machine; no CLI awareness at all. `runtime/` — `pmctl` CLI entrypoint, dispatch runner, trace logger, guard engine, validator, report generator; no Codex/Claude specifics. `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` — format conversion only; each adapter is a thin shell that translates CLI-specific calls into pmctl invocations. `mcp/` — pm-dispatch-server MCP tool bridge (pm_list_tasks / pm_create_task / pm_dispatch / pm_read_trace / pm_guard_check); any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) uses the same server. Key design rules: core never changes per CLI; guard engine lives in pmctl, Claude hooks are just one delivery path; adapters own zero business logic. P0: extract `core/schemas/` (task.schema.json, decision.schema.json, review.schema.json) and lock data format across CLIs. P1: pmctl CLI (CC-215). P2: Claude commands call pmctl, stop embedding logic. P3: Codex adapter formalised. P4: MCP server (CC-216). P5: Gemini / OpenCode adapters. Complements CC-059 (thin pm.md), CC-215 (pmctl), CC-216 (MCP server). | arch/portability | 2026-05-21 | — | — | design |
+| CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|gemini\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
+| CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Gemini CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
@@ -321,6 +323,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 ## CC-104o — Windows Store python3 stub (superseded by CC-104t)
 
 **See**: CC-104t
+
+## CC-104p — serialize_with_lock routing-log shim ✅ 2026-05-21
+
+**Outcome**: `scripts/lib/portable.sh` now exposes `serialize_with_lock()`, preferring `flock` when available and falling back to `mkdir_lock` via `FAKE_FLOCK_MISSING=1`-testable path. `hook-routing-log.sh` routes append serialization through the shim. Portable and routing tests cover both lock paths and rc propagation.
+**See**: pr:TBD
 
 ## CC-105 — [CC-OSS Phase 5] BACKLOG cleanup + v0.1.0 release ✅ 2026-05-17
 
@@ -750,31 +757,37 @@ is skipped and a warning is emitted.
 
 **Priority**: P3 — low urgency (normal manifests are safe). Fix before any public release.
 
-## CC-211 — adapter-layer split: separate CLI-agnostic core from per-tool adapters（deferred）
+## CC-211 — multi-CLI platform architecture（deferred）
 
-**Problem**: pm-dispatch's core orchestration logic (pr-gate, validate, rollup, codex-dispatch)
-is already CLI-agnostic bash, but the directory structure does not make this boundary explicit.
-As other AI coding tools (Codex CLI, future tools) emerge, the risk of coupling creep grows.
+**Problem**: pm-dispatch is currently framed as "Claude Code personal config + Codex dispatch
+wrapper". As Codex CLI, Gemini CLI, OpenCode, and other AI tools mature, this framing creates
+coupling creep: hooks, adapters, and business logic intermingle because there is no enforced
+boundary between the CLI-agnostic PM engine and each tool's delivery path.
 
-**Why**: The user plans to eventually consolidate pm-dispatch outside `~/.claude/` so that
-Codex, Claude Code, and other CLIs can all use the same orchestration layer with their own
-thin adapter shims. The current symlink model (`install.sh` → `~/.claude/`) already provides
-good separation for Claude Code, but there is no formal boundary preventing new code from
-assuming `~/.claude/` as a runtime dependency.
+**Why**: Re-framing pm-dispatch as an "agent-native PM orchestration toolkit" with explicit layer
+boundaries allows any AI CLI to use the same PM system without forking logic. Guard engine,
+dispatch state machine, reviewer policy, and schema definitions should be owned once.
 
-**Requirement** (design + restructure scope):
-1. Define the core/adapter split in directory layout:
-   - `core/` ← current `scripts/` logic that has zero `~/.claude/` assumptions
-   - `adapters/claude-code/` ← hooks, agents, commands (current `~/.claude/` shims)
-   - `adapters/codex/` ← future: direct `codex` CLI invocation wrapper
-   - `adapters/generic/` ← shell alias / Makefile entry points
-2. Update `install.sh` to support `--adapter claude-code|codex|all` flag.
-3. Ensure no `core/` script reads from or writes to `~/.claude/` directly.
-4. Document the adapter contract in `docs/adapter-contract.md`.
+**Requirement** (4-layer architecture, design scope):
 
-**Complements**: CC-059 (thin `/pm.md` script-layer), CC-207 (Windows portability).
+| Layer | Path | Owns |
+|---|---|---|
+| `core/` | `core/schemas/`, `core/lib/` | PM schema, task/decision/review models, reviewer policy, dispatch state machine — zero CLI awareness |
+| `runtime/` | `cli/pmctl` | `pmctl` CLI, dispatch runner, trace logger, guard engine, validator, report generator |
+| `adapters/` | `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` | Format conversion only; each adapter translates CLI-specific calls into `pmctl` invocations |
+| `mcp/` | `mcp/pm-dispatch-server` | MCP tool bridge; any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) shares one server |
 
-**Priority**: P4 — long-term direction, not urgent. Evaluate at v0.3.0 milestone planning.
+**Key design rules**:
+- `core/` never changes per CLI; no `~/.claude/` assumptions.
+- Guard engine lives in `pmctl`; Claude hooks are one delivery path, not the definition.
+- Adapters own zero business logic.
+- `pmctl adapter generate <claude|codex|gemini|opencode>` produces per-CLI config from core agent definitions to prevent 4-way drift.
+
+**Priority order**: P0 extract `core/schemas/` (lock data format across CLIs) → P1 pmctl CLI (CC-215) → P2 Claude commands call pmctl → P3 Codex adapter formalised → P4 MCP server (CC-216) → P5 Gemini/OpenCode adapters.
+
+**Complements**: CC-059 (thin `/pm.md` script-layer), CC-215 (pmctl), CC-216 (MCP server).
+
+**Priority**: P4 — long-term direction. Evaluate at v0.3.0 milestone planning.
 
 ## CC-212 — `make_junction_windows()` env-var path-passing standardization（deferred）
 
@@ -829,6 +842,60 @@ document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` (one-line change).
 
 **Priority**: P3 — tiny fix, fold into next docs PR.
+
+## CC-215 — pmctl — core CLI entrypoint（deferred）
+
+**Problem**: pm-dispatch has no language-agnostic runtime binary. All orchestration logic is
+reached through Claude-specific hooks and commands, preventing non-Claude CLIs from accessing
+the same PM capabilities without duplicating logic.
+
+**Why**: `pmctl` as a standalone binary makes pm-dispatch a proper tool layer: Claude hooks,
+Codex wrappers, and MCP server all become thin callers into one well-defined CLI interface.
+Guard logic and dispatch state move from Claude-only paths into `pmctl` so any CLI without hook
+support can call `pmctl guard check` or `pmctl safe-bash`.
+
+**Requirement**:
+- Implement `cli/pmctl` with subcommand interface:
+  - `pmctl task create|claim|dispatch|status|review`
+  - `pmctl decision add`
+  - `pmctl backlog sync`
+  - `pmctl trace tail`
+  - `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>`
+  - `pmctl adapter generate <claude|codex|gemini|opencode>`
+- Claude adapter: `/pm task-123` → `pmctl task dispatch task-123 --agent claude`
+- Guard logic migrates from Claude-only hooks into `pmctl` so hook is just a thin caller.
+- `pmctl adapter generate` produces per-CLI config from core agent definitions.
+
+**Depends on**: CC-211 (core layer extracted first).
+
+**Complements**: CC-211 (architecture), CC-216 (MCP server wraps pmctl).
+
+**Priority**: P1 within CC-211 roadmap. Evaluate at v0.3.0.
+
+## CC-216 — MCP server — pm-dispatch-server（deferred）
+
+**Problem**: Each AI CLI (Claude Code, OpenCode, Gemini CLI) needs separate command/hook wiring
+to reach pm-dispatch. There is no universal bridge that works for any MCP-capable tool without
+per-CLI adaptation.
+
+**Why**: An MCP server exposes pm-dispatch operations as standard MCP tools, meaning any
+MCP-capable CLI gets full PM access with no additional wiring. Adapters shrink to auth/config/
+format differences only.
+
+**Requirement**:
+- Implement `mcp/pm-dispatch-server` exposing MCP tools:
+  - `pm_list_tasks`, `pm_read_task`, `pm_create_task`, `pm_update_status`
+  - `pm_add_decision`, `pm_request_review`, `pm_dispatch_to_agent`
+  - `pm_read_trace`, `pm_guard_check`
+- Implementation path: thin Node.js or Python wrapper over `pmctl` subprocesses (avoids
+  duplicating logic), or native bash MCP server once spec stabilises.
+- MCP becomes the universal bridge; adapters handle only auth / config / format differences.
+
+**Depends on**: CC-211 (core layer), CC-215 (pmctl stable before wrapping).
+
+**Complements**: CC-211 (architecture), CC-215 (pmctl as backend).
+
+**Priority**: P4 within CC-211 roadmap. Evaluate at v0.3.0.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
