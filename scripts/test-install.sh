@@ -1827,12 +1827,12 @@ test_install_sh_copy_fallback_banner() {
     fail "$name" "install failed rc=$rc; out=$out"
     return
   fi
-  if [[ "$out" != *"installed via copy fallback"* ]]; then
+  if [[ "$out" != *"installed via copy"* ]]; then
     fail "$name" "expected copy fallback banner; out=$out"
     return
   fi
-  if [[ "$out" != *"re-run install.sh after updates"* ]]; then
-    fail "$name" "expected re-run reminder in banner; out=$out"
+  if [[ "$out" != *"uninstall.sh && bash install.sh"* ]]; then
+    fail "$name" "expected uninstall+reinstall hint in banner; out=$out"
     return
   fi
   pass "$name"
@@ -1862,7 +1862,7 @@ test_install_sh_no_banner_dry_run() {
     fail "$name" "dry-run install failed rc=$rc; out=$out"
     return
   fi
-  if [[ "$out" == *"installed via copy fallback"* ]]; then
+  if [[ "$out" == *"installed via copy"* ]]; then
     fail "$name" "banner must NOT appear in dry-run mode; out=$out"
     return
   fi
