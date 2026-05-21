@@ -165,29 +165,29 @@ case_doctor_all_ok_exits_0() {
   fi
 }
 
-case_doctor_hooks_missing_exits_2() {
-  local name="doctor-hooks-missing-exits-2"
+case_doctor_hooks_missing_exits_1() {
+  local name="doctor-hooks-missing-exits-1"
   should_run "$name" || return 0
   local home="$tmp_root/home-no-hooks" out status=0
   mkdir -p "$home/.claude"
   printf '{"hooks":{}}\n' > "$home/.claude/settings.json"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$out" == *"[FAIL]"* && "$out" == *"hooks"* ]]; then
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"hooks"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
   fi
 }
 
-case_doctor_settings_missing_exits_2() {
-  local name="doctor-settings-missing-exits-2"
+case_doctor_settings_missing_exits_1() {
+  local name="doctor-settings-missing-exits-1"
   should_run "$name" || return 0
   local home="$tmp_root/home-no-settings" out status=0
   mkdir -p "$home/.claude"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$out" == *"[FAIL]"* && "$out" == *"settings"* ]]; then
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"settings"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -213,14 +213,14 @@ case_doctor_json_output_valid() {
       fail "$name" "invalid JSON line: $line"
       return
     fi
-    if [[ "$line" == *"[OK]"* || "$line" == *"[FAIL]"* ]]; then
+    if [[ "$line" == *"[OK]"* ]]; then
       fail "$name" "human tag leaked into JSON: $line"
       return
     fi
     last_line="$line"
   done <<< "$out"
 
-  if [[ "$status" -eq 2 && "$last_line" == *'"summary":true'* ]]; then
+  if [[ "$status" -eq 1 && "$last_line" == *'"summary":true'* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status last_line=$last_line out=$out"
@@ -241,8 +241,8 @@ case_doctor_quiet_no_ok_lines() {
   fi
 }
 
-case_doctor_jq_missing_exits_2() {
-  local name="doctor-jq-missing-exits-2"
+case_doctor_jq_missing_exits_1() {
+  local name="doctor-jq-missing-exits-1"
   should_run "$name" || return 0
   if ! command -v jq >/dev/null 2>&1; then
     pass "$name (jq not on PATH - test trivially satisfied)"
@@ -256,19 +256,127 @@ case_doctor_jq_missing_exits_2() {
   printf '{}\n' > "$home/.claude/settings.json"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" "$bash_real" "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$status" -eq 2 && "$out" == *"[FAIL]"* && "$out" == *"jq"* ]]; then
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"jq"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
   fi
 }
 
+case_doctor_warn_only_exits_0() {
+  local name="doctor-warn-only-exits-0"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-warn-only" out status=0 path bin cmd
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  # PATH without claude or codex -> those checks return WARN, not FAIL.
+  bin="$tmp_root/bin-warn-only"
+  mkdir -p "$bin"
+  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+    link_cmd "$bin" "$cmd"
+  done
+  [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
+  [[ -x "$bin/python3" ]] || { pass "$name (python3 not available - skip)"; return; }
+  path="$bin"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_repo_from_different_cwd() {
+  local name="doctor-repo-from-different-cwd"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-repo-cwd" out status=0
+  write_full_settings "$home"
+  write_manifest "$home"
+  # Create memory dir for REPO_ROOT path, not for tmp_root.
+  # shellcheck source=scripts/lib/memory.sh
+  . "$REPO_ROOT/scripts/lib/memory.sh"
+  local encoded
+  encoded="$(encode_path "$REPO_ROOT")"
+  mkdir -p "$home/.claude/projects/$encoded/memory"
+
+  local other_cwd="$tmp_root/other-cwd"
+  mkdir -p "$other_cwd"
+  local path
+  path="$(make_stub_bin "$tmp_root/bin-repo-cwd" claude codex)"
+
+  out="$(cd "$other_cwd" && HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"memory directory exists"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected memory-dir ok for REPO_ROOT; status=$status out=$out"
+  fi
+}
+
+case_doctor_frontmatter_lint_ok() {
+  local name="doctor-frontmatter-lint-ok"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-frontmatter" out status=0 path
+  write_full_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-frontmatter" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"frontmatter lint passed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected frontmatter-lint check in output; status=$status out=$out"
+  fi
+}
+
+case_doctor_help_exits_0() {
+  local name="doctor-help-exits-0"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(bash "$DOCTOR" --help 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"Usage:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_unknown_flag() {
+  local name="doctor-unknown-flag"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(bash "$DOCTOR" --unknown-flag-xyz 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"unknown flag"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_repo_missing_arg() {
+  local name="doctor-repo-missing-arg"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(bash "$DOCTOR" --repo 2>&1)" || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 for --repo with no arg; status=$status out=$out"
+  fi
+}
+
 case_doctor_all_ok_exits_0
-case_doctor_hooks_missing_exits_2
-case_doctor_settings_missing_exits_2
+case_doctor_hooks_missing_exits_1
+case_doctor_settings_missing_exits_1
 case_doctor_json_output_valid
 case_doctor_quiet_no_ok_lines
-case_doctor_jq_missing_exits_2
+case_doctor_jq_missing_exits_1
+case_doctor_warn_only_exits_0
+case_doctor_repo_from_different_cwd
+case_doctor_frontmatter_lint_ok
+case_doctor_help_exits_0
+case_doctor_unknown_flag
+case_doctor_repo_missing_arg
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"

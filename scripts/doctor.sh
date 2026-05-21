@@ -275,7 +275,7 @@ check_memory_dir() {
   fi
 
   local result=""
-  result="$(find_memory_dir "$PWD" 2>/dev/null || true)"
+  result="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
   if [[ -n "$result" && -d "$result" ]]; then
     emit_check memory-dir ok "memory directory exists: $result"
   else
@@ -299,6 +299,22 @@ check_manifest() {
   fi
 
   emit_check manifest ok "install manifest present"
+}
+
+check_frontmatter_lint() {
+  local lint_script="${REPO_ROOT}/scripts/lint-frontmatter.sh"
+  if [[ ! -x "$lint_script" ]]; then
+    emit_check frontmatter-lint warn "lint-frontmatter.sh not found or not executable" \
+      "bash '${REPO_ROOT}/install.sh' to restore managed scripts"
+    return
+  fi
+  local out
+  if out="$(cd "$REPO_ROOT" && "$lint_script" 2>&1)"; then
+    emit_check frontmatter-lint ok "frontmatter lint passed"
+  else
+    emit_check frontmatter-lint fail "frontmatter lint errors detected" \
+      "bash '${REPO_ROOT}/scripts/lint-frontmatter.sh' for details"
+  fi
 }
 
 main() {
@@ -349,10 +365,10 @@ main() {
   check_scripts_executable
   check_memory_dir
   check_manifest
+  check_frontmatter_lint
 
   local ec=0
-  [[ $_WARN_COUNT -gt 0 ]] && ec=1
-  [[ $_FAIL_COUNT -gt 0 ]] && ec=2
+  [[ $_FAIL_COUNT -gt 0 ]] && ec=1
   if [[ "$JSON" -eq 1 ]]; then
     printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":%d}\n' \
       "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT" "$ec"
