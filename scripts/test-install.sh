@@ -1544,22 +1544,27 @@ test_install_dir_junction_windows_fallback() {
   # real PowerShell or an environment where New-Item Junction is blocked.
   printf '#!/bin/bash\nexit 1\n' > "$fake_bin/powershell.exe"
   chmod +x "$fake_bin/powershell.exe"
+  local install_exit=0
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
+  local ok=true
+  if [[ $install_exit -ne 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — install.sh exited %d unexpectedly\n' "$name" "$install_exit" >&2
+  fi
   # Fallback must have run install_dir() per-file copy — at least one agent
   # file (symlink or copy) should appear directly in ~/.claude/agents/.
   local agent_count=0
   [[ -d "$home/.claude/agents" ]] && \
     agent_count=$(find "$home/.claude/agents" -maxdepth 1 -name "*.md" | wc -l)
-  if [[ "$agent_count" -gt 0 ]]; then
-    pass "$name"
-  else
-    printf '  FAIL  %s — expected per-file agent outputs under ~/.claude/agents/ after junction fallback\n' "$name" >&2
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  if [[ "$agent_count" -eq 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — no agent files under ~/.claude/agents/ after junction fallback\n' "$name" >&2
   fi
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
 }
 
 test_install_dir_junction_manifest_entry() {
@@ -1570,23 +1575,86 @@ test_install_dir_junction_manifest_entry() {
   fake_bin="$tmp_root/${name}-bin"
   mkdir -p "$home/.claude" "$fake_bin"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
-  # Fake powershell.exe that succeeds — simulates a successful junction
-  # creation on Windows. On Linux, no real junction is created but the
-  # manifest should still record mode=junction.
-  printf '#!/bin/bash\nexit 0\n' > "$fake_bin/powershell.exe"
+  # Fake powershell.exe: parses -Path from -Command, converts Win-format path
+  # to Unix, then mkdir -p to simulate junction creation side effect.
+  cat > "$fake_bin/powershell.exe" <<'PWSH'
+#!/bin/bash
+for arg in "$@"; do
+  if [[ "$arg" == *"New-Item"* && "$arg" == *"Junction"* ]]; then
+    if [[ "$arg" =~ -Path[[:space:]]\'([^\']+)\' ]]; then
+      dst="${BASH_REMATCH[1]//\\/\/}"
+      mkdir -p "$dst" 2>/dev/null || true
+    fi
+  fi
+done
+exit 0
+PWSH
   chmod +x "$fake_bin/powershell.exe"
+  local install_exit=0
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
   local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
-  if [[ -f "$manifest" ]] && grep -q '"mode":"junction"' "$manifest"; then
-    pass "$name"
-  else
-    printf '  FAIL  %s — expected mode=junction entry in install-manifest.json\n' "$name" >&2
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  local ok=true
+  if [[ $install_exit -ne 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — install.sh exited %d\n' "$name" "$install_exit" >&2
   fi
+  if ! grep -q '"mode":"junction"' "$manifest" 2>/dev/null; then
+    ok=false
+    printf '  FAIL  %s — no mode=junction in manifest\n' "$name" >&2
+  fi
+  if [[ ! -d "$home/.claude/agents" ]]; then
+    ok=false
+    printf '  FAIL  %s — ~/.claude/agents directory not created by fake junction\n' "$name" >&2
+  fi
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
+}
+
+test_install_dir_junction_existing_real_dir() {
+  local name="install-dir-junction-existing-real-dir"
+  should_run "$name" || return 0
+  local home fake_bin unrelated_agent
+  home="$tmp_root/$name"
+  fake_bin="$tmp_root/${name}-bin"
+  unrelated_agent="$home/.claude/agents/third-party-agent.md"
+  mkdir -p "$home/.claude/agents" "$fake_bin"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  # Pre-create an unrelated agent file in ~/.claude/agents/ to simulate
+  # a user who already has other agents installed.
+  printf '# Third-party agent\n' > "$unrelated_agent"
+  # Fake powershell.exe that succeeds — if install.sh incorrectly calls junction
+  # on the pre-existing real directory, the unrelated file would be lost.
+  printf '#!/bin/bash\nexit 0\n' > "$fake_bin/powershell.exe"
+  chmod +x "$fake_bin/powershell.exe"
+  local install_exit=0
+  HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
+  local ok=true
+  if [[ $install_exit -ne 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — install.sh exited %d\n' "$name" "$install_exit" >&2
+  fi
+  # The unrelated agent must still be present (install_dir fallback preserves it).
+  if [[ ! -f "$unrelated_agent" ]]; then
+    ok=false
+    printf '  FAIL  %s — unrelated agent was deleted (junction replaced real dir)\n' "$name" >&2
+  fi
+  # pm-dispatch agents must also be installed (per-file fallback ran).
+  local pm_agent_count=0
+  [[ -d "$home/.claude/agents" ]] && \
+    pm_agent_count=$(find "$home/.claude/agents" -maxdepth 1 -name "*.md" \
+      ! -name "third-party-agent.md" | wc -l)
+  if [[ "$pm_agent_count" -eq 0 ]]; then
+    ok=false
+    printf '  FAIL  %s — no pm-dispatch agent files installed despite fallback\n' "$name" >&2
+  fi
+  $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
 }
 
 test_uninstall_junction_mode_removes_dir() {
@@ -1668,6 +1736,7 @@ test_verify_flag_runs_preflights
 test_escape_hatch_overrides_verify
 test_install_dir_junction_manifest_entry
 test_install_dir_junction_windows_fallback
+test_install_dir_junction_existing_real_dir
 test_uninstall_junction_mode_removes_dir
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic

@@ -99,6 +99,14 @@ install_dir_junction() {
     fi
   fi
 
+  # If dest exists as a non-junction real directory, fall back to per-file copy
+  # to preserve any unrelated entries (e.g. agents from other tools).
+  if [[ -d "$dest_dir" && ! -L "$dest_dir" ]]; then
+    printf 'install: %s is an existing real directory — per-file copy to preserve coexistence\n' "$subdir" >&2
+    install_dir "$subdir"
+    return
+  fi
+
   if [[ ! -d "$CLAUDE_HOME" ]]; then
     mkdir -p "$CLAUDE_HOME"
   fi
