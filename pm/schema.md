@@ -59,7 +59,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - **首次記錄**：`YYYY-MM-DD`，fallback 順序見下
 - **Refs**：結構化引用，語法見 §2.4.3；空則 `—`
 - **Priority**：`P1` / `P2` / `P3` / `—`（優先度；未設為 `—`）。向下相容：v1.1/v1.2 file 中缺此欄的列 emit W-MISSING-COLS（patch version 不引入 breaking column enforcement）。
-- **Epic**：`oss` / `reuse-debt` / `hygiene` / `design` / `—`（語義分組；空則 `—`）。詳見 §2.4.5。
+- **Epic**：`oss` / `reuse-debt` / `hygiene` / `design` / `spike` / `—`（語義分組；空則 `—`）。詳見 §2.4.5。
 
 索引必須與 body 條目一一對應，順序按 ID 升冪。
 
@@ -111,8 +111,8 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 
 #### 2.4.5 Epic enum
 
-`oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程/schema 維護）/ `design`（新功能架構設計，含 interface 決策與 /pre-impl 設計評審類工作）/ `—`（未分組）。
-新 repo 可以擴充此 enum；擴充需同步更新 `pm/schema.md` 並 bump patch version。
+`oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程/schema 維護）/ `design`（新功能架構設計，含 interface 決策與 /pre-impl 設計評審類工作）/ `spike`（調查類任務）/ `—`（未分組）。
+新 repo 可以擴充此 enum（additive 加值向下相容，不需 bump version）；刪除或重命名現有值則需 bump patch version 並標記 breaking change。擴充需同步更新 `pm/schema.md`。
 
 ### 2.5 條目 body 三層格式
 
