@@ -911,11 +911,188 @@ case_detect_platform_host_native
 case_detect_platform_ostype_msys
 case_file_size_bytes_returns_size
 case_file_size_bytes_missing_file
+case_link_or_copy_copy_refresh_stale() {
+  local name="link-or-copy-copy-refresh-stale"
+  should_run "$name" || return 0
+  # Behavior: when src content changes after a copy-mode install, re-running link_or_copy
+  #           detects dst_sha==prev_sha (dst unchanged) but src_sha!=dst_sha, then re-copies.
+  # Steps:
+  #   1. First install: FAKE_SYMLINK_UNSUPPORTED=1, src="v1" → dst copied, manifest records sha("v1")
+  #   2. Modify src to "v2"
+  #   3. Re-run link_or_copy → rc=1 (refresh), "refresh" in output, dst contains "v2"
+
+  local old_home="$HOME"
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local root="$tmp_root/$name"
+  local manifest_home="$tmp_root/$name-home"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  local code1 code2 out2 out_file
+
+  rm -rf "$root" "$manifest_home"
+  mkdir -p "$root" "$manifest_home/.claude/.pm-dispatch"
+  printf 'version one\n' > "$src"
+  HOME="$manifest_home"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  set +e
+  out_file="$root/first.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code1=$?
+  set -e
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+
+  printf 'version two\n' > "$src"
+
+  set +e
+  out_file="$root/second.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code2=$?
+  set -e
+  out2="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  HOME="$old_home"
+
+  if [[ "$code1" -ne 1 ]]; then
+    fail "$name" "first install rc=$code1 (want 1)"; return
+  fi
+  if [[ "$code2" -ne 1 ]]; then
+    fail "$name" "refresh rc=$code2 (want 1); out=$out2"; return
+  fi
+  if [[ "$out2" != *"refresh"* ]]; then
+    fail "$name" "output missing 'refresh'; out=$out2"; return
+  fi
+  local dst_content
+  dst_content="$(cat "$dst")"
+  if [[ "$dst_content" != "version two" ]]; then
+    fail "$name" "dst has stale content: $dst_content"; return
+  fi
+  pass "$name"
+}
+
+case_link_or_copy_copy_no_refresh_when_up_to_date() {
+  local name="link-or-copy-copy-no-refresh-when-up-to-date"
+  should_run "$name" || return 0
+  # Behavior: when src has not changed since copy-mode install, re-run returns 0 (ok).
+  # Steps:
+  #   1. First install: FAKE_SYMLINK_UNSUPPORTED=1 → dst copied
+  #   2. Re-run without changing src → src_sha==dst_sha → rc=0, "ok"
+
+  local old_home="$HOME"
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local root="$tmp_root/$name"
+  local manifest_home="$tmp_root/$name-home"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  local code1 code2 out2 out_file
+
+  rm -rf "$root" "$manifest_home"
+  mkdir -p "$root" "$manifest_home/.claude/.pm-dispatch"
+  printf 'no change\n' > "$src"
+  HOME="$manifest_home"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  set +e
+  out_file="$root/first.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code1=$?
+  set -e
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+
+  set +e
+  out_file="$root/second.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code2=$?
+  set -e
+  out2="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  HOME="$old_home"
+
+  if [[ "$code1" -ne 1 ]]; then
+    fail "$name" "first install rc=$code1 (want 1)"; return
+  fi
+  if [[ "$code2" -ne 0 ]]; then
+    fail "$name" "re-run rc=$code2 (want 0 — up to date); out=$out2"; return
+  fi
+  if [[ "$out2" != *"ok"* ]]; then
+    fail "$name" "expected 'ok' in output; out=$out2"; return
+  fi
+  pass "$name"
+}
+
+case_link_or_copy_copy_refresh_user_modified_conflict() {
+  local name="link-or-copy-copy-refresh-user-modified-conflict"
+  should_run "$name" || return 0
+  # Behavior: when user modifies the installed copy (dst_sha != prev_sha), re-run returns 2 (CONFLICT).
+  # Steps:
+  #   1. First install: FAKE_SYMLINK_UNSUPPORTED=1 → dst copied, manifest records sha
+  #   2. User overwrites dst with different content
+  #   3. Re-run → dst_sha != prev_sha AND dst_sha != src_sha → rc=2, CONFLICT message
+
+  local old_home="$HOME"
+  local old_unsupported="${FAKE_SYMLINK_UNSUPPORTED-0}"
+  local root="$tmp_root/$name"
+  local manifest_home="$tmp_root/$name-home"
+  local src="$root/src.txt"
+  local dst="$root/dst.txt"
+  local manifest="$manifest_home/.claude/.pm-dispatch/install-manifest.json"
+  local code1 code2 out2 out_file
+
+  rm -rf "$root" "$manifest_home"
+  mkdir -p "$root" "$manifest_home/.claude/.pm-dispatch"
+  printf 'original\n' > "$src"
+  HOME="$manifest_home"
+  FAKE_SYMLINK_UNSUPPORTED=1
+
+  set +e
+  out_file="$root/first.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code1=$?
+  set -e
+
+  manifest_flush "$manifest" "$REPO_ROOT" >/dev/null
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+
+  printf 'user modified\n' > "$dst"
+
+  set +e
+  out_file="$root/second.out"
+  link_or_copy "$src" "$dst" > "$out_file" 2>&1
+  code2=$?
+  set -e
+  out2="$(cat "$out_file")"
+
+  FAKE_SYMLINK_UNSUPPORTED="$old_unsupported"
+  HOME="$old_home"
+
+  if [[ "$code1" -ne 1 ]]; then
+    fail "$name" "first install rc=$code1 (want 1)"; return
+  fi
+  if [[ "$code2" -ne 2 ]]; then
+    fail "$name" "re-run rc=$code2 (want 2 — CONFLICT); out=$out2"; return
+  fi
+  if [[ "$out2" != *"CONFLICT"* ]]; then
+    fail "$name" "expected CONFLICT in output; out=$out2"; return
+  fi
+  pass "$name"
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
 case_link_or_copy_dst_is_real_dir
 case_link_or_copy_copy_fallback_dir_idempotent
+case_link_or_copy_copy_refresh_stale
+case_link_or_copy_copy_no_refresh_when_up_to_date
+case_link_or_copy_copy_refresh_user_modified_conflict
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
