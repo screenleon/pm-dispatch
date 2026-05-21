@@ -97,6 +97,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | design |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[adapter-layer split]** Formally separate pm-dispatch into (a) a CLI-agnostic core (`core/`: validate.sh, rollup.sh, pr-gate.sh, codex-dispatch.sh, lib/) and (b) per-tool adapter layers (`adapters/claude-code/` for hooks/agents/commands, `adapters/codex/` for future direct-invoke path, `adapters/generic/` for shell-alias entry points). The core scripts are already CLI-agnostic; the adapter split makes this explicit so new AI tools can integrate without touching core logic. Complements CC-059 (thin pm.md script-layer). | ops/portability | 2026-05-21 | — | — | design |
+| CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
+| CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
+| CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -772,6 +775,60 @@ assuming `~/.claude/` as a runtime dependency.
 **Complements**: CC-059 (thin `/pm.md` script-layer), CC-207 (Windows portability).
 
 **Priority**: P4 — long-term direction, not urgent. Evaluate at v0.3.0 milestone planning.
+
+## CC-212 — `make_junction_windows()` env-var path-passing standardization（deferred）
+
+**Problem**: `make_junction_windows()` passes the source and destination paths as inline PowerShell
+command-string arguments (`-Path '$win_src' -Target '$win_dst'`), but `remove_junction_windows()`
+already uses `PM_DISPATCH_RM_DST` env var. Paths containing single quotes break the inline form.
+Two different conventions in the same portability layer increase maintenance risk.
+
+**Why**: Raised by critic (path quoting) and architecture-reviewer (convention inconsistency) in
+gate-20260521-115634 as [medium] advise on PR #112.
+
+**Requirement**: Replace inline PowerShell path arguments in `make_junction_windows()` with
+`PM_DISPATCH_MAKE_SRC` and `PM_DISPATCH_MAKE_DST` env vars (matching the pattern already
+used by `remove_junction_windows()`). Update `test_install_dir_junction_manifest_entry` fake
+powershell.exe to assert both env vars.
+
+**Complements**: CC-207 (parent), CC-213 (idempotency).
+
+**Priority**: P3.
+
+## CC-213 — `install_dir_junction()` Windows-aware idempotency probe（deferred）
+
+**Problem**: The idempotent reinstall path checks `[[ -L "$dest_dir" ]]` + `readlink` to detect
+an already-installed junction, but PowerShell-created Windows directory junctions may not appear
+as `-L` in Git Bash (reparse points vs. Unix symlinks). A second `bash install.sh` run could
+therefore treat the junction directory as a real directory, fall back to per-file copy, and
+flush a manifest without the `junction` mode entry.
+
+**Why**: Windows real-device verification confirmed idempotency passes in practice (PR #112), but
+the `-L` assumption was flagged as insufficiently proven by critic + qa-tester in gate-20260521-115634
+as [medium]. The QA block was overridden with Windows dogfood evidence; this ticket captures the
+remaining automation gap.
+
+**Requirement**: Add a manifest-driven idempotency probe: before the `-L` check, read the
+existing manifest for the entry's `mode` field; if `mode == "junction"` treat the destination as
+an existing junction regardless of whether Bash `-L` fires. Add a focused test that exercises
+the "manifest says junction, `-L` is false" branch.
+
+**Complements**: CC-207 (parent), CC-212 (path-passing).
+
+**Priority**: P3.
+
+## CC-214 — platform-support.md manual uninstall command anchoring（deferred）
+
+**Problem**: The manual uninstall warning in `docs/platform-support.md` uses `bash uninstall.sh`
+without anchoring to the repo path; running it from any other working directory silently fails.
+
+**Why**: Raised by critic in gate-20260521-115634 as [low] advise. Other examples in the same
+document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
+
+**Requirement**: Replace the bare `bash uninstall.sh` in the Windows uninstall warning block with
+`bash "${PM_DISPATCH_REPO}/uninstall.sh"` (one-line change).
+
+**Priority**: P3 — tiny fix, fold into next docs PR.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
