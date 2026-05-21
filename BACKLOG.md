@@ -94,11 +94,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
-| CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | design |
+| CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[multi-CLI platform architecture]** Re-frame pm-dispatch from "Claude Code personal config + Codex dispatch wrapper" to "agent-native PM orchestration toolkit" with 4 clean layers. `core/` — PM schema, task / decision / backlog / review models, reviewer policy, dispatch state machine; no CLI awareness at all. `runtime/` — `pmctl` CLI entrypoint, dispatch runner, trace logger, guard engine, validator, report generator; no Codex/Claude specifics. `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` — format conversion only; each adapter is a thin shell that translates CLI-specific calls into pmctl invocations. `mcp/` — pm-dispatch-server MCP tool bridge (pm_list_tasks / pm_create_task / pm_dispatch / pm_read_trace / pm_guard_check); any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) uses the same server. Key design rules: core never changes per CLI; guard engine lives in pmctl, Claude hooks are just one delivery path; adapters own zero business logic. P0: extract `core/schemas/` (task.schema.json, decision.schema.json, review.schema.json) and lock data format across CLIs. P1: pmctl CLI (CC-215). P2: Claude commands call pmctl, stop embedding logic. P3: Codex adapter formalised. P4: MCP server (CC-216). P5: Gemini / OpenCode adapters. Complements CC-059 (thin pm.md), CC-215 (pmctl), CC-216 (MCP server). | arch/portability | 2026-05-21 | — | — | design |
 | CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|gemini\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
 | CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Gemini CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
+| CC-217 | ⏸ deferred | **[claude-executor background dispatch]** `Agent(subagent_type:claude-executor)` calls in `/pm` Route B and `/pr-gate` Route B currently block the main thread (missing `run_in_background:true`), inconsistent with the codex-executor pattern. Fix: add `run_in_background:true` to all claude-executor dispatch sites in commands and gate scripts; update completion handling to receive the async notification rather than blocking inline. | DX/gate | 2026-05-21 | — | P2 | oss |
+| CC-218 | ⏸ deferred | **[spike tracking infrastructure]** Add `spike` as a valid epic type in `pm/scripts/validate.sh`. Define spike body structure: `Investigation scope` / `Done-when` criteria / `Result log` pointer to `docs/spikes/CC-NNN.md`. Create `docs/spikes/` directory with README describing format. Convert CC-209 epic from `design` → `spike`. Spike results must be committed to the repo — ephemeral findings are treated as a gap. | process | 2026-05-21 | — | P2 | design |
+| CC-219 | ⏸ deferred | **[pre-milestone doc freshness gate]** Before each milestone release, verify docs are current: README, MILESTONES.md, BACKLOG.md (open tickets with TBD refs), `docs/` directory. Implement as a `scripts/check-docs-freshness.sh` checklist that prints stale indicators and exits non-zero if blocking gaps exist. Should run as part of the milestone closure checklist. | process/gate | 2026-05-21 | — | P3 | hygiene |
+| CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent reads a BACKLOG spike ticket, plans 2–3 investigation angles, dispatches parallel `Explore` sub-agents (one per angle), synthesises findings into `docs/spikes/CC-NNN.md`, and updates the BACKLOG body `Result log` pointer. Distinct from PM agent: goal is uncertainty reduction, not task execution; sub-agents are read-only Explore rather than codex-executor. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
@@ -896,6 +900,99 @@ format differences only.
 **Complements**: CC-211 (architecture), CC-215 (pmctl as backend).
 
 **Priority**: P4 within CC-211 roadmap. Evaluate at v0.3.0.
+
+## CC-217 — claude-executor background dispatch（deferred）
+
+**Problem**: `Agent(subagent_type:claude-executor)` calls in `/pm` Route B and `/pr-gate`
+Route B block the main thread waiting for the executor to finish. The codex-executor path
+already uses `run_in_background:true`; the claude-executor path does not, making the two
+routes inconsistently expensive for the main thread token budget.
+
+**Why**: Blocking dispatch holds the main thread context open for the full executor session
+duration, increasing per-task token cost and defeating the "background dispatch" goal. The
+codex-executor rule (`feedback_codex_dispatch_background.md`) already captures this principle;
+claude-executor should follow the same pattern.
+
+**Requirement**:
+- Add `run_in_background:true` to all `Agent(subagent_type:claude-executor)` dispatch calls
+  in `commands/pm.md`, `commands/pr-gate.md`, and any other dispatch sites.
+- Update completion handling to await the async notification rather than blocking inline.
+- Verify that Route B fan-out (parallel reviewer agents) is also non-blocking.
+
+**Complements**: CC-205 (dual-executor planning), CC-059 (thin pm.md).
+
+**Priority**: P2.
+
+## CC-218 — spike tracking infrastructure（deferred）
+
+**Problem**: pm-dispatch has no formal spike ticket type. Tickets that require investigation
+before spec can be written are marked `design`, conflating "we know what to build" with
+"we don't know what to build yet". Spike results have no committed home, so findings
+are lost between conversations.
+
+**Why**: A distinct `spike` epic type makes the distinction explicit in validation and in
+BACKLOG review. Committed spike result files (`docs/spikes/CC-NNN.md`) ensure findings
+survive across sessions and inform future implementation briefs.
+
+**Requirement**:
+1. Add `spike` to `valid_epic()` in `pm/scripts/validate.sh`.
+2. Define spike body structure in `docs/backlog-schema.md` (or equivalent):
+   - `Investigation scope` — what is being explored
+   - `Done-when` — what question must be answered to close the spike
+   - `Result log` — pointer to `docs/spikes/CC-NNN.md`
+3. Create `docs/spikes/` directory with `README.md` describing the format.
+4. Update CC-209 index epic from `design` → `spike` (already done in this PR).
+
+**Complements**: CC-220 (spike agent automates the investigation workflow).
+
+**Priority**: P2.
+
+## CC-219 — pre-milestone doc freshness gate（deferred）
+
+**Problem**: Milestone releases can ship with stale README, MILESTONES.md, BACKLOG.md,
+or `docs/` content. There is no automated check that doc state matches code state at
+release time.
+
+**Why**: Docs drift silently. A lightweight freshness gate catches obvious gaps (TBD PR
+refs, closed tickets with missing close dates, MILESTONES sections not yet updated) before
+a milestone tag is cut.
+
+**Requirement**:
+- Implement `scripts/check-docs-freshness.sh` that prints stale indicators and exits
+  non-zero if any blocking gap exists:
+  - BACKLOG: open tickets with `pr:TBD` refs after merge
+  - MILESTONES: planned items not reflected in Completed section
+  - README: version references not matching latest tag
+- Add to milestone closure checklist (MILESTONES.md or CONTRIBUTING.md).
+
+**Priority**: P3 — add before v0.3.0 milestone closes.
+
+## CC-220 — spike agent + `/spike` skill（deferred）
+
+**Problem**: Spike investigations are currently ad-hoc: the PM dispatches a mix of Explore
+calls, the findings are summarized in conversation context, and nothing is committed to
+the repo. Repeating a spike wastes tokens; the result is not reviewable.
+
+**Why**: A dedicated spike agent with a structured workflow produces a committed, reviewable
+result file. The parallel multi-angle dispatch matches how PM agent dispatches reviewers —
+reusing the same agent/fan-out primitives for a different cognitive mode.
+
+**Requirement**:
+- `agents/spike.md` — spike agent definition:
+  - Reads BACKLOG spike ticket for `Investigation scope` and `Done-when`
+  - Plans 2–3 investigation angles (e.g., existing-coupling audit / interface draft / prior art)
+  - Dispatches parallel `Explore` sub-agents, one per angle
+  - Synthesises findings into `docs/spikes/CC-NNN.md`
+  - Updates BACKLOG body `Result log` field with the file pointer
+- `commands/spike.md` — `/spike CC-NNN` skill invoking the agent
+- Spike agent is read-only by default (Explore sub-agents, no codex-executor)
+- Architecture spikes may dispatch 2–3 executors for multi-perspective coverage
+
+**Depends on**: CC-218 (spike type + docs/spikes/ directory must exist first).
+
+**Complements**: CC-218 (infrastructure), CC-209 (first spike to run through the new agent).
+
+**Priority**: P3. Implement after CC-218.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
