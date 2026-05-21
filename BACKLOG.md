@@ -93,6 +93,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
+| CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -678,6 +679,30 @@ Git Bash detection branch that uses junctions instead of silently falling back t
 5. `docs/platform-support.md` updated to reflect auto-sync is restored
 
 **Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
+
+## CC-208 — Gate reviewer hallucination: document citation without verification（active）
+
+**Problem**: Gate reviewers (primarily qa-tester) cite non-existent documents in
+findings. Observed example: "AGENT.md §3" — this file does not exist in the repo.
+The citation is used to justify a block verdict, forcing the main thread to manually
+verify the reference before deciding to override or fix.
+
+**Why**: Reviewer agents receive a diff, their agent definition, and the gate brief.
+They do not receive a file listing or document index, so they infer docs from training
+data and context rather than confirming existence. The constraint in their definition
+does not currently include "only cite documents you can confirm exist."
+
+**Requirement** (any of the following):
+1. Inject a verified file list (e.g., `find . -name "*.md" | sort`) into the gate
+   brief preamble so reviewers can cross-check citations before writing findings.
+2. Add an explicit instruction to each reviewer agent definition: "Do not cite any
+   document, section, or rule file by name unless you can confirm it appears in the
+   diff or in documents read during this session."
+3. Gate synthesis step verifies reviewer document citations against actual repo files
+   and flags unverifiable references as advisory-only rather than blocking.
+
+**Priority**: P3 — non-urgent. Occurs on ~30% of gate runs based on observed pattern.
+Each occurrence adds ~1–2 min of manual verification overhead.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
