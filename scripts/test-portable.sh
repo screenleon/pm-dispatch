@@ -195,6 +195,163 @@ case_mkdir_lock_release() {
   fi
 }
 
+_slw_write_basic() {
+  printf 'serialize ok\n' > "$1"
+}
+
+_slw_return_42() {
+  return 42
+}
+
+_slw_write_fallback() {
+  printf 'fallback ok\n' > "$1"
+}
+
+# Behavior: serialize_with_lock runs the wrapped function and applies its file side-effects.
+# Steps: 1. Call serialize_with_lock with a helper that writes to a temp file; 2. Assert rc=0; 3. Assert temp file contains the expected string.
+case_serialize_with_lock_basic() {
+  local name="portable-serialize-with-lock-runs-fn"
+  should_run "$name" || return 0
+  local out="$tmp_root/slw-basic.out"
+
+  if ! serialize_with_lock "$tmp_root/slw-basic" _slw_write_basic "$out"; then
+    fail "$name" "serialize_with_lock returned non-zero"
+    return
+  fi
+  if [[ "$(cat "$out" 2>/dev/null)" == "serialize ok" ]]; then
+    pass "$name"
+  else
+    fail "$name" "helper output mismatch"
+  fi
+}
+
+# Behavior: serialize_with_lock propagates the wrapped function's non-zero exit code on both flock and mkdir-fallback paths.
+# Steps: 1. Call serialize_with_lock with a helper returning 42 (flock path); 2. Repeat with FAKE_FLOCK_MISSING=1 (mkdir path); 3. Assert both results equal 42.
+case_serialize_with_lock_propagates_rc() {
+  local name="portable-serialize-with-lock-propagates-rc"
+  should_run "$name" || return 0
+  local rc_default rc_fallback old_fake old_set
+
+  if [[ -n "${FAKE_FLOCK_MISSING+x}" ]]; then
+    old_set=1
+    old_fake="$FAKE_FLOCK_MISSING"
+  else
+    old_set=0
+  fi
+
+  set +e
+  serialize_with_lock "$tmp_root/slw-rc-default" _slw_return_42
+  rc_default=$?
+  FAKE_FLOCK_MISSING=1 serialize_with_lock "$tmp_root/slw-rc-fallback" _slw_return_42
+  rc_fallback=$?
+  set -e
+
+  if [[ "$old_set" -eq 1 ]]; then
+    FAKE_FLOCK_MISSING="$old_fake"
+  else
+    unset FAKE_FLOCK_MISSING
+  fi
+
+  if [[ -d "${tmp_root}/slw-rc-fallback.lockdir" ]]; then
+    fail "$name" "mkdir fallback lockdir not removed after non-zero fn exit"
+    return
+  fi
+
+  if [[ "$rc_default" -eq 42 && "$rc_fallback" -eq 42 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc 42 in both paths, got default=$rc_default fallback=$rc_fallback"
+  fi
+}
+
+# Behavior: When FAKE_FLOCK_MISSING=1, serialize_with_lock uses the mkdir-fallback path and cleans up the lockdir on success.
+# Steps: 1. Set FAKE_FLOCK_MISSING=1 and call serialize_with_lock with a file-writing helper; 2. Assert rc=0 and file content correct; 3. Assert lockdir is removed after the call.
+case_serialize_with_lock_fallback() {
+  local name="portable-serialize-with-lock-mkdir-fallback"
+  should_run "$name" || return 0
+  local out="$tmp_root/slw-fallback.out"
+  local old_fake old_set
+
+  if [[ -n "${FAKE_FLOCK_MISSING+x}" ]]; then
+    old_set=1
+    old_fake="$FAKE_FLOCK_MISSING"
+  else
+    old_set=0
+  fi
+
+  FAKE_FLOCK_MISSING=1
+  if ! serialize_with_lock "$tmp_root/slw-fallback" _slw_write_fallback "$out"; then
+    if [[ "$old_set" -eq 1 ]]; then
+      FAKE_FLOCK_MISSING="$old_fake"
+    else
+      unset FAKE_FLOCK_MISSING
+    fi
+    fail "$name" "serialize_with_lock fallback returned non-zero"
+    return
+  fi
+
+  if [[ "$old_set" -eq 1 ]]; then
+    FAKE_FLOCK_MISSING="$old_fake"
+  else
+    unset FAKE_FLOCK_MISSING
+  fi
+
+  if [[ "$(cat "$out" 2>/dev/null)" != "fallback ok" ]]; then
+    fail "$name" "helper output mismatch"
+    return
+  fi
+  if [[ -e "$tmp_root/slw-fallback.lockdir" ]]; then
+    fail "$name" "fallback lockdir was not cleaned up"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: serialize_with_lock returns non-zero when the lock parent directory does not exist.
+# Steps:
+#   1. Choose a lockbase whose parent directory does not exist.
+#   2. Call serialize_with_lock with a no-op helper; assert rc != 0 and helper was not called.
+#   3. Repeat with FAKE_FLOCK_MISSING=1 (mkdir fallback path).
+case_serialize_with_lock_missing_parent() {
+  local name="portable-serialize-with-lock-missing-parent"
+  should_run "$name" || return 0
+  local absent_lockbase="$tmp_root/nonexistent-dir/slw-lock"
+  local fn_called_file="$tmp_root/slw-parent-fn-called"
+
+  _slw_parent_probe() { touch "$fn_called_file"; }
+
+  # Test flock path
+  local rc=0
+  serialize_with_lock "$absent_lockbase" _slw_parent_probe || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "expected non-zero rc when parent dir absent (flock path), got 0"
+    return
+  fi
+  if [[ -f "$fn_called_file" ]]; then
+    fail "$name" "helper fn was called despite missing lock parent (flock path)"
+    return
+  fi
+
+  # Test mkdir fallback path
+  local old_fake old_set
+  if [[ -n "${FAKE_FLOCK_MISSING+x}" ]]; then old_set=1; old_fake="$FAKE_FLOCK_MISSING"; else old_set=0; fi
+  FAKE_FLOCK_MISSING=1
+  rc=0
+  serialize_with_lock "$absent_lockbase" _slw_parent_probe || rc=$?
+  if [[ "$old_set" -eq 1 ]]; then FAKE_FLOCK_MISSING="$old_fake"; else unset FAKE_FLOCK_MISSING; fi
+
+  if [[ "$rc" -eq 0 ]]; then
+    fail "$name" "expected non-zero rc when parent dir absent (mkdir fallback), got 0"
+    return
+  fi
+  if [[ -f "$fn_called_file" ]]; then
+    fail "$name" "helper fn was called despite missing lock parent (mkdir fallback)"
+    return
+  fi
+
+  pass "$name"
+}
+
 case_detect_platform_override_windows() {
   local name="portable-detect-platform-override-windows"
   should_run "$name" || return 0
@@ -745,6 +902,10 @@ case_realpath_m_windows_mode_relative_path
 case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
+case_serialize_with_lock_basic
+case_serialize_with_lock_propagates_rc
+case_serialize_with_lock_fallback
+case_serialize_with_lock_missing_parent
 case_detect_platform_override_windows
 case_detect_platform_host_native
 case_detect_platform_ostype_msys

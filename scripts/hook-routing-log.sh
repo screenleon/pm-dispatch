@@ -161,50 +161,22 @@ rotate_if_needed() {
   return 0
 }
 
-append_inside_block() {
-  local target="$1" line="$2" tmp lockfile lockdir
-  lockfile="${target}.lockdir"
-  lockdir="$(dirname "$target")"
-  mkdir -p "$lockdir" 2>/dev/null || {
-    audit "lock directory failed" "$target"
-    return 1
-  }
-
-  if [[ -e "${target}.lock" ]]; then
-    audit "lock timeout" "$target"
-    return 1
-  fi
-
-  if ! mkdir_lock "$lockfile" 2; then
-    if [[ -e "$lockfile" ]]; then
-      audit "lock timeout" "$target"
-    else
-      audit "append/rotation lock open failed" "$target"
-    fi
-    return 1
-  fi
-
+_do_append_locked() {
+  local target="$1" line="$2" tmp
   if [[ ! -f "$target" ]]; then
     if ! create_minimal_log "$target" 2>/dev/null; then
-      rmdir "$lockfile"
       audit "create routing log failed" "$target"
       return 1
     fi
   fi
-
   if ! grep -q -F "$AUTO_START" "$target" 2>/dev/null || ! grep -q -F "$AUTO_END" "$target" 2>/dev/null; then
-    rmdir "$lockfile"
     audit "auto-block missing; run migrator first" "$target"
     return 1
   fi
-
   if ! rotate_if_needed "$target"; then
-    rmdir "$lockfile"
     return 1
   fi
-
   tmp="$(mktemp "${target}.append.XXXXXX" 2>/dev/null)" || {
-    rmdir "$lockfile"
     audit "append temp failed" "$target"
     return 1
   }
@@ -213,18 +185,38 @@ append_inside_block() {
     { print }
   ' "$target" > "$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    rmdir "$lockfile"
     audit "append rewrite failed" "$target"
     return 1
   fi
   if ! mv -f "$tmp" "$target" 2>/dev/null; then
     rm -f "$tmp"
-    rmdir "$lockfile"
     audit "append move failed" "$target"
     return 1
   fi
+  return 0
+}
 
-  rmdir "$lockfile"
+append_inside_block() {
+  local target="$1" line="$2"
+  local lockdir
+  lockdir="$(dirname "$target")"
+  mkdir -p "$lockdir" 2>/dev/null || {
+    audit "lock directory failed" "$target"
+    return 1
+  }
+  # Lock parent must exist before flock/mkdir can create the lock file.
+  mkdir -p "$LOG_DIR" 2>/dev/null || {
+    audit "lock directory failed" "$target"
+    return 1
+  }
+  # Lock files live in LOG_DIR so a non-writable memory dir only prevents
+  # rotation/append, not lock acquisition. Global per-LOG_DIR lock key is
+  # intentional: appends are short-lived; per-target hashing adds complexity
+  # without throughput benefit.
+  if ! serialize_with_lock "${LOG_DIR}/routing_log_append" _do_append_locked "$target" "$line"; then
+    audit "lock or append failed" "$target"
+    return 1
+  fi
   return 0
 }
 

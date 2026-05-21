@@ -43,17 +43,19 @@
 | #106 | — | SECURITY.md GitHub Private Security Advisory 流程 |
 | #107 | CC-104t | hooks 層 python3 → jq 重寫；新增 memory.sh / memory-dir.sh |
 | #108 | CC-207 | platform-support.md 改寫 + CC-207 BACKLOG entry |
+| #109 | cc-uninstall | manifest-driven uninstall.sh（23 security tests） |
+| #110 | — | uninstall-hooks.sh generic repo-root removal fix（49 tests） |
+| #111 | — | CC-209/CC-210/CC-211 BACKLOG entries + Epic enum fix |
+| #112 | CC-207 | Windows Git Bash directory junction support |
 
 ### Planned
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| cc-uninstall | `uninstall.sh` — manifest-driven 反安裝 | 🔵 gate |
-| CC-207 | Windows directory junction（install.sh + portable.sh） | ⏳ |
 | CC-058 | `scripts/doctor.sh` — 環境健康檢查 | ⏳ |
 | CC-104l | install.sh 頂部加 jq 先決條件 check + README | ⏳ |
 | CC-104v | copy-mode 安裝後顯示 summary banner | ⏳ |
-| CC-104p | flock → portable locking shim（Windows row-loss 修復） | ⏳ |
+| CC-104p | flock → portable locking shim（Windows row-loss 修復） | ✅ |
 
 ---
 
