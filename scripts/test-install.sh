@@ -1750,8 +1750,14 @@ test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
 test_install_sh_jq_missing_exits_early() {
-  # Proves install.sh exits 1 with platform-specific install hints when jq
-  # is absent from PATH, before any preflight or manifest operations.
+  # Verifies install.sh exits 1 with platform-specific install hints when jq
+  # is absent from PATH, without running preflight, manifest, or hook operations.
+  # Steps:
+  #   1. Build a stub PATH containing basic shell utilities but NOT jq
+  #   2. Run install.sh under that PATH
+  #   3. Assert exit code is 1
+  #   4. Assert output contains "jq not found" and Linux/macOS/Windows install hints
+  #   5. Assert no settings.json side effect was produced
   local name="install-sh-jq-missing-exits-early"
   should_run "$name" || return 0
 
@@ -1798,8 +1804,13 @@ test_install_sh_jq_missing_exits_early() {
 }
 
 test_install_sh_copy_fallback_banner() {
-  # Proves _COPY_FALLBACK_COUNT increments on link_or_copy rc=1 (FAKE_SYMLINK_UNSUPPORTED=1)
-  # and the summary banner appears at end of a real (non-dry-run) install.
+  # Verifies that _COPY_FALLBACK_COUNT increments when link_or_copy returns rc=1
+  # and the summary banner appears at the end of a real (non-dry-run) install.
+  # Steps:
+  #   1. Run install.sh with FAKE_SYMLINK_UNSUPPORTED=1 to force copy fallback for all files
+  #   2. Assert exit code is 0
+  #   3. Assert stdout contains the "installed via copy fallback" banner with count > 0
+  #   4. Assert stdout contains the "re-run install.sh after updates" reminder
   local name="install-sh-copy-fallback-banner"
   should_run "$name" || return 0
 
@@ -1828,9 +1839,13 @@ test_install_sh_copy_fallback_banner() {
 }
 
 test_install_sh_no_banner_dry_run() {
-  # Proves the copy fallback banner is suppressed under --dry-run.
-  # In dry-run, link_or_copy returns 0 before the FAKE_SYMLINK_UNSUPPORTED branch,
-  # so _COPY_FALLBACK_COUNT stays 0 and the banner condition is never satisfied.
+  # Verifies the copy fallback banner is suppressed when --dry-run is active.
+  # In dry-run mode link_or_copy returns 0 before the FAKE_SYMLINK_UNSUPPORTED branch,
+  # so _COPY_FALLBACK_COUNT stays at 0 and the DRY_RUN guard never prints the banner.
+  # Steps:
+  #   1. Run install.sh with FAKE_SYMLINK_UNSUPPORTED=1 and --dry-run
+  #   2. Assert exit code is 0
+  #   3. Assert stdout does NOT contain the "installed via copy fallback" banner
   local name="install-sh-no-banner-dry-run"
   should_run "$name" || return 0
 
