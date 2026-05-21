@@ -1535,21 +1535,56 @@ test_escape_hatch_overrides_verify() {
 test_install_dir_junction_windows_fallback() {
   local name="install-dir-junction-windows-fallback"
   should_run "$name" || return 0
-  local home
+  local home fake_bin
   home="$tmp_root/$name"
-  mkdir -p "$home/.claude"
+  fake_bin="$tmp_root/${name}-bin"
+  mkdir -p "$home/.claude" "$fake_bin"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
-  # Simulate Windows + no powershell.exe by faking PM_DISPATCH_PLATFORM and
-  # a PATH that contains no powershell.exe.
-  local out
-  out=$(HOME="$home" PM_DISPATCH_PLATFORM=windows \
-        PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-        bash "$REPO_ROOT/install.sh" --dry-run 2>&1) || true
-  # On fallback, agents should still be listed (via per-file install_dir path).
-  if [[ "$out" == *"agents"* ]]; then
+  # Fake powershell.exe that always fails — simulates Git Bash without
+  # real PowerShell or an environment where New-Item Junction is blocked.
+  printf '#!/bin/bash\nexit 1\n' > "$fake_bin/powershell.exe"
+  chmod +x "$fake_bin/powershell.exe"
+  HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+  # Fallback must have run install_dir() per-file copy — at least one agent
+  # file (symlink or copy) should appear directly in ~/.claude/agents/.
+  local agent_count=0
+  [[ -d "$home/.claude/agents" ]] && \
+    agent_count=$(find "$home/.claude/agents" -maxdepth 1 -name "*.md" | wc -l)
+  if [[ "$agent_count" -gt 0 ]]; then
     pass "$name"
   else
-    printf '  FAIL  %s — expected agents section in output\n' "$name" >&2
+    printf '  FAIL  %s — expected per-file agent outputs under ~/.claude/agents/ after junction fallback\n' "$name" >&2
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  fi
+}
+
+test_install_dir_junction_manifest_entry() {
+  local name="install-dir-junction-manifest-entry"
+  should_run "$name" || return 0
+  local home fake_bin
+  home="$tmp_root/$name"
+  fake_bin="$tmp_root/${name}-bin"
+  mkdir -p "$home/.claude" "$fake_bin"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  # Fake powershell.exe that succeeds — simulates a successful junction
+  # creation on Windows. On Linux, no real junction is created but the
+  # manifest should still record mode=junction.
+  printf '#!/bin/bash\nexit 0\n' > "$fake_bin/powershell.exe"
+  chmod +x "$fake_bin/powershell.exe"
+  HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+  local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  if [[ -f "$manifest" ]] && grep -q '"mode":"junction"' "$manifest"; then
+    pass "$name"
+  else
+    printf '  FAIL  %s — expected mode=junction entry in install-manifest.json\n' "$name" >&2
     FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
   fi
 }
@@ -1631,6 +1666,7 @@ test_skip_preflight_skips_all_tests
 test_default_install_skips_preflights
 test_verify_flag_runs_preflights
 test_escape_hatch_overrides_verify
+test_install_dir_junction_manifest_entry
 test_install_dir_junction_windows_fallback
 test_uninstall_junction_mode_removes_dir
 test_filter_no_match_exits_nonzero

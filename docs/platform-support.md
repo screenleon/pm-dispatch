@@ -133,6 +133,25 @@ bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh" --dry-run
 Removes the symlinks, junctions, or copies for agents, commands, scripts, and
 the .pm schema. Run after Part 1.
 
+**Recommended (all platforms):** Use the manifest-driven uninstaller — it handles
+symlinks, Windows directory junctions, and copies safely:
+
+```bash
+bash "${PM_DISPATCH_REPO}/uninstall.sh"
+# or preview what will be removed:
+bash "${PM_DISPATCH_REPO}/uninstall.sh" --dry-run
+```
+
+**Alternative: manual removal (Linux/macOS, copy or symlink installs only)**
+
+> **Warning (Windows Git Bash / junction installs):** Do NOT use the `rm -f`
+> commands below on `~/.claude/agents`, `~/.claude/commands`, or `~/.claude/skills`
+> if those directories were installed as Windows directory junctions. Running
+> `rm -f ~/.claude/agents/critic.md` inside a junction will delete the source file
+> from the pm-dispatch repository, not the link.
+> Use `bash uninstall.sh` or `rmdir ~/.claude/agents ~/.claude/commands ~/.claude/skills`
+> to remove junctions without following them.
+
 ```bash
 # Agents
 rm -f ~/.claude/agents/architecture-reviewer.md
@@ -168,6 +187,7 @@ rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
 > rm -rf ~/.claude/agents ~/.claude/commands ~/.claude/scripts ~/.claude/.pm
 > ```
 > Only do this if you have not added other agents or commands from other sources.
+> On Windows junction installs, prefer `bash uninstall.sh` to avoid data loss.
 
 ---
 
