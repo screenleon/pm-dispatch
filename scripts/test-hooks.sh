@@ -3324,26 +3324,25 @@ routing_concurrent_append_case() {
   ready="$root/lock-ready"
   lock_release="$root/lock-release"
   mkfifo "$lock_release"
+  mkfifo "$ready"
   if command -v flock >/dev/null 2>&1 && [[ "${FAKE_FLOCK_MISSING:-}" != "1" ]]; then
     (
       (
         flock -x 9 || exit 1
-        : > "$ready"
+        echo ok > "$ready"
         cat "$lock_release" >/dev/null
       ) 9>"$lockfile"
     ) &
   else
     (
       mkdir "$lockdir" || exit 1
-      : > "$ready"
+      echo ok > "$ready"
       cat "$lock_release" >/dev/null
       rmdir "$lockdir"
     ) &
   fi
   holder="$!"
-  while [[ ! -e "$ready" ]]; do
-    sleep 0.05
-  done
+  IFS= read -r _ < "$ready" || true
   before_timeout="$(routing_count "$mem")"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"lock-timeout","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
@@ -3369,6 +3368,36 @@ routing_concurrent_append_case() {
     printf '  FAIL  %s (wait_status=%s count=%s unique=%s json_ok=%s start=%s end=%s timeout_status=%s before_timeout=%s after_timeout=%s)\n' \
       "$name" "$status" "$count" "$unique" "$json_ok" "$start_count" "$end_count" "$timeout_status" "$before_timeout" "$after_timeout"
   fi
+}
+
+# Behavior: routing hook appends first row when LOG_DIR does not exist yet (fresh HOME).
+# Steps:
+#   1. Create a temp HOME dir with no .claude/logs subdirectory.
+#   2. Create a memory dir with a valid routing_log.md.
+#   3. Run hook with CLAUDE_HOOK_LOG_DIR unset (hook defaults to $HOME/.claude/logs).
+#   4. Assert routing_log.md contains exactly one JSON row.
+routing_fresh_home_no_log_dir_case() {
+  local name="routing: first row appended when LOG_DIR absent (fresh HOME)"
+  should_run "$name" || return 0
+  local tmp_home tmp_mem
+  tmp_home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/fresh-home.XXXXXX")"
+  tmp_mem="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/fresh-mem.XXXXXX")"
+  make_routing_log "$tmp_mem"
+  local payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"fresh-home-test","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
+  printf '%s' "$payload" \
+    | env HOME="$tmp_home" CLAUDE_ROUTING_LOG_DIR="$tmp_mem" CLAUDE_HOOK_LOG_DIR= \
+        "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  local count
+  count="$(routing_count "$tmp_mem")"
+  if [[ "$count" -eq 1 ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (rows=%s expected=1)\n' "$name" "$count"
+  fi
+  rm -rf "$tmp_home" "$tmp_mem"
 }
 
 # Behavior: install-hooks dry-run shows PostToolUse Bash|Agent routing hook wiring.
@@ -3572,6 +3601,7 @@ routing_missing_marker_case
 routing_rotation_case
 routing_rotation_fail_case
 routing_concurrent_append_case
+routing_fresh_home_no_log_dir_case
 install_routing_dry_run_case
 install_routing_idempotent_case
 install_routing_migrates_unmarked_case

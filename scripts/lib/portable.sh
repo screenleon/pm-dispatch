@@ -137,6 +137,35 @@ mkdir_lock() {
   return 1
 }
 
+# serialize_with_lock <lockbase> <fn_name> [args...]
+# Run <fn_name> [args...] with exclusive lock. Prefers flock when available
+# (kernel-level, stale-lock-safe); falls back to mkdir_lock otherwise.
+# Lockfile paths managed internally:
+#   flock path  : <lockbase>.lock    (regular file)
+#   mkdir path  : <lockbase>.lockdir (directory, same as mkdir_lock convention)
+# Test shim: set FAKE_FLOCK_MISSING=1 to force the mkdir_lock path in tests.
+# Returns the wrapped function's exit code, or 1 on lock failure.
+serialize_with_lock() {
+  local lockbase="$1"; shift
+  if command -v flock >/dev/null 2>&1 && [[ "${FAKE_FLOCK_MISSING:-}" != "1" ]]; then
+    local _slw_rc=0
+    (
+      flock -x -w 2 9 || exit 1
+      "$@"
+    ) 9>"${lockbase}.lock"
+    _slw_rc=$?
+    return $_slw_rc
+  else
+    if ! mkdir_lock "${lockbase}.lockdir" 2; then
+      return 1
+    fi
+    local _slw_rc=0
+    "$@" || _slw_rc=$?
+    rmdir "${lockbase}.lockdir"
+    return $_slw_rc
+  fi
+}
+
 # file_size_bytes <file>
 # Print file size in bytes on stdout. Portable across GNU stat (linux),
 # BSD stat (macos), and wc -c fallback (any). Returns 1 (and prints

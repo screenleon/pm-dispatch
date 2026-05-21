@@ -204,8 +204,15 @@ append_inside_block() {
     audit "lock directory failed" "$target"
     return 1
   }
-  # Lock files live in LOG_DIR (always writable) so a non-writable memory dir
-  # only prevents rotation/append, not lock acquisition — keeps failure paths distinct.
+  # Lock parent must exist before flock/mkdir can create the lock file.
+  mkdir -p "$LOG_DIR" 2>/dev/null || {
+    audit "lock directory failed" "$target"
+    return 1
+  }
+  # Lock files live in LOG_DIR so a non-writable memory dir only prevents
+  # rotation/append, not lock acquisition. Global per-LOG_DIR lock key is
+  # intentional: appends are short-lived; per-target hashing adds complexity
+  # without throughput benefit.
   if ! serialize_with_lock "${LOG_DIR}/routing_log_append" _do_append_locked "$target" "$line"; then
     audit "lock or append failed" "$target"
     return 1
