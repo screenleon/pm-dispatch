@@ -3292,7 +3292,7 @@ routing_rotation_fail_case() {
 routing_concurrent_append_case() {
   local name="routing: concurrent appends keep every row"
   should_run "$name" || return 0
-  local root mem n payload status pid count unique start_count end_count json_ok lockfile ready lock_release holder timeout_status before_timeout after_timeout
+  local root mem n payload status pid count unique start_count end_count json_ok lockbase lockfile lockdir ready lock_release holder timeout_status before_timeout after_timeout
   local pids=()
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-concurrent.XXXXXX")"
   mem="$root/memory"
@@ -3318,16 +3318,28 @@ routing_concurrent_append_case() {
   json_ok=0
   routing_rows "$mem" | jq -c . >/dev/null && json_ok=1
 
-  lockfile="$mem/routing_log.md.lock"
+  lockbase="$CLAUDE_HOOK_LOG_DIR/routing_log_append"
+  lockfile="${lockbase}.lock"
+  lockdir="${lockbase}.lockdir"
   ready="$root/lock-ready"
   lock_release="$root/lock-release"
   mkfifo "$lock_release"
-  (
-    mkdir "$lockfile"
-    : > "$ready"
-    cat "$lock_release" >/dev/null
-    rmdir "$lockfile"
-  ) &
+  if command -v flock >/dev/null 2>&1 && [[ "${FAKE_FLOCK_MISSING:-}" != "1" ]]; then
+    (
+      (
+        flock -x 9 || exit 1
+        : > "$ready"
+        cat "$lock_release" >/dev/null
+      ) 9>"$lockfile"
+    ) &
+  else
+    (
+      mkdir "$lockdir" || exit 1
+      : > "$ready"
+      cat "$lock_release" >/dev/null
+      rmdir "$lockdir"
+    ) &
+  fi
   holder="$!"
   while [[ ! -e "$ready" ]]; do
     sleep 0.05
@@ -3348,7 +3360,7 @@ routing_concurrent_append_case() {
      [[ "$end_count" == "1" ]] &&
      [[ "$timeout_status" == "0" ]] &&
      [[ "$before_timeout" == "$after_timeout" ]] &&
-     grep -q -F 'lock timeout' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+     grep -q -F 'lock or append failed' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
