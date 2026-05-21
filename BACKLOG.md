@@ -94,6 +94,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
+| CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | design |
+| CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
+| CC-211 | ⏸ deferred | **[adapter-layer split]** Formally separate pm-dispatch into (a) a CLI-agnostic core (`core/`: validate.sh, rollup.sh, pr-gate.sh, codex-dispatch.sh, lib/) and (b) per-tool adapter layers (`adapters/claude-code/` for hooks/agents/commands, `adapters/codex/` for future direct-invoke path, `adapters/generic/` for shell-alias entry points). The core scripts are already CLI-agnostic; the adapter split makes this explicit so new AI tools can integrate without touching core logic. Complements CC-059 (thin pm.md script-layer). | ops/portability | 2026-05-21 | — | — | design |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -703,6 +706,72 @@ does not currently include "only cite documents you can confirm exist."
 
 **Priority**: P3 — non-urgent. Occurs on ~30% of gate runs based on observed pattern.
 Each occurrence adds ~1–2 min of manual verification overhead.
+
+## CC-209 — codegraph integration: pre-indexed context for Codex briefs（deferred）
+
+**Problem**: Codex briefs rely on manually-specified `files:` lists for context.
+If the list is incomplete, Codex spends tokens exploring the codebase via grep/read.
+
+**Why**: colbymchenry/codegraph (MIT, TypeScript, 9,475 stars, active May 2026) builds
+a pre-indexed code knowledge graph for Claude Code / Codex / Cursor. Querying it before
+dispatch could auto-supply relevant file context and reduce per-brief token cost —
+aligned with pm-dispatch's core token-efficiency goal.
+
+**Requirement** (investigation scope):
+1. Understand codegraph install model (Claude Code plugin vs. standalone CLI).
+2. Identify query API: what does a graph query return, and can it be embedded in a brief preamble?
+3. Prototype: add optional `--codegraph-enrich` flag to `codex-dispatch.sh` that runs a
+   codegraph query and injects top-N relevant file paths into the brief `files:` block.
+4. Measure token delta on 3 representative briefs with/without enrichment.
+
+**Priority**: P3 — non-urgent. Evaluate after v0.2.0 milestone closes.
+
+## CC-210 — uninstall.sh: reject managed-root exact path as deletion target（deferred）
+
+**Problem**: `uninstall.sh` checks `[[ "$dst" == "$managed_root"* ]]` (startswith), which
+allows `$managed_root` itself to pass. A malformed copy-mode manifest entry with a
+destination equal to `$HOME/.claude` could cause the uninstaller to delete the entire
+Claude config directory.
+
+**Why**: Raised as [medium] advisory by risk-reviewer in PR #110 gate. Normal installer
+manifests never create such entries, but defense-in-depth suggests rejecting the exact
+root to align worst-case blast radius with "remove installed artifacts," not "remove all
+Claude config."
+
+**Requirement**: In `uninstall.sh`, before the `rm` / `unlink` call, add:
+```bash
+[[ "$dst" == "$managed_root" ]] && { warn "skipping managed root itself: $dst"; continue; }
+```
+Add a test case in `scripts/test-uninstall.sh`: manifest entry with dst == managed root
+is skipped and a warning is emitted.
+
+**Priority**: P3 — low urgency (normal manifests are safe). Fix before any public release.
+
+## CC-211 — adapter-layer split: separate CLI-agnostic core from per-tool adapters（deferred）
+
+**Problem**: pm-dispatch's core orchestration logic (pr-gate, validate, rollup, codex-dispatch)
+is already CLI-agnostic bash, but the directory structure does not make this boundary explicit.
+As other AI coding tools (Codex CLI, future tools) emerge, the risk of coupling creep grows.
+
+**Why**: The user plans to eventually consolidate pm-dispatch outside `~/.claude/` so that
+Codex, Claude Code, and other CLIs can all use the same orchestration layer with their own
+thin adapter shims. The current symlink model (`install.sh` → `~/.claude/`) already provides
+good separation for Claude Code, but there is no formal boundary preventing new code from
+assuming `~/.claude/` as a runtime dependency.
+
+**Requirement** (design + restructure scope):
+1. Define the core/adapter split in directory layout:
+   - `core/` ← current `scripts/` logic that has zero `~/.claude/` assumptions
+   - `adapters/claude-code/` ← hooks, agents, commands (current `~/.claude/` shims)
+   - `adapters/codex/` ← future: direct `codex` CLI invocation wrapper
+   - `adapters/generic/` ← shell alias / Makefile entry points
+2. Update `install.sh` to support `--adapter claude-code|codex|all` flag.
+3. Ensure no `core/` script reads from or writes to `~/.claude/` directly.
+4. Document the adapter contract in `docs/adapter-contract.md`.
+
+**Complements**: CC-059 (thin `/pm.md` script-layer), CC-207 (Windows portability).
+
+**Priority**: P4 — long-term direction, not urgent. Evaluate at v0.3.0 milestone planning.
 
 ## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
 
