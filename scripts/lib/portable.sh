@@ -709,8 +709,9 @@ remove_junction_windows() {
   else
     win_dst="${dst//\//\\}"
   fi
-  powershell.exe -NoProfile -NonInteractive -Command \
-    "Remove-Item -Path '$win_dst' -Force" \
+  PM_DISPATCH_RM_DST="$win_dst" \
+    powershell.exe -NoProfile -NonInteractive -Command \
+    '[System.IO.Directory]::Delete($env:PM_DISPATCH_RM_DST, $false)' \
     >/dev/null 2>&1
 }
 

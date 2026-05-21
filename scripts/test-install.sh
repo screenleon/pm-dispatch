@@ -1671,14 +1671,12 @@ test_uninstall_junction_windows_remove() {
   # On Linux, the win_dst path has backslashes; convert them back before rmdir.
   cat > "$fake_bin/powershell.exe" <<'PWSH'
 #!/bin/bash
-for arg in "$@"; do
-  if [[ "$arg" == *"Remove-Item"* ]]; then
-    if [[ "$arg" =~ -Path[[:space:]]\'([^\']+)\' ]]; then
-      p="${BASH_REMATCH[1]//\\/\/}"
-      rm -rf "$p" 2>/dev/null || true
-    fi
-  fi
-done
+# Simulate [System.IO.Directory]::Delete via PM_DISPATCH_RM_DST env var.
+# Convert Win-format backslashes back to Unix forward slashes, then rm.
+if [[ -n "${PM_DISPATCH_RM_DST-}" ]]; then
+  p="${PM_DISPATCH_RM_DST//\\/\/}"
+  rm -rf "$p" 2>/dev/null || true
+fi
 exit 0
 PWSH
   chmod +x "$fake_bin/powershell.exe"
