@@ -8,7 +8,7 @@
 | RA-001 | 🔵 active | 認證體驗調整 | frontend | 2026-04-01 | decisions:#auth |
 | RA-002 | 🔵 active | 匯入資料整理 | backend | 2026-04-02 | roadmap:#imports |
 | RA-003 | 🔵 active | 營運警示改善 | ops | 2026-04-03 | feedback:2026-04-04 |
-| RA-004 | ✅ closed 2026-04-20 | 設定導覽完成 | product | 2026-04-20 | decisions:#settings |
+| RA-004 | ✅ closed 2026-05-10 | 設定導覽完成 | product | 2026-05-10 | decisions:#settings |
 
 ---
 
@@ -30,7 +30,7 @@
 **Why**: The alert payload was designed for logs rather than triage.
 **Requirement**: Alerts include the minimal context needed for first response.
 
-## RA-004 — 設定導覽完成 ✅ 2026-04-20
+## RA-004 — 設定導覽完成 ✅ 2026-05-10
 
 **Outcome**: Settings navigation was simplified.
 **See**: decisions:#settings

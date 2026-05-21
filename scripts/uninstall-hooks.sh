@@ -24,14 +24,6 @@ if [ ! -f "$settings" ]; then
   exit 0
 fi
 
-pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
-cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
-cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
-stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
-old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
-session_cmd="$repo_root/scripts/hook-session-summary.sh"
-inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
-statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
 
 tmp_new="$(mktemp)"
@@ -41,56 +33,27 @@ _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
 jq \
-  --arg pm "$pm_cmd" \
-  --arg cx "$cx_cmd" \
-  --arg cxw "$cxw_cmd" \
-  --arg stop "$stop_cmd" \
-  --arg old_stop "$old_stop_cmd" \
-  --arg session "$session_cmd" \
-  --arg inject "$inject_cmd" \
-  --arg statusline "$statusline_cmd" \
+  --arg repo_root "$repo_root" \
   --arg chain_target "$_chain_target" \
   '
-  (if (.hooks // {}).PreToolUse then
-    # Remove individual hook entries matching any managed command.
-    .hooks.PreToolUse |= map(
-      .hooks |= map(select(
-        ([
-          ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
-          ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
-          ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
-        ] | any) | not
-      ))
-    ) |
-    # Drop matcher blocks whose hooks list is now empty.
-    .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
-    # Drop PreToolUse if empty.
-    if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
-  else . end) |
-  (if (.hooks // {}).Stop then
-    .hooks.Stop |= map(
-      .hooks |= map(select(
-        ([
-          ((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
-          ((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts"),
-          (.command == $old_stop)
-        ] | any) | not
-      ))
-    ) |
-    .hooks.Stop |= map(select((.hooks | length) > 0)) |
-    if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end
-  else . end) |
-  (if (.hooks // {}).UserPromptSubmit then
-    .hooks.UserPromptSubmit |= map(
-      .hooks |= map(select(
-        ((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") | not
-      ))
-    ) |
-    .hooks.UserPromptSubmit |= map(select((.hooks | length) > 0)) |
-    if (.hooks.UserPromptSubmit | length) == 0 then del(.hooks.UserPromptSubmit) else . end
-  else . end) |
-  (if ( ((.statusLine.command // "") | split("/") | last) == ($statusline | split("/") | last)
-        and ((.statusLine.command // "") | split("/") | .[-2]) == "scripts" ) then
+  # Remove all hook entries whose .command path starts with this repo root.
+  ( [.hooks // {} | keys[]] ) as $event_types |
+  reduce $event_types[] as $et (
+    .;
+    if (.hooks[$et] | type) == "array" then
+      .hooks[$et] |= map(
+        if (.hooks | type) == "array" then
+          .hooks |= map(select(
+            ((.command // "") | startswith($repo_root + "/")) | not
+          ))
+        else . end
+      ) |
+      .hooks[$et] |= map(select((.hooks // [] | length) > 0)) |
+      if (.hooks[$et] | length) == 0 then del(.hooks[$et]) else . end
+    else . end
+  ) |
+  # Remove statusLine if it points into this repo.
+  (if ((.statusLine.command // "") | startswith($repo_root + "/")) then
     if $chain_target != "" then
       .statusLine = {"type": "command", "command": $chain_target}
     else

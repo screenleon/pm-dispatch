@@ -460,7 +460,9 @@ test_install_sh_wires_hooks() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
@@ -800,7 +802,9 @@ test_install_sh_wires_hooks_no_settings() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
@@ -817,7 +821,9 @@ test_hooks_install_uninstall_lifecycle() {
   assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
@@ -825,7 +831,9 @@ test_hooks_install_uninstall_lifecycle() {
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
@@ -833,6 +841,42 @@ test_hooks_install_uninstall_lifecycle() {
     return
   fi
 
+  pass "$name"
+}
+
+test_uninstall_hooks_removes_unlisted_hooks() {
+  # Verifies that uninstall-hooks.sh removes hooks that were NOT in the old
+  # hardcoded removal list (hook-tool-trace, hook-routing-log under PostToolUse).
+  #
+  # Steps:
+  #   1. Write settings.json with tool-trace (PreToolUse) and routing-log (PostToolUse).
+  #   2. Run uninstall-hooks.sh.
+  #   3. Assert both hooks are gone and no hooks block remains.
+  local name="uninstall-hooks-removes-unlisted-hooks"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  cat > "$home/.claude/settings.json" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-tool-trace.sh"}]}
+    ],
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-routing-log.sh"}]}
+    ]
+  }
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  if jq -e 'has("hooks")' "$home/.claude/settings.json" >/dev/null 2>&1; then
+    fail "$name" "hooks block should be absent after full removal"
+    return
+  fi
   pass "$name"
 }
 
@@ -948,13 +992,15 @@ JSON
 }
 
 test_install_hooks_uninstall_stale_paths_after_rename() {
-  # Verifies that uninstall-hooks.sh removes stale managed hook paths (e.g. from
-  # a repo rename) by basename+scripts/ match, not by exact full path.
+  # Verifies the rename lifecycle: install-hooks.sh first refreshes stale
+  # managed hook paths, then uninstall-hooks.sh removes the refreshed repo-local
+  # hooks by repo-root prefix.
   #
   # Steps:
   #   1. Create settings.json with managed hooks at /fake/old-repo/scripts/
-  #   2. Run uninstall-hooks.sh (current repo_root; paths differ from settings)
-  #   3. Assert all managed hook basenames are gone from settings.json
+  #   2. Run install-hooks.sh to refresh paths to the current repo_root
+  #   3. Run uninstall-hooks.sh
+  #   4. Assert all managed hook basenames are gone from settings.json
   local name="install-hooks-uninstall-stale-paths-after-rename"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
@@ -981,13 +1027,20 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
 }
 JSON
 
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
+  if grep -q "/fake/old-repo/" "$home/.claude/settings.json"; then
+    fail "$name" "stale /fake/old-repo/ path still present after re-install"
+    return
+  fi
+
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
 
   local settings="$home/.claude/settings.json"
 
   # All managed hook basenames must be gone
   for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
-              hook-log-claude-usage.sh hook-session-summary.sh \
+              hook-tool-trace.sh hook-log-claude-usage.sh hook-session-summary.sh \
+              hook-routing-log.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
@@ -1494,6 +1547,7 @@ test_install_hooks_profile_invalid_value_rejected
 test_install_hooks_jq_missing_prints_platform_hints
 test_install_sh_wires_hooks_no_settings
 test_hooks_install_uninstall_lifecycle
+test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_updates_stale_paths_after_rename
 test_install_hooks_preserves_unrelated_same_basename_hook
 test_install_hooks_uninstall_stale_paths_after_rename
