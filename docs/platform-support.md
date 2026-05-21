@@ -115,8 +115,9 @@ bash uninstall.sh      # remove stale copies
 bash install.sh        # reinstall with latest versions
 ```
 
-Re-running `install.sh` is idempotent; it refreshes copied helper scripts with
-the latest versions and is safe to run at any time.
+Re-running `install.sh` is idempotent and safe, but will **not** refresh already-copied
+helper scripts whose source has changed (see CC-221). Use uninstall+reinstall above
+to pick up source changes in copied files.
 
 ---
 
