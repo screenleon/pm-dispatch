@@ -78,6 +78,12 @@ bash scripts/install-hooks.sh
 > paths auto-sync after pulling. Individual helper scripts are still copied.
 > See *Update* below.
 
+> **Copy-mode installs (no dev-mode):** Individual helper scripts (`scripts/*.sh`) are
+> always installed via copy on Git Bash. After pulling updates to these files, re-run
+> `bash install.sh` — changes to copied files do not propagate automatically.
+> `install.sh` prints a summary banner listing how many files were installed via copy
+> so you know when this applies.
+
 ---
 
 ## Update
