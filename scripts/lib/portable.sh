@@ -532,6 +532,7 @@ manifest_record() {
   local fallback_reason="${5-}"
   local src_abs
   local dst_abs
+  local dst_parent
   local escaped_src
   local escaped_dst
   local entry
@@ -543,6 +544,8 @@ manifest_record() {
 
   case "$mode" in
     symlink)
+      ;;
+    junction)
       ;;
     copy)
       [[ -n "$sha256" ]] || {
@@ -561,12 +564,13 @@ manifest_record() {
   esac
 
   src_abs="$(realpath_m "$src" 2>/dev/null || printf '%s' "$src")"
-  dst_abs="$(cd "$(dirname "$dst")" && pwd -P)/$(basename "$dst")"
+  dst_parent="$(cd "$(dirname "$dst")" 2>/dev/null && pwd -P || printf '%s' "$(dirname "$dst")")"
+  dst_abs="$dst_parent/$(basename "$dst")"
   escaped_src="$(_portable_json_escape "$src_abs")"
   escaped_dst="$(_portable_json_escape "$dst_abs")"
 
-  if [[ "$mode" == "symlink" ]]; then
-    entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"symlink\"}"
+  if [[ "$mode" == "symlink" || "$mode" == "junction" ]]; then
+    entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"$mode\"}"
   else
     entry="{\"src\":\"$escaped_src\",\"dst\":\"$escaped_dst\",\"mode\":\"copy\",\"sha256\":\"$sha256\",\"fallback_reason\":\"$(_portable_json_escape "$fallback_reason")\"}"
   fi
@@ -663,6 +667,53 @@ _portable_copy_path() {
     rm -rf "$dst"
   fi
   cp -a "$src" "$dst"
+}
+
+# make_junction_windows <src_dir> <dst_dir>
+# Create a Windows directory junction dst_dir -> src_dir via PowerShell.
+# Returns 0 on success, 1 if powershell.exe is unavailable or junction fails.
+# Only safe to call when src_dir is a directory.
+make_junction_windows() {
+  local src="$1" dst="$2"
+  if ! command -v powershell.exe >/dev/null 2>&1; then
+    printf 'portable: powershell.exe not found — junction unavailable\n' >&2
+    return 1
+  fi
+  local win_src win_dst
+  if command -v cygpath >/dev/null 2>&1; then
+    win_src="$(cygpath -w "$src")"
+    win_dst="$(cygpath -w "$dst")"
+  else
+    win_src="${src//\//\\}"
+    win_dst="${dst//\//\\}"
+  fi
+  powershell.exe -NoProfile -NonInteractive -Command \
+    "New-Item -ItemType Junction -Path '$win_dst' -Target '$win_src' -Force | Out-Null" \
+    >/dev/null 2>&1
+}
+
+# remove_junction_windows <dst>
+# Remove a Windows directory junction at dst via PowerShell Remove-Item.
+# Returns 0 on success, 1 if powershell.exe is unavailable or removal fails.
+# Remove-Item -Force removes the junction reparse point without following it
+# or deleting the junction's target directory contents.
+remove_junction_windows() {
+  local dst="$1"
+  if ! command -v powershell.exe >/dev/null 2>&1; then
+    printf 'portable: powershell.exe not found — junction removal unavailable\n' >&2
+    return 1
+  fi
+  local win_dst
+  if command -v cygpath >/dev/null 2>&1; then
+    win_dst="$(cygpath -w "$dst")"
+  else
+    win_dst="${dst//\//\\}"
+  fi
+  # shellcheck disable=SC2016
+  PM_DISPATCH_RM_DST="$win_dst" \
+    powershell.exe -NoProfile -NonInteractive -Command \
+    '[System.IO.Directory]::Delete($env:PM_DISPATCH_RM_DST, $false)' \
+    >/dev/null 2>&1
 }
 
 link_or_copy() {

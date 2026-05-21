@@ -22,6 +22,8 @@ CLAUDE_HOME="$HOME/.claude"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
 
+_UNINSTALL_PLATFORM="$(detect_platform)"
+
 MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
 
 if [[ ! -f "$MANIFEST" ]]; then
@@ -209,6 +211,42 @@ while IFS= read -r line; do
         fi
       else
         # Path not found — not a safety concern (normal after partial rerun)
+        skipped=$((skipped + 1))
+        echo "  skip $dst (already gone)"
+      fi
+      ;;
+    junction)
+      if ! is_symlink_dst_under_managed_root "$dst"; then
+        skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
+        echo "  skip $dst (dst outside managed root — skipping for safety)"
+        continue
+      fi
+      # Use rmdir to remove junction without following it into source contents.
+      # On Linux/macOS -L catches symlinks; on Windows junctions may not pass -L.
+      if [[ -d "$dst" ]]; then
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+          echo "  would remove junction $dst"
+        else
+          if [[ "$_UNINSTALL_PLATFORM" == "windows" ]]; then
+            remove_junction_windows "$dst" || {
+              printf '  skip %s (powershell Remove-Item failed)\n' "$dst" >&2
+              skipped=$((skipped + 1))
+              safety_skipped=$((safety_skipped + 1))
+              continue
+            }
+          else
+            rmdir "$dst" 2>/dev/null || {
+              printf '  skip %s (rmdir failed — may not be a junction or not empty)\n' "$dst" >&2
+              skipped=$((skipped + 1))
+              safety_skipped=$((safety_skipped + 1))
+              continue
+            }
+          fi
+          echo "  remove junction $dst"
+          removed=$((removed + 1))
+        fi
+      else
         skipped=$((skipped + 1))
         echo "  skip $dst (already gone)"
       fi
