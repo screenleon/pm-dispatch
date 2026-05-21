@@ -1749,6 +1749,111 @@ test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
 test_legacy_stale_symlinks_removed
+test_install_sh_jq_missing_exits_early() {
+  # Proves install.sh exits 1 with platform-specific install hints when jq
+  # is absent from PATH, before any preflight or manifest operations.
+  local name="install-sh-jq-missing-exits-early"
+  should_run "$name" || return 0
+
+  local stub_bin="$tmp_root/$name-stub"
+  mkdir -p "$stub_bin"
+  local util
+  for util in env bash sh dirname pwd uname id; do
+    local src; src="$(command -v "$util" 2>/dev/null)" || continue
+    ln -sf "$src" "$stub_bin/$util"
+  done
+  # Deliberately do NOT symlink jq into stub_bin.
+
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  local out rc=0
+  out="$(HOME="$home" PATH="$stub_bin" bash "$REPO_ROOT/install.sh" 2>&1)" || rc=$?
+
+  if [[ $rc -ne 1 ]]; then
+    fail "$name" "expected exit 1 with missing jq, got rc=$rc; out=$out"
+    return
+  fi
+  if [[ "$out" != *"jq not found"* ]]; then
+    fail "$name" "missing 'jq not found' in output: $out"
+    return
+  fi
+  if [[ "$out" != *"apt install jq"* ]]; then
+    fail "$name" "missing Linux install hint; out=$out"
+    return
+  fi
+  if [[ "$out" != *"brew install jq"* ]]; then
+    fail "$name" "missing macOS install hint; out=$out"
+    return
+  fi
+  if [[ "$out" != *"winget install jqlang.jq"* ]]; then
+    fail "$name" "missing Windows install hint; out=$out"
+    return
+  fi
+  if [[ -f "$home/.claude/settings.json" ]]; then
+    fail "$name" "settings.json should not exist after jq-missing abort"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_sh_copy_fallback_banner() {
+  # Proves _COPY_FALLBACK_COUNT increments on link_or_copy rc=1 (FAKE_SYMLINK_UNSUPPORTED=1)
+  # and the summary banner appears at end of a real (non-dry-run) install.
+  local name="install-sh-copy-fallback-banner"
+  should_run "$name" || return 0
+
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  local out rc=0
+  out="$(HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    FAKE_SYMLINK_UNSUPPORTED=1 \
+    bash "$REPO_ROOT/install.sh" --profile full 2>&1)" || rc=$?
+
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install failed rc=$rc; out=$out"
+    return
+  fi
+  if [[ "$out" != *"installed via copy fallback"* ]]; then
+    fail "$name" "expected copy fallback banner; out=$out"
+    return
+  fi
+  if [[ "$out" != *"re-run install.sh after updates"* ]]; then
+    fail "$name" "expected re-run reminder in banner; out=$out"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_sh_no_banner_dry_run() {
+  # Proves the copy fallback banner is suppressed under --dry-run.
+  # In dry-run, link_or_copy returns 0 before the FAKE_SYMLINK_UNSUPPORTED branch,
+  # so _COPY_FALLBACK_COUNT stays 0 and the banner condition is never satisfied.
+  local name="install-sh-no-banner-dry-run"
+  should_run "$name" || return 0
+
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+
+  local out rc=0
+  out="$(HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    FAKE_SYMLINK_UNSUPPORTED=1 \
+    bash "$REPO_ROOT/install.sh" --profile full --dry-run 2>&1)" || rc=$?
+
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "dry-run install failed rc=$rc; out=$out"
+    return
+  fi
+  if [[ "$out" == *"installed via copy fallback"* ]]; then
+    fail "$name" "banner must NOT appear in dry-run mode; out=$out"
+    return
+  fi
+  pass "$name"
+}
+
 test_filter_no_match_exits_nonzero() {
   # Verifies --filter with a pattern that matches no cases exits nonzero
   # and emits a diagnostic rather than silently reporting 0 passed.
@@ -1776,6 +1881,9 @@ test_install_dir_junction_windows_fallback
 test_install_dir_junction_existing_real_dir
 test_uninstall_junction_windows_remove
 test_uninstall_junction_mode_removes_dir
+test_install_sh_jq_missing_exits_early
+test_install_sh_copy_fallback_banner
+test_install_sh_no_banner_dry_run
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic
 
