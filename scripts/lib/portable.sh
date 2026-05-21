@@ -692,6 +692,28 @@ make_junction_windows() {
     >/dev/null 2>&1
 }
 
+# remove_junction_windows <dst>
+# Remove a Windows directory junction at dst via PowerShell Remove-Item.
+# Returns 0 on success, 1 if powershell.exe is unavailable or removal fails.
+# Remove-Item -Force removes the junction reparse point without following it
+# or deleting the junction's target directory contents.
+remove_junction_windows() {
+  local dst="$1"
+  if ! command -v powershell.exe >/dev/null 2>&1; then
+    printf 'portable: powershell.exe not found — junction removal unavailable\n' >&2
+    return 1
+  fi
+  local win_dst
+  if command -v cygpath >/dev/null 2>&1; then
+    win_dst="$(cygpath -w "$dst")"
+  else
+    win_dst="${dst//\//\\}"
+  fi
+  powershell.exe -NoProfile -NonInteractive -Command \
+    "Remove-Item -Path '$win_dst' -Force" \
+    >/dev/null 2>&1
+}
+
 link_or_copy() {
   local src="${1-}"
   local dst="${2-}"

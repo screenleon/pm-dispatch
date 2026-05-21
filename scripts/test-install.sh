@@ -1657,6 +1657,45 @@ test_install_dir_junction_existing_real_dir() {
   $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
 }
 
+test_uninstall_junction_windows_remove() {
+  local name="uninstall-junction-windows-remove"
+  should_run "$name" || return 0
+  local home managed src dst fake_bin
+  home="$tmp_root/$name"
+  managed="$home/.claude"
+  src="$home/fake-pm-dispatch/agents"
+  dst="$managed/agents"
+  fake_bin="$tmp_root/${name}-bin"
+  mkdir -p "$managed/.pm-dispatch" "$src" "$dst" "$fake_bin"
+  # Fake powershell.exe that simulates Remove-Item by removing the directory.
+  # On Linux, the win_dst path has backslashes; convert them back before rmdir.
+  cat > "$fake_bin/powershell.exe" <<'PWSH'
+#!/bin/bash
+for arg in "$@"; do
+  if [[ "$arg" == *"Remove-Item"* ]]; then
+    if [[ "$arg" =~ -Path[[:space:]]\'([^\']+)\' ]]; then
+      p="${BASH_REMATCH[1]//\\/\/}"
+      rm -rf "$p" 2>/dev/null || true
+    fi
+  fi
+done
+exit 0
+PWSH
+  chmod +x "$fake_bin/powershell.exe"
+  # Write a real-format manifest with mode=junction.
+  printf '{"manifest_version":1,"installed_at":"2026-01-01T00:00:00Z","pm_dispatch_version":"test","entries":[\n{"src":"%s","dst":"%s","mode":"junction"}\n]}\n' \
+    "$src" "$dst" > "$managed/.pm-dispatch/install-manifest.json"
+  HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  if [[ ! -d "$dst" ]]; then
+    pass "$name"
+  else
+    printf '  FAIL  %s — junction dir %s still exists after Windows uninstall\n' "$name" "$dst" >&2
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  fi
+}
+
 test_uninstall_junction_mode_removes_dir() {
   local name="uninstall-junction-mode-removes-dir"
   should_run "$name" || return 0
@@ -1737,6 +1776,7 @@ test_escape_hatch_overrides_verify
 test_install_dir_junction_manifest_entry
 test_install_dir_junction_windows_fallback
 test_install_dir_junction_existing_real_dir
+test_uninstall_junction_windows_remove
 test_uninstall_junction_mode_removes_dir
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic
