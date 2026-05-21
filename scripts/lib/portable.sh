@@ -753,6 +753,7 @@ link_or_copy() {
   local existing_symlink_target
   local prev_sha
   local curr_sha
+  local src_sha
   local fallback_reason
   local sha256
   local ln_rc=0
@@ -790,11 +791,26 @@ link_or_copy() {
 
   if [[ -e "$dst" ]]; then
     if [[ -n "$prev_sha" ]] && _portable_sha256_path "$dst" >/dev/null 2>&1; then
+      src_sha="$(_portable_sha256_path "$src")"
       curr_sha="$(_portable_sha256_path "$dst")"
-      if [[ "$curr_sha" == "$prev_sha" ]]; then
+      if [[ "$curr_sha" == "$src_sha" ]]; then
         echo "  ok    $dst"
-        manifest_record "$src" "$dst" copy "$curr_sha" "already installed from manifest (sha256 match)" || return 3
+        manifest_record "$src" "$dst" copy "$src_sha" "already up to date (sha256 match)" || return 3
         return 0
+      fi
+      if [[ "$curr_sha" == "$prev_sha" ]]; then
+        if [[ "${DRY_RUN:-0}" == "1" ]]; then
+          echo "  would refresh $dst -> $src"
+          manifest_record "$src" "$dst" copy "$src_sha" "dry-run refresh" || return 3
+          return 0
+        fi
+        if ! _portable_copy_path "$src" "$dst"; then
+          printf 'portable: copy refresh failed for %s -> %s\n' "$src" "$dst" >&2
+          return 3
+        fi
+        manifest_record "$src" "$dst" copy "$src_sha" "refreshed (src updated since last install)" || return 3
+        echo "  refresh $dst -> $src"
+        return 1
       fi
       printf '  CONFLICT %s exists and does not match manifest entry\n' "$dst" >&2
       return 2

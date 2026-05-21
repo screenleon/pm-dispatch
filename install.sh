@@ -298,9 +298,8 @@ echo
 
 if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo
-  echo "Note: $_COPY_FALLBACK_COUNT file(s) installed via copy (symlink unavailable)."
-  echo "      Copied files do not auto-sync with source changes."
-  echo "      To pick up updates: bash uninstall.sh && bash install.sh"
+  echo "Note: $_COPY_FALLBACK_COUNT file(s) installed or refreshed via copy (symlink unavailable)."
+  echo "      Re-run install.sh after pulling to keep copied files up to date."
 fi
 
 echo "Done."

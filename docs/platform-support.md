@@ -79,9 +79,10 @@ bash scripts/install-hooks.sh
 > See *Update* below.
 
 > **Copy-mode installs (no dev-mode):** Individual helper scripts (`scripts/*.sh`) are
-> always installed via copy on Git Bash. Copied files do not auto-sync with source
-> changes. To pick up updates run `bash uninstall.sh && bash install.sh`.
-> `install.sh` prints a summary banner listing how many files were installed via copy.
+> always installed via copy on Git Bash. Re-run `bash install.sh` after pulling to
+> refresh copied files — the installer compares source vs installed sha256 and
+> re-copies only files whose source has changed.
+> `install.sh` prints a summary banner listing how many files were installed or refreshed via copy.
 
 ---
 
@@ -105,19 +106,14 @@ bash install.sh    # creates symlinks for any new files
 ### Windows Git Bash
 
 Pull and agents/commands/skills auto-sync via junction. Individual helper scripts
-(`scripts/*.sh`) are installed via copy and do **not** auto-sync. To pick up
-changes to copied files, uninstall and reinstall:
+(`scripts/*.sh`) are installed via copy. Re-run `install.sh` to refresh stale copies
+— the installer compares `sha256(src)` vs `sha256(dst)` and re-copies only changed files:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"
 git pull
-bash uninstall.sh      # remove stale copies
-bash install.sh        # reinstall with latest versions
+bash install.sh        # refreshes changed copies; creates symlinks for new files
 ```
-
-Re-running `install.sh` is idempotent and safe, but will **not** refresh already-copied
-helper scripts whose source has changed (see CC-221). Use uninstall+reinstall above
-to pick up source changes in copied files.
 
 ---
 
