@@ -51,6 +51,7 @@ _OK_COUNT=0
 _WARN_COUNT=0
 _FAIL_COUNT=0
 _SETTINGS_FILE_FAILED=0
+_SETTINGS_FILE_INVALID=0
 
 usage() {
   cat <<'EOF'
@@ -160,6 +161,7 @@ check_codex() {
 check_settings_file() {
   local settings="$HOME/.claude/settings.json"
   _SETTINGS_FILE_FAILED=0
+  _SETTINGS_FILE_INVALID=0
   if [[ ! -f "$settings" ]]; then
     _SETTINGS_FILE_FAILED=1
     emit_check settings-file fail "settings.json missing" "bash '${REPO_ROOT}/install.sh'"
@@ -167,6 +169,7 @@ check_settings_file() {
   fi
 
   if command -v jq >/dev/null 2>&1 && ! jq . "$settings" >/dev/null 2>&1; then
+    _SETTINGS_FILE_INVALID=1
     emit_check settings-file warn "settings.json exists but is not valid JSON" \
       "printf '{}\\n' > ~/.claude/settings.json  then re-run install-hooks.sh"
     return
@@ -200,6 +203,10 @@ check_hooks() {
   local settings="$HOME/.claude/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
     emit_check hooks fail "settings.json missing — cannot check hooks" "bash '${REPO_ROOT}/install.sh'"
+    return
+  fi
+  if [[ "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
+    emit_check hooks warn "settings.json is not valid JSON — cannot check hooks"
     return
   fi
   if ! command -v jq >/dev/null 2>&1; then
@@ -251,6 +258,13 @@ check_scripts_executable() {
     hook-session-summary.sh
     hook-inject-memory.sh
     hook-save-rate-limits.sh
+    token-usage.sh
+    log-usage.sh
+    pr-gate.sh
+    codex-dispatch.sh
+    setup-project.sh
+    patch-gitignore.sh
+    doctor.sh
   )
   local -a missing=()
   local script
@@ -262,9 +276,9 @@ check_scripts_executable() {
 
   if [[ "${#missing[@]}" -gt 0 ]]; then
     emit_check scripts-executable fail "non-executable scripts: ${missing[*]}" \
-      "chmod +x '${REPO_ROOT}/scripts/hook-*.sh'"
+      "chmod +x '${REPO_ROOT}/scripts/'*.sh"
   else
-    emit_check scripts-executable ok "hook scripts are executable"
+    emit_check scripts-executable ok "managed scripts are executable"
   fi
 }
 

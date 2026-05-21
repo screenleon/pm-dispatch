@@ -365,6 +365,89 @@ case_doctor_repo_missing_arg() {
   fi
 }
 
+case_doctor_scripts_not_executable_fail() {
+  local name="doctor-scripts-not-executable-fail"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-no-exec" out status=0
+
+  # Create a writable copy of the repo scripts dir to safely toggle perms.
+  local fake_repo="$tmp_root/fake-repo-no-exec"
+  mkdir -p "$fake_repo/scripts"
+  cp -r "$REPO_ROOT/scripts/lib" "$fake_repo/scripts/" 2>/dev/null || true
+  for f in "$REPO_ROOT/scripts/"*.sh; do
+    cp "$f" "$fake_repo/scripts/$(basename "$f")"
+    chmod +x "$fake_repo/scripts/$(basename "$f")"
+  done
+  chmod -x "$fake_repo/scripts/hook-pm-write-guard.sh"
+
+  write_minimal_settings "$home"
+  write_manifest "$home"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"non-executable"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_manifest_missing_warn() {
+  local name="doctor-manifest-missing-warn"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-no-manifest" out status=0 path
+  write_full_settings "$home"
+  path="$(make_stub_bin "$tmp_root/bin-no-manifest" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"manifest"* && "$out" == *"[WARN]"* && "$status" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_manifest_bad_version_warn() {
+  local name="doctor-manifest-bad-version-warn"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-bad-manifest" out status=0 path
+  write_full_settings "$home"
+  mkdir -p "$home/.claude/.pm-dispatch"
+  printf '{"manifest_version":99}\n' > "$home/.claude/.pm-dispatch/install-manifest.json"
+  path="$(make_stub_bin "$tmp_root/bin-bad-manifest" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"manifest"* && "$out" == *"[WARN]"* && "$status" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_malformed_settings_warn() {
+  local name="doctor-malformed-settings-warn"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-bad-settings" out status=0 path
+  mkdir -p "$home/.claude"
+  printf 'not json at all\n' > "$home/.claude/settings.json"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-bad-settings" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"[WARN]"* && "$out" == *"settings"* && "$out" == *"cannot check hooks"* && "$out" == *"Summary:"* && "$out" != *"[FAIL]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1
@@ -377,6 +460,10 @@ case_doctor_frontmatter_lint_ok
 case_doctor_help_exits_0
 case_doctor_unknown_flag
 case_doctor_repo_missing_arg
+case_doctor_scripts_not_executable_fail
+case_doctor_manifest_missing_warn
+case_doctor_manifest_bad_version_warn
+case_doctor_malformed_settings_warn
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
