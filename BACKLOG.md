@@ -733,7 +733,7 @@ does not currently include "only cite documents you can confirm exist."
 **Priority**: P3 — non-urgent. Occurs on ~30% of gate runs based on observed pattern.
 Each occurrence adds ~1–2 min of manual verification overhead.
 
-## CC-209 — codegraph integration: pre-indexed context for Codex briefs ✅ done
+## CC-209 — codegraph integration: pre-indexed context for Codex briefs
 
 **Problem**: Codex briefs rely on manually-specified `files:` lists for context.
 If the list is incomplete, Codex spends tokens exploring the codebase via grep/read.
