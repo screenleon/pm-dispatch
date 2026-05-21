@@ -213,6 +213,33 @@ while IFS= read -r line; do
         echo "  skip $dst (already gone)"
       fi
       ;;
+    junction)
+      if ! is_under_managed_root "$dst"; then
+        skipped=$((skipped + 1))
+        safety_skipped=$((safety_skipped + 1))
+        echo "  skip $dst (dst outside managed root — skipping for safety)"
+        continue
+      fi
+      # Use rmdir to remove junction without following it into source contents.
+      # On Linux/macOS -L catches symlinks; on Windows junctions may not pass -L.
+      if [[ -d "$dst" ]]; then
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+          echo "  would remove junction $dst"
+        else
+          rmdir "$dst" 2>/dev/null || {
+            printf '  skip %s (rmdir failed — may not be a junction or not empty)\n' "$dst" >&2
+            skipped=$((skipped + 1))
+            safety_skipped=$((safety_skipped + 1))
+            continue
+          }
+          echo "  remove junction $dst"
+          removed=$((removed + 1))
+        fi
+      else
+        skipped=$((skipped + 1))
+        echo "  skip $dst (already gone)"
+      fi
+      ;;
     *)
       if ! is_under_managed_root "$dst"; then
         skipped=$((skipped + 1))

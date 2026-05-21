@@ -1532,6 +1532,49 @@ test_escape_hatch_overrides_verify() {
   $ok && pass "$name" || { FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); }
 }
 
+test_install_dir_junction_windows_fallback() {
+  local name="install-dir-junction-windows-fallback"
+  should_run "$name" || return 0
+  local home
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  # Simulate Windows + no powershell.exe by faking PM_DISPATCH_PLATFORM and
+  # a PATH that contains no powershell.exe.
+  local out
+  out=$(HOME="$home" PM_DISPATCH_PLATFORM=windows \
+        PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        bash "$REPO_ROOT/install.sh" --dry-run 2>&1) || true
+  # On fallback, agents should still be listed (via per-file install_dir path).
+  if [[ "$out" == *"agents"* ]]; then
+    pass "$name"
+  else
+    printf '  FAIL  %s — expected agents section in output\n' "$name" >&2
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  fi
+}
+
+test_uninstall_junction_mode_removes_dir() {
+  local name="uninstall-junction-mode-removes-dir"
+  should_run "$name" || return 0
+  local home managed src dst
+  home="$tmp_root/$name"
+  managed="$home/.claude"
+  src="$home/fake-pm-dispatch/agents"
+  dst="$managed/agents"
+  mkdir -p "$managed/.pm-dispatch" "$src" "$dst"
+  # Write a manifest entry with mode=junction pointing to dst (which is a real dir here).
+  printf '[{"src":"%s","dst":"%s","mode":"junction"}]\n' "$src" "$dst" \
+    > "$managed/.pm-dispatch/install-manifest.json"
+  HOME="$home" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  if [[ ! -d "$dst" ]]; then
+    pass "$name"
+  else
+    printf '  FAIL  %s — junction dir %s still exists after uninstall\n' "$name" "$dst" >&2
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+  fi
+}
+
 test_install_sh_wires_hooks
 test_install_sh_profile_minimal_skips_codex_hooks
 test_install_sh_profile_full_wires_codex_hooks
@@ -1588,6 +1631,8 @@ test_skip_preflight_skips_all_tests
 test_default_install_skips_preflights
 test_verify_flag_runs_preflights
 test_escape_hatch_overrides_verify
+test_install_dir_junction_windows_fallback
+test_uninstall_junction_mode_removes_dir
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic
 

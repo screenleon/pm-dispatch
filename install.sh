@@ -45,6 +45,8 @@ CLAUDE_HOME="$HOME/.claude"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
 
+_INSTALL_PLATFORM="$(detect_platform)"
+
 link() {
   local src="$1" dest="$2"
   local rc
@@ -69,6 +71,48 @@ remove_legacy_symlink() {
     rm "$path"
     echo "  remove (legacy) $path"
   fi
+}
+
+install_dir_junction() {
+  local subdir="$1"
+  local src_dir="$REPO_ROOT/$subdir"
+  local dest_dir="$CLAUDE_HOME/$subdir"
+
+  [[ -d "$src_dir" ]] || { echo "skip $subdir (no source)"; return 0; }
+
+  echo "==> $subdir (windows junction)"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would junction $dest_dir -> $src_dir"
+    manifest_record "$src_dir" "$dest_dir" junction || true
+    return 0
+  fi
+
+  # If dest is already a junction pointing to our src, treat as idempotent.
+  if [[ -d "$dest_dir" && -L "$dest_dir" ]]; then
+    local existing_target
+    existing_target="$(readlink "$dest_dir" 2>/dev/null || true)"
+    if [[ "$existing_target" == "$src_dir" ]]; then
+      echo "  ok    $dest_dir (junction already correct)"
+      manifest_record "$src_dir" "$dest_dir" junction || true
+      return 0
+    fi
+  fi
+
+  if [[ ! -d "$CLAUDE_HOME" ]]; then
+    mkdir -p "$CLAUDE_HOME"
+  fi
+
+  # Attempt junction creation.
+  if make_junction_windows "$src_dir" "$dest_dir"; then
+    echo "  junction $dest_dir -> $src_dir"
+    manifest_record "$src_dir" "$dest_dir" junction || return 1
+    return 0
+  fi
+
+  # Junction failed - fall back to per-file copy via install_dir().
+  printf 'install: junction failed for %s - falling back to per-file copy\n' "$subdir" >&2
+  install_dir "$subdir"
 }
 
 install_dir() {
@@ -130,9 +174,15 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo
 fi
 
-install_dir agents
-install_dir skills
-install_dir commands
+if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
+  install_dir_junction agents
+  install_dir_junction skills
+  install_dir_junction commands
+else
+  install_dir agents
+  install_dir skills
+  install_dir commands
+fi
 
 # Helper scripts — symlinked into ~/.claude/scripts/ so the user can
 # call them as `bash ~/.claude/scripts/<script>` regardless of where
@@ -177,7 +227,19 @@ PM_DEST="$HOME/.claude/.pm"
 if [[ -d "$PM_SRC" ]]; then
   echo "==> pm-schema"
   pm_conflicts=0
-  link "$PM_SRC" "$PM_DEST" || pm_conflicts=$((pm_conflicts + 1))
+  if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  would junction $PM_DEST -> $PM_SRC"
+      manifest_record "$PM_SRC" "$PM_DEST" junction || pm_conflicts=$((pm_conflicts + 1))
+    elif ! make_junction_windows "$PM_SRC" "$PM_DEST"; then
+      link "$PM_SRC" "$PM_DEST" || pm_conflicts=$((pm_conflicts + 1))
+    else
+      echo "  junction $PM_DEST -> $PM_SRC"
+      manifest_record "$PM_SRC" "$PM_DEST" junction || pm_conflicts=$((pm_conflicts + 1))
+    fi
+  else
+    link "$PM_SRC" "$PM_DEST" || pm_conflicts=$((pm_conflicts + 1))
+  fi
   echo "  (1 attempted, $pm_conflicts conflicts)"
   if [[ "$pm_conflicts" -gt 0 ]]; then
     echo "install.sh: pm-schema symlink failed — resolve conflict before continuing" >&2

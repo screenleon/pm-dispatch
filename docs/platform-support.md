@@ -3,8 +3,10 @@
 > **Status (2026-05-20, v0.2.0)**: CC-104t (python→jq hook rewrite) has landed —
 > hooks are now functional on Windows Git Bash without requiring python3.
 > Windows is **experimental**: install succeeds and all hooks run, but
-> `install.sh` copies files instead of symlinking on Git Bash (no auto-sync
-> after updates; re-run `bash install.sh` after pulling). Tracked as CC-207.
+> `install.sh` uses directory junctions for managed directories on Git Bash
+> so agents, commands, skills, and the pm schema auto-sync after updates.
+> Individual helper script files are still copied; re-run `bash install.sh`
+> after pulling when scripts change. Tracked as CC-207.
 > **WSL2 remains the recommended Windows path** (treated as Linux, first-class).
 
 ## Support matrix
@@ -14,7 +16,7 @@
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
 | WSL2                             | **First-class**      | Treated as Linux |
-| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; install copies rather than symlinks (CC-207); re-run `bash install.sh` after updates |
+| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; directory junctions restore auto-sync for managed directories; re-run `bash install.sh` after script updates |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
 
 ---
@@ -70,9 +72,10 @@ bash install.sh
 bash scripts/install-hooks.sh
 ```
 
-> **Known limitation (CC-207):** On Git Bash, `ln -s` does not create real
-> symlinks, so `install.sh` falls back to **copying files**. After pulling
-> pm-dispatch updates you must re-run `bash install.sh` to sync the copies.
+> **Symlink support (CC-207):** On Git Bash, `ln -s` does not create real
+> symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
+> for `agents/`, `commands/`, `skills/`, and `pm-schema` directories so those
+> paths auto-sync after pulling. Individual helper scripts are still copied.
 > See *Update* below.
 
 ---
@@ -96,16 +99,17 @@ bash install.sh    # creates symlinks for any new files
 
 ### Windows Git Bash
 
-Because files are copied rather than symlinked:
+Pull and agents/commands/skills auto-sync via junction; only individual script
+files (`scripts/*.sh`) need re-run after updates:
 
 ```bash
 cd "${PM_DISPATCH_REPO}"
 git pull
-bash install.sh        # re-sync all copies
+bash install.sh        # re-sync copied helper scripts when they change
 ```
 
-Re-running `install.sh` is idempotent; it overwrites copies with the latest
-versions and is safe to run at any time.
+Re-running `install.sh` is idempotent; it refreshes copied helper scripts with
+the latest versions and is safe to run at any time.
 
 ---
 
@@ -126,7 +130,7 @@ bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh" --dry-run
 
 ### Part 2 — remove managed files from ~/.claude
 
-Removes the symlinks (or copies on Windows) for agents, commands, scripts, and
+Removes the symlinks, junctions, or copies for agents, commands, scripts, and
 the .pm schema. Run after Part 1.
 
 ```bash
@@ -212,7 +216,7 @@ bash install.sh && bash scripts/install-hooks.sh
 - GNU `realpath -m` not guaranteed → shimmed `realpath_m` provides equivalent behavior.
 - Filesystem case-insensitive → avoid hook paths differing only by case.
 - `codex` CLI hooks unsupported on Windows; `--profile full` falls back to `minimal`.
-- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict` → install falls back to file copy (CC-207).
+- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts (CC-207).
 
 ## Repository references
 
