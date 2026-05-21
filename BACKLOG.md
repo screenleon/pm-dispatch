@@ -107,6 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
+| CC-222 | ⏸ deferred | **[codegraph brief-enrichment helper]** Implement `scripts/codegraph-enrich.sh` — checks codegraph is installed (graceful no-op if absent), ensures/refreshes a `fast`-tier per-repo index, runs `codegraph context --no-code`, and emits a `files:`-block fragment for the brief author to paste (additive, never replacing the human list). Carries the prototype + 3-brief token-delta measurement deferred from the CC-209 spike (investigation-only). See `docs/spikes/CC-209.md` §7. | ops/token | 2026-05-21 | — | P3 | design |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -751,6 +752,14 @@ aligned with pm-dispatch's core token-efficiency goal.
 
 **Priority**: P3 — non-urgent. Evaluate after v0.2.0 milestone closes.
 
+**Result log**: `docs/spikes/CC-209.md` — spike complete 2026-05-21 (investigation-only).
+Verdict: adopt codegraph `fast` tier as an optional, additive CLI-preflight enrichment
+for code-language target repos; LSP/embedding tiers rejected as too heavy. codegraph has
+no shell support, so pm-dispatch self-indexing is not possible — accepted as a known
+limitation (ctags noted as the recorded fallback if revisited; not scheduled). Prototype
+and the 3-brief token-delta measurement carried to CC-222. Independent Codex review:
+`docs/spikes/CC-209-track-b-codex.md`.
+
 ## CC-210 — uninstall.sh: reject managed-root exact path as deletion target（deferred）
 
 **Problem**: `uninstall.sh` checks `[[ "$dst" == "$managed_root"* ]]` (startswith), which
@@ -1044,3 +1053,35 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Why**: The current install-again workflow does not fix stale copied helpers. The correct uninstall+reinstall workaround is documented (CC-104v), but the underlying implementation is wrong. A user who simply re-runs `install.sh` after pulling a source change will silently keep the old version.
 **Requirement**: Change the `link_or_copy` copy-path to compare `sha256(src)` vs `sha256(dst)` at install time; if they differ and `mode=copy`, re-copy and update the manifest entry. Guard: if manifest has no prior entry, existing behavior (first-time copy) is unchanged.
 **Closed**: Implemented in PR #117. `scripts/lib/portable.sh` now compares src vs dst sha256 directly; four new test cases in `scripts/test-portable.sh` cover stale refresh, up-to-date rerun, user-modified conflict, and dry-run refresh.
+
+## CC-222 — codegraph brief-enrichment helper（deferred）
+
+**Problem**: Codex briefs hand-list the `files:` block. An incomplete list makes Codex
+spend tokens exploring the target repo. The CC-209 spike confirmed codegraph can supply
+an accurate `path:line` file list cheaply (~130 tokens per query), but that spike was
+investigation-only — no helper was built.
+
+**Why**: The CC-209 verdict is "adopt codegraph `fast` tier as optional, additive
+enrichment". The remaining work is the helper script plus the token-delta measurement
+the spike deferred (CC-209 investigation-scope items 3–4).
+
+**Requirement**:
+1. Implement `scripts/codegraph-enrich.sh <target-repo> "<goal>"`.
+2. Degrade gracefully: if `codegraph` is not installed, no-op with a warning — never block dispatch.
+3. Index lifecycle: `codegraph index` when no `.codegraph/` exists, `codegraph sync` when it does, full re-index when the index is stale beyond a TTL.
+4. Run `codegraph context "<goal>" --no-code` and emit a `files:`-block fragment for the brief author to paste — additive only, never replacing the human `files:` list.
+5. Ensure the target repo's `.gitignore` covers `.codegraph/`.
+6. Measure token delta on 3 representative briefs with and without enrichment; record results.
+
+**Constraints**: `fast` tier only — no LSP, no embeddings. codegraph stays out of
+`codex-dispatch.sh` (CLI preflight, not a dispatch flag). The helper is a
+main-thread brief-authoring preflight — the dispatched executor never invokes
+codegraph; it only consumes an already-enriched `files:` block (see
+`docs/spikes/CC-209.md` §3.1). Live executor-side codegraph use (Model B) is
+explicitly out of scope. codegraph does not index shell, so this helper does not
+apply to pm-dispatch's own `.sh` sources — an accepted known limitation (see
+CC-209 Result log), not a goal of this ticket.
+
+**Depends on**: CC-209 (spike — see `docs/spikes/CC-209.md`).
+
+**Priority**: P3.
