@@ -8,18 +8,54 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-22
+
+**Theme**: Cross-platform operations, environment health tooling, and schema improvements.
+
 ### Added
-- **`commands/skill-refine.md`** — added Prerequisites section documenting `CLAUDE_MEMORY_DIR` requirement and export example (CC-025b).
-- **`scripts/test-skill-refine.sh`** — added `case_no_args_exits_2_with_usage` and `case_multi_args_exits_2_with_usage` guard tests (CC-025b).
-- **`scripts/test-commands.sh`** — new contract-lint script asserting `/caveman` and `/caveman-commit` behavioral contracts; wired into CI (`lint.yml`).
-- **`.github/workflows/lint.yml`** — added `test-commands` CI job.
+
+- **`scripts/doctor.sh`** — install environment health check: verifies `claude`/`jq` on PATH, hooks wired in `settings.json`, memory dir present, scripts executable, frontmatter lint clean. Accepts `--profile minimal|full|auto`; each failing check prints a concrete remediation step. Wired into `install.sh` post-install and `scripts/run-all-tests.sh` (CC-058).
+- **`scripts/run-all-tests.sh`** — standalone test aggregator that runs all per-subsystem suites and produces a single pass/fail summary; replaces `install.sh --verify` as the canonical health check tool (CC-104n).
+- **`scripts/lib/portable.sh` `serialize_with_lock()`** — cross-platform locking shim: prefers `flock` when available, falls back to `mkdir_lock`. Eliminates `flock` hard-dependency on Windows Git Bash (CC-104p).
+- **`scripts/uninstall.sh`** — manifest-driven uninstall removes only files recorded in the install manifest; safety guard rejects dst not strictly under the managed root.
+- **`install.sh` copy-mode refresh semantics** — re-running `install.sh` now compares `sha256(src)` vs `sha256(dst)` directly; only changed files are re-copied (CC-221).
+- **`install.sh` jq prerequisite check** — jq is checked at the top of the installer before any tests run; error includes a platform-aware install hint (CC-104l).
+- **`install.sh` copy-mode banner** — when files were installed via copy fallback, a summary banner at the end reminds the user to re-run after source edits (CC-104v).
+- **pm-schema v1.1** — BACKLOG index table adds `Priority` (P1/P2/P3) and `Epic` columns; `pm/scripts/validate.sh` and `pm/scripts/rollup.sh` updated (CC-052).
+- **pm-schema v1.2** — adds `design` and `spike` epic enum values; validator and rollup updated (CC-104/CC-205).
+- **`DECISIONS.md`** — repo-level architectural decision log; `validate.sh` guards that referenced IDs exist (CC-067).
+- **`CONTRIBUTING.md`** + **`CODE_OF_CONDUCT.md`** — source-available contributor guidelines + Contributor Covenant 2.1 (CC-031).
+- **`commands/skill-refine.md`** Prerequisites section documenting `CLAUDE_MEMORY_DIR` requirement (CC-025b).
+- **`scripts/test-commands.sh`** — contract-lint CI test for `/caveman` and `/caveman-commit` behavioral contracts; wired into `lint.yml` `test-commands` job (CC-039/CC-053).
 
 ### Changed
-- **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to the NO-GO fix-loop protocol; added new contract test script rule to the brief-writing section (CC-039).
-- **`commands/pre-impl.md`** — added Q4 (contract test completeness) to Step 2; updated heading to reflect Q1–Q4 (CC-039).
 
-### Removed
-- **`[1.0.0]` and `[1.1.0]` changelog sections** — these were accidentally written during project setup before the repo's official public release (v0.1.0 on 2026-05-17). They contained internal scaffolding notes, not user-visible releases. Removed per maintainer decision; full history remains in `git log`.
+- **`scripts/lint-frontmatter.sh`** — complete YAML flow-collection validation matching PyYAML semantics: dq escape whitelist, adjacent-quote detection, tab-indented list item rejection, and empty-entry check (`[foo,,bar]`). Covers all four collection paths (key-level `[...]` / `{...}`, list-item `[...]` / `{...}`). Regression suite expanded from 35 to 68 test cases (CC-056/CC-058).
+- **Hook scripts** — rewrote `hook-log-claude-usage.sh`, `hook-inject-memory.sh`, `hook-session-summary.sh`, and `hook-save-rate-limits.sh` from python3 to jq. Eliminates python3 as a runtime dependency; fixes Windows Git Bash failures caused by the Microsoft Store python3 stub (CC-104t).
+- **`scripts/install.sh`** — `link_or_copy()` now detects real-directory dst conflict before attempting `ln -s` (CC-104u); on Windows Git Bash, managed directories (`agents/`, `commands/`, etc.) are created as PowerShell directory junctions so they auto-sync after `git pull` (CC-207).
+- **`hook-routing-log.sh`** — replaced `flock`/fd9 pattern with `serialize_with_lock()` portable shim (CC-104p).
+- **`pm/scripts/validate.sh`** — bidirectional Index ↔ Section consistency check; CHANGELOG drift detection (CC-030/CC-046).
+- **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to NO-GO fix-loop protocol; added contract-test rule to brief-writing section (CC-039).
+- **`commands/pre-impl.md`** — added Q4 (contract test completeness) to Step 2 (CC-039).
+
+### Fixed
+
+- `hook-routing-log.sh` row-loss on Windows: `flock` is Linux-only; `serialize_with_lock()` shim restores concurrent-safe appends on Git Bash (CC-104p).
+- `install.sh` copy-mode idempotency: stale copies were not refreshed on re-install because sha comparison used the old manifest hash instead of comparing src vs dst directly (CC-221).
+
+### Known limitations
+
+- macOS is documented but not dogfood-tested. Install code path is the same as Linux; report issues via GitHub Issues.
+- Windows Git Bash: individual `scripts/*.sh` helper files are still installed via copy (not junction); re-run `bash install.sh` after pulling to refresh changed copies.
+- `CC-200..CC-204` reuse-debt items deferred: shared executor-router, profile-detect shim, handover validator framework, test-harness lib, hook framework.
+
+### Test coverage
+
+Added since v0.1.0:
+- 68 lint-frontmatter regression cases (was 35)
+- 32 doctor health-check cases
+- 23 run-all-tests aggregator cases
+- Additional install/uninstall/portable cases
 
 ## [0.1.0] — 2026-05-17
 
