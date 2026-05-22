@@ -205,6 +205,12 @@ hook_present() {
 stale_hook_commands() {
   local settings="$1" repo_root="$2"
   jq -r --arg repo_root "$repo_root" '
+    # Normalize Windows drive paths (C:/...) to POSIX form (/c/...) so that
+    # comparisons work regardless of which format the shell or installer used.
+    def normalize_path:
+      if test("^[A-Za-z]:[/\\\\]") then
+        "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+      else . end;
     [
       ((.hooks // {}) | .PreToolUse[]?  | (.hooks // [])[]?),
       ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
@@ -216,7 +222,7 @@ stale_hook_commands() {
         (.command? // "") as $cmd |
         ($cmd | length) > 0 and
         ($cmd | split("/") | .[-2]) == "scripts" and
-        ($cmd | startswith($repo_root) | not)
+        (($cmd | normalize_path) | startswith($repo_root + "/") | not)
       ) | .command)
     | unique[]
   ' "$settings" 2>/dev/null
