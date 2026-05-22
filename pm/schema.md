@@ -119,6 +119,8 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 `oss`（CC-OSS 公開源碼系列）/ `reuse-debt`（技術債重用）/ `hygiene`（流程/schema 維護）/ `design`（新功能架構設計，含 interface 決策與 /pre-impl 設計評審類工作）/ `spike`（調查類任務）/ `—`（未分組）。
 新 repo 可以擴充此 enum（additive 加值向下相容，不需 bump version）；刪除或重命名現有值則需 bump patch version 並標記 breaking change。擴充需同步更新 `pm/schema.md`。
 
+`spike`-epic 票仍用標準三節 body（§2.5）—— spike 慣例（`Investigation scope` / `Done-when` / `Result log` 寫在 `Requirement` 節內）與 result-file（`docs/spikes/CC-NNN.md`）格式見 [`docs/spikes/README.md`](../docs/spikes/README.md)。
+
 ### 2.5 條目 body 三層格式
 
 每個 active 條目 body 固定三節 Problem / Why / Requirement，**只寫到這三層為止**。後接可選的 `Tags` 行與溢出用的 `Refs` 行：
