@@ -597,16 +597,15 @@ case_doctor_manifest_bad_version_warn() {
   fi
 }
 
-case_doctor_malformed_settings_warn() {
-  # Verifies that non-JSON settings.json emits [WARN] about being invalid JSON
-  # rather than [FAIL], and that hook checks are skipped.
+case_doctor_malformed_settings_fail() {
+  # Verifies that non-JSON settings.json causes [FAIL] (not just [WARN]),
+  # non-zero exit, and that hook checks are also reported as failed.
   #
   # Steps:
   #   1. Write "not json at all" to settings.json.
   #   2. Run doctor --no-color --repo <repo>.
-  #   3. Assert exit 0, output has [WARN] with "settings" and "cannot check hooks",
-  #      no [FAIL], and contains "Summary:".
-  local name="doctor-malformed-settings-warn"
+  #   3. Assert exit 1, output has [FAIL] with "settings" and "cannot check hooks".
+  local name="doctor-malformed-settings-fail"
   should_run "$name" || return 0
   if ! command -v jq >/dev/null 2>&1; then
     pass "$name (jq not available - skip)"
@@ -619,10 +618,41 @@ case_doctor_malformed_settings_warn() {
   path="$(make_stub_bin "$tmp_root/bin-bad-settings" claude codex)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"[WARN]"* && "$out" == *"settings"* && "$out" == *"cannot check hooks"* && "$out" == *"Summary:"* && "$out" != *"[FAIL]"* ]]; then
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"settings"* && "$out" == *"cannot check hooks"* && "$out" == *"Summary:"* ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail "$name" "expected exit 1 with [FAIL] and 'cannot check hooks'; status=$status out=$out"
+  fi
+}
+
+case_doctor_malformed_settings_json() {
+  # Verifies that --json mode reports settings-file as "fail" and summary
+  # exit_code as 1 when settings.json is not valid JSON.
+  #
+  # Steps:
+  #   1. Write malformed settings.json.
+  #   2. Run doctor --json --repo <repo>.
+  #   3. Assert settings-file JSON line has "status":"fail" and summary has "exit_code":1.
+  local name="doctor-malformed-settings-json"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-bad-settings-json" out status=0 path
+  mkdir -p "$home/.claude"
+  printf 'not json at all\n' > "$home/.claude/settings.json"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-bad-settings-json" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>&1)" || status=$?
+  local settings_status exit_code
+  settings_status="$(printf '%s\n' "$out" | jq -r 'select(.check == "settings-file") | .status' 2>/dev/null || true)"
+  exit_code="$(printf '%s\n' "$out" | jq -r 'select(.summary == true) | .exit_code' 2>/dev/null || true)"
+  if [[ "$settings_status" == "fail" && "$exit_code" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected settings-file=fail exit_code=1; got settings_status=$settings_status exit_code=$exit_code status=$status"
   fi
 }
 
@@ -915,7 +945,8 @@ case_doctor_repo_missing_arg
 case_doctor_scripts_not_executable_fail
 case_doctor_manifest_missing_warn
 case_doctor_manifest_bad_version_warn
-case_doctor_malformed_settings_warn
+case_doctor_malformed_settings_fail
+case_doctor_malformed_settings_json
 case_doctor_profile_minimal_skip_codex_hooks
 case_doctor_minimal_missing_routing_log_fails
 case_doctor_profile_missing_arg_exits_2

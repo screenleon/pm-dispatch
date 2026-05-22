@@ -178,7 +178,7 @@ check_settings_file() {
 
   if command -v jq >/dev/null 2>&1 && ! jq . "$settings" >/dev/null 2>&1; then
     _SETTINGS_FILE_INVALID=1
-    emit_check settings-file warn "settings.json exists but is not valid JSON" \
+    emit_check settings-file fail "settings.json exists but is not valid JSON" \
       "printf '{}\\n' > ~/.claude/settings.json  then re-run install-hooks.sh"
     return
   fi
@@ -240,7 +240,7 @@ check_hooks() {
     return
   fi
   if [[ "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
-    emit_check hooks warn "settings.json is not valid JSON — cannot check hooks"
+    emit_check hooks fail "settings.json is not valid JSON — cannot check hooks"
     return
   fi
   if ! command -v jq >/dev/null 2>&1; then
