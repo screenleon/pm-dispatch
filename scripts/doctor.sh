@@ -31,6 +31,10 @@ else
         esac ;;
     esac
   }
+  # Copy-mode parity: portable.sh would supply codex_available(); define a
+  # matching fallback so check_codex() / the hook-profile case do not hit an
+  # undefined function when lib/ is absent (CC-201).
+  codex_available() { command -v codex >/dev/null 2>&1; }
 fi
 
 if [[ "$_PORTABLE_AVAILABLE" -eq 1 && -f "$SCRIPT_DIR/lib/memory-dir.sh" ]]; then
