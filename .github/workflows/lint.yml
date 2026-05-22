@@ -110,6 +110,8 @@ jobs:
             memory-dir.sh
             doctor.sh
             test-doctor.sh
+            test-harness.sh
+            test-test-harness.sh
 
   test-doctor:
     runs-on: ubuntu-latest

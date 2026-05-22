@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #
 # Shared test harness for scripts/test-*.sh
 # Provides a common argument parser, counting helpers, tmp directory lifecycle,
