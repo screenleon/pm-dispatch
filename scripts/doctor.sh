@@ -373,19 +373,20 @@ check_manifest() {
 }
 
 check_frontmatter_lint() {
-  local lint_script="${REPO_ROOT}/scripts/lint-frontmatter.sh"
+  # Always run the installed (trusted) linter; never execute scripts from --repo target.
+  local lint_script="${SCRIPT_DIR}/lint-frontmatter.sh"
   if [[ ! -x "$lint_script" ]]; then
     emit_check frontmatter-lint warn "lint-frontmatter.sh not found or not executable" \
       "bash '${REPO_ROOT}/install.sh' to restore managed scripts"
     return
   fi
   local out
-  out="$(cd "$REPO_ROOT" && "$lint_script" 2>&1)" && {
+  out="$("$lint_script" --repo-root "$REPO_ROOT" 2>&1)" && {
     emit_check frontmatter-lint ok "frontmatter lint passed"
     return
   }
   emit_check frontmatter-lint fail "frontmatter lint errors detected: ${out%%$'\n'*}" \
-    "bash '${REPO_ROOT}/scripts/lint-frontmatter.sh' for details"
+    "bash '${SCRIPT_DIR}/lint-frontmatter.sh' --repo-root '${REPO_ROOT}' for details"
 }
 
 main() {

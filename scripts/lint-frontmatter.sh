@@ -7,7 +7,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 single_file=""
 
 usage() {
-  echo "usage: $(basename "$0") [--file <path>]" >&2
+  echo "usage: $(basename "$0") [--file <path>] [--repo-root <path>]" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -18,6 +18,14 @@ while [ "$#" -gt 0 ]; do
         exit 2
       fi
       single_file="$2"
+      shift 2
+      ;;
+    --repo-root)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      repo_root="$2"
       shift 2
       ;;
     -h|--help)
@@ -71,9 +79,10 @@ extract_frontmatter() {
   ' "$1"
 }
 
-# Validate frontmatter lines with pure bash — no python3/PyYAML required.
-# Checks: each line is blank, a list item, or a "key: value" pair;
-# argument-hint must be a quoted string.
+# Validate frontmatter lines — restricted YAML subset (no full YAML parser).
+# Accepts: blank lines, list items, simple key: value pairs, quoted values.
+# Rejects: unclosed brackets/braces, unterminated quoted scalars, nested mappings.
+# argument-hint must be a double-quoted string.
 check_frontmatter() {
   local line
   while IFS= read -r line; do
@@ -89,6 +98,14 @@ check_frontmatter() {
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ \"[[:space:]]*$ ]]; then
       printf 'unterminated quoted value: %s\n' "$line"
+      return 1
+    fi
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\{ ]] && [[ ! "$line" =~ \} ]]; then
+      printf 'unclosed YAML flow mapping: %s\n' "$line"
+      return 1
+    fi
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\' ]] && [[ ! "$line" =~ \'[[:space:]]*$ ]]; then
+      printf 'unterminated single-quoted value: %s\n' "$line"
       return 1
     fi
     # Reject unquoted values that look like nested YAML mappings (word: rest).

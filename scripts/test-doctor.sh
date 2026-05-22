@@ -834,6 +834,42 @@ case_doctor_installed_copy_no_repo() {
   fi
 }
 
+case_doctor_repo_trusted_linter() {
+  # Verifies that doctor.sh runs the INSTALLED linter, not the target repo's
+  # scripts/lint-frontmatter.sh, preventing arbitrary code execution via --repo.
+  #
+  # Steps:
+  #   1. Create a fake target repo with a malicious lint-frontmatter.sh that
+  #      writes a sentinel file when executed.
+  #   2. Run doctor --repo <fake-repo>.
+  #   3. Assert the sentinel file was NOT created.
+  local name="doctor-repo-trusted-linter"
+  should_run "$name" || return 0
+  local fake_repo="$tmp_root/fake-repo-trusted"
+  local sentinel="$tmp_root/sentinel-trusted"
+  mkdir -p "$fake_repo/scripts" "$fake_repo/agents" "$fake_repo/commands"
+  cat > "$fake_repo/scripts/lint-frontmatter.sh" <<EOLINT
+#!/usr/bin/env bash
+touch "$sentinel"
+exit 0
+EOLINT
+  chmod +x "$fake_repo/scripts/lint-frontmatter.sh"
+  touch "$fake_repo/install.sh"
+  local home="$tmp_root/home-trusted" path
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-trusted" claude codex)"
+  HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$fake_repo" >/dev/null 2>&1 || true
+  if [[ ! -f "$sentinel" ]]; then
+    pass "$name"
+  else
+    fail "$name" "doctor.sh executed the target repo's lint-frontmatter.sh (sentinel created)"
+  fi
+}
+
 case_doctor_stale_hook_sibling_prefix_warns() {
   # Verifies that hook paths under a sibling checkout sharing the repo-root
   # prefix (e.g. /path/pm-dispatch-sibling/scripts/) emit [WARN] "different checkout".
@@ -888,6 +924,7 @@ case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
 case_doctor_installed_copy_no_repo
+case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 
 if $LIST; then

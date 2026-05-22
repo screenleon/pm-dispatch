@@ -176,6 +176,10 @@ run_tmp_fail "lint-frontmatter/unterminated-quoted-value" \
   $'---\ndescription: "unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/nested-yaml-value" \
   $'---\ndescription: foo: bar\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/unclosed-flow-mapping" \
+  $'---\ndescription: {unterminated\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/unterminated-single-quote" \
+  $'---\ndescription: \'unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/non-string-argument-hint" \
   $'---\ndescription: test\nargument-hint:\n  - a\n  - b\n---\n\nbody\n'
 
