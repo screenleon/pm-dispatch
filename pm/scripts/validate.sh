@@ -103,6 +103,7 @@ function norm_area(s) {
   if (s == "architecture") return "arch"
   if (s == "operations") return "ops"
   if (s == "con") return "connector"
+  if (s == "documentation") return "docs"
   return s
 }
 

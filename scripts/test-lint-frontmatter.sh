@@ -172,6 +172,8 @@ run_tmp_fail "lint-frontmatter/malformed-yaml" \
   $'---\nkey: [unclosed\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/unquoted-argument-hint" \
   $'---\ndescription: test\nargument-hint: [a|b|c]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/unterminated-quoted-value" \
+  $'---\ndescription: "unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/non-string-argument-hint" \
   $'---\ndescription: test\nargument-hint:\n  - a\n  - b\n---\n\nbody\n'
 

@@ -87,6 +87,10 @@ check_frontmatter() {
       printf 'unclosed YAML list bracket: %s\n' "$line"
       return 1
     fi
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ \"[[:space:]]*$ ]]; then
+      printf 'unterminated quoted value: %s\n' "$line"
+      return 1
+    fi
     if [[ "$line" =~ ^argument-hint: ]] && [[ ! "$line" =~ ^argument-hint:[[:space:]]*\" ]]; then
       printf 'argument-hint must be quoted as a YAML string\n'
       return 1
