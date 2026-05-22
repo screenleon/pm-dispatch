@@ -220,6 +220,8 @@ run_tmp_fail "lint-frontmatter/invalid-dq-escape" \
   $'---\ndescription: "bad \\q escape"\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/sq-in-seq-unclosed" \
   $'---\ndescription: [\'unterminated]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-unclosed-seq" \
+  $'---\ntags:\n  - [unclosed\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 

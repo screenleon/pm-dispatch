@@ -88,7 +88,54 @@ check_frontmatter() {
   local trailing_after_quoted_re='^[A-Za-z_-]+:[[:space:]]*"([^"\\]|\\.)*"[[:space:]]*[^[:space:]]'
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^[[:space:]]*- ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]] ]]; then
+      local _item="${line#*- }"
+      if [[ "$_item" =~ ^\[ ]]; then
+        if [[ ! "$_item" =~ \][[:space:]]*$ ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        local _si _sinq _sinsq
+        _si="${_item#*\[}"; _si="${_si%\]*}"
+        _sinq="${_si//\"/}"
+        if (( (${#_si} - ${#_sinq}) % 2 != 0 )); then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        _sinsq="${_si//\'/}"
+        if (( (${#_si} - ${#_sinsq}) % 2 != 0 )); then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        if [[ "$_si" == *"{"* ]] || [[ "$_si" == *"["* ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+      elif [[ "$_item" =~ ^\{ ]]; then
+        if [[ ! "$_item" =~ \}[[:space:]]*$ ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        local _mi _minq _mi_nob _mi_ncb
+        _mi="${_item#*\{}"; _mi="${_mi%\}*}"
+        _minq="${_mi//\"/}"
+        if (( (${#_mi} - ${#_minq}) % 2 != 0 )); then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        _mi_nob="${_mi//\[/}"; _mi_ncb="${_mi//\]/}"
+        if (( (${#_mi} - ${#_mi_nob}) != (${#_mi} - ${#_mi_ncb}) )); then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+      elif [[ "$_item" =~ ^\" ]]; then
+        local _idq_re='^"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[[:space:]]*$'
+        if [[ ! "$_item" =~ $_idq_re ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+      elif [[ "$_item" =~ ^\' ]]; then
+        local _isq_re="^'([^']|'')*'[[:space:]]*$"
+        if [[ ! "$_item" =~ $_isq_re ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+      elif [[ "$_item" =~ ^[@\`\*\&\!] ]]; then
+        printf 'invalid YAML list item: %s\n' "$line"; return 1
+      fi
+      continue
+    fi
     if [[ ! "$line" =~ ^[A-Za-z_-]+:[[:space:]] ]] && [[ ! "$line" =~ ^[A-Za-z_-]+:$ ]]; then
       printf 'unexpected frontmatter syntax: %s\n' "$line"
       return 1
