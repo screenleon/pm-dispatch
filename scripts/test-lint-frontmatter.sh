@@ -184,6 +184,10 @@ run_tmp_fail "lint-frontmatter/unterminated-single-quote" \
   $'---\ndescription: \'unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/non-string-argument-hint" \
   $'---\ndescription: test\nargument-hint:\n  - a\n  - b\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-scalar-start-at" \
+  $'---\ndescription: @bad\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-scalar-start-backtick" \
+  $'---\ndescription: `bad\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 

@@ -125,6 +125,11 @@ check_frontmatter() {
       printf 'argument-hint must be quoted as a YAML string\n'
       return 1
     fi
+    local _sv="${line#*: }"
+    if [[ "$_sv" =~ ^[@\`] ]]; then
+      printf 'invalid YAML plain scalar start: %s\n' "$line"
+      return 1
+    fi
   done
 }
 

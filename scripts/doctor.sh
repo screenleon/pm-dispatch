@@ -167,7 +167,7 @@ check_codex() {
 }
 
 check_settings_file() {
-  local settings="$HOME/.claude/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   _SETTINGS_FILE_FAILED=0
   _SETTINGS_FILE_INVALID=0
   if [[ ! -f "$settings" ]]; then
@@ -234,7 +234,7 @@ stale_hook_commands() {
 }
 
 check_hooks() {
-  local settings="$HOME/.claude/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
     emit_check hooks fail "settings.json missing — cannot check hooks" "bash '${REPO_ROOT}/install.sh'"
     return
@@ -356,7 +356,7 @@ check_memory_dir() {
 }
 
 check_manifest() {
-  local manifest_path="$HOME/.claude/.pm-dispatch/install-manifest.json"
+  local manifest_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.pm-dispatch/install-manifest.json"
   if [[ ! -f "$manifest_path" ]]; then
     emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
       "bash '${REPO_ROOT}/install.sh' to regenerate"

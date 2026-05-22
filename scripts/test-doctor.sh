@@ -899,6 +899,38 @@ case_doctor_installed_copy_no_repo_json() {
   fi
 }
 
+case_doctor_claude_config_dir() {
+  # Verifies that CLAUDE_CONFIG_DIR overrides HOME/.claude for settings and
+  # manifest lookups: when HOME/.claude has no valid config but CLAUDE_CONFIG_DIR
+  # points to a directory with valid settings and manifest, doctor must not FAIL
+  # for missing settings or manifest.
+  #
+  # Steps:
+  #   1. Create home_bare with no .claude/ directory.
+  #   2. Create config_dir with valid settings.json and pm-dispatch manifest.
+  #   3. Run doctor --no-color --repo <repo> with HOME=home_bare, CLAUDE_CONFIG_DIR=config_dir.
+  #   4. Assert exit 0 and no "settings-file" FAIL line.
+  local name="doctor-claude-config-dir"
+  should_run "$name" || return 0
+  local home_bare="$tmp_root/home-bare-noconfig"
+  local config_dir="$tmp_root/config-dir-valid"
+  mkdir -p "$home_bare"
+  mkdir -p "$config_dir/.pm-dispatch"
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]},\n      {"matcher": "*",          "hooks": [{"type": "command", "command": "%s/scripts/hook-tool-trace.sh"}]}\n    ],\n    "PostToolUse": [\n      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "%s/scripts/hook-routing-log.sh"}]}\n    ],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
+    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
+    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
+  printf '{"manifest_version":1}\n' > "$config_dir/.pm-dispatch/install-manifest.json"
+  local path out status=0
+  path="$(make_stub_bin "$tmp_root/bin-config-dir" claude codex)"
+  out="$(HOME="$home_bare" CLAUDE_CONFIG_DIR="$config_dir" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" != *"[FAIL]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with no [FAIL]; status=$status out=$out"
+  fi
+}
+
 case_doctor_repo_trusted_linter() {
   # Verifies that doctor.sh runs the INSTALLED linter, not the target repo's
   # scripts/lint-frontmatter.sh, preventing arbitrary code execution via --repo.
@@ -991,6 +1023,7 @@ case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
 case_doctor_installed_copy_no_repo
 case_doctor_installed_copy_no_repo_json
+case_doctor_claude_config_dir
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 
