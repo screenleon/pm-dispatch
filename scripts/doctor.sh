@@ -189,9 +189,14 @@ check_settings_file() {
 hook_present() {
   local basename="$1" settings="$2"
   jq -e --arg basename "$basename" '
+    def normalize_path:
+      if test("^[A-Za-z]:[/\\\\]") then
+        "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+      else gsub("\\\\"; "/") end;
     def managed_hook:
       (.command? // "") as $cmd |
-      (($cmd | split("/") | last) == $basename and ($cmd | split("/") | .[-2]) == "scripts");
+      ($cmd | normalize_path) as $ncmd |
+      (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts");
     ([
       ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
       ((.hooks // {}).PostToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
@@ -202,7 +207,8 @@ hook_present() {
     (
       $basename == "hook-save-rate-limits.sh" and
       ((.statusLine.command? // "") as $cmd |
-        (($cmd | split("/") | last) == $basename and ($cmd | split("/") | .[-2]) == "scripts"))
+        ($cmd | normalize_path) as $ncmd |
+        (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts"))
     )
   ' "$settings" >/dev/null 2>&1
 }
@@ -225,9 +231,10 @@ stale_hook_commands() {
     ]
     | map(select(
         (.command? // "") as $cmd |
-        ($cmd | length) > 0 and
-        ($cmd | split("/") | .[-2]) == "scripts" and
-        (($cmd | split("/") | last) | IN(
+        ($cmd | normalize_path) as $ncmd |
+        ($ncmd | length) > 0 and
+        ($ncmd | split("/") | .[-2]) == "scripts" and
+        (($ncmd | split("/") | last) | IN(
           "hook-pm-write-guard.sh",
           "hook-tool-trace.sh",
           "hook-log-claude-usage.sh",
@@ -238,7 +245,7 @@ stale_hook_commands() {
           "hook-codex-bash-guard.sh",
           "hook-codex-write-guard.sh"
         )) and
-        (($cmd | normalize_path) | startswith(($repo_root | normalize_path) + "/") | not)
+        ($ncmd | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
     | unique[]
   ' "$settings" 2>/dev/null

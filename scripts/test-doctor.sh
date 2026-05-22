@@ -777,6 +777,111 @@ install-hooks: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
   pass "$name"
 }
 
+case_doctor_windows_path_hooks_present() {
+  # Verifies that hook commands stored in Windows backslash form
+  # (e.g. C:\path\scripts\hook-pm-write-guard.sh) are correctly identified
+  # as present by hook_present(). Without normalize_path in hook_present(),
+  # split("/") fails and all hooks are reported missing.
+  #
+  # Steps:
+  #   1. Write settings.json with a minimal full-profile hook set using
+  #      Windows backslash paths pointing at a fake "C:\pm-dispatch\scripts\" root.
+  #   2. Run doctor --no-color --repo <repo>.
+  #   3. Assert exit 0 (hooks pass, not fail for missing).
+  local name="doctor-windows-path-hooks-present"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-win-present"
+  local win_root="C:\\pm-dispatch"
+  mkdir -p "$home/.claude/.pm-dispatch"
+  # Write settings with Windows backslash paths for minimal hook set
+  cat > "$home/.claude/settings.json" <<'EOSETTINGS'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-pm-write-guard.sh"}]},
+      {"matcher": "*",          "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-tool-trace.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-routing-log.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-inject-memory.sh"}]}
+    ]
+  },
+  "statusLine": {"command": "C:\\pm-dispatch\\scripts\\hook-save-rate-limits.sh"}
+}
+EOSETTINGS
+  printf '{"manifest_version":1}\n' > "$home/.claude/.pm-dispatch/install-manifest.json"
+  local path out status=0
+  path="$(make_stub_bin "$tmp_root/bin-win-present" claude)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --profile minimal --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" != *"missing hooks"* && "$out" != *"[FAIL]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with no missing-hooks FAIL; status=$status out=$out"
+  fi
+}
+
+case_doctor_windows_path_hooks_stale() {
+  # Verifies that hook commands in Windows backslash form pointing at a
+  # DIFFERENT checkout root are detected as stale by stale_hook_commands().
+  # Without normalize_path applied before split("/"), the parent-directory
+  # check fails and the stale path is silently ignored.
+  #
+  # Steps:
+  #   1. Write settings.json with Windows paths pointing at "C:\other-repo\".
+  #   2. Run doctor --no-color --repo <this-repo>.
+  #   3. Assert output contains stale-path warning.
+  local name="doctor-windows-path-hooks-stale"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-win-stale"
+  mkdir -p "$home/.claude/.pm-dispatch"
+  cat > "$home/.claude/settings.json" <<'EOSETTINGS'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-pm-write-guard.sh"}]},
+      {"matcher": "*",          "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-tool-trace.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-routing-log.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-inject-memory.sh"}]}
+    ]
+  },
+  "statusLine": {"command": "C:\\other-repo\\scripts\\hook-save-rate-limits.sh"}
+}
+EOSETTINGS
+  printf '{"manifest_version":1}\n' > "$home/.claude/.pm-dispatch/install-manifest.json"
+  local path out status=0
+  path="$(make_stub_bin "$tmp_root/bin-win-stale" claude)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --profile minimal --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"different checkout"* || "$out" == *"stale"* || "$out" == *"[WARN]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected stale-path warning for Windows backslash hooks; status=$status out=$out"
+  fi
+}
+
 case_doctor_stale_hook_path_warns() {
   # Verifies that doctor emits [WARN] when hook commands point at a different
   # checkout (basename matches but path prefix != REPO_ROOT).
@@ -1045,6 +1150,8 @@ case_doctor_minimal_missing_routing_log_fails
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity
+case_doctor_windows_path_hooks_present
+case_doctor_windows_path_hooks_stale
 case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
