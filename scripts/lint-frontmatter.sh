@@ -71,6 +71,29 @@ extract_frontmatter() {
   ' "$1"
 }
 
+# Validate frontmatter lines with pure bash — no python3/PyYAML required.
+# Checks: each line is blank, a list item, or a "key: value" pair;
+# argument-hint must be a quoted string.
+check_frontmatter() {
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*- ]] && continue
+    if [[ ! "$line" =~ ^[A-Za-z_-]+:[[:space:]] ]] && [[ ! "$line" =~ ^[A-Za-z_-]+:$ ]]; then
+      printf 'unexpected frontmatter syntax: %s\n' "$line"
+      return 1
+    fi
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\[ ]] && [[ ! "$line" =~ \] ]]; then
+      printf 'unclosed YAML list bracket: %s\n' "$line"
+      return 1
+    fi
+    if [[ "$line" =~ ^argument-hint: ]] && [[ ! "$line" =~ ^argument-hint:[[:space:]]*\" ]]; then
+      printf 'argument-hint must be quoted as a YAML string\n'
+      return 1
+    fi
+  done
+}
+
 failures=0
 checked=0
 
@@ -95,27 +118,7 @@ for file in "${files[@]}"; do
   fi
 
   frontmatter="$(extract_frontmatter "$file")"
-  if error="$(
-    printf '%s\n' "$frontmatter" | python3 -c '
-import sys
-
-try:
-    import yaml
-except ImportError as exc:
-    print(f"PyYAML is required: {exc}", file=sys.stderr)
-    sys.exit(2)
-
-try:
-    data = yaml.safe_load(sys.stdin)
-except yaml.YAMLError as exc:
-    print(exc, file=sys.stderr)
-    sys.exit(1)
-
-if isinstance(data, dict) and "argument-hint" in data and not isinstance(data["argument-hint"], str):
-    print("argument-hint must be quoted as a YAML string", file=sys.stderr)
-    sys.exit(1)
-' 2>&1
-  )"; then
+  if error="$(printf '%s\n' "$frontmatter" | check_frontmatter 2>&1)"; then
     echo "OK: $file"
     checked=$((checked + 1))
   else

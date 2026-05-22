@@ -373,7 +373,7 @@ check_frontmatter_lint() {
     emit_check frontmatter-lint ok "frontmatter lint passed"
     return
   }
-  emit_check frontmatter-lint fail "frontmatter lint errors detected: $out" \
+  emit_check frontmatter-lint fail "frontmatter lint errors detected: ${out%%$'\n'*}" \
     "bash '${REPO_ROOT}/scripts/lint-frontmatter.sh' for details"
 }
 
