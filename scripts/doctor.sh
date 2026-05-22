@@ -222,7 +222,7 @@ stale_hook_commands() {
         (.command? // "") as $cmd |
         ($cmd | length) > 0 and
         ($cmd | split("/") | .[-2]) == "scripts" and
-        (($cmd | normalize_path) | startswith($repo_root + "/") | not)
+        (($cmd | normalize_path) | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
     | unique[]
   ' "$settings" 2>/dev/null
