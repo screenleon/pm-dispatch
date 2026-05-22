@@ -5,10 +5,19 @@ Personal Claude Code configuration for forks: subagents, slash commands, skills,
 
 This repository is designed for a single maintainer working on their own adaptation. It is source-available for reading and forking, while remaining explicitly private-maintainer scoped for this operational track.
 
-## Onboarding
+## Documentation
 
-- [Getting Started](docs/GETTING_STARTED.md)
-- [Core concepts](docs/CONCEPTS.md)
+**Start here**
+- [Getting started](docs/GETTING_STARTED.md) — install, verify, first `/pm` run
+- [Core concepts](docs/CONCEPTS.md) — the orchestration model and why it is shaped this way
+
+**Reference**
+- [Platform support](docs/platform-support.md) — per-OS install model (symlink / copy mode)
+- [Executor contract](docs/executor-contract.md) — `full` / `minimal` profile + PM handoff abstraction
+- [Dispatch brief schema](docs/dispatch-brief.md) — required brief fields + `self_verify` macros
+- [Model tier policy](docs/model-tier-policy.md) — sonnet-default, Opus escalation rules
+- [Memory system](docs/memory-system.md) — memory persistence layer: on-disk layout and recall lifecycle
+- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — `pr-gate-handover_v1` block format (claude-executor fan-out)
 
 ## Working language
 
@@ -31,7 +40,7 @@ scripts/                            hook wrappers (called by absolute path) + us
              → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
-docs/                               policy documents (model-tier-policy.md, dispatch-brief.md)
+docs/                               guides, schemas, and policy documents
 ```
 
 ## pm-schema (`pm/`)
@@ -39,7 +48,7 @@ docs/                               policy documents (model-tier-policy.md, disp
 Cross-repo project-management schema and tooling consumed by `project-pm` and BACKLOG.md / DECISIONS.md authoring across the user's repos. `install.sh` symlinks `~/.claude/.pm/` to this directory so canonical path references (e.g., the `rollup.sh --out` default, prose mentions in memory) keep working.
 
 Contents:
-- `schema.md` — pm-schema v1 definition.
+- `schema.md` — pm-schema v1.2 definition.
 - `templates/{BACKLOG,DECISIONS}.md` — bootstrap templates.
 - `scripts/rollup.sh`, `scripts/validate.sh` — portable shell tooling (pure stdlib).
 - `scripts/test/` — fixture-driven test suite for the scripts above.
@@ -70,7 +79,17 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 
 Idempotent — re-run safely after adding files. Per-file symlinks so other tools' agents in `~/.claude/agents/` are not clobbered. If a destination already exists and is not our symlink, it is skipped with a CONFLICT warning.
 
+On platforms without symlink support (Windows Git Bash), the installer falls back to **copy mode**: managed directories are created as directory junctions and helper scripts are copied — re-run `install.sh` after `git pull` to refresh changed copies. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
+
 **Profile**: `full` wires every hook including the codex-* guards (use when you run the [Codex CLI](https://github.com/openai/codex) for dispatch). `minimal` skips the codex-* guards (use when you only use Claude Code; the `claude` executor handles dispatch). Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
+
+After installing, verify the environment is healthy:
+
+```sh
+bash scripts/doctor.sh
+```
+
+`doctor.sh` checks that `claude` and `jq` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command.
 
 ## Testing
 
@@ -140,6 +159,9 @@ usage.
 - **install-hooks.sh / uninstall-hooks.sh** — Idempotent `jq`-based splice into `~/.claude/settings.json`. `--dry-run` shows the diff without applying. Each apply backs up `settings.json` to `settings.json.bak.<timestamp>`.
 - **test-hooks.sh** — Regression suite for the managed hook scripts (~200+ cases: happy paths, boundary, per-metachar isolated coverage, quote / `..` / glob / read-root / git -C / `--flag=path` bypass attempts, destructive git, stash subverbs, audit-log content assertions, env-var bypass, type-confusion, and StatusLine rate-limit capture). Exit 0 on all pass. `VERBOSE=1` prints every case. Run by `install.sh` and isolates audit logs via `CLAUDE_HOOK_LOG_DIR`.
 - **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
+- **lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
+- **run-all-tests.sh** — Standalone test aggregator: runs every registered suite and prints one pass/fail summary. `install.sh --verify` runs it as a preflight; `--list` and `--skip <name>` are available.
+- **doctor.sh** — Environment health check: verifies `claude`/`jq` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
 - **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.

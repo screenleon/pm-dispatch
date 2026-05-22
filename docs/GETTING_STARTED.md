@@ -82,7 +82,18 @@ When codex is intentionally absent, you can still run the full stack as a lightw
 
 ## 4) Verify install succeeded
 
-After install, check what was linked:
+Run the built-in health check:
+
+```sh
+bash scripts/doctor.sh
+```
+
+`doctor.sh` checks that `claude` and `jq` are on PATH, hooks are wired in
+`~/.claude/settings.json`, the memory directory is present, scripts are
+executable, and frontmatter passes lint. Each failing check prints a concrete
+remediation command.
+
+If you want to see what was linked rather than just whether it is healthy:
 
 ```sh
 readlink -f "$HOME/.claude/commands/pm.md"
@@ -90,28 +101,14 @@ readlink -f "$HOME/.claude/agents/project-pm.md"
 readlink -f "$HOME/.claude/.pm"
 ```
 
-If links are missing or point to different repos, compare with the current clone root in `${PM_DISPATCH_REPO}`.
-
-Check that hook traffic is being logged:
+For a full regression sweep (takes ~30 s):
 
 ```sh
-if [[ -f "$HOME/.claude/logs/hooks.log" ]]; then
-  tail -n 5 "$HOME/.claude/logs/hooks.log"
-else
-  echo "hooks log not present yet; run a pre-tool hook once to populate"
-fi
+bash scripts/run-all-tests.sh
 ```
 
-`install.sh` already runs pre-flight checks that should pass on a healthy setup.
-The same checks are useful to re-run directly for troubleshooting:
-
-```sh
-bash scripts/lint-scripts.sh
-bash scripts/test-hooks.sh
-```
-
-In normal docs-first workflows, this gives high confidence that hook allowlists and script
-parsing are sane before any dispatch.
+In normal docs-first workflows, passing `doctor.sh` alone is sufficient before
+your first `/pm` run.
 
 ## 5) First `/pm` run (end-to-end walkthrough)
 

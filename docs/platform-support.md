@@ -86,6 +86,26 @@ bash scripts/install-hooks.sh
 
 ---
 
+## Verify the install
+
+Run the built-in health check after installing on any platform:
+
+```bash
+bash "${PM_DISPATCH_REPO}/scripts/doctor.sh"
+```
+
+`doctor.sh` checks that `claude` and `jq` are on PATH, hooks are wired, memory
+directory is present, scripts are executable, and frontmatter passes lint.
+Each failing check prints a concrete remediation command.
+
+Pass `--profile minimal` when the install used the minimal profile:
+
+```bash
+bash "${PM_DISPATCH_REPO}/scripts/doctor.sh" --profile minimal
+```
+
+---
+
 ## Update
 
 ### Linux / macOS / WSL2
