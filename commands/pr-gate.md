@@ -144,11 +144,16 @@ When the background Bash completion notification arrives:
    lines of stdout).
 4. If stdout contains a `pr-gate-handover_v1` block, follow the claude fan-out path:
    - Parse the block entries with the parser used for handover metadata.
-   - For each `role: reviewer` entry:
-     - run `Agent(subagent_type: "claude-executor", prompt: "<brief_file>")` in parallel.
-     - read `<output_file>` after each fan-out.
-   - If a synthesis entry exists, run one final `Agent(subagent_type: "claude-executor")`.
-   - Read `result_file` from the same path and relay it.
+   - Fan out every `role: reviewer` entry in a single message — one
+     `Agent(subagent_type: "claude-executor", prompt: "<brief_file>", run_in_background: true)`
+     per entry — so reviewers run detached without blocking the main thread
+     (consistent with the codex route and the background-Bash dispatch above).
+   - When every reviewer background agent has reported completion, read each
+     entry's `<output_file>`.
+   - If a synthesis entry exists, run one final `Agent(subagent_type:
+     "claude-executor", run_in_background: true)`; read `result_file` once its
+     completion notification arrives.
+   - Relay `result_file`.
 5. If no handover block is present, this is Route A: read `result_file` directly.
 6. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
