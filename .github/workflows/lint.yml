@@ -110,6 +110,13 @@ jobs:
             doctor.sh
             test-doctor.sh
 
+  test-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: doctor.sh regression suite
+        run: ./scripts/test-doctor.sh
+
   test-portable:
     runs-on: ubuntu-latest
     steps:

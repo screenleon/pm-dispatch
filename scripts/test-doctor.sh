@@ -864,6 +864,41 @@ case_doctor_installed_copy_no_repo() {
   fi
 }
 
+case_doctor_installed_copy_no_repo_json() {
+  # Verifies that --json mode in copy-mode without --repo produces only valid
+  # JSON Lines output (no human-readable Summary: line mixed in).
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir with no lib/.
+  #   2. Run with --json (no --repo); expect exit 1.
+  #   3. Assert every non-empty output line parses as valid JSON.
+  local name="doctor-installed-copy-no-repo-json"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local copydir="$tmp_root/copy-norepo-json"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+  local home="$tmp_root/home-copy-norepo-json" out status=0 path
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-copy-norepo-json" claude codex)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$copydir/doctor.sh" --json 2>&1)" || status=$?
+  local invalid_line=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '%s\n' "$line" | jq . >/dev/null 2>&1 || { invalid_line=1; break; }
+  done <<< "$out"
+  if [[ "$status" -eq 1 && "$invalid_line" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 with all-JSON output; status=$status invalid_line=$invalid_line out=$out"
+  fi
+}
+
 case_doctor_repo_trusted_linter() {
   # Verifies that doctor.sh runs the INSTALLED linter, not the target repo's
   # scripts/lint-frontmatter.sh, preventing arbitrary code execution via --repo.
@@ -955,6 +990,7 @@ case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
 case_doctor_installed_copy_no_repo
+case_doctor_installed_copy_no_repo_json
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 

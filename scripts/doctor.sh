@@ -445,7 +445,12 @@ main() {
       emit_check "repo-root" "fail" \
         "copy-mode install: repo root could not be inferred (got: $REPO_ROOT)" \
         "re-run with: bash $(basename "${BASH_SOURCE[0]}") --repo <path-to-pm-dispatch-checkout>"
-      printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+      if [[ "$JSON" -eq 1 ]]; then
+        printf '{"summary":true,"ok":%d,"warn":%d,"fail":%d,"exit_code":1}\n' \
+          "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+      else
+        printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+      fi
       exit 1
     fi
   fi
