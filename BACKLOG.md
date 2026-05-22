@@ -1119,3 +1119,19 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Priority**: P3 — design prerequisite; not blocking current workflows.
 
 **Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
+
+## CC-226 — lint-frontmatter: extract shared dq-escape validation helper（deferred）
+
+**Problem**: `scripts/lint-frontmatter.sh` repeats the same double-quoted escape whitelist regex and adjacent-quoted-scalar check across 4 separate collection branches (key-level flow seq, key-level flow mapping, list-item flow seq, list-item flow mapping). A future grammar fix applied to one branch can be missed in the others, causing a silent parity gap.
+
+**Why**: Raised as medium advisory by critic + architecture-reviewer in gate-20260522-171123 (CC-058 gating). The current branch coverage is green and covers all 4 paths, so the risk is low now, but will grow as the grammar is extended.
+
+**Requirement**: Extract the dq escape whitelist check, the adjacent-quoted-scalar check, and the empty-entry check into a shared bash helper or predicate function. Ensure a parity test (or single call site) prevents future per-branch divergence.
+
+**Dependencies**: CC-058 (lint-frontmatter rewrite — merged)
+
+**Priority**: P3 — maintainability; not blocking current workflows.
+
+**Cross-link**: CC-224 (hook-profile inventory duplication — same class of debt)
+
+**Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
