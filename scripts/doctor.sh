@@ -158,7 +158,7 @@ check_claude() {
 }
 
 check_codex() {
-  if command -v codex >/dev/null 2>&1; then
+  if codex_available; then
     emit_check codex ok "codex available"
   else
     emit_check codex warn "codex not found — full-profile hooks (hook-codex-bash-guard.sh etc.) will be skipped; minimal profile active" \
@@ -280,7 +280,7 @@ check_hooks() {
   case "$PROFILE" in
     full)    _want_full=1 ;;
     minimal) _want_full=0 ;;
-    *)       command -v codex >/dev/null 2>&1 && _want_full=1 || _want_full=0 ;;
+    *)       if codex_available; then _want_full=1; else _want_full=0; fi ;;
   esac
   if [[ "$_want_full" -eq 1 ]]; then
     profile="full"

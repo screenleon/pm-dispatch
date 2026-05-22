@@ -62,6 +62,21 @@ detect_platform() {
   printf 'unknown\n'
 }
 
+# Return 0 if the `codex` CLI is on PATH, 1 otherwise.
+codex_available() {
+  command -v codex >/dev/null 2>&1
+}
+
+# Echo the auto-detected executor profile: "full" when codex is available,
+# "minimal" otherwise.
+detect_executor_profile() {
+  if codex_available; then
+    printf 'full\n'
+  else
+    printf 'minimal\n'
+  fi
+}
+
 # Resolve a path with GNU-like normalization for use as a cross-platform shim.
 realpath_m() {
   local path="${1:-}"

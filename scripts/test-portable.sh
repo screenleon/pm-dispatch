@@ -473,6 +473,78 @@ case_detect_platform_ostype_msys() {
   fi
 }
 
+case_codex_available_true_when_stub_present() {
+  local name="portable-codex-available-true-when-stub-present"
+  should_run "$name" || return 0
+  local old_path="$PATH"
+  local stub_dir="$tmp_root/codex-stub-available"
+  mkdir -p "$stub_dir"
+  printf '#!/usr/bin/env sh\nprintf "codex-stub\\n"\n' > "$stub_dir/codex"
+  chmod +x "$stub_dir/codex"
+
+  PATH="$stub_dir:$old_path"
+  if codex_available; then
+    pass "$name"
+  else
+    fail "$name" "expected codex_available success when codex stub is on PATH"
+  fi
+  PATH="$old_path"
+}
+
+case_codex_available_false_without_stub() {
+  local name="portable-codex-available-false-without-stub"
+  should_run "$name" || return 0
+  local old_path="$PATH"
+  local no_codex_path="$tmp_root/empty-path"
+  mkdir -p "$no_codex_path"
+
+  PATH="$no_codex_path"
+  if codex_available; then
+    fail "$name" "expected codex_available failure when codex is absent from PATH"
+  else
+    pass "$name"
+  fi
+  PATH="$old_path"
+}
+
+case_detect_executor_profile_full_when_stub_present() {
+  local name="portable-detect-executor-profile-full-when-stub-present"
+  should_run "$name" || return 0
+  local old_path="$PATH"
+  local stub_dir="$tmp_root/detect-profile-stub"
+  local got
+  mkdir -p "$stub_dir"
+  printf '#!/usr/bin/env sh\nprintf "codex-stub\\n"\n' > "$stub_dir/codex"
+  chmod +x "$stub_dir/codex"
+
+  PATH="$stub_dir:$old_path"
+  got="$(detect_executor_profile)"
+  PATH="$old_path"
+  if [[ "$got" == "full" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected profile 'full' got '$got'"
+  fi
+}
+
+case_detect_executor_profile_minimal_without_stub() {
+  local name="portable-detect-executor-profile-minimal-without-stub"
+  should_run "$name" || return 0
+  local old_path="$PATH"
+  local no_codex_path="$tmp_root/empty-path-profile"
+  local got
+  mkdir -p "$no_codex_path"
+
+  PATH="$no_codex_path"
+  got="$(detect_executor_profile)"
+  PATH="$old_path"
+  if [[ "$got" == "minimal" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected profile 'minimal' got '$got'"
+  fi
+}
+
 case_realpath_m_symlink_resolves() {
   local name="portable-realpath-m-symlink-resolves"
   should_run "$name" || return 0
@@ -909,6 +981,10 @@ case_serialize_with_lock_missing_parent
 case_detect_platform_override_windows
 case_detect_platform_host_native
 case_detect_platform_ostype_msys
+case_codex_available_true_when_stub_present
+case_codex_available_false_without_stub
+case_detect_executor_profile_full_when_stub_present
+case_detect_executor_profile_minimal_without_stub
 case_file_size_bytes_returns_size
 case_file_size_bytes_missing_file
 case_link_or_copy_copy_refresh_stale() {
