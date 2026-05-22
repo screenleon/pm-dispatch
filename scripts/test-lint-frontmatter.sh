@@ -196,6 +196,8 @@ run_tmp_fail "lint-frontmatter/alias-plain-scalar" \
   $'---\ndescription: *missing\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/escaped-terminal-quote" \
   $'---\ndescription: "foo\\"\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/trailing-after-single-quote" \
+  $'---\ndescription: \'foo\' \'bar\'\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 

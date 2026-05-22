@@ -114,7 +114,8 @@ check_frontmatter() {
         return 1
       fi
     fi
-    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\' ]] && [[ ! "$line" =~ \'[[:space:]]*$ ]]; then
+    local _closed_sq_re="^[A-Za-z_-]+:[[:space:]]*'([^']|'')*'[[:space:]]*$"
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\' ]] && [[ ! "$line" =~ $_closed_sq_re ]]; then
       printf 'unterminated single-quoted value: %s\n' "$line"
       return 1
     fi
