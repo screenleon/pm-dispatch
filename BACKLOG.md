@@ -1132,6 +1132,25 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P3 — maintainability; not blocking current workflows.
 
-**Cross-link**: CC-224 (hook-profile inventory duplication — same class of debt)
+**Cross-link**: CC-224 (hook-profile inventory duplication — same class of debt), CC-227 (module extraction — can be done together)
+
+## CC-227 — lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh（deferred）
+
+**Problem**: `scripts/lint-frontmatter.sh` mixes CLI parsing, frontmatter boundary detection, and a ~150-line hand-rolled YAML subset parser in a single file. The parser logic (`check_frontmatter()`) has no stable call boundary, making it hard to reuse from other scripts (e.g., `doctor.sh` currently forks a subprocess to call the linter), hard to test in isolation, and hard to extend without touching the CLI script.
+
+**Why**: User feedback after CC-058 gating: splitting the YAML validation into a dedicated library file would improve long-term maintainability. Relates to the CC-226 shared-helper advisory — if both are done together, the grammar contract becomes a first-class lib with clear ownership.
+
+**Requirement**:
+1. Move `check_frontmatter()` and all YAML-subset validation helpers into `scripts/lib/yaml-frontmatter.sh`
+2. `scripts/lint-frontmatter.sh` becomes a thin CLI wrapper that sources the lib
+3. `doctor.sh` can optionally source the lib directly instead of fork-execing the linter
+4. Tests can source the lib and call `check_frontmatter()` directly, reducing tmp-file overhead
+5. If done together with CC-226: shared dq-escape/adjacent-quote/empty-entry helpers live in the lib
+
+**Dependencies**: CC-058 (lint-frontmatter rewrite — merged), CC-226 (shared helpers — can be combined)
+
+**Priority**: P3 — maintainability; not blocking current workflows.
+
+**Cross-link**: CC-226 (shared validation helpers — recommend combining), CC-224 (hook-profile lib extraction — same pattern)
 
 **Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
