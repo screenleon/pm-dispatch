@@ -74,12 +74,6 @@ Tag: `v0.2.0` @ pending（merge 後執行：`git tag v0.2.0 && git push origin v
 
 ---
 
-## v0.3.0 — Planning
-
-**主題**：TBD — DX / gate 改進（CC-217 claude-executor background dispatch + CC-206 gate lifecycle hook 為候選）。
-
----
-
 ## v0.1.0 — Foundation（released 2026-05-17）
 
 **主題**：CC-OSS epic — 首次公開發布；跨平台基礎建設 + PR gate pipeline。
