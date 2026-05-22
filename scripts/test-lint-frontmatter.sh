@@ -176,6 +176,8 @@ run_tmp_fail "lint-frontmatter/unterminated-quoted-value" \
   $'---\ndescription: "unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/nested-yaml-value" \
   $'---\ndescription: foo: bar\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/trailing-after-quote" \
+  $'---\ndescription: "foo" "bar"\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/unclosed-flow-mapping" \
   $'---\ndescription: {unterminated\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/unterminated-single-quote" \

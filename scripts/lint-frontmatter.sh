@@ -85,6 +85,7 @@ extract_frontmatter() {
 # argument-hint must be a double-quoted string.
 check_frontmatter() {
   local line
+  local trailing_after_quoted_re='^[A-Za-z_-]+:[[:space:]]*"([^"\\]|\\.)*"[[:space:]]*[^[:space:]]'
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^[[:space:]]*- ]] && continue
@@ -98,6 +99,10 @@ check_frontmatter() {
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ \"[[:space:]]*$ ]]; then
       printf 'unterminated quoted value: %s\n' "$line"
+      return 1
+    fi
+    if [[ "$line" =~ $trailing_after_quoted_re ]]; then
+      printf 'trailing content after quoted value: %s\n' "$line"
       return 1
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\{ ]] && [[ ! "$line" =~ \} ]]; then
