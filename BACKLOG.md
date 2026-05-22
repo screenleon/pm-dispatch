@@ -105,6 +105,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent reads a BACKLOG spike ticket, plans 2–3 investigation angles, dispatches parallel sub-agents (one per angle; executor type configurable by dispatch layer), synthesises findings into `docs/spikes/CC-NNN.md`, and updates the BACKLOG body `Result log` pointer. Distinct from PM agent: goal is uncertainty reduction, not task execution. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
 | CC-221 | ✅ closed 2026-05-21 | **[copy-mode refresh semantics]** `link_or_copy` idempotency check compares dst sha256 against manifest (old src sha), so re-running `install.sh` does NOT refresh a copied file whose source changed — it matches the stale copy against the old manifest sha and returns ok. Fix: compare `sha256(src)` vs `sha256(dst)` directly; if different and mode=copy, re-copy and update manifest. Surfaced during CC-104v gate review; current behaviour documented as uninstall+reinstall workaround. | ops | 2026-05-21 | pr:#117 | P3 | oss |
 | CC-222 | ⏸ deferred | **[v0.2.0 release prep]** Close the v0.2.0 milestone: confirm all Planned tickets ✅, Windows Git Bash smoke-test pass, write CHANGELOG.md [0.2.0] section, update MILESTONES.md (close v0.2.0, stub v0.3.0 planning), docs freshness sweep (doctor.sh 記錄於 GETTING_STARTED + platform-support), BACKLOG status flip, git tag v0.2.0 + GitHub Release. | process/release | 2026-05-22 | — | P2 | oss |
+| CC-223 | ⏸ deferred | **[doctor.sh stale-hook path boundary fix]** `stale_hook_commands()` uses `startswith($repo_root)` without a path separator, so a sibling checkout (e.g. `/path/pm-dispatch-old`) sharing the repo-root prefix incorrectly passes as current. Fix: compare against `$repo_root + "/"` to enforce a real path boundary. Add sibling-prefix regression test in `test-doctor.sh`. Raised by critic/qa-tester/security/risk as [medium] advise in gate-20260522-100348. | ops/test | 2026-05-22 | — | P3 | oss |
+| CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
@@ -1089,3 +1091,33 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Priority**: P2 — blocks milestone closure.
 
 **Cross-link**: CC-219（pre-milestone doc freshness gate 的自動化版本；CC-222 是手動版，先執行）
+
+## CC-223 — doctor.sh stale-hook path boundary fix（deferred）
+
+**Problem**: `stale_hook_commands()` in `scripts/doctor.sh` checks for stale checkout paths with `startswith($repo_root)`, but this lacks a path separator boundary. A sibling checkout at a path like `/home/user/pm-dispatch-old` — which starts with `/home/user/pm-dispatch` — would incorrectly pass as current and produce no WARN.
+
+**Why**: Raised by critic, qa-tester, security-reviewer, and risk-reviewer as [medium] advise in PR-gate `gate-20260522-100348`. The false-negative scenario is realistic for users who maintain multiple checkouts side by side.
+
+**Requirement**:
+1. In `stale_hook_commands()` (around line 219), change `startswith($repo_root)` → `startswith($repo_root + "/")`.
+2. Add a regression test `case_doctor_stale_hook_sibling_prefix_warns` in `test-doctor.sh`: write hook commands under a sibling path (e.g. `$REPO_ROOT-old/scripts/`) that shares the repo-root prefix and assert that doctor emits `[WARN]` + "different checkout".
+
+**Dependencies**: CC-058（base implementation already merged）
+
+**Priority**: P3 — defensive correctness; current behaviour only fails for same-prefix siblings.
+
+**Cross-link**: CC-058（stale-hook feature this fixes）, CC-224（companion: shared hook-profile inventory）
+
+## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh（deferred）
+
+**Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-hooks.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
+
+**Why**: Raised by critic and architecture-reviewer as [medium] advise in PR-gate `gate-20260522-100348`. The duplication became structurally significant once `--profile minimal|full|auto` was added and both files enumerate hooks by profile.
+
+**Requirement**: Extract the managed hook list and profile classification into a shared shell helper (e.g. `scripts/hook-profile.sh`) sourced by both `doctor.sh` and `install-hooks.sh`. Alternatively, add a parity test (e.g. `test-hook-profile-parity.sh`) that parses both files and asserts the hook sets are identical for each profile tier.
+
+**Dependencies**: CC-058（profile flag already landed）
+
+**Priority**: P3 — maintainability; current duplication is limited to two well-known files.
+
+**Cross-link**: CC-223（boundary fix; pair these if tackling doctor.sh again）, CC-204（hook/profile reuse debt）
