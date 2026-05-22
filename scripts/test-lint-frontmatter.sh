@@ -34,6 +34,12 @@ trap cleanup EXIT
 
 should_run() {
   if $LIST; then ALL_CASES+=("$1"); return 1; fi
+  if [[ "$FILTER" == "unclosed-seq" && "$1" == "lint-frontmatter/unclosed-quote-in-seq" ]]; then
+    return 0
+  fi
+  if [[ "$FILTER" == "mismatched-map" && "$1" == "lint-frontmatter/mismatched-bracket-in-map" ]]; then
+    return 0
+  fi
   [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
 }
 
@@ -198,6 +204,18 @@ run_tmp_fail "lint-frontmatter/escaped-terminal-quote" \
   $'---\ndescription: "foo\\"\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/trailing-after-single-quote" \
   $'---\ndescription: \'foo\' \'bar\'\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/unclosed-quote-in-seq" \
+  $'---\ndescription: ["unterminated]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/mismatched-bracket-in-map" \
+  $'---\ndescription: {foo: [bar}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/anchor-plain-scalar" \
+  $'---\ndescription: &anchor foo\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/yaml-tag-double" \
+  $'---\ndescription: !!str foo\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/yaml-tag-single" \
+  $'---\ndescription: !tag foo\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/nested-seq-in-seq" \
+  $'---\ndescription: [[a, b]]\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 

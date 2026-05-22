@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate frontmatter YAML
+      # Grammar coverage for the restricted subset is provided by test-lint-frontmatter below.
+      - name: Validate frontmatter (restricted YAML subset)
         run: ./scripts/lint-frontmatter.sh
 
   test-lint-frontmatter:

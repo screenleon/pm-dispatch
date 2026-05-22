@@ -94,7 +94,19 @@ check_frontmatter() {
       return 1
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\[ ]]; then
-      if [[ ! "$line" =~ \] ]] || [[ ! "$line" =~ \][[:space:]]*$ ]]; then
+      if [[ ! "$line" =~ \][[:space:]]*$ ]]; then
+        printf 'invalid YAML flow sequence: %s\n' "$line"
+        return 1
+      fi
+      local _seq_inner _seq_nq
+      _seq_inner="${line#*\[}"
+      _seq_inner="${_seq_inner%\]*}"
+      _seq_nq="${_seq_inner//\"/}"
+      if (( (${#_seq_inner} - ${#_seq_nq}) % 2 != 0 )); then
+        printf 'invalid YAML flow sequence: %s\n' "$line"
+        return 1
+      fi
+      if [[ "$_seq_inner" == *"{"* ]] || [[ "$_seq_inner" == *"["* ]]; then
         printf 'invalid YAML flow sequence: %s\n' "$line"
         return 1
       fi
@@ -109,7 +121,21 @@ check_frontmatter() {
       return 1
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\{ ]]; then
-      if [[ ! "$line" =~ \} ]] || [[ ! "$line" =~ \}[[:space:]]*$ ]]; then
+      if [[ ! "$line" =~ \}[[:space:]]*$ ]]; then
+        printf 'invalid YAML flow mapping: %s\n' "$line"
+        return 1
+      fi
+      local _map_inner _map_nq _map_no_ob _map_no_cb
+      _map_inner="${line#*\{}"
+      _map_inner="${_map_inner%\}*}"
+      _map_nq="${_map_inner//\"/}"
+      if (( (${#_map_inner} - ${#_map_nq}) % 2 != 0 )); then
+        printf 'invalid YAML flow mapping: %s\n' "$line"
+        return 1
+      fi
+      _map_no_ob="${_map_inner//\[/}"
+      _map_no_cb="${_map_inner//\]/}"
+      if (( (${#_map_inner} - ${#_map_no_ob}) != (${#_map_inner} - ${#_map_no_cb}) )); then
         printf 'invalid YAML flow mapping: %s\n' "$line"
         return 1
       fi
@@ -132,7 +158,7 @@ check_frontmatter() {
       return 1
     fi
     local _sv="${line#*: }"
-    if [[ "$_sv" =~ ^[@\`\*] ]]; then
+    if [[ "$_sv" =~ ^[@\`\*\&\!] ]]; then
       printf 'invalid YAML plain scalar start: %s\n' "$line"
       return 1
     fi
