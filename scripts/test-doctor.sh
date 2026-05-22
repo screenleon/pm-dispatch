@@ -5,51 +5,9 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCTOR="$REPO_ROOT/scripts/doctor.sh"
-
-FILTER=""
-LIST=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --filter)
-      FILTER="${2:-}"
-      shift 2
-      ;;
-    --list)
-      LIST=true
-      shift
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-
-ALL_CASES=()
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-should_run() {
-  if $LIST; then
-    ALL_CASES+=("$1")
-    return 1
-  fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
-}
-
-pass() {
-  printf 'PASS: %s\n' "$1"
-  PASS=$((PASS + 1))
-}
-
-fail() {
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-}
-
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 write_minimal_settings() {
   local home_dir="$1"
@@ -1193,19 +1151,4 @@ case_doctor_claude_config_dir
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
 
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-if [[ -n "$FILTER" && $((PASS+FAIL)) -eq 0 ]]; then
-  printf 'no tests matched filter %q - check --list for available case names\n' \
-    "$FILTER" >&2
-  exit 1
-fi
-
-printf '%s passed, %s failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
