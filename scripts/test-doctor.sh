@@ -129,6 +129,34 @@ write_stale_path_settings() {
 EOF
 }
 
+write_sibling_prefix_settings() {
+  local home_dir="$1" sibling="$2"
+  mkdir -p "$home_dir/.claude"
+  cat > "$home_dir/.claude/settings.json" <<EOF
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-bash-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "*",          "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-tool-trace.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-routing-log.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-inject-memory.sh"}]}
+    ]
+  },
+  "statusLine": {"command": "${sibling}/scripts/hook-save-rate-limits.sh"}
+}
+EOF
+}
+
 write_full_settings() {
   local home_dir="$1"
   mkdir -p "$home_dir/.claude"
@@ -722,6 +750,92 @@ case_doctor_stale_hook_path_warns() {
   fi
 }
 
+case_doctor_symlink_invocation() {
+  # Verifies that doctor.sh resolves symlinks to find its lib/ directory when
+  # invoked through a symlink under a directory without lib/.
+  #
+  # Steps:
+  #   1. Create a symlink to doctor.sh in a temp dir that has no lib/ subdirectory.
+  #   2. Run doctor via the symlink with --no-color --repo REPO_ROOT.
+  #   3. Assert output contains "frontmatter lint" (requires lib/portable.sh,
+  #      confirming symlink was resolved to the real scripts/ dir).
+  local name="doctor-symlink-invocation"
+  should_run "$name" || return 0
+  local symdir="$tmp_root/sym-scripts"
+  mkdir -p "$symdir"
+  ln -sf "$DOCTOR" "$symdir/doctor.sh"
+  local home="$tmp_root/home-symlink" out status=0
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  local path
+  path="$(make_stub_bin "$tmp_root/bin-symlink" claude codex)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$symdir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"frontmatter lint"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected frontmatter lint in output (lib/ resolved via symlink); status=$status out=$out"
+  fi
+}
+
+case_doctor_copy_mode_no_lib() {
+  # Verifies that doctor.sh runs gracefully when lib/ is absent (copy-mode
+  # install on Windows), emitting WARN for degraded checks rather than crashing.
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir with no lib/ subdirectory.
+  #   2. Run the copy with --no-color --repo REPO_ROOT.
+  #   3. Assert exit code is 0 or 1 (no crash) and output contains "Summary:".
+  local name="doctor-copy-mode-no-lib"
+  should_run "$name" || return 0
+  local copydir="$tmp_root/copy-scripts"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+  local home="$tmp_root/home-copy" out status=0
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  local path
+  path="$(make_stub_bin "$tmp_root/bin-copy" claude codex)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$copydir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ ( "$status" -eq 0 || "$status" -eq 1 ) && "$out" == *"Summary:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 or 1 with Summary:; status=$status out=$out"
+  fi
+}
+
+case_doctor_stale_hook_sibling_prefix_warns() {
+  # Verifies that hook paths under a sibling checkout sharing the repo-root
+  # prefix (e.g. /path/pm-dispatch-sibling/scripts/) emit [WARN] "different checkout".
+  # Regression test for CC-223 path-boundary fix.
+  #
+  # Steps:
+  #   1. Write settings.json with hooks pointing to ${REPO_ROOT}-sibling/scripts/.
+  #   2. Run doctor --no-color --repo REPO_ROOT.
+  #   3. Assert exit 0 and output contains [WARN] and "different checkout".
+  local name="doctor-stale-hook-sibling-prefix-warns"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local sibling="${REPO_ROOT}-sibling"
+  local home="$tmp_root/home-sibling-prefix" out status=0 path
+  mkdir -p "$home/.claude"
+  write_sibling_prefix_settings "$home" "$sibling"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-sibling-prefix" claude)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"[WARN]"* && "$out" == *"different checkout"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected WARN 'different checkout' for sibling-prefix hooks; status=$status out=$out"
+  fi
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1
@@ -743,6 +857,9 @@ case_doctor_minimal_missing_routing_log_fails
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_stale_hook_path_warns
+case_doctor_symlink_invocation
+case_doctor_copy_mode_no_lib
+case_doctor_stale_hook_sibling_prefix_warns
 
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
