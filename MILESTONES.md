@@ -59,6 +59,7 @@
 | CC-104v | copy-mode 安裝後顯示 summary banner | ✅ |
 | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） | ✅ |
 | CC-104p | flock → portable locking shim（Windows row-loss 修復） | ✅ |
+| CC-222 | v0.2.0 release prep（CHANGELOG + docs + tag + GitHub Release） | ⏳ |
 
 ---
 

@@ -68,10 +68,10 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 固定值（單一或以 `/` 複合，最多 2 段）：
 
 **Layer tokens**（系統分層）：
-`arch / backend / frontend / content / ops / connector / DX / product`
+`arch / backend / frontend / content / ops / connector / DX / product / docs / install / release`
 
 **Topic tokens**（工具層 / 影響面）：
-`ux / process / memory / token / test / gate / portability`
+`ux / process / memory / token / test / gate / portability / reuse / security`
 
 - `ux` — 使用者操作體驗、developer ergonomics
 - `process` — 開發流程、工作流、PM 規範
@@ -80,10 +80,15 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 - `test` — 測試基礎設施、test runner、fixture
 - `gate` — PR gate 工具、reviewer 流程
 - `portability` — 跨平台相容性、OS/shell 差異、Windows/macOS/Linux 行為
+- `docs` — 文件工作（技術文件、README、schema 說明；區隔 `content` = 用戶端內容）
+- `install` — 安裝、onboarding、uninstall 操作流程
+- `release` — 版本發布管理（CHANGELOG、tag、GitHub Release、milestone 關閉）
+- `reuse` — 抽取共用邏輯、DRY 重構、減少技術債（共用 lib/helper）
+- `security` — 安全類工作（弱點修復、secret 管理、審計）
 
 Topic tokens 可與 layer tokens 複合（例：`ux/memory`、`ops/test`、`ops/gate`）。純 topic 也合法（例：`process`、`ux`）。
 
-Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` → `arch`、`operations` → `ops`、`con` → `connector`。未列入的詞先討論擴 enum，不可自由發明。
+Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` → `arch`、`operations` → `ops`、`con` → `connector`、`documentation` → `docs`。未列入的詞先討論擴 enum，不可自由發明。
 
 #### 2.4.2 「首次記錄」fallback
 

@@ -45,6 +45,7 @@ JSON=0
 QUIET=0
 COLOR=0
 REPO_ROOT=""
+PROFILE="auto"
 [[ -t 1 ]] && COLOR=1
 
 _OK_COUNT=0
@@ -55,7 +56,7 @@ _SETTINGS_FILE_INVALID=0
 
 usage() {
   cat <<'EOF'
-Usage: doctor.sh [--json] [--quiet] [--no-color] [--repo <path>]
+Usage: doctor.sh [--json] [--quiet] [--no-color] [--repo <path>] [--profile auto|minimal|full]
 
 Run pm-dispatch environment health checks.
 
@@ -64,6 +65,8 @@ Options:
   --quiet       Suppress OK lines in human output
   --no-color    Disable colorized human output
   --repo PATH   Repository root to check (default: script directory parent)
+  --profile auto|minimal|full
+                Override hook-profile detection (default: auto)
   --help        Show this help
 EOF
 }
@@ -199,6 +202,26 @@ hook_present() {
   ' "$settings" >/dev/null 2>&1
 }
 
+stale_hook_commands() {
+  local settings="$1" repo_root="$2"
+  jq -r --arg repo_root "$repo_root" '
+    [
+      ((.hooks // {}) | .PreToolUse[]?  | (.hooks // [])[]?),
+      ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
+      ((.hooks // {}) | .Stop[]?        | (.hooks // [])[]?),
+      ((.hooks // {}) | .UserPromptSubmit[]? | (.hooks // [])[]?),
+      (if .statusLine then {command: (.statusLine.command // "")} else empty end)
+    ]
+    | map(select(
+        (.command? // "") as $cmd |
+        ($cmd | length) > 0 and
+        ($cmd | split("/") | .[-2]) == "scripts" and
+        ($cmd | startswith($repo_root) | not)
+      ) | .command)
+    | unique[]
+  ' "$settings" 2>/dev/null
+}
+
 check_hooks() {
   local settings="$HOME/.claude/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
@@ -214,7 +237,7 @@ check_hooks() {
     return
   fi
 
-  local profile="minimal"
+  local profile
   local -a hooks=(
     hook-pm-write-guard.sh
     hook-tool-trace.sh
@@ -222,14 +245,22 @@ check_hooks() {
     hook-session-summary.sh
     hook-inject-memory.sh
     hook-save-rate-limits.sh
+    hook-routing-log.sh
   )
-  if command -v codex >/dev/null 2>&1; then
+  local _want_full=0
+  case "$PROFILE" in
+    full)    _want_full=1 ;;
+    minimal) _want_full=0 ;;
+    *)       command -v codex >/dev/null 2>&1 && _want_full=1 || _want_full=0 ;;
+  esac
+  if [[ "$_want_full" -eq 1 ]]; then
     profile="full"
     hooks+=(
       hook-codex-bash-guard.sh
       hook-codex-write-guard.sh
-      hook-routing-log.sh
     )
+  else
+    profile="minimal"
   fi
 
   local -a missing=()
@@ -242,8 +273,23 @@ check_hooks() {
 
   if [[ "${#missing[@]}" -gt 0 ]]; then
     emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-hooks.sh'"
+    return
   else
     emit_check hooks ok "${#hooks[@]} hooks present ($profile profile)"
+  fi
+
+  # Warn if any managed hook is wired from a different checkout.
+  if command -v jq >/dev/null 2>&1; then
+    local -a _stale=()
+    local _sc
+    while IFS= read -r _sc; do
+      [[ -n "$_sc" ]] && _stale+=("$_sc")
+    done < <(stale_hook_commands "$settings" "$REPO_ROOT")
+    if [[ "${#_stale[@]}" -gt 0 ]]; then
+      emit_check hooks warn \
+        "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
+        "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
+    fi
   fi
 }
 
@@ -353,6 +399,20 @@ main() {
           exit 2
         fi
         REPO_ROOT="$2"
+        shift 2
+        ;;
+      --profile)
+        if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+          printf 'doctor: --profile requires auto|minimal|full\n' >&2
+          exit 2
+        fi
+        case "${2}" in
+          auto|minimal|full) PROFILE="$2" ;;
+          *)
+            printf 'doctor: --profile must be auto, minimal, or full\n' >&2
+            exit 2
+            ;;
+        esac
         shift 2
         ;;
       --help)

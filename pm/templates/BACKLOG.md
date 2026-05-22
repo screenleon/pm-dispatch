@@ -29,8 +29,8 @@ Status enum（五值）：
   ✅ done              — soft-close，body 保持 active 格式，不需日期或 See:
   ⏸ deferred          — 等待外部條件，body 保持 active 格式
 
-影響面（layer tokens）：arch / backend / frontend / content / ops / connector / DX / product
-影響面（topic tokens）：ux / process / memory / token / test / gate
+影響面（layer tokens）：arch / backend / frontend / content / ops / connector / DX / product / docs / install / release
+影響面（topic tokens）：ux / process / memory / token / test / gate / portability / reuse / security
 可斜線複合，最多 2 段（例：ux/memory、ops/test）。
 索引必須與下方 body 一一對應，順序按 ID 升冪。
 -->
