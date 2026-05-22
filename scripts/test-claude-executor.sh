@@ -20,44 +20,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=scripts/lib/handover-validate.sh
 . "$REPO_ROOT/scripts/lib/handover-validate.sh"
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
-FILTER=""
-LIST=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --filter)
-      if [[ $# -lt 2 ]]; then
-        echo "test-claude-executor: --filter requires a pattern argument" >&2
-        exit 2
-      fi
-      FILTER="$2"
-      shift 2
-      ;;
-    --list)   LIST=true; shift ;;
-    *) shift ;;
-  esac
-done
-
-ALL_CASES=()
-should_run() {
-  if $LIST; then
-    ALL_CASES+=("$1")
-    return 1
-  fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
-}
-
-scratch="$(mktemp -d)"
 brief_file="$(mktemp -p /tmp brief-cc102-test-XXXXXX.md)"
 chmod 600 "$brief_file"
-trap 'rm -rf "$scratch" "$brief_file"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
-fail() { printf 'FAIL: %s: %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); }
+trap 'rm -rf "$tmp_root" "$brief_file"' EXIT
 
 # ── case 1: validator accepts a claude metadata header ──────────────────
 
@@ -70,7 +39,7 @@ claude_metadata_validates() {
 handover_version: 2
 executor: claude
 dispatch_route: main_thread_bash_background
-working_dir: $scratch
+working_dir: $tmp_root
 brief_file: $brief_file
 sandbox: workspace-write
 approval: never
@@ -106,9 +75,9 @@ self_verify_executes() {
   local name="claude-executor/self_verify executes against trivial goal"
   should_run "$name" || return 0
 
-  local target="$scratch/hello.txt"
+  local target="$tmp_root/hello.txt"
   cat > "$brief_file" <<BRIEF
-working_dir: $scratch
+working_dir: $tmp_root
 goal: Create hello.txt with body "hello".
 files:
   - new: $target
@@ -165,16 +134,4 @@ unknown_executor_rejected
 self_verify_executes
 scratch_isolation
 
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-echo
-echo "----"
-echo "$PASS passed, $FAIL failed"
-if [[ $FAIL -gt 0 ]]; then
-  printf 'failed cases:\n'
-  for c in "${FAILED_CASES[@]}"; do printf '  - %s\n' "$c"; done
-  exit 1
-fi
+th_summary
