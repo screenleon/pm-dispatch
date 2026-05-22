@@ -17,7 +17,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`scripts/doctor.sh`** — install environment health check: verifies `claude`/`jq` on PATH, hooks wired in `settings.json`, memory dir present, scripts executable, frontmatter lint clean. Accepts `--profile minimal|full|auto`; each failing check prints a concrete remediation step. Wired into `install.sh` post-install and `scripts/run-all-tests.sh` (CC-058).
 - **`scripts/run-all-tests.sh`** — standalone test aggregator that runs all per-subsystem suites and produces a single pass/fail summary; replaces `install.sh --verify` as the canonical health check tool (CC-104n).
 - **`scripts/lib/portable.sh` `serialize_with_lock()`** — cross-platform locking shim: prefers `flock` when available, falls back to `mkdir_lock`. Eliminates `flock` hard-dependency on Windows Git Bash (CC-104p).
-- **`scripts/uninstall.sh`** — manifest-driven uninstall removes only files recorded in the install manifest; safety guard rejects dst not strictly under the managed root.
+- **`uninstall.sh`** — manifest-driven uninstall removes only files recorded in the install manifest; safety guard rejects dst not strictly under the managed root.
 - **`install.sh` copy-mode refresh semantics** — re-running `install.sh` now compares `sha256(src)` vs `sha256(dst)` directly; only changed files are re-copied (CC-221).
 - **`install.sh` jq prerequisite check** — jq is checked at the top of the installer before any tests run; error includes a platform-aware install hint (CC-104l).
 - **`install.sh` copy-mode banner** — when files were installed via copy fallback, a summary banner at the end reminds the user to re-run after source edits (CC-104v).
@@ -32,7 +32,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **`scripts/lint-frontmatter.sh`** — complete YAML flow-collection validation matching PyYAML semantics: dq escape whitelist, adjacent-quote detection, tab-indented list item rejection, and empty-entry check (`[foo,,bar]`). Covers all four collection paths (key-level `[...]` / `{...}`, list-item `[...]` / `{...}`). Regression suite expanded from 35 to 68 test cases (CC-056/CC-058).
 - **Hook scripts** — rewrote `hook-log-claude-usage.sh`, `hook-inject-memory.sh`, `hook-session-summary.sh`, and `hook-save-rate-limits.sh` from python3 to jq. Eliminates python3 as a runtime dependency; fixes Windows Git Bash failures caused by the Microsoft Store python3 stub (CC-104t).
-- **`scripts/install.sh`** — `link_or_copy()` now detects real-directory dst conflict before attempting `ln -s` (CC-104u); on Windows Git Bash, managed directories (`agents/`, `commands/`, etc.) are created as PowerShell directory junctions so they auto-sync after `git pull` (CC-207).
+- **`install.sh`** — `link_or_copy()` now detects real-directory dst conflict before attempting `ln -s` (CC-104u); on Windows Git Bash, managed directories (`agents/`, `commands/`, etc.) are created as PowerShell directory junctions so they auto-sync after `git pull` (CC-207).
 - **`hook-routing-log.sh`** — replaced `flock`/fd9 pattern with `serialize_with_lock()` portable shim (CC-104p).
 - **`pm/scripts/validate.sh`** — bidirectional Index ↔ Section consistency check; CHANGELOG drift detection (CC-030/CC-046).
 - **`agents/project-pm.md`** Rule B — added point 5 (next-layer sweep) to NO-GO fix-loop protocol; added contract-test rule to brief-writing section (CC-039).

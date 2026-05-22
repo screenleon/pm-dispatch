@@ -8,13 +8,20 @@
 
 ---
 
-## v0.2.0 — Cross-platform ops（進行中）
+## v0.2.0 — Cross-platform ops（released 2026-05-22）
 
-**主題**：完整 install / verify / uninstall 操作週期；Windows Git Bash 正確性修復。
+**主題**：完整 install / verify / uninstall 操作週期；環境健康診斷；Windows Git Bash 正確性修復。
 
-**Done when**:
-- 所有 Planned 票狀態為 ✅
-- Windows Git Bash 實機驗證：directory junction 正常、routing-log 無 row-loss
+Tag: `v0.2.0` @ TBD（本 PR merge 後 tag）
+
+核心內容（詳見 CHANGELOG.md v0.2.0 section）：
+- `scripts/doctor.sh` — 環境健康檢查，每項給出可操作修復步驟（CC-058）
+- `scripts/run-all-tests.sh` — standalone 全套測試聚合器（CC-104n）
+- `uninstall.sh` — manifest-driven 移除（CC-109）
+- `install.sh` — directory junction（Windows）、copy-mode refresh、jq prereq check（CC-207/CC-221/CC-104l/v）
+- `scripts/lib/portable.sh` `serialize_with_lock()` — flock portable shim（CC-104p）
+- Hook scripts python3 → jq 重寫（CC-104t）
+- pm-schema v1.1/v1.2（Priority/Epic 欄位、design/spike epic）（CC-052/CC-205）
 
 ### Completed since v0.1.0
 
@@ -70,24 +77,6 @@
 ## v0.3.0 — Planning
 
 **主題**：TBD — DX / gate 改進（CC-217 claude-executor background dispatch + CC-206 gate lifecycle hook 為候選）。
-
----
-
-## v0.2.0 — Cross-platform ops（released 2026-05-22）
-
-**主題**：完整 install / verify / uninstall 操作週期；環境健康診斷；Windows Git Bash 正確性修復。
-
-Tag: `v0.2.0` @ TBD（本 PR merge 後 tag）
-
-核心內容（詳見 CHANGELOG.md v0.2.0 section 或 PR #119）：
-- `scripts/doctor.sh` — 環境健康檢查，每項給出可操作修復步驟（CC-058）
-- `scripts/run-all-tests.sh` — standalone 全套測試聚合器（CC-104n）
-- `scripts/lint-frontmatter.sh` — 完整 PyYAML-equivalent YAML flow-collection 驗證（CC-058）
-- `scripts/uninstall.sh` — manifest-driven 移除（CC-109）
-- `scripts/install.sh` — directory junction（Windows）、copy-mode refresh、jq prereq check（CC-207/CC-221/CC-104l/v）
-- `scripts/lib/portable.sh` `serialize_with_lock()` — flock portable shim（CC-104p）
-- Hook scripts python3 → jq 重寫（CC-104t）
-- pm-schema v1.1/v1.2（Priority/Epic 欄位、design/spike epic）（CC-052/CC-205）
 
 ---
 

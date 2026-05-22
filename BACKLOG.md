@@ -1056,47 +1056,9 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 ## CC-222 — v0.2.0 release prep ✅ 2026-05-22
 
-**See**: PR TBD (this PR)
+**See**: this PR
 
-**Problem**: v0.2.0 milestone closes when CC-058 merges, but the release itself requires a coordinated set of process steps (CHANGELOG, docs, tag, GitHub Release) that are easy to forget or do out of order.
-
-**Why**: CC-105 (v0.1.0 release) established this pattern — having an explicit ticket prevents ad-hoc closure that skips freshness checks or leaves stale MILESTONES.md.
-
-**Requirement**: Execute the following checklist in order when CC-058 PR is merged.
-
-### Pre-flight
-- [ ] All v0.2.0 Planned tickets in MILESTONES.md have status ✅
-- [ ] Windows Git Bash smoke test: `bash doctor.sh --no-color --repo <repo>` exits 0 (or WARN-only) on a minimal-profile Windows installation
-
-### CHANGELOG.md
-- [ ] Write `## [0.2.0] — <release-date>` section
-- [ ] Cover all PRs merged since v0.1.0 (#79 → CC-058 PR), grouped by Added / Changed / Fixed
-- [ ] Highlight: doctor.sh (`--profile` flag), Windows junction support (CC-207), copy-mode refresh (CC-221), uninstall.sh manifest-driven, portable locking (CC-104p), install.sh jq check (CC-104l), copy-mode banner (CC-104v)
-
-### MILESTONES.md
-- [ ] Add `Tag: v0.2.0 @ <commit>` and `Released: <date>` to the v0.2.0 section header
-- [ ] Add stub `## v0.3.0` section with 主題 placeholder and empty Planned table
-  - 暫定主題候選：claude-executor background dispatch (CC-217) + gate lifecycle hook (CC-206) + spike tracking (CC-218)
-
-### BACKLOG.md
-- [ ] Flip CC-058 status from 🔵 active → ✅ closed `<date>`
-- [ ] Verify no other active/deferred ticket in v0.2.0 Planned is left un-flipped
-
-### Docs freshness
-- [ ] `docs/GETTING_STARTED.md` — 在 post-install section 加 `bash doctor.sh --repo <path>` verify step
-- [ ] `docs/platform-support.md` — 加 doctor.sh entry（what it checks, `--profile` flag）
-- [ ] `README.md` — 確認 install 段落提及 doctor.sh 或 `--verify`；Windows junction 已記錄
-
-### Release
-- [ ] `git tag v0.2.0 -m "v0.2.0 — Cross-platform ops"`
-- [ ] `git push origin v0.2.0`
-- [ ] GitHub Release：以 CHANGELOG.md [0.2.0] 內容為 release notes body
-
-**Dependencies**: CC-058（doctor.sh merge 後才執行）
-
-**Priority**: P2 — blocks milestone closure.
-
-**Cross-link**: CC-219（pre-milestone doc freshness gate 的自動化版本；CC-222 是手動版，先執行）
+**Outcome**: CHANGELOG.md [0.2.0] written; MILESTONES.md v0.2.0 closed, v0.3.0 stub added; docs/GETTING_STARTED.md §4 updated with doctor.sh verification; docs/platform-support.md "Verify the install" section added; BACKLOG CC-058 and CC-222 flipped to closed. Post-merge steps remaining: `git tag v0.2.0`, `git push origin v0.2.0`, GitHub Release.
 
 ## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh（deferred）
 
