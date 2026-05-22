@@ -74,16 +74,16 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104i | ✅ closed 2026-05-17 | **[Windows dogfood r1 fixes]** `.gitattributes` forces LF — verified `file install.sh ... portable.sh` no CRLF after checkout on Windows | ops/repo | 2026-05-17 | pr:#80 | — | oss |
 | CC-104j | 🟡 deferred | **[Windows dogfood r1 r2 finding]** `test-dispatch-handover.sh:674-685` `brief_file_symlink_rejects_case` uses `ln -s` for fixture setup; on Git Bash falls back to copy → validator treats as regular file → test fails. Same skip-if-not-symlink pattern as CC-104g case (a) — `[[ -L "$link" ]]` precondition → SKIP | ops/test | 2026-05-17 | — | — | oss |
 | CC-104k | 🟡 deferred | **[UNC/9P filesystem caveat — re-scoped from `mkdir_lock` atomicity claim]** Race test on Windows Git Bash 5.2.15 (Windows 11) confirmed `mkdir` IS atomic on **local NTFS** (`C:\...\Temp` — Git Bash's `/tmp`); 20/20 rounds × 50 parallel = exactly 1 winner each. Original CC-037 regression failure on Windows was specifically when running pm-dispatch from `\\\\wsl.localhost\\Ubuntu\\...` (9P UNC bridging WSL FS to Windows) — 9P protocol or its Windows client does not preserve mkdir atomicity. Not a code bug; install-on-local-disk caveat. See **CC-104r** for the install-time UNC path detect / docs warn follow-up. If a third filesystem ever surfaces `mkdir`-non-atomic, revisit with `set -C` + `: > file` primitive (already race-tested as atomic on tested FS) | filesystem/caveat | 2026-05-18 | — | — | oss |
-| CC-104l | ✅ closed 2026-05-21 | **[Windows dogfood r1 r2 finding]** jq install hint visibility: install-hooks.sh shows the platform-aware hint per CC-104b (#79), BUT install.sh preflight runs `test-hooks` FIRST which fails with bare "jq missing" repeated 200+ times before hitting install-hooks.sh. Add (a) jq prerequisite check at top of install.sh BEFORE preflight (one-line hint), (b) jq install command at top of README "Install" section so first-time readers see it before clicking through to platform-support.md | ops/install/ux | 2026-05-17 | pr:#116 | — | oss |
-| CC-104m | 🟡 deferred | **[Platform layout — post-v0.1.0]** pm-dispatch staging dir + multi-target projection: introduce `~/.pm-dispatch/content/` as canonical view, then symlink-project to `~/.claude/` and (future) `~/.codex/` etc. Today pm-dispatch is Claude-only by virtue of where install.sh lands; this re-shapes it as a tool-agnostic content platform. Touches install.sh, manifest schema (v0 → v1 with `target` field), uninstall semantics. Decided 2026-05-18 (CC-104c scope discussion, Path Y). Open until clear Codex/Cursor/Aider integration need surfaces | arch/install/platform | 2026-05-18 | — | — | oss |
-| CC-104n | ✅ closed 2026-05-19 | **[CC-104c risk-reviewer advise]** install.sh preflight hard-fail (`--verify` block) converts optional/local validation issues into full install blockers; transient or environment-specific tooling gaps (e.g. missing optional bin) abort entire install. Pre-existing behavior surfaced by CC-104c gate. Mitigation: gate non-essential preflight checks behind a best-effort path OR add explicit `--skip-preflight=<name>` opt-out switch. **Design direction**: extract `scripts/run-all-tests.sh` as standalone test aggregator (make-check / make-install boundary); install.sh `--verify` becomes a thin wrapper around it; folds CC-104q | ops/install/risk | 2026-05-18 | pr:#101 | P2 | oss |
+| CC-104l | ✅ closed 2026-05-21 | **[Windows dogfood r1 r2 finding]** jq install hint visibility: install-hooks.sh shows the platform-aware hint per CC-104b (#79), BUT install.sh preflight runs `test-hooks` FIRST which fails with bare "jq missing" repeated 200+ times before hitting install-hooks.sh. Add (a) jq prerequisite check at top of install.sh BEFORE preflight (one-line hint), (b) jq install command at top of README "Install" section so first-time readers see it before clicking through to platform-support.md | ops/install | 2026-05-17 | pr:#116 | — | oss |
+| CC-104m | 🟡 deferred | **[Platform layout — post-v0.1.0]** pm-dispatch staging dir + multi-target projection: introduce `~/.pm-dispatch/content/` as canonical view, then symlink-project to `~/.claude/` and (future) `~/.codex/` etc. Today pm-dispatch is Claude-only by virtue of where install.sh lands; this re-shapes it as a tool-agnostic content platform. Touches install.sh, manifest schema (v0 → v1 with `target` field), uninstall semantics. Decided 2026-05-18 (CC-104c scope discussion, Path Y). Open until clear Codex/Cursor/Aider integration need surfaces | arch/install | 2026-05-18 | — | — | oss |
+| CC-104n | ✅ closed 2026-05-19 | **[CC-104c risk-reviewer advise]** install.sh preflight hard-fail (`--verify` block) converts optional/local validation issues into full install blockers; transient or environment-specific tooling gaps (e.g. missing optional bin) abort entire install. Pre-existing behavior surfaced by CC-104c gate. Mitigation: gate non-essential preflight checks behind a best-effort path OR add explicit `--skip-preflight=<name>` opt-out switch. **Design direction**: extract `scripts/run-all-tests.sh` as standalone test aggregator (make-check / make-install boundary); install.sh `--verify` becomes a thin wrapper around it; folds CC-104q | ops/install | 2026-05-18 | pr:#101 | P2 | oss |
 | CC-104o | 🟢 superseded 2026-05-20 | **[Windows dogfood r3 finding]** Microsoft Store python3 reparse-point stub (`/c/Users/<user>/AppData/Local/Microsoft/WindowsApps/python3.exe`) returns exit 49 in non-interactive contexts → 36 preflight cases FAIL (every `inject-hook/*`, `session-hook/*`, `rl-hook/*`, `stop_*`, `mem-recall/format-validator`, `cross-cmd/*` because hook scripts internally call python3). Fix: install.sh / install-hooks.sh preflight detects the MS Store stub via `python3 -c 'pass'` exit-49 probe, hard-fail with platform-aware hint (`winget install Python.Python.3.12` + "remove WindowsApps stub from PATH or order real Python first"). Required before Windows = Supported flag flip — fork users on Windows hit this on first install. Superseded by CC-104t which eliminates python3 entirely via jq rewrite. | ops | 2026-05-18 | — | — | oss |
 | CC-104p | ✅ closed 2026-05-21 | **[Windows dogfood r3 finding]** `flock` is Linux-only — Git Bash has no flock binary; `hook-routing-log.sh` directly calls flock (bypassing portable.sh abstraction) → 2 cases FAIL on Windows (`routing: rotation failure audits and skips append`, `routing: concurrent appends keep every row`). Strong dependency on **CC-104k** (mkdir_lock Git Bash atomicity) — fix should be one combined PR: (a) fix mkdir_lock atomicity per CC-104k, (b) add `scripts/lib/portable.sh::serialize_with_lock <path> <cmd>` shim that prefers `flock` when present else falls back to `mkdir_lock`, (c) rewrite hook-routing-log.sh to use shim. **Blocker** because CC-036's main-thread background dispatch makes concurrent routing-log appends real (no longer theoretical) → Windows row-loss = silent data corruption | arch/portable | 2026-05-18 | pr:TBD | — | oss |
 | CC-104q | ✅ closed 2026-05-19 | **[Windows dogfood r3 finding]** test-hooks preflight runs codex-dispatch cases (`cxw: Write to existing symlink /tmp/brief-*.md → deny`, `dispatch_brief_file_reads_file`) even when codex is not on PATH → 2 cases FAIL with `codex: command not found`. `install.sh --profile minimal` skips codex hooks but preflight still tests them. Fix: test-hooks should SKIP (not FAIL) codex-* cases when `command -v codex` is false. Folds well with **CC-104n** preflight `--skip-preflight=<name>` mechanism — could land in same PR | ops/test/ux | 2026-05-18 | — | — | oss |
 | CC-104r | ⏸ deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh` performance_budget assertion: 27990 ms actual vs 3500 ms budget on Windows native filesystem (WSL UNC path `\\wsl.localhost\...` is ~8× slower than local disk). Not a pm-dispatch bug — physical filesystem characteristic. Fix is two-part: (a) `docs/platform-support.md` warns "install on local disk, avoid cross-WSL/native FS boundaries"; (b) preflight detects UNC path → prints warning and skips budget assertion (10 lines). Polish, not blocker | docs/ops | 2026-05-18 | — | — | oss |
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/trace/portability | 2026-05-18 | — | — | oss |
 | CC-104t | ✅ closed 2026-05-20 | **[python→jq replacement — supersedes CC-104o]** Hook scripts call `python3` in 4 places (`hook-log-claude-usage.sh` 2 heredocs; `hook-inject-memory.sh`, `hook-session-summary.sh`, `hook-save-rate-limits.sh` 1 each) for JSON/JSONL parsing + simple date arithmetic. Rewrite to use jq (already a required dep) + bash filesystem walking, eliminating python3 entirely. Pros: (a) closes 36 Windows hook FAILs caused by Microsoft Store python3 reparse-point stub (root cause, not workaround), (b) shrinks install footprint to jq-only, (c) consistent with CC-104b jq-as-canonical-dep direction, (d) no Claude Code session-restart required when PATH changes. Cons: ~250 LoC refactor across 4 hooks; date arithmetic via `jq fromdateiso8601` (1.6+) or `date -d` shim. **Required ≥4 behavioral units → `/pre-impl` mandatory.** Once landed, mark CC-104o `🟢 superseded by CC-104t` | arch/hook/portability | 2026-05-18 | pr:#107 | P2 | oss |
-| CC-104u | ✅ closed 2026-05-19 | **[Windows dogfood r4 finding]** `install.sh` `link()` semantics bug on existing-directory dst: when `dst` is already a directory (e.g. `~/.claude/.pm` is a real dir from a prior install or manual setup), `ln -s "$src" "$dst"` is interpreted as "create link inside the dir named $(basename "$src")" → produces `dst/basename(src)` (e.g. `.pm/pm`) instead of failing cleanly. CC-104c's link_or_copy inherits this from `ln`. Observed: `ln: failed to create symbolic link '/c/Users/Lien Chen/.claude/.pm/pm': File exists`. Copy fallback masked the symptom but `manifest` records a wrong dst. Fix: `link_or_copy` should `[[ -d "$dst" && ! -L "$dst" ]]` precheck → return CONFLICT (rc=2) with clear message, OR use `ln -sn` (no-dereference) consistently. Also audit `pm-schema` install block path-handling | ops/install/correctness | 2026-05-18 | pr:#100 | P2 | oss |
+| CC-104u | ✅ closed 2026-05-19 | **[Windows dogfood r4 finding]** `install.sh` `link()` semantics bug on existing-directory dst: when `dst` is already a directory (e.g. `~/.claude/.pm` is a real dir from a prior install or manual setup), `ln -s "$src" "$dst"` is interpreted as "create link inside the dir named $(basename "$src")" → produces `dst/basename(src)` (e.g. `.pm/pm`) instead of failing cleanly. CC-104c's link_or_copy inherits this from `ln`. Observed: `ln: failed to create symbolic link '/c/Users/Lien Chen/.claude/.pm/pm': File exists`. Copy fallback masked the symptom but `manifest` records a wrong dst. Fix: `link_or_copy` should `[[ -d "$dst" && ! -L "$dst" ]]` precheck → return CONFLICT (rc=2) with clear message, OR use `ln -sn` (no-dereference) consistently. Also audit `pm-schema` install block path-handling | ops/install | 2026-05-18 | pr:#100 | P2 | oss |
 | CC-104v | ✅ closed 2026-05-21 | **[Windows dogfood r4 — docs]** Document copy-mode install snapshot semantics: when `link_or_copy` falls back to copy (Git Bash without dev-mode), changes to source repo do NOT propagate to install dst — user must re-run `install.sh` after any source edit. Currently surfaced only via per-file `portable: fallback copy path ... symlink post-check failed` stderr. Add a single summary banner at end of install when copy-mode entries > 0 (`N files installed via copy fallback; source edits will require re-install`). Also add section to `docs/platform-support.md` Windows page. UX, not correctness | docs/install/ux | 2026-05-18 | pr:#116 | — | oss |
 | CC-200 | ⏸ deferred | **[Reuse debt]** `scripts/lib/executor-router.sh` — 抽出共用 codex/claude routing logic（目前 `/pm`、`/pr-gate` 各寫一套，未來 N=3 consumer 痛點） | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-201 | ⏸ deferred | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
@@ -107,6 +107,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
+| CC-222 | ⏸ deferred | **[v0.2.0 release prep]** Close the v0.2.0 milestone: confirm all Planned tickets ✅, Windows Git Bash smoke-test pass, write CHANGELOG.md [0.2.0] section, update MILESTONES.md (close v0.2.0, stub v0.3.0 planning), docs freshness sweep (doctor.sh 記錄於 GETTING_STARTED + platform-support), BACKLOG status flip, git tag v0.2.0 + GitHub Release. | process/release | 2026-05-22 | — | P2 | oss |
+| CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
+| CC-226 | ⏸ deferred | **[lint-frontmatter: extract shared dq-escape validation helper]** `check_frontmatter()` 內有 4 個 collection branch 各自重複相同的 dq escape whitelist regex、adjacent-quote check、empty-entry check，未來修改一個 branch 容易遺漏其他三個，造成 parity gap。建議抽取成 shared bash helper，或以 parity test 確保 4 個 branch 永遠同步。Raised as [medium] advisory in gate-20260522-171123. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
+| CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
+| CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-051 | ✅ closed 2026-05-18 | **[BACKLOG hygiene Tier 1]** Add schema convention preamble at top of BACKLOG.md: ID convention (`CC-NNN` sequential except `CC-1NN` = CC-OSS epic markers, `CC-2NN` = reuse-debt markers — semantic groupings, not numeric ranges), sub-letter convention (`CC-NNNa/b/c` = follow-ups to parent ticket), status emoji legend (✅ closed / 🟡 deferred / 🔵 active / ⚠️ partial / ⏸ deferred-low-pri). Without this docs, fork users see "weird gaps" and don't know the conventions | process/docs | 2026-05-17 | — | — | hygiene |
@@ -116,7 +121,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-055 | ✅ closed 2026-05-18 | `commands/pr-gate.md` frontmatter YAML syntax error fixed | ops/DX | 2026-05-18 | pr:#86 | — | hygiene |
 | CC-056 | ✅ closed 2026-05-18 | `scripts/lint-frontmatter.sh` + CI job + 12 regression tests | ops/test | 2026-05-18 | pr:#86 | — | hygiene |
 | CC-057 | ✅ closed 2026-05-18 | README `skills/` layout row + `update-config` ref removed | docs/DX | 2026-05-18 | pr:#86 | — | hygiene |
-| CC-058 | ⏸ deferred | `scripts/doctor.sh`：安裝前後環境健康檢查（claude/codex/jq 存在、hooks 已裝、memory dir、scripts executable、frontmatter lint）；每項失敗給出可操作修復步驟 | ops/DX | 2026-05-18 | — | — | — |
+| CC-058 | 🔵 active | `scripts/doctor.sh`：安裝前後環境健康檢查（claude/codex/jq 存在、hooks 已裝、memory dir、scripts executable、frontmatter lint）；每項失敗給出可操作修復步驟 | ops/DX | 2026-05-18 | — | P3 | — |
 | CC-059 | ⏸ deferred | Thin `/pm.md` command：把 brief 建立 / handover validation / dispatch / BashOutput tracking / diff verify 等 runtime 邏輯移入 `scripts/pm-dispatch-runner.sh` 等腳本；pm.md 只保留意圖描述與行為約束 | arch/ops | 2026-05-18 | CC-200 | — | design |
 | CC-060 | ⏸ deferred | Codex model/config 外部化：把 hardcoded 模型名稱、sandbox policy、approval policy 抽到 config file（`defaults/codex.toml` 或 `.env.defaults`）；commands 與 scripts 讀 config 而非寫死 | arch/config | 2026-05-18 | CC-047 | — | — |
 | CC-061 | ⏸ deferred | 建立 `skills/` 目錄 + 2–3 個 starter SKILL.md：`dispatch-brief/SKILL.md`、`pr-gate-review/SKILL.md`（對齊 Anthropic Skills spec；README 已聲稱支援但目錄不存在）；與 CC-014/CC-015/CC-026 技能定義解耦，這條處理目錄結構 | arch/ux | 2026-05-18 | CC-057 | — | — |
@@ -1044,3 +1049,110 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Why**: The current install-again workflow does not fix stale copied helpers. The correct uninstall+reinstall workaround is documented (CC-104v), but the underlying implementation is wrong. A user who simply re-runs `install.sh` after pulling a source change will silently keep the old version.
 **Requirement**: Change the `link_or_copy` copy-path to compare `sha256(src)` vs `sha256(dst)` at install time; if they differ and `mode=copy`, re-copy and update the manifest entry. Guard: if manifest has no prior entry, existing behavior (first-time copy) is unchanged.
 **Closed**: Implemented in PR #117. `scripts/lib/portable.sh` now compares src vs dst sha256 directly; four new test cases in `scripts/test-portable.sh` cover stale refresh, up-to-date rerun, user-modified conflict, and dry-run refresh.
+
+---
+
+## CC-222 — v0.2.0 release prep（deferred）
+
+**Problem**: v0.2.0 milestone closes when CC-058 merges, but the release itself requires a coordinated set of process steps (CHANGELOG, docs, tag, GitHub Release) that are easy to forget or do out of order.
+
+**Why**: CC-105 (v0.1.0 release) established this pattern — having an explicit ticket prevents ad-hoc closure that skips freshness checks or leaves stale MILESTONES.md.
+
+**Requirement**: Execute the following checklist in order when CC-058 PR is merged.
+
+### Pre-flight
+- [ ] All v0.2.0 Planned tickets in MILESTONES.md have status ✅
+- [ ] Windows Git Bash smoke test: `bash doctor.sh --no-color --repo <repo>` exits 0 (or WARN-only) on a minimal-profile Windows installation
+
+### CHANGELOG.md
+- [ ] Write `## [0.2.0] — <release-date>` section
+- [ ] Cover all PRs merged since v0.1.0 (#79 → CC-058 PR), grouped by Added / Changed / Fixed
+- [ ] Highlight: doctor.sh (`--profile` flag), Windows junction support (CC-207), copy-mode refresh (CC-221), uninstall.sh manifest-driven, portable locking (CC-104p), install.sh jq check (CC-104l), copy-mode banner (CC-104v)
+
+### MILESTONES.md
+- [ ] Add `Tag: v0.2.0 @ <commit>` and `Released: <date>` to the v0.2.0 section header
+- [ ] Add stub `## v0.3.0` section with 主題 placeholder and empty Planned table
+  - 暫定主題候選：claude-executor background dispatch (CC-217) + gate lifecycle hook (CC-206) + spike tracking (CC-218)
+
+### BACKLOG.md
+- [ ] Flip CC-058 status from 🔵 active → ✅ closed `<date>`
+- [ ] Verify no other active/deferred ticket in v0.2.0 Planned is left un-flipped
+
+### Docs freshness
+- [ ] `docs/GETTING_STARTED.md` — 在 post-install section 加 `bash doctor.sh --repo <path>` verify step
+- [ ] `docs/platform-support.md` — 加 doctor.sh entry（what it checks, `--profile` flag）
+- [ ] `README.md` — 確認 install 段落提及 doctor.sh 或 `--verify`；Windows junction 已記錄
+
+### Release
+- [ ] `git tag v0.2.0 -m "v0.2.0 — Cross-platform ops"`
+- [ ] `git push origin v0.2.0`
+- [ ] GitHub Release：以 CHANGELOG.md [0.2.0] 內容為 release notes body
+
+**Dependencies**: CC-058（doctor.sh merge 後才執行）
+
+**Priority**: P2 — blocks milestone closure.
+
+**Cross-link**: CC-219（pre-milestone doc freshness gate 的自動化版本；CC-222 是手動版，先執行）
+
+## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh（deferred）
+
+**Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-hooks.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
+
+**Why**: Raised by critic and architecture-reviewer as [medium] advise in PR-gate `gate-20260522-100348`. The duplication became structurally significant once `--profile minimal|full|auto` was added and both files enumerate hooks by profile.
+
+**Requirement**: Extract the managed hook list and profile classification into a shared shell helper (e.g. `scripts/hook-profile.sh`) sourced by both `doctor.sh` and `install-hooks.sh`. Alternatively, add a parity test (e.g. `test-hook-profile-parity.sh`) that parses both files and asserts the hook sets are identical for each profile tier.
+
+**Dependencies**: CC-058（profile flag already landed）
+
+**Priority**: P3 — maintainability; current duplication is limited to two well-known files.
+
+**Cross-link**: CC-223（boundary fix; pair these if tackling doctor.sh again）, CC-204（hook/profile reuse debt）
+
+## CC-225 — claude-executor result observability（deferred）
+
+**Problem**: `claude-executor` task output is written to session-scoped `/tmp/` paths that are not tracked in the repo, cannot be reviewed across sessions, and are not recoverable after the shell exits. The main thread has no durable record of brief path, result summary, or exit status for completed executor tasks.
+
+**Why**: Raised from gate-20260522-145444 (CC-058 gating). The observability gap was observed during the CC-058 session: claude-executor tasks ran but their outputs were opaque to the main thread with no git-diffable artifact. This blocks the CC-211/CC-216 MCP architecture extraction.
+
+**Requirement**: After a claude-executor task completes, the main thread should write the brief path, result summary, and exit status to a repo-tracked directory (format consistent with `.gate-results/`). This serves as the prerequisite for the MCP task abstraction in CC-211/CC-216.
+
+**Dependencies**: CC-211 (MCP architecture design), CC-058 (doctor.sh merge — prerequisite)
+
+**Priority**: P3 — design prerequisite; not blocking current workflows.
+
+**Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
+
+## CC-226 — lint-frontmatter: extract shared dq-escape validation helper（deferred）
+
+**Problem**: `scripts/lint-frontmatter.sh` repeats the same double-quoted escape whitelist regex and adjacent-quoted-scalar check across 4 separate collection branches (key-level flow seq, key-level flow mapping, list-item flow seq, list-item flow mapping). A future grammar fix applied to one branch can be missed in the others, causing a silent parity gap.
+
+**Why**: Raised as medium advisory by critic + architecture-reviewer in gate-20260522-171123 (CC-058 gating). The current branch coverage is green and covers all 4 paths, so the risk is low now, but will grow as the grammar is extended.
+
+**Requirement**: Extract the dq escape whitelist check, the adjacent-quoted-scalar check, and the empty-entry check into a shared bash helper or predicate function. Ensure a parity test (or single call site) prevents future per-branch divergence.
+
+**Dependencies**: CC-058 (lint-frontmatter rewrite — merged)
+
+**Priority**: P3 — maintainability; not blocking current workflows.
+
+**Cross-link**: CC-224 (hook-profile inventory duplication — same class of debt), CC-227 (module extraction — can be done together)
+
+## CC-227 — lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh（deferred）
+
+**Problem**: `scripts/lint-frontmatter.sh` mixes CLI parsing, frontmatter boundary detection, and a ~150-line hand-rolled YAML subset parser in a single file. The parser logic (`check_frontmatter()`) has no stable call boundary, making it hard to reuse from other scripts (e.g., `doctor.sh` currently forks a subprocess to call the linter), hard to test in isolation, and hard to extend without touching the CLI script.
+
+**Why**: User feedback after CC-058 gating: splitting the YAML validation into a dedicated library file would improve long-term maintainability. Relates to the CC-226 shared-helper advisory — if both are done together, the grammar contract becomes a first-class lib with clear ownership.
+
+**Requirement**:
+1. Move `check_frontmatter()` and all YAML-subset validation helpers into `scripts/lib/yaml-frontmatter.sh`
+2. `scripts/lint-frontmatter.sh` becomes a thin CLI wrapper that sources the lib
+3. `doctor.sh` can optionally source the lib directly instead of fork-execing the linter
+4. Tests can source the lib and call `check_frontmatter()` directly, reducing tmp-file overhead
+5. If done together with CC-226: shared dq-escape/adjacent-quote/empty-entry helpers live in the lib
+
+**Dependencies**: CC-058 (lint-frontmatter rewrite — merged), CC-226 (shared helpers — can be combined)
+
+**Priority**: P3 — maintainability; not blocking current workflows.
+
+**Cross-link**: CC-226 (shared validation helpers — recommend combining), CC-224 (hook-profile lib extraction — same pattern)
+
+**Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)

@@ -17,17 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install PyYAML
-        run: pip install pyyaml --quiet
-      - name: Validate frontmatter YAML
+      # Grammar coverage for the restricted subset is provided by test-lint-frontmatter below.
+      - name: Validate frontmatter (restricted YAML subset)
         run: ./scripts/lint-frontmatter.sh
 
   test-lint-frontmatter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install PyYAML
-        run: pip install pyyaml --quiet
       - name: lint-frontmatter regression suite
         run: bash scripts/test-lint-frontmatter.sh
 
@@ -111,6 +108,15 @@ jobs:
             usage-weekly.sh
             memory.sh
             memory-dir.sh
+            doctor.sh
+            test-doctor.sh
+
+  test-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: doctor.sh regression suite
+        run: ./scripts/test-doctor.sh
 
   test-portable:
     runs-on: ubuntu-latest

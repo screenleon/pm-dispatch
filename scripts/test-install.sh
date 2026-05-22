@@ -254,7 +254,7 @@ test_install_manifest_atomic() {
       expected_entries=$((expected_entries + 1))
     done
   done
-  for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh; do
+  for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh doctor.sh; do
     [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
   done
   [[ -d "$REPO_ROOT/pm" ]] && expected_entries=$((expected_entries + 1))
@@ -1485,6 +1485,7 @@ test_verify_flag_runs_preflights() {
   for suite in lint-agents lint-scripts test-hooks test-migrate test-install \
                test-usage-weekly test-usage-tracker test-pm-scripts \
                test-codex-dispatch test-pr-gate test-setup-project \
+               test-doctor \
                test-patch-gitignore test-run-all-tests; do
     if [[ "$out" != *"$suite"* ]]; then
       ok=false

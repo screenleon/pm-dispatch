@@ -593,7 +593,7 @@ manifest_record() {
   esac
 
   src_abs="$(realpath_m "$src" 2>/dev/null || printf '%s' "$src")"
-  dst_parent="$(cd "$(dirname "$dst")" 2>/dev/null && pwd -P || printf '%s' "$(dirname "$dst")")"
+  dst_parent="$(realpath -- "$(dirname "$dst")" 2>/dev/null || { cd "$(dirname "$dst")" 2>/dev/null && pwd -P; } || printf '%s' "$(dirname "$dst")")"
   dst_abs="$dst_parent/$(basename "$dst")"
   escaped_src="$(_portable_json_escape "$src_abs")"
   escaped_dst="$(_portable_json_escape "$dst_abs")"

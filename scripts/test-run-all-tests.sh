@@ -27,6 +27,7 @@ SUITE_NAMES=(
   test-setup-project
   test-patch-gitignore
   test-portable
+  test-doctor
   test-lint-frontmatter
   test-commands
   test-commands-runner
@@ -72,6 +73,7 @@ suite_path() {
     test-setup-project) printf 'scripts/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'scripts/test-patch-gitignore.sh\n' ;;
     test-portable) printf 'scripts/test-portable.sh\n' ;;
+    test-doctor) printf 'scripts/test-doctor.sh\n' ;;
     test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
     test-commands) printf 'scripts/test-commands.sh\n' ;;
     test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
@@ -150,13 +152,13 @@ test_list() {
 test_skip_unknown_suite() {
   local name="skip-unknown-suite"
   # Behavior: --skip with an unknown suite name is a no-op; all registered suites run.
-  # Steps: invoke --skip nonexistent-suite with all pass-stubs; assert 22 passed, 0 skipped.
+  # Steps: invoke --skip nonexistent-suite with all pass-stubs; assert 23 passed, 0 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip nonexistent-suite 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"22 passed, 0 failed, 0 skipped"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"23 passed, 0 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -166,7 +168,7 @@ test_skip_unknown_suite() {
 test_skip_known_suite() {
   local name="skip-known-suite"
   # Behavior: --skip with a known suite name causes exactly that suite to be skipped.
-  # Steps: invoke --skip lint-agents; assert SKIP message and 21 passed 1 skipped.
+  # Steps: invoke --skip lint-agents; assert SKIP message and 22 passed 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -174,7 +176,7 @@ test_skip_known_suite() {
   out=$(PATH="$path" run_aggregator "$repo" --skip lint-agents 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP lint-agents (requested)"* &&
-        "$out" == *"21 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"22 passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -192,7 +194,7 @@ test_suite_not_found_skip() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL lint-scripts (not found or not executable)"* &&
-        "$out" == *"21 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"22 passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -202,7 +204,7 @@ test_suite_not_found_skip() {
 test_codex_missing_skips_codex_dispatch() {
   local name="codex-missing-skips-codex-dispatch"
   # Behavior: test-codex-dispatch is auto-skipped when codex is absent from PATH.
-  # Steps: put codex-absent PATH; assert SKIP test-codex-dispatch and 21 passed 1 skipped.
+  # Steps: put codex-absent PATH; assert SKIP test-codex-dispatch and 22 passed 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -210,7 +212,7 @@ test_codex_missing_skips_codex_dispatch() {
   out=$(PATH="$path" bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
-        "$out" == *"21 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"22 passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -229,7 +231,7 @@ test_fail_on_suite_error() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL test-pr-gate"* &&
-        "$out" == *"21 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"22 passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"

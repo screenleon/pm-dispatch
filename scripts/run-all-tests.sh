@@ -24,6 +24,7 @@ SUITE_NAMES=(
   test-setup-project
   test-patch-gitignore
   test-portable
+  test-doctor
   test-lint-frontmatter
   test-commands
   test-commands-runner
@@ -49,6 +50,7 @@ declare -A SUITE_PATHS=(
   [test-setup-project]="scripts/test-setup-project.sh"
   [test-patch-gitignore]="scripts/test-patch-gitignore.sh"
   [test-portable]="scripts/test-portable.sh"
+  [test-doctor]="scripts/test-doctor.sh"
   [test-lint-frontmatter]="scripts/test-lint-frontmatter.sh"
   [test-commands]="scripts/test-commands.sh"
   [test-commands-runner]="scripts/test-commands-runner.sh"
