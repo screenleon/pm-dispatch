@@ -86,7 +86,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104u | ✅ closed 2026-05-19 | **[Windows dogfood r4 finding]** `install.sh` `link()` semantics bug on existing-directory dst: when `dst` is already a directory (e.g. `~/.claude/.pm` is a real dir from a prior install or manual setup), `ln -s "$src" "$dst"` is interpreted as "create link inside the dir named $(basename "$src")" → produces `dst/basename(src)` (e.g. `.pm/pm`) instead of failing cleanly. CC-104c's link_or_copy inherits this from `ln`. Observed: `ln: failed to create symbolic link '/c/Users/Lien Chen/.claude/.pm/pm': File exists`. Copy fallback masked the symptom but `manifest` records a wrong dst. Fix: `link_or_copy` should `[[ -d "$dst" && ! -L "$dst" ]]` precheck → return CONFLICT (rc=2) with clear message, OR use `ln -sn` (no-dereference) consistently. Also audit `pm-schema` install block path-handling | ops/install | 2026-05-18 | pr:#100 | P2 | oss |
 | CC-104v | ✅ closed 2026-05-21 | **[Windows dogfood r4 — docs]** Document copy-mode install snapshot semantics: when `link_or_copy` falls back to copy (Git Bash without dev-mode), changes to source repo do NOT propagate to install dst — user must re-run `install.sh` after any source edit. Currently surfaced only via per-file `portable: fallback copy path ... symlink post-check failed` stderr. Add a single summary banner at end of install when copy-mode entries > 0 (`N files installed via copy fallback; source edits will require re-install`). Also add section to `docs/platform-support.md` Windows page. UX, not correctness | docs/install/ux | 2026-05-18 | pr:#116 | — | oss |
 | CC-200 | ⏸ deferred | **[Reuse debt]** `scripts/lib/executor-router.sh` — 抽出共用 codex/claude routing logic（目前 `/pm`、`/pr-gate` 各寫一套，未來 N=3 consumer 痛點） | arch/reuse | 2026-05-17 | — | — | reuse-debt |
-| CC-201 | ⏸ deferred | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
+| CC-201 | ✅ closed 2026-05-23 | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | pr:#123 | — | reuse-debt |
 | CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-203 | ⏸ deferred | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一 | ops/test/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
@@ -1037,11 +1037,14 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Why**: A third consumer would turn the duplicated route logic into a maintenance cost and make executor behavior easier to drift.
 **Requirement**: Extract shared codex/claude routing into `scripts/lib/executor-router.sh`, preserving existing CLI behavior for current callers.
 
-## CC-201 — Reuse debt: `detect_executor_profile()` shim（deferred）
+## CC-201 — Reuse debt: `detect_executor_profile()` shim ✅ 2026-05-23
+
+**See**: PR #123
 
 **Problem**: `install-hooks.sh` and `pr-gate.sh` both repeat `command -v codex` style executor-profile detection.
 **Why**: Profile detection should be consistent across install and dispatch paths.
 **Requirement**: Move executor-profile detection into a shared shim, likely `scripts/lib/portable.sh` or a focused executor helper, and update both consumers.
+**Closed**: `codex_available()` + `detect_executor_profile()` added to `scripts/lib/portable.sh`; `install-hooks.sh` / `pr-gate.sh` / `doctor.sh` (×2) consumers updated; `pr-gate.sh` + `doctor.sh` source the shim behind a graceful copy-mode fallback. +4 `test-portable.sh` cases, +1 `test-doctor.sh` regression case. PR #123 (v0.3.0 M0).
 
 ## CC-202 — Reuse debt: handover validator framework（deferred）
 

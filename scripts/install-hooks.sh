@@ -72,11 +72,7 @@ case "$PLATFORM" in
 esac
 
 if [[ -z "$PROFILE" ]]; then
-  if command -v codex >/dev/null 2>&1; then
-    PROFILE=full
-  else
-    PROFILE=minimal
-  fi
+  PROFILE="$(detect_executor_profile)"
 fi
 
 if [[ "$PLATFORM" == "auto" ]]; then

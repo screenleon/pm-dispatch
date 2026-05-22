@@ -78,16 +78,6 @@ case "$EXECUTOR_OPTION" in
     ;;
 esac
 
-if [[ "$EXECUTOR_OPTION" == "auto" ]]; then
-  if command -v codex >/dev/null 2>&1; then
-    EXECUTOR="codex"
-  else
-    EXECUTOR="claude"
-  fi
-else
-  EXECUTOR="$EXECUTOR_OPTION"
-fi
-
 cd "$WORK_DIR"
 
 # ── Detect base branch ────────────────────────────────────────────────────────
@@ -219,6 +209,25 @@ while [[ -L "$_self" ]]; do
   [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+# Source portable.sh for codex_available(); graceful fallback for standalone
+# copies (test harness, copy-mode install) where the sibling lib/ is absent.
+if [[ -f "$SCRIPT_DIR/lib/portable.sh" ]]; then
+  # shellcheck source=scripts/lib/portable.sh
+  . "$SCRIPT_DIR/lib/portable.sh"
+else
+  codex_available() { command -v codex >/dev/null 2>&1; }
+fi
+
+if [[ "$EXECUTOR_OPTION" == "auto" ]]; then
+  if codex_available; then
+    EXECUTOR="codex"
+  else
+    EXECUTOR="claude"
+  fi
+else
+  EXECUTOR="$EXECUTOR_OPTION"
+fi
+
 unset _self _self_dir
 
 # Track all brief files for EXIT cleanup

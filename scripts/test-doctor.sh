@@ -967,6 +967,37 @@ case_doctor_copy_mode_no_lib() {
   fi
 }
 
+case_doctor_copy_mode_no_lib_no_codex() {
+  # CC-201 regression: in copy-mode (no lib/portable.sh) codex_available()
+  # comes from doctor.sh's own fallback block, not portable.sh. Verify
+  # doctor.sh still runs gracefully when codex is ALSO absent from PATH —
+  # the fallback codex_available must be defined so check_codex() and the
+  # hook-profile case degrade to a warning rather than hitting an undefined
+  # function.
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir with no lib/ subdirectory.
+  #   2. Run it with a PATH containing claude but NOT codex.
+  #   3. Assert exit 0 or 1 (no crash) and output contains "Summary:".
+  local name="doctor-copy-mode-no-lib-no-codex"
+  should_run "$name" || return 0
+  local copydir="$tmp_root/copy-scripts-nocodex"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+  local home="$tmp_root/home-copy-nocodex" out status=0
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  local path
+  path="$(make_stub_bin "$tmp_root/bin-copy-nocodex" claude)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$copydir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ ( "$status" -eq 0 || "$status" -eq 1 ) && "$out" == *"Summary:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 or 1 with Summary: (no crash when codex absent in copy-mode); status=$status out=$out"
+  fi
+}
+
 case_doctor_installed_copy_no_repo() {
   # Verifies that doctor.sh emits [FAIL] with a helpful message when invoked
   # in copy-mode (no lib/) without --repo, so the user is not misled by
@@ -1155,6 +1186,7 @@ case_doctor_windows_path_hooks_stale
 case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
+case_doctor_copy_mode_no_lib_no_codex
 case_doctor_installed_copy_no_repo
 case_doctor_installed_copy_no_repo_json
 case_doctor_claude_config_dir
