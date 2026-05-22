@@ -106,12 +106,17 @@ check_frontmatter() {
         printf 'invalid YAML flow sequence: %s\n' "$line"
         return 1
       fi
+      local _seq_nsq="${_seq_inner//\'/}"
+      if (( (${#_seq_inner} - ${#_seq_nsq}) % 2 != 0 )); then
+        printf 'invalid YAML flow sequence: %s\n' "$line"
+        return 1
+      fi
       if [[ "$_seq_inner" == *"{"* ]] || [[ "$_seq_inner" == *"["* ]]; then
         printf 'invalid YAML flow sequence: %s\n' "$line"
         return 1
       fi
     fi
-    local _closed_dq_re='^[A-Za-z_-]+:[[:space:]]*"([^"\\]|\\.)*"[[:space:]]*$'
+    local _closed_dq_re='^[A-Za-z_-]+:[[:space:]]*"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[[:space:]]*$'
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ $_closed_dq_re ]]; then
       printf 'unterminated quoted value: %s\n' "$line"
       return 1

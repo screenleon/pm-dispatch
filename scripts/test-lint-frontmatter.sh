@@ -216,6 +216,10 @@ run_tmp_fail "lint-frontmatter/yaml-tag-single" \
   $'---\ndescription: !tag foo\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/nested-seq-in-seq" \
   $'---\ndescription: [[a, b]]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-dq-escape" \
+  $'---\ndescription: "bad \\q escape"\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/sq-in-seq-unclosed" \
+  $'---\ndescription: [\'unterminated]\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 
