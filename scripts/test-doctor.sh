@@ -875,7 +875,7 @@ EOSETTINGS
   path="$(make_stub_bin "$tmp_root/bin-win-stale" claude)"
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --no-color --profile minimal --repo "$REPO_ROOT" 2>&1)" || status=$?
-  if [[ "$out" == *"different checkout"* || "$out" == *"stale"* || "$out" == *"[WARN]"* ]]; then
+  if [[ "$out" == *"hook(s) wired from a different checkout"* ]]; then
     pass "$name"
   else
     fail "$name" "expected stale-path warning for Windows backslash hooks; status=$status out=$out"

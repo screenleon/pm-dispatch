@@ -89,6 +89,9 @@ check_frontmatter() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     if [[ "$line" =~ ^[[:space:]]*-[[:space:]] ]]; then
+      if [[ "$line" =~ $'\t' ]]; then
+        printf 'invalid YAML list item (tab indentation not allowed): %s\n' "$line"; return 1
+      fi
       local _item="${line#*- }"
       if [[ "$_item" =~ ^\[ ]]; then
         if [[ ! "$_item" =~ \][[:space:]]*$ ]]; then
@@ -99,6 +102,19 @@ check_frontmatter() {
         _sinq="${_si//\"/}"
         if (( (${#_si} - ${#_sinq}) % 2 != 0 )); then
           printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        if [[ "$_si" == *'"'* ]]; then
+          local _si_re='^([^"]*"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[^"]*)*$'
+          if [[ ! "$_si" =~ $_si_re ]]; then printf 'invalid YAML list item: %s\n' "$line"; return 1; fi
+        fi
+        local _si_adj_dq='"[[:space:]]+"'
+        local _si_adj_sq="'[[:space:]]+'"
+        if [[ "$_si" =~ $_si_adj_dq ]] || [[ "$_si" =~ $_si_adj_sq ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        if [[ "$_si" != *'"'* && "$_si" != *"'"* ]]; then
+          local _si_empty_re=',[[:space:]]*,|^[[:space:]]*,'
+          if [[ "$_si" =~ $_si_empty_re ]]; then printf 'invalid YAML list item: %s\n' "$line"; return 1; fi
         fi
         _sinsq="${_si//\'/}"
         if (( (${#_si} - ${#_sinsq}) % 2 != 0 )); then
@@ -116,6 +132,19 @@ check_frontmatter() {
         _minq="${_mi//\"/}"
         if (( (${#_mi} - ${#_minq}) % 2 != 0 )); then
           printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        if [[ "$_mi" == *'"'* ]]; then
+          local _mi_re='^([^"]*"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[^"]*)*$'
+          if [[ ! "$_mi" =~ $_mi_re ]]; then printf 'invalid YAML list item: %s\n' "$line"; return 1; fi
+        fi
+        local _mi_adj_dq='"[[:space:]]+"'
+        local _mi_adj_sq="'[[:space:]]+'"
+        if [[ "$_mi" =~ $_mi_adj_dq ]] || [[ "$_mi" =~ $_mi_adj_sq ]]; then
+          printf 'invalid YAML list item: %s\n' "$line"; return 1
+        fi
+        if [[ "$_mi" != *'"'* && "$_mi" != *"'"* ]]; then
+          local _mi_empty_re=',[[:space:]]*,|^[[:space:]]*,'
+          if [[ "$_mi" =~ $_mi_empty_re ]]; then printf 'invalid YAML list item: %s\n' "$line"; return 1; fi
         fi
         _mi_nob="${_mi//\[/}"; _mi_ncb="${_mi//\]/}"
         if (( (${#_mi} - ${#_mi_nob}) != (${#_mi} - ${#_mi_ncb}) )); then
@@ -153,6 +182,22 @@ check_frontmatter() {
         printf 'invalid YAML flow sequence: %s\n' "$line"
         return 1
       fi
+      if [[ "$_seq_inner" == *'"'* ]]; then
+        local _seq_inner_re='^([^"]*"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[^"]*)*$'
+        if [[ ! "$_seq_inner" =~ $_seq_inner_re ]]; then printf 'invalid YAML flow sequence: %s\n' "$line"; return 1; fi
+      fi
+      local _seq_adj_dq='"[[:space:]]+"'
+      local _seq_adj_sq="'[[:space:]]+'"
+      if [[ "$_seq_inner" =~ $_seq_adj_dq ]] || [[ "$_seq_inner" =~ $_seq_adj_sq ]]; then
+        printf 'invalid YAML flow sequence: %s\n' "$line"
+        return 1
+      fi
+      if [[ "$_seq_inner" != *'"'* && "$_seq_inner" != *"'"* ]]; then
+        local _seq_empty_re=',[[:space:]]*,|^[[:space:]]*,'
+        if [[ "$_seq_inner" =~ $_seq_empty_re ]]; then
+          printf 'invalid YAML flow sequence: %s\n' "$line"; return 1
+        fi
+      fi
       local _seq_nsq="${_seq_inner//\'/}"
       if (( (${#_seq_inner} - ${#_seq_nsq}) % 2 != 0 )); then
         printf 'invalid YAML flow sequence: %s\n' "$line"
@@ -184,6 +229,22 @@ check_frontmatter() {
       if (( (${#_map_inner} - ${#_map_nq}) % 2 != 0 )); then
         printf 'invalid YAML flow mapping: %s\n' "$line"
         return 1
+      fi
+      if [[ "$_map_inner" == *'"'* ]]; then
+        local _map_inner_re='^([^"]*"([^"\\]|\\[0abtnvfre"\\/NLP_]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})*"[^"]*)*$'
+        if [[ ! "$_map_inner" =~ $_map_inner_re ]]; then printf 'invalid YAML flow mapping: %s\n' "$line"; return 1; fi
+      fi
+      local _map_adj_dq='"[[:space:]]+"'
+      local _map_adj_sq="'[[:space:]]+'"
+      if [[ "$_map_inner" =~ $_map_adj_dq ]] || [[ "$_map_inner" =~ $_map_adj_sq ]]; then
+        printf 'invalid YAML flow mapping: %s\n' "$line"
+        return 1
+      fi
+      if [[ "$_map_inner" != *'"'* && "$_map_inner" != *"'"* ]]; then
+        local _map_empty_re=',[[:space:]]*,|^[[:space:]]*,'
+        if [[ "$_map_inner" =~ $_map_empty_re ]]; then
+          printf 'invalid YAML flow mapping: %s\n' "$line"; return 1
+        fi
       fi
       _map_no_ob="${_map_inner//\[/}"
       _map_no_cb="${_map_inner//\]/}"

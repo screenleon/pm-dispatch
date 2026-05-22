@@ -164,6 +164,41 @@ run_exit "lint-frontmatter/file-missing-value" 2 --file
 run_tmp_ok "lint-frontmatter/valid-file" \
   $'---\ndescription: test\n---\n\nbody\n'
 
+# -- happy path: flow sequences -----------------------------------------------
+
+run_tmp_ok "lint-frontmatter/valid-seq-unquoted" \
+  $'---\ndescription: [foo, bar]\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-seq-dq" \
+  $'---\ndescription: ["foo", "bar"]\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-seq-sq" \
+  $'---\ndescription: [\'foo\', \'bar\']\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-seq-dq-escape" \
+  $'---\ndescription: ["valid \\n escape"]\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-seq-single-item" \
+  $'---\ndescription: ["item"]\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-seq-comma-in-dq" \
+  $'---\ndescription: ["foo,,bar","baz"]\n---\n\nbody\n'
+
+# -- happy path: flow mappings ------------------------------------------------
+
+run_tmp_ok "lint-frontmatter/valid-flow-mapping-unquoted" \
+  $'---\ndescription: {foo: bar}\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-flow-mapping-dq" \
+  $'---\ndescription: {foo: "bar", baz: "qux"}\n---\n\nbody\n'
+
+# -- happy path: list items ---------------------------------------------------
+
+run_tmp_ok "lint-frontmatter/valid-list-item-plain" \
+  $'---\ntags:\n  - plain-value\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-list-item-dq" \
+  $'---\ntags:\n  - "valid item"\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-list-item-sq" \
+  $'---\ntags:\n  - \'valid item\'\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-list-item-seq" \
+  $'---\ntags:\n  - [a, b]\n---\n\nbody\n'
+run_tmp_ok "lint-frontmatter/valid-list-item-map" \
+  $'---\ntags:\n  - {k: v}\n---\n\nbody\n'
+
 # -- warning-not-fail cases ---------------------------------------------------
 
 run_tmp_ok "lint-frontmatter/no-frontmatter-warn" \
@@ -222,6 +257,50 @@ run_tmp_fail "lint-frontmatter/sq-in-seq-unclosed" \
   $'---\ndescription: [\'unterminated]\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/list-item-unclosed-seq" \
   $'---\ntags:\n  - [unclosed\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-dq-escape-in-seq" \
+  $'---\ndescription: ["bad \\q escape"]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-dq-escape-in-list-item" \
+  $'---\ntags:\n  - ["bad \\q escape"]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-dq-escape-in-flow-mapping" \
+  $'---\ndescription: {foo: "bad \\q escape"}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/invalid-dq-escape-in-list-item-flow-mapping" \
+  $'---\ntags:\n  - {foo: "bad \\q escape"}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/seq-adjacent-dq" \
+  $'---\ndescription: ["foo" "bar"]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/seq-adjacent-sq" \
+  $'---\ndescription: [\'foo\' \'bar\']\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/flow-mapping-adjacent-dq" \
+  $'---\ndescription: {foo: "bar" "baz"}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/flow-mapping-adjacent-sq" \
+  $'---\ndescription: {foo: \'bar\' \'baz\'}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-seq-adjacent-dq" \
+  $'---\ntags:\n  - ["foo" "bar"]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-seq-adjacent-sq" \
+  $'---\ntags:\n  - [\'foo\' \'bar\']\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-mapping-adjacent-dq" \
+  $'---\ntags:\n  - {foo: "bar" "baz"}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-mapping-adjacent-sq" \
+  $'---\ntags:\n  - {foo: \'bar\' \'baz\'}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-unclosed-mapping" \
+  $'---\ntags:\n  - {unclosed\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-dq-invalid-escape" \
+  $'---\ntags:\n  - "bad \\q escape"\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-dq-unclosed" \
+  $'---\ntags:\n  - "unterminated\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/tab-indented-list-item" \
+  $'---\ndescription: test\ntags:\n\t- bad\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/seq-double-comma" \
+  $'---\ndescription: [foo,,bar]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/seq-leading-comma" \
+  $'---\ndescription: [,foo]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/map-double-comma" \
+  $'---\ndescription: {foo: bar,, baz: qux}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/map-leading-comma" \
+  $'---\ndescription: {,foo: bar}\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-seq-double-comma" \
+  $'---\ntags:\n  - [foo,,bar]\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/list-item-map-double-comma" \
+  $'---\ntags:\n  - {foo: bar,, baz: qux}\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 
