@@ -8,11 +8,11 @@
 
 ---
 
-## v0.2.0 — Cross-platform ops（release-prep complete, tag pending）
+## v0.2.0 — Cross-platform ops（released 2026-05-22）
 
 **主題**：完整 install / verify / uninstall 操作週期；環境健康診斷；Windows Git Bash 正確性修復。
 
-Tag: `v0.2.0` @ pending（merge 後執行：`git tag v0.2.0 && git push origin v0.2.0` + GitHub Release）
+Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 
 核心內容（詳見 CHANGELOG.md v0.2.0 section）：
 - `scripts/doctor.sh` — 環境健康檢查，每項給出可操作修復步驟（CC-058）
@@ -70,7 +70,7 @@ Tag: `v0.2.0` @ pending（merge 後執行：`git tag v0.2.0 && git push origin v
 | CC-104v | copy-mode 安裝後顯示 summary banner | ✅ |
 | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） | ✅ |
 | CC-104p | flock → portable locking shim（Windows row-loss 修復） | ✅ |
-| CC-222 | v0.2.0 release prep（CHANGELOG + docs + tag + GitHub Release） | ⏳ tag pending |
+| CC-222 | v0.2.0 release prep（CHANGELOG + docs + tag + GitHub Release） | ✅ |
 
 ---
 
