@@ -369,12 +369,12 @@ check_frontmatter_lint() {
     return
   fi
   local out
-  if out="$(cd "$REPO_ROOT" && "$lint_script" 2>&1)"; then
+  out="$(cd "$REPO_ROOT" && "$lint_script" 2>&1)" && {
     emit_check frontmatter-lint ok "frontmatter lint passed"
-  else
-    emit_check frontmatter-lint fail "frontmatter lint errors detected" \
-      "bash '${REPO_ROOT}/scripts/lint-frontmatter.sh' for details"
-  fi
+    return
+  }
+  emit_check frontmatter-lint fail "frontmatter lint errors detected: $out" \
+    "bash '${REPO_ROOT}/scripts/lint-frontmatter.sh' for details"
 }
 
 main() {
