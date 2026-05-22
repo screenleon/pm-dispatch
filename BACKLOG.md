@@ -97,8 +97,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-209 | ⏸ deferred | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as the first **context-pack** source (CC-232) — not a direct codex-dispatch integration. Investigation: install model, query API, whether output maps to context-pack v1, token/accuracy delta vs the rg/git baseline (CC-237). Runs as the first formal `/spike` in v0.3.0 M5; output is docs/spikes/CC-209.md with an adopt/defer/reject recommendation. | ops/token | 2026-05-21 | — | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones M0–M5 — see docs/architecture/v0.3.0-synthesis.md and MILESTONES.md v0.3.0. Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
-| CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|gemini\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
-| CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** **Deferred to v0.4.0** — v0.3.0 ships only `mcp/README.md` (the intended tool surface, as a `pmctl` interface design constraint); the server is built once `pmctl` is stable. Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Gemini CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
+| CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|antigravity\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
+| CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** **Deferred to v0.4.0** — v0.3.0 ships only `mcp/README.md` (the intended tool surface, as a `pmctl` interface design constraint); the server is built once `pmctl` is stable. Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Antigravity CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
 | CC-217 | ⏸ deferred | **[claude-executor background dispatch]** `Agent(subagent_type:claude-executor)` calls in `/pm` Route B and `/pr-gate` Route B currently block the main thread (missing `run_in_background:true`), inconsistent with the codex-executor pattern. Fix: add `run_in_background:true` to all claude-executor dispatch sites in commands and gate scripts; update completion handling to receive the async notification rather than blocking inline. | DX/gate | 2026-05-21 | — | P2 | oss |
 | CC-218 | ⏸ deferred | **[spike tracking infrastructure]** Add `spike` as a valid epic type in `pm/scripts/validate.sh`. Define spike body structure: `Investigation scope` / `Done-when` criteria / `Result log` pointer to `docs/spikes/CC-NNN.md`. Create `docs/spikes/` directory with README describing format. Convert CC-209 epic from `design` → `spike`. Spike results must be committed to the repo — ephemeral findings are treated as a gap. | process | 2026-05-21 | — | P2 | design |
 | CC-219 | ⏸ deferred | **[pre-milestone doc freshness gate]** Before each milestone release, verify docs are current: README, MILESTONES.md, BACKLOG.md (open tickets with TBD refs), `docs/` directory. Implement as a `scripts/check-docs-freshness.sh` checklist that prints stale indicators and exits non-zero if blocking gaps exist. Should run as part of the milestone closure checklist. | process/gate | 2026-05-21 | — | P3 | hygiene |
@@ -118,7 +118,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-232 | ⏸ deferred | **[v0.3.0 M1: context-pack schema]** Define `core/schema/context-pack.schema.json` + the context-enricher interface — a pluggable pre-dispatch context bundle (files/symbols/memories/risks) assembled from sources. Decouples context enrichment from `codex-dispatch.sh`; consumed via `pmctl context build`. | process | 2026-05-22 | — | P2 | design |
 | CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
 | CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
-| CC-235 | ⏸ deferred | **[v0.3.0 M4: lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate — a Task ≥3 behavioral units cannot transition `claimed→in-progress` without a design artifact (Superpowers-inspired). | process | 2026-05-22 | — | P2 | design |
+| CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ⏸ deferred | **[v0.3.0 M4: context-enricher baseline]** Implement the context-enricher baseline sources — rg / `git ls-files` / `git diff` / memory search — producing a context-pack (CC-232) before dispatch. codegraph is evaluated separately as the CC-209 spike. `pmctl context build`. | ux | 2026-05-22 | — | P3 | design |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
@@ -796,7 +796,7 @@ is skipped and a warning is emitted.
 **v0.3.0 epic** (updated 2026-05-22): umbrella epic for the v0.3.0 PM-runtime restructure. The original P0–P5 ordering below is **superseded** — see [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) for the M0–M5 milestone breakdown and `MILESTONES.md` v0.3.0 for ticket assignment. MCP (CC-216) and non-Claude adapters are deferred to v0.4.0.
 
 **Problem**: pm-dispatch is currently framed as "Claude Code personal config + Codex dispatch
-wrapper". As Codex CLI, Gemini CLI, OpenCode, and other AI tools mature, this framing creates
+wrapper". As Codex CLI, Antigravity CLI, OpenCode, and other AI tools mature, this framing creates
 coupling creep: hooks, adapters, and business logic intermingle because there is no enforced
 boundary between the CLI-agnostic PM engine and each tool's delivery path.
 
@@ -810,16 +810,16 @@ dispatch state machine, reviewer policy, and schema definitions should be owned 
 |---|---|---|
 | `core/` | `core/schemas/`, `core/lib/` | PM schema, task/decision/review models, reviewer policy, dispatch state machine — zero CLI awareness |
 | `runtime/` | `cli/pmctl` | `pmctl` CLI, dispatch runner, trace logger, guard engine, validator, report generator |
-| `adapters/` | `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` | Format conversion only; each adapter translates CLI-specific calls into `pmctl` invocations |
-| `mcp/` | `mcp/pm-dispatch-server` | MCP tool bridge; any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) shares one server |
+| `adapters/` | `adapters/claude/`, `adapters/codex/`, `adapters/antigravity/`, `adapters/opencode/` | Format conversion only; each adapter translates CLI-specific calls into `pmctl` invocations |
+| `mcp/` | `mcp/pm-dispatch-server` | MCP tool bridge; any MCP-capable CLI (Claude Code, OpenCode, Antigravity CLI) shares one server |
 
 **Key design rules**:
 - `core/` never changes per CLI; no `~/.claude/` assumptions.
 - Guard engine lives in `pmctl`; Claude hooks are one delivery path, not the definition.
 - Adapters own zero business logic.
-- `pmctl adapter generate <claude|codex|gemini|opencode>` produces per-CLI config from core agent definitions to prevent 4-way drift.
+- `pmctl adapter generate <claude|codex|antigravity|opencode>` produces per-CLI config from core agent definitions to prevent 4-way drift.
 
-**Priority order**: P0 extract `core/schemas/` (lock data format across CLIs) → P1 pmctl CLI (CC-215) → P2 Claude commands call pmctl → P3 Codex adapter formalised → P4 MCP server (CC-216) → P5 Gemini/OpenCode adapters.
+**Priority order**: P0 extract `core/schemas/` (lock data format across CLIs) → P1 pmctl CLI (CC-215) → P2 Claude commands call pmctl → P3 Codex adapter formalised → P4 MCP server (CC-216) → P5 Antigravity/OpenCode adapters.
 
 **Complements**: CC-059 (thin `/pm.md` script-layer), CC-215 (pmctl), CC-216 (MCP server).
 
@@ -897,7 +897,7 @@ support can call `pmctl guard check` or `pmctl safe-bash`.
   - `pmctl backlog sync`
   - `pmctl trace tail`
   - `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>`
-  - `pmctl adapter generate <claude|codex|gemini|opencode>`
+  - `pmctl adapter generate <claude|codex|antigravity|opencode>`
 - Claude adapter: `/pm task-123` → `pmctl task dispatch task-123 --agent claude`
 - Guard logic migrates from Claude-only hooks into `pmctl` so hook is just a thin caller.
 - `pmctl adapter generate` produces per-CLI config from core agent definitions.
@@ -912,7 +912,7 @@ support can call `pmctl guard check` or `pmctl safe-bash`.
 
 **v0.4.0** (updated 2026-05-22): deferred to v0.4.0 per the v0.3.0 synthesis — MCP must wrap a stable `pmctl`, never an immature one. v0.3.0 ships only `mcp/README.md` defining the tool surface as a `pmctl` interface design constraint. See [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) §5.4.
 
-**Problem**: Each AI CLI (Claude Code, OpenCode, Gemini CLI) needs separate command/hook wiring
+**Problem**: Each AI CLI (Claude Code, OpenCode, Antigravity CLI) needs separate command/hook wiring
 to reach pm-dispatch. There is no universal bridge that works for any MCP-capable tool without
 per-CLI adaptation.
 
@@ -1246,13 +1246,17 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: CC-230 (events.jsonl), CC-229 (event schema).
 
-## CC-235 — Task lifecycle gate: spec→design→plan enforcement（deferred）
+## CC-235 — Task lifecycle gate: tiered spec→design→plan（deferred）
 
-**Problem**: The spec→design→plan discipline (`/pre-impl`, the `qa_checklist` rule) is advisory prose in `agents/project-pm.md` — not enforced.
+**Problem**: The spec→design→plan discipline (`/pre-impl`, the `qa_checklist` rule) is advisory prose in `agents/project-pm.md` — not enforced. But a single uniform gate would over-burden trivial tasks — a typo fix should not need a design artifact.
 
-**Why**: Superpowers' principle: clarify/spec/design/plan before implementing. Making it a state-machine gate moves it from prose to structural enforcement.
+**Why**: Enforcement should be **graded by task size**, consistent with pm-dispatch's existing tiered patterns: the pr-gate express/standard/full tiers and the sonnet-default / Opus-escalation model-tier policy. The gate's weight scales with the task.
 
-**Requirement**: `pmctl` enforces that a Task of ≥3 behavioral units cannot transition `claimed → in-progress` without a design artifact. The threshold already exists in `project-pm.md`.
+**Requirement**: `pmctl` enforces a tiered gate on the `claimed → in-progress` transition:
+- **Trivial** — 1 mechanical unit (typo, rename, doc tweak, dep bump): no gate; dispatch directly.
+- **Small** — ~2 units, localized: lightweight — a one-line intent + acceptance in the brief; no `/pre-impl` artifact.
+- **Substantial** — ≥3 behavioral units, OR touches a shared module/schema, OR introduces a new interface: full spec→design→plan; a `/pre-impl` design artifact is required before the transition.
+The ≥3-units threshold and the shared-module / new-interface triggers already exist in `agents/project-pm.md`; this ticket makes them a graded state-machine gate rather than advisory prose.
 
 **Milestone**: v0.3.0 M4.
 

@@ -72,7 +72,7 @@
 ### v0.3.0 範圍外 → v0.4.0
 
 - CC-216 — `mcp/pm-dispatch-server` 實作（v0.3.0 只放 `mcp/README.md` 工具介面規格作為 `pmctl` 設計約束）
-- `adapters/codex` / `adapters/gemini` / `adapters/opencode` — named slot，不實作
+- `adapters/codex` / `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）
 - AI Night Shift autonomy loop — 不做
 - CC-236 `pmctl report` 晨報 — 降為 🟢 someday（2026-05-22；無人值守執行需求低，非 v0.4.0 排程）
 
