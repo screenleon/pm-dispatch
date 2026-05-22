@@ -5,31 +5,9 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"
-
-# --filter <pattern>  run only cases whose name contains <pattern>
-# --list              print all case names and exit
-FILTER=""
-LIST=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --filter) FILTER="${2:-}"; shift 2 ;;
-    --list)   LIST=true; shift ;;
-    *) shift ;;
-  esac
-done
-
-ALL_CASES=()
-# Returns 0 (run) or 1 (skip). In --list mode, registers name and skips.
-should_run() {
-  if $LIST; then
-    ALL_CASES+=("$1")
-    return 1
-  fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
-}
-
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 # CC-102 introduced install-hooks.sh profile auto-detection via
 # `command -v codex`. Tests in this file written before that change
@@ -43,21 +21,6 @@ mkdir -p "$_codex_stub_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
 chmod +x "$_codex_stub_bin/codex"
 export PATH="$_codex_stub_bin:$PATH"
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() {
-  printf 'PASS: %s\n' "$1"
-  PASS=$((PASS + 1))
-}
-
-fail() {
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-}
 
 assert_contains() {
   local name="$1" file="$2" needle="$3"
@@ -1903,18 +1866,4 @@ test_install_sh_no_banner_dry_run
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic
 
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-if [[ -n "$FILTER" && $((PASS + FAIL)) -eq 0 ]]; then
-  printf 'no tests matched filter %q — check --list for available case names\n' "$FILTER" >&2
-  exit 1
-fi
-
-printf '%s passed, %s failed\n' "$PASS" "$FAIL"
-if [ "$FAIL" -gt 0 ]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
