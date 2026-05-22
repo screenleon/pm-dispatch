@@ -5,10 +5,19 @@ Personal Claude Code configuration for forks: subagents, slash commands, skills,
 
 This repository is designed for a single maintainer working on their own adaptation. It is source-available for reading and forking, while remaining explicitly private-maintainer scoped for this operational track.
 
-## Onboarding
+## Documentation
 
-- [Getting Started](docs/GETTING_STARTED.md)
-- [Core concepts](docs/CONCEPTS.md)
+**Start here**
+- [Getting started](docs/GETTING_STARTED.md) — install, verify, first `/pm` run
+- [Core concepts](docs/CONCEPTS.md) — the orchestration model and why it is shaped this way
+
+**Reference**
+- [Platform support](docs/platform-support.md) — per-OS install model (symlink / copy mode)
+- [Executor contract](docs/executor-contract.md) — `full` / `minimal` profile + PM handoff abstraction
+- [Dispatch brief schema](docs/dispatch-brief.md) — required brief fields + `self_verify` macros
+- [Model tier policy](docs/model-tier-policy.md) — sonnet-default, Opus escalation rules
+- [Memory system](docs/memory-system.md) — memory persistence layer: on-disk layout and recall lifecycle
+- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — `pr-gate-handover_v1` block format (claude-executor fan-out)
 
 ## Working language
 
@@ -31,7 +40,7 @@ scripts/                            hook wrappers (called by absolute path) + us
              → ~/.claude/scripts/   token-usage.sh and log-usage.sh are symlinked here by install.sh
 pm/          → ~/.claude/.pm/       cross-repo PM schema, scripts, templates
 settings/                           settings fragments to merge into ~/.claude/settings.json by hand
-docs/                               policy documents (model-tier-policy.md, dispatch-brief.md)
+docs/                               guides, schemas, and policy documents
 ```
 
 ## pm-schema (`pm/`)
