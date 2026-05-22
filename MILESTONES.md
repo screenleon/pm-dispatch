@@ -8,6 +8,76 @@
 
 ---
 
+## v0.3.0 — PM runtime restructure（規劃中）
+
+**主題**：把 pm-dispatch 從「Claude Code 設定 + dispatch 腳本」重構成 schema-first / state-first / adapter-thin 的 **PM runtime**；把 Multica / Memori / Superpowers / AI Night Shift 的概念吸收進單一 state substrate，而非四個獨立功能。
+
+完整架構規劃見 [`docs/architecture/v0.3.0-synthesis.md`](docs/architecture/v0.3.0-synthesis.md)（三方獨立規劃對照與綜合）+ [`docs/architecture/v0.3.0-source-plans.md`](docs/architecture/v0.3.0-source-plans.md)。Epic：CC-211。
+
+四層架構：`core/`（資料模型 + 政策）→ `runtime/`（`pmctl` 主幹）→ `adapters/`（交付層）→ `mcp/`（外部橋接，v0.4.0）。
+
+### M0 — 便宜前置抽取（零架構風險）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-201 | `detect_executor_profile()` shim | ⏳ |
+| CC-203 | `test-harness.sh` 共用測試 lib | ⏳ |
+| CC-218 | spike tracking 基建 | ⏳ |
+| CC-219 | pre-milestone doc-freshness gate | ⏳ |
+| CC-217 | claude-executor 背景 dispatch | ⏳ |
+| CC-060 | Codex model/config 外部化 | ⏳ |
+
+### M1 — state / schema substrate（核心交付）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-229 | `core/schema/` — task/run/event/review/decision schemas | ⏳ |
+| CC-230 | `~/.claude/.pm/state/` state store + `routing_log.md`→`runs.jsonl` | ⏳ |
+| CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ⏳ |
+| CC-232 | context-pack schema + context-enricher 介面 | ⏳ |
+
+### M2 — 由抽取長出 runtime
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-202 | handover-validator framework → `pmctl validate` | ⏳ |
+| CC-204 | hook framework → guard engine → `pmctl guard check` | ⏳ |
+| CC-200 | executor-router → dispatch runner | ⏳ |
+| CC-215 | `bin/pmctl` MVP（全子命令 `--json` 輸出） | ⏳ |
+
+### M3 — 重新接 Claude adapter
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-059 | thin `commands/pm.md` | ⏳ |
+| CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
+| CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
+
+### M4 — 概念吸收
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-234 | memory v2 — event-derived distillation（Memori） | ⏳ |
+| CC-235 | Task lifecycle gate — spec→design→plan 強制（Superpowers） | ⏳ |
+| CC-237 | context-enricher baseline — rg/git/memory sources | ⏳ |
+
+### M5 — spike workflow + release
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
+| CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
+| — | v0.3.0 release prep | ⏳ |
+
+### v0.3.0 範圍外 → v0.4.0
+
+- CC-216 — `mcp/pm-dispatch-server` 實作（v0.3.0 只放 `mcp/README.md` 工具介面規格作為 `pmctl` 設計約束）
+- `adapters/codex` / `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）
+- AI Night Shift autonomy loop — 不做
+- CC-236 `pmctl report` 晨報 — 降為 🟢 someday（2026-05-22；無人值守執行需求低，非 v0.4.0 排程）
+
+---
+
 ## v0.2.0 — Cross-platform ops（released 2026-05-22）
 
 **主題**：完整 install / verify / uninstall 操作週期；環境健康診斷；Windows Git Bash 正確性修復。

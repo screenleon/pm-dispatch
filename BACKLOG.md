@@ -94,15 +94,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
-| CC-209 | ⏸ deferred | **[codegraph integration]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as a pre-indexed context supplier for Codex briefs — instead of manually listing files: in each brief, pm-dispatch could query the codegraph index to auto-enrich context and reduce per-invocation exploration tokens. Requires investigation of install integration, query API shape in codex-dispatch.sh or brief preamble. Complementary to pm-dispatch token-efficiency goals. | ops/token | 2026-05-21 | — | P3 | spike |
+| CC-209 | ⏸ deferred | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript) as the first **context-pack** source (CC-232) — not a direct codex-dispatch integration. Investigation: install model, query API, whether output maps to context-pack v1, token/accuracy delta vs the rg/git baseline (CC-237). Runs as the first formal `/spike` in v0.3.0 M5; output is docs/spikes/CC-209.md with an adopt/defer/reject recommendation. | ops/token | 2026-05-21 | — | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
-| CC-211 | ⏸ deferred | **[multi-CLI platform architecture]** Re-frame pm-dispatch from "Claude Code personal config + Codex dispatch wrapper" to "agent-native PM orchestration toolkit" with 4 clean layers. `core/` — PM schema, task / decision / backlog / review models, reviewer policy, dispatch state machine; no CLI awareness at all. `runtime/` — `pmctl` CLI entrypoint, dispatch runner, trace logger, guard engine, validator, report generator; no Codex/Claude specifics. `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` — format conversion only; each adapter is a thin shell that translates CLI-specific calls into pmctl invocations. `mcp/` — pm-dispatch-server MCP tool bridge (pm_list_tasks / pm_create_task / pm_dispatch / pm_read_trace / pm_guard_check); any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) uses the same server. Key design rules: core never changes per CLI; guard engine lives in pmctl, Claude hooks are just one delivery path; adapters own zero business logic. P0: extract `core/schemas/` (task.schema.json, decision.schema.json, review.schema.json) and lock data format across CLIs. P1: pmctl CLI (CC-215). P2: Claude commands call pmctl, stop embedding logic. P3: Codex adapter formalised. P4: MCP server (CC-216). P5: Gemini / OpenCode adapters. Complements CC-059 (thin pm.md), CC-215 (pmctl), CC-216 (MCP server). | arch/portability | 2026-05-21 | — | — | design |
-| CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|gemini\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
-| CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Gemini CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
+| CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones M0–M5 — see docs/architecture/v0.3.0-synthesis.md and MILESTONES.md v0.3.0. Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
+| CC-215 | ⏸ deferred | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|antigravity\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
+| CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** **Deferred to v0.4.0** — v0.3.0 ships only `mcp/README.md` (the intended tool surface, as a `pmctl` interface design constraint); the server is built once `pmctl` is stable. Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Antigravity CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
 | CC-217 | ⏸ deferred | **[claude-executor background dispatch]** `Agent(subagent_type:claude-executor)` calls in `/pm` Route B and `/pr-gate` Route B currently block the main thread (missing `run_in_background:true`), inconsistent with the codex-executor pattern. Fix: add `run_in_background:true` to all claude-executor dispatch sites in commands and gate scripts; update completion handling to receive the async notification rather than blocking inline. | DX/gate | 2026-05-21 | — | P2 | oss |
 | CC-218 | ⏸ deferred | **[spike tracking infrastructure]** Add `spike` as a valid epic type in `pm/scripts/validate.sh`. Define spike body structure: `Investigation scope` / `Done-when` criteria / `Result log` pointer to `docs/spikes/CC-NNN.md`. Create `docs/spikes/` directory with README describing format. Convert CC-209 epic from `design` → `spike`. Spike results must be committed to the repo — ephemeral findings are treated as a gap. | process | 2026-05-21 | — | P2 | design |
 | CC-219 | ⏸ deferred | **[pre-milestone doc freshness gate]** Before each milestone release, verify docs are current: README, MILESTONES.md, BACKLOG.md (open tickets with TBD refs), `docs/` directory. Implement as a `scripts/check-docs-freshness.sh` checklist that prints stale indicators and exits non-zero if blocking gaps exist. Should run as part of the milestone closure checklist. | process/gate | 2026-05-21 | — | P3 | hygiene |
-| CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent reads a BACKLOG spike ticket, plans 2–3 investigation angles, dispatches parallel sub-agents (one per angle; executor type configurable by dispatch layer), synthesises findings into `docs/spikes/CC-NNN.md`, and updates the BACKLOG body `Result log` pointer. Distinct from PM agent: goal is uncertainty reduction, not task execution. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
+| CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent is a **planner** (like `project-pm`): reads a BACKLOG spike ticket, plans 2–3 investigation angles, returns a `spike_plan` block; the **main thread** fans out one Agent per angle (subagents cannot spawn subagents); the spike agent is re-invoked to synthesise findings into `docs/spikes/CC-NNN.md` and update the `Result log`. Modeled on `/pr-gate`'s reviewer fan-out. v0.3.0 M5. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
 | CC-221 | ✅ closed 2026-05-21 | **[copy-mode refresh semantics]** `link_or_copy` idempotency check compares dst sha256 against manifest (old src sha), so re-running `install.sh` does NOT refresh a copied file whose source changed — it matches the stale copy against the old manifest sha and returns ok. Fix: compare `sha256(src)` vs `sha256(dst)` directly; if different and mode=copy, re-copy and update manifest. Surfaced during CC-104v gate review; current behaviour documented as uninstall+reinstall workaround. | ops | 2026-05-21 | pr:#117 | P3 | oss |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-213 | ⏸ deferred | **[CC-207 advise follow-up]** `install_dir_junction()` 的 idempotency 邏輯用 Bash `[[ -L "$dest_dir" ]]` + `readlink` 判斷已安裝 junction，但 PowerShell 建立的 Windows directory junction 在 Git Bash 下不一定呈現為 `-L`；重新執行 `bash install.sh` 可能把 junction 目錄誤認為真實目錄而 fallback 到 per-file copy 並覆蓋 manifest。修正：加 Windows-aware junction probe（讀 manifest `mode` 欄位作 idempotency 判斷，或 `powershell.exe [System.IO.File]::GetAttributes`）。Raised by critic + qa-tester in gate-20260521-115634 as [medium]. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
@@ -111,6 +111,16 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-226 | ⏸ deferred | **[lint-frontmatter: extract shared dq-escape validation helper]** `check_frontmatter()` 內有 4 個 collection branch 各自重複相同的 dq escape whitelist regex、adjacent-quote check、empty-entry check，未來修改一個 branch 容易遺漏其他三個，造成 parity gap。建議抽取成 shared bash helper，或以 parity test 確保 4 個 branch 永遠同步。Raised as [medium] advisory in gate-20260522-171123. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
+| CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | — | P2 | hygiene |
+| CC-229 | ⏸ deferred | **[v0.3.0 M1: core schemas]** Create `core/schema/{task,run,event,review,decision}.schema.json` — the five first-class PM-runtime entities (docs/architecture/v0.3.0-synthesis.md §5.2). Re-home `pm/schema.md` (BACKLOG grammar) under `core/`. Ships no behavior change; schema locked at end of M1. | process | 2026-05-22 | — | P1 | design |
+| CC-230 | ⏸ deferred | **[v0.3.0 M1: state store]** Build the `~/.claude/.pm/state/` runtime state store — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + index, guarded by `serialize_with_lock()`. Migrate the machine-written `routing_log.md` auto-block to `runs.jsonl` (kills the machine-written-Markdown-table anti-pattern). `pmctl` is the only writer. | process | 2026-05-22 | — | P1 | design |
+| CC-231 | ⏸ deferred | **[v0.3.0 M1: core policy extraction]** Extract `core/policy/` declarative tables — reviewer-policy (the gate matrix now prose-only in `agents/project-pm.md`), executor-enum (closed: codex/claude), dispatch-states (the dispatch state machine). Pure definitions, zero behavior. | process | 2026-05-22 | — | P2 | design |
+| CC-232 | ⏸ deferred | **[v0.3.0 M1: context-pack schema]** Define `core/schema/context-pack.schema.json` + the context-enricher interface — a pluggable pre-dispatch context bundle (files/symbols/memories/risks) assembled from sources. Decouples context enrichment from `codex-dispatch.sh`; consumed via `pmctl context build`. | process | 2026-05-22 | — | P2 | design |
+| CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
+| CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
+| CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
+| CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
+| CC-237 | ⏸ deferred | **[v0.3.0 M4: context-enricher baseline]** Implement the context-enricher baseline sources — rg / `git ls-files` / `git diff` / memory search — producing a context-pack (CC-232) before dispatch. codegraph is evaluated separately as the CC-209 spike. `pmctl context build`. | ux | 2026-05-22 | — | P3 | design |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
@@ -741,6 +751,8 @@ Each occurrence adds ~1–2 min of manual verification overhead.
 
 ## CC-209 — codegraph integration: pre-indexed context for Codex briefs（deferred）
 
+**Reframed 2026-05-22**: this is now a **context-enrichment spike** — evaluate codegraph as the first source behind the `context-pack` abstraction (CC-232), not a direct `codex-dispatch.sh` flag. Runs as the first formal `/spike` in v0.3.0 M5. Requirement bullet 3 below (`--codegraph-enrich` flag on `codex-dispatch.sh`) is superseded by `pmctl context build --source codegraph`. See [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) §9.
+
 **Problem**: Codex briefs rely on manually-specified `files:` lists for context.
 If the list is incomplete, Codex spends tokens exploring the codebase via grep/read.
 
@@ -781,8 +793,10 @@ is skipped and a warning is emitted.
 
 ## CC-211 — multi-CLI platform architecture（deferred）
 
+**v0.3.0 epic** (updated 2026-05-22): umbrella epic for the v0.3.0 PM-runtime restructure. The original P0–P5 ordering below is **superseded** — see [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) for the M0–M5 milestone breakdown and `MILESTONES.md` v0.3.0 for ticket assignment. MCP (CC-216) and non-Claude adapters are deferred to v0.4.0.
+
 **Problem**: pm-dispatch is currently framed as "Claude Code personal config + Codex dispatch
-wrapper". As Codex CLI, Gemini CLI, OpenCode, and other AI tools mature, this framing creates
+wrapper". As Codex CLI, Antigravity CLI, OpenCode, and other AI tools mature, this framing creates
 coupling creep: hooks, adapters, and business logic intermingle because there is no enforced
 boundary between the CLI-agnostic PM engine and each tool's delivery path.
 
@@ -796,16 +810,16 @@ dispatch state machine, reviewer policy, and schema definitions should be owned 
 |---|---|---|
 | `core/` | `core/schemas/`, `core/lib/` | PM schema, task/decision/review models, reviewer policy, dispatch state machine — zero CLI awareness |
 | `runtime/` | `cli/pmctl` | `pmctl` CLI, dispatch runner, trace logger, guard engine, validator, report generator |
-| `adapters/` | `adapters/claude/`, `adapters/codex/`, `adapters/gemini/`, `adapters/opencode/` | Format conversion only; each adapter translates CLI-specific calls into `pmctl` invocations |
-| `mcp/` | `mcp/pm-dispatch-server` | MCP tool bridge; any MCP-capable CLI (Claude Code, OpenCode, Gemini CLI) shares one server |
+| `adapters/` | `adapters/claude/`, `adapters/codex/`, `adapters/antigravity/`, `adapters/opencode/` | Format conversion only; each adapter translates CLI-specific calls into `pmctl` invocations |
+| `mcp/` | `mcp/pm-dispatch-server` | MCP tool bridge; any MCP-capable CLI (Claude Code, OpenCode, Antigravity CLI) shares one server |
 
 **Key design rules**:
 - `core/` never changes per CLI; no `~/.claude/` assumptions.
 - Guard engine lives in `pmctl`; Claude hooks are one delivery path, not the definition.
 - Adapters own zero business logic.
-- `pmctl adapter generate <claude|codex|gemini|opencode>` produces per-CLI config from core agent definitions to prevent 4-way drift.
+- `pmctl adapter generate <claude|codex|antigravity|opencode>` produces per-CLI config from core agent definitions to prevent 4-way drift.
 
-**Priority order**: P0 extract `core/schemas/` (lock data format across CLIs) → P1 pmctl CLI (CC-215) → P2 Claude commands call pmctl → P3 Codex adapter formalised → P4 MCP server (CC-216) → P5 Gemini/OpenCode adapters.
+**Priority order**: P0 extract `core/schemas/` (lock data format across CLIs) → P1 pmctl CLI (CC-215) → P2 Claude commands call pmctl → P3 Codex adapter formalised → P4 MCP server (CC-216) → P5 Antigravity/OpenCode adapters.
 
 **Complements**: CC-059 (thin `/pm.md` script-layer), CC-215 (pmctl), CC-216 (MCP server).
 
@@ -883,7 +897,7 @@ support can call `pmctl guard check` or `pmctl safe-bash`.
   - `pmctl backlog sync`
   - `pmctl trace tail`
   - `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>`
-  - `pmctl adapter generate <claude|codex|gemini|opencode>`
+  - `pmctl adapter generate <claude|codex|antigravity|opencode>`
 - Claude adapter: `/pm task-123` → `pmctl task dispatch task-123 --agent claude`
 - Guard logic migrates from Claude-only hooks into `pmctl` so hook is just a thin caller.
 - `pmctl adapter generate` produces per-CLI config from core agent definitions.
@@ -896,7 +910,9 @@ support can call `pmctl guard check` or `pmctl safe-bash`.
 
 ## CC-216 — MCP server — pm-dispatch-server（deferred）
 
-**Problem**: Each AI CLI (Claude Code, OpenCode, Gemini CLI) needs separate command/hook wiring
+**v0.4.0** (updated 2026-05-22): deferred to v0.4.0 per the v0.3.0 synthesis — MCP must wrap a stable `pmctl`, never an immature one. v0.3.0 ships only `mcp/README.md` defining the tool surface as a `pmctl` interface design constraint. See [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) §5.4.
+
+**Problem**: Each AI CLI (Claude Code, OpenCode, Antigravity CLI) needs separate command/hook wiring
 to reach pm-dispatch. There is no universal bridge that works for any MCP-capable tool without
 per-CLI adaptation.
 
@@ -987,6 +1003,8 @@ a milestone tag is cut.
 
 ## CC-220 — spike agent + `/spike` skill（deferred）
 
+**Corrected 2026-05-22**: the original "spike agent dispatches parallel sub-agents" is structurally impossible — **subagents cannot spawn subagents**. The spike agent is a *planner* (like `project-pm`); the **main thread** fans out one Agent per angle, modeled on `/pr-gate`'s reviewer fan-out. v0.3.0 M5.
+
 **Problem**: Spike investigations are currently ad-hoc: the PM dispatches a mix of Explore
 calls, the findings are summarized in conversation context, and nothing is committed to
 the repo. Repeating a spike wastes tokens; the result is not reviewable.
@@ -999,7 +1017,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 - `agents/spike.md` — spike agent definition:
   - Reads BACKLOG spike ticket for `Investigation scope` and `Done-when`
   - Plans 2–3 investigation angles (e.g., existing-coupling audit / interface draft / prior art)
-  - Dispatches parallel sub-agents, one per angle; executor type and model configurable by dispatch layer
+  - Returns a `spike_plan` block (2–3 angles); the **main thread** fans out one `Agent` per angle — subagents cannot spawn subagents (same constraint as `project-pm`)
   - Synthesises findings into `docs/spikes/CC-NNN.md`
   - Updates BACKLOG body `Result log` field with the file pointer
 - `commands/spike.md` — `/spike CC-NNN` skill invoking the agent
@@ -1122,3 +1140,154 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Cross-link**: CC-226 (shared validation helpers — recommend combining), CC-224 (hook-profile lib extraction — same pattern)
 
 **Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
+
+## CC-228 — BACKLOG validator-debt cleanup（deferred）
+
+**Problem**: `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes, none introduced by recent PRs. An always-red validator provides no signal — a real new error would be invisible.
+
+**Why**: The debt accumulated as the schema tightened (CC-030 / CC-052 / CC-067) faster than existing rows were migrated.
+
+**Requirement** (resolve per error class, dry-run `validate.sh` after each, target exit 0):
+1. `E-INDEX-MISMATCH` — CC-104d/e/f/g/j/k/m/r/s have index rows but no body section. Add stub sections or drop the index rows (they were Windows-dogfood sub-items, mostly folded into shipped PRs).
+2. `E-AREA-ENUM` — CC-052/060/104v/203/204 etc. use slash-combined or non-enum areas (`arch`, `config`, `schema`, `ops`, `hook`). Widen the `area` enum (adding `arch`/`ops` is additive and fixes the most rows) or rewrite the rows.
+3. `E-REFS-PREFIX` — CC-059/060/061/064/066 carry bare `CC-NNN` refs; the Refs column requires a prefix. Move ticket cross-links into the section body.
+
+**Priority**: P2 — not blocking, but should land before v0.3.0 M1 tightens the schema further.
+
+**Cross-link**: surfaced during CC-222 close-out 2026-05-22.
+
+## CC-229 — core/schema: task/run/event/review/decision schemas（deferred）
+
+**Problem**: pm-dispatch has no state model — tasks are `BACKLOG.md` rows, runs are trace files, reviews are `.gate-results/` files, and nothing links them.
+
+**Why**: The v0.3.0 PM runtime needs a canonical data contract before any runtime code can be written (see [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) §5.2).
+
+**Requirement**:
+- Create `core/schema/{task,run,event,review,decision}.schema.json` — JSON Schema for the five first-class entities and their lifecycles.
+- Re-home `pm/schema.md` (the BACKLOG grammar) under `core/`.
+- Ships with no behavior depending on it (de-risking); schema locked at end of M1.
+
+**Milestone**: v0.3.0 M1.
+
+**Priority**: P1 — every downstream layer references the schema.
+
+**Cross-link**: CC-211 (epic), CC-230 (state store consumes these schemas).
+
+## CC-230 — state store: ~/.claude/.pm/state/（deferred）
+
+**Problem**: Run/event state is scattered — `.agent-trace/*.jsonl` plus a machine-written Markdown table in `routing_log.md` that nothing reads structurally (worst-of-both-worlds).
+
+**Why**: A single state store with one writer makes the substrate trustworthy and queryable.
+
+**Requirement**:
+- Build `~/.claude/.pm/state/` — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + a small index, guarded by `serialize_with_lock()` (CC-104p).
+- Migrate the `routing_log.md` auto-block to `runs.jsonl` (the one budgeted migration; kills the machine-written-Markdown-table anti-pattern).
+- `pmctl` is the only writer; no hook/command/agent writes state files directly.
+
+**Milestone**: v0.3.0 M1.
+
+**Priority**: P1 — the runtime mutates this store.
+
+**Cross-link**: CC-229 (schemas), CC-215 (pmctl writes here).
+
+## CC-231 — core/policy extraction（deferred）
+
+**Problem**: Reviewer-gate policy, the executor enum, and the dispatch state machine live as prose scattered across `agents/project-pm.md` and command files — no single source.
+
+**Why**: `core/` should own these as declarative, behavior-free definitions consumed by the runtime.
+
+**Requirement**: Extract `core/policy/` — `reviewer-policy` (critic/arch/security/risk/qa gate matrix), `executor-enum` (closed: codex, claude), `dispatch-states` (the dispatch state machine). Pure definitions, zero behavior.
+
+**Milestone**: v0.3.0 M1.
+
+**Priority**: P2.
+
+**Cross-link**: CC-211 (epic), CC-204 (guard engine consumes policy).
+
+## CC-232 — context-pack schema + context-enricher interface（deferred）
+
+**Problem**: Brief context is hand-listed (`files:`); incomplete lists cost the executor exploration tokens. There is no abstraction for "assembled pre-dispatch context".
+
+**Why**: A `context-pack` decouples context enrichment from any one executor or source; it serves spike, reuse/refactor, and (later) MCP resources alike.
+
+**Requirement**: Define `core/schema/context-pack.schema.json` (files / symbols / memories / risks, each with a source + confidence) + the context-enricher interface (pluggable sources). Consumed via `pmctl context build`.
+
+**Milestone**: v0.3.0 M1.
+
+**Priority**: P2.
+
+**Cross-link**: CC-237 (baseline sources), CC-209 (codegraph as a source — spiked).
+
+## CC-233 — scripts/test-layer-boundaries.sh（deferred）
+
+**Problem**: The four-layer architecture is only a discipline; nothing enforces the dependency direction.
+
+**Why**: One cheap structural test prevents slow architecture drift (the cost the layering exists to avoid).
+
+**Requirement**: Add `scripts/test-layer-boundaries.sh` — grep `core/` for forbidden tokens (CLI product names, `~/.claude`, bash invocations), grep `adapters/` for state-mutation calls. Wire into CI.
+
+**Milestone**: v0.3.0 M3.
+
+**Priority**: P3.
+
+**Cross-link**: CC-211 (epic).
+
+## CC-234 — memory v2: event-derived distillation（deferred）
+
+**Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable signal is the action stream (tool calls, decisions, gate verdicts).
+
+**Why**: Memori's insight — memory from what agents *do*, not just what they say. The Event log (CC-230) is that action stream.
+
+**Requirement**: Point `/mem-distill` at `events.jsonl` as an input alongside `episodes.jsonl`. The existing four-tier card system is unchanged; this gives the `event` tier a schema. No separate memory engine.
+
+**Milestone**: v0.3.0 M4.
+
+**Priority**: P2.
+
+**Cross-link**: CC-230 (events.jsonl), CC-229 (event schema).
+
+## CC-235 — Task lifecycle gate: tiered spec→design→plan（deferred）
+
+**Problem**: The spec→design→plan discipline (`/pre-impl`, the `qa_checklist` rule) is advisory prose in `agents/project-pm.md` — not enforced. But a single uniform gate would over-burden trivial tasks — a typo fix should not need a design artifact.
+
+**Why**: Enforcement should be **graded by task size**, consistent with pm-dispatch's existing tiered patterns: the pr-gate express/standard/full tiers and the sonnet-default / Opus-escalation model-tier policy. The gate's weight scales with the task.
+
+**Requirement**: `pmctl` enforces a tiered gate on the `claimed → in-progress` transition:
+- **Trivial** — 1 mechanical unit (typo, rename, doc tweak, dep bump): no gate; dispatch directly.
+- **Small** — ~2 units, localized: lightweight — a one-line intent + acceptance in the brief; no `/pre-impl` artifact.
+- **Substantial** — ≥3 behavioral units, OR touches a shared module/schema, OR introduces a new interface: full spec→design→plan; a `/pre-impl` design artifact is required before the transition.
+The ≥3-units threshold and the shared-module / new-interface triggers already exist in `agents/project-pm.md`; this ticket makes them a graded state-machine gate rather than advisory prose.
+
+**Milestone**: v0.3.0 M4.
+
+**Priority**: P2.
+
+**Cross-link**: CC-229 (Task schema/lifecycle), CC-022 (`/pre-impl`).
+
+## CC-236 — pmctl report: away-from-keyboard state roll-up（someday）
+
+**Deprioritized 2026-05-22**: the original "morning report" framing assumed unattended / overnight agent runs. In actual practice the maintainer does not run agents away from the computer, so a time-gap roll-up has low current need. Demoted from v0.3.0 M4 to `🟢 someday`. On-demand state queries are already part of the `pmctl` surface (CC-215); this ticket is specifically the *periodic / since-you-were-away* report.
+
+**Problem** (conditional): if unattended or overnight dispatch ever becomes part of the workflow, there is no single command to see what happened while away.
+
+**Why**: A read-only roll-up over the state substrate (CC-230) would answer that without hand-reconstruction. The idea is sound; the need is gated on a workflow change.
+
+**Requirement** (if revived): `pmctl report` — open tasks, blockers, last gate verdict per active task, runs since last invocation. Read-only query over the CC-230 store.
+
+**Revisit when**: the workflow includes overnight / away-from-keyboard agent runs.
+
+**Cross-link**: CC-230 (state store), CC-211 (epic); AI Night Shift mapping — docs/architecture/v0.3.0-synthesis.md §5.3.
+
+## CC-237 — context-enricher baseline: rg/git/memory sources（deferred）
+
+**Problem**: The `context-pack` abstraction (CC-232) needs concrete sources before it is useful.
+
+**Why**: A baseline of always-available sources (no external dependency) proves the abstraction and is the comparison point for the codegraph spike (CC-209).
+
+**Requirement**: Implement context-enricher sources — `rg`, `git ls-files`, `git diff`, memory search — producing a `context-pack` before dispatch. `pmctl context build`. codegraph is NOT a baseline source; it is evaluated separately (CC-209).
+
+**Milestone**: v0.3.0 M4.
+
+**Priority**: P3.
+
+**Cross-link**: CC-232 (schema/interface), CC-209 (codegraph spike).
