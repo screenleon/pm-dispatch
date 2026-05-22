@@ -111,6 +111,8 @@ jobs:
             usage-weekly.sh
             memory.sh
             memory-dir.sh
+            doctor.sh
+            test-doctor.sh
 
   test-portable:
     runs-on: ubuntu-latest
