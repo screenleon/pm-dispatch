@@ -91,6 +91,14 @@ check_frontmatter() {
       printf 'unterminated quoted value: %s\n' "$line"
       return 1
     fi
+    # Reject unquoted values that look like nested YAML mappings (word: rest).
+    if [[ ! "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]]; then
+      local _val="${line#*: }"
+      if [[ "$_val" =~ ^[A-Za-z_][A-Za-z_-]*:[[:space:]] ]]; then
+        printf 'value looks like a nested YAML mapping: %s\n' "$line"
+        return 1
+      fi
+    fi
     if [[ "$line" =~ ^argument-hint: ]] && [[ ! "$line" =~ ^argument-hint:[[:space:]]*\" ]]; then
       printf 'argument-hint must be quoted as a YAML string\n'
       return 1

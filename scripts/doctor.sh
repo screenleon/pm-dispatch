@@ -440,6 +440,13 @@ main() {
 
   if [[ -z "$REPO_ROOT" ]]; then
     REPO_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || printf '%s/..' "$SCRIPT_DIR")"
+    if [[ "$_PORTABLE_AVAILABLE" -eq 0 && ! -f "$REPO_ROOT/install.sh" ]]; then
+      emit_check "repo-root" "fail" \
+        "copy-mode install: repo root could not be inferred (got: $REPO_ROOT)" \
+        "re-run with: bash $(basename "${BASH_SOURCE[0]}") --repo <path-to-pm-dispatch-checkout>"
+      printf '\nSummary: %d OK, %d WARN, %d FAIL\n' "$_OK_COUNT" "$_WARN_COUNT" "$_FAIL_COUNT"
+      exit 1
+    fi
   fi
 
   check_jq

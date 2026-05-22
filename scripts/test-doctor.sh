@@ -806,6 +806,34 @@ case_doctor_copy_mode_no_lib() {
   fi
 }
 
+case_doctor_installed_copy_no_repo() {
+  # Verifies that doctor.sh emits [FAIL] with a helpful message when invoked
+  # in copy-mode (no lib/) without --repo, so the user is not misled by
+  # checks that silently fail against ~/.claude instead of the checkout.
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir that has no lib/ subdirectory.
+  #   2. Run the copy WITHOUT --repo (auto-infers parent = tmpdir/..).
+  #   3. Assert exit code 1 and output contains [FAIL] with "copy-mode" or "--repo".
+  local name="doctor-installed-copy-no-repo"
+  should_run "$name" || return 0
+  local copydir="$tmp_root/copy-norepo"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+  local home="$tmp_root/home-copy-norepo" out status=0
+  mkdir -p "$home/.claude"
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  local path
+  path="$(make_stub_bin "$tmp_root/bin-copy-norepo" claude codex)"
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$copydir/doctor.sh" --no-color 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && ( "$out" == *"copy-mode"* || "$out" == *"--repo"* ) ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 with [FAIL] copy-mode/--repo message; status=$status out=$out"
+  fi
+}
+
 case_doctor_stale_hook_sibling_prefix_warns() {
   # Verifies that hook paths under a sibling checkout sharing the repo-root
   # prefix (e.g. /path/pm-dispatch-sibling/scripts/) emit [WARN] "different checkout".
@@ -859,6 +887,7 @@ case_doctor_profile_invalid_value_exits_2
 case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
+case_doctor_installed_copy_no_repo
 case_doctor_stale_hook_sibling_prefix_warns
 
 if $LIST; then
