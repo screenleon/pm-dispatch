@@ -93,9 +93,11 @@ check_frontmatter() {
       printf 'unexpected frontmatter syntax: %s\n' "$line"
       return 1
     fi
-    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\[ ]] && [[ ! "$line" =~ \] ]]; then
-      printf 'unclosed YAML list bracket: %s\n' "$line"
-      return 1
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\[ ]]; then
+      if [[ ! "$line" =~ \] ]] || [[ ! "$line" =~ \][[:space:]]*$ ]]; then
+        printf 'invalid YAML flow sequence: %s\n' "$line"
+        return 1
+      fi
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ \"[[:space:]]*$ ]]; then
       printf 'unterminated quoted value: %s\n' "$line"
@@ -105,9 +107,11 @@ check_frontmatter() {
       printf 'trailing content after quoted value: %s\n' "$line"
       return 1
     fi
-    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\{ ]] && [[ ! "$line" =~ \} ]]; then
-      printf 'unclosed YAML flow mapping: %s\n' "$line"
-      return 1
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\{ ]]; then
+      if [[ ! "$line" =~ \} ]] || [[ ! "$line" =~ \}[[:space:]]*$ ]]; then
+        printf 'invalid YAML flow mapping: %s\n' "$line"
+        return 1
+      fi
     fi
     if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\' ]] && [[ ! "$line" =~ \'[[:space:]]*$ ]]; then
       printf 'unterminated single-quoted value: %s\n' "$line"

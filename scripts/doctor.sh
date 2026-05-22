@@ -227,6 +227,17 @@ stale_hook_commands() {
         (.command? // "") as $cmd |
         ($cmd | length) > 0 and
         ($cmd | split("/") | .[-2]) == "scripts" and
+        (($cmd | split("/") | last) | IN(
+          "hook-pm-write-guard.sh",
+          "hook-tool-trace.sh",
+          "hook-log-claude-usage.sh",
+          "hook-session-summary.sh",
+          "hook-inject-memory.sh",
+          "hook-save-rate-limits.sh",
+          "hook-routing-log.sh",
+          "hook-codex-bash-guard.sh",
+          "hook-codex-write-guard.sh"
+        )) and
         (($cmd | normalize_path) | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
     | unique[]
@@ -282,25 +293,23 @@ check_hooks() {
     fi
   done
 
-  if [[ "${#missing[@]}" -gt 0 ]]; then
-    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-hooks.sh'"
-    return
-  else
-    emit_check hooks ok "${#hooks[@]} hooks present ($profile profile)"
-  fi
-
-  # Warn if any managed hook is wired from a different checkout.
+  # Compute stale list before emitting any status so we emit a single line.
+  local -a _stale=()
   if command -v jq >/dev/null 2>&1; then
-    local -a _stale=()
     local _sc
     while IFS= read -r _sc; do
       [[ -n "$_sc" ]] && _stale+=("$_sc")
     done < <(stale_hook_commands "$settings" "$REPO_ROOT")
-    if [[ "${#_stale[@]}" -gt 0 ]]; then
-      emit_check hooks warn \
-        "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
-        "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
-    fi
+  fi
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-hooks.sh'"
+  elif [[ "${#_stale[@]}" -gt 0 ]]; then
+    emit_check hooks warn \
+      "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
+      "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
+  else
+    emit_check hooks ok "${#hooks[@]} hooks present ($profile profile)"
   fi
 }
 

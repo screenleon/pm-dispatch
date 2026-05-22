@@ -188,6 +188,10 @@ run_tmp_fail "lint-frontmatter/invalid-scalar-start-at" \
   $'---\ndescription: @bad\n---\n\nbody\n'
 run_tmp_fail "lint-frontmatter/invalid-scalar-start-backtick" \
   $'---\ndescription: `bad\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/flow-seq-trailing-content" \
+  $'---\ndescription: [foo] bar\n---\n\nbody\n'
+run_tmp_fail "lint-frontmatter/flow-map-trailing-content" \
+  $'---\ndescription: {foo} bar\n---\n\nbody\n'
 
 # -- repo scan mode -----------------------------------------------------------
 

@@ -751,6 +751,23 @@ case_doctor_profile_invalid_value_exits_2() {
   fi
 }
 
+case_doctor_hook_inventory_parity() {
+  # CC-224 parity guard: managed hook basenames in doctor.sh must match those
+  # in install-hooks.sh. A drift means health-check and installer disagree.
+  local name="doctor-hook-inventory-parity"
+  should_run "$name" || return 0
+  local doctor_hooks install_hooks
+  doctor_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
+  install_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-hooks.sh" | sort -u)"
+  if [[ "$doctor_hooks" == "$install_hooks" ]]; then
+    pass "$name"
+  else
+    fail "$name" "hook inventory mismatch between doctor.sh and install-hooks.sh:
+doctor.sh:     $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
+install-hooks: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
+  fi
+}
+
 case_doctor_stale_hook_path_warns() {
   # Verifies that doctor emits [WARN] when hook commands point at a different
   # checkout (basename matches but path prefix != REPO_ROOT).
@@ -1018,6 +1035,7 @@ case_doctor_profile_minimal_skip_codex_hooks
 case_doctor_minimal_missing_routing_log_fails
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
+case_doctor_hook_inventory_parity
 case_doctor_stale_hook_path_warns
 case_doctor_symlink_invocation
 case_doctor_copy_mode_no_lib
@@ -1030,6 +1048,12 @@ case_doctor_stale_hook_sibling_prefix_warns
 if $LIST; then
   printf '%s\n' "${ALL_CASES[@]}"
   exit 0
+fi
+
+if [[ -n "$FILTER" && $((PASS+FAIL)) -eq 0 ]]; then
+  printf 'no tests matched filter %q - check --list for available case names\n' \
+    "$FILTER" >&2
+  exit 1
 fi
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
