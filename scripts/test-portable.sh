@@ -8,53 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$SCRIPT_DIR/lib/portable.sh"
-
-# --filter <pattern>  run only cases whose name contains <pattern>
-# --list              print all case names and exit
-FILTER=""
-LIST=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --filter)
-      FILTER="${2:-}"
-      shift 2
-      ;;
-    --list)
-      LIST=true
-      shift
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-
-ALL_CASES=()
-should_run() {
-  if $LIST; then
-    ALL_CASES+=("$1")
-    return 1
-  fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
-}
-
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() {
-  printf 'PASS: %s\n' "$1"
-  PASS=$((PASS + 1))
-}
-
-fail() {
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-}
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 case_realpath_m_existing_abs() {
   local name="portable-realpath-m-existing-absolute-file"
@@ -1237,13 +1193,4 @@ case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
 
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-printf '%s passed, %s failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary

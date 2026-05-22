@@ -26,6 +26,7 @@ SUITE_NAMES=(
   test-portable
   test-doctor
   test-lint-frontmatter
+  test-test-harness
   test-commands
   test-commands-runner
   test-dispatch-handover
@@ -52,6 +53,7 @@ declare -A SUITE_PATHS=(
   [test-portable]="scripts/test-portable.sh"
   [test-doctor]="scripts/test-doctor.sh"
   [test-lint-frontmatter]="scripts/test-lint-frontmatter.sh"
+  [test-test-harness]="scripts/test-test-harness.sh"
   [test-commands]="scripts/test-commands.sh"
   [test-commands-runner]="scripts/test-commands-runner.sh"
   [test-dispatch-handover]="scripts/test-dispatch-handover.sh"
