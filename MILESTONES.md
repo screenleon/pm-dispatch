@@ -59,7 +59,6 @@
 |---|---|---|
 | CC-234 | memory v2 — event-derived distillation（Memori） | ⏳ |
 | CC-235 | Task lifecycle gate — spec→design→plan 強制（Superpowers） | ⏳ |
-| CC-236 | `pmctl report` 晨報（AI Night Shift 收割） | ⏳ |
 | CC-237 | context-enricher baseline — rg/git/memory sources | ⏳ |
 
 ### M5 — spike workflow + release
@@ -75,6 +74,7 @@
 - CC-216 — `mcp/pm-dispatch-server` 實作（v0.3.0 只放 `mcp/README.md` 工具介面規格作為 `pmctl` 設計約束）
 - `adapters/codex` / `adapters/gemini` / `adapters/opencode` — named slot，不實作
 - AI Night Shift autonomy loop — 不做
+- CC-236 `pmctl report` 晨報 — 降為 🟢 someday（2026-05-22；無人值守執行需求低，非 v0.4.0 排程）
 
 ---
 

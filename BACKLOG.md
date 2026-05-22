@@ -119,7 +119,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
 | CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate — a Task ≥3 behavioral units cannot transition `claimed→in-progress` without a design artifact (Superpowers-inspired). | process | 2026-05-22 | — | P2 | design |
-| CC-236 | ⏸ deferred | **[v0.3.0 M4: pmctl report]** Add `pmctl report` — a read-only morning-report rolling up state since last invocation (open tasks, blockers, last gate verdict per active task, runs since yesterday). The one AI-Night-Shift idea worth harvesting; a query over the CC-230 substrate, no autonomy. | ux | 2026-05-22 | — | P3 | design |
+| CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ⏸ deferred | **[v0.3.0 M4: context-enricher baseline]** Implement the context-enricher baseline sources — rg / `git ls-files` / `git diff` / memory search — producing a context-pack (CC-232) before dispatch. codegraph is evaluated separately as the CC-209 spike. `pmctl context build`. | ux | 2026-05-22 | — | P3 | design |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
@@ -1260,19 +1260,19 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: CC-229 (Task schema/lifecycle), CC-022 (`/pre-impl`).
 
-## CC-236 — pmctl report: morning-report（deferred）
+## CC-236 — pmctl report: away-from-keyboard state roll-up（someday）
 
-**Problem**: The maintainer reconstructs "where am I" by reading `BACKLOG.md` + `git log` + `.gate-results/` by hand every session.
+**Deprioritized 2026-05-22**: the original "morning report" framing assumed unattended / overnight agent runs. In actual practice the maintainer does not run agents away from the computer, so a time-gap roll-up has low current need. Demoted from v0.3.0 M4 to `🟢 someday`. On-demand state queries are already part of the `pmctl` surface (CC-215); this ticket is specifically the *periodic / since-you-were-away* report.
 
-**Why**: A read-only roll-up over the state substrate is the single biggest daily-use win — and the one AI-Night-Shift idea worth harvesting (no autonomy).
+**Problem** (conditional): if unattended or overnight dispatch ever becomes part of the workflow, there is no single command to see what happened while away.
 
-**Requirement**: `pmctl report` — open tasks, blockers, last gate verdict per active task, runs since last invocation. Read-only query over the CC-230 store.
+**Why**: A read-only roll-up over the state substrate (CC-230) would answer that without hand-reconstruction. The idea is sound; the need is gated on a workflow change.
 
-**Milestone**: v0.3.0 M4.
+**Requirement** (if revived): `pmctl report` — open tasks, blockers, last gate verdict per active task, runs since last invocation. Read-only query over the CC-230 store.
 
-**Priority**: P3.
+**Revisit when**: the workflow includes overnight / away-from-keyboard agent runs.
 
-**Cross-link**: CC-230 (state store), CC-211 (epic).
+**Cross-link**: CC-230 (state store), CC-211 (epic); AI Night Shift mapping — docs/architecture/v0.3.0-synthesis.md §5.3.
 
 ## CC-237 — context-enricher baseline: rg/git/memory sources（deferred）
 
