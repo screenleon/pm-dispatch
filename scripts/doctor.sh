@@ -382,6 +382,8 @@ check_manifest() {
 }
 
 check_frontmatter_lint() {
+  # In copy-mode (no lib/), lint-frontmatter.sh is not co-installed with doctor.sh.
+  # This check degrades to WARN in that case. See CC-225 for v2 resolution.
   # Always run the installed (trusted) linter; never execute scripts from --repo target.
   local lint_script="${SCRIPT_DIR}/lint-frontmatter.sh"
   if [[ ! -x "$lint_script" ]]; then

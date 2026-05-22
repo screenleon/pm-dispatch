@@ -190,7 +190,7 @@ create_memory_dir_for_pwd() {
   # shellcheck source=scripts/lib/memory.sh
   . "$REPO_ROOT/scripts/lib/memory.sh"
   local encoded
-  encoded="$(encode_path "$PWD")"
+  encoded="$(encode_path "$REPO_ROOT")"
   mkdir -p "$home_dir/.claude/projects/$encoded/memory"
 }
 
@@ -753,19 +753,28 @@ case_doctor_profile_invalid_value_exits_2() {
 
 case_doctor_hook_inventory_parity() {
   # CC-224 parity guard: managed hook basenames in doctor.sh must match those
-  # in install-hooks.sh. A drift means health-check and installer disagree.
+  # in install-hooks.sh. Also asserts codex-only hooks appear only in the
+  # full-profile section of doctor.sh, not the base hooks array.
   local name="doctor-hook-inventory-parity"
   should_run "$name" || return 0
   local doctor_hooks install_hooks
   doctor_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
   install_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-hooks.sh" | sort -u)"
-  if [[ "$doctor_hooks" == "$install_hooks" ]]; then
-    pass "$name"
-  else
+  if [[ "$doctor_hooks" != "$install_hooks" ]]; then
     fail "$name" "hook inventory mismatch between doctor.sh and install-hooks.sh:
 doctor.sh:     $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
 install-hooks: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
+    return
   fi
+  # Codex-only hooks must appear in the full-profile section of doctor.sh,
+  # not in the base hooks array (lines before the full) branch).
+  local codex_in_base
+  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'hook-codex-[a-z-]+\.sh' || true)"
+  if [[ -n "$codex_in_base" ]]; then
+    fail "$name" "codex-only hooks found in base hooks array (should be full-profile only): $codex_in_base"
+    return
+  fi
+  pass "$name"
 }
 
 case_doctor_stale_hook_path_warns() {

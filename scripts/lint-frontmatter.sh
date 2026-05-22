@@ -99,7 +99,8 @@ check_frontmatter() {
         return 1
       fi
     fi
-    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ \"[[:space:]]*$ ]]; then
+    local _closed_dq_re='^[A-Za-z_-]+:[[:space:]]*"([^"\\]|\\.)*"[[:space:]]*$'
+    if [[ "$line" =~ ^[A-Za-z_-]+:[[:space:]]*\" ]] && [[ ! "$line" =~ $_closed_dq_re ]]; then
       printf 'unterminated quoted value: %s\n' "$line"
       return 1
     fi
@@ -130,7 +131,7 @@ check_frontmatter() {
       return 1
     fi
     local _sv="${line#*: }"
-    if [[ "$_sv" =~ ^[@\`] ]]; then
+    if [[ "$_sv" =~ ^[@\`\*] ]]; then
       printf 'invalid YAML plain scalar start: %s\n' "$line"
       return 1
     fi
