@@ -20,6 +20,7 @@ sot_file="$work_dir/sot.tsv"
 doc_file="$work_dir/doc.tsv"
 template_file="$work_dir/template.tsv"
 
+# shellcheck disable=SC2329  # invoked indirectly via trap below
 cleanup() {
   rm -rf "$work_dir"
 }
