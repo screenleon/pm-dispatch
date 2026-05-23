@@ -166,7 +166,7 @@ Per `[[feedback_design_survey_offload]]` (revised): codex output is evidence, no
 
 Phase 2 (benchmark) NOT executed — gated on PM review of this verdict.
 
-**Main-thread recommendation for Phase 2**: re-design with a representative target codebase that matches codegraph's supported language set (TypeScript / JavaScript / Python / Go). pm-dispatch's japanese-site project (TS/JS) is one candidate; the pm-dispatch repo itself is NOT. Phase 2 brief should specify the target as a separate parameter from "the spike's working directory", and benchmark codegraph vs `rg`/`git ls-files` baseline for context retrieval against THAT codebase.
+**Main-thread recommendation for Phase 2**: re-design with a representative target codebase that matches codegraph's supported language set (TypeScript / JavaScript / Python / Go). The user picks an actual target project at Phase 2 brief time — pm-dispatch the orchestration tool is NOT the right target (bash + markdown). Phase 2 brief should specify the target as a separate parameter from "the spike's working directory", and benchmark codegraph vs `rg`/`git ls-files` baseline for context retrieval against THAT target codebase.
 
 ## Raw evidence appendix
 
