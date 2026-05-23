@@ -443,6 +443,14 @@ output_format: |
   Final: GO|NO-GO
   {required fixes if NO-GO; override path if any block-soft}
 
+  CRITICAL — the Final: line above MUST be emitted EXACTLY in this shape:
+  - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
+  - at start of line (no leading whitespace)
+  - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
+  - matched by the regex ^Final: (GO|NO-GO)$
+  - the value MUST equal the frontmatter `final:` field (case-sensitive)
+  Examples that BREAK the parser and MUST NOT be emitted: `**Final: GO**`, `Final: **GO**`, ` Final: GO`, `Final: Go`.
+
   ## Escalation
   **Recommended**: true|false
   **Reviewers**: <comma-list or "none">
@@ -455,11 +463,12 @@ output_format: |
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
-  - has-conclusion: grep -c 'Final' ${OUTPUT_FILE} should be >= 1
+  - has-conclusion: grep -c '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
+  - frontmatter-final-parity: the value after `final:` in the YAML frontmatter MUST equal the value after `Final:` in Gate Conclusion (case-sensitive)
 
   acceptance:
   - ${OUTPUT_FILE} exists with a verdict section for each of the ${NUM_REVIEWERS} reviewers
-  - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
+  - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 BRIEF_EOF
 
   if [[ "$EXECUTOR" == "codex" ]]; then
@@ -822,6 +831,14 @@ output_format: |
   Final: GO|NO-GO
   {required fixes if NO-GO; override path if any block or block-soft}
 
+  CRITICAL — the Final: line above MUST be emitted EXACTLY in this shape:
+  - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
+  - at start of line (no leading whitespace)
+  - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
+  - matched by the regex ^Final: (GO|NO-GO)$
+  - the value MUST equal the frontmatter `final:` field (case-sensitive)
+  Examples that BREAK the parser and MUST NOT be emitted: `**Final: GO**`, `Final: **GO**`, ` Final: GO`, `Final: Go`.
+
   ## Escalation
   **Recommended**: true|false
   **Reviewers**: <comma-list or "none">
@@ -839,13 +856,14 @@ output_format: |
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
-  - has-final: grep -c 'Final' ${OUTPUT_FILE} should be exactly 1
+  - has-final: grep -cE '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
+  - frontmatter-final-parity: the value after `final:` in the YAML frontmatter MUST equal the value after `Final:` in Gate Conclusion (case-sensitive)
   - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}
 
 acceptance:
   - ${OUTPUT_FILE} exists with a section for each of the ${NUM_REVIEWERS} reviewers
   - Cross-Reviewer Overlaps section is present
-  - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion
+  - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 SBRIEF_P2
 
   printf '  [synthesis] running PM consolidation...\n'

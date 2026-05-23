@@ -120,6 +120,14 @@ fi
 write_frontmatter_stub_gate_result() {
   local output_path="$1"
   local final_verdict="${2:-GO}"
+  local final_line="Final: ${final_verdict}"
+
+  # CC-252 regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
+  # line wrapped in markdown bold (simulates codex applying prose emphasis).
+  # The parser MUST reject this — Final line is contract-locked to plain text.
+  if [[ "${CODEX_GATE_STUB_BOLD_FINAL:-}" == "1" ]]; then
+    final_line="**Final: ${final_verdict}**"
+  fi
 
   cat > "$output_path" << STUB_GATE_EOF
 ---
@@ -157,7 +165,7 @@ none
 ## Gate Conclusion
 **Overall verdict**: pass
 **Most severe individual verdict**: pass
-Final: ${final_verdict}
+${final_line}
 Required fixes before GO: none
 
 ## Escalation
@@ -1348,6 +1356,41 @@ test_hash_tool_missing_aborts_gate() {
   pass "$name"
 }
 
+test_bold_final_line_rejected() {
+  # CC-252 regression: when synthesis emits the Final: line wrapped in markdown
+  # bold (e.g., `**Final: GO**`) — as observed on CC-249 spike PR #146 where
+  # codex applied prose emphasis — the parser MUST reject it. The Final line is
+  # contract-locked to plain text via the `^Final: (GO|NO-GO)$` regex.
+  # Loosening the parser to accept bold-Final would silently hide the brief-
+  # template drift the CC-250 brief is supposed to prevent.
+  # Steps:
+  #   1. Create a minimal repo (express tier, docs change)
+  #   2. CODEX_GATE_STUB_BOLD_FINAL=1: synthesis writes "**Final: GO**" instead of "Final: GO"
+  #   3. Run gate in --parallel mode
+  #   4. Assert non-zero exit and "exactly one Final" / "(found 0)" in stderr
+  local name="bold-final-line-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_BOLD_FINAL=1 run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis emits **Final: GO** (bold)"
+    return
+  fi
+  assert_contains "$name" "$err" "exactly one Final" || return
+  pass "$name"
+}
+
 test_synthesis_multiple_final_lines_aborts_gate() {
   # Verifies that a synthesis output with more than one Final: line causes the
   # gate to abort — duplicate or contradictory Final: lines indicate a
@@ -1913,6 +1956,7 @@ run_test test_block_soft_verdict_is_no_go
 run_test test_synthesis_artifact_tamper_detected
 run_test test_verdict_prefix_rejected
 run_test test_hash_tool_missing_aborts_gate
+run_test test_bold_final_line_rejected
 run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_multiple_verdict_lines_aborts_gate
 run_test test_reviewer_cross_artifact_tamper_detected
