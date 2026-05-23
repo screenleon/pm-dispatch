@@ -97,6 +97,7 @@ jobs:
             test-install.sh
             test-lint-frontmatter.sh
             test-migrate-routing-log.sh
+            test-commands-runner.sh
             test-patch-gitignore.sh
             test-pr-gate.sh
             test-pr-gate-profile.sh
