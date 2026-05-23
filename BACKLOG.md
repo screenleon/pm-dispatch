@@ -153,7 +153,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
 | CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
 | CC-249 | ⏸ deferred | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
-| CC-250 | 🔵 active | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:TBD | P2 | oss |
+| CC-250 | ✅ closed 2026-05-23 | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:#144 | P2 | oss |
+| CC-251 | 🔵 active | **[brief-authoring discipline for multi-file dispatches]** 3 patterns added to `agents/project-pm.md` + `docs/dispatch-brief.md` to prevent codex apply_patch debug-loop hang on > 4 files OR > 50 lines verbatim briefs: (1) apply_patch retry-cap (HALT after 2nd consecutive failure on same file, no 3rd retry), (2) verbatim-as-attached-file (write embedded content to /tmp/<task>-content/*.md, brief references path), (3) `expected_head_sha` state pin (40-char sha + self_verify check). Memory `[[feedback_codex_brief_discipline]]` documents the CC-247/248 + CC-250 retro evidence. Long-term resolution: CC-235 tiered lifecycle gate enforces split + CC-244 typed schema. | process | 2026-05-23 | pr:TBD | P3 | oss |
 
 ---
 
@@ -1568,7 +1569,7 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **Cross-link**: CC-203 (origin epic), CC-247 / CC-248 (sibling harness work — separate PR A), `commands/pre-impl.md` (spike gate).
 
-## CC-250 — `/pr-gate v2`: machine-readable result + escalation hint（active）
+## CC-250 — `/pr-gate v2`: machine-readable result + escalation hint ✅ 2026-05-23
 
 **Problem**: `/pr-gate` result files today are prose-only Markdown with a `Final: GO|NO-GO` grep target; consumers (validate.sh, downstream automation) can read the binary verdict but cannot see per-reviewer verdicts, mode, tier, or whether the gate recommends a follow-up targeted re-gate without parsing the prose. Reviewer override discipline is scattered across `agents/project-pm.md` + each reviewer's verdict scale, so a person reading one reviewer agent cannot find its override policy without cross-reference.
 
@@ -1589,3 +1590,34 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Priority**: P2 — gate-infra prerequisite for v0.3.0 M1 (CC-231 reviewer-policy extraction depends on a typed gate result surface to extract policy from).
 
 **Cross-link**: CC-231 (M1 reviewer-policy extraction consumer of this typed surface), CC-215 (pmctl downstream consumer), CC-208 (gate reviewer hallucination — related gate hardening), `MILESTONES.md` §v0.3.0 M1 prerequisite sub-table.
+
+**Outcome**: Shipped via PR #144 — frontmatter + escalation + gh pr view fallback + 5 reviewer override-policy sections all landed. Meta-test self-gate confirmed format works end-to-end. Hang during dispatch (apply_patch debug loop, ~10 min stall) recovered on its own; the retrospective on this hang drove CC-251 brief-authoring discipline.
+
+**See**: CC-251 (brief-discipline derived from CC-247/248 + CC-250 dispatch retros), CC-231 (downstream consumer), CC-215 (pmctl downstream consumer).
+
+## CC-251 — Brief-authoring discipline for multi-file dispatches（active）
+
+**Problem**: Codex dispatches on briefs that touch > 4 files OR embed > 50 lines of verbatim content (paragraphs, table rows, code blocks the executor must reproduce byte-identically) hit a debug-loop hang pattern: `apply_patch verification failed: Failed to find expected lines` → codex retries → eventually self-recovers OR exhausts dispatch timeout (1800s). Observed twice in 2026-05-23: CC-247/248 PR #142 (hit on 9-file harness migration) and CC-250 PR #144 (hit on 9-file gate-infra bundle).
+
+**Why**: Three failure modes layer:
+1. Large brief + many read files burns input-token budget that should go to accurate patch construction
+2. Embedded verbatim content tempts codex to paraphrase during retype (CC-250 stderr showed `pass/fail print-format` → `print-format` — silent drop)
+3. Large target files (BACKLOG.md 1500+ lines, pr-gate.sh 840 lines) with many same-prefix lines cause patch context to grab wrong location
+4. Codex has no internal retry-cap on apply_patch failures — debug loop runs until dispatch timeout
+
+The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget) is mitigated separately by brief-splitting (split N-file dispatch into ⌈N/3⌉ smaller ones) — discipline first, split second.
+
+**Requirement**:
+- **`agents/project-pm.md`** gains a "Multi-file brief discipline" section in the "Writing a brief for codex-executor" prose, listing the 3 patterns with rationale + when-to-apply trigger (> 4 files OR > 50 lines verbatim).
+- **`docs/dispatch-brief.md`** gains an optional `expected_head_sha` schema field under "Optional sections" with a usage example.
+- Memory `[[feedback_codex_brief_discipline]]` documents the retro evidence (CC-247/248 + CC-250 stderr excerpts + apply_patch failure root cause).
+
+**Acceptance**:
+- 3 patterns documented verbatim in `agents/project-pm.md` (retry-cap text, verbatim-as-attached-file pattern, expected_head_sha pattern).
+- `docs/dispatch-brief.md` lists `expected_head_sha` as Optional with example.
+- Validator parity preserved at 30 (CC-228 baseline).
+- No code change required this PR — discipline is brief-authoring time, not runtime. Long-term `pmctl` (CC-215) may add `--expect-head <sha>` flag at the wrapper level.
+
+**Priority**: P3 — discipline polish; not a blocker but every future > 4-file dispatch should apply the patterns.
+
+**Cross-link**: CC-247/CC-248 (#142 retro), CC-250 (#144 retro), CC-235 (tiered-lifecycle-gate that would enforce split mechanically), CC-244 (typed pipeline that would turn verbatim into schema fields), CC-215 (pmctl `--expect-head` wrapper option), memory `[[feedback_codex_brief_discipline]]`.
