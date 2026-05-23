@@ -1,5 +1,5 @@
 # pm-dispatch
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](https://github.com/screenleon/pm-dispatch/releases/tag/v0.2.0)
 
 Personal Claude Code configuration for forks: subagents, slash commands, skills, and dispatch scripts with a stable installer.
 

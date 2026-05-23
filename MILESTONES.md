@@ -131,7 +131,7 @@ Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 | #117 | CC-221 | copy-mode refresh semantics（link_or_copy src-vs-dst sha compare） |
 | #119 | CC-058 | scripts/doctor.sh + lint-frontmatter PyYAML-equivalent validation + 68 regression tests |
 
-### Planned
+### Roadmap (all shipped)
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
