@@ -122,3 +122,61 @@ th_summary() {
   fi
   exit 0
 }
+
+_th_assert_fail_msg() {
+  local helper_name="$1"
+  local condition_summary="$2"
+  shift 2
+
+  if (( $# > 0 )); then
+    printf '%s: %s (%s)' "$helper_name" "$condition_summary" "$*"
+  else
+    printf '%s: %s' "$helper_name" "$condition_summary"
+  fi
+}
+
+assert_exit() {
+  local name="$1" actual="$2" expected="$3"
+  if [[ "$actual" == "$expected" ]]; then
+    pass "$name"
+    return 0
+  fi
+  fail "$name" "$(_th_assert_fail_msg 'assert_exit' 'actual and expected mismatch' \
+    "name=$name" "actual=$actual" "expected=$expected")"
+  return 1
+}
+
+assert_file_contains() {
+  local name="$1" file="$2" literal_substring="$3"
+  if grep -Fq -- "$literal_substring" "$file"; then
+    pass "$name"
+    return 0
+  fi
+  fail "$name" "$(_th_assert_fail_msg 'assert_file_contains' 'file did not contain literal substring' \
+    "name=$name" "file=$file" "needle=$literal_substring")"
+  return 1
+}
+
+assert_file_matches() {
+  local name="$1" file="$2" regex="$3"
+  if grep -qE -- "$regex" "$file"; then
+    pass "$name"
+    return 0
+  fi
+  fail "$name" "$(_th_assert_fail_msg 'assert_file_matches' 'file did not match regex' \
+    "name=$name" "file=$file" "regex=$regex")"
+  return 1
+}
+
+assert_string_contains() {
+  local name="$1" haystack_string="$2" needle="$3"
+  if [[ "$haystack_string" == *"$needle"* ]]; then
+    pass "$name"
+    return 0
+  fi
+
+  local haystack_summary="${haystack_string:0:80}"
+  fail "$name" "$(_th_assert_fail_msg 'assert_string_contains' 'string did not contain needle' \
+    "name=$name" "haystack=${haystack_summary}" "needle=$needle")"
+  return 1
+}

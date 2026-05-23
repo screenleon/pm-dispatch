@@ -310,6 +310,78 @@ case_harness_fail_fast_and_format_orthogonal() {
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp --fail-fast; fail 'stop' 'reason'"
 }
 
+case_assert_exit_pass() {
+  local name="assert-exit-pass"
+  local expected_out
+  expected_out=$'PASS: assert-exit-pass\n1 passed, 0 failed'
+  run_harness_probe "$name" 0 "$expected_out" '' \
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_exit 'assert-exit-pass' 0 0; th_summary"
+}
+
+case_assert_exit_fail() {
+  local name="assert-exit-fail"
+  local expected_out
+  expected_out=$'FAIL: assert-exit-fail: assert_exit: actual and expected mismatch (name=assert-exit-fail actual=0 expected=1)\n0 passed, 1 failed'
+  run_harness_probe "$name" 1 "$expected_out" '' \
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_exit 'assert-exit-fail' 0 1; th_summary"
+}
+
+case_assert_file_contains_pass() {
+  local name="assert-file-contains-pass"
+  local tmp_file="$TMP_ROOT/$name.txt"
+  local expected_out
+  expected_out=$'PASS: assert-file-contains-pass\n1 passed, 0 failed'
+  run_harness_probe "$name" 0 "$expected_out" '' \
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-pass' \"$tmp_file\" 'hello'; th_summary"
+}
+
+case_assert_file_contains_fail() {
+  local name="assert-file-contains-fail"
+  local tmp_file="$TMP_ROOT/$name.txt"
+  local expected_out
+  expected_out=$'FAIL: assert-file-contains-fail: assert_file_contains: file did not contain literal substring (name=assert-file-contains-fail file='
+  expected_out+="$tmp_file"
+  expected_out=$expected_out$' needle=missing)\n0 passed, 1 failed'
+  run_harness_probe "$name" 1 "$expected_out" '' \
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-fail' \"$tmp_file\" 'missing'; th_summary"
+}
+
+case_assert_file_matches_pass() {
+  local name="assert-file-matches-pass"
+  local tmp_file="$TMP_ROOT/$name.txt"
+  local expected_out
+  expected_out=$'PASS: assert-file-matches-pass\n1 passed, 0 failed'
+  run_harness_probe "$name" 0 "$expected_out" '' \
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-pass' \"$tmp_file\" '^[a-z]+[0-9]+$'; th_summary"
+}
+
+case_assert_file_matches_fail() {
+  local name="assert-file-matches-fail"
+  local tmp_file="$TMP_ROOT/$name.txt"
+  local expected_out
+  expected_out=$'FAIL: assert-file-matches-fail: assert_file_matches: file did not match regex (name=assert-file-matches-fail file='
+  expected_out+="$tmp_file"
+  expected_out=$expected_out$' regex=^[0-9]+\x24)\n0 passed, 1 failed'
+  run_harness_probe "$name" 1 "$expected_out" '' \
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-fail' \"$tmp_file\" '^[0-9]+$'; th_summary"
+}
+
+case_assert_string_contains_pass() {
+  local name="assert-string-contains-pass"
+  local expected_out
+  expected_out=$'PASS: assert-string-contains-pass\n1 passed, 0 failed'
+  run_harness_probe "$name" 0 "$expected_out" '' \
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-pass' 'the quick brown fox' 'quick'; th_summary"
+}
+
+case_assert_string_contains_fail() {
+  local name="assert-string-contains-fail"
+  local expected_out
+  expected_out=$'FAIL: assert-string-contains-fail: assert_string_contains: string did not contain needle (name=assert-string-contains-fail haystack=the quick brown fox needle=slow)\n0 passed, 1 failed'
+  run_harness_probe "$name" 1 "$expected_out" '' \
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-fail' 'the quick brown fox' 'slow'; th_summary"
+}
+
 case_harness_filter_still_works() {
   local name="filter-still-works"
   local out err rc
@@ -364,6 +436,14 @@ case_harness_fail_fast_no_failures
 case_harness_fail_fast_and_format_orthogonal
 case_harness_filter_still_works
 case_harness_list_still_works
+case_assert_exit_pass
+case_assert_exit_fail
+case_assert_file_contains_pass
+case_assert_file_contains_fail
+case_assert_file_matches_pass
+case_assert_file_matches_fail
+case_assert_string_contains_pass
+case_assert_string_contains_fail
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
