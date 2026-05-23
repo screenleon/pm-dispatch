@@ -18,44 +18,40 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMMANDS_DIR="$REPO_ROOT/commands"
 AGENTS_DIR="$REPO_ROOT/agents"
 
-FILTER=""
-LIST=false
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --filter)
       if [[ $# -lt 2 ]]; then
-        echo "error: --filter requires an argument" >&2; exit 1
+        echo "error: --filter requires an argument" >&2
+        exit 1
       fi
-      FILTER="$2"; shift 2 ;;
-    --list) LIST=true; shift ;;
-    *) echo "error: unknown option: $1" >&2; exit 1 ;;
+      args+=(--filter "$2")
+      shift 2
+      ;;
+    --list)
+      args+=(--list)
+      shift
+      ;;
+    *)
+      echo "error: unknown option: $1" >&2
+      exit 1
+      ;;
   esac
 done
-
-ALL_CASES=()
-FAILED_CASES=()
-
-should_run() {
-  if $LIST; then ALL_CASES+=("$1"); return 1; fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
-}
-
-PASS=0
-FAIL=0
+th_init "${args[@]}"
 
 # Helper: assert file contains pattern (grep -E)
 assert_contains() {
   local name="$1" file="$2" pattern="$3"
   should_run "$name" || return 0
   if grep -qE "$pattern" "$file" 2>/dev/null; then
-    PASS=$((PASS+1))
-    ${VERBOSE:+echo "  PASS $name"}
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    echo "  FAIL $name"
-    echo "    expected pattern: $pattern"
-    echo "    in file: $file"
+    fail "$name" "expected pattern: $pattern; in file: $file"
+    return 1
   fi
 }
 
@@ -64,14 +60,10 @@ assert_not_contains() {
   local name="$1" file="$2" pattern="$3"
   should_run "$name" || return 0
   if ! grep -qE "$pattern" "$file" 2>/dev/null; then
-    PASS=$((PASS+1))
-    ${VERBOSE:+echo "  PASS $name"}
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    echo "  FAIL $name"
-    echo "    unexpected pattern present: $pattern"
-    echo "    in file: $file"
+    fail "$name" "unexpected pattern present: $pattern; in file: $file"
+    return 1
   fi
 }
 
@@ -85,12 +77,10 @@ assert_frontmatter() {
   has_close=$(awk '/^---$/{c++} c==2{found=1;exit} END{print (found ? 1 : 0)}' "$file")
   has_desc=$(grep -c "^description:" "$file" || true)
   if [[ "$has_open" -ge 1 && "$has_close" -eq 1 && "$has_desc" -ge 1 ]]; then
-    PASS=$((PASS+1))
-    ${VERBOSE:+echo "  PASS $name"}
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    echo "  FAIL $name — incomplete frontmatter (open=$has_open close=$has_close desc=$has_desc) in $file"
+    fail "$name" "incomplete frontmatter (open=$has_open close=$has_close desc=$has_desc) in $file"
+    return 1
   fi
 }
 
@@ -102,18 +92,12 @@ assert_in_section() {
   local found
   found=$(awk "/^# ${section}/{in_sec=1; next} in_sec && /^# /{exit} in_sec && /${pattern}/{found=1} END{print (found ? 1 : 0)}" "$file")
   if [[ "$found" -eq 1 ]]; then
-    PASS=$((PASS+1))
-    ${VERBOSE:+echo "  PASS $name"}
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    echo "  FAIL $name"
-    echo "    expected pattern '$pattern' inside '# ${section}' section"
-    echo "    in file: $file"
+    fail "$name" "expected pattern '$pattern' inside '# ${section}' section in $file"
+    return 1
   fi
 }
-
-$LIST || echo "test-commands.sh"
 
 # ── caveman.md contract ──────────────────────────────────────────────────────
 
@@ -316,26 +300,4 @@ done
 
 # ── summary ──────────────────────────────────────────────────────────────────
 
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-# Fail if --filter matched nothing (prevents silent false-green on typos)
-if [[ -n "$FILTER" && $((PASS+FAIL)) -eq 0 ]]; then
-  printf 'no tests matched filter %q — check --list for available case names\n' \
-    "$FILTER" >&2
-  exit 1
-fi
-
-echo ""
-echo "----"
-echo "$PASS passed, $FAIL failed"
-if [[ $FAIL -gt 0 ]]; then
-  echo "failed cases:"
-  for c in "${FAILED_CASES[@]}"; do
-    echo "  - $c"
-  done
-  exit 1
-fi
-exit 0
+th_summary
