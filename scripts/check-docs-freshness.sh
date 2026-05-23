@@ -11,27 +11,16 @@ if [[ -L "${BASH_SOURCE[0]}" ]]; then
 fi
 
 # Source libs with graceful fallback for copy-mode (Windows) where lib/ is absent.
+# This script does not call any portable.sh helpers directly, but the sourcing
+# pattern is kept for parity with doctor.sh — if a future check requires platform
+# detection it can rely on lib/portable.sh being loaded when available.
 if [[ -f "$SCRIPT_DIR/lib/portable.sh" ]]; then
   # shellcheck source=scripts/lib/portable.sh
+  # shellcheck disable=SC1091
   . "$SCRIPT_DIR/lib/portable.sh"
   _PORTABLE_AVAILABLE=1
 else
   _PORTABLE_AVAILABLE=0
-  detect_platform() {
-    case "${OSTYPE:-}" in
-      linux*) printf 'linux\n' ;;
-      darwin*) printf 'macos\n' ;;
-      msys*|cygwin*) printf 'windows\n' ;;
-      *)
-        case "$(uname -s 2>/dev/null)" in
-          Linux*) printf 'linux\n' ;;
-          Darwin*) printf 'macos\n' ;;
-          MINGW*|MSYS*) printf 'windows\n' ;;
-          *) printf 'unknown\n' ;;
-        esac
-        ;;
-    esac
-  }
 fi
 
 JSON=0
@@ -208,7 +197,6 @@ run_unit_milestones() {
   local milestones="$REPO_ROOT/MILESTONES.md"
   local -a tags=()
   local -A section_planned=()
-  local -A tags_seen=()
   local current=""
   local planned=0
   local unit_fail=0
@@ -256,7 +244,6 @@ run_unit_milestones() {
   fi
 
   for line in "${tags[@]}"; do
-    tags_seen["$line"]=1
     if [[ -z "${section_planned[$line]+x}" ]]; then
       emit_check "$unit" fail "tag $line exists but no section ## $line in MILESTONES.md" "$milestones"
       unit_fail=1
@@ -275,7 +262,7 @@ run_unit_backlog() {
   local unit="U3-BACKLOG"
   local backlog="$REPO_ROOT/BACKLOG.md"
   local found=0
-  local line_no status refs
+  local line_no status
 
   emit_unit_header "$unit"
 
@@ -284,7 +271,7 @@ run_unit_backlog() {
     return
   fi
 
-  while IFS='|' read -r line_no status refs; do
+  while IFS='|' read -r line_no status; do
     found=1
     if [[ "$status" == *"✅"* && "$status" == *"closed"* ]]; then
       emit_check "$unit" fail "closed row with pr:TBD" "${backlog}:${line_no}"
@@ -299,7 +286,7 @@ run_unit_backlog() {
     gsub(/^[[:space:]]+/, "", refs)
     gsub(/[[:space:]]+$/, "", refs)
     if (refs ~ /pr:TBD/) {
-      print NR "|" status "|" refs
+      print NR "|" status
     }
   }' "$backlog")
 
