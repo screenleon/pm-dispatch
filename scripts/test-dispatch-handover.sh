@@ -5,21 +5,19 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_ROOT/scripts/lib/handover-validate.sh"
 
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-t_pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS+1)); }
-t_fail() { printf 'FAIL: %s\n' "$1" >&2; FAIL=$((FAIL+1)); FAILED_CASES+=("$1"); }
+# shellcheck source=scripts/lib/test-harness.sh
+. "$REPO_ROOT/scripts/lib/test-harness.sh"
+th_init "$@"
 
 run_case() {
-  local name=$1
-  local fn=$2
+  local name="$1"
+  local fn="$2"
+  should_run "$name" || return 0
 
   if "$fn"; then
-    t_pass "$name"
+    pass "$name"
   else
-    t_fail "$name"
+    fail "$name"
   fi
 }
 
@@ -902,10 +900,4 @@ run_case "extract_metadata_missing_separator_rejects_case" extract_metadata_miss
 run_case "extract_body_missing_separator_rejects_case" extract_body_missing_separator_rejects_case
 run_case "handover/extract metadata body round-trips" extract_metadata_body_round_trips_case
 
-echo "----"
-echo "$PASS passed, $FAIL failed"
-if [[ "$FAIL" -ne 0 ]]; then
-  printf 'Failed cases:\n' >&2
-  printf '  %s\n' "${FAILED_CASES[@]}" >&2
-fi
-[[ "$FAIL" -eq 0 ]]
+th_summary
