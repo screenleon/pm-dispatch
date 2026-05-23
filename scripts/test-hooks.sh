@@ -25,40 +25,31 @@ RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
 SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
 
-# --filter <pattern>  run only cases whose name contains <pattern>
-# --list              print all case names and exit
-FILTER=""
-LIST=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --filter) FILTER="${2:-}"; shift 2 ;;
-    --list)   LIST=true; shift ;;
-    *) shift ;;
-  esac
-done
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
-ALL_CASES=()
-# Returns 0 (run) or 1 (skip). In --list mode, registers name and skips.
-should_run() {
-  if $LIST; then
-    ALL_CASES+=("$1")
-    return 1
-  fi
-  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+# Preserve historical VERBOSE-gated `  PASS  $name` + unconditional `  FAIL  $name` format.
+pass() {
+  PASS=$((PASS + 1))
+  ${VERBOSE:+printf '  PASS  %s\n' "$1"}
+}
+
+fail() {
+  FAIL=$((FAIL + 1))
+  FAILED_CASES+=("$1")
+  printf '  FAIL  %s\n' "$1"
+  [[ -n "${2:-}" ]] && printf '%s\n' "$2"
 }
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
 TEST_LOG_FILE="$CLAUDE_HOOK_LOG_DIR/hooks.log"
-trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}"' EXIT
+trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
 
 # Pin the codex-executor read roots to known values so path tests are
 # deterministic regardless of caller environment.
 export CLAUDE_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
 
 # run_case <name> <expected_exit> <hook_path> <json_input> [<expected_stderr_substring>]
 run_case() {
@@ -76,17 +67,14 @@ run_case() {
   if [[ -n "$expect_stderr" && "$actual_stderr" != *"$expect_stderr"* ]]; then pass=0; fi
 
   if [[ "$pass" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s\n' "$name"
-    printf '        expected: exit=%s' "$expect_exit"
-    [[ -n "$expect_stderr" ]] && printf ' stderr~="%s"' "$expect_stderr"
-    printf '\n        actual:   exit=%s' "$actual_exit"
-    [[ -n "$actual_stderr" ]] && printf ' stderr=%q' "${actual_stderr:0:200}"
-    printf '\n'
+    local detail
+    detail="$(printf '        expected: exit=%s' "$expect_exit")"
+    [[ -n "$expect_stderr" ]] && detail+="$(printf ' stderr~="%s"' "$expect_stderr")"
+    detail+=$'\n'"$(printf '        actual:   exit=%s' "$actual_exit")"
+    [[ -n "$actual_stderr" ]] && detail+="$(printf ' stderr=%q' "${actual_stderr:0:200}")"
+    fail "$name" "$detail"
   fi
 }
 
@@ -97,12 +85,9 @@ run_case_env() {
   local actual_exit
   actual_exit=$(printf '%s' "$json" | env "$envspec" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
   if [[ "$actual_exit" == "$expect_exit" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s (expected exit=%s, got exit=%s)\n' "$name" "$expect_exit" "$actual_exit"
+    fail "$name" "$(printf '        expected: exit=%s, actual: %s' "$expect_exit" "$actual_exit")"
   fi
 }
 
@@ -123,17 +108,14 @@ run_command_case() {
   if [[ -n "$expect_stderr" && "$actual_stderr" != *"$expect_stderr"* ]]; then pass=0; fi
 
   if [[ "$pass" == "1" ]]; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s\n' "$name"
-    printf '        expected: exit=%s' "$expect_exit"
-    [[ -n "$expect_stderr" ]] && printf ' stderr~="%s"' "$expect_stderr"
-    printf '\n        actual:   exit=%s' "$actual_exit"
-    [[ -n "$actual_stderr" ]] && printf ' stderr=%q' "${actual_stderr:0:200}"
-    printf '\n'
+    local detail
+    detail="$(printf '        expected: exit=%s' "$expect_exit")"
+    [[ -n "$expect_stderr" ]] && detail+="$(printf ' stderr~="%s"' "$expect_stderr")"
+    detail+=$'\n'"$(printf '        actual:   exit=%s' "$actual_exit")"
+    [[ -n "$actual_stderr" ]] && detail+="$(printf ' stderr=%q' "${actual_stderr:0:200}")"
+    fail "$name" "$detail"
   fi
 }
 
@@ -143,12 +125,9 @@ assert_log() {
   local name="$1" needle="$2"
   should_run "$name" || return 0
   if [[ -f "$TEST_LOG_FILE" ]] && grep -q -F -- "$needle" "$TEST_LOG_FILE"; then
-    PASS=$((PASS+1))
-    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL+1))
-    FAILED_CASES+=("$name")
-    printf '  FAIL  %s (log missing substring: %q)\n' "$name" "$needle"
+    fail "$name" "$(printf '        missing substring: %q' "$needle")"
   fi
 }
 
@@ -3615,25 +3594,4 @@ meta_filter_no_match_exits_nonzero
 # =============================================================================
 # summary
 # =============================================================================
-
-if $LIST; then
-  printf '%s\n' "${ALL_CASES[@]}"
-  exit 0
-fi
-
-if [[ -n "$FILTER" && $((PASS + FAIL)) -eq 0 ]]; then
-  printf 'no tests matched filter %q — check --list for available case names\n' "$FILTER" >&2
-  exit 1
-fi
-
-echo
-echo "----"
-echo "$PASS passed, $FAIL failed"
-if [[ $FAIL -gt 0 ]]; then
-  echo "failed cases:"
-  for c in "${FAILED_CASES[@]}"; do
-    echo "  - $c"
-  done
-  exit 1
-fi
-exit 0
+th_summary
