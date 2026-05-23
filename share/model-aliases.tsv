@@ -1,0 +1,5 @@
+# pm-facing_alias	wire_model_id	reasoning_effort
+# Schema: PM-facing alias, wire-format model id, reasoning effort.
+#
+# Columns must be tab-separated.
+codex-spark	gpt-5.3-codex-spark	high

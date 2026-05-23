@@ -27,7 +27,8 @@
 # Defaults:
 #   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
 #   --approval never             (never | on-failure | on-request | untrusted)
-#   --timeout  ${CODEX_DISPATCH_TIMEOUT:-1200}   seconds; 0 disables
+#   --timeout  precedence: brief field > CODEX_DISPATCH_TIMEOUT env >
+#             ~/.pm-dispatch/config [dispatch.default_timeout] > 1200 fallback
 #
 # Outputs:
 #   .agent-trace/codex-<ts>.jsonl   full event stream (codex stdout)
@@ -53,7 +54,10 @@ set -euo pipefail
 if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.sh$ ]]; then
   __codex_dispatch_snapshot_dir="$(mktemp -d -t codex-dispatch.XXXXXX)"
   __codex_dispatch_snapshot="$__codex_dispatch_snapshot_dir/codex-dispatch.sh"
+  __codex_dispatch_source_repo="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/model-aliases.tsv"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
+  [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/model-aliases.tsv" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -66,11 +70,116 @@ MODEL=""
 SANDBOX="workspace-write"
 APPROVAL="never"
 SKIP_GIT_CHECK=0
-TIMEOUT="${CODEX_DISPATCH_TIMEOUT:-1200}"
+SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PM_DISPATCH_CONFIG_FILE="${HOME}/.pm-dispatch/config"
+PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/model-aliases.tsv"
+[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../share/model-aliases.tsv"
+TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
 PRINT_CMD=0
+
+_load_config_timeout() {
+  local config_path="${PM_DISPATCH_CONFIG_FILE}"
+  local config_timeout=""
+  local config_default_model=""
+  local line_no=0
+  local line key value
+
+  if [[ -r "$config_path" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      ((line_no += 1))
+      line="${line%$'\r'}"
+      line="${line%%#*}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -z "$line" ]] && continue
+
+      if [[ "$line" != *"="* ]]; then
+        echo "codex-dispatch: warning: malformed config line in ${config_path}:${line_no}" >&2
+        continue
+      fi
+
+      key="${line%%=*}"
+      value="${line#*=}"
+      key="${key#"${key%%[![:space:]]*}"}"
+      key="${key%"${key##*[![:space:]]}"}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      value="${value%"${value##*[![:space:]]}"}"
+
+      if [[ "$key" == "dispatch.default_timeout" ]]; then
+        if [[ "$value" =~ ^[0-9]+$ ]]; then
+          config_timeout="$value"
+        else
+          echo "codex-dispatch: warning: malformed value for dispatch.default_timeout in ${config_path}:${line_no}" >&2
+        fi
+      elif [[ "$key" == "dispatch.default_model" ]]; then
+        config_default_model="$value"
+        # Reserved for future default-model support; intentionally not consumed in axis 2.
+      fi
+      # Unknown keys are intentionally ignored for future axes.
+    done < "$config_path"
+  fi
+
+  if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
+    echo "$CODEX_DISPATCH_TIMEOUT"
+    return 0
+  fi
+
+  : "$config_default_model"
+
+  if [[ -n "$config_timeout" ]]; then
+    echo "$config_timeout"
+    return 0
+  fi
+
+  echo "1200"
+}
+
+_resolve_model_alias() {
+  local query_model="$1"
+  local line_no=0
+  local line
+  local alias_value model_id reasoning_effort
+
+  if [[ ! -f "$PM_DISPATCH_ALIAS_FILE" ]]; then
+    echo "codex-dispatch: error: model alias source-of-truth not found: $PM_DISPATCH_ALIAS_FILE" >&2
+    echo "Expected file path: share/model-aliases.tsv (copied to snapshot at runtime)." >&2
+    return 1
+  fi
+  if ! [[ -r "$PM_DISPATCH_ALIAS_FILE" ]]; then
+    echo "codex-dispatch: error: model alias source-of-truth unreadable: $PM_DISPATCH_ALIAS_FILE" >&2
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    ((line_no += 1))
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "${line:0:1}" == "#" ]] && continue
+
+    IFS=$'\t' read -r alias_value model_id reasoning_effort rest <<< "$line"
+    if [[ -z "$alias_value" || -z "$model_id" || -z "$reasoning_effort" || -n "$rest" ]]; then
+      echo "codex-dispatch: error: malformed model-alias entry in ${PM_DISPATCH_ALIAS_FILE}:${line_no}" >&2
+      echo "Expected one tab-separated line: <alias><TAB><model_id><TAB><reasoning_effort>" >&2
+      return 1
+    fi
+
+    if [[ "$alias_value" == "$query_model" ]]; then
+      MODEL_RESOLVED="$model_id"
+      MODEL_RESOLVED_EFFORT="$reasoning_effort"
+      MODEL_ALIAS_MATCH=1
+      return 0
+    fi
+  done < "$PM_DISPATCH_ALIAS_FILE"
+
+  return 0
+}
+
+TIMEOUT="$(_load_config_timeout)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -122,24 +231,11 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-# PM-facing alias → wire-format model mapping used by dispatch.
-# Source-of-truth: each user's `~/.codex/config.toml` `model` + `model_reasoning_effort` keys.
-declare -A MODEL_ALIAS_TO_ID=(
-  [codex-spark]="gpt-5.3-codex-spark"
-)
-declare -A MODEL_ALIAS_TO_EFFORT=(
-  [codex-spark]="high"
-)
-
 MODEL_RESOLVED="$MODEL"
 MODEL_RESOLVED_EFFORT=""
 MODEL_ALIAS_MATCH=0
 if [[ -n "$MODEL" ]]; then
-  if [[ -n "${MODEL_ALIAS_TO_ID[$MODEL]+x}" ]]; then
-    MODEL_RESOLVED="${MODEL_ALIAS_TO_ID[$MODEL]}"
-    MODEL_RESOLVED_EFFORT="${MODEL_ALIAS_TO_EFFORT[$MODEL]}"
-    MODEL_ALIAS_MATCH=1
-  fi
+  _resolve_model_alias "$MODEL" || exit 2
 fi
 
 MODEL_DISPLAY="$MODEL"
