@@ -153,6 +153,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
 | CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
 | CC-249 | ⏸ deferred | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
+| CC-250 | 🔵 active | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:TBD | P2 | oss |
 
 ---
 
@@ -1566,3 +1567,25 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Priority**: P3 — reuse-debt; correctness ceiling, not a daily friction. Spike first, implement second.
 
 **Cross-link**: CC-203 (origin epic), CC-247 / CC-248 (sibling harness work — separate PR A), `commands/pre-impl.md` (spike gate).
+
+## CC-250 — `/pr-gate v2`: machine-readable result + escalation hint（active）
+
+**Problem**: `/pr-gate` result files today are prose-only Markdown with a `Final: GO|NO-GO` grep target; consumers (validate.sh, downstream automation) can read the binary verdict but cannot see per-reviewer verdicts, mode, tier, or whether the gate recommends a follow-up targeted re-gate without parsing the prose. Reviewer override discipline is scattered across `agents/project-pm.md` + each reviewer's verdict scale, so a person reading one reviewer agent cannot find its override policy without cross-reference.
+
+**Why**: As `/pr-gate` matures and feeds into the v0.3.0 M1 runtime layer (CC-231 reviewer-policy extraction, CC-215 pmctl), the result file becomes the contract between the gate and downstream tooling. A typed frontmatter + an explicit escalation hint section lets future consumers act on the gate output without re-parsing prose. Override-policy consolidation eliminates the per-reviewer documentation gap noticed during recurring gate cycles.
+
+**Requirement**:
+- **A**. Every gate result file (sequential + parallel) starts with a YAML frontmatter block (`gate_result_version: pr_gate_result_v1`, `final`, `tier`, `mode`, `most_severe`, `reviewers:` map with every reviewer in `$ALL_REVIEWERS` keyed to verdict-or-`skipped`, `escalation:` block). Existing `Final: GO|NO-GO` line in `## Gate Conclusion` is preserved verbatim.
+- **B**. New `## Escalation` body section mirrors the frontmatter `escalation:` block. Both empty-list (recommended=false) and populated cases are valid emissions. Trigger: sensitive-path keyword in diff AND at least one reviewer returned advise|block-soft.
+- **C**. `--base` detection prepends `gh pr view --json baseRefName` when no `--base` flag is given and `gh` is on PATH; gracefully degrades to current `origin/HEAD → main` chain.
+- **D**. Each of the 5 reviewer agent .md files gains a `## Override policy` section consolidating discipline already documented in `agents/project-pm.md` §"User override discipline".
+
+**Acceptance**:
+- `test-pr-gate.sh` adds at least 3 new cases: (a) sequential result file starts with valid YAML frontmatter containing `gate_result_version: pr_gate_result_v1` + `final:` + `reviewers:` map; (b) `## Escalation` section is present with `**Recommended**:` line; (c) `^Final: (GO|NO-GO)$` line still present and unique (back-compat).
+- `bash pm/scripts/validate.sh BACKLOG.md DECISIONS.md CHANGELOG.md 2>&1 | grep -c '^E-'` ≤ 30 (baseline).
+- `bash scripts/run-tests.sh` exit 0.
+- `shellcheck --severity=style scripts/pr-gate.sh` exits 0.
+
+**Priority**: P2 — gate-infra prerequisite for v0.3.0 M1 (CC-231 reviewer-policy extraction depends on a typed gate result surface to extract policy from).
+
+**Cross-link**: CC-231 (M1 reviewer-policy extraction consumer of this typed surface), CC-215 (pmctl downstream consumer), CC-208 (gate reviewer hallucination — related gate hardening), `MILESTONES.md` §v0.3.0 M1 prerequisite sub-table.

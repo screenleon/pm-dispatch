@@ -96,3 +96,7 @@ verdict: <2-3 sentences — does the test phase clear the gate?>
 - Never silently skip a category. `N/A` requires a reason.
 - The three red lines are absolute. No `sleep(N)` async waits; no mocking SUT's own logic; no test you don't expect to fail when the impl breaks.
 - **Scope rule**: Only block on test coverage gaps for behavior *introduced or changed by this PR's diff*. Missing coverage for pre-existing untested code is a non-blocking audit finding at most — file it as a separate issue, not a blocker on this PR.
+
+## Override policy
+
+`block` from a red-line violation (test wouldn't fail under plausible mutation; mocked SUT logic; `sleep`-based async sync; missing coverage for new behavioral unit) is **not PM-overridable**. The user must accept the reviewer's stated `override_path` verbatim; PM cannot self-override. `needs-tests` is the normal pre-write state, not a block. See `agents/project-pm.md` §"User override discipline".
