@@ -3,7 +3,9 @@ description: Route a request to the project-pm agent.
 argument-hint: "<free-form request, e.g. \"status of foo\", \"add /health endpoint to api\">"
 ---
 
-Invoke `project-pm` via Agent. Do not force a model — inherit the main-thread model so the user's own session choice applies (see `docs/model-tier-policy.md` §`/pm`). Brief with: request ($ARGUMENTS), current working directory, and relevant prior-turn context the subagent won't otherwise see.
+**Before invoking the agent, capture a state snapshot.** Run `bash ${PM_DISPATCH_REPO}/scripts/pm-prep-snapshot.sh` from within the target repo's working directory. Extract any `CC-\d+` ticket IDs from `$ARGUMENTS` and pass them as `--focus CC-N,CC-M`. Capture the resulting `/tmp/pm-snapshot-<ts>-<unique>.md` path. If the script errors (e.g. the target repo has no `BACKLOG.md` — common outside pm-dispatch), skip the snapshot but proceed with the dispatch; do not block on this step. Rationale: solves the "PM spends its first phase re-verifying caller-claimed branch/ticket state" failure mode documented in `[[project_memory_architecture]]` and CC-242 retro (see `docs/spikes/CC-060.md`).
+
+Invoke `project-pm` via Agent. Do not force a model — inherit the main-thread model so the user's own session choice applies (see `docs/model-tier-policy.md` §`/pm`). Brief with: request ($ARGUMENTS), current working directory, **`snapshot_file: <abs-path>` when the snapshot was captured above** (PM agent's `## Snapshot ingestion` section in `agents/project-pm.md` treats this as ground truth, preferring it over caller-brief prose for commit SHAs / ticket IDs), and relevant prior-turn context the subagent won't otherwise see.
 
 Relay the PM's user-facing summary. Do not do the PM's job yourself.
 
