@@ -10,21 +10,25 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_SCRIPT="$SCRIPT_DIR/log-usage.sh"
 VIEW_SCRIPT="$SCRIPT_DIR/token-usage.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
+TMP_ROOT="$tmp_root"
 
-fail() {
-  local name="$1" detail="${2:-}"
-  printf '  FAIL  %s\n' "$name"
-  [[ -n "$detail" ]] && printf '        %s\n' "$detail"
-  exit 1
-}
-
-pass_case() {
+# Preserve historical pass/fail format + fail-fast (CC-203 Batch 3 migration).
+pass() {
   PASS=$((PASS + 1))
   printf '  PASS  %s\n' "$1"
+}
+
+fail() {
+  FAIL=$((FAIL + 1))
+  FAILED_CASES+=("$1")
+  printf '  FAIL  %s\n' "$1"
+  [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
+  th_summary
+  exit 1
 }
 
 assert_exit() {
@@ -76,7 +80,9 @@ run_view() {
 # log-usage.sh tests
 # ---------------------------------------------------------------------------
 
-echo "== log-usage =="
+if ! $LIST; then
+  echo "== log-usage =="
+fi
 
 case_happy_path() {
   local name="happy_path" home status
@@ -89,7 +95,7 @@ case_happy_path() {
   assert_contains "$name" "$logfile" '"tokens":390000'
   assert_contains "$name" "$logfile" '"note":"JapanJob PR #24"'
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_note_single_quote() {
@@ -101,7 +107,7 @@ case_note_single_quote() {
   local logfile="$home/.claude/usage-tracker.jsonl"
   assert_contains "$name" "$logfile" '"note":"it'"'"'s done"'
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_note_double_quote() {
@@ -112,7 +118,7 @@ case_note_double_quote() {
   local logfile="$home/.claude/usage-tracker.jsonl"
   assert_contains "$name" "$logfile" '"note":"fix \"thing\""'
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_note_backslash() {
@@ -123,7 +129,7 @@ case_note_backslash() {
   local logfile="$home/.claude/usage-tracker.jsonl"
   assert_contains "$name" "$logfile" '"note":"path\\to\\thing"'
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_note_unicode() {
@@ -134,7 +140,7 @@ case_note_unicode() {
   local logfile="$home/.claude/usage-tracker.jsonl"
   assert_contains "$name" "$logfile" '"note":"已完成 #14 重構"'
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_note_injection_attempt() {
@@ -150,7 +156,7 @@ case_note_injection_attempt() {
   local logfile="$home/.claude/usage-tracker.jsonl"
   jq -e . "$logfile" > /dev/null 2>&1 || fail "$name" "output is not valid JSON"
   assert_line_count "$name" "$logfile" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_tokens_not_integer() {
@@ -161,7 +167,7 @@ case_tokens_not_integer() {
   assert_exit "$name" "$status" 2
   local logfile="$home/.claude/usage-tracker.jsonl"
   [[ ! -f "$logfile" ]] || assert_line_count "$name" "$logfile" 0
-  pass_case "$name"
+  pass "$name"
 }
 
 case_tokens_float_rejected() {
@@ -169,7 +175,7 @@ case_tokens_float_rejected() {
   home="$(new_home "$name")"
   run_log "$home" codex_task "3.14" "pi" > /dev/null 2>&1; status=$?
   assert_exit "$name" "$status" 2
-  pass_case "$name"
+  pass "$name"
 }
 
 case_multiple_appends() {
@@ -179,7 +185,7 @@ case_multiple_appends() {
   run_log "$home" codex_task      50000 "second"
   run_log "$home" pm_synthesis    15000 "third"
   assert_line_count "$name" "$home/.claude/usage-tracker.jsonl" 3
-  pass_case "$name"
+  pass "$name"
 }
 
 case_idempotent_json_per_line() {
@@ -191,7 +197,7 @@ case_idempotent_json_per_line() {
     printf '%s\n' "$line" | jq -e . > /dev/null 2>&1 \
       || fail "$name" "line is not valid JSON: $line"
   done < "$home/.claude/usage-tracker.jsonl"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_file_permissions() {
@@ -200,14 +206,12 @@ case_file_permissions() {
   run_log "$home" codex_task 1 ""
   perms=$(stat -c '%a' "$home/.claude/usage-tracker.jsonl")
   [[ "$perms" == "600" ]] || fail "$name" "expected 600 perms, got $perms"
-  pass_case "$name"
+  pass "$name"
 }
 
 # ---------------------------------------------------------------------------
 # token-usage.sh tests
 # ---------------------------------------------------------------------------
-
-echo "== token-usage =="
 
 write_log() {
   local home="$1" ts="$2" type="$3" tokens="$4" note="${5:-}" pool="${6:-}"
@@ -225,7 +229,7 @@ case_view_missing_logfile() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "No usage log"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_empty_logfile() {
@@ -236,7 +240,7 @@ case_view_empty_logfile() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "Total"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_all_mode() {
@@ -248,7 +252,7 @@ case_view_all_mode() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "all time"
   assert_contains "$name" "$out" "50,000"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_today_mode() {
@@ -264,7 +268,7 @@ case_view_today_mode() {
   assert_contains "$name" "$out" "today (UTC)"
   assert_contains "$name" "$out" "40,000"
   assert_not_contains "$name" "$out" "99,999"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_unknown_mode() {
@@ -274,7 +278,7 @@ case_view_unknown_mode() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --foobar > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 2
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_malformed_line_skipped() {
@@ -288,7 +292,7 @@ case_view_malformed_line_skipped() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out.err" "skipped"
   assert_contains "$name" "$out" "5,000"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_missing_ts_skipped() {
@@ -303,7 +307,7 @@ case_view_missing_ts_skipped() {
   assert_contains "$name" "$out.err" "skipped"
   assert_contains "$name" "$out" "1,000"
   assert_not_contains "$name" "$out" "9,999"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_view_malformed_calibration_warns() {
@@ -315,7 +319,7 @@ case_view_malformed_calibration_warns() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out.err" "malformed"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_round_trip() {
@@ -328,14 +332,12 @@ case_round_trip() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "80,000"
   assert_contains "$name" "$out" "reviewer_critic"
-  pass_case "$name"
+  pass "$name"
 }
 
 # ---------------------------------------------------------------------------
 # log-usage.sh pool field tests
 # ---------------------------------------------------------------------------
-
-echo "== log-usage: pool field =="
 
 case_log_pool_codex() {
   local name="log_pool_codex" home status
@@ -343,7 +345,7 @@ case_log_pool_codex() {
   run_log "$home" codex_dispatch 1100 "dispatch" "" codex; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"codex"'
-  pass_case "$name"
+  pass "$name"
 }
 
 case_log_pool_default() {
@@ -352,7 +354,7 @@ case_log_pool_default() {
   run_log "$home" session_total 2200 "session"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
-  pass_case "$name"
+  pass "$name"
 }
 
 case_log_pool_spark() {
@@ -361,7 +363,7 @@ case_log_pool_spark() {
   run_log "$home" codex_dispatch 3300 "spark dispatch" "" spark; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"spark"'
-  pass_case "$name"
+  pass "$name"
 }
 
 case_log_pool_invalid() {
@@ -372,7 +374,7 @@ case_log_pool_invalid() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
   assert_contains "$name" "$err" "unknown pool"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_excludes_codex_pool() {
@@ -389,7 +391,7 @@ case_remaining_excludes_codex_pool() {
   assert_contains "$name" "$out" "Inferred total limit      : 200,000"
   assert_contains "$name" "$out" "Separate quota tokens     : Codex 5,000,000"
   assert_not_contains "$name" "$out" "10,200,000"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_no_claude_log() {
@@ -404,7 +406,7 @@ case_remaining_no_claude_log() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "no Claude log data"
   assert_contains "$name" "$out" "rate unknown"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_mixed_pools_correct_total() {
@@ -421,7 +423,7 @@ case_remaining_mixed_pools_correct_total() {
   assert_contains "$name" "$out" "Codex   : 200,000"
   assert_contains "$name" "$out" "Total   : 300,000"
   assert_contains "$name" "$out" "Inferred total limit      : 200,000"
-  pass_case "$name"
+  pass "$name"
 }
 
 # ---------------------------------------------------------------------------
@@ -439,8 +441,6 @@ write_calib() {
 # --remaining flag tests
 # ---------------------------------------------------------------------------
 
-echo "== token-usage: --remaining =="
-
 case_remaining_basic_no_calibration() {
   local name="remaining_basic_no_calibration" home out status
   home="$(new_home "$name")"
@@ -455,7 +455,7 @@ case_remaining_basic_no_calibration() {
   assert_contains "$name" "$out" "Remaining tokens"
   assert_contains "$name" "$out" "tokens/hr"
   assert_exit "$name" "$status" 0
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_with_calibration() {
@@ -473,7 +473,7 @@ case_remaining_with_calibration() {
   assert_contains "$name" "$out" "from calibration"
   assert_contains "$name" "$out" "Inferred total limit"
   assert_exit "$name" "$status" 0
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_out_of_range_high() {
@@ -484,7 +484,7 @@ case_remaining_out_of_range_high() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining 101 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$out.err" "0"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_out_of_range_low() {
@@ -495,7 +495,7 @@ case_remaining_out_of_range_low() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining -5 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$out.err" "0"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_not_a_number() {
@@ -506,7 +506,7 @@ case_remaining_not_a_number() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining abc > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$out.err" "must be a number"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_missing_value() {
@@ -517,7 +517,7 @@ case_remaining_missing_value() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out.err" "not found"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_100_no_calibration() {
@@ -528,7 +528,7 @@ case_remaining_100_no_calibration() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 100 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "cannot estimate"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_0_percent() {
@@ -543,7 +543,7 @@ case_remaining_0_percent() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "0  [inferred"
   assert_not_contains "$name" "$out" "tokens/hr"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_calibration_divergence_warning() {
@@ -558,7 +558,7 @@ case_remaining_calibration_divergence_warning() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out.err" "differs"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_codex_dispatch_counted() {
@@ -575,7 +575,7 @@ case_remaining_codex_dispatch_counted() {
   assert_contains "$name" "$out" "205,000"
   assert_not_contains "$name" "$out" "310,000"
   assert_occurrences "$name" "$out" "Codex   : 155,000" 1
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_auto_valid_file() {
@@ -596,7 +596,7 @@ case_remaining_auto_valid_file() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "Remaining (from dashboard): 75"
   rm -rf "$rl_dir"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_remaining_auto_stale_warning() {
@@ -616,7 +616,7 @@ case_remaining_auto_stale_warning() {
   assert_exit "$name" "$status" 0
   if grep -Eq "old|stale" "$out.err"; then
     rm -rf "$rl_dir"
-    pass_case "$name"
+    pass "$name"
   else
     rm -rf "$rl_dir"
     fail "$name" "expected staleness warning, got: $(head -5 "$out.err")"
@@ -639,7 +639,7 @@ case_remaining_auto_missing_file() {
   assert_exit "$name" "$status" 0
   if grep -Eqi "not found|rate-limits" "$out.err"; then
     rm -rf "$rl_dir"
-    pass_case "$name"
+    pass "$name"
   else
     rm -rf "$rl_dir"
     fail "$name" "expected missing-file note, got: $(head -3 "$out.err")"
@@ -663,7 +663,7 @@ case_remaining_auto_out_of_range_percentage() {
   assert_exit "$name" "$status" 0
   if grep -qi "out of range" "$out.err" && ! grep -q "Remaining (from dashboard)" "$out"; then
     rm -rf "$rl_dir"
-    pass_case "$name"
+    pass "$name"
   else
     rm -rf "$rl_dir"
     fail "$name" "expected out-of-range warning and no derived percentage, got stderr: $(head -3 "$out.err")"
@@ -687,7 +687,7 @@ case_remaining_auto_no_five_hour_key() {
   assert_exit "$name" "$status" 0
   if grep -qi "no five_hour" "$out.err"; then
     rm -rf "$rl_dir"
-    pass_case "$name"
+    pass "$name"
   else
     rm -rf "$rl_dir"
     fail "$name" "expected no-five_hour warning, got: $(head -3 "$out.err")"
@@ -711,7 +711,7 @@ case_remaining_auto_malformed_json() {
   assert_exit "$name" "$status" 0
   if grep -qi "could not read" "$out.err"; then
     rm -rf "$rl_dir"
-    pass_case "$name"
+    pass "$name"
   else
     rm -rf "$rl_dir"
     fail "$name" "expected could-not-read warning, got: $(head -3 "$out.err")"
@@ -734,7 +734,7 @@ case_remaining_manual_n_unchanged() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "Remaining (from dashboard): 60"
   rm -rf "$rl_dir"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_codex_old_log_excluded() {
@@ -748,7 +748,7 @@ case_codex_old_log_excluded() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "last 5h"
   assert_not_contains "$name" "$out" "999,000"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_one_dispatch_one_count() {
@@ -761,64 +761,82 @@ case_one_dispatch_one_count() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "155,000"
   assert_not_contains "$name" "$out" "310,000"
-  pass_case "$name"
+  pass "$name"
 }
 
-# ---------------------------------------------------------------------------
-# Run all
-# ---------------------------------------------------------------------------
+run_case() {
+  local name="$1" fn="$2"
+  should_run "$name" || return 0
+  "$fn"
+}
 
-case_happy_path
-case_note_single_quote
-case_note_double_quote
-case_note_backslash
-case_note_unicode
-case_note_injection_attempt
-case_tokens_not_integer
-case_tokens_float_rejected
-case_multiple_appends
-case_idempotent_json_per_line
-case_file_permissions
+run_case "happy_path" case_happy_path
+run_case "note_single_quote" case_note_single_quote
+run_case "note_double_quote" case_note_double_quote
+run_case "note_backslash" case_note_backslash
+run_case "note_unicode" case_note_unicode
+run_case "note_injection_attempt" case_note_injection_attempt
+run_case "tokens_not_integer" case_tokens_not_integer
+run_case "tokens_float_rejected" case_tokens_float_rejected
+run_case "multiple_appends" case_multiple_appends
+run_case "idempotent_json_per_line" case_idempotent_json_per_line
+run_case "file_permissions" case_file_permissions
 
-case_view_missing_logfile
-case_view_empty_logfile
-case_view_all_mode
-case_view_today_mode
-case_view_unknown_mode
-case_view_malformed_line_skipped
-case_view_missing_ts_skipped
-case_view_malformed_calibration_warns
-case_round_trip
+if ! $LIST; then
+  echo
+  echo "== token-usage =="
+fi
 
-case_log_pool_codex
-case_log_pool_default
-case_log_pool_spark
-case_log_pool_invalid
-case_remaining_excludes_codex_pool
-case_remaining_no_claude_log
-case_remaining_mixed_pools_correct_total
+run_case "view_missing_logfile" case_view_missing_logfile
+run_case "view_empty_logfile" case_view_empty_logfile
+run_case "view_all_mode" case_view_all_mode
+run_case "view_today_mode" case_view_today_mode
+run_case "view_unknown_mode" case_view_unknown_mode
+run_case "view_malformed_line_skipped" case_view_malformed_line_skipped
+run_case "view_missing_ts_skipped" case_view_missing_ts_skipped
+run_case "view_malformed_calibration_warns" case_view_malformed_calibration_warns
+run_case "round_trip" case_round_trip
 
-case_remaining_basic_no_calibration
-case_remaining_with_calibration
-case_remaining_out_of_range_high
-case_remaining_out_of_range_low
-case_remaining_not_a_number
-case_remaining_missing_value
-case_remaining_100_no_calibration
-case_remaining_0_percent
-case_remaining_calibration_divergence_warning
-case_remaining_codex_dispatch_counted
-case_remaining_auto_valid_file
-case_remaining_auto_stale_warning
-case_remaining_auto_missing_file
-case_remaining_auto_out_of_range_percentage
-case_remaining_auto_no_five_hour_key
-case_remaining_auto_malformed_json
-case_remaining_manual_n_unchanged
-case_codex_old_log_excluded
-case_one_dispatch_one_count
+if ! $LIST; then
+  echo
+  echo "== log-usage: pool field =="
+fi
 
-echo
-echo "----"
-echo "$PASS passed, 0 failed"
-echo "test-usage-tracker: all cases pass"
+run_case "log_pool_codex" case_log_pool_codex
+run_case "log_pool_default" case_log_pool_default
+run_case "log_pool_spark" case_log_pool_spark
+run_case "log_pool_invalid" case_log_pool_invalid
+run_case "remaining_excludes_codex_pool" case_remaining_excludes_codex_pool
+run_case "remaining_no_claude_log" case_remaining_no_claude_log
+run_case "remaining_mixed_pools_correct_total" case_remaining_mixed_pools_correct_total
+
+if ! $LIST; then
+  echo
+  echo "== token-usage: --remaining =="
+fi
+
+run_case "remaining_basic_no_calibration" case_remaining_basic_no_calibration
+run_case "remaining_with_calibration" case_remaining_with_calibration
+run_case "remaining_out_of_range_high" case_remaining_out_of_range_high
+run_case "remaining_out_of_range_low" case_remaining_out_of_range_low
+run_case "remaining_not_a_number" case_remaining_not_a_number
+run_case "remaining_missing_value" case_remaining_missing_value
+run_case "remaining_100_no_calibration" case_remaining_100_no_calibration
+run_case "remaining_0_percent" case_remaining_0_percent
+run_case "remaining_calibration_divergence_warning" case_remaining_calibration_divergence_warning
+run_case "remaining_codex_dispatch_counted" case_remaining_codex_dispatch_counted
+run_case "remaining_auto_valid_file" case_remaining_auto_valid_file
+run_case "remaining_auto_stale_warning" case_remaining_auto_stale_warning
+run_case "remaining_auto_missing_file" case_remaining_auto_missing_file
+run_case "remaining_auto_out_of_range_percentage" case_remaining_auto_out_of_range_percentage
+run_case "remaining_auto_no_five_hour_key" case_remaining_auto_no_five_hour_key
+run_case "remaining_auto_malformed_json" case_remaining_auto_malformed_json
+run_case "remaining_manual_n_unchanged" case_remaining_manual_n_unchanged
+run_case "codex_old_log_excluded" case_codex_old_log_excluded
+run_case "one_dispatch_one_count" case_one_dispatch_one_count
+
+if ! $LIST; then
+  echo
+  echo "----"
+fi
+th_summary
