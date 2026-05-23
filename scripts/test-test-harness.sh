@@ -315,7 +315,7 @@ case_assert_exit_pass() {
   local expected_out
   expected_out=$'PASS: assert-exit-pass\n1 passed, 0 failed'
   run_harness_probe "$name" 0 "$expected_out" '' \
-    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_exit 'assert-exit-pass' 0 0; th_summary"
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_exit 'assert-exit-pass' 0 0 && pass 'assert-exit-pass'; th_summary"
 }
 
 case_assert_exit_fail() {
@@ -332,7 +332,7 @@ case_assert_file_contains_pass() {
   local expected_out
   expected_out=$'PASS: assert-file-contains-pass\n1 passed, 0 failed'
   run_harness_probe "$name" 0 "$expected_out" '' \
-    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-pass' \"$tmp_file\" 'hello'; th_summary"
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-pass' \"$tmp_file\" 'hello' && pass 'assert-file-contains-pass'; th_summary"
 }
 
 case_assert_file_contains_fail() {
@@ -352,7 +352,7 @@ case_assert_file_matches_pass() {
   local expected_out
   expected_out=$'PASS: assert-file-matches-pass\n1 passed, 0 failed'
   run_harness_probe "$name" 0 "$expected_out" '' \
-    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-pass' \"$tmp_file\" '^[a-z]+[0-9]+$'; th_summary"
+    "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-pass' \"$tmp_file\" '^[a-z]+[0-9]+$' && pass 'assert-file-matches-pass'; th_summary"
 }
 
 case_assert_file_matches_fail() {
@@ -371,7 +371,7 @@ case_assert_string_contains_pass() {
   local expected_out
   expected_out=$'PASS: assert-string-contains-pass\n1 passed, 0 failed'
   run_harness_probe "$name" 0 "$expected_out" '' \
-    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-pass' 'the quick brown fox' 'quick'; th_summary"
+    "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-pass' 'the quick brown fox' 'quick' && pass 'assert-string-contains-pass'; th_summary"
 }
 
 case_assert_string_contains_fail() {

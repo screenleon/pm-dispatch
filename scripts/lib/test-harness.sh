@@ -135,10 +135,19 @@ _th_assert_fail_msg() {
   fi
 }
 
+# assert_* helpers (CC-249 PR-B.1 + CC-254 amendment):
+# On success, return 0 WITHOUT calling pass(). On failure, call fail() and return 1.
+# Consumers control PASS accounting explicitly:
+#   assert_X "$name" ... && pass "$name"
+# Rationale: existing consumer test bodies (~14 files, ~200+ call-sites) already
+# follow the "assert is a check; consumer calls pass" pattern. Auto-calling pass
+# in the helper would double-count when consumers also call pass explicitly.
+# Spike CC-249 originally assumed auto-pass; PR-B.2 surfaced the conflict;
+# CC-254 amendment removed auto-pass to enable pure-rename consumer migration.
+
 assert_exit() {
   local name="$1" actual="$2" expected="$3"
   if [[ "$actual" == "$expected" ]]; then
-    pass "$name"
     return 0
   fi
   fail "$name" "$(_th_assert_fail_msg 'assert_exit' 'actual and expected mismatch' \
@@ -149,7 +158,6 @@ assert_exit() {
 assert_file_contains() {
   local name="$1" file="$2" literal_substring="$3"
   if grep -Fq -- "$literal_substring" "$file"; then
-    pass "$name"
     return 0
   fi
   fail "$name" "$(_th_assert_fail_msg 'assert_file_contains' 'file did not contain literal substring' \
@@ -160,7 +168,6 @@ assert_file_contains() {
 assert_file_matches() {
   local name="$1" file="$2" regex="$3"
   if grep -qE -- "$regex" "$file"; then
-    pass "$name"
     return 0
   fi
   fail "$name" "$(_th_assert_fail_msg 'assert_file_matches' 'file did not match regex' \
@@ -171,7 +178,6 @@ assert_file_matches() {
 assert_string_contains() {
   local name="$1" haystack_string="$2" needle="$3"
   if [[ "$haystack_string" == *"$needle"* ]]; then
-    pass "$name"
     return 0
   fi
 
