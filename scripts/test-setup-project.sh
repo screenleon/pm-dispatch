@@ -5,16 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETUP_SCRIPT="$SCRIPT_DIR/setup-project.sh"
 EXPECTED_ENTRIES=(".agent-trace/" ".codex-briefs/" ".gate-results/" ".agents/")
-
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); printf 'FAIL: %s: %s\n' "$1" "$2"; }
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 init_git_repo() {
   local dir="$1"
@@ -56,7 +49,8 @@ assert_expected_entries_once() {
 test_creates_gitignore_entries() {
   # Happy path: no .gitignore exists — both entries must be created.
   local name="creates-gitignore-entries"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
 
@@ -72,7 +66,8 @@ test_creates_gitignore_entries() {
 test_patches_existing_gitignore() {
   # Existing .gitignore — entries appended, prior content preserved.
   local name="patches-existing-gitignore"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
   printf '*.log\n' > "$dir/.gitignore"
@@ -90,7 +85,8 @@ test_patches_existing_gitignore() {
 test_idempotent_gitignore() {
   # Running twice — no duplicate entries for any managed entry.
   local name="idempotent-gitignore"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
 
@@ -103,7 +99,8 @@ test_idempotent_gitignore() {
 test_dry_run_no_modifications() {
   # --dry-run must not create or modify any files.
   local name="dry-run-no-modifications"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
 
@@ -118,7 +115,8 @@ test_dry_run_no_modifications() {
 test_no_dockerfiles_skips_dockerignore() {
   # No Dockerfiles in tree — .dockerignore must NOT be created.
   local name="no-dockerfiles-skips-dockerignore"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
@@ -132,7 +130,8 @@ test_no_dockerfiles_skips_dockerignore() {
 test_patches_dockerignore_next_to_dockerfile() {
   # Dockerfile present in subdir — co-located .dockerignore patched, existing content kept.
   local name="patches-dockerignore-next-to-dockerfile"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   local svcdir="$dir/service"
   mkdir -p "$svcdir"
   touch "$svcdir/Dockerfile"
@@ -150,7 +149,8 @@ test_patches_dockerignore_next_to_dockerfile() {
 test_already_present_entries() {
   # Entries already in .gitignore — output says "already present", no duplicates.
   local name="already-present-entries"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
   printf '.agent-trace/\n.codex-briefs/\n' > "$dir/.gitignore"
@@ -163,7 +163,8 @@ test_already_present_entries() {
 test_partial_state_no_header_duplicate() {
   # One entry present, one absent — header must appear exactly once after patching.
   local name="partial-state-no-header-duplicate"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
   printf '.agent-trace/\n' > "$dir/.gitignore"
@@ -181,7 +182,8 @@ test_partial_state_no_header_duplicate() {
 
 test_entry_list_parity() {
   local name="entry-list-parity"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
   touch "$dir/Dockerfile"
@@ -204,8 +206,4 @@ run_test test_already_present_entries
 run_test test_partial_state_no_header_duplicate
 run_test test_entry_list_parity
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
