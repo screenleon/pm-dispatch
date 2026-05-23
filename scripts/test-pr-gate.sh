@@ -117,6 +117,59 @@ if [[ "${CODEX_GATE_STUB_MULTIPLE_VERDICTS:-}" == "1" && "$brief_file" != *-synt
   exit 0
 fi
 
+write_frontmatter_stub_gate_result() {
+  local output_path="$1"
+  local final_verdict="${2:-GO}"
+
+  cat > "$output_path" << STUB_GATE_EOF
+---
+gate_result_version: pr_gate_result_v1
+final: ${final_verdict}
+tier: express
+mode: parallel
+most_severe: approve
+reviewers:
+  critic: approve
+  qa-tester: pass
+  architecture-reviewer: approve
+  security-reviewer: pass
+  risk-reviewer: pass
+escalation:
+  recommended: false
+  reviewers: []
+  reason: []
+---
+
+# PR-Gate Result — stub tier (parallel codex mode)
+**Date**: 2026-01-01
+**Reviewers**: stub
+**Not reviewed**: none
+
+## stub-reviewer — advise
+- stub finding
+
+## Cross-Reviewer Overlaps
+none
+
+## Coverage Notes
+**Dimensions not covered**: none
+
+## Gate Conclusion
+**Overall verdict**: pass
+**Most severe individual verdict**: pass
+Final: ${final_verdict}
+Required fixes before GO: none
+
+## Escalation
+**Recommended**: false
+**Reviewers**: none
+**Reason**:
+- none
+
+Rationale: Stub gate output.
+STUB_GATE_EOF
+}
+
 # Determine effective mode: synthesis briefs can have their own mode override.
 if [[ "$brief_file" == *-synthesis.md ]]; then
   effective_mode="${CODEX_GATE_STUB_SYNTHESIS_MODE:-${CODEX_GATE_STUB_MODE:-success}}"
@@ -159,8 +212,18 @@ case "$effective_mode" in
         if [[ -n "${CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL:-}" ]]; then
           extra_final_line="Final: ${CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL}"$'\n'
         fi
-        printf '# PR-Gate Result — stub tier (parallel codex mode)\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub output.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: %s\n%s\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub synthesis output.\n' "$final_verdict" "$extra_final_line" > "$output_path"
+        write_frontmatter_stub_gate_result "$output_path" "$final_verdict"
+        if [[ -n "$extra_final_line" ]]; then
+          printf '%s' "$extra_final_line" >> "$output_path"
+        fi
       else
+        # Sequential result file should include frontmatter blocks and escalation section.
+        if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ || \
+              "$brief_file" =~ ^.*/pr-gate-claude-[0-9]{8}-[0-9]{6}-combined\.md$ ]]; then
+          final_verdict="${CODEX_GATE_STUB_SYNTHESIS_FINAL:-GO}"
+          write_frontmatter_stub_gate_result "$output_path" "$final_verdict"
+          exit 0
+        fi
         # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
         printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
@@ -1191,8 +1254,8 @@ if [[ "$brief_file" == *-synthesis.md ]]; then
   if [[ -n "$reviewer_artifact" ]]; then
     printf 'tampered-by-synthesis\n' >> "$reviewer_artifact"
   fi
-  # Write valid synthesis output so other checks pass
-  printf '# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
+  # Write valid synthesis output so other checks pass (frontmatter required by CC-250 parity check)
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: skipped\n  qa-tester: skipped\n  architecture-reviewer: skipped\n  security-reviewer: skipped\n  risk-reviewer: skipped\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\n## Escalation\n**Recommended**: false\n**Reviewers**: none\n**Reason**:\n- none\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
 else
   stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
   printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
@@ -1384,6 +1447,212 @@ test_reviewer_cross_artifact_tamper_detected() {
   fi
   assert_contains "$name" "$err" "cross-reviewer artifact tampering" || return
   assert_not_contains "$name" "$out" "[synthesis]" || return
+  pass "$name"
+}
+
+test_gate_result_frontmatter_and_escalation() {
+  local name="gate-result-frontmatter-escalation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
+    --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ "$(head -n 1 "$result")" != "---" ]]; then
+    fail "$name" "frontmatter block must start with ---"
+    return
+  fi
+  local frontmatter_end
+  frontmatter_end="$(awk 'BEGIN{s=0} /^---$/ { s++; if (s == 2) { print NR; exit } }' "$result")"
+  if [[ -z "$frontmatter_end" ]]; then
+    fail "$name" "frontmatter block must have a closing ---"
+    return
+  fi
+  local frontmatter
+  frontmatter="$(sed -n "1,${frontmatter_end}p" "$result")"
+  if ! printf '%s\n' "$frontmatter" | grep -q '^gate_result_version: pr_gate_result_v1$'; then
+    fail "$name" "frontmatter missing gate_result_version: pr_gate_result_v1"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -Eq '^final: (GO|NO-GO)$'; then
+    fail "$name" "missing frontmatter final in GO|NO-GO form"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^reviewers:$'; then
+    fail "$name" "frontmatter missing reviewers map"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*critic:'; then
+    fail "$name" "frontmatter missing critic verdict"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*qa-tester:'; then
+    fail "$name" "frontmatter missing qa-tester verdict"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*architecture-reviewer:'; then
+    fail "$name" "frontmatter missing architecture-reviewer verdict"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*security-reviewer:'; then
+    fail "$name" "frontmatter missing security-reviewer verdict"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*risk-reviewer:'; then
+    fail "$name" "frontmatter missing risk-reviewer verdict"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^escalation:$'; then
+    fail "$name" "frontmatter missing escalation block"
+    return
+  fi
+  if ! printf '%s\n' "$frontmatter" | grep -q '^[[:space:]]*recommended: '; then
+    fail "$name" "frontmatter missing escalation recommendation"
+    return
+  fi
+  assert_contains "$name" "$result" "## Escalation" || return
+  assert_contains "$name" "$result" "**Recommended**:" || return
+  assert_contains "$name" "$result" "**Reviewers**:" || return
+  assert_contains "$name" "$result" "**Reason**:" || return
+  pass "$name"
+}
+
+test_gate_result_final_line_back_compat() {
+  local name="gate-result-final-line-back-compat"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+    "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  local final_count
+  final_count="$(awk '/^Final: (GO|NO-GO)$/{count++} END {print count+0}' "$result")"
+  if [[ "$final_count" -ne 1 ]]; then
+    fail "$name" "expected exactly one Final line, got $final_count"
+    return
+  fi
+  pass "$name"
+}
+
+test_frontmatter_escalation_parity() {
+  local name="frontmatter-escalation-parity"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  local fm
+  local body
+  fm="$(awk 'BEGIN{front=0} /^---$/ { if (front == 0) {front=1; next} else if (front == 1) {exit} } front && /^  recommended: / {print $2; exit}' "$result")"
+  body="$(awk 'BEGIN{in_block=0} /^## Escalation/{in_block=1; next} in_block && /^\*\*Recommended\*\*:/ {print $2; exit}' "$result")"
+  if [[ -z "$fm" || -z "$body" ]]; then
+    fail "$name" "missing escalation recommendation in frontmatter or body"
+    return
+  fi
+  if [[ "$fm" != "$body" ]]; then
+    fail "$name" "frontmatter escalation ($fm) does not match body escalation ($body)"
+    return
+  fi
+  pass "$name"
+}
+
+test_base_detection_via_gh_pr_view() {
+  local name="base-detection-via-gh-pr-view"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" fakegh="$dir/fake-gh"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir" "$fakegh"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$fakegh/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+echo "main"
+exit 0
+FAKE_GH
+  chmod +x "$fakegh/gh"
+
+  set +e
+  PATH="$fakegh:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" --output "$result" 2>/dev/null
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" "pr-gate: base detected from gh pr view: main" || return
+  if ! grep -Eq '^Final: (GO|NO-GO)$' "$result"; then
+    fail "$name" "final line missing in gate output"
+    return
+  fi
+  pass "$name"
+}
+
+test_base_detection_gh_fallback() {
+  local name="base-detection-gh-fallback"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" fakegh="$dir/fake-gh"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir" "$fakegh"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$fakegh/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+exit 1
+FAKE_GH
+  chmod +x "$fakegh/gh"
+
+  set +e
+  PATH="$fakegh:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" --output "$result" 2>/dev/null
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_not_contains "$name" "$out" "base detected from gh pr view" || return
   pass "$name"
 }
 
@@ -1628,6 +1897,9 @@ run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_sequential_flag_produces_combined_brief
+run_test test_gate_result_frontmatter_and_escalation
+run_test test_gate_result_final_line_back_compat
+run_test test_frontmatter_escalation_parity
 run_test test_failed_reviewer_aborts_gate
 run_test test_synthesis_verdict_mismatch_aborts_gate
 run_test test_post_synthesis_injection_detected
@@ -1644,6 +1916,8 @@ run_test test_hash_tool_missing_aborts_gate
 run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_multiple_verdict_lines_aborts_gate
 run_test test_reviewer_cross_artifact_tamper_detected
+run_test test_base_detection_via_gh_pr_view
+run_test test_base_detection_gh_fallback
 run_test test_adjacent_go_test_included
 run_test test_adjacent_ts_test_in_tests_dir
 run_test test_adjacent_ts_test_tsx_variant

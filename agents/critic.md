@@ -57,3 +57,7 @@ verdict: <2-3 sentences>
 - Never use `block-soft` for taste-level disagreements — those go in `advise`.
 - Be specific. "Line 42 swallows the DB error and returns 200" — not "error handling could be better".
 - **Scope rule**: Only block on issues *introduced or worsened by this PR's diff*. Pre-existing issues the diff does not touch must not be blocking verdicts — list them as `advise` at most. If unsure whether an issue pre-existed, use `git log`/`git blame` to verify before blocking.
+
+## Override policy
+
+`block-soft` is overridable. PM may override with written reasoning recorded in project memory (`Decisions / constraints` section) and shown in the gate summary. `advise` is non-blocking by definition. See `agents/project-pm.md` §"User override discipline" for the override protocol.

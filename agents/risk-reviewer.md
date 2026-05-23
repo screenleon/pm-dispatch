@@ -71,3 +71,8 @@ override_path: <exact statement user must make, or "none — must be fixed">
 - Risk ≠ security: "what breaks if wrong" not "what an attacker does" (that's security-reviewer).
 - Be specific: "Adding NOT NULL to `users.role` (migration 0042 line 12) on a 50M-row table without backfill locks writes during ALTER and fails under concurrent INSERTs" — not "migration is risky".
 - **Scope rule**: Only block on risks *introduced or worsened by this PR's diff*. Pre-existing risks the diff does not touch must be `advise` at most. If unsure whether a risk pre-existed, verify with `git log`/`git blame` before issuing a block.
+
+## Override policy
+
+`block` is **not PM-overridable** — same hard-gate discipline as security-reviewer. Only the user overrides, by quoting the reviewer's `override_path:` verbatim (or by stating the same scope in their own words). PM may not paraphrase or imply consent.
+See `agents/project-pm.md` §"User override discipline".

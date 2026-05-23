@@ -27,6 +27,12 @@
 | CC-217 | claude-executor 背景 dispatch | ✅ (#124) |
 | CC-060 | Codex model/config 外部化 | ✅ (#131) |
 
+### M1 prerequisite — gate-infra typed surface
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-250 | `/pr-gate v2` typed result + escalation hint（為 CC-231 reviewer-policy 抽取提供 typed gate output surface） | ⏳ |
+
 ### M1 — state / schema substrate（核心交付）
 
 | 票號 | 說明 | 狀態 |

@@ -84,8 +84,23 @@ cd "$WORK_DIR"
 if [[ -n "$BASE_OVERRIDE" ]]; then
   BASE="$BASE_OVERRIDE"
 else
-  BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
-  : "${BASE:=main}"
+  if command -v gh >/dev/null 2>&1; then
+    if GH_BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null); then
+      if [[ -n "$GH_BASE" ]]; then
+        BASE="$GH_BASE"
+        printf 'pr-gate: base detected from gh pr view: %s\n' "$BASE"
+      else
+        BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+        : "${BASE:=main}"
+      fi
+    else
+      BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+      : "${BASE:=main}"
+    fi
+  else
+    BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+    : "${BASE:=main}"
+  fi
 fi
 if ! git rev-parse --verify "$BASE" > /dev/null 2>&1; then
   printf 'Error: base ref not found: %s\n' "$BASE" >&2
@@ -388,6 +403,24 @@ task:
   Write the complete result to ${OUTPUT_FILE}.
 
 output_format: |
+  ---
+  gate_result_version: pr_gate_result_v1
+  final: GO|NO-GO
+  tier: express|standard|full|targeted
+  mode: sequential
+  most_severe: approve|advise|block-soft|block
+  reviewers:
+    critic: approve|advise|block-soft|skipped
+    qa-tester: pass|needs-tests|block|skipped
+    architecture-reviewer: approve|advise|block-soft|skipped
+    security-reviewer: pass|block|pass-not-applicable|skipped
+    risk-reviewer: pass|block|pass-not-applicable|skipped
+  escalation:
+    recommended: true|false
+    reviewers: []
+    reason: []
+  ---
+
   # PR-Gate Result — ${TIER} tier (codex mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
@@ -407,8 +440,18 @@ output_format: |
   ## Gate Conclusion
   **Overall verdict**: {most severe}
   **Most severe individual verdict**: {most severe}
-  Final: GO | NO-GO
+  Final: GO|NO-GO
   {required fixes if NO-GO; override path if any block-soft}
+
+  ## Escalation
+  **Recommended**: true|false
+  **Reviewers**: <comma-list or "none">
+  **Reason**:
+  - <bullet> (or "none" when recommended=false)
+
+  Escalation is recommended when:
+  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/
+  (b) at least one reviewer returned advise|block-soft.
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
@@ -737,6 +780,24 @@ task:
   5. Write the complete consolidated result to ${OUTPUT_FILE}.
 
 output_format: |
+  ---
+  gate_result_version: pr_gate_result_v1
+  final: GO|NO-GO
+  tier: ${TIER}
+  mode: parallel
+  most_severe: approve|advise|block-soft|block
+  reviewers:
+    critic: approve|advise|block-soft|skipped
+    qa-tester: pass|needs-tests|block|skipped
+    architecture-reviewer: approve|advise|block-soft|skipped
+    security-reviewer: pass|block|pass-not-applicable|skipped
+    risk-reviewer: pass|block|pass-not-applicable|skipped
+  escalation:
+    recommended: true|false
+    reviewers: []
+    reason: []
+  ---
+
   # PR-Gate Result — ${TIER} tier (parallel codex mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
@@ -758,9 +819,18 @@ output_format: |
   ## Gate Conclusion
   **Overall verdict**: {most severe across all reviewers}
   **Most severe individual verdict**: {most severe}
-  Final: GO | NO-GO
+  Final: GO|NO-GO
+  {required fixes if NO-GO; override path if any block or block-soft}
 
-  Required fixes before GO: {bulleted list if NO-GO; "none" if GO}
+  ## Escalation
+  **Recommended**: true|false
+  **Reviewers**: <comma-list or "none">
+  **Reason**:
+  - <bullet> (or "none" when recommended=false)
+
+  Escalation is recommended when:
+  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/
+  (b) at least one reviewer returned advise|block-soft.
 
   Recommended follow-ups:
   {non-blocking improvements from advise-level findings, if any}
@@ -801,6 +871,16 @@ SBRIEF_P2
   if [[ "$SYNTHESIS_FINAL" != "$SHELL_FINAL" ]]; then
     printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) — gate result may have been manipulated.\n' \
       "$SYNTHESIS_FINAL" "$SHELL_FINAL" >&2
+    exit 1
+  fi
+  FRONTMATTER_FINAL=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$OUTPUT_FILE")
+  if [[ -z "$FRONTMATTER_FINAL" ]]; then
+    printf 'Error: gate result frontmatter final missing: cannot verify shell/Synthesis parity.\n' >&2
+    exit 1
+  fi
+  if [[ "$FRONTMATTER_FINAL" != "$SHELL_FINAL" ]]; then
+    printf 'Error: frontmatter final (%s) does not match shell-computed verdict (%s).\n' \
+      "$FRONTMATTER_FINAL" "$SHELL_FINAL" >&2
     exit 1
   fi
 

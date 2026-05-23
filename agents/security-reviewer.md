@@ -69,3 +69,7 @@ override_path: <exact statement user must make to override, or "none — must be
 - Be reproducible: cite file:line and the exact problematic construct.
 - If the diff is too large to review thoroughly, decline — do not rubber-stamp.
 - **Scope rule**: Only block on vulnerabilities *introduced or worsened by this PR's diff*. Pre-existing security gaps the diff does not touch must be `advise` at most — they warrant a separate issue, not a PR block. Verify pre-existence with `git log`/`git blame` before blocking.
+
+## Override policy
+
+`block` is **not PM-overridable**. Only the user overrides, and only by quoting the reviewer's `override_path:` verbatim (or by stating the same scope in their own words). PM may not paraphrase, summarise, or imply consent on the user's behalf. See `agents/project-pm.md` §"User override discipline".

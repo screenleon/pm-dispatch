@@ -59,3 +59,7 @@ verdict: <2-3 sentences>
 - Be specific: "Module A imports three internals of module B (lines X/Y/Z); should go through B's public interface" — not "coupling too high".
 - If the diff is too small for architecture review, say so and pass.
 - **Scope rule**: Only block on structural issues *introduced or worsened by this PR's diff*. Pre-existing design gaps the diff does not touch must be `advise` at most. If unsure whether an issue pre-existed, check `git log`/`git blame` before blocking.
+
+## Override policy
+
+`block-soft` is overridable. PM may override with written reasoning recorded in project memory (`Decisions / constraints` section) and shown in the gate summary. Architecture verdicts are advisory; structural concerns surfaced as `advise` do not block. See `agents/project-pm.md` §"User override discipline".
