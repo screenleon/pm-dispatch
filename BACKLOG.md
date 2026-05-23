@@ -152,9 +152,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
 | CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
 | CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
-| CC-249 | ⏸ deferred | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
+| CC-249 | 🟢 someday | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Result log: docs/spikes/CC-249.md. Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
 | CC-250 | ✅ closed 2026-05-23 | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:#144 | P2 | oss |
 | CC-251 | 🔵 active | **[brief-authoring discipline for multi-file dispatches]** 3 patterns added to `agents/project-pm.md` + `docs/dispatch-brief.md` to prevent codex apply_patch debug-loop hang on > 4 files OR > 50 lines verbatim briefs: (1) apply_patch retry-cap (HALT after 2nd consecutive failure on same file, no 3rd retry), (2) verbatim-as-attached-file (write embedded content to /tmp/<task>-content/*.md, brief references path), (3) `expected_head_sha` state pin (40-char sha + self_verify check). Memory `[[feedback_codex_brief_discipline]]` documents the CC-247/248 + CC-250 retro evidence. Long-term resolution: CC-235 tiered lifecycle gate enforces split + CC-244 typed schema. | process | 2026-05-23 | pr:TBD | P3 | oss |
+| CC-252 | 🔵 active | **[/pr-gate brief template: harden `Final:` line emission]** Discovered while running /pr-gate on CC-249 spike (#146 area): the CC-250 (#144) brief template asks codex to write `Final: GO\|NO-GO` in `## Gate Conclusion`, but codex applied prose markdown emphasis (`**Final: GO**`), which fails pr-gate.sh's `^Final: (GO\|NO-GO)$` parity grep → false-negative exit-1 even though the verdict is GO. Fix: the brief template in `scripts/pr-gate.sh` MUST tell codex the `Final:` line is **exact format, no bold, no leading/trailing markup, at start-of-line**, and add a frontmatter-vs-Final-line parity self-check to the template (the verdict in frontmatter `final:` must match the Final line). Discovered as a CC-250 follow-up; the verdict-extraction works, only the back-compat regex fails. | gate/ops | 2026-05-23 | pr:TBD | P3 | oss |
 
 ---
 
@@ -1621,3 +1622,23 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P3 — discipline polish; not a blocker but every future > 4-file dispatch should apply the patterns.
 
 **Cross-link**: CC-247/CC-248 (#142 retro), CC-250 (#144 retro), CC-235 (tiered-lifecycle-gate that would enforce split mechanically), CC-244 (typed pipeline that would turn verbatim into schema fields), CC-215 (pmctl `--expect-head` wrapper option), memory `[[feedback_codex_brief_discipline]]`.
+
+## CC-252 — `/pr-gate` brief template: harden `Final:` line emission（active）
+
+**Problem**: The CC-250 (#144) brief template inside `scripts/pr-gate.sh` instructs codex to write `Final: GO|NO-GO` in the `## Gate Conclusion` section, but does not specify that the line must be at start-of-line with no markdown emphasis. Codex applies prose markdown convention (e.g., `**Final: GO**` bold) which fails `pr-gate.sh`'s back-compat parity grep `^Final: (GO|NO-GO)$` — gate exits 1 even when the verdict is GO. Observed on CC-249 spike dispatch 2026-05-23.
+
+**Why**: The verdict frontmatter (CC-250 item A) carries the machine-readable verdict and works correctly, but the legacy `Final:` line is the back-compat anchor for any downstream tool / human parser that didn't migrate to frontmatter. False-negative gate exits cause local-run confusion and would break CI gating if any downstream tool uses pr-gate.sh's exit code as a quality signal.
+
+**Requirement**:
+- Both brief templates in `scripts/pr-gate.sh` (sequential + parallel synthesis) MUST explicitly tell codex: "Emit the `Final:` line **at start of line, plain text, no markdown emphasis (no `**`, no backticks), exact format `Final: GO` or `Final: NO-GO`**".
+- Add a frontmatter-vs-Final-line parity instruction: codex must verify that frontmatter `final:` value matches the `Final:` line value (case-sensitive match on GO/NO-GO).
+- `test-pr-gate.sh` add regression case: synthesis stub that writes `**Final: GO**` must trigger the back-compat check failure (not silently pass).
+
+**Acceptance**:
+- After the brief-template fix, /pr-gate exit code matches the verdict (GO → 0, NO-GO → non-zero); no false-negative exits on bold-Final emission.
+- Regression test in test-pr-gate.sh covers the bold-Final failure mode.
+- `bash scripts/test-pr-gate.sh` passes; `bash pm/scripts/validate.sh BACKLOG.md` parity preserved at baseline.
+
+**Priority**: P3 — gate-infra polish; verdict itself is correct, only the exit-code parser is sensitive to format drift.
+
+**Cross-link**: CC-250 (#144 origin), `[[feedback_codex_brief_discipline]]` (paraphrase-prevention discipline — related failure mode), `scripts/pr-gate.sh` (brief templates around L350 sequential + L520 parallel synthesis).
