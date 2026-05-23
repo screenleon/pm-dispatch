@@ -4,16 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCH_SCRIPT="$SCRIPT_DIR/patch-gitignore.sh"
-
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); printf 'FAIL: %s: %s\n' "$1" "$2"; }
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 assert_contains() {
   local name="$1" file="$2" needle="$3"
@@ -42,9 +35,10 @@ count_entry() {
 
 test_non_git_skips_silently() {
   local name="non-git-skips-silently"
-  local dir="$TMP_ROOT/$name"
-  local out="$TMP_ROOT/$name.out"
-  local err="$TMP_ROOT/$name.err"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
   mkdir -p "$dir"
 
   bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" >"$out" 2>"$err"
@@ -61,7 +55,8 @@ test_non_git_skips_silently() {
 
 test_adds_entries_and_is_idempotent() {
   local name="adds-entries-and-is-idempotent"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   init_git_repo "$dir"
 
   bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".codex-briefs/" ".gate-results/"
@@ -84,7 +79,8 @@ test_adds_entries_and_is_idempotent() {
 
 test_dry_run_writes_nothing() {
   local name="dry-run-writes-nothing"
-  local dir="$TMP_ROOT/$name"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
   local out
   init_git_repo "$dir"
 
@@ -100,10 +96,11 @@ test_dry_run_writes_nothing() {
 
 test_rejects_symlink_gitignore() {
   local name="rejects-symlink-gitignore"
-  local dir="$TMP_ROOT/$name"
-  local target="$TMP_ROOT/$name-elsewhere-target"
-  local out="$TMP_ROOT/$name.out"
-  local err="$TMP_ROOT/$name.err"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
+  local target="$tmp_root/$name-elsewhere-target"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
   init_git_repo "$dir"
   printf 'pre-existing\n' > "$target"
   ln -s "$target" "$dir/.gitignore"
@@ -133,10 +130,11 @@ test_rejects_symlink_gitignore() {
 
 test_rejects_symlink_dry_run() {
   local name="rejects-symlink-dry-run"
-  local dir="$TMP_ROOT/$name"
-  local target="$TMP_ROOT/$name-elsewhere-target"
-  local out="$TMP_ROOT/$name.out"
-  local err="$TMP_ROOT/$name.err"
+  should_run "$name" || return 0
+  local dir="$tmp_root/$name"
+  local target="$tmp_root/$name-elsewhere-target"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
   init_git_repo "$dir"
   printf 'pre-existing\n' > "$target"
   ln -s "$target" "$dir/.gitignore"
@@ -176,8 +174,4 @@ run_test test_dry_run_writes_nothing
 run_test test_rejects_symlink_gitignore
 run_test test_rejects_symlink_dry_run
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
