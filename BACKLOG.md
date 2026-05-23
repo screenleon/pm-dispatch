@@ -150,6 +150,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-065 | 🟡 deferred | Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P3 | — |
 | CC-066 | 🟡 deferred | Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P3 | design |
 | CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
+| CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:TBD | P2 | reuse-debt |
+| CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
+| CC-249 | ⏸ deferred | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:TBD | P3 | reuse-debt |
 
 ---
 
@@ -1491,3 +1494,63 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Test additions**: `cli-stdout-echoes-out-path` (assert stdout matches the path passed to `--out`), `cli-stdout-echoes-default-path` (assert default invocation prints a valid path to a real file). Also de-staled `frontmatter-core-fields: backlog_next_id` (was literal `CC-245`, now regex `CC-[0-9]+` so future ticket additions don't break it).
 
 **See**: CC-243, CC-245.
+
+## CC-247 — `th_init --format=<preset>`: 6-preset enum for residual print-format overrides（active）
+
+**Problem**: After the CC-203 GROUP-B migration, 6 `test-*.sh` files still carry per-file `pass`/`fail` print-format overrides because the canonical `th_init` print format does not match what each test's golden output / VERBOSE convention expects. The override pattern violates the "harness is single source of truth for output" intent of CC-203 and re-introduces the drift CC-203 was meant to remove.
+
+**Why**: The user prefers perfect DRY over harness minimalism (D3 decision 2026-05-23). The 6 surviving variants are a small, enumerable set — each maps cleanly to one of 6 print-format preset combinations (indent on/off × colon-suffix on/off × VERBOSE-gated on/off, minus impossible combinations). Encoding them as named presets (`--format=<name>`) keeps the harness as the single source of truth while letting each consumer pick its preset declaratively. No per-file override remains after this lands.
+
+**Requirement**:
+- Add a `--format=<preset>` flag to `th_init` in `scripts/lib/test-harness.sh` accepting exactly 6 preset names (final names + per-consumer mapping to be enumerated in the PR A brief based on a focused survey of the 6 consumer files — survey is OWNER of PR A brief, not this docs PR).
+- After PR A merges, zero per-file `pass`/`fail` overrides remain in the 6 known consumer files.
+- `--format=<unknown>` exits non-zero with a clear error (closed enum, not free-form string).
+
+**Acceptance**:
+- All 6 consumer test scripts pass with their original golden output after migration.
+- `grep -nE '^(pass|fail)\(\)' scripts/test-*.sh` returns zero matches in the 6 known consumers post-migration.
+- `bash scripts/run-tests.sh` exit 0 (no regression).
+
+**Priority**: P2 — reuse-debt, blocks the "no more per-file format overrides" invariant CC-203 implicitly promised.
+
+**Cross-link**: CC-203 (origin epic), CC-248 (sibling harness option — bundle in PR A).
+
+## CC-248 — `th_init --fail-fast`: promote fail-fast to harness option（active）
+
+**Problem**: Three test scripts — `test-usage-weekly.sh`, `test-usage-tracker.sh`, `test-skill-refine.sh` — currently use per-script `exit 1` inside their custom `fail()` override to terminate on first failure instead of collecting all failures via the harness's default collect-all behavior. The override re-introduces a per-file format-divergence path that CC-203 set out to remove.
+
+**Why**: Fail-fast vs collect-all is a legitimate, project-internal preference (mostly used where a failure invalidates all subsequent cases, e.g. shared state setup). Promoting it from "patch the harness override" to a first-class `th_init --fail-fast` option keeps the harness as the single source of truth and lets these 3 consumers express intent declaratively. Bundled with CC-247 in PR A — both are "remove the per-file `pass`/`fail` override class".
+
+**Requirement**:
+- Add `--fail-fast` flag to `th_init` in `scripts/lib/test-harness.sh`. When set, the first failing case causes `th_summary` (or the `fail()` path) to terminate the run with non-zero exit immediately; default behavior unchanged.
+- The 3 consumer scripts switch from per-script `exit 1` override to `th_init --fail-fast`.
+
+**Acceptance**:
+- The 3 consumer scripts retain fail-fast semantics (regression test: inject a failing case early and confirm subsequent cases do not run).
+- Default-mode scripts (collect-all) untouched — `bash scripts/run-tests.sh` exit unchanged.
+- Zero per-script `exit 1` in `fail()` overrides remain across these 3 files.
+
+**Priority**: P3 — reuse-debt; smaller blast radius than CC-247 but ships in same PR A.
+
+**Cross-link**: CC-203 (origin epic), CC-247 (sibling harness option — bundle in PR A).
+
+## CC-249 — Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh`（deferred）
+
+**Problem**: The shared test-harness exposes assertion helpers with non-uniform contracts that have drifted as more consumers migrated under CC-203:
+- `assert_contains` has 3 different call signatures observed across the harness + consumers (haystack-first, needle-first, and a third variant where the message is positional vs keyword). Consumers each picked a variant; the harness accepts the union loosely.
+- `assert_exit` has an arg-order conflict — some consumers call `assert_exit <expected> <actual>` and others call `assert_exit <actual> <expected>`. Both currently pass silently when the values are equal, masking the divergence.
+
+**Why**: Divergent assertion contracts re-introduce the per-file-style cost CC-203 was supposed to retire. Consolidating to a single signature per helper is the right shape, but the unified API is not obvious from the call-sites alone — picking the wrong signature forces N consumer rewrites with high risk of behavior regression in the assertion-failure path. Therefore this ticket is **gated by a `/pre-impl` spike** (PR B sequence): the spike enumerates the divergent call-sites, picks the unified signature, and decides whether to break compat (call-site rewrite) or accept a multi-arity shim. Implementation only after the spike resolves.
+
+**Requirement**:
+- `/pre-impl` spike output documents: (a) all call-site variants of `assert_contains` and `assert_exit` in the harness + every migrated consumer; (b) chosen unified signature per helper; (c) migration strategy (break-and-rewrite vs multi-arity shim); (d) any deprecation path for legacy callers.
+- Implementation PR (PR B) follows the spike's chosen signature; consumers updated in lockstep; assertion-failure messages remain at-least-as-informative as the pre-consolidation versions.
+
+**Acceptance**:
+- Single signature per assertion helper documented in the harness header comment.
+- Every consumer in `scripts/test-*.sh` uses the unified signature.
+- Regression test (in `test-test-harness.sh`) exercises both the pass and fail path for each consolidated helper.
+
+**Priority**: P3 — reuse-debt; correctness ceiling, not a daily friction. Spike first, implement second.
+
+**Cross-link**: CC-203 (origin epic), CC-247 / CC-248 (sibling harness work — separate PR A), `commands/pre-impl.md` (spike gate).
