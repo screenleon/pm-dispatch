@@ -40,6 +40,14 @@ Use as needed; not all briefs require all of them.
     - spark pool: --model *spark* → pool=spark in log entry
     - log failure: log-usage.sh unavailable → dispatch still exits 0
   ```
+- **`expected_head_sha`** — **Recommended for any brief that touches > 4 files OR depends on a specific base commit**. 40-char git HEAD sha the brief was authored against. Codex should verify `git rev-parse HEAD == <sha>` at dispatch start; mismatch → HALT and report (catches "wrong branch / branch advanced / file changed under me" failures before any patch is attempted). Example:
+  ```
+  expected_head_sha: e2711dd802a3...
+  ```
+  And in `self_verify`:
+  ```
+  - expected-head: bash -c "[[ \$(git rev-parse HEAD) == e2711dd802a3... ]]"
+  ```
 
 ## Brief skeletons
 
