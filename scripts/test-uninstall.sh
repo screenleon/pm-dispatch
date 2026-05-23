@@ -9,22 +9,14 @@ UNINSTALL="$REPO_ROOT/uninstall.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
 
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() {
-  printf 'PASS: %s\n' "$1"
-  PASS=$((PASS + 1))
-}
-
-fail() {
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
+run_case() {
+  local name="$1" fn="$2"
+  should_run "$name" || return 0
+  "$fn"
 }
 
 assert_contains() {
@@ -865,34 +857,28 @@ test_claude_home_symlink() {
   fi
 }
 
-test_no_manifest
-test_symlink_removed
-test_symlink_foreign
-test_copy_sha_match
-test_copy_sha_mismatch
-test_dry_run
-test_empty_dir_removed
-test_hooks_called
-test_copy_dir_sha_match
-test_copy_dir_sha_mismatch
-test_dry_run_copy
-test_unknown_flag
-test_manifest_edge_branches
-test_skip_preserves_manifest
-test_skip_copy_preserves_manifest
-test_out_of_root_dst_rejected
-test_out_of_root_copy_rejected
-test_dot_dot_traversal_rejected
-test_hooks_failure_preserves_manifest
-test_multi_line_manifest_preserved
-test_symlink_parent_traversal_rejected
-test_symlink_parent_no_realpath_rejected
-test_claude_home_symlink
+run_case "TC-01 no-manifest" test_no_manifest
+run_case "TC-02 symlink-removed" test_symlink_removed
+run_case "TC-03 symlink-foreign" test_symlink_foreign
+run_case "TC-04 copy-sha-match" test_copy_sha_match
+run_case "TC-05 copy-sha-mismatch" test_copy_sha_mismatch
+run_case "TC-06 dry-run" test_dry_run
+run_case "TC-07 empty-dir-removed" test_empty_dir_removed
+run_case "TC-08 hooks-called" test_hooks_called
+run_case "TC-09 copy-dir-sha-match" test_copy_dir_sha_match
+run_case "TC-10 copy-dir-sha-mismatch" test_copy_dir_sha_mismatch
+run_case "TC-11 dry-run-copy" test_dry_run_copy
+run_case "TC-12 unknown-flag" test_unknown_flag
+run_case "TC-13 manifest-edge-branches" test_manifest_edge_branches
+run_case "TC-14 skip-preserves-manifest" test_skip_preserves_manifest
+run_case "TC-15 skip-copy-preserves-manifest" test_skip_copy_preserves_manifest
+run_case "TC-16 out-of-root-dst-rejected" test_out_of_root_dst_rejected
+run_case "TC-17 out-of-root-copy-rejected" test_out_of_root_copy_rejected
+run_case "TC-18 dot-dot-traversal-rejected" test_dot_dot_traversal_rejected
+run_case "TC-19 hooks-failure-preserves-manifest" test_hooks_failure_preserves_manifest
+run_case "TC-20 multi-line-manifest-preserved" test_multi_line_manifest_preserved
+run_case "TC-21 symlink-parent-traversal-rejected" test_symlink_parent_traversal_rejected
+run_case "TC-22 symlink-parent-no-realpath-rejected" test_symlink_parent_no_realpath_rejected
+run_case "TC-23 claude-home-symlink" test_claude_home_symlink
 
-if [[ "$FAIL" -gt 0 ]]; then
-  printf '%s passed, %s failed\n' "$PASS" "$FAIL"
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}"
-  exit 1
-fi
-
-printf '%s passed, %s failed\n' "$PASS" "$FAIL"
+th_summary
