@@ -5,23 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ORIGINAL_PATH="$PATH"
 
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
+
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() {
-  PASS=$((PASS + 1))
-  printf 'PASS: %s\n' "$1"
-}
-
-fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-}
 
 assert_contains() {
   local name="$1" file="$2" needle="$3"
@@ -447,6 +436,7 @@ test_commands_pr_gate_md_has_both_routes() {
 
 run_case() {
   local name="$1" fn="$2"
+  should_run "$name" || return 0
   if "$fn"; then
     :
   else
@@ -464,8 +454,4 @@ run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "pr-gate-handover-fence-shape" test_pr_gate_handover_fence_shape
 run_case "commands-pr-gate-md-has-both-routes" test_commands_pr_gate_md_has_both_routes
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
