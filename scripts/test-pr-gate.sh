@@ -21,20 +21,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
 chmod +x "$_codex_stub_bin/codex"
 export PATH="$_codex_stub_bin:$PATH"
 
-PASS=0
-FAIL=0
-FAILED_CASES=()
-
-pass() {
-  PASS=$((PASS + 1))
-  printf 'PASS: %s\n' "$1"
-}
-
-fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-  printf 'FAIL: %s: %s\n' "$1" "$2"
-}
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+legacy_tmp_root="$TMP_ROOT"
+th_init "$@"
+TMP_ROOT="$tmp_root"
+trap 'rm -rf "$tmp_root" "$legacy_tmp_root"' EXIT
 
 assert_contains() {
   local name="$1" file="$2" needle="$3"
@@ -301,6 +293,7 @@ run_gate() {
 
 test_tier_detection() {
   local name="tier-detection"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -325,6 +318,7 @@ test_tier_detection() {
 
 test_pr_gate_does_not_mutate_gitignore() {
   local name="pr-gate-does-not-mutate-gitignore"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -365,6 +359,7 @@ test_pr_gate_does_not_mutate_gitignore() {
 
 test_missing_reviewer_agent() {
   local name="missing-reviewer-agent"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -388,6 +383,7 @@ test_missing_reviewer_agent() {
 
 test_invalid_base_ref() {
   local name="invalid-base-ref"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -411,6 +407,7 @@ test_invalid_base_ref() {
 
 test_no_changed_files() {
   local name="no-changed-files"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -434,6 +431,7 @@ test_no_changed_files() {
 
 test_reviewers_override_skips_tier_detection() {
   local name="reviewers-override"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -462,6 +460,7 @@ test_reviewers_override_skips_tier_detection() {
 
 test_brief_file_inside_workdir() {
   local name="brief-file-inside-workdir"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" marker="$dir/marker"
@@ -484,6 +483,7 @@ test_brief_file_inside_workdir() {
 
 test_brief_cleanup_on_dispatch_failure() {
   local name="brief-cleanup-on-failure"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -509,6 +509,7 @@ test_brief_cleanup_on_dispatch_failure() {
 
 test_output_directory_created() {
   local name="output-directory-created"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" result="$dir/output/subdir/result.md"
@@ -535,6 +536,7 @@ test_output_directory_created() {
 test_parallel_launches_per_reviewer() {
   # Verifies --parallel mode launches one dispatch per reviewer and a synthesis.
   local name="parallel-launches-per-reviewer"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -561,6 +563,7 @@ test_sequential_flag_produces_combined_brief() {
   # Verifies --sequential produces the combined reviewer brief with the
   # "Process each reviewer IN ORDER" instruction.
   local name="sequential-flag-combined-brief"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -587,6 +590,7 @@ test_failed_reviewer_aborts_gate() {
   # Verifies that when reviewer dispatches fail the gate exits non-zero and
   # prints an error — synthesis must not run on incomplete reviewer data.
   local name="failed-reviewer-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -657,6 +661,7 @@ test_adjacent_go_test_included() {
   # Uses --sequential so CAPTURE_BRIEF holds the combined brief that lists all
   # review files, directly proving inclusion (not just the stdout counter).
   local name="adjacent-go-test-included"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -682,6 +687,7 @@ test_adjacent_ts_test_in_tests_dir() {
   # Verifies that __tests__/<name>.test.ts adjacent to a changed .ts source
   # file is included in the reviewer brief.
   local name="adjacent-ts-test-tests-dir"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -707,6 +713,7 @@ test_adjacent_ts_test_in_tests_dir() {
 test_adjacent_ts_test_tsx_variant() {
   # Verifies that __tests__/<name>.test.tsx is recognised as an adjacent test.
   local name="adjacent-ts-test-tsx-variant"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -732,6 +739,7 @@ test_adjacent_ts_test_tsx_variant() {
 test_adjacent_ts_spec_ts_variant() {
   # Verifies that __tests__/<name>.spec.ts is recognised as an adjacent test.
   local name="adjacent-ts-spec-ts-variant"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -757,6 +765,7 @@ test_adjacent_ts_spec_ts_variant() {
 test_adjacent_ts_spec_tsx_variant() {
   # Verifies that a sibling <name>.spec.tsx file is recognised as an adjacent test.
   local name="adjacent-ts-spec-tsx-variant"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -783,6 +792,7 @@ test_adjacent_ts_sibling_test() {
   # Verifies that a sibling <name>.test.ts file (not in __tests__/) is
   # included in the reviewer brief.
   local name="adjacent-ts-sibling-test"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -809,6 +819,7 @@ test_adjacent_test_not_duplicated_when_in_diff() {
   # Verifies that a test file already in the diff is not re-appended as an
   # adjacent file (de-duplication).
   local name="adjacent-test-not-duplicated"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -854,6 +865,7 @@ test_synthesis_verdict_mismatch_aborts_gate() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
   local name="synthesis-verdict-mismatch-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -884,6 +896,7 @@ test_post_synthesis_injection_detected() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit, "synthesis session modified" in stderr
   local name="post-synthesis-injection-detected"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -917,6 +930,7 @@ test_synthesis_no_output_aborts_gate() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit and "synthesis did not produce" in stderr
   local name="synthesis-no-output-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -946,6 +960,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="reviewer-invalid-verdict-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -975,6 +990,7 @@ test_reviewer_no_output_aborts_gate() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
   local name="reviewer-no-output-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1004,6 +1020,7 @@ test_sequential_no_output_aborts_gate() {
   #   3. Run gate in sequential mode (default)
   #   4. Assert non-zero exit and "sequential gate did not produce" in stderr
   local name="sequential-no-output-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1033,6 +1050,7 @@ test_sequential_no_final_line_aborts_gate() {
   #   3. Run gate in sequential mode (default)
   #   4. Assert non-zero exit and "must contain exactly one Final" in stderr
   local name="sequential-no-final-line-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1062,6 +1080,7 @@ test_prompt_injection_detected() {
   #   3. Run gate in parallel mode (default)
   #   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
   local name="prompt-injection-detected"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1098,6 +1117,7 @@ test_block_soft_verdict_is_no_go() {
   #   3. Run gate in --parallel mode
   #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
   local name="block-soft-verdict-is-no-go"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1128,6 +1148,7 @@ test_synthesis_artifact_tamper_detected() {
   #   2. Run gate in --parallel mode; synthesis stub appends to the first reviewer output
   #   3. Assert non-zero exit and "artifact" or "tampering" in stderr
   local name="synthesis-artifact-tamper-detected"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1204,6 +1225,7 @@ test_verdict_prefix_rejected() {
   #   3. Run gate in --parallel mode
   #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="verdict-prefix-rejected"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1235,6 +1257,7 @@ test_hash_tool_missing_aborts_gate() {
   #   3. Run gate with --parallel
   #   4. Assert non-zero exit and "no sha256sum or shasum" in stderr
   local name="hash-tool-missing-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1272,6 +1295,7 @@ test_synthesis_multiple_final_lines_aborts_gate() {
   #   3. Run gate in --parallel mode
   #   4. Assert non-zero exit and "exactly one Final" in stderr
   local name="synthesis-multiple-final-lines-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1303,6 +1327,7 @@ test_multiple_verdict_lines_aborts_gate() {
   #   3. Run gate in --parallel mode
   #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="multiple-verdict-lines-aborts-gate"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1337,6 +1362,7 @@ test_reviewer_cross_artifact_tamper_detected() {
   # exits (before critic's 0.3s sleep ends). After critic exits, the cross-tamper
   # check re-hashes qa-tester's artifact and detects the mismatch.
   local name="reviewer-cross-artifact-tamper-detected"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
@@ -1368,6 +1394,7 @@ run_test() {
 test_standard_tier_detection() {
   # Verifies 100-500 non-doc lines on a feature branch triggers standard tier.
   local name="standard-tier-detection"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1392,6 +1419,7 @@ test_standard_tier_detection() {
 test_full_tier_line_count() {
   # Verifies >500 non-doc lines on a feature branch triggers full tier.
   local name="full-tier-line-count"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1415,6 +1443,7 @@ test_full_tier_line_count() {
 test_full_tier_sensitive_file() {
   # Verifies a sensitive filename (auth-*) triggers full tier regardless of line count.
   local name="full-tier-sensitive-file"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1438,6 +1467,7 @@ test_full_tier_sensitive_file() {
 test_via_symlink() {
   # Verifies readlink -f fix: gate dispatches correctly when run as a symlink.
   local name="via-symlink"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner" symdir="$dir/symdir"
   local out="$dir/out" err="$dir/err"
@@ -1464,6 +1494,7 @@ test_via_symlink() {
 test_rename_sensitive_old_name() {
   # Verifies that renaming auth.ts → login.ts still triggers full tier on the old name.
   local name="rename-sensitive-old-name"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1499,6 +1530,7 @@ test_rename_sensitive_old_name() {
 test_binary_file_routes_to_standard() {
   # Verifies that a binary file change is not silently routed to express tier.
   local name="binary-file-routes-to-standard"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1542,6 +1574,7 @@ test_untracked_binary_routes_to_standard() {
   # is not silently routed to express tier. The working-tree fallback must treat
   # untracked non-doc files as having unknown size.
   local name="untracked-binary-routes-to-standard"
+  should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
@@ -1619,8 +1652,4 @@ run_test test_adjacent_ts_spec_tsx_variant
 run_test test_adjacent_ts_sibling_test
 run_test test_adjacent_test_not_duplicated_when_in_diff
 
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary
