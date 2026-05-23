@@ -41,25 +41,7 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-th_init "${args[@]}"
-
-# Override harness pass/fail to preserve historical VERBOSE-conditional
-# per-case output format (`  PASS <name>` / `  FAIL <name>`, two-space
-# indent, no colon). scripts/test-commands-runner.sh parses this exact
-# format via `sed -n -E 's/^  (PASS|FAIL) //p'`, so changing it breaks
-# the contract. CC-203 Batch 2 migration originally lost this; restored
-# here so the harness handles counters/filter/list while the print
-# format stays back-compatible.
-pass() {
-  PASS=$((PASS + 1))
-  ${VERBOSE:+printf '  PASS %s\n' "$1"}
-}
-fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-  printf '  FAIL %s\n' "$1"
-  [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
-}
+th_init --format=indent-1sp "${args[@]}"
 
 # Helper: assert file contains pattern (grep -E)
 assert_contains() {

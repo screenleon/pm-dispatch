@@ -13,23 +13,8 @@ VIEW_SCRIPT="$SCRIPT_DIR/token-usage.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
-th_init "$@"
+th_init --format=indent-2sp --fail-fast "$@"
 TMP_ROOT="$tmp_root"
-
-# Preserve historical pass/fail format + fail-fast (CC-203 Batch 3 migration).
-pass() {
-  PASS=$((PASS + 1))
-  printf '  PASS  %s\n' "$1"
-}
-
-fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-  printf '  FAIL  %s\n' "$1"
-  [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
-  th_summary
-  exit 1
-}
 
 assert_exit() {
   local name="$1" actual="$2" expected="$3"

@@ -42,12 +42,12 @@ SUITE_NAMES=(
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
 
-pass() {
+pass_case() {
   PASS=$((PASS + 1))
   printf 'PASS: %s\n' "$1"
 }
 
-fail() {
+fail_case() {
   FAIL=$((FAIL + 1))
   FAILED_CASES+=("$1")
   printf 'FAIL: %s: %s\n' "$1" "$2"
@@ -56,7 +56,7 @@ fail() {
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" != *"$needle"* ]]; then
-    fail "$name" "missing output: $needle"
+    fail_case "$name" "missing output: $needle"
     return 1
   fi
 }
@@ -146,13 +146,13 @@ test_list() {
   local out status=0 suite
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   if [[ "$status" -ne 0 ]]; then
-    fail "$name" "--list exited $status: $out"
+    fail_case "$name" "--list exited $status: $out"
     return
   fi
   for suite in "${SUITE_NAMES[@]}"; do
     assert_contains "$name" "$out" "$suite" || return
   done
-  pass "$name"
+  pass_case "$name"
 }
 
 test_skip_unknown_suite() {
@@ -165,9 +165,9 @@ test_skip_unknown_suite() {
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip nonexistent-suite 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -183,9 +183,9 @@ test_skip_known_suite() {
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP lint-agents (requested)"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 0 failed, 1 skipped"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -201,9 +201,9 @@ test_suite_not_found_skip() {
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL lint-scripts (not found or not executable)"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -219,9 +219,9 @@ test_codex_missing_skips_codex_dispatch() {
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 0 failed, 1 skipped"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -238,9 +238,9 @@ test_fail_on_suite_error() {
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL test-pr-gate"* &&
         "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -251,9 +251,9 @@ test_skip_missing_arg() {
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --skip 2>&1) || status=$?
   if [[ "$status" -eq 2 && "$out" == *"--skip requires a non-empty suite name"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -264,9 +264,9 @@ test_unknown_flag() {
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --foobar 2>&1) || status=$?
   if [[ "$status" -eq 2 && "$out" == *"unknown flag"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -280,9 +280,9 @@ test_skip_empty_arg() {
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip '' 2>&1) || status=$?
   if [[ "$status" -eq 2 && "$out" == *"--skip"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -296,9 +296,9 @@ test_skip_option_like_arg() {
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip --list 2>&1) || status=$?
   if [[ "$status" -eq 2 && "$out" == *"--skip"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -323,9 +323,9 @@ STUB
   path="$(make_path_with_codex "$repo/bin")"
   out=$(CLAUDE_CONFIG_TEST_PREFLIGHT_HOME=/sentinel/home PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"HOME_IS=/sentinel/home"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -350,9 +350,9 @@ STUB
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"PASS test-install"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
@@ -374,9 +374,9 @@ test_dispatch_pm_scripts_via_bash() {
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" == *"PASS test-pm-scripts"* ]]; then
-    pass "$name"
+    pass_case "$name"
   else
-    fail "$name" "status=$status out=$out"
+    fail_case "$name" "status=$status out=$out"
   fi
 }
 
