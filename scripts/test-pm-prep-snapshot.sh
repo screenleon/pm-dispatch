@@ -227,4 +227,50 @@ if should_run "error-hard-unwritable-output"; then
   chmod 700 "$ro"
 fi
 
+if should_run "cli-help"; then
+  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --help >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
+    if grep -q "^Usage:" /tmp/pm-prep-snapshot.err; then
+      pass "cli-help: prints usage on stderr"
+    else
+      fail "cli-help" "missing 'Usage:' on stderr"
+    fi
+  else
+    fail "cli-help" "expected exit 0 from --help"
+  fi
+fi
+
+if should_run "cli-unknown-flag"; then
+  if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --not-a-real-flag >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
+    fail "cli-unknown-flag" "expected non-zero exit for unknown flag"
+  else
+    if grep -q "unknown argument" /tmp/pm-prep-snapshot.err; then
+      pass "cli-unknown-flag: clear error message"
+    else
+      fail "cli-unknown-flag" "missing 'unknown argument' error"
+    fi
+  fi
+fi
+
+if should_run "branch-base-warn-on-missing-origin-main"; then
+  local_repo="$tmp_root/local-only-repo"
+  mkdir -p "$local_repo"
+  ( cd "$local_repo"
+    git init -q -b main
+    git -c user.email=t@t -c user.name=T commit --allow-empty -q -m init
+    # No origin remote — origin/main cannot resolve.
+    # Use the real BACKLOG.md so the snapshot script can compute backlog_next_id.
+    cp "$REPO_ROOT/BACKLOG.md" .
+    out="$tmp_root/local-only-snap.md"
+    if PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$out" >/tmp/pm-prep-snapshot.err 2>&1; then
+      if grep -qE "^# warn: origin/main unresolved" "$out" && grep -qE "^branch_base: main@[0-9a-f]+" "$out"; then
+        pass "branch-base-warn-on-missing-origin-main"
+      else
+        fail "branch-base-warn-on-missing-origin-main" "missing warn line or wrong branch_base"
+      fi
+    else
+      fail "branch-base-warn-on-missing-origin-main" "snapshot script must not hard-fail when origin/main unresolved"
+    fi
+  )
+fi
+
 th_summary

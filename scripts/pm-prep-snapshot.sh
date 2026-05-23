@@ -18,7 +18,7 @@ if [ ! -f "$BACKLOG_FILE" ]; then
   exit 1
 fi
 
-OUT_PATH="/tmp/pm-snapshot-$(date -u '+%Y%m%dT%H%M%SZ').md"
+OUT_PATH="/tmp/pm-snapshot-$(date -u '+%Y%m%dT%H%M%SZ')-$$.$RANDOM.md"
 FOCUS_ARG=""
 
 print_usage() {
@@ -96,15 +96,24 @@ CURRENT_BRANCH_NAME="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/nu
 CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
 CURRENT_BRANCH="${CURRENT_BRANCH_NAME}@${CURRENT_SHA}"
 
-if ! BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 origin/main 2>/dev/null)"; then
-  echo "error: cannot resolve origin/main SHA for $REPO_ROOT" >&2
-  exit 1
+BRANCH_BASE_WARN=""
+if BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 origin/main 2>/dev/null)"; then
+  BRANCH_BASE="origin/main@$BRANCH_BASE_SHA"
+elif BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 main 2>/dev/null)"; then
+  BRANCH_BASE="main@$BRANCH_BASE_SHA"
+  BRANCH_BASE_WARN="origin/main unresolved; falling back to local main"
+else
+  BRANCH_BASE="unresolved"
+  BRANCH_BASE_WARN="origin/main and main both unresolved; PM should treat branch context as untrusted"
 fi
-BRANCH_BASE="origin/main@$BRANCH_BASE_SHA"
 
-if ! AHEAD_BY="$(git -C "$REPO_ROOT" rev-list --count "$BRANCH_BASE_SHA..$CURRENT_SHA" 2>/dev/null)"; then
-  echo "error: cannot compute ahead_by from origin/main to HEAD" >&2
-  exit 1
+if [ -n "$BRANCH_BASE_SHA" ] && AHEAD_BY="$(git -C "$REPO_ROOT" rev-list --count "$BRANCH_BASE_SHA..$CURRENT_SHA" 2>/dev/null)"; then
+  :
+else
+  AHEAD_BY=0
+  if [ -z "$BRANCH_BASE_WARN" ]; then
+    BRANCH_BASE_WARN="ahead_by could not be computed; defaulted to 0"
+  fi
 fi
 
 MAX_CC_ID=0
@@ -247,6 +256,9 @@ TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
   printf '%s\n' '---'
   printf 'snapshot_ts: %s\n' "$SNAPSHOT_TS"
   printf 'repo: %s\n' "$REPO_NAME"
+  if [ -n "$BRANCH_BASE_WARN" ]; then
+    printf '# warn: %s\n' "$BRANCH_BASE_WARN"
+  fi
   printf 'branch_base: %s\n' "$BRANCH_BASE"
   printf 'current_branch: %s\n' "$CURRENT_BRANCH"
   printf 'ahead_by: %s\n' "$AHEAD_BY"
