@@ -126,6 +126,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-240 | ⏸ deferred | **[test-suite reliability follow-ups]** Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129). Remaining: `[low]` `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` (pre-existing; conflicts with the qa AGENT.md red line on `sleep` for async sync) → CI-timing flakiness. Fix with an IPC / event-driven lock-hold. | test | 2026-05-23 | pr:#127 | P3 | oss |
 | CC-241 | ⏸ deferred | **[v0.2.0 doc-drift cleanup]** The CC-219 doc-freshness gate, run against `main`, surfaces three real drifts that pre-date this PR: (a) `[FAIL]` `BACKLOG.md:81` CC-104p shows `✅ closed 2026-05-21` but `pr:TBD` — the actual merged PR is #114 (`feat(cc-104p): add serialize_with_lock portable shim`); update the row to `pr:#114`. (b) `[FAIL]` `MILESTONES.md` `## v0.2.0` section status is marked 規劃中/planned but git tag `v0.2.0` was cut 2026-05-22 — flip status to released and add closing notes consistent with the `## v0.1.0` section. (c) `[WARN]` `README.md` has no `vN.N.N` version reference; add a current-version footer or version-table to satisfy U1 of the gate (warning only — non-blocking). Single PR; data-only commit; expected diff < 20 lines. | process/docs | 2026-05-23 | — | P3 | hygiene |
 | CC-242 | ✅ closed 2026-05-23 | **[Spike — codex-dispatch param extraction survey + design decisions]** Survey all hardcoded codex-dispatch params (sandbox / approval / timeout / model alias) across scripts, validators, hooks, docs, agent templates, and test fixtures; classify each by invariant source (validator / hook / contract / doc / test) and configurability verdict; design timeout-axis PoC (env + `~/.pm-dispatch/config` precedence chain) and model-alias SoT extraction path; resolve open Q1 (scope) and Q2 (config file location). Output: `docs/spikes/CC-060.md`. Decisions: Q1=B (timeout + model-SoT bundled into one CC-060 impl PR), Q2=A (introduce `~/.pm-dispatch/config` as the first user-config precedent in the repo, optional / user-managed / never installer-created). Feeds directly into the CC-060 impl brief on this same branch. | process | 2026-05-23 | — | — | spike |
+| CC-243 | 🔵 active | **[pm-prep-snapshot — state-snapshot前置給PM agent]** New `scripts/pm-prep-snapshot.sh` runs from main thread before any PM-agent spawn and writes `/tmp/pm-snapshot-<ts>.md` containing branch_base (`origin/main` HEAD + current branch HEAD), recently_merged (last 5 `gh pr list --state merged`), backlog_next_id (derived from highest CC-N in `BACKLOG.md`), focus_tickets (full row + body section for any caller-named ticket IDs), project_tooling (`ls Makefile project/backlog.yml 2>/dev/null`). PM brief always cites the snapshot path as ground truth; PM is instructed to prefer snapshot over caller-claimed commit/ID. Solves the two HALT classes observed in CC-242 (stale main commit, ticket-ID collision). Schema-like keys (`branch_base:`, `ticket_ids_consumed:`, `project_tooling:`) chosen now to ease future upgrade to typed `spike_v1` pipeline (see CC-244). | ops | 2026-05-23 | — | P2 | design |
+| CC-244 | 🟢 someday | **[Typed artifact pipeline — spike → brief → handover schema]** Define `spike_v1` schema mirroring existing `dispatch_handover_v1`: frontmatter (`spike_id`, `status`, `decisions_resolved`, `branch_base`, `ticket_ids_consumed`, `project_tooling`) + named sections (`scope`, `findings`, `constraints`, `decisions`, `phase3_handover`). Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-brief-from-spike.sh` (mechanical brief extraction). Reduces main-thread courier cost, makes spike→brief authoring mechanical, gives invariant checkpoints (`decisions_resolved=true` ⇒ no re-asking Q1/Q2). Defer until 3+ spike docs exist and the brief-extraction pattern repeats; only one spike (CC-060) today, so schema would be premature overhead. CC-243 field names chosen to align with this future schema (no re-wash needed at upgrade time). | arch | 2026-05-23 | — | — | design |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
@@ -1390,3 +1392,82 @@ The genuinely-missing piece is the **front-end**: a reuse-scan that runs *before
 **Outcome**: Surveyed sandbox/approval/timeout/model-alias hardcoded params across `scripts/codex-dispatch.sh`, `scripts/lib/handover-validate.sh`, hooks, `docs/dispatch-brief.md`, `agents/{project-pm,claude-executor}.md`, and 14+ test fixtures. Classified each axis by invariant source (validator vs doc vs contract vs hook vs test). Verdicts: sandbox = yes-with-guard (don't expose as knob), approval = no (load-bearing bash-route invariant), timeout = yes (env layer already exists; bundle a `~/.pm-dispatch/config` fallback), model alias = yes-with-guard (extract map to data file + render check). Hooks audit: not a gatekeeper for any of these axes — no co-edits needed there. Open questions Q1 (scope) and Q2 (config location) resolved by user: Q1=B (timeout + model-SoT bundled into one CC-060 impl PR); Q2=A (introduce `~/.pm-dispatch/config` as the first user-config precedent in the repo, optional / user-managed / never installer-created).
 **Output**: `docs/spikes/CC-060.md` (transplanted from spike draft, with all phases + decisions preserved).
 **See**: docs/spikes/CC-060.md
+
+## CC-243 — pm-prep-snapshot: state-snapshot前置給PM agent（active）
+
+**Problem**: PM agent spawns start cold and rely on caller-supplied brief metadata (branch HEAD, ticket IDs, project tooling). Two HALT classes observed in CC-242: (a) caller brief claimed `main = 5c02e30` but origin/main had advanced two PRs past that (#129 + #130 merged after the brief was written); (b) caller brief instructed "register CC-241 spike ticket" but CC-241 had been consumed by #130. PM had to spend its first phase verifying state instead of doing PM work.
+
+**Solution**: New main-thread script `scripts/pm-prep-snapshot.sh` that runs immediately before any PM spawn and writes a typed snapshot to `/tmp/pm-snapshot-<ts>.md`:
+
+```yaml
+---
+snapshot_ts: 2026-05-23T14:30:00+09:00
+repo: pm-dispatch
+branch_base: origin/main@<sha>
+current_branch: <name>@<sha>
+ahead_by: <N commits>
+recently_merged:        # gh pr list --state merged --limit 5
+  - "#130 fix(cc-241): ..."
+  - ...
+backlog_next_id: CC-245     # parsed from BACKLOG.md highest CC-N
+focus_tickets:              # full row + body section per caller-named ID
+  CC-243:
+    status: 🔵 active
+    row: "| CC-243 | ... |"
+    body: |
+      ## CC-243 — ...
+project_tooling:
+  makefile: false
+  backlog_render_target: false
+  has_validate_sh: true
+---
+```
+
+PM brief template updated: caller adds `snapshot_file: /tmp/pm-snapshot-<ts>.md` field and a directive "Treat snapshot fields as ground truth; do not trust commit SHAs or ticket IDs from this brief's prose — re-derive them from the snapshot."
+
+**Schema-key naming aligned with future CC-244 typed pipeline**: `branch_base`, `ticket_ids_consumed`, `project_tooling` — when CC-244 lands, the snapshot output becomes a frontmatter block of `spike_v1` without re-washing field names.
+
+**Acceptance**:
+- `scripts/pm-prep-snapshot.sh [--focus CC-N,CC-M]` writes a snapshot to `/tmp/pm-snapshot-<ts>.md` with all required fields
+- `scripts/test-pm-prep-snapshot.sh` covers: no-focus path, with-focus path, ticket-not-found warning, derivation of `backlog_next_id`, `project_tooling` probe
+- `agents/project-pm.md` updated with a "Snapshot ingestion" subsection telling PM to read the snapshot file first and prefer its values over brief prose
+- `docs/dispatch-brief.md` schema documents the optional `snapshot_file` field
+- `scripts/lint-scripts.sh` and `scripts/lint-frontmatter.sh` cover the new script
+- README adds one-line description in the Scripts section
+
+**Out of scope**: multi-repo snapshots, snapshot caching, snapshot diff between two times. Add tickets if/when a real workflow needs them.
+
+**See**: CC-244 (future typed-pipeline upgrade path).
+
+## CC-244 — Typed artifact pipeline: spike → brief → handover schema（someday）
+
+**Premise**: spike documents today (we have one: `docs/spikes/CC-060.md`) are free-form prose. The brief-authoring step extracts decisions + handover fields from prose, which (a) costs PM tokens re-reading the spike, (b) loses invariant checkpoints (no `decisions_resolved=true` flag, so the next agent might re-ask resolved questions), (c) makes main thread inline the whole spike when courier-ing between agents.
+
+**Design sketch**: define `spike_v1` schema mirroring the existing `dispatch_handover_v1`:
+
+```yaml
+---
+spike_id: CC-060
+status: phase_3_ready    # phase_1_raw | phase_2_synthesis | phase_3_ready
+decisions_resolved: true
+branch_base: origin/main@f905db7
+ticket_ids_consumed: [CC-242]
+project_tooling: {makefile: false, backlog_render_target: false}
+---
+## scope
+## findings
+## constraints
+## decisions
+## phase3_handover     # bridges directly to dispatch_handover_v1
+```
+
+Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-brief-from-spike.sh` (mechanical extraction).
+
+**Why deferred to someday, not active**: only one spike exists today (CC-060). Schema's leverage scales with N — for N=1 it's pure overhead. Defer until 3+ spike docs accumulate and the brief-extraction pattern repeats verbatim, indicating real automation value. CC-243's schema-key naming was chosen now so that upgrade to CC-244 doesn't re-wash field names.
+
+**Trigger conditions to promote from someday → active**:
+- 3+ spike documents under `docs/spikes/` with similar phase-1/phase-2/phase-3 structure
+- Two consecutive brief-authoring rounds where PM essentially copy-pastes the same fields out of spike prose
+- Or: an automation use case (e.g. CI-side spike-stage tracking) that requires structured spike state
+
+**See**: CC-243 (snapshot fields already aligned).
