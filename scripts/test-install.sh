@@ -22,14 +22,6 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
 chmod +x "$_codex_stub_bin/codex"
 export PATH="$_codex_stub_bin:$PATH"
 
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file"; then
-    fail "$name" "missing output: $needle"
-    return 1
-  fi
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   if grep -Fq -- "$needle" "$file"; then
@@ -126,47 +118,47 @@ run_install_case() {
 
   case "$name" in
     pm-absent-real-run)
-      assert_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      assert_file_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
       assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-absent-dry-run)
-      assert_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      assert_file_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
       if [ -e "$home/.claude/.pm" ] || [ -L "$home/.claude/.pm" ]; then
         fail "$name" "$home/.claude/.pm should not exist"
         return
       fi
       ;;
     pm-correct-symlink-idempotent)
-      assert_contains "$name" "$out" "ok    $home/.claude/.pm" || return
+      assert_file_contains "$name" "$out" "ok    $home/.claude/.pm" || return
       assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-wrong-symlink-real-run)
-      assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "expected $REPO_ROOT/pm" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return
+      assert_file_contains "$name" "$err" "expected $REPO_ROOT/pm" || return
       assert_symlink_target "$name" "$home/.claude/.pm" "$decoy" || return
       ;;
     pm-real-dir-real-run)
-      assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "is a real directory" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return
+      assert_file_contains "$name" "$err" "is a real directory" || return
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     pm-real-dir-dry-run)
-      assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "is a real directory" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return
+      assert_file_contains "$name" "$err" "is a real directory" || return
       assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     scripts-absent-real-run)
-      assert_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
+      assert_file_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
       assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
       ;;
     scripts-correct-symlink-idempotent)
-      assert_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return
+      assert_file_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return
       assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
       ;;
     scripts-wrong-symlink-real-run)
-      assert_contains "$name" "$err" "CONFLICT" || return
-      assert_contains "$name" "$err" "expected $REPO_ROOT/scripts/pr-gate.sh" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return
+      assert_file_contains "$name" "$err" "expected $REPO_ROOT/scripts/pr-gate.sh" || return
       assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$decoy/pr-gate.sh" || return
       ;;
   esac
@@ -345,7 +337,7 @@ test_legacy_stale_symlinks_removed() {
     fail "$name" "$script_home/.claude/scripts/codex-pr-gate.sh should not exist"
     return
   fi
-  assert_contains "$name" "$script_out" "remove (legacy)" || return
+  assert_file_contains "$name" "$script_out" "remove (legacy)" || return
 
   local command_home="$tmp_root/$name-command-home"
   local command_out="$tmp_root/$name-command.stdout"
@@ -393,7 +385,7 @@ test_legacy_stale_symlinks_removed() {
     fail "$name" "$usage_home/.claude/scripts/claude-usage.sh should have been removed"
     return
   fi
-  assert_contains "$name" "$usage_out" "remove (legacy)" || return
+  assert_file_contains "$name" "$usage_out" "remove (legacy)" || return
 
   pass "$name"
 }
@@ -420,14 +412,14 @@ test_install_sh_wires_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
     return
@@ -450,11 +442,11 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile minimal > /dev/null 2>&1
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -472,9 +464,9 @@ test_install_sh_profile_full_wires_codex_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   pass "$name"
 }
 
@@ -509,11 +501,11 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
     return
   fi
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   pass "$name"
@@ -549,11 +541,11 @@ test_install_hooks_windows_profile_minimal_silent() {
     return
   fi
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   pass "$name"
@@ -570,15 +562,15 @@ test_install_hooks_profile_downgrade_removes_codex() {
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   # The non-codex managed hooks must still be present after downgrade.
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -601,8 +593,8 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   HOME="$home" PATH="$stub_bin:$PATH" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   pass "$name"
 }
 
@@ -631,7 +623,7 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
 
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   pass "$name"
 }
 
@@ -667,9 +659,9 @@ test_install_hooks_platform_linux_explicit() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform linux --profile full > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   pass "$name"
 }
 
@@ -762,14 +754,14 @@ test_install_sh_wires_hooks_no_settings() {
     fail "$name" "settings.json was not created during first-time install"
     return
   fi
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -781,14 +773,14 @@ test_hooks_install_uninstall_lifecycle() {
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
-  assert_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
@@ -898,7 +890,7 @@ JSON
     fail "$name" "stale /fake/old-repo/ path still present after re-install"
     return
   fi
-  assert_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
 
   pass "$name"
 }
@@ -937,10 +929,10 @@ JSON
   local settings="$home/.claude/settings.json"
 
   # Unrelated hook must still be present at original path
-  assert_contains "$name" "$settings" "$unrelated_path" || return
+  assert_file_contains "$name" "$settings" "$unrelated_path" || return
 
   # Our managed hook must also be present (appended, not merged)
-  assert_contains "$name" "$settings" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$settings" "hook-log-claude-usage.sh" || return
 
   # Count occurrences of the basename — must be exactly 2
   # (unrelated path + our managed path)
@@ -1035,8 +1027,8 @@ test_userpromptsubmit_install_wires_hook() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return
-  assert_contains "$name" "$home/.claude/settings.json" "$inject" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$inject" || return
   if ! jq -e --arg inject "$inject" \
     '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
     "$home/.claude/settings.json" >/dev/null; then
@@ -1114,7 +1106,7 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
 }
@@ -1131,7 +1123,7 @@ test_stop_hook_migration() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" \
     "hooks/hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" \
+  assert_file_contains "$name" "$home/.claude/settings.json" \
     "scripts/hook-log-claude-usage.sh" || return
   pass "$name"
 }
@@ -1148,13 +1140,13 @@ test_stop_hook_preservation() {
 
   # After install: unrelated hook preserved, managed hook added
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
 
   # After uninstall: managed hook removed, unrelated hook still present
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
-  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   pass "$name"
 }
 
@@ -1188,7 +1180,7 @@ test_statusline_install_chains_previous() {
   assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > "$out"
-  assert_contains "$name" "$out" "already wired, nothing to do" || return
+  assert_file_contains "$name" "$out" "already wired, nothing to do" || return
   assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
   pass "$name"
 }
@@ -1271,7 +1263,7 @@ test_session_stop_install_wires_hook() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "$session" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$session" || return
   if ! jq -e --arg session "$session" \
     '.hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session)' \
     "$home/.claude/settings.json" >/dev/null; then
@@ -1346,7 +1338,7 @@ test_session_stop_uninstall_preserves_stop() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
 
-  assert_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   pass "$name"
 }

@@ -28,14 +28,6 @@ th_init "$@"
 TMP_ROOT="$tmp_root"
 trap 'rm -rf "$tmp_root" "$legacy_tmp_root"' EXIT
 
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file"; then
-    fail "$name" "missing output: $needle"
-    return 1
-  fi
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   if grep -Fq -- "$needle" "$file"; then
@@ -381,9 +373,9 @@ test_tier_detection() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
-  assert_contains "$name" "$brief" "Tier: express" || return
-  assert_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
+  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
   pass "$name"
 }
 
@@ -447,7 +439,7 @@ test_missing_reviewer_agent() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  assert_contains "$name" "$err" "Error: reviewer agent file not found:" || return
+  assert_file_contains "$name" "$err" "Error: reviewer agent file not found:" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -471,7 +463,7 @@ test_invalid_base_ref() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  assert_contains "$name" "$err" "Error: base ref not found: nonexistent-branch-12345" || return
+  assert_file_contains "$name" "$err" "Error: base ref not found: nonexistent-branch-12345" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -495,7 +487,7 @@ test_no_changed_files() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  assert_contains "$name" "$err" "Error: no changed files detected against main" || return
+  assert_file_contains "$name" "$err" "Error: no changed files detected against main" || return
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -520,10 +512,10 @@ test_reviewers_override_skips_tier_detection() {
     return
   fi
   # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
-  assert_contains "$name" "$brief" "Tier: targeted" || return
-  assert_contains "$name" "$brief" "Reviewers: critic" || return
+  assert_file_contains "$name" "$brief" "Tier: targeted" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic" || return
   # Synthesis brief embeds reviewer findings inline — no read: paths to reviewer output files
-  assert_contains "$name" "$brief" "--- critic findings ---" || return
+  assert_file_contains "$name" "$brief" "--- critic findings ---" || return
   assert_not_contains "$name" "$brief" "reviewer-critic-" || return
   assert_not_contains "$name" "$brief" "read: $home/.claude/agents/qa-tester.md" || return
   pass "$name"
@@ -548,7 +540,7 @@ test_brief_file_inside_workdir() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$marker" "brief-present" || return
+  assert_file_contains "$name" "$marker" "brief-present" || return
   pass "$name"
 }
 
@@ -624,9 +616,9 @@ test_parallel_launches_per_reviewer() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "[parallel] launched critic" || return
-  assert_contains "$name" "$out" "[parallel] launched qa-tester" || return
-  assert_contains "$name" "$out" "[synthesis] running PM consolidation" || return
+  assert_file_contains "$name" "$out" "[parallel] launched critic" || return
+  assert_file_contains "$name" "$out" "[parallel] launched qa-tester" || return
+  assert_file_contains "$name" "$out" "[synthesis] running PM consolidation" || return
   pass "$name"
 }
 
@@ -651,7 +643,7 @@ test_sequential_flag_produces_combined_brief() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$brief" "Process each reviewer IN ORDER" || return
+  assert_file_contains "$name" "$brief" "Process each reviewer IN ORDER" || return
   assert_not_contains "$name" "$out" "[parallel]" || return
   assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
@@ -678,7 +670,7 @@ test_failed_reviewer_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewers fail"
     return
   fi
-  assert_contains "$name" "$err" "reviewer session(s) failed:" || return
+  assert_file_contains "$name" "$err" "reviewer session(s) failed:" || return
   # Synthesis must not run after reviewer failure
   assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
@@ -749,8 +741,8 @@ test_adjacent_go_test_included() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "app_test.go" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "app_test.go" || return
   pass "$name"
 }
 
@@ -776,8 +768,8 @@ test_adjacent_ts_test_in_tests_dir() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "format.test.ts" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "format.test.ts" || return
   pass "$name"
 }
 
@@ -802,8 +794,8 @@ test_adjacent_ts_test_tsx_variant() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "format.test.tsx" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "format.test.tsx" || return
   pass "$name"
 }
 
@@ -828,8 +820,8 @@ test_adjacent_ts_spec_ts_variant() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "format.spec.ts" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "format.spec.ts" || return
   pass "$name"
 }
 
@@ -854,8 +846,8 @@ test_adjacent_ts_spec_tsx_variant() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "format.spec.tsx" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "format.spec.tsx" || return
   pass "$name"
 }
 
@@ -881,8 +873,8 @@ test_adjacent_ts_sibling_test() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "adjacent test files added: 1" || return
-  assert_contains "$name" "$brief" "format.test.ts" || return
+  assert_file_contains "$name" "$out" "adjacent test files added: 1" || return
+  assert_file_contains "$name" "$brief" "format.test.ts" || return
   pass "$name"
 }
 
@@ -954,7 +946,7 @@ test_synthesis_verdict_mismatch_aborts_gate() {
     fail "$name" "expected non-zero exit when synthesis verdict contradicts shell verdict"
     return
   fi
-  assert_contains "$name" "$err" "contradicts shell-computed" || return
+  assert_file_contains "$name" "$err" "contradicts shell-computed" || return
   pass "$name"
 }
 
@@ -988,7 +980,7 @@ test_post_synthesis_injection_detected() {
     fail "$name" "expected non-zero exit when synthesis modifies tracked file"
     return
   fi
-  assert_contains "$name" "$err" "synthesis session modified" || return
+  assert_file_contains "$name" "$err" "synthesis session modified" || return
   pass "$name"
 }
 
@@ -1018,7 +1010,7 @@ test_synthesis_no_output_aborts_gate() {
     fail "$name" "expected non-zero exit when synthesis produces no output"
     return
   fi
-  assert_contains "$name" "$err" "synthesis did not produce" || return
+  assert_file_contains "$name" "$err" "synthesis did not produce" || return
   pass "$name"
 }
 
@@ -1048,7 +1040,7 @@ test_reviewer_invalid_verdict_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer output has no valid Verdict line"
     return
   fi
-  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -1078,7 +1070,7 @@ test_reviewer_no_output_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer produces no output"
     return
   fi
-  assert_contains "$name" "$err" "reviewer output missing or empty" || return
+  assert_file_contains "$name" "$err" "reviewer output missing or empty" || return
   pass "$name"
 }
 
@@ -1108,7 +1100,7 @@ test_sequential_no_output_aborts_gate() {
     fail "$name" "expected non-zero exit when sequential dispatch produces no output"
     return
   fi
-  assert_contains "$name" "$err" "sequential gate did not produce" || return
+  assert_file_contains "$name" "$err" "sequential gate did not produce" || return
   pass "$name"
 }
 
@@ -1138,7 +1130,7 @@ test_sequential_no_final_line_aborts_gate() {
     fail "$name" "expected non-zero exit when sequential output has no valid Final line"
     return
   fi
-  assert_contains "$name" "$err" "must contain exactly one Final" || return
+  assert_file_contains "$name" "$err" "must contain exactly one Final" || return
   pass "$name"
 }
 
@@ -1173,7 +1165,7 @@ test_prompt_injection_detected() {
     fail "$name" "expected non-zero exit when reviewer modifies tracked file"
     return
   fi
-  assert_contains "$name" "$err" "prompt injection" || return
+  assert_file_contains "$name" "$err" "prompt injection" || return
   assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
@@ -1206,7 +1198,7 @@ test_block_soft_verdict_is_no_go() {
     fail "$name" "expected non-zero exit when block-soft verdict triggers NO-GO"
     return
   fi
-  assert_contains "$name" "$err" "contradicts shell-computed" || return
+  assert_file_contains "$name" "$err" "contradicts shell-computed" || return
   pass "$name"
 }
 
@@ -1314,7 +1306,7 @@ test_verdict_prefix_rejected() {
     fail "$name" "expected non-zero exit when verdict uses invalid prefix-only token"
     return
   fi
-  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -1352,7 +1344,7 @@ test_hash_tool_missing_aborts_gate() {
     fail "$name" "expected non-zero exit when sha256sum/shasum unavailable"
     return
   fi
-  assert_contains "$name" "$err" "no sha256sum or shasum" || return
+  assert_file_contains "$name" "$err" "no sha256sum or shasum" || return
   pass "$name"
 }
 
@@ -1387,7 +1379,7 @@ test_bold_final_line_rejected() {
     fail "$name" "expected non-zero exit when synthesis emits **Final: GO** (bold)"
     return
   fi
-  assert_contains "$name" "$err" "exactly one Final" || return
+  assert_file_contains "$name" "$err" "exactly one Final" || return
   pass "$name"
 }
 
@@ -1419,7 +1411,7 @@ test_synthesis_multiple_final_lines_aborts_gate() {
     fail "$name" "expected non-zero exit when synthesis has multiple Final: lines"
     return
   fi
-  assert_contains "$name" "$err" "exactly one Final" || return
+  assert_file_contains "$name" "$err" "exactly one Final" || return
   pass "$name"
 }
 
@@ -1451,7 +1443,7 @@ test_multiple_verdict_lines_aborts_gate() {
     fail "$name" "expected non-zero exit when reviewer artifact has multiple valid Verdict lines"
     return
   fi
-  assert_contains "$name" "$err" "exactly one valid Verdict line" || return
+  assert_file_contains "$name" "$err" "exactly one valid Verdict line" || return
   pass "$name"
 }
 
@@ -1488,7 +1480,7 @@ test_reviewer_cross_artifact_tamper_detected() {
     fail "$name" "expected non-zero exit when cross-reviewer tampers a reviewer artifact"
     return
   fi
-  assert_contains "$name" "$err" "cross-reviewer artifact tampering" || return
+  assert_file_contains "$name" "$err" "cross-reviewer artifact tampering" || return
   assert_not_contains "$name" "$out" "[synthesis]" || return
   pass "$name"
 }
@@ -1566,10 +1558,10 @@ test_gate_result_frontmatter_and_escalation() {
     fail "$name" "frontmatter missing escalation recommendation"
     return
   fi
-  assert_contains "$name" "$result" "## Escalation" || return
-  assert_contains "$name" "$result" "**Recommended**:" || return
-  assert_contains "$name" "$result" "**Reviewers**:" || return
-  assert_contains "$name" "$result" "**Reason**:" || return
+  assert_file_contains "$name" "$result" "## Escalation" || return
+  assert_file_contains "$name" "$result" "**Recommended**:" || return
+  assert_file_contains "$name" "$result" "**Reviewers**:" || return
+  assert_file_contains "$name" "$result" "**Reason**:" || return
   pass "$name"
 }
 
@@ -1662,7 +1654,7 @@ FAKE_GH
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "pr-gate: base detected from gh pr view: main" || return
+  assert_file_contains "$name" "$out" "pr-gate: base detected from gh pr view: main" || return
   if ! grep -Eq '^Final: (GO|NO-GO)$' "$result"; then
     fail "$name" "final line missing in gate output"
     return
@@ -1723,8 +1715,8 @@ test_standard_tier_detection() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$brief" "Tier: standard" || return
-  assert_contains "$name" "$brief" "Reviewers: critic,qa-tester,architecture-reviewer" || return
+  assert_file_contains "$name" "$brief" "Tier: standard" || return
+  assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester,architecture-reviewer" || return
   pass "$name"
 }
 
@@ -1748,7 +1740,7 @@ test_full_tier_line_count() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$brief" "Tier: full" || return
+  assert_file_contains "$name" "$brief" "Tier: full" || return
   pass "$name"
 }
 
@@ -1772,7 +1764,7 @@ test_full_tier_sensitive_file() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$brief" "Tier: full" || return
+  assert_file_contains "$name" "$brief" "Tier: full" || return
   pass "$name"
 }
 
@@ -1799,7 +1791,7 @@ test_via_symlink() {
     fail "$name" "exit $code — readlink -f fix may be broken"
     return
   fi
-  assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
   pass "$name"
 }
 
@@ -1835,7 +1827,7 @@ test_rename_sensitive_old_name() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$brief" "Tier: full" || return
+  assert_file_contains "$name" "$brief" "Tier: full" || return
   pass "$name"
 }
 
