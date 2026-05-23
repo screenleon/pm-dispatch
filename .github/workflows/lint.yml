@@ -102,6 +102,7 @@ jobs:
             test-pr-gate-profile.sh
             test-portable.sh
             test-claude-executor.sh
+            test-pm-prep-snapshot.sh
             test-setup-project.sh
             test-usage-tracker.sh
             test-usage-weekly.sh
