@@ -232,12 +232,13 @@ FAKEOF
   _exit10=$?
 
   _tracker10="$_home10/.claude/usage-tracker.jsonl"
-  if [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
+  if [[ "$_exit10" -eq 0 ]] \
+     && [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
      && grep -q '"pool":"codex"' "$_tracker10" \
      && grep -q '"tokens":105000' "$_tracker10"; then
     pass "$name"
   else
-    fail "$name" ""
+    fail "$name" "exit=$_exit10"
   fi
   rm -rf "$_fake_bin10" "$_home10" "$_work10"
   rm -f "$_brief10"
@@ -309,12 +310,13 @@ FAKEOF
   _exit12=$?
 
   _tracker12="$_home12/.claude/usage-tracker.jsonl"
-  if [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
+  if [[ "$_exit12" -eq 0 ]] \
+     && [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
      && grep -q '"pool":"spark"' "$_tracker12" \
      && grep -q '"tokens":52000' "$_tracker12"; then
     pass "$name"
   else
-    fail "$name" ""
+    fail "$name" "exit=$_exit12"
   fi
   rm -rf "$_fake_bin12" "$_home12" "$_work12"
   rm -f "$_brief12"

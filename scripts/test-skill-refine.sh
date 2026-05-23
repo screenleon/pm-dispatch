@@ -252,29 +252,43 @@ case_env_set_success() {
   pass "$name"
 }
 
-# Behavior: SKILL_NAME values containing path separators or whitespace are rejected with exit 2.
-# Steps:
-#   1. For each bad input, invoke skill-refine with a valid CLAUDE_MEMORY_DIR.
-#   2. Assert exit 2 for each invocation.
-#   3. Assert stderr names the rejected invalid value.
-case_invalid_skill_name() {
-  local name="invalid_skill_name" repo memory out err status bad_input safe_name
+# Behavior: SKILL_NAME values containing path separators are rejected with exit 2.
+case_invalid_skill_name_path_separator() {
+  local name="invalid_skill_name_path_separator" repo memory out err status
+  local bad_input='../foo'
   should_run "$name" || return 0
   repo="$(make_repo "$name")"
   memory="$tmp_root/$name-memory"
   mkdir -p "$memory"
 
-  for bad_input in '../foo' 'foo bar'; do
-    safe_name="${bad_input//[^A-Za-z0-9]/_}"
-    out="$tmp_root/$name-$safe_name.out"
-    err="$tmp_root/$name-$safe_name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
 
-    run_skill_refine "$repo" "$bad_input" "$memory" "$tmp_root/no-home" "$out" "$err"
-    status=$RUN_STATUS
+  run_skill_refine "$repo" "$bad_input" "$memory" "$tmp_root/no-home" "$out" "$err"
+  status=$RUN_STATUS
 
-    assert_exit "$name" "$status" 2
-    assert_contains "$name" "$err" "invalid skill name: $bad_input"
-  done
+  assert_exit "$name" "$status" 2
+  assert_contains "$name" "$err" "invalid skill name: $bad_input"
+  pass "$name"
+}
+
+# Behavior: SKILL_NAME values containing whitespace are rejected with exit 2.
+case_invalid_skill_name_whitespace() {
+  local name="invalid_skill_name_whitespace" repo memory out err status
+  local bad_input='foo bar'
+  should_run "$name" || return 0
+  repo="$(make_repo "$name")"
+  memory="$tmp_root/$name-memory"
+  mkdir -p "$memory"
+
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
+
+  run_skill_refine "$repo" "$bad_input" "$memory" "$tmp_root/no-home" "$out" "$err"
+  status=$RUN_STATUS
+
+  assert_exit "$name" "$status" 2
+  assert_contains "$name" "$err" "invalid skill name: $bad_input"
   pass "$name"
 }
 
@@ -325,7 +339,8 @@ case_bad_memory_dir
 case_zero_candidates
 case_missing_fields
 case_env_set_success
-case_invalid_skill_name
+case_invalid_skill_name_path_separator
+case_invalid_skill_name_whitespace
 case_no_args_exits_2_with_usage
 case_multi_args_exits_2_with_usage
 
