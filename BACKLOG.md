@@ -101,7 +101,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** **Deferred to v0.4.0** — v0.3.0 ships only `mcp/README.md` (the intended tool surface, as a `pmctl` interface design constraint); the server is built once `pmctl` is stable. Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Antigravity CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
 | CC-217 | ✅ closed 2026-05-23 | **[claude-executor background dispatch]** `Agent(subagent_type:claude-executor)` calls in `/pm` Route B and `/pr-gate` Route B currently block the main thread (missing `run_in_background:true`), inconsistent with the codex-executor pattern. Fix: add `run_in_background:true` to all claude-executor dispatch sites in commands and gate scripts; update completion handling to receive the async notification rather than blocking inline. | DX/gate | 2026-05-21 | pr:#124 | P2 | oss |
 | CC-218 | ✅ closed 2026-05-23 | **[spike tracking infrastructure]** Add `spike` as a valid epic type in `pm/scripts/validate.sh`. Define spike body structure: `Investigation scope` / `Done-when` criteria / `Result log` pointer to `docs/spikes/CC-NNN.md`. Create `docs/spikes/` directory with README describing format. Convert CC-209 epic from `design` → `spike`. Spike results must be committed to the repo — ephemeral findings are treated as a gap. | process | 2026-05-21 | pr:#125 | P2 | design |
-| CC-219 | ⏸ deferred | **[pre-milestone doc freshness gate]** Before each milestone release, verify docs are current: README, MILESTONES.md, BACKLOG.md (open tickets with TBD refs), `docs/` directory. Implement as a `scripts/check-docs-freshness.sh` checklist that prints stale indicators and exits non-zero if blocking gaps exist. Should run as part of the milestone closure checklist. | process/gate | 2026-05-21 | — | P3 | hygiene |
+| CC-219 | 🔵 active | **[pre-milestone doc freshness gate]** Before each milestone release, verify docs are current: README, MILESTONES.md, BACKLOG.md (open tickets with TBD refs), `docs/` directory. Implement as a `scripts/check-docs-freshness.sh` checklist that prints stale indicators and exits non-zero if blocking gaps exist. Should run as part of the milestone closure checklist. | process/gate | 2026-05-21 | pr:#129 | P3 | hygiene |
 | CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent is a **planner** (like `project-pm`): reads a BACKLOG spike ticket, plans 2–3 investigation angles, returns a `spike_plan` block; the **main thread** fans out one Agent per angle (subagents cannot spawn subagents); the spike agent is re-invoked to synthesise findings into `docs/spikes/CC-NNN.md` and update the `Result log`. Modeled on `/pr-gate`'s reviewer fan-out. v0.3.0 M5. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
 | CC-221 | ✅ closed 2026-05-21 | **[copy-mode refresh semantics]** `link_or_copy` idempotency check compares dst sha256 against manifest (old src sha), so re-running `install.sh` does NOT refresh a copied file whose source changed — it matches the stale copy against the old manifest sha and returns ok. Fix: compare `sha256(src)` vs `sha256(dst)` directly; if different and mode=copy, re-copy and update manifest. Surfaced during CC-104v gate review; current behaviour documented as uninstall+reinstall workaround. | ops | 2026-05-21 | pr:#117 | P3 | oss |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
@@ -123,7 +123,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-237 | ⏸ deferred | **[v0.3.0 M4: context-enricher baseline]** Implement the context-enricher baseline sources — rg / `git ls-files` / `git diff` / memory search — producing a context-pack (CC-232) before dispatch. codegraph is evaluated separately as the CC-209 spike. `pmctl context build`. | ux | 2026-05-22 | — | P3 | design |
 | CC-238 | ⏸ deferred | **[/pr-gate claude-route fan-out hardening]** CC-217 made the `/pr-gate` claude-executor reviewer/synthesis fan-out run detached (`run_in_background`). Gate advisories on the new flow (CC-217 gate, gate-20260523): (a) no timeout/fallback if a reviewer agent never reports completion → indefinite wait; (b) single fan-out step weakens per-reviewer failure attribution on partial failure; (c) no test artifact validates background completion / relay ordering. Add a completion timeout + partial-failure attribution + test coverage for the claude-route fan-out. | gate | 2026-05-23 | pr:#124 | P3 | oss |
 | CC-239 | ⏸ deferred | **[reuse-scan capability]** New work keeps duplicating existing helpers / scripts / patterns (the recurring CC-200..204 reuse debt) because nothing surfaces "this already exists" before a brief is written. A dedicated reuse/refactor *agent* was considered and rejected (subagents cannot dispatch → it would only duplicate `project-pm`; refactor is not a distinct cognitive mode; refactor expertise already lives in architecture/risk/critic reviewers + the `dispatch-brief.md` refactor skeleton). The right shape is a **reuse-scan capability** invoked during PM briefing — queries the codebase for prior art and emits a reuse report the brief incorporates. Builds on CC-232 / CC-237 / CC-061. | reuse | 2026-05-23 | — | P3 | design |
-| CC-240 | ⏸ deferred | **[test-suite reliability follow-ups]** From the CC-203 gate (gate-20260523): (a) `[medium]` `scripts/test-run-all-tests.sh` asserts fixed suite counts (`24 passed` …) instead of deriving expected totals from `SUITE_NAMES` — suite-registration drift goes undetected and every new suite needs manual count bumps; (b) `[low]` `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` (pre-existing; conflicts with the qa AGENT.md red line on `sleep` for async sync) → CI-timing flakiness. Fix (a) by computing expected counts from the registry; fix (b) with an IPC / event-driven lock-hold. | test | 2026-05-23 | pr:#127 | P3 | oss |
+| CC-240 | ⏸ deferred | **[test-suite reliability follow-ups]** Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129). Remaining: `[low]` `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` (pre-existing; conflicts with the qa AGENT.md red line on `sleep` for async sync) → CI-timing flakiness. Fix with an IPC / event-driven lock-hold. | test | 2026-05-23 | pr:#127 | P3 | oss |
+| CC-241 | ⏸ deferred | **[v0.2.0 doc-drift cleanup]** The CC-219 doc-freshness gate, run against `main`, surfaces three real drifts that pre-date this PR: (a) `[FAIL]` `BACKLOG.md:81` CC-104p shows `✅ closed 2026-05-21` but `pr:TBD` — the actual merged PR is #114 (`feat(cc-104p): add serialize_with_lock portable shim`); update the row to `pr:#114`. (b) `[FAIL]` `MILESTONES.md` `## v0.2.0` section status is marked 規劃中/planned but git tag `v0.2.0` was cut 2026-05-22 — flip status to released and add closing notes consistent with the `## v0.1.0` section. (c) `[WARN]` `README.md` has no `vN.N.N` version reference; add a current-version footer or version-table to satisfy U1 of the gate (warning only — non-blocking). Single PR; data-only commit; expected diff < 20 lines. | process/docs | 2026-05-23 | — | P3 | hygiene |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
@@ -992,7 +993,7 @@ survive across sessions and inform future implementation briefs.
 
 **Priority**: P2.
 
-## CC-219 — pre-milestone doc freshness gate（deferred）
+## CC-219 — pre-milestone doc freshness gate（active — PR #129）
 
 **Problem**: Milestone releases can ship with stale README, MILESTONES.md, BACKLOG.md,
 or `docs/` content. There is no automated check that doc state matches code state at
@@ -1344,16 +1345,41 @@ The genuinely-missing piece is the **front-end**: a reuse-scan that runs *before
 
 **Cross-link**: CC-232 (context-pack schema), CC-237 (context-enricher baseline), CC-061 (skills/), CC-200..CC-204 (the reuse debt this prevents recurring), `docs/architecture/v0.3.0-synthesis.md`.
 
-## CC-240 — test-suite reliability follow-ups（deferred）
+## CC-240 — test-suite reliability follow-ups（deferred — partial）
 
-**Problem**: The CC-203 gate (gate-20260523, standard tier, advise/GO) raised two test-infra findings: (a) `scripts/test-run-all-tests.sh` asserts hardcoded suite counts (`24 passed, 0 failed`, `23 passed, 1 skipped`, …) that must be hand-bumped whenever a suite is registered — CC-203 itself had to bump 23→24 in five assertions; (b) `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` to create contention overlap (pre-existing — not introduced by CC-203).
+**Status**: Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129); the assertions now derive expected pass/skip totals from `${#SUITE_NAMES[@]}`. Part (b) below remains open.
 
-**Why**: (a) hardcoded counts make suite-registration drift invisible and add manual churn to every harness/suite change; (b) fixed-`sleep` async timing is flaky on slow / preempted CI hosts and conflicts with the qa-testing-rules AGENT.md red line on `sleep` for async synchronization — a flaky gate test erodes the gate's signal.
+**Problem (remaining)**: `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` to create contention overlap (pre-existing — not introduced by CC-203).
+
+**Why**: Fixed-`sleep` async timing is flaky on slow / preempted CI hosts and conflicts with the qa-testing-rules AGENT.md red line on `sleep` for async synchronization — a flaky gate test erodes the gate's signal.
 
 **Requirement**:
-- `test-run-all-tests.sh`: derive expected pass/skip totals from `SUITE_NAMES` (count the registry) rather than hardcoding integers in each assertion.
 - `test-portable.sh::case_mkdir_lock_contention`: replace the fixed `sleep 1.2` lock-hold with an IPC / event-driven control path (e.g. a FIFO-gated holder, matching the pattern already used elsewhere in the portable-lock tests).
 
 **Priority**: P3 — test-infra hardening; advisory follow-up, the CC-203 GO was not blocked on it.
 
 **Cross-link**: CC-203 (origin), `scripts/test-run-all-tests.sh`, `scripts/test-portable.sh`.
+
+## CC-241 — v0.2.0 doc-drift cleanup（deferred）
+
+**Problem**: The CC-219 doc-freshness gate, run against `main` for the first time, surfaces three real pre-existing drifts:
+
+1. `[FAIL]` `BACKLOG.md:81` — CC-104p row shows `✅ closed 2026-05-21` but the PR ref column is `pr:TBD`. The actual merged PR is **#114** (`feat(cc-104p): add serialize_with_lock portable shim; fix routing-log row-loss on fresh HOME`, merged 2026-05-21).
+2. `[FAIL]` `MILESTONES.md` — the `## v0.2.0` section status string still reads as 規劃中/planned even though git tag `v0.2.0` was cut on 2026-05-22 (closed via CC-222 / PR #120). The CC-219 gate's U2 unit (`tag exists but section marked planned`) correctly flags this.
+3. `[WARN]` `README.md` — no `vN.N.N` version reference anywhere in the file. CC-219's U1 unit treats absence as a warning (non-blocking), but releasing a v0.2.0 tag without README visibility weakens the user-facing surface.
+
+**Why**: These drifts existed silently because no gate was running until CC-219. Now that the gate ships on `main`, every subsequent milestone close will trip the same three findings until they're fixed — the gate's signal degrades each time a known-but-unfixed FAIL is ignored. Closing the drift quickly preserves the gate's "if it flags, it matters" trust property.
+
+**Requirement**:
+- Update `BACKLOG.md:81` (CC-104p row) PR ref column from `pr:TBD` to `pr:#114`.
+- Update `MILESTONES.md` `## v0.2.0` section: flip status from planned to released (date 2026-05-22, tag `v0.2.0`, closing-notes line consistent with the `## v0.1.0` section's prose).
+- Update `README.md`: add a current-version reference (footer line, badge, or version-table row) so U1 can detect drift on future releases instead of falling through to the absent-warning branch.
+
+**Acceptance**:
+- `bash scripts/check-docs-freshness.sh` against `main` exits 0 (all three checks clean) after merge.
+- `bash scripts/check-docs-freshness.sh --json` parses with zero findings.
+- Single PR, data-only, expected diff < 20 lines.
+
+**Priority**: P3 — hygiene; non-blocking but degrades gate signal each iteration it's deferred. Should ship in the same week as CC-219 merge.
+
+**Cross-link**: CC-219 (the gate that surfaced these), CC-104p (origin of finding 1), CC-222 / MILESTONES.md (origin of finding 2).

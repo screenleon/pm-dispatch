@@ -33,11 +33,14 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
   test-claude-executor
   test-run-all-tests
 )
+SUITE_TOTAL=${#SUITE_NAMES[@]}
+SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
 
 pass() {
   PASS=$((PASS + 1))
@@ -77,6 +80,7 @@ suite_path() {
     test-doctor) printf 'scripts/test-doctor.sh\n' ;;
     test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
     test-test-harness) printf 'scripts/test-test-harness.sh\n' ;;
+    test-check-docs-freshness) printf 'scripts/test-check-docs-freshness.sh\n' ;;
     test-commands) printf 'scripts/test-commands.sh\n' ;;
     test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
     test-dispatch-handover) printf 'scripts/test-dispatch-handover.sh\n' ;;
@@ -154,13 +158,13 @@ test_list() {
 test_skip_unknown_suite() {
   local name="skip-unknown-suite"
   # Behavior: --skip with an unknown suite name is a no-op; all registered suites run.
-  # Steps: invoke --skip nonexistent-suite with all pass-stubs; assert 24 passed, 0 skipped.
+  # Steps: invoke --skip nonexistent-suite with all pass-stubs; assert all suites pass, none skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
   path="$(make_path_with_codex "$repo/bin")"
   out=$(PATH="$path" run_aggregator "$repo" --skip nonexistent-suite 2>&1) || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"24 passed, 0 failed, 0 skipped"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -170,7 +174,7 @@ test_skip_unknown_suite() {
 test_skip_known_suite() {
   local name="skip-known-suite"
   # Behavior: --skip with a known suite name causes exactly that suite to be skipped.
-  # Steps: invoke --skip lint-agents; assert SKIP message and 23 passed 1 skipped.
+  # Steps: invoke --skip lint-agents; assert SKIP message and TOTAL-1 passed, 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -178,7 +182,7 @@ test_skip_known_suite() {
   out=$(PATH="$path" run_aggregator "$repo" --skip lint-agents 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP lint-agents (requested)"* &&
-        "$out" == *"23 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"$SUITE_MINUS_ONE passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -196,7 +200,7 @@ test_suite_not_found_skip() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL lint-scripts (not found or not executable)"* &&
-        "$out" == *"23 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -206,7 +210,7 @@ test_suite_not_found_skip() {
 test_codex_missing_skips_codex_dispatch() {
   local name="codex-missing-skips-codex-dispatch"
   # Behavior: test-codex-dispatch is auto-skipped when codex is absent from PATH.
-  # Steps: put codex-absent PATH; assert SKIP test-codex-dispatch and 23 passed 1 skipped.
+  # Steps: put codex-absent PATH; assert SKIP test-codex-dispatch and TOTAL-1 passed, 1 skipped.
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
   write_pass_stubs "$repo"
@@ -214,7 +218,7 @@ test_codex_missing_skips_codex_dispatch() {
   out=$(PATH="$path" bash "$repo/scripts/run-all-tests.sh" 2>&1) || status=$?
   if [[ "$status" -eq 0 &&
         "$out" == *"SKIP test-codex-dispatch (codex not on PATH)"* &&
-        "$out" == *"23 passed, 0 failed, 1 skipped"* ]]; then
+        "$out" == *"$SUITE_MINUS_ONE passed, 0 failed, 1 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -233,7 +237,7 @@ test_fail_on_suite_error() {
   out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
   if [[ "$status" -eq 1 &&
         "$out" == *"FAIL test-pr-gate"* &&
-        "$out" == *"23 passed, 1 failed, 0 skipped"* ]]; then
+        "$out" == *"$SUITE_MINUS_ONE passed, 1 failed, 0 skipped"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
