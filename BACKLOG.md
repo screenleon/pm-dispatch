@@ -124,6 +124,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-238 | ⏸ deferred | **[/pr-gate claude-route fan-out hardening]** CC-217 made the `/pr-gate` claude-executor reviewer/synthesis fan-out run detached (`run_in_background`). Gate advisories on the new flow (CC-217 gate, gate-20260523): (a) no timeout/fallback if a reviewer agent never reports completion → indefinite wait; (b) single fan-out step weakens per-reviewer failure attribution on partial failure; (c) no test artifact validates background completion / relay ordering. Add a completion timeout + partial-failure attribution + test coverage for the claude-route fan-out. | gate | 2026-05-23 | pr:#124 | P3 | oss |
 | CC-239 | ⏸ deferred | **[reuse-scan capability]** New work keeps duplicating existing helpers / scripts / patterns (the recurring CC-200..204 reuse debt) because nothing surfaces "this already exists" before a brief is written. A dedicated reuse/refactor *agent* was considered and rejected (subagents cannot dispatch → it would only duplicate `project-pm`; refactor is not a distinct cognitive mode; refactor expertise already lives in architecture/risk/critic reviewers + the `dispatch-brief.md` refactor skeleton). The right shape is a **reuse-scan capability** invoked during PM briefing — queries the codebase for prior art and emits a reuse report the brief incorporates. Builds on CC-232 / CC-237 / CC-061. | reuse | 2026-05-23 | — | P3 | design |
 | CC-240 | ⏸ deferred | **[test-suite reliability follow-ups]** Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129). Remaining: `[low]` `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` (pre-existing; conflicts with the qa AGENT.md red line on `sleep` for async sync) → CI-timing flakiness. Fix with an IPC / event-driven lock-hold. | test | 2026-05-23 | pr:#127 | P3 | oss |
+| CC-241 | ⏸ deferred | **[v0.2.0 doc-drift cleanup]** The CC-219 doc-freshness gate, run against `main`, surfaces three real drifts that pre-date this PR: (a) `[FAIL]` `BACKLOG.md:81` CC-104p shows `✅ closed 2026-05-21` but `pr:TBD` — the actual merged PR is #114 (`feat(cc-104p): add serialize_with_lock portable shim`); update the row to `pr:#114`. (b) `[FAIL]` `MILESTONES.md` `## v0.2.0` section status is marked 規劃中/planned but git tag `v0.2.0` was cut 2026-05-22 — flip status to released and add closing notes consistent with the `## v0.1.0` section. (c) `[WARN]` `README.md` has no `vN.N.N` version reference; add a current-version footer or version-table to satisfy U1 of the gate (warning only — non-blocking). Single PR; data-only commit; expected diff < 20 lines. | process/docs | 2026-05-23 | — | P3 | hygiene |
 | CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-049 | ✅ closed 2026-05-18 | Archive closed ticket sections → BACKLOG-ARCHIVE.md | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
 | CC-050 | ✅ closed 2026-05-18 | Audit stale deferred tickets CC-011/012/014/015 | process/docs | 2026-05-17 | pr:#87 | — | hygiene |
@@ -1358,3 +1359,27 @@ The genuinely-missing piece is the **front-end**: a reuse-scan that runs *before
 **Priority**: P3 — test-infra hardening; advisory follow-up, the CC-203 GO was not blocked on it.
 
 **Cross-link**: CC-203 (origin), `scripts/test-run-all-tests.sh`, `scripts/test-portable.sh`.
+
+## CC-241 — v0.2.0 doc-drift cleanup（deferred）
+
+**Problem**: The CC-219 doc-freshness gate, run against `main` for the first time, surfaces three real pre-existing drifts:
+
+1. `[FAIL]` `BACKLOG.md:81` — CC-104p row shows `✅ closed 2026-05-21` but the PR ref column is `pr:TBD`. The actual merged PR is **#114** (`feat(cc-104p): add serialize_with_lock portable shim; fix routing-log row-loss on fresh HOME`, merged 2026-05-21).
+2. `[FAIL]` `MILESTONES.md` — the `## v0.2.0` section status string still reads as 規劃中/planned even though git tag `v0.2.0` was cut on 2026-05-22 (closed via CC-222 / PR #120). The CC-219 gate's U2 unit (`tag exists but section marked planned`) correctly flags this.
+3. `[WARN]` `README.md` — no `vN.N.N` version reference anywhere in the file. CC-219's U1 unit treats absence as a warning (non-blocking), but releasing a v0.2.0 tag without README visibility weakens the user-facing surface.
+
+**Why**: These drifts existed silently because no gate was running until CC-219. Now that the gate ships on `main`, every subsequent milestone close will trip the same three findings until they're fixed — the gate's signal degrades each time a known-but-unfixed FAIL is ignored. Closing the drift quickly preserves the gate's "if it flags, it matters" trust property.
+
+**Requirement**:
+- Update `BACKLOG.md:81` (CC-104p row) PR ref column from `pr:TBD` to `pr:#114`.
+- Update `MILESTONES.md` `## v0.2.0` section: flip status from planned to released (date 2026-05-22, tag `v0.2.0`, closing-notes line consistent with the `## v0.1.0` section's prose).
+- Update `README.md`: add a current-version reference (footer line, badge, or version-table row) so U1 can detect drift on future releases instead of falling through to the absent-warning branch.
+
+**Acceptance**:
+- `bash scripts/check-docs-freshness.sh` against `main` exits 0 (all three checks clean) after merge.
+- `bash scripts/check-docs-freshness.sh --json` parses with zero findings.
+- Single PR, data-only, expected diff < 20 lines.
+
+**Priority**: P3 — hygiene; non-blocking but degrades gate signal each iteration it's deferred. Should ship in the same week as CC-219 merge.
+
+**Cross-link**: CC-219 (the gate that surfaced these), CC-104p (origin of finding 1), CC-222 / MILESTONES.md (origin of finding 2).
