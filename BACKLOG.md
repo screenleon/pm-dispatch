@@ -1672,3 +1672,53 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P2 — unblocks PR-B.2 (consumer migration); CC-249 epic stuck until this lands.
 
 **Cross-link**: CC-249 (parent epic), `docs/spikes/CC-249.md` (spike that missed this gap — amendment will update spike's Open Risks section), `[[feedback_codex_brief_discipline]]` (CC-251 — discipline that helped Codex catch and HALT-loop on the conflict rather than silently mis-migrate).
+
+## CC-253 — CC-209 Phase 2: codegraph benchmark on representative target codebase（active）
+
+**Problem**: CC-209 Phase 1 spike (PR #151) returned `Verdict: AMBER` because pm-dispatch's bash + markdown stack is outside codegraph's supported language set; the index produced `0 files / 0 nodes` (correctly — pm-dispatch is the wrong test target for a code-context tool). Phase 2 (benchmark token + latency vs rg/git baseline per original CC-209 ticket) was gated on Phase 1 verdict; running it on pm-dispatch would produce uninformative numbers.
+
+**Why**: codegraph's intended use is indexing a target codebase that codex/Claude is being dispatched **against** (e.g., the user's app under development), not indexing pm-dispatch itself (the orchestration tool). To produce a meaningful adopt/defer/reject verdict for CC-232 (context-pack source) + CC-237 (enricher baseline), Phase 2 needs a representative target in codegraph's supported language set (TypeScript / JavaScript / Python / Go).
+
+**Requirement**:
+- Spike brief MUST specify `test_target:` explicitly (per CC-255 brief template improvement): pick a TS/JS/Python/Go codebase pm-dispatch routinely dispatches against. Candidates: `japanese-site` (TS/JS) — confirm via `git -C ~/github/japanese-site` language detect.
+- Index target via `codegraph index` (pre-existing v0.8.0 binary at `~/.nvm/.../bin/codegraph` per PR #151 evidence).
+- Run 3 representative queries — pick from real briefs (e.g., a "find all callers of `<symbol>`" query, a "definition lookup" query, a "callgraph traversal" query).
+- Baseline: `rg` + `git ls-files` returning equivalent file/symbol set.
+- Measure: input-token proxy (`wc -c` on full files in baseline vs `wc -c` on codegraph-filtered subset), latency (`time`).
+- Verdict: adopt (token saving > 50% with acceptable precision) / defer (insufficient signal) / reject (worse than baseline).
+- Apply CC-255 spike-validation discipline: main-thread cross-checks claims (license, install path, output shape) against `gh api` + WebFetch independently before consuming the verdict.
+
+**Acceptance**:
+- `docs/spikes/cc209-codegraph-phase2.md` (or appended `## Phase 2` to phase1 doc) exists with 3 query benchmarks + verdict.
+- Phase 2 brief commits to `test_target:` field per CC-255 template.
+- Main-thread validation section appended per `[[feedback_spike_validation_mandatory]]`.
+- BACKLOG CC-209 row flipped to `✅ closed` with final verdict after Phase 2 lands.
+
+**Priority**: P3 — feeds CC-232 / CC-237 design, not blocking other work.
+
+**Cross-link**: CC-209 (Phase 1 origin), `docs/spikes/cc209-codegraph-phase1.md`, CC-255 (template improvements this depends on), CC-232 (context-pack consumer), CC-237 (enricher consumer), `[[feedback_spike_validation_mandatory]]`.
+
+## CC-255 — Spike infrastructure: rubric + brief template improvements（active）
+
+**Problem**: CC-209 Phase 1 spike (PR #151) surfaced 2 spike-infrastructure gaps that caused codex to misapply the rubric:
+
+1. **Verdict rubric ambiguity on "local env" scope**: rubric RED criterion 1 read "Install fails after a reasonable attempt and the failure is not a local env issue (e.g. peerDep that the user could resolve)". Codex hit a sandbox network block, classified it as "not local env" because the rubric only enumerated peerDep as a local-env class. Reality: sandbox isolation is the same conceptual class.
+2. **Spike brief test-target ambiguity**: Phase 1 brief said "Angle A: pick one well-known symbol in pm-dispatch" — that sentence pre-committed pm-dispatch as the indexed test target. For language-aware tools (codegraph, semgrep, similar), the indexed target must match the tool's supported language set; the brief must commit to the right target, not let the executor pick.
+
+**Why**: Both gaps caused codex to issue an inaccurate verdict (`RED` when the true verdict was `AMBER`). The errors weren't fabrications — codex executed honestly — but rubric + brief ambiguity made them analytically derivable from the prompt. Future spikes will repeat these unless the infrastructure is hardened.
+
+**Requirement**:
+- **Rubric template** (`/tmp/cc<NNN>-content/verdict-rubric.md` future spikes write): RED criterion 1 enumeration expanded to "(e.g. peerDep, sandbox network isolation, missing dev dependencies)". Add a sentence: "ANY constraint of the executor's local environment (sandbox, network, missing tools) counts as local-env — not a project quality signal."
+- **Spike brief template** (in `docs/spikes/README.md` skeleton OR `docs/dispatch-brief.md`): add optional `test_target:` field to spike-brief schema. Required when the spike evaluates a language-aware tool (codegraph, AST-grep, semgrep, etc.); optional otherwise. Field commits to the representative target codebase the spike will exercise, distinct from the spike's working_dir.
+- Update `agents/project-pm.md` brief-authoring guidance: when briefing a verdict-issuing spike for a language-aware tool, require `test_target:` in the brief output.
+
+**Acceptance**:
+- `docs/spikes/README.md` skeleton updated with `test_target:` field documented.
+- `docs/dispatch-brief.md` schema adds `test_target:` as optional section.
+- Reference verdict-rubric template enumerates sandbox-block as local-env example.
+- `agents/project-pm.md` brief-authoring rules updated to require `test_target:` for language-aware-tool verdict spikes.
+- Regression: re-author CC-209 Phase 2 brief (CC-253 work) using the new template; confirm it commits to `test_target: japanese-site` (or chosen TS/JS target) explicitly.
+
+**Priority**: P3 — process polish; affects every future spike but each individual cost is small.
+
+**Cross-link**: CC-209 (Phase 1 origin showing both gaps), CC-253 (Phase 2 dependent on these template improvements), `[[feedback_spike_pilot_required]]` (sibling spike-process rule), `[[feedback_spike_validation_mandatory]]` (sibling validation rule).
