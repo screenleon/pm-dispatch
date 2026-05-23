@@ -91,6 +91,7 @@ jobs:
             patch-gitignore.sh
             pr-gate.sh
             setup-project.sh
+            test-check-docs-freshness.sh
             test-codex-dispatch.sh
             test-commands.sh
             test-commands-runner.sh
