@@ -5,23 +5,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MIGRATOR="$SCRIPT_DIR/migrate-routing-log.sh"
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-pass() {
-  PASS=$((PASS+1))
-  [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$1"
-}
-
-fail() {
-  FAIL=$((FAIL+1))
-  FAILED_CASES+=("$1")
-  printf '  FAIL  %s%s\n' "$1" "${2:+ — $2}"
-}
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 write_fixture() {
   local path="$1" malformed="${2:-0}"
@@ -104,8 +90,10 @@ assert_schema() {
 #   2. Trigger migrate-routing-log.sh against that fixture.
 #   3. Verify backup creation, marker insertion, row count, legacy bullet removal, and JSON schema.
 test_fresh_migrates() {
-  local name="migrate: fresh file writes backup markers and 5 rows" path out
-  path="$TMP_ROOT/m1/routing_log.md"
+  local name="migrate: fresh file writes backup markers and 5 rows"
+  should_run "$name" || return 0
+  local path out
+  path="$tmp_root/m1/routing_log.md"
   write_fixture "$path"
   out="$(CLAUDE_ROUTING_LOG_PATH="$path" "$MIGRATOR" 2>&1)"
   if [[ -f "$path.bak" ]] && grep -q '<!-- routing-log:auto-block:start -->' "$path" && [[ "$(row_count "$path")" == "5" ]] && ! grep -q '^## 2026-05' "$path" && assert_schema "$path"; then
@@ -121,8 +109,10 @@ test_fresh_migrates() {
 #   2. Trigger migrate-routing-log.sh against the migrated fixture again.
 #   3. Verify the output reports no-op, file bytes are preserved, and the backup remains.
 test_idempotent() {
-  local name="migrate: second invocation no-op preserves file and bak" path out
-  path="$TMP_ROOT/m2/routing_log.md"
+  local name="migrate: second invocation no-op preserves file and bak"
+  should_run "$name" || return 0
+  local path out
+  path="$tmp_root/m2/routing_log.md"
   write_fixture "$path"
   CLAUDE_ROUTING_LOG_PATH="$path" "$MIGRATOR" >/dev/null 2>&1
   cp "$path" "$path.after1"
@@ -140,8 +130,10 @@ test_idempotent() {
 #   2. Trigger migrate-routing-log.sh against that fixture.
 #   3. Verify the command exits non-zero, reports the backup conflict, and preserves the original file.
 test_existing_backup_aborts() {
-  local name="migrate: existing backup aborts without touching file" path out status
-  path="$TMP_ROOT/m3/routing_log.md"
+  local name="migrate: existing backup aborts without touching file"
+  should_run "$name" || return 0
+  local path out status
+  path="$tmp_root/m3/routing_log.md"
   write_fixture "$path"
   cp "$path" "$path.before"
   printf 'old backup\n' > "$path.bak"
@@ -159,8 +151,10 @@ test_existing_backup_aborts() {
 #   2. Trigger migrate-routing-log.sh against that fixture.
 #   3. Verify only valid rows are migrated and the missing Task line is reported.
 test_malformed_skips() {
-  local name="migrate: malformed bullet skips one row and audits" path out
-  path="$TMP_ROOT/m4/routing_log.md"
+  local name="migrate: malformed bullet skips one row and audits"
+  should_run "$name" || return 0
+  local path out
+  path="$tmp_root/m4/routing_log.md"
   write_fixture "$path" 1
   out="$(CLAUDE_ROUTING_LOG_PATH="$path" "$MIGRATOR" 2>&1)"
   if [[ "$(row_count "$path")" == "4" ]] && [[ "$out" == *"missing Task line"* ]]; then
@@ -176,8 +170,10 @@ test_malformed_skips() {
 #   2. Trigger migrate-routing-log.sh against that fixture.
 #   3. Verify the table region after migration matches the saved copy.
 test_legacy_integrity() {
-  local name="migrate: legacy table region byte-for-byte unchanged" path
-  path="$TMP_ROOT/m5/routing_log.md"
+  local name="migrate: legacy table region byte-for-byte unchanged"
+  should_run "$name" || return 0
+  local path
+  path="$tmp_root/m5/routing_log.md"
   write_fixture "$path"
   legacy_region "$path" > "$path.legacy.before"
   CLAUDE_ROUTING_LOG_PATH="$path" "$MIGRATOR" >/dev/null 2>&1
@@ -191,14 +187,15 @@ test_legacy_integrity() {
 
 # Behavior: CLAUDE_ROUTING_LOG_DIR env var overrides project-memory directory discovery.
 # Steps:
-#   1. Write a fixture to $TMP_ROOT/m6/routing_log.md.
+#   1. Write a fixture to $tmp_root/m6/routing_log.md.
 #   2. Run migrator without CLAUDE_ROUTING_LOG_PATH, with CLAUDE_ROUTING_LOG_DIR pointing
-#      to $TMP_ROOT/m6, and with --cwd set to a path that has no .claude memory dir.
+#      to $tmp_root/m6, and with --cwd set to a path that has no .claude memory dir.
 #   3. Verify exit 0 — the override was respected and migration succeeded.
 test_routing_log_dir_override() {
   local name="migrate: CLAUDE_ROUTING_LOG_DIR overrides memory discovery"
   local path dir
-  dir="$TMP_ROOT/m6"
+  should_run "$name" || return 0
+  dir="$tmp_root/m6"
   path="$dir/routing_log.md"
   write_fixture "$path"
   if CLAUDE_ROUTING_LOG_DIR="$dir" "$MIGRATOR" --cwd /tmp/no-such-cwd-cc104t 2>/dev/null; then
@@ -208,7 +205,6 @@ test_routing_log_dir_override() {
   fi
 }
 
-echo "== migrate-routing-log =="
 test_fresh_migrates
 test_idempotent
 test_existing_backup_aborts
@@ -216,14 +212,4 @@ test_malformed_skips
 test_legacy_integrity
 test_routing_log_dir_override
 
-echo
-echo "----"
-echo "$PASS passed, $FAIL failed"
-if [[ "$FAIL" -gt 0 ]]; then
-  echo "failed cases:"
-  for c in "${FAILED_CASES[@]}"; do
-    echo "  - $c"
-  done
-  exit 1
-fi
-exit 0
+th_summary
