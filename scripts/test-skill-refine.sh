@@ -6,19 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_STATUS=0
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
-th_init "$@"
-
-fail() {
-  local name="$1" detail="${2:-}"
-  printf '  FAIL  %s\n' "$name"
-  if [[ -n "$detail" ]]; then
-    printf '        %s\n' "$detail"
-  fi
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$name")
-  th_summary
-  exit 1
-}
+th_init --format=colon-mixed --fail-fast "$@"
 
 assert_exit() {
   local name="$1" actual="$2" expected="$3"

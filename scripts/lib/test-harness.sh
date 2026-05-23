@@ -7,6 +7,8 @@
 th_init() {
   FILTER=""
   LIST=false
+  FORMAT="colon-flat"
+  FAIL_FAST=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --filter)
@@ -15,6 +17,22 @@ th_init() {
         ;;
       --list)
         LIST=true
+        shift
+        ;;
+      --format=*)
+        FORMAT="${1#*=}"
+        case "$FORMAT" in
+          colon-flat|colon-mixed|indent-1sp|indent-2sp|indent-2sp-quiet)
+            ;;
+          *)
+            printf 'error: unknown --format value %s (valid values: colon-flat, colon-mixed, indent-1sp, indent-2sp, indent-2sp-quiet)\n' "$FORMAT" >&2
+            exit 1
+            ;;
+        esac
+        shift
+        ;;
+      --fail-fast)
+        FAIL_FAST=true
         shift
         ;;
       *)
@@ -41,14 +59,46 @@ should_run() {
 }
 
 pass() {
-  printf 'PASS: %s\n' "$1"
+  case "$FORMAT" in
+    colon-flat|colon-mixed)
+      printf 'PASS: %s\n' "$1"
+      ;;
+    indent-2sp)
+      printf '  PASS  %s\n' "$1"
+      ;;
+    indent-1sp)
+      ${VERBOSE:+printf '  PASS %s\n' "$1"}
+      ;;
+    indent-2sp-quiet)
+      ${VERBOSE:+printf '  PASS  %s\n' "$1"}
+      ;;
+  esac
   PASS=$((PASS + 1))
 }
 
 fail() {
-  printf 'FAIL: %s: %s\n' "$1" "$2"
+  case "$FORMAT" in
+    colon-flat)
+      printf 'FAIL: %s: %s\n' "$1" "$2"
+      ;;
+    colon-mixed|indent-2sp)
+      printf '  FAIL  %s\n' "$1"
+      [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
+      ;;
+    indent-1sp)
+      printf '  FAIL %s\n' "$1"
+      [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
+      ;;
+    indent-2sp-quiet)
+      printf '  FAIL  %s\n' "$1"
+      [[ -n "${2:-}" ]] && printf '%s\n' "$2"
+      ;;
+  esac
   FAIL=$((FAIL + 1))
   FAILED_CASES+=("$1")
+  if $FAIL_FAST; then
+    th_summary
+  fi
 }
 
 th_summary() {

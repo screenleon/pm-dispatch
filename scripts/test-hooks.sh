@@ -27,20 +27,7 @@ SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
-th_init "$@"
-
-# Preserve historical VERBOSE-gated `  PASS  $name` + unconditional `  FAIL  $name` format.
-pass() {
-  PASS=$((PASS + 1))
-  ${VERBOSE:+printf '  PASS  %s\n' "$1"}
-}
-
-fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_CASES+=("$1")
-  printf '  FAIL  %s\n' "$1"
-  [[ -n "${2:-}" ]] && printf '%s\n' "$2"
-}
+th_init --format=indent-2sp-quiet "$@"
 
 # Sandbox audit logs.
 export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
