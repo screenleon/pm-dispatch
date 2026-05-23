@@ -139,8 +139,9 @@ collect_backlog_row() {
     /^## Index/ { in_index=1; next }
     in_index && $0 ~ /^## / { exit }
     in_index && $0 ~ /^\|/ {
-      gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2)
-      if ($2 == t) { print; exit }
+      candidate=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/,"",candidate)
+      if (candidate == t) { print; exit }
     }
   ' "$BACKLOG_FILE"
 }
@@ -243,7 +244,7 @@ fi
 TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
 
 {
-  printf '---\n'
+  printf '%s\n' '---'
   printf 'snapshot_ts: %s\n' "$SNAPSHOT_TS"
   printf 'repo: %s\n' "$REPO_NAME"
   printf 'branch_base: %s\n' "$BRANCH_BASE"
@@ -253,7 +254,7 @@ TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
   if [ -n "$RECENTLY_MERGED_WARN" ]; then
     printf '# warn: %s\n' "$RECENTLY_MERGED_WARN"
     printf 'recently_merged: []\n'
-  elif [ "${#RECENTLY_MERGED[@]:-0}" -eq 0 ]; then
+  elif [ "${#RECENTLY_MERGED[@]}" -eq 0 ]; then
     printf 'recently_merged: []\n'
   else
     printf 'recently_merged:\n'
@@ -268,7 +269,7 @@ TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
   printf '  makefile: %s\n' "$HAS_MAKEFILE"
   printf '  backlog_render_target: %s\n' "$HAS_BACKLOG_RENDER_TARGET"
   printf '  has_validate_sh: %s\n' "$HAS_VALIDATE_SH"
-  printf '---\n'
+  printf '%s\n' '---'
   printf '\n'
 
   if [ "${#FOCUS_IDS[@]}" -gt 0 ]; then
