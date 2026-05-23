@@ -4,17 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHECK_SCRIPT="$SCRIPT_DIR/check-docs-freshness.sh"
 
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
+
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-FAILED_CASES=()
 LAST_EXIT=0
 LAST_OUTPUT=""
-
-pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); printf 'FAIL: %s: %s\n' "$1" "$2"; }
 
 assert_exit() {
   local name="$1" expected="$2" actual="$3"
@@ -568,27 +565,27 @@ run_test_help() {
   pass "$name"
 }
 
-run_case() { "$@" || true; }
+run_case() {
+  local name="$1" fn="$2"
+  should_run "$name" || return 0
+  "$fn" || true
+}
 
-run_case run_test_u1_readme_clean
-run_case run_test_u1_readme_stale
-run_case run_test_u1_readme_absent
-run_case run_test_u2_section_missing
-run_case run_test_u2_status_stale
-run_case run_test_u2_clean
-run_case run_test_u3_closed_tbd
-run_case run_test_u3_open_tbd
-run_case run_test_u3_clean
-run_case run_test_aggregation_warning_only
-run_case run_test_aggregation_blocking_plus_warning
-run_case run_test_json_output
-run_case run_test_quiet_keeps_findings
-run_case run_test_repo_override
-run_case run_test_copy_mode_parity
-run_case run_test_help
+run_case "u1-readme-clean-exit-0" run_test_u1_readme_clean
+run_case "u1-readme-stale-exit-2" run_test_u1_readme_stale
+run_case "u1-readme-absent-exit-1" run_test_u1_readme_absent
+run_case "u2-section-missing-exit-2" run_test_u2_section_missing
+run_case "u2-status-stale-exit-2" run_test_u2_status_stale
+run_case "u2-clean-exit-0" run_test_u2_clean
+run_case "u3-closed-tbd-exit-2" run_test_u3_closed_tbd
+run_case "u3-open-tbd-exit-1" run_test_u3_open_tbd
+run_case "u3-clean-exit-0" run_test_u3_clean
+run_case "aggregation-warning-only-exit-1" run_test_aggregation_warning_only
+run_case "aggregation-blocking-warning-exit-2" run_test_aggregation_blocking_plus_warning
+run_case "json-output-valid" run_test_json_output
+run_case "quiet-keeps-findings" run_test_quiet_keeps_findings
+run_case "repo-override" run_test_repo_override
+run_case "copy-mode-parity" run_test_copy_mode_parity
+run_case "help-flag" run_test_help
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
-  exit 1
-fi
+th_summary

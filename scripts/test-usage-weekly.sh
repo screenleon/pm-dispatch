@@ -9,10 +9,6 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 USAGE="$SCRIPT_DIR/usage-weekly.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
 CURRENT_DATE="$(date -d '4 days ago' +%F 2>/dev/null || date -v -4d +%F 2>/dev/null || printf '2026-05-01')"
 
 # touch_days_ago FILE DAYS — portable mtime setter (GNU + BSD).
@@ -26,19 +22,24 @@ touch_days_ago() {
   fi
 }
 
-fail() {
-  local name="$1" detail="${2:-}"
-  printf '  FAIL  %s\n' "$name"
-  if [[ -n "$detail" ]]; then
-    printf '        %s\n' "$detail"
-  fi
-  exit 1
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
+TMP_ROOT="$tmp_root"
+
+# Preserve historical pass/fail format + fail-fast (CC-203 Batch 3 migration).
+pass() {
+  PASS=$((PASS + 1))
+  printf '  PASS  %s\n' "$1"
 }
 
-pass_case() {
-  local name="$1"
-  PASS=$((PASS + 1))
-  printf '  PASS  %s\n' "$name"
+fail() {
+  FAIL=$((FAIL + 1))
+  FAILED_CASES+=("$1")
+  printf '  FAIL  %s\n' "$1"
+  [[ -n "${2:-}" ]] && printf '        %s\n' "$2"
+  th_summary
+  exit 1
 }
 
 assert_contains() {
@@ -155,7 +156,7 @@ case_happy_path_dailyActivity_array() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 100 | 5 | 50 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_schema_dailyActivity_object() {
@@ -167,7 +168,7 @@ case_schema_dailyActivity_object() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 101 | 6 | 51 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_schema_days_array() {
@@ -179,7 +180,7 @@ case_schema_days_array() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 102 | 7 | 52 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_schema_daily_object() {
@@ -191,7 +192,7 @@ case_schema_daily_object() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 103 | 8 | 53 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_empty_dailyActivity_array() {
@@ -204,7 +205,7 @@ case_empty_dailyActivity_array() {
   assert_exit "$name" "$status" 0
   assert_not_contains "$name" "$out" "schema-mismatch"
   assert_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_missing_stats_cache() {
@@ -215,7 +216,7 @@ case_missing_stats_cache() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "(stats-cache.json not found)"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_stale_boundary_2d() {
@@ -234,7 +235,7 @@ case_stale_boundary_2d() {
   assert_exit "$name" "$status" 0
   assert_not_contains "$name" "$out" "(slightly stale"
   assert_not_contains "$name" "$out" "(stale"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_stale_boundary_3d() {
@@ -253,7 +254,7 @@ case_stale_boundary_3d() {
   assert_exit "$name" "$status" 0
   assert_matches "$name" "$out" '\(slightly stale, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
   assert_not_contains "$name" "$out" "(stale >"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_stale_boundary_14d() {
@@ -266,7 +267,7 @@ case_stale_boundary_14d() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_not_contains "$name" "$out" "(stale >14d"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_stale_boundary_15d() {
@@ -279,7 +280,7 @@ case_stale_boundary_15d() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_matches "$name" "$out" '\(stale >14d, last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\)'
-  pass_case "$name"
+  pass "$name"
 }
 
 case_model_tokens_array() {
@@ -296,7 +297,7 @@ case_model_tokens_array() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "- claude-sonnet-4-6: 1234"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_model_tokens_object() {
@@ -313,7 +314,7 @@ case_model_tokens_object() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "- claude-opus-4-7: 5678"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_corrupt_json() {
@@ -325,7 +326,7 @@ case_corrupt_json() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_jq_missing() {
@@ -338,7 +339,7 @@ case_jq_missing() {
   run_usage "$home" "$out" "$no_jq_path"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "(tool missing: jq)"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_codex_session_filename_with_space() {
@@ -356,7 +357,7 @@ case_codex_session_filename_with_space() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_read_only_invariant() {
@@ -380,7 +381,7 @@ case_read_only_invariant() {
     [[ "${VERBOSE:-}" ]] && diff -u "$before" "$after" || true
     fail "$name" "HOME directory listing changed"
   fi
-  pass_case "$name"
+  pass "$name"
 }
 
 case_output_contract() {
@@ -401,7 +402,7 @@ case_output_contract() {
   if [[ "$last" != Data\ freshness:* ]]; then
     fail "$name" "unexpected final line: $last"
   fi
-  pass_case "$name"
+  pass "$name"
 }
 
 case_mixed_schema_empty_preferred_populated_alternate() {
@@ -418,7 +419,7 @@ case_mixed_schema_empty_preferred_populated_alternate() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 99 | 3 | 33 |"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_bsd_date_fallback() {
@@ -439,7 +440,7 @@ case_bsd_date_fallback() {
   assert_matches "$name" "$out" '^# Weekly Usage Report [0-9]{4}-[0-9]{2}-[0-9]{2} ~ [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   # epoch_to_date via BSD date -r must produce a real date, not "n/a"
   assert_matches "$name" "$out" 'Data freshness: Claude stats-cache\.json last computed [0-9]{4}-[0-9]{2}-[0-9]{2}\.'
-  pass_case "$name"
+  pass "$name"
 }
 
 case_bsd_stat_fallback() {
@@ -465,33 +466,42 @@ case_bsd_stat_fallback() {
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
   assert_not_contains "$name" "$out" "| $CURRENT_DATE | 1 | 0 |"
-  pass_case "$name"
+  pass "$name"
 }
 
-echo "== usage-weekly =="
+run_case() {
+  local name="$1" fn="$2"
+  should_run "$name" || return 0
+  "$fn"
+}
 
-case_happy_path_dailyActivity_array
-case_schema_dailyActivity_object
-case_schema_days_array
-case_schema_daily_object
-case_empty_dailyActivity_array
-case_mixed_schema_empty_preferred_populated_alternate
-case_missing_stats_cache
-case_stale_boundary_2d
-case_stale_boundary_3d
-case_stale_boundary_14d
-case_stale_boundary_15d
-case_model_tokens_array
-case_model_tokens_object
-case_corrupt_json
-case_jq_missing
-case_bsd_date_fallback
-case_bsd_stat_fallback
-case_codex_session_filename_with_space
-case_read_only_invariant
-case_output_contract
+if ! $LIST; then
+  echo "== usage-weekly =="
+fi
 
-echo
-echo "----"
-printf '%s passed, 0 failed\n' "$PASS"
-echo "test-usage-weekly: all cases pass"
+run_case "happy_path_dailyActivity_array" case_happy_path_dailyActivity_array
+run_case "schema_dailyActivity_object" case_schema_dailyActivity_object
+run_case "schema_days_array" case_schema_days_array
+run_case "schema_daily_object" case_schema_daily_object
+run_case "empty_dailyActivity_array" case_empty_dailyActivity_array
+run_case "mixed_schema_empty_preferred_populated_alternate" case_mixed_schema_empty_preferred_populated_alternate
+run_case "missing_stats_cache" case_missing_stats_cache
+run_case "stale_boundary_2d" case_stale_boundary_2d
+run_case "stale_boundary_3d" case_stale_boundary_3d
+run_case "stale_boundary_14d" case_stale_boundary_14d
+run_case "stale_boundary_15d" case_stale_boundary_15d
+run_case "model_tokens_array" case_model_tokens_array
+run_case "model_tokens_object" case_model_tokens_object
+run_case "corrupt_json" case_corrupt_json
+run_case "jq_missing" case_jq_missing
+run_case "bsd_date_fallback" case_bsd_date_fallback
+run_case "bsd_stat_fallback" case_bsd_stat_fallback
+run_case "codex_session_filename_with_space" case_codex_session_filename_with_space
+run_case "read_only_invariant" case_read_only_invariant
+run_case "output_contract" case_output_contract
+
+if ! $LIST; then
+  echo
+  echo "----"
+fi
+th_summary
