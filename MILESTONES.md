@@ -16,16 +16,16 @@
 
 四層架構：`core/`（資料模型 + 政策）→ `runtime/`（`pmctl` 主幹）→ `adapters/`（交付層）→ `mcp/`（外部橋接，v0.4.0）。
 
-### M0 — 便宜前置抽取（零架構風險）
+### M0 — 便宜前置抽取（零架構風險）— ✅ complete 2026-05-23
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-201 | `detect_executor_profile()` shim | ⏳ |
-| CC-203 | `test-harness.sh` 共用測試 lib | ⏳ |
-| CC-218 | spike tracking 基建 | ⏳ |
-| CC-219 | pre-milestone doc-freshness gate | ⏳ |
-| CC-217 | claude-executor 背景 dispatch | ⏳ |
-| CC-060 | Codex model/config 外部化 | ⏳ |
+| CC-201 | `detect_executor_profile()` shim | ✅ (#123) |
+| CC-203 | `test-harness.sh` 共用測試 lib | ✅ (#127/#128/#135–#140) |
+| CC-218 | spike tracking 基建 | ✅ (#125) |
+| CC-219 | pre-milestone doc-freshness gate | ✅ (#129) |
+| CC-217 | claude-executor 背景 dispatch | ✅ (#124) |
+| CC-060 | Codex model/config 外部化 | ✅ (#131) |
 
 ### M1 — state / schema substrate（核心交付）
 
