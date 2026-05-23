@@ -13,6 +13,8 @@ FAIL=0
 FAILED_CASES=()
 
 SUITE_NAMES=(
+  # CC-240: hard-coded count assertions in this file are still tracking the
+  # pre-CC-219 suite set; keep assertions unchanged until follow-up.
   lint-agents
   lint-scripts
   test-hooks
@@ -33,6 +35,7 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
   test-claude-executor
@@ -77,6 +80,7 @@ suite_path() {
     test-doctor) printf 'scripts/test-doctor.sh\n' ;;
     test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
     test-test-harness) printf 'scripts/test-test-harness.sh\n' ;;
+    test-check-docs-freshness) printf 'scripts/test-check-docs-freshness.sh\n' ;;
     test-commands) printf 'scripts/test-commands.sh\n' ;;
     test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
     test-dispatch-handover) printf 'scripts/test-dispatch-handover.sh\n' ;;
