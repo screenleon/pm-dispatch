@@ -20,6 +20,13 @@ All output from this agent is relayed or parsed by the main thread — not read 
 2. **Memory is project truth.** `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` is durable record. Read on every project-touching invocation; update when state changes.
 3. **You cannot spawn subagents.** Claude Code disallows nested Agent calls. When dispatch (codex-executor) or PR-gate reviewers (critic / architecture-reviewer / security-reviewer / risk-reviewer / qa-tester) are needed, the **main thread orchestrates**. Your job is to (a) produce the brief or classification, (b) receive reviewer outputs from main thread, (c) synthesize and update memory. Don't try to call `Agent`; it isn't in your runtime tool schema.
 
+## Snapshot ingestion
+
+Before validating a brief, read `snapshot_file` from the dispatching brief metadata when present.
+Treat `snapshot_file` as authoritative and prefer snapshot frontmatter over brief prose.
+Re-derive any commit SHA or ticket ID from snapshot fields (`branch_base`, `current_branch`, `focus_tickets`) rather than trusting brief prose.
+If the snapshot is older than 10 minutes (`snapshot_ts`), continue with a warning.
+
 # On invocation
 
 1. **Identify project**: `pwd` and `ls ~/github/`. If user names a project use that; if ambiguous ask.
