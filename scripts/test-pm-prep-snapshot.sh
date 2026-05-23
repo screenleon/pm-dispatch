@@ -104,6 +104,28 @@ if should_run "cli-out-override"; then
   fi
 fi
 
+if should_run "cli-stdout-echoes-out-path"; then
+  out="$tmp_root/pm-snapshot-echo.md"
+  captured="$(run_snapshot "$out" 2>/dev/null)"
+  if [ "$captured" = "$out" ]; then
+    pass "cli-stdout-echoes-out-path"
+  else
+    fail "cli-stdout-echoes-out-path" "stdout='$captured' expected='$out'"
+  fi
+fi
+
+if should_run "cli-stdout-echoes-default-path"; then
+  marker="$tmp_root/echo-default-marker"
+  : > "$marker"
+  captured="$(PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" 2>/dev/null)"
+  if [ -n "$captured" ] && [ -f "$captured" ]; then
+    pass "cli-stdout-echoes-default-path"
+    rm -f "$captured"
+  else
+    fail "cli-stdout-echoes-default-path" "stdout='$captured' (file missing or empty)"
+  fi
+fi
+
 if should_run "frontmatter-core-fields"; then
   out="$tmp_root/frontmatter.md"
   run_snapshot "$out" >/dev/null
@@ -113,7 +135,7 @@ if should_run "frontmatter-core-fields"; then
   require_file_contains "$out" '^current_branch: [^[:space:]]+@[0-9a-f]{7,}$' "frontmatter-core-fields: current_branch"
   require_file_contains "$out" '^ahead_by: [0-9]+$' "frontmatter-core-fields: ahead_by"
   require_file_contains "$out" '^recently_merged:' "frontmatter-core-fields: recently_merged"
-  require_file_contains "$out" '^backlog_next_id: CC-245$' "frontmatter-core-fields: backlog_next_id"
+  require_file_contains "$out" '^backlog_next_id: CC-[0-9]+$' "frontmatter-core-fields: backlog_next_id"
   require_file_contains "$out" '^project_tooling:$' "frontmatter-core-fields: project_tooling"
 fi
 

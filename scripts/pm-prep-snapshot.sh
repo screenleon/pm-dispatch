@@ -307,3 +307,4 @@ TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
 } > "$TMP_OUT"
 
 mv "$TMP_OUT" "$OUT_PATH"
+printf '%s\n' "$OUT_PATH"
