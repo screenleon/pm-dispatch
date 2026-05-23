@@ -3,11 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
 RUN_STATUS=0
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 fail() {
   local name="$1" detail="${2:-}"
@@ -15,13 +14,10 @@ fail() {
   if [[ -n "$detail" ]]; then
     printf '        %s\n' "$detail"
   fi
+  FAIL=$((FAIL + 1))
+  FAILED_CASES+=("$name")
+  th_summary
   exit 1
-}
-
-pass_case() {
-  local name="$1"
-  PASS=$((PASS + 1))
-  printf 'PASS  %s\n' "$name"
 }
 
 assert_exit() {
@@ -48,7 +44,7 @@ assert_not_contains() {
 make_repo() {
   local name repo
   name="$1"
-  repo="$TMP_ROOT/$name"
+  repo="$tmp_root/$name"
   mkdir -p "$repo/scripts" "$repo/commands"
   cp "$REPO_ROOT/scripts/skill-refine.sh" "$repo/scripts/skill-refine.sh"
   printf '# testskill\n' > "$repo/commands/testskill.md"
@@ -79,11 +75,12 @@ run_skill_refine_unset_env() {
 #   3. Assert the output reports the expected candidates and renders their headings.
 case_happy_path() {
   local name="happy_path_multi_candidate" repo out err status
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
 
-  run_skill_refine "$repo" testskill "$REPO_ROOT/scripts/fixtures/skill-refine" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" testskill "$REPO_ROOT/scripts/fixtures/skill-refine" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
@@ -101,7 +98,7 @@ case_happy_path() {
   if [[ -s "$err" ]]; then
     fail "$name" "unexpected stderr: $(sed -n '1p' "$err")"
   fi
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: Multiple matching feedback files appear in LC_ALL=C lexicographic order.
@@ -111,11 +108,12 @@ case_happy_path() {
 #   3. Assert the feedback_alpha heading appears before feedback_beta.
 case_deterministic_order() {
   local name="deterministic_order" repo out err status alpha_line beta_line
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
 
-  run_skill_refine "$repo" testskill "$REPO_ROOT/scripts/fixtures/skill-refine" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" testskill "$REPO_ROOT/scripts/fixtures/skill-refine" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
@@ -124,7 +122,7 @@ case_deterministic_order() {
   if [[ -z "$alpha_line" || -z "$beta_line" || "$alpha_line" -ge "$beta_line" ]]; then
     fail "$name" "expected feedback_alpha before feedback_beta"
   fi
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: Missing commands/<name>.md exits 2 with a clear error.
@@ -134,16 +132,17 @@ case_deterministic_order() {
 #   3. Assert exit 2 and stderr names the missing command file.
 case_missing_command_file() {
   local name="missing_command_file" repo out err status
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
 
-  run_skill_refine "$repo" missing "$REPO_ROOT/scripts/fixtures/skill-refine" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" missing "$REPO_ROOT/scripts/fixtures/skill-refine" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$err" "Error: skill command file not found: $repo/commands/missing.md"
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: CLAUDE_MEMORY_DIR unset OR pointing at a nonexistent dir both exit 2.
@@ -152,12 +151,13 @@ case_missing_command_file() {
 #   2. Set CLAUDE_MEMORY_DIR to a nonexistent dir, invoke skill-refine, and assert exit 2 plus CLAUDE_MEMORY_DIR in stderr.
 case_bad_memory_dir() {
   local name="bad_memory_dir" repo home out err status unset_out unset_err unset_status
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  home="$TMP_ROOT/$name-home"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
-  unset_out="$TMP_ROOT/$name-unset.out"
-  unset_err="$TMP_ROOT/$name-unset.err"
+  home="$tmp_root/$name-home"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
+  unset_out="$tmp_root/$name-unset.out"
+  unset_err="$tmp_root/$name-unset.err"
   mkdir -p "$home"
 
   run_skill_refine_unset_env "$repo" testskill "$home" "$unset_out" "$unset_err"
@@ -167,13 +167,13 @@ case_bad_memory_dir() {
   assert_contains "$name" "$unset_err" "CLAUDE_MEMORY_DIR"
   assert_contains "$name" "$unset_err" "exported pointing at your memory dir"
 
-  run_skill_refine "$repo" testskill "$TMP_ROOT/definitely-not-a-dir" "$home" "$out" "$err"
+  run_skill_refine "$repo" testskill "$tmp_root/definitely-not-a-dir" "$home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$err" "CLAUDE_MEMORY_DIR"
-  assert_contains "$name" "$err" "$TMP_ROOT/definitely-not-a-dir"
-  pass_case "$name"
+  assert_contains "$name" "$err" "$tmp_root/definitely-not-a-dir"
+  pass "$name"
 }
 
 # Behavior: A valid memory dir with no matching tokens prints zero-candidate notice and exits 0.
@@ -183,20 +183,21 @@ case_bad_memory_dir() {
 #   3. Assert the zero-candidate count and No matching notice are printed.
 case_zero_candidates() {
   local name="zero_candidates" repo memory out err status
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  memory="$TMP_ROOT/$name-memory"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  memory="$tmp_root/$name-memory"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
   mkdir -p "$memory"
 
-  run_skill_refine "$repo" otherskill "$memory" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" otherskill "$memory" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "Found 0 candidate(s). Scanned $memory at "
   assert_contains "$name" "$out" "No matching feedback entries found for \`otherskill\`."
   assert_contains "$name" "$out" "_M1 spike: read-only signal bundling. No diff generation yet (M2)._"
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: A feedback file lacking Why/How fields still renders with _(not present)_ placeholders.
@@ -206,21 +207,22 @@ case_zero_candidates() {
 #   3. Assert the missing fields render as _(not present)_ placeholders.
 case_missing_fields() {
   local name="missing_fields" repo memory out err status
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  memory="$TMP_ROOT/$name-memory"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  memory="$tmp_root/$name-memory"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
   mkdir -p "$memory"
   printf '%s\n' '---' 'description: testskill missing body fields' '---' '' 'Body references testskill only.' > "$memory/feedback_missing.md"
 
-  run_skill_refine "$repo" testskill "$memory" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" testskill "$memory" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
   assert_contains "$name" "$out" "## feedback_missing"
   assert_contains "$name" "$out" "- Why: _(not present)_"
   assert_contains "$name" "$out" "- How to apply: _(not present)_"
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: Explicit CLAUDE_MEMORY_DIR pointing at a writable directory with a matching fixture yields candidates.
@@ -230,14 +232,15 @@ case_missing_fields() {
 #   3. Export CLAUDE_MEMORY_DIR through the invocation and assert exit 0 plus at least one candidate.
 case_env_set_success() {
   local name="env_set_success" repo memory out err status candidate_count
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  memory="$TMP_ROOT/$name-memory"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  memory="$tmp_root/$name-memory"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
   mkdir -p "$memory"
   printf '%s\n' '---' 'description: testskill from env-set memory dir' '---' '' 'Why: testskill should read explicit env memory.' 'How to apply: Keep CLAUDE_MEMORY_DIR exported for this run.' > "$memory/feedback_testskill.md"
 
-  run_skill_refine "$repo" testskill "$memory" "$TMP_ROOT/no-home" "$out" "$err"
+  run_skill_refine "$repo" testskill "$memory" "$tmp_root/no-home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
@@ -246,7 +249,7 @@ case_env_set_success() {
     fail "$name" "expected at least one candidate"
   fi
   assert_contains "$name" "$out" "## feedback_testskill"
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: SKILL_NAME values containing path separators or whitespace are rejected with exit 2.
@@ -256,22 +259,23 @@ case_env_set_success() {
 #   3. Assert stderr names the rejected invalid value.
 case_invalid_skill_name() {
   local name="invalid_skill_name" repo memory out err status bad_input safe_name
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  memory="$TMP_ROOT/$name-memory"
+  memory="$tmp_root/$name-memory"
   mkdir -p "$memory"
 
   for bad_input in '../foo' 'foo bar'; do
     safe_name="${bad_input//[^A-Za-z0-9]/_}"
-    out="$TMP_ROOT/$name-$safe_name.out"
-    err="$TMP_ROOT/$name-$safe_name.err"
+    out="$tmp_root/$name-$safe_name.out"
+    err="$tmp_root/$name-$safe_name.err"
 
-    run_skill_refine "$repo" "$bad_input" "$memory" "$TMP_ROOT/no-home" "$out" "$err"
+    run_skill_refine "$repo" "$bad_input" "$memory" "$tmp_root/no-home" "$out" "$err"
     status=$RUN_STATUS
 
     assert_exit "$name" "$status" 2
     assert_contains "$name" "$err" "invalid skill name: $bad_input"
   done
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: Invoking skill-refine with no arguments exits 2 and prints Usage: to stderr.
@@ -281,16 +285,17 @@ case_invalid_skill_name() {
 #   3. Assert exit 2 and that stderr contains "Usage:".
 case_no_args_exits_2_with_usage() {
   local name="no_args_exits_2_with_usage" repo out err
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
   set +e
   bash "$repo/scripts/skill-refine.sh" > "$out" 2> "$err"
   local status=$?
   set -e
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$err" "Usage:"
-  pass_case "$name"
+  pass "$name"
 }
 
 # Behavior: Invoking skill-refine with multiple arguments exits 2 and prints Usage: to stderr.
@@ -300,16 +305,17 @@ case_no_args_exits_2_with_usage() {
 #   3. Assert exit 2 and that stderr contains "Usage:".
 case_multi_args_exits_2_with_usage() {
   local name="multi_args_exits_2_with_usage" repo out err
+  should_run "$name" || return 0
   repo="$(make_repo "$name")"
-  out="$TMP_ROOT/$name.out"
-  err="$TMP_ROOT/$name.err"
+  out="$tmp_root/$name.out"
+  err="$tmp_root/$name.err"
   set +e
   bash "$repo/scripts/skill-refine.sh" foo bar > "$out" 2> "$err"
   local status=$?
   set -e
   assert_exit "$name" "$status" 2
   assert_contains "$name" "$err" "Usage:"
-  pass_case "$name"
+  pass "$name"
 }
 
 case_happy_path
@@ -323,4 +329,4 @@ case_invalid_skill_name
 case_no_args_exits_2_with_usage
 case_multi_args_exits_2_with_usage
 
-printf 'skill-refine tests passed: %s\n' "$PASS"
+th_summary
