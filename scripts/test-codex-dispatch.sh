@@ -356,6 +356,70 @@ fi
 rm -rf "$_work16"
 rm -f "$_brief16"
 
+# ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
+_home17="$(mktemp -d)"
+_work17="$(mktemp -d)"
+git init -q "$_work17"
+_brief17="$(mktemp --suffix=.md)"
+_stderr17="$(mktemp)"
+printf 'goal: timeout precedence env-only test\n' > "$_brief17"
+set +e
+HOME="$_home17" CODEX_DISPATCH_TIMEOUT=600 \
+  "$DISPATCH" --cd "$_work17" --brief-file "$_brief17" --print-cmd >/dev/null 2>"$_stderr17"
+_exit17=$?
+set -e
+if [[ "$_exit17" -eq 0 ]] && grep -q "timeout:  600s" "$_stderr17"; then
+  t_pass "timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
+else
+  t_fail "timeout/env-only — exit=$_exit17 timeout_banner=$(grep -m1 'timeout:' "$_stderr17" 2>/dev/null || echo missing)"
+fi
+rm -rf "$_work17" "$_home17"
+rm -f "$_brief17" "$_stderr17"
+
+# ---- 18: timeout precedence config-only uses dispatch.default_timeout ----
+_home18="$(mktemp -d)"
+mkdir -p "$_home18/.pm-dispatch"
+printf 'dispatch.default_timeout=900\n' > "$_home18/.pm-dispatch/config"
+_work18="$(mktemp -d)"
+git init -q "$_work18"
+_brief18="$(mktemp --suffix=.md)"
+_stderr18="$(mktemp)"
+printf 'goal: timeout precedence config-only test\n' > "$_brief18"
+set +e
+HOME="$_home18" CODEX_DISPATCH_TIMEOUT= \
+  "$DISPATCH" --cd "$_work18" --brief-file "$_brief18" --print-cmd >/dev/null 2>"$_stderr18"
+_exit18=$?
+set -e
+if [[ "$_exit18" -eq 0 ]] && grep -q "timeout:  900s" "$_stderr18"; then
+  t_pass "timeout/config-only uses dispatch.default_timeout"
+else
+  t_fail "timeout/config-only — exit=$_exit18 timeout_banner=$(grep -m1 'timeout:' "$_stderr18" 2>/dev/null || echo missing)"
+fi
+rm -rf "$_work18" "$_home18"
+rm -f "$_brief18" "$_stderr18"
+
+# ---- 19: timeout precedence brief-field wins over env and config ----
+_home19="$(mktemp -d)"
+mkdir -p "$_home19/.pm-dispatch"
+printf 'dispatch.default_timeout=900\n' > "$_home19/.pm-dispatch/config"
+_work19="$(mktemp -d)"
+git init -q "$_work19"
+_brief19="$(mktemp --suffix=.md)"
+_stderr19="$(mktemp)"
+printf 'goal: timeout precedence brief wins\n' > "$_brief19"
+set +e
+HOME="$_home19" CODEX_DISPATCH_TIMEOUT=700 \
+  "$DISPATCH" --cd "$_work19" --brief-file "$_brief19" --timeout 1200 --print-cmd >/dev/null 2>"$_stderr19"
+_exit19=$?
+set -e
+if [[ "$_exit19" -eq 0 ]] && grep -q "timeout:  1200s" "$_stderr19"; then
+  t_pass "timeout/brief-field beats env and config"
+else
+  t_fail "timeout/brief-field precedence — exit=$_exit19 timeout_banner=$(grep -m1 'timeout:' "$_stderr19" 2>/dev/null || echo missing)"
+fi
+rm -rf "$_work19" "$_home19"
+rm -f "$_brief19" "$_stderr19"
+
 echo "----"
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

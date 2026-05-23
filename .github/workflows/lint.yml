@@ -43,6 +43,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Validate script hygiene
         run: ./scripts/lint-scripts.sh
+      - name: Validate codex model alias source-of-truth
+        run: bash scripts/lint-model-aliases.sh
 
   test-hooks:
     runs-on: ubuntu-latest

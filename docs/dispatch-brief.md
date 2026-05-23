@@ -253,22 +253,37 @@ Metadata fields:
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `sandbox` | yes | Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
 | `approval` | yes | Bash route accepts only `never`; other values require Agent(codex-executor) fallback. |
-| `timeout` | yes | `1200` default, in seconds. |
+| `timeout` | yes | `1200` fallback after `CODEX_DISPATCH_TIMEOUT` and config; public env fallback chain below. |
 | `model` | yes | `default` or a specific Codex model name. |
 | `skip_git_check` | yes | Bash route accepts only `false`; `true` requires Agent(codex-executor) fallback. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
 
+### Env / config precedence
+
+Timeout resolution for `codex-dispatch.sh` follows this chain (highest priority first):
+
+- brief `timeout` value
+- `CODEX_DISPATCH_TIMEOUT` environment variable (public)
+- `dispatch.default_timeout` in `~/.pm-dispatch/config`
+- hardcoded fallback `1200` in `scripts/codex-dispatch.sh`
+
+Example `~/.pm-dispatch/config`:
+
+```text
+dispatch.default_timeout=900
+```
+
+Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnings and ignored. Unknown keys are ignored for forward compatibility.
+
 ## Model aliases
 
-PM short-form model aliases are mapped to wire-format model IDs inside
-`scripts/codex-dispatch.sh` before invoking `codex exec`.
+PM short-form model aliases are resolved from the source-of-truth file
+`share/model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
+`scripts/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
-
-This table is hardcoded in `scripts/codex-dispatch.sh` and must be kept in
-sync if CLI alias behavior or Codex model availability changes.
 
 Direct Bash dispatch shape:
 
