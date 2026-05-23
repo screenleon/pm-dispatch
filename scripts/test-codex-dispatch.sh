@@ -16,119 +16,168 @@ set -euo pipefail
 # tests. (Defensive — current implementation ignores them entirely.)
 unset CODEX_DISPATCH_SNAPSHOT_ACTIVE CODEX_DISPATCH_SNAPSHOT_PATH
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DISPATCH="$REPO_ROOT/scripts/codex-dispatch.sh"
 
-PASS=0
-FAIL=0
-
-t_pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS+1)); }
-t_fail() { printf 'FAIL: %s\n' "$1" >&2; FAIL=$((FAIL+1)); }
+# shellcheck source=scripts/lib/test-harness.sh
+. "$SCRIPT_DIR/lib/test-harness.sh"
+th_init "$@"
 
 # Resolve the actual tmp dir mktemp -t uses (respects TMPDIR if set).
 SNAP_DIR="$(dirname "$(mktemp -u -t codex-dispatch.XXXXXX)")"
 SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9]+/codex-dispatch\.sh"
 
 # ---- 1: --help exits 0 ----
-if "$DISPATCH" --help >/dev/null 2>&1; then
-  t_pass "snapshot/--help exits 0"
-else
-  t_fail "snapshot/--help non-zero exit"
-fi
+case_help_exits_0() {
+  local name="snapshot/--help exits 0"
+  should_run "$name" || return 0
+
+  if "$DISPATCH" --help >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 2: --help output preserved through re-exec ----
-out="$("$DISPATCH" --help 2>&1)"
-if grep -q "Wrapper for invoking" <<<"$out"; then
-  t_pass "snapshot/--help output preserved"
-else
-  t_fail "snapshot/--help output corrupted"
-fi
+case_help_output_preserved() {
+  local name="snapshot/--help output preserved"
+  local out
+  should_run "$name" || return 0
+
+  out="$("$DISPATCH" --help 2>&1)"
+  if grep -q "Wrapper for invoking" <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 3: fresh invocation re-execs from a snapshot copy ----
-trace_out="$(bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
-if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
-  t_pass "snapshot/fresh invocation re-execs from snapshot copy"
-else
-  t_fail "snapshot/fresh invocation did NOT re-exec from a snapshot copy"
-  printf '  trace tail:\n%s\n' "$(printf '%s\n' "$trace_out" | tail -10 | sed 's/^/    /')" >&2
-fi
+case_fresh_invocation_reexecs_from_snapshot_copy() {
+  local name="snapshot/fresh invocation re-execs from snapshot copy"
+  local trace_out
+  should_run "$name" || return 0
+
+  trace_out="$(bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
+  if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ""
+    printf '  trace tail:\n%s\n' "$(printf '%s\n' "$trace_out" | tail -10 | sed 's/^/    /')" >&2
+  fi
+}
 
 # ---- 4: SECURITY — ambient env vars do NOT bypass the snapshot ----
 # Inherited CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 used to skip the snapshot block.
 # The new design is env-agnostic: trigger is BASH_SOURCE shape, not env.
-trace_out="$(CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 \
-  CODEX_DISPATCH_SNAPSHOT_PATH=/tmp/this-must-be-ignored \
-  bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
-if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
-  t_pass "snapshot/ambient-env-defense — fresh snapshot taken regardless of env vars"
-else
-  t_fail "snapshot/ambient-env-defense — env=1 bypassed snapshot; security regression"
-fi
+case_ambient_env_defense() {
+  local name="snapshot/ambient-env-defense — fresh snapshot taken regardless of env vars"
+  local trace_out
+  should_run "$name" || return 0
+
+  trace_out="$(CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 \
+    CODEX_DISPATCH_SNAPSHOT_PATH=/tmp/this-must-be-ignored \
+    bash -x "$DISPATCH" --help 2>&1 1>/dev/null || true)"
+  if grep -E "$SNAP_RE" <<<"$trace_out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 5: SECURITY — ambient env path is NOT removed by cleanup trap ----
 # An attacker who can pollute CODEX_DISPATCH_SNAPSHOT_PATH used to be able to
 # trick the trap into rm-ing arbitrary user-writable files. Verify any inherited
 # path is ignored — the cleanup trap targets only the freshly-created snapshot.
-victim="$(mktemp)"
-echo "do-not-delete" > "$victim"
-CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 CODEX_DISPATCH_SNAPSHOT_PATH="$victim" \
-  "$DISPATCH" --help >/dev/null 2>&1
-if [[ -f "$victim" && "$(cat "$victim")" == "do-not-delete" ]]; then
-  t_pass "snapshot/ambient-path-defense — arbitrary inherited path NOT deleted"
-  rm -f "$victim"
-else
-  t_fail "snapshot/ambient-path-defense — inherited path was deleted; security regression"
-fi
+case_ambient_path_defense() {
+  local name="snapshot/ambient-path-defense — arbitrary inherited path NOT deleted"
+  local victim
+  should_run "$name" || return 0
+
+  victim="$(mktemp)"
+  echo "do-not-delete" > "$victim"
+  CODEX_DISPATCH_SNAPSHOT_ACTIVE=1 CODEX_DISPATCH_SNAPSHOT_PATH="$victim" \
+    "$DISPATCH" --help >/dev/null 2>&1
+  if [[ -f "$victim" && "$(cat "$victim")" == "do-not-delete" ]]; then
+    pass "$name"
+    rm -f "$victim"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 6: cleanup on normal exit (no leak in resolved tmp dir) ----
-before=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
-"$DISPATCH" --help >/dev/null 2>&1
-after=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
-if [[ "$after" -le "$before" ]]; then
-  t_pass "snapshot/cleanup — no leak in $SNAP_DIR (before=$before after=$after)"
-else
-  t_fail "snapshot/cleanup — file count grew from $before to $after in $SNAP_DIR"
-fi
+case_cleanup_no_leak() {
+  local before after name
+  before=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
+  local name="snapshot/cleanup — no leak in $SNAP_DIR"
+  should_run "$name" || return 0
+  "$DISPATCH" --help >/dev/null 2>&1
+  after=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
+  if [[ "$after" -le "$before" ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 7: structural — snapshot block has all required constructs ----
 # Stronger than just one keyword; guards against a partial-revert that
 # silently breaks the mechanism while keeping a token of the original block.
-missing=()
-grep -qE 'BASH_SOURCE\[0\].*codex-dispatch\\\.\[A-Za-z0-9\]\{6\}/codex-dispatch\\\.sh' "$DISPATCH" \
-  || missing+=("BASH_SOURCE path-pattern check")
-grep -q 'mktemp -d -t codex-dispatch'              "$DISPATCH" || missing+=("mktemp template")
-grep -q 'cp -- "\${BASH_SOURCE\[0\]}"'             "$DISPATCH" || missing+=("cp from BASH_SOURCE")
-grep -q 'chmod +x'                                  "$DISPATCH" || missing+=("chmod +x")
-grep -qE 'exec "\$__codex_dispatch_snapshot"'      "$DISPATCH" || missing+=("exec snapshot")
-grep -qE "trap.*rm -rf.*\\\$__codex_dispatch_snapshot_dir" "$DISPATCH" || missing+=("cleanup trap")
-if [[ "${#missing[@]}" -eq 0 ]]; then
-  t_pass "snapshot/structural — all snapshot-block constructs present"
-else
-  t_fail "snapshot/structural — missing: ${missing[*]}"
-fi
+case_structural_snapshot_block_intact() {
+  local name="snapshot/structural — all snapshot-block constructs present"
+  local missing=()
+  should_run "$name" || return 0
+
+  grep -qE 'BASH_SOURCE\[0\].*codex-dispatch\\\.\[A-Za-z0-9\]\{6\}/codex-dispatch\\\.sh' "$DISPATCH" \
+    || missing+=("BASH_SOURCE path-pattern check")
+  grep -q 'mktemp -d -t codex-dispatch'              "$DISPATCH" || missing+=("mktemp template")
+  grep -q 'cp -- "\${BASH_SOURCE\[0\]}"'             "$DISPATCH" || missing+=("cp from BASH_SOURCE")
+  grep -q 'chmod +x'                                  "$DISPATCH" || missing+=("chmod +x")
+  grep -qE 'exec "\$__codex_dispatch_snapshot"'      "$DISPATCH" || missing+=("exec snapshot")
+  grep -qE "trap.*rm -rf.*\\\$__codex_dispatch_snapshot_dir" "$DISPATCH" || missing+=("cleanup trap")
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 8: dispatch startup does not mutate .gitignore ----
-tmp_repo="$(mktemp -d)"
-git init -q "$tmp_repo"
-printf '*.log\n' > "$tmp_repo/.gitignore"
-before="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
-"$DISPATCH" --help >/dev/null 2>&1
-"$DISPATCH" --cd "$tmp_repo" --brief-file "$tmp_repo/missing-brief.md" >/dev/null 2>&1 || true
-after="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
-if [[ "$after" == "$before" ]]; then
-  t_pass "dispatch/does-not-mutate-gitignore"
-else
-  t_fail "dispatch/does-not-mutate-gitignore — checksum changed"
-fi
-rm -rf "$tmp_repo"
+case_dispatch_does_not_mutate_gitignore() {
+  local name="dispatch/does-not-mutate-gitignore"
+  local tmp_repo before after
+  should_run "$name" || return 0
+
+  tmp_repo="$(mktemp -d)"
+  git init -q "$tmp_repo"
+  printf '*.log\n' > "$tmp_repo/.gitignore"
+  before="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
+  "$DISPATCH" --help >/dev/null 2>&1
+  "$DISPATCH" --cd "$tmp_repo" --brief-file "$tmp_repo/missing-brief.md" >/dev/null 2>&1 || true
+  after="$(sha256sum "$tmp_repo/.gitignore" | awk '{print $1}')"
+  if [[ "$after" == "$before" ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$tmp_repo"
+}
 
 # ---- 9: auto-log/parser emits exactly one integer ----
-tmp_trace9="$(mktemp)"
-printf '%s\n' \
-  '{"type":"turn.started"}' \
-  '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0}}' \
-  > "$tmp_trace9"
-_result9=$(python3 - "$tmp_trace9" << 'PYEOF'
+case_auto_log_parser_single_integer() {
+  local name="auto-log/parser-single-integer"
+  local tmp_trace9 _result9
+  should_run "$name" || return 0
+
+  tmp_trace9="$(mktemp)"
+  printf '%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0}}' \
+    > "$tmp_trace9"
+  _result9=$(python3 - "$tmp_trace9" << 'PYEOF'
 import json, sys
 for line in open(sys.argv[1]):
     try:
@@ -141,17 +190,24 @@ for line in open(sys.argv[1]):
 print(0)
 PYEOF
 )
-rm -f "$tmp_trace9"
-# Must be exactly "105000" — one line, one integer
-if [[ "$_result9" == "105000" ]]; then
-  t_pass "auto-log/parser-single-integer"
-else
-  t_fail "auto-log/parser-single-integer — got: $(printf '%q' "$_result9")"
-fi
+  rm -f "$tmp_trace9"
+  # Must be exactly "105000" — one line, one integer
+  if [[ "$_result9" == "105000" ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+}
 
 # ---- 10: auto-log/successful-dispatch-logs-codex ----
-_fake_bin10="$(mktemp -d)"
-cat > "$_fake_bin10/codex" << 'FAKEOF'
+case_auto_log_successful_dispatch_logs_codex() {
+  local name="auto-log/successful-dispatch-logs-codex"
+  local _fake_bin10 _home10 _work10 _brief10 _tracker10 _exit10
+  local path
+  should_run "$name" || return 0
+
+  _fake_bin10="$(mktemp -d)"
+  cat > "$_fake_bin10/codex" << 'FAKEOF'
 #!/usr/bin/env bash
 # Fake codex: write a minimal trace to stdout (captured to TRACE by dispatch)
 printf '%s\n' \
@@ -159,267 +215,342 @@ printf '%s\n' \
   '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
 exit 0
 FAKEOF
-chmod +x "$_fake_bin10/codex"
+  chmod +x "$_fake_bin10/codex"
 
-_home10="$(mktemp -d)"
-mkdir -p "$_home10/.claude/scripts"
-ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home10/.claude/scripts/log-usage.sh"
+  _home10="$(mktemp -d)"
+  mkdir -p "$_home10/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home10/.claude/scripts/log-usage.sh"
 
-_work10="$(mktemp -d)"
-git init -q "$_work10"
+  _work10="$(mktemp -d)"
+  git init -q "$_work10"
 
-_brief10="$(mktemp --suffix=.md)"
-printf 'working_dir: %s\ngoal: test auto-log\n' "$_work10" > "$_brief10"
+  _brief10="$(mktemp --suffix=.md)"
+  printf 'working_dir: %s\ngoal: test auto-log\n' "$_work10" > "$_brief10"
 
-PATH="$_fake_bin10:$PATH" HOME="$_home10" \
-  "$DISPATCH" --cd "$_work10" --brief-file "$_brief10" >/dev/null 2>&1
-_exit10=$?
+  PATH="$_fake_bin10:$PATH" HOME="$_home10" \
+    "$DISPATCH" --cd "$_work10" --brief-file "$_brief10" >/dev/null 2>&1
+  _exit10=$?
 
-_tracker10="$_home10/.claude/usage-tracker.jsonl"
-if [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
-   && grep -q '"pool":"codex"' "$_tracker10" \
-   && grep -q '"tokens":105000' "$_tracker10"; then
-  t_pass "auto-log/successful-dispatch-logs-codex"
-else
-  t_fail "auto-log/successful-dispatch-logs-codex — exit=$_exit10 tracker=$(cat "$_tracker10" 2>/dev/null || echo MISSING)"
-fi
-rm -rf "$_fake_bin10" "$_home10" "$_work10"
-rm -f "$_brief10"
+  _tracker10="$_home10/.claude/usage-tracker.jsonl"
+  if [[ "$_exit10" -eq 0 ]] \
+     && [[ -f "$_tracker10" ]] && grep -q '"type":"codex_dispatch"' "$_tracker10" \
+     && grep -q '"pool":"codex"' "$_tracker10" \
+     && grep -q '"tokens":105000' "$_tracker10"; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit10"
+  fi
+  rm -rf "$_fake_bin10" "$_home10" "$_work10"
+  rm -f "$_brief10"
+}
 
 # ---- 11: auto-log/failed-dispatch-no-log ----
-_fake_bin11="$(mktemp -d)"
-cat > "$_fake_bin11/codex" << 'FAKEOF'
+case_auto_log_failed_dispatch_no_log() {
+  local name="auto-log/failed-dispatch-no-log"
+  local _fake_bin11 _home11 _work11 _brief11 _exit11
+  should_run "$name" || return 0
+
+  _fake_bin11="$(mktemp -d)"
+  cat > "$_fake_bin11/codex" << 'FAKEOF'
 #!/usr/bin/env bash
 exit 1
 FAKEOF
-chmod +x "$_fake_bin11/codex"
+  chmod +x "$_fake_bin11/codex"
 
-_home11="$(mktemp -d)"
-mkdir -p "$_home11/.claude/scripts"
-ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home11/.claude/scripts/log-usage.sh"
+  _home11="$(mktemp -d)"
+  mkdir -p "$_home11/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home11/.claude/scripts/log-usage.sh"
 
-_work11="$(mktemp -d)"
-git init -q "$_work11"
+  _work11="$(mktemp -d)"
+  git init -q "$_work11"
 
-_brief11="$(mktemp --suffix=.md)"
-printf 'goal: test\n' > "$_brief11"
+  _brief11="$(mktemp --suffix=.md)"
+  printf 'goal: test\n' > "$_brief11"
 
-PATH="$_fake_bin11:$PATH" HOME="$_home11" \
-  "$DISPATCH" --cd "$_work11" --brief-file "$_brief11" >/dev/null 2>&1 || true
+  PATH="$_fake_bin11:$PATH" HOME="$_home11" \
+    "$DISPATCH" --cd "$_work11" --brief-file "$_brief11" >/dev/null 2>&1 || true
 
-if [[ ! -f "$_home11/.claude/usage-tracker.jsonl" ]]; then
-  t_pass "auto-log/failed-dispatch-no-log"
-else
-  t_fail "auto-log/failed-dispatch-no-log — tracker was created despite failure"
-fi
-rm -rf "$_fake_bin11" "$_home11" "$_work11"
-rm -f "$_brief11"
+  if [[ ! -f "$_home11/.claude/usage-tracker.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_fake_bin11" "$_home11" "$_work11"
+  rm -f "$_brief11"
+}
 
 # ---- 12: auto-log/spark-model-logs-spark-pool ----
-_fake_bin12="$(mktemp -d)"
-cat > "$_fake_bin12/codex" << 'FAKEOF'
+case_auto_log_spark_model_logs_pool() {
+  local name="auto-log/spark-model-logs-spark-pool"
+  local _fake_bin12 _home12 _work12 _brief12 _tracker12 _exit12
+  should_run "$name" || return 0
+
+  _fake_bin12="$(mktemp -d)"
+  cat > "$_fake_bin12/codex" << 'FAKEOF'
 #!/usr/bin/env bash
 printf '%s\n' \
   '{"type":"turn.started"}' \
   '{"type":"turn.completed","usage":{"input_tokens":50000,"output_tokens":2000,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
 exit 0
 FAKEOF
-chmod +x "$_fake_bin12/codex"
+  chmod +x "$_fake_bin12/codex"
 
-_home12="$(mktemp -d)"
-mkdir -p "$_home12/.claude/scripts"
-ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home12/.claude/scripts/log-usage.sh"
+  _home12="$(mktemp -d)"
+  mkdir -p "$_home12/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home12/.claude/scripts/log-usage.sh"
 
-_work12="$(mktemp -d)"
-git init -q "$_work12"
+  _work12="$(mktemp -d)"
+  git init -q "$_work12"
 
-_brief12="$(mktemp --suffix=.md)"
-printf 'goal: spark test\n' > "$_brief12"
+  _brief12="$(mktemp --suffix=.md)"
+  printf 'goal: spark test\n' > "$_brief12"
 
-PATH="$_fake_bin12:$PATH" HOME="$_home12" \
-  "$DISPATCH" --cd "$_work12" --brief-file "$_brief12" --model codex-spark >/dev/null 2>&1
-_exit12=$?
+  PATH="$_fake_bin12:$PATH" HOME="$_home12" \
+    "$DISPATCH" --cd "$_work12" --brief-file "$_brief12" --model codex-spark >/dev/null 2>&1
+  _exit12=$?
 
-_tracker12="$_home12/.claude/usage-tracker.jsonl"
-if [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
-   && grep -q '"pool":"spark"' "$_tracker12" \
-   && grep -q '"tokens":52000' "$_tracker12"; then
-  t_pass "auto-log/spark-model-logs-spark-pool"
-else
-  t_fail "auto-log/spark-model-logs-spark-pool — exit=$_exit12 tracker=$(cat "$_tracker12" 2>/dev/null || echo MISSING)"
-fi
-rm -rf "$_fake_bin12" "$_home12" "$_work12"
-rm -f "$_brief12"
+  _tracker12="$_home12/.claude/usage-tracker.jsonl"
+  if [[ "$_exit12" -eq 0 ]] \
+     && [[ -f "$_tracker12" ]] && grep -q '"type":"codex_dispatch"' "$_tracker12" \
+     && grep -q '"pool":"spark"' "$_tracker12" \
+     && grep -q '"tokens":52000' "$_tracker12"; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit12"
+  fi
+  rm -rf "$_fake_bin12" "$_home12" "$_work12"
+  rm -f "$_brief12"
+}
 
 # ---- 13: auto-log/log-failure-preserves-dispatch-exit ----
-_fake_bin13="$(mktemp -d)"
-cat > "$_fake_bin13/codex" << 'FAKEOF'
+case_auto_log_log_failure_preserves_dispatch_exit() {
+  local name="auto-log/log-failure-preserves-dispatch-exit"
+  local _fake_bin13 _home13 _work13 _brief13 _stderr13 _exit13
+  should_run "$name" || return 0
+
+  _fake_bin13="$(mktemp -d)"
+  cat > "$_fake_bin13/codex" << 'FAKEOF'
 #!/usr/bin/env bash
 printf '%s\n' \
   '{"type":"turn.started"}' \
   '{"type":"turn.completed","usage":{"input_tokens":10000,"output_tokens":500}}'
 exit 0
 FAKEOF
-chmod +x "$_fake_bin13/codex"
+  chmod +x "$_fake_bin13/codex"
 
-_home13="$(mktemp -d)"
-mkdir -p "$_home13/.claude/scripts"
-# Deliberately no log-usage.sh so the auto-log call fails
+  _home13="$(mktemp -d)"
+  mkdir -p "$_home13/.claude/scripts"
+  # Deliberately no log-usage.sh so the auto-log call fails
 
-_work13="$(mktemp -d)"
-git init -q "$_work13"
+  _work13="$(mktemp -d)"
+  git init -q "$_work13"
 
-_brief13="$(mktemp --suffix=.md)"
-printf 'goal: test logging failure\n' > "$_brief13"
+  _brief13="$(mktemp --suffix=.md)"
+  printf 'goal: test logging failure\n' > "$_brief13"
 
-PATH="$_fake_bin13:$PATH" HOME="$_home13" \
-  "$DISPATCH" --cd "$_work13" --brief-file "$_brief13" >/dev/null 2>&1
-_exit13=$?
+  PATH="$_fake_bin13:$PATH" HOME="$_home13" \
+    "$DISPATCH" --cd "$_work13" --brief-file "$_brief13" >/dev/null 2>&1
+  _exit13=$?
 
-# Find the stderr trace file written by dispatch
-_stderr13="$(ls "$_work13/.agent-trace/"*.stderr 2>/dev/null | head -1)"
-if [[ "$_exit13" -eq 0 && -n "$_stderr13" ]] && grep -q "usage log failed" "$_stderr13"; then
-  t_pass "auto-log/log-failure-preserves-dispatch-exit"
-else
-  t_fail "auto-log/log-failure-preserves-dispatch-exit — exit=$_exit13 stderr=$(cat "$_stderr13" 2>/dev/null | tail -5 || echo MISSING)"
-fi
-rm -rf "$_fake_bin13" "$_home13" "$_work13"
-rm -f "$_brief13"
+  # Find the stderr trace file written by dispatch
+  _stderr13="$(ls "$_work13/.agent-trace/"*.stderr 2>/dev/null | head -1)"
+  if [[ "$_exit13" -eq 0 && -n "$_stderr13" ]] && grep -q "usage log failed" "$_stderr13"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_fake_bin13" "$_home13" "$_work13"
+  rm -f "$_brief13"
+}
 
 # ---- 14: alias-resolution-spark prints resolved CMD with effort and resolved banner ----
-_work14="$(mktemp -d)"
-git init -q "$_work14"
-mkdir -p "$_work14/.agent-trace"
+case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files() {
+  local name="alias-resolution-spark prints resolved model + effort + banner + no trace files"
+  local _work14 _brief14 _before14 _stderr14 _after14 _output14 _exit14
+  should_run "$name" || return 0
 
-_brief14="$(mktemp --suffix=.md)"
-printf 'goal: print cmd alias resolution test\n' > "$_brief14"
+  _work14="$(mktemp -d)"
+  git init -q "$_work14"
+  mkdir -p "$_work14/.agent-trace"
 
-_before14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
-_stderr14="$(mktemp)"
-set +e
-_output14="$("$DISPATCH" --cd "$_work14" --brief-file "$_brief14" --model codex-spark --print-cmd 2>"$_stderr14")"
-_exit14=$?
-set -e
-_after14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
+  _brief14="$(mktemp --suffix=.md)"
+  printf 'goal: print cmd alias resolution test\n' > "$_brief14"
 
-if [[ "$_exit14" -eq 0 ]] \
-  && [[ "$_output14" == *"-m gpt-5.3-codex-spark"* ]] \
-  && [[ "$_output14" == *'-c model_reasoning_effort="high"'* ]] \
-  && [[ "$_before14" == "$_after14" ]] \
-  && grep -q "model:    codex-spark → gpt-5.3-codex-spark (effort=high)" "$_stderr14"; then
-  t_pass "alias-resolution-spark prints resolved model + effort + banner + no trace files"
-else
-  t_fail "alias-resolution-spark — exit=$_exit14 output='$(printf '%q' "$_output14")' trace_before=${_before14} trace_after=${_after14}"
-fi
-rm -rf "$_work14"
-rm -f "$_brief14" "$_stderr14"
+  _before14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
+  _stderr14="$(mktemp)"
+  set +e
+  _output14="$("$DISPATCH" --cd "$_work14" --brief-file "$_brief14" --model codex-spark --print-cmd 2>"$_stderr14")"
+  _exit14=$?
+  set -e
+  _after14="$(find "$_work14/.agent-trace" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | wc -l)"
+
+  if [[ "$_exit14" -eq 0 ]] \
+    && [[ "$_output14" == *"-m gpt-5.3-codex-spark"* ]] \
+    && [[ "$_output14" == *'-c model_reasoning_effort="high"'* ]] \
+    && [[ "$_before14" == "$_after14" ]] \
+    && grep -q "model:    codex-spark → gpt-5.3-codex-spark (effort=high)" "$_stderr14"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work14"
+  rm -f "$_brief14" "$_stderr14"
+}
 
 # ---- 15: full-form-passthrough keeps model and no effort ----
-_work15="$(mktemp -d)"
-git init -q "$_work15"
+case_full_form_passthrough_keeps_model_no_effort() {
+  local name="full-form-passthrough keeps full model and no injected effort"
+  local _work15 _brief15 _output15 _exit15
+  should_run "$name" || return 0
 
-_brief15="$(mktemp --suffix=.md)"
-printf 'goal: print cmd full-form passthrough test\n' > "$_brief15"
+  _work15="$(mktemp -d)"
+  git init -q "$_work15"
 
-set +e
-_output15="$("$DISPATCH" --cd "$_work15" --brief-file "$_brief15" --model gpt-5.3-codex-spark --print-cmd)"
-_exit15=$?
-set -e
-if [[ "$_exit15" -eq 0 ]] \
-  && [[ "$_output15" == *"-m gpt-5.3-codex-spark"* ]] \
-  && [[ "$_output15" != *"model_reasoning_effort=\"high\""* ]]; then
-  t_pass "full-form-passthrough keeps full model and no injected effort"
-else
-  t_fail "full-form-passthrough — exit=$_exit15 output='$(printf '%q' "$_output15")'"
-fi
-rm -rf "$_work15"
-rm -f "$_brief15"
+  _brief15="$(mktemp --suffix=.md)"
+  printf 'goal: print cmd full-form passthrough test\n' > "$_brief15"
+
+  set +e
+  _output15="$("$DISPATCH" --cd "$_work15" --brief-file "$_brief15" --model gpt-5.3-codex-spark --print-cmd)"
+  _exit15=$?
+  set -e
+  if [[ "$_exit15" -eq 0 ]] \
+    && [[ "$_output15" == *"-m gpt-5.3-codex-spark"* ]] \
+    && [[ "$_output15" != *"model_reasoning_effort=\"high\""* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work15"
+  rm -f "$_brief15"
+}
 
 # ---- 16: unknown-alias-fallback keeps raw model and no effort ----
-_work16="$(mktemp -d)"
-git init -q "$_work16"
+case_unknown_alias_fallback_keeps_raw_model() {
+  local name="unknown-alias-fallback keeps raw model and no effort"
+  local _work16 _brief16 _output16 _exit16
+  should_run "$name" || return 0
 
-_brief16="$(mktemp --suffix=.md)"
-printf 'goal: print cmd unknown alias fallback test\n' > "$_brief16"
+  _work16="$(mktemp -d)"
+  git init -q "$_work16"
 
-set +e
-_output16="$("$DISPATCH" --cd "$_work16" --brief-file "$_brief16" --model unknown-tag --print-cmd)"
-_exit16=$?
-set -e
-if [[ "$_exit16" -eq 0 ]] \
-  && [[ "$_output16" == *"-m unknown-tag"* ]] \
-  && [[ "$_output16" != *"model_reasoning_effort="* ]] ; then
-  t_pass "unknown-alias-fallback keeps raw model and no injected effort"
-else
-  t_fail "unknown-alias-fallback — exit=$_exit16 output='$(printf '%q' "$_output16")'"
-fi
-rm -rf "$_work16"
-rm -f "$_brief16"
+  _brief16="$(mktemp --suffix=.md)"
+  printf 'goal: print cmd unknown alias fallback test\n' > "$_brief16"
+
+  set +e
+  _output16="$("$DISPATCH" --cd "$_work16" --brief-file "$_brief16" --model unknown-tag --print-cmd)"
+  _exit16=$?
+  set -e
+  if [[ "$_exit16" -eq 0 ]] \
+    && [[ "$_output16" == *"-m unknown-tag"* ]] \
+    && [[ "$_output16" != *"model_reasoning_effort="* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work16"
+  rm -f "$_brief16"
+}
 
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
-_home17="$(mktemp -d)"
-_work17="$(mktemp -d)"
-git init -q "$_work17"
-_brief17="$(mktemp --suffix=.md)"
-_stderr17="$(mktemp)"
-printf 'goal: timeout precedence env-only test\n' > "$_brief17"
-set +e
-HOME="$_home17" CODEX_DISPATCH_TIMEOUT=600 \
-  "$DISPATCH" --cd "$_work17" --brief-file "$_brief17" --print-cmd >/dev/null 2>"$_stderr17"
-_exit17=$?
-set -e
-if [[ "$_exit17" -eq 0 ]] && grep -q "timeout:  600s" "$_stderr17"; then
-  t_pass "timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
-else
-  t_fail "timeout/env-only — exit=$_exit17 timeout_banner=$(grep -m1 'timeout:' "$_stderr17" 2>/dev/null || echo missing)"
-fi
-rm -rf "$_work17" "$_home17"
-rm -f "$_brief17" "$_stderr17"
+case_timeout_env_only_precedence() {
+  local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
+  local _home17 _work17 _brief17 _stderr17 _exit17
+  should_run "$name" || return 0
+
+  _home17="$(mktemp -d)"
+  _work17="$(mktemp -d)"
+  git init -q "$_work17"
+  _brief17="$(mktemp --suffix=.md)"
+  _stderr17="$(mktemp)"
+  printf 'goal: timeout precedence env-only test\n' > "$_brief17"
+  set +e
+  HOME="$_home17" CODEX_DISPATCH_TIMEOUT=600 \
+    "$DISPATCH" --cd "$_work17" --brief-file "$_brief17" --print-cmd >/dev/null 2>"$_stderr17"
+  _exit17=$?
+  set -e
+  if [[ "$_exit17" -eq 0 ]] && grep -q "timeout:  600s" "$_stderr17"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work17" "$_home17"
+  rm -f "$_brief17" "$_stderr17"
+}
 
 # ---- 18: timeout precedence config-only uses dispatch.default_timeout ----
-_home18="$(mktemp -d)"
-mkdir -p "$_home18/.pm-dispatch"
-printf 'dispatch.default_timeout=900\n' > "$_home18/.pm-dispatch/config"
-_work18="$(mktemp -d)"
-git init -q "$_work18"
-_brief18="$(mktemp --suffix=.md)"
-_stderr18="$(mktemp)"
-printf 'goal: timeout precedence config-only test\n' > "$_brief18"
-set +e
-HOME="$_home18" CODEX_DISPATCH_TIMEOUT= \
-  "$DISPATCH" --cd "$_work18" --brief-file "$_brief18" --print-cmd >/dev/null 2>"$_stderr18"
-_exit18=$?
-set -e
-if [[ "$_exit18" -eq 0 ]] && grep -q "timeout:  900s" "$_stderr18"; then
-  t_pass "timeout/config-only uses dispatch.default_timeout"
-else
-  t_fail "timeout/config-only — exit=$_exit18 timeout_banner=$(grep -m1 'timeout:' "$_stderr18" 2>/dev/null || echo missing)"
-fi
-rm -rf "$_work18" "$_home18"
-rm -f "$_brief18" "$_stderr18"
+case_timeout_config_only_precedence() {
+  local name="timeout/config-only uses dispatch.default_timeout"
+  local _home18 _work18 _brief18 _stderr18 _exit18
+  should_run "$name" || return 0
+
+  _home18="$(mktemp -d)"
+  mkdir -p "$_home18/.pm-dispatch"
+  printf 'dispatch.default_timeout=900\n' > "$_home18/.pm-dispatch/config"
+  _work18="$(mktemp -d)"
+  git init -q "$_work18"
+  _brief18="$(mktemp --suffix=.md)"
+  _stderr18="$(mktemp)"
+  printf 'goal: timeout precedence config-only test\n' > "$_brief18"
+  set +e
+  HOME="$_home18" CODEX_DISPATCH_TIMEOUT= \
+    "$DISPATCH" --cd "$_work18" --brief-file "$_brief18" --print-cmd >/dev/null 2>"$_stderr18"
+  _exit18=$?
+  set -e
+  if [[ "$_exit18" -eq 0 ]] && grep -q "timeout:  900s" "$_stderr18"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work18" "$_home18"
+  rm -f "$_brief18" "$_stderr18"
+}
 
 # ---- 19: timeout precedence brief-field wins over env and config ----
-_home19="$(mktemp -d)"
-mkdir -p "$_home19/.pm-dispatch"
-printf 'dispatch.default_timeout=900\n' > "$_home19/.pm-dispatch/config"
-_work19="$(mktemp -d)"
-git init -q "$_work19"
-_brief19="$(mktemp --suffix=.md)"
-_stderr19="$(mktemp)"
-printf 'goal: timeout precedence brief wins\n' > "$_brief19"
-set +e
-HOME="$_home19" CODEX_DISPATCH_TIMEOUT=700 \
-  "$DISPATCH" --cd "$_work19" --brief-file "$_brief19" --timeout 1200 --print-cmd >/dev/null 2>"$_stderr19"
-_exit19=$?
-set -e
-if [[ "$_exit19" -eq 0 ]] && grep -q "timeout:  1200s" "$_stderr19"; then
-  t_pass "timeout/brief-field beats env and config"
-else
-  t_fail "timeout/brief-field precedence — exit=$_exit19 timeout_banner=$(grep -m1 'timeout:' "$_stderr19" 2>/dev/null || echo missing)"
-fi
-rm -rf "$_work19" "$_home19"
-rm -f "$_brief19" "$_stderr19"
+case_timeout_precedence_brief_field() {
+  local name="timeout/brief-field beats env and config"
+  local _home19 _work19 _brief19 _stderr19 _exit19
+  should_run "$name" || return 0
 
-echo "----"
-echo "$PASS passed, $FAIL failed"
-[[ "$FAIL" -eq 0 ]]
+  _home19="$(mktemp -d)"
+  mkdir -p "$_home19/.pm-dispatch"
+  printf 'dispatch.default_timeout=900\n' > "$_home19/.pm-dispatch/config"
+  _work19="$(mktemp -d)"
+  git init -q "$_work19"
+  _brief19="$(mktemp --suffix=.md)"
+  _stderr19="$(mktemp)"
+  printf 'goal: timeout precedence brief wins\n' > "$_brief19"
+  set +e
+  HOME="$_home19" CODEX_DISPATCH_TIMEOUT=700 \
+    "$DISPATCH" --cd "$_work19" --brief-file "$_brief19" --timeout 1200 --print-cmd >/dev/null 2>"$_stderr19"
+  _exit19=$?
+  set -e
+  if [[ "$_exit19" -eq 0 ]] && grep -q "timeout:  1200s" "$_stderr19"; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work19" "$_home19"
+  rm -f "$_brief19" "$_stderr19"
+}
+
+case_help_exits_0
+case_help_output_preserved
+case_fresh_invocation_reexecs_from_snapshot_copy
+case_ambient_env_defense
+case_ambient_path_defense
+case_cleanup_no_leak
+case_structural_snapshot_block_intact
+case_dispatch_does_not_mutate_gitignore
+case_auto_log_parser_single_integer
+case_auto_log_successful_dispatch_logs_codex
+case_auto_log_failed_dispatch_no_log
+case_auto_log_spark_model_logs_pool
+case_auto_log_log_failure_preserves_dispatch_exit
+case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
+case_full_form_passthrough_keeps_model_no_effort
+case_unknown_alias_fallback_keeps_raw_model
+case_timeout_env_only_precedence
+case_timeout_config_only_precedence
+case_timeout_precedence_brief_field
+
+th_summary
