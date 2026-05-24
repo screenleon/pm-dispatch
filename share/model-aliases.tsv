@@ -2,4 +2,14 @@
 # Schema: PM-facing alias, wire-format model id, reasoning effort.
 #
 # Columns must be tab-separated.
+#
+# Context window reference (brief authors: estimate against this when sizing
+# `files:` blocks and embedded `context:` content):
+#   codex-spark             — gpt-5.3-codex-spark      ~64K tokens
+#   <default> (no --model)  — gpt-5.3-codex            ~122K tokens
+# Survey-style briefs that read large files (BACKLOG.md ~1800 lines,
+# v0.3.0-synthesis.md, agents/project-pm.md) MUST use lazy-read
+# instructions in `context:` (see docs/dispatch-brief.md §`files:` block
+# semantics). CC-229 substrate spike v1/v2 hit context_length_exceeded
+# with eager-load briefs; v3 succeeded with lazy reading.
 codex-spark	gpt-5.3-codex-spark	high
