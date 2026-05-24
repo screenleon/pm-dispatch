@@ -100,7 +100,8 @@ case_enum_sync() {
   # Compare an inline schema enum against the policy YAML it documents.
   # args: <schema_file> <jq path to enum> <yaml_file> <yaml key>
   local schema_file="$1" jq_path="$2" yaml_file="$3" yaml_key="$4"
-  local name="enum-sync: $(basename "$schema_file") $jq_path == $(basename "$yaml_file") #/$yaml_key"
+  local name
+  name="enum-sync: $(basename "$schema_file") $jq_path == $(basename "$yaml_file") #/$yaml_key"
   should_run "$name" || return 0
 
   local schema_vals yaml_vals

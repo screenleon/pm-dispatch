@@ -93,6 +93,7 @@ jobs:
             setup-project.sh
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
+            test-core-schemas.sh
             test-commands.sh
             test-commands-runner.sh
             test-dispatch-handover.sh
