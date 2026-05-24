@@ -23,6 +23,20 @@ A brief missing any of these is a request for guesswork. Reject and ask the call
 
 The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but `codex-executor` re-checks `acceptance` against `git diff` from outside.
 
+### `files:` block semantics — sandbox allowlist, NOT must-read list
+
+A `read:`-tagged entry means **"executor MAY read this if it needs the content"**, not **"executor MUST read this upfront"**. The block doubles as the sandbox/audit declaration of which files the brief is authorised to touch — not as a checklist of mandatory ingestion.
+
+For survey-style briefs (spikes, audits, broad reviews), pre-loading every cited source file exhausts the executor's context window before useful work begins. Codex's default model has ~120K token context; pre-reading `BACKLOG.md` (1,800 lines) + `docs/architecture/v0.3.0-synthesis.md` + `agents/project-pm.md` consumes most of it (calibration: CC-229 spike v1+v2 hit `context_length_exceeded` exactly this way before v3 succeeded with lazy reading).
+
+When authoring a brief whose `files:` block lists more than ~4 reads totaling > 50KB:
+
+- Add a `context:` or `constraints:` instruction telling the executor to **read on demand only**: open only the cited line ranges via `grep -n` / `sed -n` / targeted `head`, not full files.
+- If the brief depends on a self-contained scope/RFC doc, mark that one file as the single up-front read and treat all other `read:` entries as on-demand lookups.
+- BACKLOG.md, large synthesis docs, and `agents/*.md` should always be opened via section-targeted commands (`grep -A 30 '^## CC-NNN' BACKLOG.md`), never read whole.
+
+This applies to both `codex` and `claude` executors — Claude has more context budget, but lazy reading is still better hygiene.
+
 ## Optional sections
 
 Use as needed; not all briefs require all of them.
