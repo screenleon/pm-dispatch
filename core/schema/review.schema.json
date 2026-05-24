@@ -31,10 +31,12 @@
         "required": ["reviewer", "verdict"],
         "properties": {
           "reviewer": {
-            "$ref": "../policy/reviewer-policy.yaml#/reviewers"
+            "enum": ["critic", "qa-tester", "architecture-reviewer", "security-reviewer", "risk-reviewer"],
+            "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
           },
           "verdict": {
-            "$ref": "../policy/reviewer-policy.yaml#/verdicts"
+            "enum": ["pass", "pass-not-applicable", "advise", "block-soft", "block", "needs-tests"],
+            "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
           },
           "summary": {
             "type": "string"

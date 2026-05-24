@@ -16,10 +16,12 @@
       "pattern": "^[A-Z]{1,4}-[0-9]+$"
     },
     "executor": {
-      "$ref": "../policy/executor-enum.yaml#/values"
+      "enum": ["codex", "claude"],
+      "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync — CC-233 layer test verifies."
     },
     "dispatch_route": {
-      "$ref": "../policy/dispatch-routes.yaml#/values"
+      "enum": ["main_thread_bash_background", "agent_executor"],
+      "description": "Editing source-of-truth: core/policy/dispatch-routes.yaml. Keep in sync."
     },
     "model": {
       "type": "string",
@@ -34,7 +36,8 @@
       "pattern": "^/"
     },
     "state": {
-      "$ref": "../policy/run-states.yaml#/states"
+      "enum": ["pending", "dispatched", "verifying", "ok", "partial", "failed"],
+      "description": "Editing source-of-truth: core/policy/run-states.yaml. Keep in sync."
     },
     "trace_path": {
       "type": "string",

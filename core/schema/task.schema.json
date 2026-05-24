@@ -18,7 +18,8 @@
       "maxLength": 200
     },
     "state": {
-      "$ref": "../policy/task-states.yaml#/states"
+      "enum": ["open", "claimed", "in-progress", "blocked", "done", "dropped"],
+      "description": "Editing source-of-truth: core/policy/task-states.yaml. Keep in sync."
     },
     "priority": {
       "enum": ["P1", "P2", "P3", null]

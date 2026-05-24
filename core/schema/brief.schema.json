@@ -2,7 +2,7 @@
   "title": "Brief",
   "description": "A pm-dispatch dispatch brief — work definition consumed by codex / claude executor. Mirrors docs/dispatch-brief.md schema. Distinct from Handover: Brief = work definition, Handover = dispatch envelope.",
   "type": "object",
-  "required": ["working_dir", "goal", "files", "acceptance"],
+  "required": ["schema_version", "working_dir", "goal", "files", "acceptance"],
   "properties": {
     "schema_version": {
       "const": 1
