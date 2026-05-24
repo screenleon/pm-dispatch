@@ -4,10 +4,6 @@
 #
 # Distinguished from run-states.yaml: one Dispatch may produce multiple
 # Runs (retry on exit 124, fallback to alternative executor profile).
-# Per synthesis §5.2.
-#
-# In M1 this lives as a definition only; M2 pmctl dispatch invokes the
-# state machine.
 
 states:
   - pending       # brief queued, no Run yet

@@ -54,7 +54,7 @@
     "self_verify": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Required for file-writing briefs (any entry tagged write:/new: or untagged). Read-only briefs (every files: entry tagged read:) may omit. Conditional requirement enforced by pmctl validate (M2)."
+      "description": "Required for file-writing briefs (any entry tagged write:/new: or untagged). Read-only briefs (every files: entry tagged read:) may omit. Conditional requirement enforced by the runtime validator."
     },
     "acceptance": {
       "type": "array",

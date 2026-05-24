@@ -1,12 +1,11 @@
 # core/policy/reviewer-policy.yaml
 #
 # PR-gate reviewer matrix. Consumed by core/schema/review.schema.json
-# (reviewer field via $ref #/reviewers).
+# (reviewer + verdict fields, inline enums kept in sync).
 #
-# **Matrix only.** Override discipline (Rule A / Rule B in
-# agents/project-pm.md:64-91) stays as prose where the PM agent reads it.
-# Q6 resolved 2026-05-24: extracting prose to YAML produces drift; keep
-# the judgment-encoding in the agent file.
+# **Matrix only.** Override discipline (Rule A / Rule B) stays as prose
+# in agents/project-pm.md where the PM agent reads it. Splitting prose
+# to YAML produces drift.
 #
 # `kind`:
 #   - advisory:  may issue advise; cannot block merge
@@ -15,8 +14,7 @@
 # `phase`:
 #   - all:        runs on every PR
 #   - impl-only:  runs only when implementation code changes (skipped for
-#                 docs-only PRs — historically caused the early "auto-pass"
-#                 verdict pattern; documented for transparency)
+#                 docs-only PRs)
 #   - test-phase: runs against test-surface gaps (qa-tester)
 
 reviewers:
@@ -36,8 +34,8 @@ reviewers:
     kind: hard-gate
     phase: test-phase
 
-# Verdict tokens any reviewer may emit (consumed by review.schema.json
-# findings[].verdict).
+# Verdict tokens any reviewer may emit (consumed by
+# review.schema.json findings[].verdict).
 verdicts:
   - pass
   - pass-not-applicable

@@ -42,7 +42,7 @@
     },
     "payload": {
       "type": "object",
-      "description": "Kind-specific data. Loose-typed by design — kind-specific subschemas can be added per kind in M2+ without a breaking schema_version bump.",
+      "description": "Kind-specific data. Loose-typed by design — kind-specific subschemas can be added per kind without a breaking schema_version bump.",
       "additionalProperties": true
     }
   },

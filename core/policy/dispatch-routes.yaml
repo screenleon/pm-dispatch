@@ -2,11 +2,8 @@
 #
 # Closed list of dispatch routes for a `dispatch_handover_v1` block.
 # Consumed by:
-#   - scripts/lib/handover-validate.sh (CC-231)
-#   - core/schema/handover.schema.json ($ref #/values)
-#
-# Mirrors the current hardcoded validator at scripts/lib/handover-validate.sh
-# (the dispatch_route case block).
+#   - scripts/lib/handover-validate.sh
+#   - core/schema/handover.schema.json (inline enum, kept in sync)
 
 values:
   - main_thread_bash_background    # codex route — main thread Bash() to scripts/codex-dispatch.sh

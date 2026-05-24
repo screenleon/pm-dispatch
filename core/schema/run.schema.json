@@ -17,7 +17,7 @@
     },
     "executor": {
       "enum": ["codex", "claude"],
-      "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync — CC-233 layer test verifies."
+      "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
     },
     "dispatch_route": {
       "enum": ["main_thread_bash_background", "agent_executor"],

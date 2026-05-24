@@ -34,7 +34,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Supporting links / commit SHAs / spike doc references."
+      "description": "Supporting links / commit SHAs / design-doc references."
     },
     "tags": {
       "type": "array",

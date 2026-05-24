@@ -17,7 +17,7 @@ A unique identifier. Matches `sources[].name` in the assembled `ContextPack` (se
 
 Source-implementation version. Bumps when the source's output shape or filter logic changes.
 
-- Free string. Semver-ish recommended (`1.0.0`, `1.1.0-rc1`). No format enforcement in M1.
+- Free string. Semver-ish recommended (`1.0.0`, `1.1.0-rc1`). No format enforcement.
 
 ### `build(task_id) → items[]`
 
@@ -38,13 +38,13 @@ The source decides which category each item belongs to. Convention: a file path 
 
 2. **No inter-source dependencies.** Sources MUST NOT depend on the output of other sources. The assembler invokes sources in arbitrary order; sources cannot rely on a specific ordering.
 
-3. **Bounded runtime.** A source SHOULD complete in < 5 seconds for typical task_id input. The assembler MAY enforce a hard timeout (M4 detail; not specified in M1).
+3. **Bounded runtime.** A source SHOULD complete in < 5 seconds for typical `task_id` input. The assembler MAY enforce a hard timeout.
 
-4. **No network calls in M1.** Sources operate on local repository state only. A future revision may relax this for indexed remote sources (e.g. codegraph remote cache), but M1's baseline sources (rg, git-log, memory) are local-only.
+4. **No network calls.** Sources operate on local repository state only. Indexed remote sources MAY relax this only when the contract is extended (schema_version bump).
 
 5. **Confidence MUST be meaningful.** `confidence: 1.0` reserved for exact matches; `confidence: 0.0` for "the consumer should reject this." Sources MUST NOT emit items at `confidence: 0`. (Convention; not schema-enforced.)
 
-6. **Deterministic for fixed input.** Same `task_id` + same repository state ⇒ same items[]. No randomness, no time-based variation. Required so context-pack assembly is reproducible / cacheable.
+6. **Deterministic for fixed input.** Same `task_id` + same repository state ⇒ same `items[]`. No randomness, no time-based variation. Required so context-pack assembly is reproducible / cacheable.
 
 ## Optional surface
 
@@ -68,21 +68,8 @@ A source MAY implement a self-test that the assembler runs before invoking `buil
 - Sources do NOT decide which categories a task needs. The assembler / brief author picks the source set.
 - Sources do NOT mutate the pack after assembly. They contribute items; the assembler combines.
 - Sources do NOT implement caching beyond what their underlying tool already provides. Pack caching is the assembler / consumer's concern.
-- Sources are NOT pmctl subcommands. They are libraries the assembler invokes.
-
-## Baseline sources (CC-237, M4)
-
-The M4 baseline source set:
-
-- `rg` — ripgrep against the working tree, returns matching files / lines.
-- `git-log` — recently-touched files and their authors.
-- `memory` — relevant memory cards by keyword + recency (per `[[mem-search]]` skill).
-- `codegraph` — only when CC-209 Phase 2 verdict adopts it (currently AMBER).
-
-Implementations land in M4. This M1 contract locks the shape so M4 can implement against a stable surface.
+- Sources are NOT `pmctl` subcommands. They are libraries the assembler invokes.
 
 ## Versioning
 
-Breaking changes to this contract are signaled by bumping `context-pack.schema.json` `schema_version` (the pack's required `const` field). Source authors update the schema_version they produce; consumers handle both versions during a deprecation window.
-
-In M1, `schema_version: 1` is the only valid value.
+Breaking changes to this contract bump `context-pack.schema.json` `schema_version` (the pack's required `const` field). Source authors update the `schema_version` they produce; consumers handle both versions during a deprecation window.

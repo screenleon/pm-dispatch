@@ -1,6 +1,6 @@
 {
   "title": "Handover",
-  "description": "The dispatch envelope: metadata header of a `dispatch_handover_v1` fenced block. Mirrors the current scripts/lib/handover-validate.sh metadata contract (CC-231 will extract the validator to consume this schema + policy files).",
+  "description": "The dispatch envelope: metadata header of a `dispatch_handover_v1` fenced block. Mirrors the scripts/lib/handover-validate.sh metadata contract.",
   "type": "object",
   "required": [
     "handover_version",

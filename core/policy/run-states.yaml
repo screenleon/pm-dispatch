@@ -1,10 +1,8 @@
 # core/policy/run-states.yaml
 #
-# Run lifecycle states. Consumed by core/schema/run.schema.json (state field).
-#
-# Per docs/architecture/v0.3.0-synthesis.md §5.2 and the synthesis spike §A.
-# A Run represents one executor dispatch (one codex/claude invocation per
-# brief).
+# Run lifecycle states. Consumed by core/schema/run.schema.json (state
+# field, inline enum kept in sync). A Run represents one executor
+# dispatch (one codex/claude invocation per brief).
 
 states:
   - pending       # brief written, not yet dispatched

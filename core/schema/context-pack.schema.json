@@ -1,6 +1,6 @@
 {
   "title": "ContextPack",
-  "description": "A pluggable pre-dispatch context bundle assembled from sources (rg, git-log, memory, codegraph, ...). Per CC-232 spike + synthesis §A. Categorical typed arrays enable per-source attribution + confidence ranking.",
+  "description": "A pluggable pre-dispatch context bundle assembled from sources (rg, git-log, memory, codegraph, ...). Categorical typed arrays enable per-source attribution + confidence ranking.",
   "type": "object",
   "required": ["schema_version", "task_id", "built_ts", "sources", "files"],
   "properties": {

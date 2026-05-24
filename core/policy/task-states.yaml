@@ -1,9 +1,7 @@
 # core/policy/task-states.yaml
 #
-# Task lifecycle states. Consumed by core/schema/task.schema.json
-# (state field).
-#
-# Per docs/architecture/v0.3.0-synthesis.md §5.2.
+# Task lifecycle states. Consumed by core/schema/task.schema.json (state
+# field, inline enum kept in sync).
 
 states:
   - open
@@ -13,8 +11,8 @@ states:
   - done
   - dropped
 
-# Allowed transitions (informational; not currently enforced by validator,
-# but documents the state machine for human readers + future pmctl validate).
+# Allowed transitions (informational; documents the state machine for
+# human readers and future validator).
 transitions:
   open:
     - claimed

@@ -26,7 +26,7 @@
     },
     "epic": {
       "type": "string",
-      "description": "Maps to BACKLOG row epic column. Valid values enforced by pm/scripts/validate.sh::valid_epic — kept here as a free string in M1; pmctl validate may narrow in M2."
+      "description": "Maps to BACKLOG row epic column. Valid values enforced by pm/scripts/validate.sh::valid_epic — kept here as a free string; the runtime validator may narrow later."
     },
     "area": {
       "type": "string",
