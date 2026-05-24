@@ -448,8 +448,8 @@ output_format: |
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
   - matched by the regex ^Final: (GO|NO-GO)$
-  - the value MUST equal the frontmatter `final:` field (case-sensitive)
-  Examples that BREAK the parser and MUST NOT be emitted: `**Final: GO**`, `Final: **GO**`, ` Final: GO`, `Final: Go`.
+  - the value MUST equal the frontmatter \`final:\` field (case-sensitive)
+  Examples that BREAK the parser and MUST NOT be emitted: \`**Final: GO**\`, \`Final: **GO**\`, \` Final: GO\`, \`Final: Go\`.
 
   ## Escalation
   **Recommended**: true|false
@@ -464,7 +464,7 @@ output_format: |
 self_verify:
   - file-exists: ${OUTPUT_FILE}
   - has-conclusion: grep -c '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
-  - frontmatter-final-parity: the value after `final:` in the YAML frontmatter MUST equal the value after `Final:` in Gate Conclusion (case-sensitive)
+  - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
 
   acceptance:
   - ${OUTPUT_FILE} exists with a verdict section for each of the ${NUM_REVIEWERS} reviewers
@@ -836,8 +836,8 @@ output_format: |
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
   - matched by the regex ^Final: (GO|NO-GO)$
-  - the value MUST equal the frontmatter `final:` field (case-sensitive)
-  Examples that BREAK the parser and MUST NOT be emitted: `**Final: GO**`, `Final: **GO**`, ` Final: GO`, `Final: Go`.
+  - the value MUST equal the frontmatter \`final:\` field (case-sensitive)
+  Examples that BREAK the parser and MUST NOT be emitted: \`**Final: GO**\`, \`Final: **GO**\`, \` Final: GO\`, \`Final: Go\`.
 
   ## Escalation
   **Recommended**: true|false
@@ -857,7 +857,7 @@ output_format: |
 self_verify:
   - file-exists: ${OUTPUT_FILE}
   - has-final: grep -cE '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
-  - frontmatter-final-parity: the value after `final:` in the YAML frontmatter MUST equal the value after `Final:` in Gate Conclusion (case-sensitive)
+  - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
   - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}
 
 acceptance:

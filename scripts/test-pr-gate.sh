@@ -1383,6 +1383,44 @@ test_bold_final_line_rejected() {
   pass "$name"
 }
 
+test_brief_construction_emits_no_shell_errors() {
+  # CC-257 regression: the codex-brief heredoc at scripts/pr-gate.sh:362
+  # (BRIEF_EOF) and the synthesis-brief heredocs (SBRIEF_P1, SBRIEF_P2) are
+  # unquoted, so bash performs command substitution on backtick pairs in the
+  # body. CC-252 (#147) introduced cautionary `` `Final: ...` `` tokens that
+  # bash then tried to execute, producing 7 `command not found` lines per
+  # invocation. Fix: escape the backticks in the heredoc body (\`Final: ...\`)
+  # so bash writes them literally.
+  # Steps:
+  #   1. Run gate against a minimal repo (express tier, docs change)
+  #   2. Assert exit 0 (gate ran cleanly)
+  #   3. Assert stderr file contains zero "command not found" lines
+  #   4. Assert the captured brief still contains the cautionary tokens
+  #      (`Final:`, `final:`, `**Final: GO**`) so codex still sees the warning
+  local name="brief-construction-no-shell-errors"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_not_contains "$name" "$err" "command not found" || return
+  assert_file_contains "$name" "$brief" 'frontmatter `final:` field' || return
+  assert_file_contains "$name" "$brief" '`**Final: GO**`' || return
+  pass "$name"
+}
+
 test_synthesis_multiple_final_lines_aborts_gate() {
   # Verifies that a synthesis output with more than one Final: line causes the
   # gate to abort — duplicate or contradictory Final: lines indicate a
@@ -1949,6 +1987,7 @@ run_test test_synthesis_artifact_tamper_detected
 run_test test_verdict_prefix_rejected
 run_test test_hash_tool_missing_aborts_gate
 run_test test_bold_final_line_rejected
+run_test test_brief_construction_emits_no_shell_errors
 run_test test_synthesis_multiple_final_lines_aborts_gate
 run_test test_multiple_verdict_lines_aborts_gate
 run_test test_reviewer_cross_artifact_tamper_detected
