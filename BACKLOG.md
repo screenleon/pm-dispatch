@@ -160,6 +160,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-255 | 🔵 active | **[Spike infrastructure: rubric + brief template improvements]** PR #151 codegraph Phase 1 surfaced 2 spike-infra gaps that misled codex: (a) verdict rubric must enumerate sandbox-block as a "local env" example alongside peerDep (codex misapplied RED criterion because sandbox isolation wasn't an explicit local-env class in the rubric); (b) spike brief template must specify test target as a separate field from working directory — when target language-aware tools (e.g. codegraph) are evaluated, the brief must commit to a representative target codebase, not let codex pick on its own (Phase 1 brief said "pick a symbol in pm-dispatch" which pre-committed wrong target). Touch points: `/tmp/cc<NNN>-content/verdict-rubric.md` templates, `docs/spikes/README.md` skeleton, `docs/dispatch-brief.md` schema add optional `test_target:` field for spike briefs. | process | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-254 | 🔵 active | **[CC-249 PR-B.1 amendment: harness assert_* helpers no auto-pass]** PR-B.1 (#148) harness helpers auto-called `pass "$name"` on success. PR-B.2 (consumer migration) attempted dispatch 2026-05-24 surfaced design conflict: existing 13 consumers follow `assert_X "$name" && pass "$name"` pattern (assert is check, consumer calls pass) — pure rename would cause double-count. Codex defensively shadowed harness by re-defining 4 helpers locally in each consumer (violating Q3 break-and-rewrite rule). Real fix: remove auto-pass from harness; consumers keep explicit `pass` (unchanged behavior on success, helper still calls `fail` on failure). Self-tests amended to call pass explicitly after assert. After this lands, PR-B.2 reverts to pure rename + delete local defs (the simple migration spike originally envisioned). | ops/test | 2026-05-24 | pr:#149 | P2 | reuse-debt |
 | CC-256 | 🔵 active | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. Filed in pr:#152. | ops/test | 2026-05-24 | pr:#152 | P3 | reuse-debt |
+| CC-257 | 🔵 active | **[pr-gate.sh stderr noise: 7× `final::` command-not-found per invocation]** Every `/pr-gate` run emits 7 shell errors at `scripts/pr-gate.sh:362` (heredoc opening line for the codex brief construction). Reproducible on cc-249-pr-b2-consumer-migration-v2 gate run 2026-05-24 (`.gate-results/gate-20260524-174507.md`). Errors: `final::`, `**Final::`, `Final::` (×3), `final::`, `Final::`. Heredoc body contains literal `Final: GO\|NO-GO` and `**Final: GO**` example tokens; bash is interpreting these somewhere as commands. Verdict + result file still emit correctly (`Final: GO` produced) so this is stderr noise only — but it obscures real shell errors and hits every PR. Hypothesis: unquoted heredoc delimiter (`<< BRIEF_EOF`) lets command substitution / metachars in body get evaluated; OR a downstream `eval` / `source` parses the constructed brief and re-executes lines. Fix likely a heredoc quoting change (`<< 'BRIEF_EOF'`) but requires confirming all `${VAR}` interpolations are otherwise injected. Discovered while running standard-tier gate on CC-249 PR-B.2 v2 (#152); classified medium per `[[feedback_gate_finding_triage]]` (no-block gate). | gate/ops | 2026-05-24 | pr:TBD | P3 | oss |
 
 ---
 
@@ -1727,6 +1728,44 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P3 — process polish; affects every future spike but each individual cost is small.
 
 **Cross-link**: CC-209 (Phase 1 origin showing both gaps), CC-253 (Phase 2 dependent on these template improvements), `[[feedback_spike_pilot_required]]` (sibling spike-process rule), `[[feedback_spike_validation_mandatory]]` (sibling validation rule).
+
+## CC-257 — pr-gate.sh stderr noise: `final::` command-not-found ×7 per invocation（active）
+
+**Problem**: Every `/pr-gate` invocation emits 7 shell errors at `scripts/pr-gate.sh:362` (the codex brief heredoc opening line):
+
+```
+scripts/pr-gate.sh: line 362: final:: command not found
+scripts/pr-gate.sh: line 362: **Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+```
+
+Reproducible on the CC-249 PR-B.2 v2 gate run (2026-05-24, `.gate-results/gate-20260524-174507.md`, dispatch trace `codex-20260524-174508-114715`). The errors match literal tokens inside the heredoc body (`final: GO\|NO-GO` frontmatter, `Final: GO\|NO-GO` output_format, `**Final: GO**` / `Final: **GO**` / `Final: Go` cautionary examples in the brief template added by CC-252 #147).
+
+**Why**: Gate verdict + result file still emit correctly (this run produced `Final: GO` cleanly), so this is stderr noise only — but:
+- It hits every PR gate run for every user
+- It buries any real shell errors from `pr-gate.sh` under 7 false-positive lines
+- It will confuse future debugging — anyone tailing the gate output sees "errors" when there are none
+
+Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted delimiter, so bash performs variable + command substitution + arithmetic expansion on the body. Hypothesis: somewhere in the body a `${VAR}` interpolation contains text that resolves to a bareword line bash tries to execute; OR a downstream `eval`/`source` reads the constructed brief and re-executes parsed lines. Needs investigation before fix.
+
+**Requirement**:
+- Reproduce locally with `bash -x` to identify which expansion (or downstream consumer) triggers the command-not-found.
+- If heredoc-quoting fix is safe (no `${VAR}` interpolation lost), change `<< BRIEF_EOF` → `<< 'BRIEF_EOF'` and ensure every needed variable is otherwise injected (e.g. pre-render then substitute via `sed`).
+- If the root cause is a downstream `eval`/`source`/`source <(...)` pattern, replace with a quote-safe alternative (`read -d ''`, `mapfile`, or proper parsing).
+- Add a regression test that runs `/pr-gate` against a fixture branch and asserts stderr matches `^$` (or only a known noise allowlist).
+
+**Acceptance**:
+- `/pr-gate` (any tier) emits zero `command not found` errors at line 362 (or anywhere in `pr-gate.sh`).
+- All existing gate runs continue to produce correct `Final: GO|NO-GO` verdicts (regression: re-run the gate on a known-GO branch + a known-NO-GO fixture).
+- New regression test in `scripts/test-pr-gate.sh` (or `scripts/test-pr-gate-profile.sh`) asserts stderr cleanliness.
+
+**Priority**: P3 — medium severity per `[[feedback_gate_finding_triage]]` (no-block gate finding), no correctness impact, but hits 100% of `/pr-gate` invocations and obscures real signals.
+
+**Cross-link**: CC-252 (#147, added the cautionary `**Final: ...**` example lines that are inside the heredoc); CC-250 (#144, original `/pr-gate v2` machine-readable frontmatter); `[[feedback_gate_finding_triage]]` (severity rule applied).
 
 ## CC-256 — CC-249 reuse-debt tail: 3 excluded test files（active）
 
