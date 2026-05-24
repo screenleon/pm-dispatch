@@ -159,6 +159,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-253 | 🔵 active | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-255 | 🔵 active | **[Spike infrastructure: rubric + brief template improvements]** PR #151 codegraph Phase 1 surfaced 2 spike-infra gaps that misled codex: (a) verdict rubric must enumerate sandbox-block as a "local env" example alongside peerDep (codex misapplied RED criterion because sandbox isolation wasn't an explicit local-env class in the rubric); (b) spike brief template must specify test target as a separate field from working directory — when target language-aware tools (e.g. codegraph) are evaluated, the brief must commit to a representative target codebase, not let codex pick on its own (Phase 1 brief said "pick a symbol in pm-dispatch" which pre-committed wrong target). Touch points: `/tmp/cc<NNN>-content/verdict-rubric.md` templates, `docs/spikes/README.md` skeleton, `docs/dispatch-brief.md` schema add optional `test_target:` field for spike briefs. | process | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-254 | 🔵 active | **[CC-249 PR-B.1 amendment: harness assert_* helpers no auto-pass]** PR-B.1 (#148) harness helpers auto-called `pass "$name"` on success. PR-B.2 (consumer migration) attempted dispatch 2026-05-24 surfaced design conflict: existing 13 consumers follow `assert_X "$name" && pass "$name"` pattern (assert is check, consumer calls pass) — pure rename would cause double-count. Codex defensively shadowed harness by re-defining 4 helpers locally in each consumer (violating Q3 break-and-rewrite rule). Real fix: remove auto-pass from harness; consumers keep explicit `pass` (unchanged behavior on success, helper still calls `fail` on failure). Self-tests amended to call pass explicitly after assert. After this lands, PR-B.2 reverts to pure rename + delete local defs (the simple migration spike originally envisioned). | ops/test | 2026-05-24 | pr:#149 | P2 | reuse-debt |
+| CC-256 | 🔵 active | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. | ops/test | 2026-05-24 | pr:TBD | P3 | reuse-debt |
 
 ---
 
@@ -1722,3 +1723,30 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P3 — process polish; affects every future spike but each individual cost is small.
 
 **Cross-link**: CC-209 (Phase 1 origin showing both gaps), CC-253 (Phase 2 dependent on these template improvements), `[[feedback_spike_pilot_required]]` (sibling spike-process rule), `[[feedback_spike_validation_mandatory]]` (sibling validation rule).
+
+## CC-256 — CC-249 reuse-debt tail: 3 excluded test files（active）
+
+**Problem**: CC-249 spike (#146) Q1-Q5 + PR-B.2 v2 (this PR) migrated 10 of 13 consumer `test-*.sh` files off divergent local `assert_*` helpers onto the unified harness helpers from PR-B.1 (#148, amended by CC-254 #149). 3 files were deliberately excluded from the v2 migration batch:
+
+- `scripts/test-test-harness.sh` — tests the harness itself (13 unified-helper call-sites). Migration would create a cyclic dependency where the system-under-test is also the helper-source. Needs a per-test classification: assertions that exercise the helpers must remain as raw bash, but assertions about other harness behaviour can adopt the helpers.
+- `scripts/test-run-all-tests.sh` — orchestrator (2 unified-helper call-sites). Different test shape: it runs other test-*.sh as subprocesses and asserts on their aggregated output, not on file-level fixtures. Helper-fit needs a per-call review.
+- `scripts/test-hooks.sh` — 0 unified-helper call-sites in current code. Audit-confirm only — if no `assert_(exit|file_contains|file_matches|string_contains)` ever appears, this file drops out of the reuse-debt set entirely (close as no-op).
+
+**Why deferred not done in CC-249**: spike Q1-Q5 envisioned a uniform rename batch. The 3 files each need analysis, not rename. Including them in PR-B.2 v2 would have either (a) blocked the 10 clean migrations on per-file judgment calls or (b) shipped half-migrated state. Cleaner to ship the 10 + carry the tail.
+
+**Requirement**:
+- Per-file analysis for each of the 3 files: enumerate the assert-call-sites, classify each (migrate / keep-raw-bash / harness-self-test-exempt).
+- For `test-test-harness.sh`: pick a rule that distinguishes "asserting on harness output" (must stay raw) vs "asserting on file fixtures using harness helpers" (can migrate). Document the rule in a header comment.
+- For `test-run-all-tests.sh`: review the 2 call-sites; if they fit `assert_string_contains` / `assert_file_contains` shape, migrate; otherwise document why not.
+- For `test-hooks.sh`: if the audit confirms 0 call-sites, close ticket as no-op (no edit needed).
+
+**Acceptance**:
+- Each of the 3 files either (a) migrated and golden-parity verified, or (b) has a header comment documenting why specific call-sites remain raw, or (c) confirmed-no-op (test-hooks.sh case).
+- `scripts/test-test-harness.sh` 30/30 passes.
+- `scripts/test-run-all-tests.sh` integration passes.
+- `scripts/test-hooks.sh` 298+ cases pass (current count from memory).
+- No new shadow shims of the 4 unified helpers in any file (`grep -cE '^(function )?(assert_exit|assert_file_contains|assert_file_matches|assert_string_contains)\(\)'` returns 0 across all consumers).
+
+**Priority**: P3 — each file is small and the surface area is bounded; not blocking anything downstream. CC-249 epic closure does not depend on this.
+
+**Cross-link**: CC-249 (parent epic, closed by the PR that introduces this row), CC-254 (#149, the harness amendment that enabled the v2 migration), `[[feedback_test_migration_format_preservation]]` (preservation contract any sub-migration here must honour).
