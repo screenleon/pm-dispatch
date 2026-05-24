@@ -21,7 +21,7 @@ Executor-agnostic metadata (must be interpreted by all concrete profiles):
 Executor-specific metadata subsets:
 
 - `sandbox`, `approval`, `skip_git_check`: codex-profile-only today (current validator and CLI assumptions).
-- `claude`: no concrete metadata subset yet; CC-102 defines and ships its own minimal subset, using main-thread semantics.
+- `claude`: minimal subset using main-thread semantics; codex-only fields (`sandbox`, `approval`, `skip_git_check`) are set to canonical no-op values for schema stability.
 
 Executors should ignore unrecognized metadata keys unless they are intentionally documented for that profile.
 
@@ -43,17 +43,17 @@ The diff is the source of truth for work completion. The report is narrative con
 | Aspect | codex profile | claude profile |
 |---|---|---|
 | Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
-| Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract in CC-101. |
+| Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract. |
 | Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
 | Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | `/pr-gate` now routes through `executor` selection: existing codex path continues unchanged, and claude path fan-outs `pr-gate-handover_v1` entries to `claude-executor` then runs the synthesis flow. |
 | Install requirement | `codex` install profile (current operational mode). | `claude` install profile (lightweight; no codex binary workflow dependency). |
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
-| Status | Implemented (primary route since CC-036). | Implemented in CC-102 — `agents/claude-executor.md` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
+| Status | Implemented (primary route). | Implemented — `agents/claude-executor.md` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
 
 ## Selection
 
-Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract and is intended to become available when CC-102 ships the `claude` enum and adapter.
+Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract.
 
 ## Forward-compat notes
 
-As of CC-102, `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.
+`scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.

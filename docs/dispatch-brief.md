@@ -495,4 +495,4 @@ Expected sequence:
 4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from `scripts/codex-dispatch.sh:203-207`.
 5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start banner from `scripts/codex-dispatch.sh:142-154` and finish banner from `scripts/codex-dispatch.sh:196-199`.
 6. Main thread runs `git -C ${PM_DISPATCH_REPO} status --short` and confirms no unexpected changes.
-7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook; the future CC-036b schema extension may add `dispatch_route` after two weeks of telemetry.
+7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook.
