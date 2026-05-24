@@ -1,0 +1,47 @@
+# core/policy/reviewer-policy.yaml
+#
+# PR-gate reviewer matrix. Consumed by core/schema/review.schema.json
+# (reviewer field via $ref #/reviewers).
+#
+# **Matrix only.** Override discipline (Rule A / Rule B in
+# agents/project-pm.md:64-91) stays as prose where the PM agent reads it.
+# Q6 resolved 2026-05-24: extracting prose to YAML produces drift; keep
+# the judgment-encoding in the agent file.
+#
+# `kind`:
+#   - advisory:  may issue advise; cannot block merge
+#   - hard-gate: may issue block; requires user override (not PM self-override)
+#
+# `phase`:
+#   - all:        runs on every PR
+#   - impl-only:  runs only when implementation code changes (skipped for
+#                 docs-only PRs — historically caused the early "auto-pass"
+#                 verdict pattern; documented for transparency)
+#   - test-phase: runs against test-surface gaps (qa-tester)
+
+reviewers:
+  critic:
+    kind: advisory
+    phase: all
+  architecture-reviewer:
+    kind: advisory
+    phase: impl-only
+  security-reviewer:
+    kind: hard-gate
+    phase: impl-only
+  risk-reviewer:
+    kind: hard-gate
+    phase: impl-only
+  qa-tester:
+    kind: hard-gate
+    phase: test-phase
+
+# Verdict tokens any reviewer may emit (consumed by review.schema.json
+# findings[].verdict).
+verdicts:
+  - pass
+  - pass-not-applicable
+  - advise
+  - block-soft           # arch / critic strong advisory; not a hard block
+  - block                # hard-gate veto
+  - needs-tests          # qa-tester specific

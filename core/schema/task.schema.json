@@ -1,0 +1,52 @@
+{
+  "title": "Task",
+  "description": "A pm-dispatch task — runtime projection of a BACKLOG.md row. Markdown stays primary; this schema documents the row shape and the lifecycle the row's status column encodes.",
+  "type": "object",
+  "required": ["id", "schema_version", "title", "state", "created_ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+$",
+      "description": "Ticket id. Pattern matches pm/schema.md grammar (e.g. CC-229, JS-106)."
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "state": {
+      "$ref": "../policy/task-states.yaml#/states"
+    },
+    "priority": {
+      "enum": ["P1", "P2", "P3", null]
+    },
+    "epic": {
+      "type": "string",
+      "description": "Maps to BACKLOG row epic column. Valid values enforced by pm/scripts/validate.sh::valid_epic — kept here as a free string in M1; pmctl validate may narrow in M2."
+    },
+    "area": {
+      "type": "string",
+      "description": "Maps to BACKLOG row area column. Valid values enforced by pm/scripts/validate.sh::valid_area_token."
+    },
+    "ticket_origin": {
+      "enum": ["backlog_md", "ad_hoc"],
+      "default": "backlog_md"
+    },
+    "backlog_ref": {
+      "type": "string",
+      "description": "Repo-relative path + anchor, e.g. BACKLOG.md#CC-229"
+    },
+    "created_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

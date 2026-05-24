@@ -1,0 +1,114 @@
+# core/state/layout.yaml
+#
+# Machine-readable specification of the pm-dispatch v0.3.0 state-store layout.
+# Definitions only — does NOT include the writer logic (M2 / CC-230 at
+# runtime/pmctl/lib/state-writer.sh).
+#
+# Path placeholders:
+#   $STORE         := $CLAUDE_PM_STATE_ROOT (default: ~/.claude/.pm/state)
+#   $PROJECT       := sha1(git rev-parse --show-toplevel) — partitioning key
+#   $TASK_ID       := pattern ^[A-Z]{1,4}-[0-9]+$ (task.schema.json)
+#   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review id suffix)
+#   $YYYYMM        := archive rotation period
+#
+# Per Q2 resolved 2026-05-24: per-project partitioning.
+
+version: 1
+store_root_env: CLAUDE_PM_STATE_ROOT
+store_root_default: "~/.claude/.pm/state"
+
+# Global files (cross-project)
+global:
+  - path: "$STORE/VERSION"
+    format: text
+    description: "Plain text, contents match schema_version (= 1 in M1)."
+  - path: "$STORE/store.lock"
+    format: lockfile
+    description: "Reserved for cross-project ops; serialize_with_lock target for global operations."
+
+# Per-project partition
+project_partition:
+  root: "$STORE/projects/$PROJECT/"
+
+  files:
+    - path: "repo.json"
+      schema: null
+      description: "{repo_path, repo_name, first_seen_ts} — debug aid + future re-partitioning hook."
+      write_strategy: write-temp-then-rename
+
+    - path: "runs.jsonl"
+      schema: ../schema/run.schema.json
+      description: "Append-only Run rows. One row per executor dispatch. Replaces routing_log.md auto-block (M2 cuts the hook write per Q7)."
+      write_strategy: append-locked
+      lock: runs.lock
+      rotation:
+        threshold_bytes: 52428800   # 50 MB
+        threshold_days: 90
+        archive_path: archive/runs-$YYYYMM.jsonl.gz
+
+    - path: "runs.lock"
+      format: lockfile
+      description: "Per-project, per-entity lock for runs.jsonl. serialize_with_lock target."
+
+    - path: "events.jsonl"
+      schema: ../schema/event.schema.json
+      description: "Append-only Event rows. State changes, hook firings, decisions."
+      write_strategy: append-locked
+      lock: events.lock
+      rotation:
+        threshold_bytes: 52428800
+        threshold_days: 90
+        archive_path: archive/events-$YYYYMM.jsonl.gz
+
+    - path: "events.lock"
+      format: lockfile
+
+  subdirs:
+    - path: "tasks/"
+      file_pattern: "$TASK_ID.json"
+      schema: ../schema/task.schema.json
+      description: "Latest Task projection per id. One file per task; individually addressable. Write-temp-then-rename for atomicity."
+      write_strategy: write-temp-then-rename
+
+    - path: "reviews/"
+      file_pattern: "rev-$TS_HEX.json"
+      schema: ../schema/review.schema.json
+      description: "One file per Review. Sparse, low-volume."
+      write_strategy: write-temp-then-rename
+
+    - path: "decisions/"
+      file_pattern: "dec-YYYY-MM-DD-<slug>.json"
+      schema: ../schema/decision.schema.json
+      description: "Mirrors DECISIONS.md index rows."
+      write_strategy: write-temp-then-rename
+
+    - path: "context-packs/"
+      file_pattern: "$TASK_ID-$TS_HEX.json"
+      schema: ../schema/context-pack.schema.json
+      description: "ContextPack snapshots. Keep last 5 per task_id."
+      write_strategy: write-temp-then-rename
+      retention: "keep-last-5-per-task"
+
+    - path: "archive/"
+      description: "Rotated JSONL segments from runs.jsonl / events.jsonl. Gzipped."
+      file_patterns:
+        - "runs-$YYYYMM.jsonl.gz"
+        - "events-$YYYYMM.jsonl.gz"
+
+# Writer-boundary contract
+writer:
+  module: runtime/pmctl/lib/state-writer.sh
+  entry_points:
+    - runs_append
+    - events_append
+    - task_upsert
+    - review_upsert
+    - decision_upsert
+  ticket: CC-230
+  status: "not yet implemented (M2)"
+
+# Forbidden writers (CC-233 layer-boundary test will enforce)
+forbidden:
+  - "any path under $STORE/ written without serialize_with_lock"
+  - "any path under $STORE/ written by code outside runtime/pmctl/"
+  - "any hard-coded path; all paths must be resolved through this file"

@@ -1,0 +1,17 @@
+# core/policy/executor-enum.yaml
+#
+# Closed list of executor profiles pm-dispatch v0.3.0 dispatches to.
+# Consumed by:
+#   - scripts/lib/handover-validate.sh (M1 via CC-231 — currently hardcoded
+#     `case "$value" in codex|claude)`; will read from this file)
+#   - core/schema/run.schema.json     ($ref #/values)
+#   - core/schema/handover.schema.json ($ref #/values)
+#
+# Closed in M1 (Q5 resolved 2026-05-24). Adding a value (e.g. v0.4.0
+# antigravity / opencode adapter slot per synthesis §7) is a one-line
+# YAML edit + a breaking version bump per the schema versioning policy
+# in `core/README.md`.
+
+values:
+  - codex
+  - claude

@@ -1,0 +1,32 @@
+# core/policy/dispatch-states.yaml
+#
+# Dispatch-level states (across one or more Runs of the same brief).
+#
+# Distinguished from run-states.yaml: one Dispatch may produce multiple
+# Runs (retry on exit 124, fallback to alternative executor profile).
+# Per synthesis §5.2.
+#
+# In M1 this lives as a definition only; M2 pmctl dispatch invokes the
+# state machine.
+
+states:
+  - pending       # brief queued, no Run yet
+  - in-progress  # at least one Run dispatched, none yet terminal
+  - succeeded    # terminal: a Run reached state=ok
+  - degraded     # terminal: all Runs terminal, best is partial
+  - failed       # terminal: all Runs terminal, none ok or partial
+  - cancelled    # terminal: user cancelled before/during
+
+transitions:
+  pending:
+    - in-progress
+    - cancelled
+  in-progress:
+    - succeeded
+    - degraded
+    - failed
+    - cancelled
+  succeeded: []
+  degraded: []
+  failed: []
+  cancelled: []

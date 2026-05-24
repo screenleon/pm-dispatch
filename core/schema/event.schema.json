@@ -1,0 +1,50 @@
+{
+  "title": "Event",
+  "description": "Append-only audit event. Records state changes / hook firings / decisions across the PM substrate. CLI-agnostic: `actor` is a free string namespaced by prefix; no CLI product name appears in the `kind` enum.",
+  "type": "object",
+  "required": ["id", "schema_version", "ts", "kind", "subject_type", "subject_id"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^evt-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "enum": [
+        "task.created",
+        "task.state_changed",
+        "task.blocked",
+        "run.dispatched",
+        "run.completed",
+        "run.failed",
+        "review.started",
+        "review.verdict",
+        "guard.denied",
+        "guard.warned",
+        "decision.recorded"
+      ]
+    },
+    "subject_type": {
+      "enum": ["task", "run", "review", "decision"]
+    },
+    "subject_id": {
+      "type": "string"
+    },
+    "actor": {
+      "type": "string",
+      "description": "Source of the event. Free string namespaced by prefix: pmctl|hook|adapter:<name>. NOT an enum (CLI-agnostic invariant)."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Kind-specific data. Loose-typed by design — kind-specific subschemas can be added per kind in M2+ without a breaking schema_version bump.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

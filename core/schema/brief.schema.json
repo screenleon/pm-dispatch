@@ -1,0 +1,87 @@
+{
+  "title": "Brief",
+  "description": "A pm-dispatch dispatch brief — work definition consumed by codex / claude executor. Mirrors docs/dispatch-brief.md schema. Distinct from Handover: Brief = work definition, Handover = dispatch envelope.",
+  "type": "object",
+  "required": ["working_dir", "goal", "files", "acceptance"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "working_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "files": {
+      "type": "array",
+      "description": "Sandbox allowlist (per docs/dispatch-brief.md §files: block semantics). A `read:` entry means the executor MAY open that file, NOT that it must pre-load it. For survey-style briefs, add a `context:` instruction telling the executor to read on demand.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["read"],
+            "properties": { "read": { "type": "string" } },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["edit"],
+            "properties": { "edit": { "type": "string" } },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["new"],
+            "properties": { "new": { "type": "string" } },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["write"],
+            "properties": { "write": { "type": "string" } },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "self_verify": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required for file-writing briefs (any entry tagged write:/new: or untagged). Read-only briefs (every files: entry tagged read:) may omit. Conditional requirement enforced by pmctl validate (M2)."
+    },
+    "acceptance": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "qa_checklist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required when brief introduces >= 3 behavioral units. See agents/project-pm.md `qa_checklist` rule."
+    },
+    "expected_head_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "description": "Recommended for briefs touching > 4 files. Catches branch-drift before patch is attempted."
+    },
+    "context": {
+      "type": "string",
+      "description": "Free-form background; survey-style briefs put lazy-read instructions here."
+    },
+    "task": {
+      "type": "string",
+      "description": "Free-form per-run task instructions used by composed workflows (pr-gate etc.)."
+    },
+    "output_format": {
+      "type": "string",
+      "description": "When the deliverable is a report, specifies file path + required sections."
+    }
+  },
+  "additionalProperties": false
+}

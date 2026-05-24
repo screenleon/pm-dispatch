@@ -1,0 +1,65 @@
+{
+  "title": "Handover",
+  "description": "The dispatch envelope: metadata header of a `dispatch_handover_v1` fenced block. Mirrors the current scripts/lib/handover-validate.sh metadata contract (CC-231 will extract the validator to consume this schema + policy files).",
+  "type": "object",
+  "required": [
+    "handover_version",
+    "executor",
+    "dispatch_route",
+    "working_dir",
+    "brief_file",
+    "sandbox",
+    "approval",
+    "timeout",
+    "model",
+    "skip_git_check",
+    "fallback_allowed"
+  ],
+  "properties": {
+    "handover_version": {
+      "const": 2
+    },
+    "executor": {
+      "$ref": "../policy/executor-enum.yaml#/values"
+    },
+    "dispatch_route": {
+      "$ref": "../policy/dispatch-routes.yaml#/values"
+    },
+    "working_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "brief_file": {
+      "type": "string",
+      "description": "Absolute path; main thread writes via mktemp -p /tmp brief-<slug>-XXXXXX.md mode 0600."
+    },
+    "sandbox": {
+      "enum": ["workspace-write", "read-only", "danger-full-access"]
+    },
+    "approval": {
+      "enum": ["never", "on-request", "on-failure"],
+      "description": "Validator rejects values other than `never` for the bash route — see bash-route-approval-never feedback memory."
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    },
+    "model": {
+      "type": "string",
+      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/model-aliases.tsv."
+    },
+    "skip_git_check": {
+      "type": "boolean",
+      "description": "Validator hard-rejects true on the bash route — fallback to Agent(codex-executor) for that case."
+    },
+    "fallback_allowed": {
+      "type": "boolean"
+    },
+    "snapshot_file": {
+      "type": "string",
+      "description": "Optional. Output path of scripts/pm-prep-snapshot.sh; PM agent treats this as authoritative ground truth."
+    }
+  },
+  "additionalProperties": false
+}

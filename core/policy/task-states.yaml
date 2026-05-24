@@ -1,0 +1,34 @@
+# core/policy/task-states.yaml
+#
+# Task lifecycle states. Consumed by core/schema/task.schema.json
+# (state field).
+#
+# Per docs/architecture/v0.3.0-synthesis.md §5.2.
+
+states:
+  - open
+  - claimed
+  - in-progress
+  - blocked
+  - done
+  - dropped
+
+# Allowed transitions (informational; not currently enforced by validator,
+# but documents the state machine for human readers + future pmctl validate).
+transitions:
+  open:
+    - claimed
+    - dropped
+  claimed:
+    - in-progress
+    - open       # un-claim
+    - dropped
+  in-progress:
+    - blocked
+    - done
+    - dropped
+  blocked:
+    - in-progress
+    - dropped
+  done: []        # terminal
+  dropped: []     # terminal

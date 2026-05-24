@@ -1,0 +1,60 @@
+{
+  "title": "Run",
+  "description": "One executor dispatch (one codex/claude invocation against a brief). Records the dispatch parameters + trace pointers; does NOT duplicate trace contents (which live in .agent-trace/codex-<ts>.{jsonl,last,stderr}).",
+  "type": "object",
+  "required": ["id", "schema_version", "task_id", "executor", "state", "created_ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+$"
+    },
+    "executor": {
+      "$ref": "../policy/executor-enum.yaml#/values"
+    },
+    "dispatch_route": {
+      "$ref": "../policy/dispatch-routes.yaml#/values"
+    },
+    "model": {
+      "type": "string",
+      "description": "PM-facing alias OR wire model id. Aliases resolved via share/model-aliases.tsv."
+    },
+    "brief_file": {
+      "type": "string",
+      "description": "Absolute path to the brief markdown file (typically /tmp/brief-<slug>-XXXXXX.md)."
+    },
+    "working_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "state": {
+      "$ref": "../policy/run-states.yaml#/states"
+    },
+    "trace_path": {
+      "type": "string",
+      "description": "Absolute path to .agent-trace/codex-<ts>.jsonl. Run row does NOT include trace contents."
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "started_ts": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "finished_ts": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "created_ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
