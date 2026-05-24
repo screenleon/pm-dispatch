@@ -16,16 +16,6 @@ VIEW_SCRIPT="$SCRIPT_DIR/token-usage.sh"
 th_init --format=indent-2sp --fail-fast "$@"
 TMP_ROOT="$tmp_root"
 
-assert_exit() {
-  local name="$1" actual="$2" expected="$3"
-  [[ "$actual" == "$expected" ]] || fail "$name" "expected exit=$expected, got exit=$actual"
-}
-
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  grep -qF -- "$needle" "$file" || fail "$name" "missing: $needle"
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   grep -qF -- "$needle" "$file" && fail "$name" "unexpected: $needle" || true
@@ -76,9 +66,9 @@ case_happy_path() {
   assert_exit "$name" "$status" 0
   local logfile="$home/.claude/usage-tracker.jsonl"
   [[ -f "$logfile" ]] || fail "$name" "logfile not created"
-  assert_contains "$name" "$logfile" '"type":"pr_gate_full"'
-  assert_contains "$name" "$logfile" '"tokens":390000'
-  assert_contains "$name" "$logfile" '"note":"JapanJob PR #24"'
+  assert_file_contains "$name" "$logfile" '"type":"pr_gate_full"'
+  assert_file_contains "$name" "$logfile" '"tokens":390000'
+  assert_file_contains "$name" "$logfile" '"note":"JapanJob PR #24"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
 }
@@ -90,7 +80,7 @@ case_note_single_quote() {
   run_log "$home" pm_analysis 5000 "it's done" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
   local logfile="$home/.claude/usage-tracker.jsonl"
-  assert_contains "$name" "$logfile" '"note":"it'"'"'s done"'
+  assert_file_contains "$name" "$logfile" '"note":"it'"'"'s done"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
 }
@@ -101,7 +91,7 @@ case_note_double_quote() {
   run_log "$home" codex_task 10000 'fix "thing"'; status=$?
   assert_exit "$name" "$status" 0
   local logfile="$home/.claude/usage-tracker.jsonl"
-  assert_contains "$name" "$logfile" '"note":"fix \"thing\""'
+  assert_file_contains "$name" "$logfile" '"note":"fix \"thing\""'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
 }
@@ -112,7 +102,7 @@ case_note_backslash() {
   run_log "$home" codex_task 10000 'path\to\thing'; status=$?
   assert_exit "$name" "$status" 0
   local logfile="$home/.claude/usage-tracker.jsonl"
-  assert_contains "$name" "$logfile" '"note":"path\\to\\thing"'
+  assert_file_contains "$name" "$logfile" '"note":"path\\to\\thing"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
 }
@@ -123,7 +113,7 @@ case_note_unicode() {
   run_log "$home" pm_synthesis 3000 "已完成 #14 重構"; status=$?
   assert_exit "$name" "$status" 0
   local logfile="$home/.claude/usage-tracker.jsonl"
-  assert_contains "$name" "$logfile" '"note":"已完成 #14 重構"'
+  assert_file_contains "$name" "$logfile" '"note":"已完成 #14 重構"'
   assert_line_count "$name" "$logfile" 1
   pass "$name"
 }
@@ -213,7 +203,7 @@ case_view_missing_logfile() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "No usage log"
+  assert_file_contains "$name" "$out" "No usage log"
   pass "$name"
 }
 
@@ -224,7 +214,7 @@ case_view_empty_logfile() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Total"
+  assert_file_contains "$name" "$out" "Total"
   pass "$name"
 }
 
@@ -235,8 +225,8 @@ case_view_all_mode() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "all time"
-  assert_contains "$name" "$out" "50,000"
+  assert_file_contains "$name" "$out" "all time"
+  assert_file_contains "$name" "$out" "50,000"
   pass "$name"
 }
 
@@ -250,8 +240,8 @@ case_view_today_mode() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --today > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "today (UTC)"
-  assert_contains "$name" "$out" "40,000"
+  assert_file_contains "$name" "$out" "today (UTC)"
+  assert_file_contains "$name" "$out" "40,000"
   assert_not_contains "$name" "$out" "99,999"
   pass "$name"
 }
@@ -275,8 +265,8 @@ case_view_malformed_line_skipped() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out.err" "skipped"
-  assert_contains "$name" "$out" "5,000"
+  assert_file_contains "$name" "$out.err" "skipped"
+  assert_file_contains "$name" "$out" "5,000"
   pass "$name"
 }
 
@@ -289,8 +279,8 @@ case_view_missing_ts_skipped() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out.err" "skipped"
-  assert_contains "$name" "$out" "1,000"
+  assert_file_contains "$name" "$out.err" "skipped"
+  assert_file_contains "$name" "$out" "1,000"
   assert_not_contains "$name" "$out" "9,999"
   pass "$name"
 }
@@ -303,7 +293,7 @@ case_view_malformed_calibration_warns() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out.err" "malformed"
+  assert_file_contains "$name" "$out.err" "malformed"
   pass "$name"
 }
 
@@ -315,8 +305,8 @@ case_round_trip() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2>&1; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "80,000"
-  assert_contains "$name" "$out" "reviewer_critic"
+  assert_file_contains "$name" "$out" "80,000"
+  assert_file_contains "$name" "$out" "reviewer_critic"
   pass "$name"
 }
 
@@ -329,7 +319,7 @@ case_log_pool_codex() {
   home="$(new_home "$name")"
   run_log "$home" codex_dispatch 1100 "dispatch" "" codex; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"codex"'
+  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"codex"'
   pass "$name"
 }
 
@@ -338,7 +328,7 @@ case_log_pool_default() {
   home="$(new_home "$name")"
   run_log "$home" session_total 2200 "session"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
+  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
   pass "$name"
 }
 
@@ -347,7 +337,7 @@ case_log_pool_spark() {
   home="$(new_home "$name")"
   run_log "$home" codex_dispatch 3300 "spark dispatch" "" spark; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"spark"'
+  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"spark"'
   pass "$name"
 }
 
@@ -357,8 +347,8 @@ case_log_pool_invalid() {
   err="$TMP_ROOT/$name.err"
   HOME="$home" /bin/bash "$LOG_SCRIPT" codex_dispatch 1100 "test" "" badpool > /dev/null 2> "$err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
-  assert_contains "$name" "$err" "unknown pool"
+  assert_file_contains "$name" "$home/.claude/usage-tracker.jsonl" '"pool":"claude"'
+  assert_file_contains "$name" "$err" "unknown pool"
   pass "$name"
 }
 
@@ -372,9 +362,9 @@ case_remaining_excludes_codex_pool() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Tokens used (Claude pool) : 100,000"
-  assert_contains "$name" "$out" "Inferred total limit      : 200,000"
-  assert_contains "$name" "$out" "Separate quota tokens     : Codex 5,000,000"
+  assert_file_contains "$name" "$out" "Tokens used (Claude pool) : 100,000"
+  assert_file_contains "$name" "$out" "Inferred total limit      : 200,000"
+  assert_file_contains "$name" "$out" "Separate quota tokens     : Codex 5,000,000"
   assert_not_contains "$name" "$out" "10,200,000"
   pass "$name"
 }
@@ -389,8 +379,8 @@ case_remaining_no_claude_log() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "no Claude log data"
-  assert_contains "$name" "$out" "rate unknown"
+  assert_file_contains "$name" "$out" "no Claude log data"
+  assert_file_contains "$name" "$out" "rate unknown"
   pass "$name"
 }
 
@@ -404,10 +394,10 @@ case_remaining_mixed_pools_correct_total() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 50 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Claude  : 100,000"
-  assert_contains "$name" "$out" "Codex   : 200,000"
-  assert_contains "$name" "$out" "Total   : 300,000"
-  assert_contains "$name" "$out" "Inferred total limit      : 200,000"
+  assert_file_contains "$name" "$out" "Claude  : 100,000"
+  assert_file_contains "$name" "$out" "Codex   : 200,000"
+  assert_file_contains "$name" "$out" "Total   : 300,000"
+  assert_file_contains "$name" "$out" "Inferred total limit      : 200,000"
   pass "$name"
 }
 
@@ -435,10 +425,10 @@ case_remaining_basic_no_calibration() {
   write_log "$home" "$t2" "pm_analysis"   80000 "second op"
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
-  assert_contains "$name" "$out" "Remaining Capacity Estimate"
-  assert_contains "$name" "$out" "Inferred total limit"
-  assert_contains "$name" "$out" "Remaining tokens"
-  assert_contains "$name" "$out" "tokens/hr"
+  assert_file_contains "$name" "$out" "Remaining Capacity Estimate"
+  assert_file_contains "$name" "$out" "Inferred total limit"
+  assert_file_contains "$name" "$out" "Remaining tokens"
+  assert_file_contains "$name" "$out" "tokens/hr"
   assert_exit "$name" "$status" 0
   pass "$name"
 }
@@ -453,10 +443,10 @@ case_remaining_with_calibration() {
   write_calib "$home" 600000
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
-  assert_contains "$name" "$out" "Calibrated limit"
-  assert_contains "$name" "$out" "600,000"
-  assert_contains "$name" "$out" "from calibration"
-  assert_contains "$name" "$out" "Inferred total limit"
+  assert_file_contains "$name" "$out" "Calibrated limit"
+  assert_file_contains "$name" "$out" "600,000"
+  assert_file_contains "$name" "$out" "from calibration"
+  assert_file_contains "$name" "$out" "Inferred total limit"
   assert_exit "$name" "$status" 0
   pass "$name"
 }
@@ -468,7 +458,7 @@ case_remaining_out_of_range_high() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining 101 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$out.err" "0"
+  assert_file_contains "$name" "$out.err" "0"
   pass "$name"
 }
 
@@ -479,7 +469,7 @@ case_remaining_out_of_range_low() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining -5 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$out.err" "0"
+  assert_file_contains "$name" "$out.err" "0"
   pass "$name"
 }
 
@@ -490,7 +480,7 @@ case_remaining_not_a_number() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining abc > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$out.err" "must be a number"
+  assert_file_contains "$name" "$out.err" "must be a number"
   pass "$name"
 }
 
@@ -501,7 +491,7 @@ case_remaining_missing_value() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out.err" "not found"
+  assert_file_contains "$name" "$out.err" "not found"
   pass "$name"
 }
 
@@ -512,7 +502,7 @@ case_remaining_100_no_calibration() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 100 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "cannot estimate"
+  assert_file_contains "$name" "$out" "cannot estimate"
   pass "$name"
 }
 
@@ -526,7 +516,7 @@ case_remaining_0_percent() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 0 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "0  [inferred"
+  assert_file_contains "$name" "$out" "0  [inferred"
   assert_not_contains "$name" "$out" "tokens/hr"
   pass "$name"
 }
@@ -542,7 +532,7 @@ case_remaining_calibration_divergence_warning() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 60 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out.err" "differs"
+  assert_file_contains "$name" "$out.err" "differs"
   pass "$name"
 }
 
@@ -556,8 +546,8 @@ case_remaining_codex_dispatch_counted() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Codex   : 155,000 tokens  (1 logged)"
-  assert_contains "$name" "$out" "205,000"
+  assert_file_contains "$name" "$out" "Codex   : 155,000 tokens  (1 logged)"
+  assert_file_contains "$name" "$out" "205,000"
   assert_not_contains "$name" "$out" "310,000"
   assert_occurrences "$name" "$out" "Codex   : 155,000" 1
   pass "$name"
@@ -579,7 +569,7 @@ case_remaining_auto_valid_file() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Remaining (from dashboard): 75"
+  assert_file_contains "$name" "$out" "Remaining (from dashboard): 75"
   rm -rf "$rl_dir"
   pass "$name"
 }
@@ -717,7 +707,7 @@ case_remaining_manual_n_unchanged() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining 60 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Remaining (from dashboard): 60"
+  assert_file_contains "$name" "$out" "Remaining (from dashboard): 60"
   rm -rf "$rl_dir"
   pass "$name"
 }
@@ -731,7 +721,7 @@ case_codex_old_log_excluded() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --5h > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "last 5h"
+  assert_file_contains "$name" "$out" "last 5h"
   assert_not_contains "$name" "$out" "999,000"
   pass "$name"
 }
@@ -744,7 +734,7 @@ case_one_dispatch_one_count() {
   out="$TMP_ROOT/$name.out"
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "155,000"
+  assert_file_contains "$name" "$out" "155,000"
   assert_not_contains "$name" "$out" "310,000"
   pass "$name"
 }

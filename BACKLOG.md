@@ -152,13 +152,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
 | CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
 | CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
-| CC-249 | 🟢 someday | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Result log: docs/spikes/CC-249.md. Gated by a `/pre-impl` spike — do NOT start before the spike resolves the unified API shape. | ops/test | 2026-05-23 | pr:#148 | P3 | reuse-debt |
+| CC-249 | ✅ closed 2026-05-24 | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Spike `docs/spikes/CC-249.md` decided Q1-Q5 (#146); PR-B.1 added unified helpers (#148); CC-254 removed auto-pass (#149); PR-B.2 v2 migrated 10/13 consumers (#152, −114 LoC). 3 excluded files (test-test-harness / test-run-all-tests / test-hooks) deferred to CC-256. | ops/test | 2026-05-23 | pr:#148,pr:#149,pr:#152 | P3 | reuse-debt |
 | CC-250 | ✅ closed 2026-05-23 | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:#144 | P2 | oss |
 | CC-251 | 🔵 active | **[brief-authoring discipline for multi-file dispatches]** 3 patterns added to `agents/project-pm.md` + `docs/dispatch-brief.md` to prevent codex apply_patch debug-loop hang on > 4 files OR > 50 lines verbatim briefs: (1) apply_patch retry-cap (HALT after 2nd consecutive failure on same file, no 3rd retry), (2) verbatim-as-attached-file (write embedded content to /tmp/<task>-content/*.md, brief references path), (3) `expected_head_sha` state pin (40-char sha + self_verify check). Memory `[[feedback_codex_brief_discipline]]` documents the CC-247/248 + CC-250 retro evidence. Long-term resolution: CC-235 tiered lifecycle gate enforces split + CC-244 typed schema. | process | 2026-05-23 | pr:TBD | P3 | oss |
 | CC-252 | ✅ closed 2026-05-24 | **[/pr-gate brief template: harden `Final:` line emission]** Discovered while running /pr-gate on CC-249 spike (#146 area): the CC-250 (#144) brief template asks codex to write `Final: GO\|NO-GO` in `## Gate Conclusion`, but codex applied prose markdown emphasis (`**Final: GO**`), which fails pr-gate.sh's `^Final: (GO\|NO-GO)$` parity grep → false-negative exit-1 even though the verdict is GO. Fix: the brief template in `scripts/pr-gate.sh` MUST tell codex the `Final:` line is **exact format, no bold, no leading/trailing markup, at start-of-line**, and add a frontmatter-vs-Final-line parity self-check to the template (the verdict in frontmatter `final:` must match the Final line). Discovered as a CC-250 follow-up; the verdict-extraction works, only the back-compat regex fails. | gate/ops | 2026-05-23 | pr:#147 | P3 | oss |
 | CC-253 | 🔵 active | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-255 | 🔵 active | **[Spike infrastructure: rubric + brief template improvements]** PR #151 codegraph Phase 1 surfaced 2 spike-infra gaps that misled codex: (a) verdict rubric must enumerate sandbox-block as a "local env" example alongside peerDep (codex misapplied RED criterion because sandbox isolation wasn't an explicit local-env class in the rubric); (b) spike brief template must specify test target as a separate field from working directory — when target language-aware tools (e.g. codegraph) are evaluated, the brief must commit to a representative target codebase, not let codex pick on its own (Phase 1 brief said "pick a symbol in pm-dispatch" which pre-committed wrong target). Touch points: `/tmp/cc<NNN>-content/verdict-rubric.md` templates, `docs/spikes/README.md` skeleton, `docs/dispatch-brief.md` schema add optional `test_target:` field for spike briefs. | process | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-254 | 🔵 active | **[CC-249 PR-B.1 amendment: harness assert_* helpers no auto-pass]** PR-B.1 (#148) harness helpers auto-called `pass "$name"` on success. PR-B.2 (consumer migration) attempted dispatch 2026-05-24 surfaced design conflict: existing 13 consumers follow `assert_X "$name" && pass "$name"` pattern (assert is check, consumer calls pass) — pure rename would cause double-count. Codex defensively shadowed harness by re-defining 4 helpers locally in each consumer (violating Q3 break-and-rewrite rule). Real fix: remove auto-pass from harness; consumers keep explicit `pass` (unchanged behavior on success, helper still calls `fail` on failure). Self-tests amended to call pass explicitly after assert. After this lands, PR-B.2 reverts to pure rename + delete local defs (the simple migration spike originally envisioned). | ops/test | 2026-05-24 | pr:#149 | P2 | reuse-debt |
+| CC-256 | 🔵 active | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. Filed in pr:#152. | ops/test | 2026-05-24 | pr:#152 | P3 | reuse-debt |
+| CC-257 | 🔵 active | **[pr-gate.sh stderr noise: 7× `final::` command-not-found per invocation]** Every `/pr-gate` run emits 7 shell errors at `scripts/pr-gate.sh:362` (heredoc opening line for the codex brief construction). Reproducible on cc-249-pr-b2-consumer-migration-v2 gate run 2026-05-24 (`.gate-results/gate-20260524-174507.md`). Errors: `final::`, `**Final::`, `Final::` (×3), `final::`, `Final::`. Heredoc body contains literal `Final: GO\|NO-GO` and `**Final: GO**` example tokens; bash is interpreting these somewhere as commands. Verdict + result file still emit correctly (`Final: GO` produced) so this is stderr noise only — but it obscures real shell errors and hits every PR. Hypothesis: unquoted heredoc delimiter (`<< BRIEF_EOF`) lets command substitution / metachars in body get evaluated; OR a downstream `eval` / `source` parses the constructed brief and re-executes lines. Fix likely a heredoc quoting change (`<< 'BRIEF_EOF'`) but requires confirming all `${VAR}` interpolations are otherwise injected. Discovered while running standard-tier gate on CC-249 PR-B.2 v2 (#152); classified medium per `[[feedback_gate_finding_triage]]` (no-block gate). | gate/ops | 2026-05-24 | pr:TBD | P3 | oss |
 
 ---
 
@@ -1552,7 +1554,7 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **Cross-link**: CC-203 (origin epic), CC-247 (sibling harness option — bundle in PR A).
 
-## CC-249 — Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh`（deferred）
+## CC-249 — Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` ✅ 2026-05-24
 
 **Problem**: The shared test-harness exposes assertion helpers with non-uniform contracts that have drifted as more consumers migrated under CC-203:
 - `assert_contains` has 3 different call signatures observed across the harness + consumers (haystack-first, needle-first, and a third variant where the message is positional vs keyword). Consumers each picked a variant; the harness accepts the union loosely.
@@ -1572,6 +1574,10 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Priority**: P3 — reuse-debt; correctness ceiling, not a daily friction. Spike first, implement second.
 
 **Cross-link**: CC-203 (origin epic), CC-247 / CC-248 (sibling harness work — separate PR A), `commands/pre-impl.md` (spike gate).
+
+**Outcome** (2026-05-24): Closed via spike #146 + PR-B.1 #148 + CC-254 amendment #149 + PR-B.2 v2 #152. Spike Q1-Q5 (`docs/spikes/CC-249.md`) decided: unified signatures (`assert_string_contains`, `assert_file_contains`, `assert_file_matches`, `assert_exit`), canonical `assert_exit` arg-order = `<name> <actual> <expected>`, break-and-rewrite (Q3) over multi-arity shim. PR-B.1 #148 added the 4 unified helpers; CC-254 #149 stripped auto-pass after PR-B.2 v1 surfaced double-count conflict with consumer `assert && pass` pattern. PR-B.2 v2 #152 shipped pure-rename + local-def deletion across 10 of 13 consumers (−114 LoC, golden-parity preserved byte-identically). Excluded 3 files (test-test-harness cyclic dependency, test-run-all-tests orchestrator shape, test-hooks audit-confirm-only) carried forward as CC-256.
+
+**See**: `docs/spikes/CC-249.md`, PR #146 / #148 / #149 / #152, CC-254, CC-256, `[[feedback_spike_pilot_required]]`, `[[feedback_test_migration_format_preservation]]`, `[[feedback_codex_brief_discipline]]`.
 
 ## CC-250 — `/pr-gate v2`: machine-readable result + escalation hint ✅ 2026-05-23
 
@@ -1722,3 +1728,68 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P3 — process polish; affects every future spike but each individual cost is small.
 
 **Cross-link**: CC-209 (Phase 1 origin showing both gaps), CC-253 (Phase 2 dependent on these template improvements), `[[feedback_spike_pilot_required]]` (sibling spike-process rule), `[[feedback_spike_validation_mandatory]]` (sibling validation rule).
+
+## CC-257 — pr-gate.sh stderr noise: `final::` command-not-found ×7 per invocation（active）
+
+**Problem**: Every `/pr-gate` invocation emits 7 shell errors at `scripts/pr-gate.sh:362` (the codex brief heredoc opening line):
+
+```
+scripts/pr-gate.sh: line 362: final:: command not found
+scripts/pr-gate.sh: line 362: **Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+scripts/pr-gate.sh: line 362: final:: command not found
+scripts/pr-gate.sh: line 362: Final:: command not found
+```
+
+Reproducible on the CC-249 PR-B.2 v2 gate run (2026-05-24, `.gate-results/gate-20260524-174507.md`, dispatch trace `codex-20260524-174508-114715`). The errors match literal tokens inside the heredoc body (`final: GO\|NO-GO` frontmatter, `Final: GO\|NO-GO` output_format, `**Final: GO**` / `Final: **GO**` / `Final: Go` cautionary examples in the brief template added by CC-252 #147).
+
+**Why**: Gate verdict + result file still emit correctly (this run produced `Final: GO` cleanly), so this is stderr noise only — but:
+- It hits every PR gate run for every user
+- It buries any real shell errors from `pr-gate.sh` under 7 false-positive lines
+- It will confuse future debugging — anyone tailing the gate output sees "errors" when there are none
+
+Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted delimiter, so bash performs variable + command substitution + arithmetic expansion on the body. Hypothesis: somewhere in the body a `${VAR}` interpolation contains text that resolves to a bareword line bash tries to execute; OR a downstream `eval`/`source` reads the constructed brief and re-executes parsed lines. Needs investigation before fix.
+
+**Requirement**:
+- Reproduce locally with `bash -x` to identify which expansion (or downstream consumer) triggers the command-not-found.
+- If heredoc-quoting fix is safe (no `${VAR}` interpolation lost), change `<< BRIEF_EOF` → `<< 'BRIEF_EOF'` and ensure every needed variable is otherwise injected (e.g. pre-render then substitute via `sed`).
+- If the root cause is a downstream `eval`/`source`/`source <(...)` pattern, replace with a quote-safe alternative (`read -d ''`, `mapfile`, or proper parsing).
+- Add a regression test that runs `/pr-gate` against a fixture branch and asserts stderr matches `^$` (or only a known noise allowlist).
+
+**Acceptance**:
+- `/pr-gate` (any tier) emits zero `command not found` errors at line 362 (or anywhere in `pr-gate.sh`).
+- All existing gate runs continue to produce correct `Final: GO|NO-GO` verdicts (regression: re-run the gate on a known-GO branch + a known-NO-GO fixture).
+- New regression test in `scripts/test-pr-gate.sh` (or `scripts/test-pr-gate-profile.sh`) asserts stderr cleanliness.
+
+**Priority**: P3 — medium severity per `[[feedback_gate_finding_triage]]` (no-block gate finding), no correctness impact, but hits 100% of `/pr-gate` invocations and obscures real signals.
+
+**Cross-link**: CC-252 (#147, added the cautionary `**Final: ...**` example lines that are inside the heredoc); CC-250 (#144, original `/pr-gate v2` machine-readable frontmatter); `[[feedback_gate_finding_triage]]` (severity rule applied).
+
+## CC-256 — CC-249 reuse-debt tail: 3 excluded test files（active）
+
+**Problem**: CC-249 spike (#146) Q1-Q5 + PR-B.2 v2 (this PR) migrated 10 of 13 consumer `test-*.sh` files off divergent local `assert_*` helpers onto the unified harness helpers from PR-B.1 (#148, amended by CC-254 #149). 3 files were deliberately excluded from the v2 migration batch:
+
+- `scripts/test-test-harness.sh` — tests the harness itself (13 unified-helper call-sites). Migration would create a cyclic dependency where the system-under-test is also the helper-source. Needs a per-test classification: assertions that exercise the helpers must remain as raw bash, but assertions about other harness behaviour can adopt the helpers.
+- `scripts/test-run-all-tests.sh` — orchestrator (2 unified-helper call-sites). Different test shape: it runs other test-*.sh as subprocesses and asserts on their aggregated output, not on file-level fixtures. Helper-fit needs a per-call review.
+- `scripts/test-hooks.sh` — 0 unified-helper call-sites in current code. Audit-confirm only — if no `assert_(exit|file_contains|file_matches|string_contains)` ever appears, this file drops out of the reuse-debt set entirely (close as no-op).
+
+**Why deferred not done in CC-249**: spike Q1-Q5 envisioned a uniform rename batch. The 3 files each need analysis, not rename. Including them in PR-B.2 v2 would have either (a) blocked the 10 clean migrations on per-file judgment calls or (b) shipped half-migrated state. Cleaner to ship the 10 + carry the tail.
+
+**Requirement**:
+- Per-file analysis for each of the 3 files: enumerate the assert-call-sites, classify each (migrate / keep-raw-bash / harness-self-test-exempt).
+- For `test-test-harness.sh`: pick a rule that distinguishes "asserting on harness output" (must stay raw) vs "asserting on file fixtures using harness helpers" (can migrate). Document the rule in a header comment.
+- For `test-run-all-tests.sh`: review the 2 call-sites; if they fit `assert_string_contains` / `assert_file_contains` shape, migrate; otherwise document why not.
+- For `test-hooks.sh`: if the audit confirms 0 call-sites, close ticket as no-op (no edit needed).
+
+**Acceptance**:
+- Each of the 3 files either (a) migrated and golden-parity verified, or (b) has a header comment documenting why specific call-sites remain raw, or (c) confirmed-no-op (test-hooks.sh case).
+- `scripts/test-test-harness.sh` 30/30 passes.
+- `scripts/test-run-all-tests.sh` integration passes.
+- `scripts/test-hooks.sh` 298+ cases pass (current count from memory).
+- No new shadow shims of the 4 unified helpers in any file (`grep -cE '^(function )?(assert_exit|assert_file_contains|assert_file_matches|assert_string_contains)\(\)'` returns 0 across all consumers).
+
+**Priority**: P3 — each file is small and the surface area is bounded; not blocking anything downstream. CC-249 epic closure does not depend on this.
+
+**Cross-link**: CC-249 (parent epic, closed by the PR that introduces this row), CC-254 (#149, the harness amendment that enabled the v2 migration), `[[feedback_test_migration_format_preservation]]` (preservation contract any sub-migration here must honour).

@@ -27,13 +27,6 @@ touch_days_ago() {
 th_init --format=indent-2sp --fail-fast "$@"
 TMP_ROOT="$tmp_root"
 
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -q -F -- "$needle" "$file"; then
-    fail "$name" "missing substring: $needle"
-  fi
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   if grep -q -F -- "$needle" "$file"; then
@@ -45,13 +38,6 @@ assert_matches() {
   local name="$1" file="$2" pattern="$3"
   if ! grep -E -q -- "$pattern" "$file"; then
     fail "$name" "missing pattern: $pattern"
-  fi
-}
-
-assert_exit() {
-  local name="$1" actual="$2" expected="$3"
-  if [[ "$actual" != "$expected" ]]; then
-    fail "$name" "expected exit=$expected, got exit=$actual"
   fi
 }
 
@@ -140,7 +126,7 @@ case_happy_path_dailyActivity_array() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 100 | 5 | 50 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 100 | 5 | 50 |"
   pass "$name"
 }
 
@@ -152,7 +138,7 @@ case_schema_dailyActivity_object() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 101 | 6 | 51 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 101 | 6 | 51 |"
   pass "$name"
 }
 
@@ -164,7 +150,7 @@ case_schema_days_array() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 102 | 7 | 52 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 102 | 7 | 52 |"
   pass "$name"
 }
 
@@ -176,7 +162,7 @@ case_schema_daily_object() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 103 | 8 | 53 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 103 | 8 | 53 |"
   pass "$name"
 }
 
@@ -189,7 +175,7 @@ case_empty_dailyActivity_array() {
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
   assert_not_contains "$name" "$out" "schema-mismatch"
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
   pass "$name"
 }
 
@@ -200,7 +186,7 @@ case_missing_stats_cache() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "(stats-cache.json not found)"
+  assert_file_contains "$name" "$out" "(stats-cache.json not found)"
   pass "$name"
 }
 
@@ -281,7 +267,7 @@ case_model_tokens_array() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "- claude-sonnet-4-6: 1234"
+  assert_file_contains "$name" "$out" "- claude-sonnet-4-6: 1234"
   pass "$name"
 }
 
@@ -298,7 +284,7 @@ case_model_tokens_object() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "- claude-opus-4-7: 5678"
+  assert_file_contains "$name" "$out" "- claude-opus-4-7: 5678"
   pass "$name"
 }
 
@@ -310,7 +296,7 @@ case_corrupt_json() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 0 | 0 | 0 |"
   pass "$name"
 }
 
@@ -323,7 +309,7 @@ case_jq_missing() {
 
   run_usage "$home" "$out" "$no_jq_path"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "(tool missing: jq)"
+  assert_file_contains "$name" "$out" "(tool missing: jq)"
   pass "$name"
 }
 
@@ -341,7 +327,7 @@ case_codex_session_filename_with_space() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
   pass "$name"
 }
 
@@ -382,8 +368,8 @@ case_output_contract() {
   if [[ ! "$first" =~ ^#\ Weekly\ Usage\ Report\ [0-9]{4}-[0-9]{2}-[0-9]{2}\ \~\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     fail "$name" "unexpected first line: $first"
   fi
-  assert_contains "$name" "$out" "## Claude"
-  assert_contains "$name" "$out" "## Codex"
+  assert_file_contains "$name" "$out" "## Claude"
+  assert_file_contains "$name" "$out" "## Codex"
   if [[ "$last" != Data\ freshness:* ]]; then
     fail "$name" "unexpected final line: $last"
   fi
@@ -403,7 +389,7 @@ case_mixed_schema_empty_preferred_populated_alternate() {
 
   run_usage "$home" "$out"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 99 | 3 | 33 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 99 | 3 | 33 |"
   pass "$name"
 }
 
@@ -449,7 +435,7 @@ case_bsd_stat_fallback() {
 
   run_usage "$home" "$out" "$bsd_path"; status=$?
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
+  assert_file_contains "$name" "$out" "| $CURRENT_DATE | 1 |"
   assert_not_contains "$name" "$out" "| $CURRENT_DATE | 1 | 0 |"
   pass "$name"
 }

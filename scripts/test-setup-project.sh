@@ -14,13 +14,6 @@ init_git_repo() {
   git -C "$dir" init -q
 }
 
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file" 2>/dev/null; then
-    fail "$name" "missing in $file: $needle"; return 1
-  fi
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   if grep -Fq -- "$needle" "$file" 2>/dev/null; then
@@ -55,10 +48,10 @@ test_creates_gitignore_entries() {
   init_git_repo "$dir"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
-  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
-  assert_contains "$name" "$dir/.gitignore" ".agents/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".agents/" || return
   assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
@@ -73,11 +66,11 @@ test_patches_existing_gitignore() {
   printf '*.log\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  assert_contains "$name" "$dir/.gitignore" "*.log" || return
-  assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
-  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
-  assert_contains "$name" "$dir/.gitignore" ".agents/" || return
+  assert_file_contains "$name" "$dir/.gitignore" "*.log" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".agents/" || return
   assert_expected_entries_once "$name" "$dir/.gitignore" || return
   pass "$name"
 }
@@ -138,11 +131,11 @@ test_patches_dockerignore_next_to_dockerfile() {
   printf 'node_modules/\n' > "$svcdir/.dockerignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  assert_contains "$name" "$svcdir/.dockerignore" "node_modules/" || return
-  assert_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
-  assert_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
-  assert_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
-  assert_contains "$name" "$svcdir/.dockerignore" ".agents/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" "node_modules/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" ".agents/" || return
   pass "$name"
 }
 
@@ -170,7 +163,7 @@ test_partial_state_no_header_duplicate() {
   printf '.agent-trace/\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
   local hdr_count
   hdr_count=$(grep -c "Claude agent" "$dir/.gitignore" || echo 0)
   if [[ "$hdr_count" -gt 1 ]]; then

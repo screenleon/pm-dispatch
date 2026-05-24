@@ -8,20 +8,6 @@ RUN_STATUS=0
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init --format=colon-mixed --fail-fast "$@"
 
-assert_exit() {
-  local name="$1" actual="$2" expected="$3"
-  if [[ "$actual" != "$expected" ]]; then
-    fail "$name" "expected exit=$expected, got exit=$actual"
-  fi
-}
-
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file"; then
-    fail "$name" "missing substring: $needle"
-  fi
-}
-
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
   if grep -Fq -- "$needle" "$file"; then
@@ -72,16 +58,16 @@ case_happy_path() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "# Skill refine signals: testskill"
-  assert_contains "$name" "$out" "Found 2 candidate(s). Scanned $REPO_ROOT/scripts/fixtures/skill-refine at "
-  assert_contains "$name" "$out" "## feedback_alpha"
-  assert_contains "$name" "$out" "## feedback_beta"
-  assert_contains "$name" "$out" "- description: Frontmatter mentions testskill for a frontmatter-only match."
-  assert_contains "$name" "$out" "- description: Beta covers a different command."
-  assert_contains "$name" "$out" "- Why: testskill should learn from explicit user corrections."
-  assert_contains "$name" "$out" "- How to apply: Add a focused checklist before running testskill."
-  assert_contains "$name" "$out" "- file: $REPO_ROOT/scripts/fixtures/skill-refine/feedback_alpha.md"
-  assert_contains "$name" "$out" "_M1 spike: read-only signal bundling. No diff generation yet (M2)._"
+  assert_file_contains "$name" "$out" "# Skill refine signals: testskill"
+  assert_file_contains "$name" "$out" "Found 2 candidate(s). Scanned $REPO_ROOT/scripts/fixtures/skill-refine at "
+  assert_file_contains "$name" "$out" "## feedback_alpha"
+  assert_file_contains "$name" "$out" "## feedback_beta"
+  assert_file_contains "$name" "$out" "- description: Frontmatter mentions testskill for a frontmatter-only match."
+  assert_file_contains "$name" "$out" "- description: Beta covers a different command."
+  assert_file_contains "$name" "$out" "- Why: testskill should learn from explicit user corrections."
+  assert_file_contains "$name" "$out" "- How to apply: Add a focused checklist before running testskill."
+  assert_file_contains "$name" "$out" "- file: $REPO_ROOT/scripts/fixtures/skill-refine/feedback_alpha.md"
+  assert_file_contains "$name" "$out" "_M1 spike: read-only signal bundling. No diff generation yet (M2)._"
   assert_not_contains "$name" "$out" "feedback_gamma"
   if [[ -s "$err" ]]; then
     fail "$name" "unexpected stderr: $(sed -n '1p' "$err")"
@@ -129,7 +115,7 @@ case_missing_command_file() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "Error: skill command file not found: $repo/commands/missing.md"
+  assert_file_contains "$name" "$err" "Error: skill command file not found: $repo/commands/missing.md"
   pass "$name"
 }
 
@@ -152,15 +138,15 @@ case_bad_memory_dir() {
   unset_status=$RUN_STATUS
 
   assert_exit "$name" "$unset_status" 2
-  assert_contains "$name" "$unset_err" "CLAUDE_MEMORY_DIR"
-  assert_contains "$name" "$unset_err" "exported pointing at your memory dir"
+  assert_file_contains "$name" "$unset_err" "CLAUDE_MEMORY_DIR"
+  assert_file_contains "$name" "$unset_err" "exported pointing at your memory dir"
 
   run_skill_refine "$repo" testskill "$tmp_root/definitely-not-a-dir" "$home" "$out" "$err"
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "CLAUDE_MEMORY_DIR"
-  assert_contains "$name" "$err" "$tmp_root/definitely-not-a-dir"
+  assert_file_contains "$name" "$err" "CLAUDE_MEMORY_DIR"
+  assert_file_contains "$name" "$err" "$tmp_root/definitely-not-a-dir"
   pass "$name"
 }
 
@@ -182,9 +168,9 @@ case_zero_candidates() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "Found 0 candidate(s). Scanned $memory at "
-  assert_contains "$name" "$out" "No matching feedback entries found for \`otherskill\`."
-  assert_contains "$name" "$out" "_M1 spike: read-only signal bundling. No diff generation yet (M2)._"
+  assert_file_contains "$name" "$out" "Found 0 candidate(s). Scanned $memory at "
+  assert_file_contains "$name" "$out" "No matching feedback entries found for \`otherskill\`."
+  assert_file_contains "$name" "$out" "_M1 spike: read-only signal bundling. No diff generation yet (M2)._"
   pass "$name"
 }
 
@@ -207,9 +193,9 @@ case_missing_fields() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 0
-  assert_contains "$name" "$out" "## feedback_missing"
-  assert_contains "$name" "$out" "- Why: _(not present)_"
-  assert_contains "$name" "$out" "- How to apply: _(not present)_"
+  assert_file_contains "$name" "$out" "## feedback_missing"
+  assert_file_contains "$name" "$out" "- Why: _(not present)_"
+  assert_file_contains "$name" "$out" "- How to apply: _(not present)_"
   pass "$name"
 }
 
@@ -236,7 +222,7 @@ case_env_set_success() {
   if [[ -z "$candidate_count" || "$candidate_count" -lt 1 ]]; then
     fail "$name" "expected at least one candidate"
   fi
-  assert_contains "$name" "$out" "## feedback_testskill"
+  assert_file_contains "$name" "$out" "## feedback_testskill"
   pass "$name"
 }
 
@@ -256,7 +242,7 @@ case_invalid_skill_name_path_separator() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "invalid skill name: $bad_input"
+  assert_file_contains "$name" "$err" "invalid skill name: $bad_input"
   pass "$name"
 }
 
@@ -276,7 +262,7 @@ case_invalid_skill_name_whitespace() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "invalid skill name: $bad_input"
+  assert_file_contains "$name" "$err" "invalid skill name: $bad_input"
   pass "$name"
 }
 
@@ -296,7 +282,7 @@ case_no_args_exits_2_with_usage() {
   local status=$?
   set -e
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "Usage:"
+  assert_file_contains "$name" "$err" "Usage:"
   pass "$name"
 }
 
@@ -316,7 +302,7 @@ case_multi_args_exits_2_with_usage() {
   local status=$?
   set -e
   assert_exit "$name" "$status" 2
-  assert_contains "$name" "$err" "Usage:"
+  assert_file_contains "$name" "$err" "Usage:"
   pass "$name"
 }
 

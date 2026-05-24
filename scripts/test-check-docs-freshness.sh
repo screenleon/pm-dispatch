@@ -13,30 +13,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 LAST_EXIT=0
 LAST_OUTPUT=""
 
-assert_exit() {
-  local name="$1" expected="$2" actual="$3"
-  if [[ "$expected" -ne "$actual" ]]; then
-    fail "$name" "expected exit $expected, got $actual"
-    return 1
-  fi
-}
-
-assert_output_contains() {
-  local name="$1" needle="$2"
-  if ! printf '%s\n' "$LAST_OUTPUT" | grep -Fq -- "$needle"; then
-    fail "$name" "missing output: $needle"
-    return 1
-  fi
-}
-
-assert_output_not_contains() {
-  local name="$1" needle="$2"
-  if printf '%s\n' "$LAST_OUTPUT" | grep -Fq -- "$needle"; then
-    fail "$name" "unexpected output: $needle"
-    return 1
-  fi
-}
-
 run_check() {
   local repo="$1"
   shift
@@ -82,8 +58,8 @@ DOC
   finalize_repo "$repo" v1.2.3
 
   run_check "$repo"
-  assert_exit "$name" 0 "$LAST_EXIT" || return
-  assert_output_contains "$name" "[OK]"
+  assert_exit "$name" "$LAST_EXIT" 0 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "OK]"
   pass "$name"
 }
 
@@ -114,8 +90,8 @@ DOC
   finalize_repo "$repo" v1.2.3
 
   run_check "$repo"
-  assert_exit "$name" 2 "$LAST_EXIT" || return
-  assert_output_contains "$name" "[FAIL]"
+  assert_exit "$name" "$LAST_EXIT" 2 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "FAIL]"
   pass "$name"
 }
 
@@ -146,8 +122,8 @@ DOC
   finalize_repo "$repo" v1.2.3
 
   run_check "$repo"
-  assert_exit "$name" 1 "$LAST_EXIT" || return
-  assert_output_contains "$name" "[WARN]"
+  assert_exit "$name" "$LAST_EXIT" 1 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "WARN]"
   pass "$name"
 }
 
@@ -178,8 +154,8 @@ DOC
   finalize_repo "$repo" v0.1.0
 
   run_check "$repo"
-  assert_exit "$name" 2 "$LAST_EXIT" || return
-  assert_output_contains "$name" "tag v0.1.0 exists but no section"
+  assert_exit "$name" "$LAST_EXIT" 2 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "tag v0.1.0 exists but no section"
   pass "$name"
 }
 
@@ -211,8 +187,8 @@ DOC
   finalize_repo "$repo" v0.2.0
 
   run_check "$repo"
-  assert_exit "$name" 2 "$LAST_EXIT" || return
-  assert_output_contains "$name" "marked planned"
+  assert_exit "$name" "$LAST_EXIT" 2 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "marked planned"
   pass "$name"
 }
 
@@ -243,8 +219,11 @@ DOC
   finalize_repo "$repo" v0.2.0
 
   run_check "$repo"
-  assert_exit "$name" 0 "$LAST_EXIT" || return
-  assert_output_not_contains "$name" "[WARN]"
+  assert_exit "$name" "$LAST_EXIT" 0 || return
+  if grep -Fq "[WARN]" <<< "$LAST_OUTPUT"; then
+    fail "$name" "unexpected output: [WARN]"
+    return 1
+  fi
   pass "$name"
 }
 
@@ -275,8 +254,8 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo"
-  assert_exit "$name" 2 "$LAST_EXIT" || return
-  assert_output_contains "$name" "closed row with pr:TBD"
+  assert_exit "$name" "$LAST_EXIT" 2 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "closed row with pr:TBD"
   pass "$name"
 }
 
@@ -307,8 +286,8 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo"
-  assert_exit "$name" 1 "$LAST_EXIT" || return
-  assert_output_contains "$name" "non-closed row with pr:TBD"
+  assert_exit "$name" "$LAST_EXIT" 1 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "non-closed row with pr:TBD"
   pass "$name"
 }
 
@@ -339,7 +318,7 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo"
-  assert_exit "$name" 0 "$LAST_EXIT" || return
+  assert_exit "$name" "$LAST_EXIT" 0 || return
   pass "$name"
 }
 
@@ -370,9 +349,9 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo"
-  assert_exit "$name" 1 "$LAST_EXIT" || return
-  assert_output_contains "$name" "Summary:"
-  assert_output_contains "$name" "[WARN]"
+  assert_exit "$name" "$LAST_EXIT" 1 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "Summary:"
+  assert_string_contains "$name" "$LAST_OUTPUT" "WARN]"
   pass "$name"
 }
 
@@ -403,8 +382,8 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo"
-  assert_exit "$name" 2 "$LAST_EXIT" || return
-  assert_output_contains "$name" "[FAIL]"
+  assert_exit "$name" "$LAST_EXIT" 2 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "FAIL]"
   pass "$name"
 }
 
@@ -435,13 +414,13 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo" --json
-  assert_exit "$name" 1 "$LAST_EXIT" || return
+  assert_exit "$name" "$LAST_EXIT" 1 || return
   if ! python3 -c 'import sys, json; [json.loads(l) for l in sys.stdin if l.strip()]' <<< "$LAST_OUTPUT"; then
     fail "$name" "JSON parse failed"
     return
   fi
-  assert_output_contains "$name" '"unit":"summary"'
-  assert_output_contains "$name" '"unit":"U3-BACKLOG"'
+  assert_string_contains "$name" "$LAST_OUTPUT" '"unit":"summary"'
+  assert_string_contains "$name" "$LAST_OUTPUT" '"unit":"U3-BACKLOG"'
   pass "$name"
 }
 
@@ -472,9 +451,12 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo" --quiet
-  assert_exit "$name" 1 "$LAST_EXIT" || return
-  assert_output_contains "$name" "[WARN]"
-  assert_output_not_contains "$name" "[OK]"
+  assert_exit "$name" "$LAST_EXIT" 1 || return
+  assert_string_contains "$name" "$LAST_OUTPUT" "WARN]"
+  if grep -Fq "[OK]" <<< "$LAST_OUTPUT"; then
+    fail "$name" "unexpected output: [OK]"
+    return 1
+  fi
   pass "$name"
 }
 
@@ -505,7 +487,7 @@ DOC
   finalize_repo "$repo" v1.0.0
 
   run_check "$repo" --repo "$repo"
-  assert_exit "$name" 0 "$LAST_EXIT" || return
+  assert_exit "$name" "$LAST_EXIT" 0 || return
   pass "$name"
 }
 

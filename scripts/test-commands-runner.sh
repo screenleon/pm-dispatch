@@ -7,22 +7,6 @@ SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/test-commands.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-assert_exit() {
-  local name="$1" actual="$2" expected="$3"
-  if [[ "$actual" != "$expected" ]]; then
-    fail "$name" "expected exit=$expected, got exit=$actual"
-    return 1
-  fi
-}
-
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file"; then
-    fail "$name" "missing substring: $needle"
-    return 1
-  fi
-}
-
 assert_all_case_lines_match() {
   local file="$1" line_pattern="$2" required_substring="$3" line
   while IFS= read -r line; do
@@ -95,7 +79,7 @@ case_filter_valid_pattern_passes() {
 
   assert_exit "$name" "$status" 0 || return 0
   grep -E '^  (PASS|FAIL) ' "$out" > "$case_lines" || true
-  assert_contains "$name" "$case_lines" "Rules:" || return 0
+  assert_file_contains "$name" "$case_lines" "Rules:" || return 0
   if ! detail="$(assert_all_case_lines_match "$out" '^  (PASS|FAIL) ' "Rules:")"; then
     fail "$name" "$detail"
     return 0
@@ -115,7 +99,7 @@ case_filter_zero_match_fails() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 1 || return 0
-  assert_contains "$name" "$err" "no tests matched" || return 0
+  assert_file_contains "$name" "$err" "no tests matched" || return 0
   pass "$name"
 }
 
@@ -131,7 +115,7 @@ case_unknown_option_fails() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 1 || return 0
-  assert_contains "$name" "$err" "error: unknown option" || return 0
+  assert_file_contains "$name" "$err" "error: unknown option" || return 0
   pass "$name"
 }
 
@@ -147,7 +131,7 @@ case_missing_filter_argument_fails() {
   status=$RUN_STATUS
 
   assert_exit "$name" "$status" 1 || return 0
-  assert_contains "$name" "$err" "error: --filter requires an argument" || return 0
+  assert_file_contains "$name" "$err" "error: --filter requires an argument" || return 0
   pass "$name"
 }
 
