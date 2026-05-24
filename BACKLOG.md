@@ -88,7 +88,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-200 | ⏸ deferred | **[Reuse debt]** `scripts/lib/executor-router.sh` — 抽出共用 codex/claude routing logic（目前 `/pm`、`/pr-gate` 各寫一套，未來 N=3 consumer 痛點） | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-201 | ✅ closed 2026-05-23 | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | pr:#123 | — | reuse-debt |
 | CC-202 | ⏸ deferred | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
-| CC-203 | 🔵 active | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ 個 `test-*.sh` 都各寫 `--filter/--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一。Incremental：PR #127 建 harness + 2 pilot、PR #128 遷 test-install/test-claude-executor;GROUP B(~15 檔,風格各異)後續 | ops/test/reuse | 2026-05-17 | pr:#127, pr:#128 | — | reuse-debt |
+| CC-203 | ✅ closed 2026-05-24 | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ `test-*.sh` 各寫 `--filter`/`--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一。Incremental：PR #127 建 harness + 2 pilot、PR #128 遷 test-install/test-claude-executor、PR #135-#140 遷 GROUP-B 16 file（751 cases preserved）、PR #142 加 `--format`/`--fail-fast` options、PR #152 (CC-249 PR-B.2 v2) 完成 assert_* migration。22/23 test-*.sh 已上 harness；剩 test-run-all-tests.sh (orchestrator) per [[feedback_test_migration_format_preservation]] 評估後 out-of-scope；test-test-harness/test-hooks 的 assert_* 殘餘走 CC-256。 | ops/test | 2026-05-17 | pr:#127,pr:#128,pr:#135,pr:#136,pr:#137,pr:#138,pr:#139,pr:#140,pr:#142,pr:#152 | P2 | reuse-debt |
 | CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
@@ -150,8 +150,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-065 | 🟡 deferred | Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P3 | — |
 | CC-066 | 🟡 deferred | Declarative `policy.yml` for hook allowlist：把 `hook-codex-bash-guard.sh` 的允許/拒絕清單從 shell logic 抽成 `config/policy.yml`；hook 讀 policy 而非 hardcode；可 per-repo override | arch/security | 2026-05-18 | CC-204 | P3 | design |
 | CC-067 | ✅ closed 2026-05-19 | **[schema cleanup]** 廢棄 ID gap 慣例：移除 schema.md + BACKLOG preamble 中 CC-1NN/CC-2NN 保留範圍說明；改以 v1.1 `epic` 欄位為唯一分組依據；補 DECISIONS.md 決策記錄 | process | 2026-05-19 | decisions:#2026-05-19-deprecate-id-gap-convention | P2 | hygiene |
-| CC-247 | 🔵 active | **[Reuse debt]** `th_init --format=<preset>` — extract the 6 surviving per-file `pass`/`fail` print-format overrides into 6 named harness presets (CC-203 GROUP-B residue). Mechanical; no behavior change. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
-| CC-248 | 🔵 active | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
+| CC-247 | ✅ closed 2026-05-23 | **[Reuse debt]** `th_init --format=<preset>` — extract the surviving per-file `pass`/`fail` print-format overrides into 5 named harness presets (`colon-flat`, `colon-mixed`, `indent-1sp`, `indent-2sp`, `indent-2sp-quiet`). Mechanical; no behavior change. Shipped in pr:#142; consumers adopted incrementally via PR-B.2 v2 (#152) — all 10 migrated test-*.sh files now use `th_init --format=...` or default `colon-flat`; zero per-file `pass`/`fail` overrides remain. | ops/test | 2026-05-23 | pr:#142 | P2 | reuse-debt |
+| CC-248 | ✅ closed 2026-05-23 | **[Reuse debt]** `th_init --fail-fast` — promote the 3 fail-fast test scripts (test-usage-weekly, test-usage-tracker, test-skill-refine) from per-script `exit 1` overrides to a first-class harness option. Shipped in pr:#142; all 3 consumers adopted in PR-B.2 v2 (#152) via `th_init --format=... --fail-fast`; zero per-script `fail()` overrides remain. | ops/test | 2026-05-23 | pr:#142 | P3 | reuse-debt |
 | CC-249 | ✅ closed 2026-05-24 | **[Reuse debt]** Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` (3-way `assert_contains` divergence + `assert_exit` arg-order conflict). Spike `docs/spikes/CC-249.md` decided Q1-Q5 (#146); PR-B.1 added unified helpers (#148); CC-254 removed auto-pass (#149); PR-B.2 v2 migrated 10/13 consumers (#152, −114 LoC). 3 excluded files (test-test-harness / test-run-all-tests / test-hooks) deferred to CC-256. | ops/test | 2026-05-23 | pr:#148,pr:#149,pr:#152 | P3 | reuse-debt |
 | CC-250 | ✅ closed 2026-05-23 | **[/pr-gate v2: machine-readable result + escalation]** Bundle: (A) YAML frontmatter on every gate result file (`gate_result_version: pr_gate_result_v1` + final/tier/mode/most_severe/reviewers/escalation), (B) `## Escalation` body section emitted by both sequential + parallel synthesis briefs (recommended=true requires sensitive-path AND non-fatal-uncertain reviewer verdict), (C) `--base` fallback prepends `gh pr view --json baseRefName` when available, (D) `## Override policy` section in each of the 5 reviewer agent .md files consolidating override discipline already prose-scattered. Preserves `^Final: GO\|NO-GO$` line for validate.sh + downstream parser back-compat. Out-of-scope: structured `verdict:` enum (CC-231), backlog_candidates output (CC-215), auto-escalation execution. | gate/ops | 2026-05-23 | pr:#144 | P2 | oss |
 | CC-251 | 🔵 active | **[brief-authoring discipline for multi-file dispatches]** 3 patterns added to `agents/project-pm.md` + `docs/dispatch-brief.md` to prevent codex apply_patch debug-loop hang on > 4 files OR > 50 lines verbatim briefs: (1) apply_patch retry-cap (HALT after 2nd consecutive failure on same file, no 3rd retry), (2) verbatim-as-attached-file (write embedded content to /tmp/<task>-content/*.md, brief references path), (3) `expected_head_sha` state pin (40-char sha + self_verify check). Memory `[[feedback_codex_brief_discipline]]` documents the CC-247/248 + CC-250 retro evidence. Long-term resolution: CC-235 tiered lifecycle gate enforces split + CC-244 typed schema. | process | 2026-05-23 | pr:TBD | P3 | oss |
@@ -1088,16 +1088,22 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Why**: Future handover schemas should not require hand-written validation boilerplate for every shared grammar rule.
 **Requirement**: Extract a reusable handover validator framework that schema-specific validators can configure.
 
-## CC-203 — Reuse debt: `scripts/lib/test-harness.sh`
+## CC-203 — Reuse debt: `scripts/lib/test-harness.sh` ✅ 2026-05-24
 
 **Problem**: Eight or more `test-*.sh` scripts each implement their own `--filter`, `--list`, `should_run()`, pass/fail counter, and scratch-dir handling.
 **Why**: Test harness behavior should be consistent, and fixes to CLI test behavior should not require repeated edits across scripts.
 **Requirement**: Create a source-able `scripts/lib/test-harness.sh` and migrate test scripts incrementally.
 
-**Progress** (🔵 active — multi-PR incremental ticket; each PR is a complete GO-able unit, so the ticket is `🔵 active`, not `⚠️ partial`, until done):
+**Progress** (closed 2026-05-24 — multi-PR incremental ticket; final state: 22 of 23 `scripts/test-*.sh` adopt the harness; the lone non-adopter is the deliberately excluded orchestrator `test-run-all-tests.sh`):
 - PR #127 — `scripts/lib/test-harness.sh` created (`th_init` / `should_run` / `pass` / `fail` / `th_summary`) + its own suite `test-test-harness.sh`; pilot migration of `test-portable.sh` + `test-doctor.sh`. Gate advisories filed as CC-240.
 - PR #128 — migrated `test-install.sh` + `test-claude-executor.sh` (the 2 GROUP A / mechanical files per an Explore survey).
-- **Remaining**: ~15 GROUP B `test-*.sh` — varied styles (custom `pass`/`fail`, `TMP_ROOT`, assertion-style exit-on-first-fail, the `test-run-all-tests.sh` orchestrator). NOT a uniform batch — needs a re-analysis before migrating (some may not be good case-based-harness fits). CC-203 → ✅ closed once the worthwhile remainder is migrated.
+- PR #135-#140 — GROUP-B batches migrated 16 remaining `test-*.sh` files (751 cases preserved across migrations); recurring lessons sealed into `[[feedback_test_migration_format_preservation]]`, `[[feedback_ci_shellcheck_test_exclude]]`, codex-sandbox-git-lock observation.
+- PR #142 — `th_init --format=<preset>` (CC-247) + `th_init --fail-fast` (CC-248) options added to absorb the surviving per-file overrides as first-class harness presets/flags.
+- PR #152 — CC-249 PR-B.2 v2 migrated 10/13 consumers to unified `assert_*` helpers (`assert_string_contains` / `assert_file_contains` / `assert_file_matches` / `assert_exit`), with the 4 fail-fast / format consumers adopting `th_init --format=... --fail-fast`. Zero per-file `pass`/`fail` overrides remain across the 10 migrated files.
+
+**Outcome** (2026-05-24): Closed at 22/23 adoption. The 1 non-adopter is `scripts/test-run-all-tests.sh` (orchestrator that runs other `test-*.sh` as subprocesses and asserts on aggregated output — not a case-based harness fit; deliberately excluded per the GROUP-B re-analysis). The 3 files inside the harness's `assert_*` scope but excluded from PR-B.2 (test-test-harness self-cyclic + test-run-all-tests orchestrator + test-hooks audit-confirm) are carried forward as CC-256 on a separate axis (assert_* helpers, not th_init lifecycle).
+
+**See**: PR #127, #128, #135-#140, #142, #152; CC-247, CC-248, CC-249, CC-256, `[[feedback_test_migration_format_preservation]]`, `[[feedback_ci_shellcheck_test_exclude]]`, `[[feedback_codex_brief_discipline]]`.
 
 ## CC-204 — Reuse debt: hook framework（deferred）
 
@@ -1515,7 +1521,7 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **See**: CC-243, CC-245.
 
-## CC-247 — `th_init --format=<preset>`: 6-preset enum for residual print-format overrides（active）
+## CC-247 — `th_init --format=<preset>`: 5-preset enum for residual print-format overrides ✅ 2026-05-23
 
 **Problem**: After the CC-203 GROUP-B migration, 6 `test-*.sh` files still carry per-file `pass`/`fail` print-format overrides because the canonical `th_init` print format does not match what each test's golden output / VERBOSE convention expects. The override pattern violates the "harness is single source of truth for output" intent of CC-203 and re-introduces the drift CC-203 was meant to remove.
 
@@ -1535,7 +1541,11 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **Cross-link**: CC-203 (origin epic), CC-248 (sibling harness option — bundle in PR A).
 
-## CC-248 — `th_init --fail-fast`: promote fail-fast to harness option（active）
+**Outcome** (2026-05-23): Closed via PR #142 — `th_init --format=<preset>` lands as a closed enum of 5 presets: `colon-flat` (default), `colon-mixed`, `indent-1sp`, `indent-2sp`, `indent-2sp-quiet`. Unknown values exit 1 with explicit valid-list. Consumer adoption completed incrementally; final state verified post PR-B.2 v2 (#152) close-out: 4 of 10 migrated consumers explicitly select a non-default preset (test-skill-refine=colon-mixed, test-usage-tracker=indent-2sp, test-usage-weekly=indent-2sp, test-commands=indent-1sp); the other 6 use default colon-flat. `grep -lE '^(pass|fail)\(\)' scripts/test-*.sh` returns zero matches — no per-file print-format override remains. The 6→5 preset count delta vs the original spec: closer survey collapsed two near-identical layouts into one.
+
+**See**: PR #142, PR #152 (consumer adoption fully realized), CC-248 (sibling), CC-203 (origin epic).
+
+## CC-248 — `th_init --fail-fast`: promote fail-fast to harness option ✅ 2026-05-23
 
 **Problem**: Three test scripts — `test-usage-weekly.sh`, `test-usage-tracker.sh`, `test-skill-refine.sh` — currently use per-script `exit 1` inside their custom `fail()` override to terminate on first failure instead of collecting all failures via the harness's default collect-all behavior. The override re-introduces a per-file format-divergence path that CC-203 set out to remove.
 
@@ -1553,6 +1563,10 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Priority**: P3 — reuse-debt; smaller blast radius than CC-247 but ships in same PR A.
 
 **Cross-link**: CC-203 (origin epic), CC-247 (sibling harness option — bundle in PR A).
+
+**Outcome** (2026-05-23): Closed via PR #142 — `th_init --fail-fast` lands as a boolean flag; when set, the `fail()` path calls `th_summary` after recording the failure, which exits non-zero immediately. Default (collect-all) behaviour unchanged. The 3 consumer scripts adopted in PR-B.2 v2 (#152): test-skill-refine.sh (`th_init --format=colon-mixed --fail-fast`), test-usage-tracker.sh (`th_init --format=indent-2sp --fail-fast`), test-usage-weekly.sh (`th_init --format=indent-2sp --fail-fast`). No per-script `exit 1` in `fail()` overrides remain in any of the 3 files.
+
+**See**: PR #142, PR #152 (consumer adoption), CC-247 (sibling), CC-203 (origin epic).
 
 ## CC-249 — Consolidate divergent `assert_*` helpers in `scripts/lib/test-harness.sh` ✅ 2026-05-24
 
