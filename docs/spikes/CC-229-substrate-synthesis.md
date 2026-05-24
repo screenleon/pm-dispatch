@@ -12,15 +12,19 @@
 
 ---
 
-## Headline: 3 design questions need user decision
+## Headline: all 3 design questions resolved 2026-05-24
 
-| # | Question | Claude says | Codex says | Why it matters |
-|---|---|---|---|---|
-| **Q2** | State store partitioning | Per-project (`projects/<repo-sha1>/`) | Single global (`~/.claude/.pm/state/runs.jsonl` flat) | Determines whether cross-repo isolation is structural or via post-hoc filtering. Path shape locks in M1. |
-| **Q7** | `routing_log.md` after migration | Dual-write in M1 (auto-block + jsonl), M2 hook cuts over | Auto-regenerate `routing_log.md` from `runs.jsonl` as stub in M1 | Determines whether M1 is a behavior-preserving change or introduces a Markdown-render pipeline. |
-| **Q8** | Schema versioning mechanism | `schema_version: <int>` inline field, no directory | Both inline field AND `core/schema/v1/*` directory | Directory versioning forces path moves on every bump; field-only avoids that churn. |
+User decision recorded against the synthesis recommendations:
+
+| # | Question | Decision | Rejected alternative |
+|---|---|---|---|
+| **Q2** | State store partitioning | **Per-project** `projects/<repo-sha1>/` | Single global flat |
+| **Q7** | `routing_log.md` after migration | **Dual-write in M1** (auto-block + jsonl); M2 hook cuts over | Auto-regenerate `routing_log.md` from `runs.jsonl` as stub in M1 |
+| **Q8** | Schema versioning mechanism | **`schema_version: <int>` inline field**, no directory versioning | Inline field AND `core/schema/v1/*` directory |
 
 All other 8 Q's converge (see §E below).
+
+The M1 impl-ticket brief (CC-229 schema-only PR) is unblocked.
 
 ---
 
@@ -61,11 +65,11 @@ Adopted as-is from Claude §B. Difference from codex:
 - − `core/schema/snapshot.schema.json` (codex added, scope says no)
 - − `core/context-pack/source.interface.ts` and `*.schema.json` (codex added 3 files; Claude argued contract-as-prose ages better than contract-as-pseudocode for pluggable interfaces — accepted)
 
-### On-disk `~/.claude/.pm/state/` — **CONFLICT — user decision required (Q2)**
+### On-disk `~/.claude/.pm/state/` — **Adopted: per-project (Q2 resolved 2026-05-24)**
 
-Two incompatible shapes:
+Two shapes were considered; per-project is the adopted shape. Both reproduced here for the implementation reviewer's reference.
 
-**Option A (Claude — per-project)**:
+**Option A (Claude — adopted)**:
 ```
 ~/.claude/.pm/state/
 ├── VERSION
@@ -110,12 +114,12 @@ Two incompatible shapes:
 | Symmetry with existing `.agent-trace/` | matches (today is per-repo) | breaks |
 | Future memory-private split | already factored | requires re-partitioning |
 
-**Main-thread recommendation**: **Option A (per-project)**. Three reasons:
-1. Today's `.agent-trace/` is per-repo — users already think per-project. Going global breaks the mental model.
-2. `[[project_memory_architecture]]` Phase 0 already split memory per-repo (memory-private). State-store should mirror that.
-3. Lock contention matters as soon as the user dispatches two repos in parallel (which I literally just did in this session — pm-dispatch CC-229 spike + japanese-site CC-251 close-out earlier).
+**Adopted: Option A (per-project)** — three reasons:
+1. Existing `.agent-trace/` is per-repo; users already think per-project. Going global would break the mental model.
+2. The memory store already lives per-project (per `[[project_memory_architecture]]` Phase 0); state-store mirrors that.
+3. Lock contention matters as soon as two repos dispatch in parallel.
 
-But this is your call — codex's argument for "simpler M1" is legitimate.
+Note: the user has flagged that the broader memory architecture (memory-private repo split) is provisional pending evaluation of external memory frameworks (mem0, agent-memory, etc.). Per-project partitioning is forward-compatible with any of those — `projects/<sha1>/` is the boundary unit any future split would also need.
 
 ---
 
@@ -180,39 +184,43 @@ Lower-risk option per surface. Where both pick same class, take the more concret
 | **Q10** | M1 is strictly per-machine local. Per-project partitioning (Q2 Option A) is already the factoring boundary for future memory-private split — `rsync -a projects/<sha>/` between machines, no path rewrites. | Only matters if Q2 = per-project. If Q2 = global, this Q is moot. |
 | **Q11** | M1 impl ticket for CC-230 owns the pilot walkthrough (per `[[feedback_spike_pilot_required]]`). Pilot consumer = surface #2 (`codex-dispatch.sh` → `runs_append`). | Spike-pilot rule activation point. |
 
-### Conflicts to surface — 3 user decisions needed
+### Decisions taken — 3 user decisions resolved 2026-05-24
 
-#### Q2 — Single global vs per-project state directory
+#### Q2 — State directory partitioning → **per-project**
 
-| Claude (recommend) | Codex |
+`~/.claude/.pm/state/projects/<sha1(git-toplevel)>/`
+
+| Adopted (Claude) | Rejected (Codex) |
 |---|---|
-| **Per-project** `projects/<sha1(git-toplevel)>/` | **Global** flat `runs.jsonl` |
-| matches existing `.agent-trace/` mental model | matches "minimize M1 migration scope" framing |
+| Per-project `projects/<sha1(git-toplevel)>/` | Global flat `runs.jsonl` |
+| matches existing `.agent-trace/` mental model | "minimize M1 migration scope" framing |
 | isolatable backup/wipe | simpler tree, fewer moving parts |
 | natural future memory-private split | partition can be added as v2 breaking event later |
 
-**My recommendation**: **Per-project**. See §B above for full reasoning.
+#### Q7 — `routing_log.md` migration → **dual-write in M1**
 
-#### Q7 — `routing_log.md` migration shape
+Hook keeps writing auto-block AND `runs.jsonl` in M1; M2 drops the hook write and `routing_log.md` becomes human-only.
 
-| Claude (recommend) | Codex |
+| Adopted (Claude) | Rejected (Codex) |
 |---|---|
-| **Dual-write in M1** (hook keeps writing auto-block AND `runs.jsonl`); M2 drops hook write | **M1 replaces auto-block with generated stub** pointing at jsonl |
+| Dual-write M1; M2 cuts over | M1 stub regeneration from JSONL |
 | Zero-disruption M1 (humans + scripts see no change) | Smaller M1 surface (one shape, not two) |
 | M2 is a small hook edit | M1 needs render logic for the stub |
-| Risk: dual-write maintenance for one milestone | Risk: render logic correctness in M1 (codex flagged this) |
+| Risk: dual-write maintenance for one milestone | Risk: render logic correctness in M1 |
 
-**My recommendation**: **Claude's dual-write**. Safer for "M1 = zero behavior change" invariant (synthesis §8 R3 explicit goal). Codex's stub-in-M1 builds rendering logic before the canonical data path is stable.
+Rationale: safer for the "M1 = zero behavior change" invariant (§8 R3). Codex's stub-in-M1 builds rendering logic before the canonical data path is stable.
 
-#### Q8 — Schema versioning mechanism
+#### Q8 — Schema versioning → **`schema_version` field-only**
 
-| Claude (recommend) | Codex |
+Inline `schema_version: <int>` field (required, const=1 in M1). No `$id` URLs. No `core/schema/v1/*` directory versioning.
+
+| Adopted (Claude) | Rejected (Codex) |
 |---|---|
-| `schema_version: <int>` field on every payload only | Inline field **AND** `core/schema/v1/*` directory |
+| Inline field only | Inline field + directory |
 | Bash-readable (`jq '.schema_version'`); survives file moves | Two enforcement surfaces; directory move on every bump |
-| No path break on schema evolution | Forces path moves — exact churn `core/` is designed to avoid |
+| No path break on schema evolution | Forces path moves — the churn `core/` is designed to avoid |
 
-**My recommendation**: **Claude's field-only**. Codex's directory versioning is the failure mode the in-repo `core/` boundary explicitly avoids.
+Breaking changes bump the int + accompany a `CHANGELOG.md` entry + a migration note in `DECISIONS.md`.
 
 ---
 
@@ -220,9 +228,11 @@ Lower-risk option per surface. Where both pick same class, take the more concret
 
 From both spikes' §F lists, deduplicated by underlying cause.
 
-1. **Per-project partitioning locks path shape** (Claude R-design-1 / Codex Risk-2): if a future need wants project-namespaced IDs or cross-repo task graphs, the partition path becomes breaking. Mitigation: `repo.json` per partition preserves debuggability so re-partitioning is renaming, not data migration. (Risk only if Q2 = per-project.)
+1. **Per-project partitioning locks path shape** (Claude R-design-1 / Codex Risk-2): if a future need wants project-namespaced IDs or cross-repo task graphs, the partition path becomes breaking. Mitigation: `repo.json` per partition preserves debuggability so re-partitioning is renaming, not data migration.
 
-2. **Dual-write maintenance burden** (Claude R-design-2): if Q7 = dual-write, two writers exist for one milestone. Mitigation: data shape identical, no semantic drift; M2 hook-cutover ticket is small.
+2. **Dual-write maintenance burden** (Claude R-design-2): two writers exist for one milestone (M1). Mitigation: data shape identical between auto-block and `runs.jsonl`, no semantic drift; M2 hook-cutover ticket is small.
+
+   **Rollback / decommission plan**: if dual-write proves problematic mid-M1 (lock contention, disk bloat, divergence between writers), the rollback is a single revert of the `runs_append` call added to `codex-dispatch.sh:330`. `routing_log.md` auto-block remains untouched throughout M1, so reverting `runs_append` returns the system to pre-M1 state with zero data migration. M2 cutover is the **deactivation** path: drop the hook write, leave `runs.jsonl` as sole writer, `routing_log.md` becomes human-only. No file-level cleanup is required at decommission — old auto-block rows can be left as historical record or hand-removed.
 
 3. **`core/policy/*.yaml` `$ref` from JSON Schema is non-standard** (Claude R-design-3): most JSON Schema tooling expects `$ref` to JSON. Mitigation: M2 `pmctl validate` uses `yq → jq` not generic resolver. Fallback: rewrite policies as JSON if YAML proves brittle.
 
@@ -255,12 +265,10 @@ Once user resolves Q2/Q7/Q8, the M1 impl-ticket brief writes itself:
 5. **CC-232 — context-pack docs**: `source.interface.md` + the JSON Schema. No source implementations (CC-237 owns M4).
 6. **`pm/schema.md` → `core/schema/backlog-grammar.md`** re-home + `task.schema.json` + `decision.schema.json`. Markdown stays primary.
 
-**Out of M1**: `routing_log.md` hook cutover (M2 if Q7 = dual-write), `pmctl` CLI design (CC-215, M2), MCP surface (CC-216, v0.4.0), migration tooling (M1 impl detail not in spike), per-machine sync (not in scope §3.6 for M1).
+**Out of M1**: `routing_log.md` hook cutover (M2 — dual-write deactivation), `pmctl` CLI design (CC-215, M2), MCP surface (CC-216, v0.4.0), migration tooling (M1 impl detail not in spike), per-machine sync.
 
 ---
 
 ## Next step
 
-Tell me Q2 / Q7 / Q8 — once those three are pinned, I'll write the M1 implementation brief (CC-229 schema-only PR).
-
-If you want to defer the decisions and let me pick on `[[breaking_change_for_maintainability]]` + audience-of-one judgment: **per-project / dual-write / field-only versioning** (my recommendations stand). Say the word and I'll write the brief assuming those.
+Q2/Q7/Q8 resolved 2026-05-24 (per-project / dual-write / field-only). M1 implementation brief (CC-229 schema-only PR) ready to author once PR #156 merges.
