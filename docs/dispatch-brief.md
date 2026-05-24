@@ -27,7 +27,7 @@ The pairing matters: `acceptance` is **what** must be true after the run; `self_
 
 A `read:`-tagged entry means **"executor MAY read this if it needs the content"**, not **"executor MUST read this upfront"**. The block doubles as the sandbox/audit declaration of which files the brief is authorised to touch — not as a checklist of mandatory ingestion.
 
-For survey-style briefs (spikes, audits, broad reviews), pre-loading every cited source file exhausts the executor's context window before useful work begins. Codex's default model has ~120K token context; pre-reading `BACKLOG.md` (1,800 lines) + `docs/architecture/v0.3.0-synthesis.md` + `agents/project-pm.md` consumes most of it (calibration: CC-229 spike v1+v2 hit `context_length_exceeded` exactly this way before v3 succeeded with lazy reading).
+For survey-style briefs (spikes, audits, broad reviews), pre-loading every cited source file exhausts the executor's context window before useful work begins. Codex's default model has ~120K token context; pre-reading large project files (`BACKLOG.md`, `docs/architecture/*-synthesis.md`, `agents/*.md`) consumes most of it before useful work begins.
 
 When authoring a brief whose `files:` block lists more than ~4 reads totaling > 50KB:
 
