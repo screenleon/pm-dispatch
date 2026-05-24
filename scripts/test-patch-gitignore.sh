@@ -8,20 +8,6 @@ PATCH_SCRIPT="$SCRIPT_DIR/patch-gitignore.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-assert_contains() {
-  local name="$1" file="$2" needle="$3"
-  if ! grep -Fq -- "$needle" "$file" 2>/dev/null; then
-    fail "$name" "missing in $file: $needle"; return 1
-  fi
-}
-
-assert_output_contains() {
-  local name="$1" output="$2" needle="$3"
-  if ! printf '%s\n' "$output" | grep -Fq -- "$needle"; then
-    fail "$name" "missing output: $needle"; return 1
-  fi
-}
-
 init_git_repo() {
   local dir="$1"
   mkdir -p "$dir"
@@ -60,10 +46,10 @@ test_adds_entries_and_is_idempotent() {
   init_git_repo "$dir"
 
   bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".codex-briefs/" ".gate-results/"
-  assert_contains "$name" "$dir/.gitignore" "# Claude agent / codex output" || return
-  assert_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
-  assert_contains "$name" "$dir/.gitignore" ".gate-results/" || return
+  assert_file_contains "$name" "$dir/.gitignore" "# Claude agent / codex output" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
 
   bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".codex-briefs/" ".gate-results/"
   local entry count
@@ -85,8 +71,8 @@ test_dry_run_writes_nothing() {
   init_git_repo "$dir"
 
   out="$(bash "$PATCH_SCRIPT" --dry-run "$dir" ".agent-trace/" ".gate-results/")"
-  assert_output_contains "$name" "$out" "would add: .agent-trace/" || return
-  assert_output_contains "$name" "$out" "would add: .gate-results/" || return
+  assert_string_contains "$name" "$out" "would add: .agent-trace/" || return
+  assert_string_contains "$name" "$out" "would add: .gate-results/" || return
   if [[ -f "$dir/.gitignore" ]]; then
     fail "$name" ".gitignore was created during --dry-run"
     return
