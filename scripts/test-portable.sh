@@ -1214,6 +1214,27 @@ case_portable_sha1_shasum_fallback() {
   fi
 }
 
+case_portable_sha1_both_missing() {
+  local name="portable-sha1: both tools missing exits non-zero and warns"
+  should_run "$name" || return 0
+
+  local stderr_file rc
+  stderr_file="$(mktemp)"
+  FAKE_SHA1_MISSING=1 bash -c "
+    . '${REPO_ROOT}/scripts/lib/portable.sh'
+    printf 'test\n' | _portable_sha1
+  " >/dev/null 2>"$stderr_file" && rc=0 || rc=$?
+  local stderr_out
+  stderr_out="$(cat "$stderr_file")"
+  rm -f "$stderr_file"
+
+  if [[ "$rc" -ne 0 ]] && [[ "$stderr_out" == *"neither sha1sum nor shasum"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero rc and warning; got rc=${rc} stderr='${stderr_out:-empty}'"
+  fi
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1224,5 +1245,6 @@ case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
 case_portable_sha1_shasum_fallback
+case_portable_sha1_both_missing
 
 th_summary
