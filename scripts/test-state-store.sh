@@ -298,7 +298,7 @@ case_dispatch_correct_partition() {
   work_dir="$tmp_root/partition-workdir"
   mkdir -p "$fake_bin_dir" "$work_dir"
   ( cd "$work_dir" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
-  work_dir_key="$(printf '%s\n' "$work_dir" | sha1sum 2>/dev/null | cut -c1-40 || true)"
+  work_dir_key="$(printf '%s\n' "$work_dir" | _portable_sha1 2>/dev/null || true)"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
   chmod +x "$fake_bin_dir/codex"
   brief_file="$tmp_root/partition-brief.md"
@@ -359,14 +359,15 @@ case_dispatch_subdir_partition_key() {
   #   4. Assert runs.jsonl appears under projects/<root_key>/, not subdir key.
   local name="codex-dispatch.sh: subdirectory --cd resolves to repo root partition"
   should_run "$name" || return 0
-  local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition
+  local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition git_top
   store="$tmp_root/subdir-store"
   fake_bin_dir="$tmp_root/subdir-bin"
   repo_root="$tmp_root/subdir-repo"
   work_subdir="$repo_root/sub/dir"
   mkdir -p "$fake_bin_dir" "$work_subdir"
   ( cd "$repo_root" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
-  root_key="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null | sha1sum 2>/dev/null | cut -c1-40 || true)"
+  git_top="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
+  root_key="$(printf '%s\n' "$git_top" | _portable_sha1 2>/dev/null || true)"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
   chmod +x "$fake_bin_dir/codex"
   brief_file="$tmp_root/subdir-brief.md"
@@ -487,6 +488,36 @@ case_dispatch_failed_records_state() {
   fi
 }
 
+case_project_key_shasum_fallback() {
+  local name="project_key: sha1sum missing but shasum available produces hash (not global)"
+  should_run "$name" || return 0
+
+  local tmp_git fake_bin result
+  tmp_git="$(mktemp -d)"
+  fake_bin="$(mktemp -d)"
+  git -C "$tmp_git" init -q
+
+  # shasum shim that ignores -a 1 args and delegates stdin to real sha1sum
+  printf '#!/bin/sh\nsha1sum\n' > "$fake_bin/shasum"
+  chmod +x "$fake_bin/shasum"
+
+  # FAKE_SHA1SUM_MISSING=1 blocks the direct sha1sum branch in _portable_sha1;
+  # the shasum shim in fake_bin provides a working fallback via sha1sum internally.
+  result="$(
+    FAKE_SHA1SUM_MISSING=1 PATH="$fake_bin:$PATH" _SW_REPO_ROOT="$tmp_git" \
+      bash -c "source '$REPO_ROOT/scripts/lib/state-writer.sh' 2>/dev/null
+               _sw_project_key"
+  )" || true
+  rm -rf "$tmp_git" "$fake_bin"
+
+  # Must be a 40-char hex string, NOT "global" - proves shasum fallback was used
+  if [[ "$result" =~ ^[0-9a-f]{40}$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 40-char hex via shasum fallback, got '${result:-empty}'"
+  fi
+}
+
 case_project_key_no_sha1sum() {
   local name="project_key: no sha1sum or shasum falls back to global"
   # Create a minimal repo so _sw_project_key has a git root to hash.
@@ -526,6 +557,7 @@ case_dispatch_subdir_partition_key
 case_dispatch_task_id_anchor
 case_dispatch_inline_brief_task_id
 case_dispatch_failed_records_state
+case_project_key_shasum_fallback
 case_project_key_no_sha1sum
 
 th_summary
