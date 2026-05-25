@@ -58,6 +58,11 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/model-aliases.tsv"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
   [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/model-aliases.tsv" || true
+  mkdir -p -- "$__codex_dispatch_snapshot_dir/lib"
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -79,6 +84,9 @@ BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
 PRINT_CMD=0
+
+# shellcheck source=scripts/lib/state-writer.sh
+. "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 
 _load_config_timeout() {
   local config_path="${PM_DISPATCH_CONFIG_FILE}"
@@ -306,6 +314,40 @@ else
 fi
 EXIT=$?
 set -e
+
+# --- state store: append Run row (best-effort; never fatal) ---
+{
+  # Extract task_id from brief file (first match of ^task_id: <ID>), fallback UNKN-0.
+  _SW_TASK_ID="UNKN-0"
+  if [[ -n "${BRIEF_FILE:-}" && -f "${BRIEF_FILE}" ]]; then
+    _SW_TID=$(grep -oE 'task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+      "${BRIEF_FILE}" 2>/dev/null | head -1 | \
+      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
+    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
+  fi
+  if [[ "$_SW_TASK_ID" == "UNKN-0" && -n "${BRIEF:-}" ]]; then
+    _SW_TID=$(printf '%s' "$BRIEF" | grep -oE 'task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+      2>/dev/null | head -1 | \
+      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
+    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
+  fi
+  _SW_STATE="failed"
+  [[ "$EXIT" -eq 0 ]] && _SW_STATE="ok"
+  _SW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+  _SW_HEX=$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  _SW_RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)-${_SW_HEX:0:6}"
+  _SW_TRACE_PATH="${TRACE:-}"
+  _SW_WORK_DIR="${WORK_DIR:-}"
+  _SW_MODEL_VAL="${MODEL:-}"
+  _SW_BRIEF_FILE_VAL="${BRIEF_FILE:-}"
+  printf -v _SW_RUN_JSON \
+    '{"schema_version":1,"id":"%s","task_id":"%s","executor":"codex","state":"%s","exit_code":%d,"model":"%s","brief_file":"%s","working_dir":"%s","trace_path":"%s","created_ts":"%s"}' \
+    "$_SW_RUN_ID" "$_SW_TASK_ID" "$_SW_STATE" "$EXIT" \
+    "$_SW_MODEL_VAL" "$_SW_BRIEF_FILE_VAL" "$_SW_WORK_DIR" "$_SW_TRACE_PATH" "$_SW_TS"
+  if [[ "$(type -t runs_append 2>/dev/null)" == function ]]; then
+    runs_append "$_SW_RUN_JSON" 2>/dev/null || true
+  fi
+} 2>/dev/null || true
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
