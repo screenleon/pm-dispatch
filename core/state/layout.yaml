@@ -4,15 +4,20 @@
 # Definitions only — does NOT include the writer logic.
 #
 # Path placeholders:
-#   $STORE         := $CLAUDE_PM_STATE_ROOT (default: ~/.claude/.pm/state)
+#   $STORE         := $PM_DISPATCH_STATE_ROOT
+#                     resolution order (evaluated by state-writer.sh):
+#                       1. $PM_DISPATCH_STATE_ROOT   (explicit override)
+#                       2. $XDG_DATA_HOME/pm-dispatch/state  (if XDG_DATA_HOME set)
+#                       3. store_root_default below  (fallback)
 #   $PROJECT       := sha1(git rev-parse --show-toplevel) — partitioning key
 #   $TASK_ID       := pattern ^[A-Z]{1,4}-[0-9]+$ (task.schema.json)
 #   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review id suffix)
 #   $YYYYMM        := archive rotation period
 
 version: 1
-store_root_env: CLAUDE_PM_STATE_ROOT
-store_root_default: "~/.claude/.pm/state"
+store_root_env: PM_DISPATCH_STATE_ROOT
+store_root_default: "~/.local/share/pm-dispatch/state"
+store_root_xdg_subpath: "pm-dispatch/state"
 
 # Global files (cross-project)
 global:

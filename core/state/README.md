@@ -6,7 +6,7 @@ This directory defines the **path layout** of the pm-dispatch state store on dis
 
 ## Storage location
 
-State lives at `~/.claude/.pm/state/` — per-machine, gitignored, CLI-agnostic. The `~/.claude/` prefix is incidental (existing installer-managed dir); adapters reach the store only via the runtime writer, never by globbing the dir.
+State lives under `~/.local/share/pm-dispatch/state/` by default — per-machine, gitignored, tool-agnostic. The root is resolved at runtime by `state-writer.sh` using the following precedence: `$PM_DISPATCH_STATE_ROOT` (explicit override) → `$XDG_DATA_HOME/pm-dispatch/state` (XDG-aware) → `~/.local/share/pm-dispatch/state` (fallback). Adapters reach the store only via the runtime writer, never by globbing the dir.
 
 ## Partitioning
 

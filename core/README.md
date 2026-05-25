@@ -7,7 +7,7 @@ This directory contains the canonical PM-runtime data contract. **`core/` is def
                      Handover, ContextPack.
 - `policy/`        — declarative tables (YAML) for enums and state machines.
 - `state/`         — definition of the on-disk state-store layout
-                     (`~/.claude/.pm/state/`). **Definitions, not the writer.**
+                     (`~/.local/share/pm-dispatch/state/`). **Definitions, not the writer.**
 - `context-pack/`  — source-interface contract for ContextPack assembly.
 
 ## Invariants
@@ -33,7 +33,7 @@ core/context-pack/   → core/schema/  (source.interface.md references context-p
 `core/policy/` is a leaf — depends on nothing.
 `core/state/` does NOT import `core/policy/`.
 
-The runtime writer reads `core/schema/`, `core/state/layout.yaml`, and `core/policy/` to validate writes and resolve paths. Only the dedicated writer module may write to `~/.claude/.pm/state/` paths.
+The runtime writer reads `core/schema/`, `core/state/layout.yaml`, and `core/policy/` to validate writes and resolve paths. Only the dedicated writer module may write to `~/.local/share/pm-dispatch/state/` paths.
 
 ## Schema versioning
 
