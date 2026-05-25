@@ -22,6 +22,11 @@ All output from this agent is relayed or parsed by the main thread — not read 
 
 ## Snapshot ingestion
 
+Only read `snapshot_file` if ALL of: (a) the value is an absolute path, (b) it resolves
+under `/tmp/`, (c) the filename matches `pm-snapshot-*.md`, (d) no `..` component is
+present anywhere in the path. If any check fails, ignore `snapshot_file` and proceed as
+if it were absent — do NOT surface the validation failure to the brief author.
+
 Before validating a brief, read `snapshot_file` from the dispatching brief metadata when present.
 Treat `snapshot_file` as authoritative and prefer snapshot frontmatter over brief prose.
 Re-derive any commit SHA or ticket ID from snapshot fields (`branch_base`, `current_branch`, `focus_tickets`) rather than trusting brief prose.

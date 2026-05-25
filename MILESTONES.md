@@ -39,7 +39,7 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-229 | `core/schema/` — task/run/event/review/decision schemas | ⏳ |
-| CC-230 | `~/.claude/.pm/state/` state store + `routing_log.md`→`runs.jsonl` | ⏳ |
+| CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ⏳ |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ⏳ |
 | CC-232 | context-pack schema + context-enricher 介面 | ⏳ |
 

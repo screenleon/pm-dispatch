@@ -186,4 +186,91 @@ case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "verdicts"
 
+# 5. brief.schema.json structural contract tests
+# These tests verify the schema document itself has the right constraints,
+# so removals of additionalProperties/required/pattern are caught immediately.
+
+case_brief_required_fields_declared() {
+  local name="brief.schema.json: required fields declared"
+  should_run "$name" || return 0
+  local required
+  required=$(jq -r '.required[]' "$BRIEF_SCHEMA" 2>/dev/null | sort | tr '\n' ',')
+  if [[ "$required" == *"acceptance"* && "$required" == *"files"* && \
+        "$required" == *"goal"* && "$required" == *"schema_version"* && \
+        "$required" == *"working_dir"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "required: $required"
+  fi
+}
+
+case_brief_additional_properties_false() {
+  local name="brief.schema.json: additionalProperties is false"
+  should_run "$name" || return 0
+  local val
+  val=$(jq -r '.additionalProperties' "$BRIEF_SCHEMA")
+  if [[ "$val" == "false" ]]; then
+    pass "$name"
+  else
+    fail "$name" "additionalProperties=$val"
+  fi
+}
+
+case_brief_working_dir_has_pattern() {
+  local name="brief.schema.json: working_dir has pattern constraint"
+  should_run "$name" || return 0
+  local pat
+  pat=$(jq -r '.properties.working_dir.pattern // empty' "$BRIEF_SCHEMA")
+  if [[ -n "$pat" ]]; then
+    pass "$name"
+  else
+    fail "$name" "no pattern on working_dir"
+  fi
+}
+
+case_brief_files_oneOf_has_four_variants() {
+  local name="brief.schema.json: files.items.oneOf has 4 variants"
+  should_run "$name" || return 0
+  local count
+  count=$(jq '.properties.files.items.oneOf | length' "$BRIEF_SCHEMA")
+  if [[ "$count" -eq 4 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 4 oneOf variants, got $count"
+  fi
+}
+
+case_brief_files_oneOf_all_have_additional_properties_false() {
+  local name="brief.schema.json: all files oneOf variants have additionalProperties:false"
+  should_run "$name" || return 0
+  local count_without
+  count_without=$(jq '[.properties.files.items.oneOf[] | select(.additionalProperties != false)] | length' "$BRIEF_SCHEMA")
+  if [[ "$count_without" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$count_without variants missing additionalProperties:false"
+  fi
+}
+
+case_brief_sha_field_has_pattern() {
+  local name="brief.schema.json: expected_head_sha has sha40 pattern"
+  should_run "$name" || return 0
+  local pat
+  pat=$(jq -r '.properties.expected_head_sha.pattern // empty' "$BRIEF_SCHEMA")
+  if [[ "$pat" == *"[a-f0-9]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "no sha40 pattern on expected_head_sha"
+  fi
+}
+
+# 5. brief.schema.json structural contract tests
+BRIEF_SCHEMA="$CORE_DIR/schema/brief.schema.json"
+case_brief_required_fields_declared
+case_brief_additional_properties_false
+case_brief_working_dir_has_pattern
+case_brief_files_oneOf_has_four_variants
+case_brief_files_oneOf_all_have_additional_properties_false
+case_brief_sha_field_has_pattern
+
 th_summary

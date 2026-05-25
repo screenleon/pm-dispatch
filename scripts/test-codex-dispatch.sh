@@ -533,6 +533,85 @@ case_timeout_precedence_brief_field() {
   rm -f "$_brief19" "$_stderr19"
 }
 
+# ---- 20: alias source missing exits non-zero ----
+case_alias_source_missing_exits_2() {
+  local name="alias-source/missing TSV exits non-zero"
+  local _work _brief _dispatch _out _exit
+  should_run "$name" || return 0
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: alias missing test\n' > "$_brief"
+  _dispatch="$(mktemp --suffix=.sh)"
+  sed \
+    -e 's|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE="/tmp/__nonexistent_alias_$$"|g' \
+    -e 's|^\[\[ -f "$PM_DISPATCH_ALIAS_FILE" \]\].*|: # forced PM_DISPATCH_ALIAS_FILE for test|g' \
+    "$DISPATCH" > "$_dispatch"
+  chmod +x "$_dispatch"
+  set +e
+  _out="$(bash "$_dispatch" --cd "$_work" --brief-file "$_brief" --model codex-spark --print-cmd 2>&1)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -ne 0 ]] && grep -qiE "not found|alias source|missing" <<<"$_out"; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit out=$(head -1 <<<"$_out")"
+  fi
+  rm -rf "$_work"; rm -f "$_brief" "$_dispatch"
+}
+
+# ---- 21: alias source malformed exits non-zero ----
+case_alias_source_malformed_exits_nonzero() {
+  local name="alias-source/malformed TSV exits non-zero"
+  local _work _brief _dispatch _alias_file _out _exit
+  should_run "$name" || return 0
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: alias malformed test\n' > "$_brief"
+  _alias_file="$(mktemp)"
+  printf 'bad-alias\tgpt-5.3\n' > "$_alias_file"
+  _dispatch="$(mktemp --suffix=.sh)"
+  sed \
+    -e "s|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE=\"$_alias_file\"|g" \
+    -e 's|^\[\[ -f "$PM_DISPATCH_ALIAS_FILE" \]\].*|: # forced PM_DISPATCH_ALIAS_FILE for test|g' \
+    "$DISPATCH" > "$_dispatch"
+  chmod +x "$_dispatch"
+  set +e
+  _out="$(bash "$_dispatch" --cd "$_work" --brief-file "$_brief" --model codex-spark --print-cmd 2>&1)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -ne 0 ]] && grep -qi "malformed" <<<"$_out"; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit out=$(head -1 <<<"$_out")"
+  fi
+  rm -rf "$_work"; rm -f "$_brief" "$_dispatch" "$_alias_file"
+}
+
+# ---- 22: alias source installed-helper fallback resolves from ../share ----
+case_alias_source_installed_helper_fallback() {
+  local name="alias-source/fallback to ../share/model-aliases.tsv"
+  local _root _script_dir _share_dir _work _brief _dispatch _out _exit
+  should_run "$name" || return 0
+  _root="$(mktemp -d)"
+  _script_dir="$_root/codex-dispatch.ABC123"
+  _share_dir="$_root/share"
+  mkdir -p "$_script_dir" "$_share_dir"
+  cp "$DISPATCH" "$_script_dir/codex-dispatch.sh"
+  chmod +x "$_script_dir/codex-dispatch.sh"
+  printf 'codex-spark\tgpt-5.3-codex-spark\thigh\n' > "$_share_dir/model-aliases.tsv"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: alias fallback test\n' > "$_brief"
+  _dispatch="$_script_dir/codex-dispatch.sh"
+  set +e
+  _out="$(bash "$_dispatch" --cd "$_work" --brief-file "$_brief" --model codex-spark --print-cmd 2>&1)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit out=$(head -1 <<<"$_out")"
+  fi
+  rm -rf "$_root" "$_work"; rm -f "$_brief"
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -552,5 +631,8 @@ case_unknown_alias_fallback_keeps_raw_model
 case_timeout_env_only_precedence
 case_timeout_config_only_precedence
 case_timeout_precedence_brief_field
+case_alias_source_missing_exits_2
+case_alias_source_malformed_exits_nonzero
+case_alias_source_installed_helper_fallback
 
 th_summary

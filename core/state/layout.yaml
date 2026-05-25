@@ -99,7 +99,7 @@ project_partition:
 
 # Writer-boundary contract
 writer:
-  module: runtime/pmctl/lib/state-writer.sh
+  description: "Single designated write boundary. The runtime layer owns the concrete module binding; only the designated writer module may write to $STORE paths."
   entry_points:
     - runs_append
     - events_append

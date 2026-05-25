@@ -7,6 +7,39 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-05-25: state-root-xdg
+
+### Context
+
+The original state-store default path was `~/.claude/.pm/state/` — chosen because
+`~/.claude/` was already installer-managed. The `core/README.md` invariant #2 prohibits
+CLI product names as path segments (`claude` qualifies), creating a self-contradiction.
+
+### Decision
+
+Default state root changed to `~/.local/share/pm-dispatch/state/` (XDG Base Directory
+spec). Override env var renamed `CLAUDE_PM_STATE_ROOT` → `PM_DISPATCH_STATE_ROOT`.
+Added `store_root_xdg_subpath: "pm-dispatch/state"` to `core/state/layout.yaml` so
+the runtime writer can apply XDG_DATA_HOME precedence without hardcoding paths.
+
+Resolution order (runtime writer must implement):
+1. `$PM_DISPATCH_STATE_ROOT` (explicit override)
+2. `$XDG_DATA_HOME/pm-dispatch/state` (if XDG_DATA_HOME set)
+3. `~/.local/share/pm-dispatch/state` (fallback)
+
+### Alternatives considered
+
+- Keep `~/.claude/.pm/state/` with a documented exception to invariant #2 — rejected:
+  defeats the CLI-agnostic goal and forces future forks to carry the exception.
+- `~/.pm-dispatch/state` — simpler but adds a new dotdir; XDG path is more
+  standard on Linux and avoids home-dir clutter.
+
+### Constraints introduced
+
+- `CC-230` (`state-writer.sh`) must implement the 3-level resolution order.
+- Any docs/spikes referencing `~/.claude/.pm/state/` are historical artifacts of
+  the pre-decision design; authoritative path is now in `core/state/layout.yaml`.
+
 ## 2026-05-19: cc030-validate-bidirectional
 
 Closes: BACKLOG.md#CC-030
