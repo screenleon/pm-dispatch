@@ -112,10 +112,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-226 | ⏸ deferred | **[lint-frontmatter: extract shared dq-escape validation helper]** `check_frontmatter()` 內有 4 個 collection branch 各自重複相同的 dq escape whitelist regex、adjacent-quote check、empty-entry check，未來修改一個 branch 容易遺漏其他三個，造成 parity gap。建議抽取成 shared bash helper，或以 parity test 確保 4 個 branch 永遠同步。Raised as [medium] advisory in gate-20260522-171123. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | — | P2 | hygiene |
-| CC-229 | 🔵 active | **[v0.3.0 M1: core schemas]** Create `core/schema/{task,run,event,review,decision}.schema.json` — the five first-class PM-runtime entities (docs/architecture/v0.3.0-synthesis.md §5.2). Re-home `pm/schema.md` (BACKLOG grammar) under `core/`. Ships no behavior change; schema locked at end of M1. **Spike phase landed via PR #156** (`docs/spikes/CC-229-substrate-{scope,claude,codex,synthesis}.md`); Q2/Q7/Q8 resolved 2026-05-24 (per-project partitioning / dual-write routing_log / `schema_version` field-only). Schema-only impl PR ready to author once PR #156 merges. | process | 2026-05-24 | pr:#156 | P1 | design |
+| CC-229 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core schemas]** Create `core/schema/{task,run,event,review,decision}.schema.json` — the five first-class PM-runtime entities (docs/architecture/v0.3.0-synthesis.md §5.2). Re-home `pm/schema.md` (BACKLOG grammar) under `core/`. Ships no behavior change; schema locked at end of M1. **Spike phase landed via PR #156** (`docs/spikes/CC-229-substrate-{scope,claude,codex,synthesis}.md`); Q2/Q7/Q8 resolved 2026-05-24 (per-project partitioning / dual-write routing_log / `schema_version` field-only). Schema-only impl PR ready to author once PR #156 merges. | process | 2026-05-24 | pr:#156,pr:#157 | — | design |
 | CC-230 | ⏸ deferred | **[v0.3.0 M1: state store]** Build the `~/.local/share/pm-dispatch/state/` runtime state store — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + index, guarded by `serialize_with_lock()`. Migrate the machine-written `routing_log.md` auto-block to `runs.jsonl` (kills the machine-written-Markdown-table anti-pattern). `pmctl` is the only writer. | process | 2026-05-22 | — | P1 | design |
-| CC-231 | ⏸ deferred | **[v0.3.0 M1: core policy extraction]** Extract `core/policy/` declarative tables — reviewer-policy (the gate matrix now prose-only in `agents/project-pm.md`), executor-enum (closed: codex/claude), dispatch-states (the dispatch state machine). Pure definitions, zero behavior. | process | 2026-05-22 | — | P2 | design |
-| CC-232 | ⏸ deferred | **[v0.3.0 M1: context-pack schema]** Define `core/schema/context-pack.schema.json` + the context-enricher interface — a pluggable pre-dispatch context bundle (files/symbols/memories/risks) assembled from sources. Decouples context enrichment from `codex-dispatch.sh`; consumed via `pmctl context build`. | process | 2026-05-22 | — | P2 | design |
+| CC-231 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core policy extraction]** Extract `core/policy/` declarative tables — reviewer-policy (the gate matrix now prose-only in `agents/project-pm.md`), executor-enum (closed: codex/claude), dispatch-states (the dispatch state machine). Pure definitions, zero behavior. | process | 2026-05-22 | pr:#157 | — | design |
+| CC-232 | ✅ closed 2026-05-25 | **[v0.3.0 M1: context-pack schema]** Define `core/schema/context-pack.schema.json` + the context-enricher interface — a pluggable pre-dispatch context bundle (files/symbols/memories/risks) assembled from sources. Decouples context enrichment from `codex-dispatch.sh`; consumed via `pmctl context build`. | process | 2026-05-22 | pr:#157 | — | design |
 | CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
 | CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
@@ -1211,7 +1211,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: surfaced during CC-222 close-out 2026-05-22.
 
-## CC-229 — core/schema: task/run/event/review/decision schemas（active）
+## CC-229 — core/schema: task/run/event/review/decision schemas ✅ 2026-05-25
 
 **Problem**: pm-dispatch has no state model — tasks are `BACKLOG.md` rows, runs are trace files, reviews are `.gate-results/` files, and nothing links them.
 
@@ -1249,7 +1249,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: CC-229 (schemas), CC-215 (pmctl writes here).
 
-## CC-231 — core/policy extraction（deferred）
+## CC-231 — core/policy extraction ✅ 2026-05-25
 
 **Problem**: Reviewer-gate policy, the executor enum, and the dispatch state machine live as prose scattered across `agents/project-pm.md` and command files — no single source.
 
@@ -1261,9 +1261,11 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P2.
 
+**See**: `core/policy/` in pr:#157 (`executor-enum.yaml`, `reviewer-policy.yaml`, `dispatch-states.yaml`, `run-states.yaml`, `task-states.yaml`, `dispatch-routes.yaml`).
+
 **Cross-link**: CC-211 (epic), CC-204 (guard engine consumes policy).
 
-## CC-232 — context-pack schema + context-enricher interface（deferred）
+## CC-232 — context-pack schema + context-enricher interface ✅ 2026-05-25
 
 **Problem**: Brief context is hand-listed (`files:`); incomplete lists cost the executor exploration tokens. There is no abstraction for "assembled pre-dispatch context".
 
@@ -1274,6 +1276,8 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Milestone**: v0.3.0 M1.
 
 **Priority**: P2.
+
+**See**: `core/schema/context-pack.schema.json` + `core/context-pack/source.interface.md` in pr:#157.
 
 **Cross-link**: CC-237 (baseline sources), CC-209 (codegraph as a source — spiked).
 
