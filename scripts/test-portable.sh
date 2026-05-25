@@ -1192,9 +1192,11 @@ case_portable_sha1_shasum_fallback() {
   # even if it exists on PATH, so the shasum branch is exercised.
   local fake_bin
   fake_bin="$(mktemp -d)"
-  # Fake shasum that outputs sha1sum-compatible format on any input.
-  printf '#!/bin/sh\nprintf "da39a3ee5e6b4b0d3255bfef95601890afd80709  -\\n"\n' \
-    > "$fake_bin/shasum"
+  # shasum shim that delegates to the real sha1sum so stdin is actually hashed.
+  # FAKE_SHA1SUM_MISSING=1 blocks the direct sha1sum branch; this shim proves
+  # the shasum branch passes stdin through rather than returning a fixed digest.
+  # shasum shim: ignore -a 1 args (shasum-specific) and delegate stdin to sha1sum.
+  printf '#!/bin/sh\nsha1sum\n' > "$fake_bin/shasum"
   chmod +x "$fake_bin/shasum"
 
   local result
@@ -1205,12 +1207,13 @@ case_portable_sha1_shasum_fallback() {
   )" || true
   rm -rf "$fake_bin"
 
-  # Assert exact digest — our fake shasum always emits da39a3... (SHA-1 of empty).
-  # A regex-only check would pass any broken impl that returns an arbitrary 40-hex string.
-  if [[ "$result" == "da39a3ee5e6b4b0d3255bfef95601890afd80709" ]]; then
+  # SHA-1("test-input\n") = 19877dd23a7175600bf62729888d5cea95ccb85a.
+  # An input-independent fake would return a different constant; wrong routing would
+  # return the sha1sum-branch hash for a different input or empty.
+  if [[ "$result" == "19877dd23a7175600bf62729888d5cea95ccb85a" ]]; then
     pass "$name"
   else
-    fail "$name" "expected da39a3ee5e6b4b0d3255bfef95601890afd80709, got '${result:-empty}'"
+    fail "$name" "expected 19877dd23a7175600bf62729888d5cea95ccb85a, got '${result:-empty}'"
   fi
 }
 
