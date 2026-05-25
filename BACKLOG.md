@@ -1945,13 +1945,17 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 - `agents/project-pm.md`：PM brief template 改寫 `isolation_level:` 取代三個原生欄位；說明三個原生欄位為 adapter-generated，PM 不直接填寫
 - `scripts/codex-dispatch.sh`：dispatch 前讀取 `adapters/codex/isolation-map.yaml` 展開 `isolation_level` → 原生欄位；遇未知值 → 立即 exit 1 with error
 
-**Acceptance**:
+**Acceptance (M1 scope — adapters/claude only)**:
 1. `grep -q "isolation_level" core/policy/executor-enum.yaml` → match（或對應 policy 檔案）
-2. `cat adapters/codex/isolation-map.yaml` → 包含全部 4 個 isolation_level 的映射
-3. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
+2. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
+3. `bash scripts/run-all-tests.sh` → exit 0
+
+**Acceptance (M2 scope — deferred)**:
 4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
 5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
-6. `bash scripts/run-all-tests.sh` → exit 0
+
+**Acceptance (v0.4.0 scope — adapters/codex deferred)**:
+6. `cat adapters/codex/isolation-map.yaml` → 包含全部 4 個 isolation_level 的映射
 
 **Scope revision 2026-05-25**: adapters/codex 移至 v0.4.0；當前範圍為 M1（core/policy/ enum + adapters/claude/ no-op map）。
 

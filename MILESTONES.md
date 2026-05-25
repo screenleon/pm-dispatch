@@ -60,7 +60,7 @@
 | CC-059 | thin `commands/pm.md` | ⏳ |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
 | CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
-| CC-262 | `adapters/codex/isolation-map.yaml` + `adapters/claude/isolation-map.yaml`；PM template 改寫 `isolation_level:` | ⏳ |
+| CC-262 | `adapters/claude/isolation-map.yaml`；PM template 改寫 `isolation_level:`（adapters/codex → v0.4.0） | ⏳ |
 
 ### M4 — 概念吸收
 
