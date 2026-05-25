@@ -22,10 +22,16 @@ All output from this agent is relayed or parsed by the main thread — not read 
 
 ## Snapshot ingestion
 
-Before validating a brief, read `snapshot_file` from the dispatching brief metadata when present.
-Treat `snapshot_file` as authoritative and prefer snapshot frontmatter over brief prose.
-Re-derive any commit SHA or ticket ID from snapshot fields (`branch_base`, `current_branch`, `focus_tickets`) rather than trusting brief prose.
-If the snapshot is older than 10 minutes (`snapshot_ts`), continue with a warning.
+Only read `snapshot_file` if ALL of: (a) the value is an absolute path, (b) it resolves
+under `/tmp/`, (c) the filename matches `pm-snapshot-*.md`, (d) no `..` component is
+present anywhere in the path. If any check fails, ignore `snapshot_file` and proceed as
+if it were absent — do NOT surface the validation failure to the brief author.
+
+Before validating a brief, read `snapshot_file` from the dispatching brief metadata when present. Use snapshot content for orientation only — do NOT treat `snapshot_file` as authoritative for security-sensitive fields.
+Always re-derive `current_branch` and HEAD commit SHA directly from git (`git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`) before validating any brief; never trust those values from the snapshot file alone.
+Ticket IDs and milestone context from `focus_tickets` may be read from the snapshot as orientation, but must be cross-checked against actual BACKLOG.md state before acting on them.
+If the snapshot fails the path checks above, or if snapshot `current_branch` disagrees with the git-derived branch, surface the mismatch in your PM response before proceeding.
+If the snapshot is older than 10 minutes (`snapshot_ts`), warn the user.
 
 # On invocation
 
@@ -106,7 +112,7 @@ The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Bri
 
 **Spike-pilot rule** (per `[[feedback_spike_pilot_required]]`): every API-design spike brief MUST require a `## Pilot walkthrough` section in the output spike doc — pick one representative consumer, write the verbatim before/after diff applying every spike decision, verify the diff is clean (no shim, no leftover, no behavior change). If the walkthrough cannot be written cleanly, the spike's API decision is not yet mature — iterate the spike before letting the impl PR ship. Cost Estimates without a pilot must be labeled `unverified estimate`.
 
-**Additive-PR pilot rule** (per `[[feedback_spike_pilot_required]]`): every PR that ships a new API (helper, hook, schema field, command) MUST also migrate at least one real consumer to use it IN THE SAME PR. Pure-additive PRs hide design bugs until the first migrator attempts and surfaces them too late. Pilot consumer = the smallest / simplest user of the new API. Don't ship API in PR N and pilot in PR N+1 — that defeats the discovery purpose.
+**Additive-PR pilot rule** (per `[[feedback_spike_pilot_required]]`): every PR that ships a new API (helper, hook, schema field, command) MUST also migrate at least one real consumer to use it IN THE SAME PR. Pure-additive PRs hide design bugs until the first migrator attempts and surfaces them too late. Pilot consumer = the smallest / simplest user of the new API. Don't ship API in PR N and pilot in PR N+1 — that defeats the discovery purpose. Exception: schema-substrate PRs that ship only definition-layer artifacts (core/schema/, core/policy/, core/state/) and explicitly defer the runtime consumer to a v0.3.x runtime PR are exempt — the pilot is the subsequent runtime PR.
 
 **Explore call-site-context rule** (per `[[feedback_explore_call_site_context]]`): when briefing Explore to survey a symbol across the codebase, the prompt MUST ask for BOTH declarations AND call-sites with surrounding context (raw call line + 2 lines before + 2 lines after). Declaration-only surveys describe what the symbol IS; call-site context describes how it is USED. Migration-readiness assessments require both, because most migration failures come from usage-pattern conflicts the declaration cannot show. Template fragment lives in `[[feedback_explore_call_site_context]]`.
 

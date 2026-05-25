@@ -1,0 +1,47 @@
+{
+  "title": "Decision",
+  "description": "Index row for a DECISIONS.md entry. Markdown stays primary — schema documents the index-row shape only; body sections (Context/Decision/Alternatives/Constraints) stay Markdown.",
+  "type": "object",
+  "required": ["id", "schema_version", "date", "title", "decision_md_path"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "title": {
+      "type": "string"
+    },
+    "closes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "BACKLOG ticket ids this decision closes (e.g. CC-229, CC-258)."
+    },
+    "decision_md_path": {
+      "type": "string",
+      "description": "Absolute or repo-relative path to the DECISIONS.md anchor for this decision."
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Supporting links / commit SHAs / design-doc references."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

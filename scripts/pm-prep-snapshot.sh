@@ -97,14 +97,24 @@ CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
 CURRENT_BRANCH="${CURRENT_BRANCH_NAME}@${CURRENT_SHA}"
 
 BRANCH_BASE_WARN=""
-if BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 origin/main 2>/dev/null)"; then
-  BRANCH_BASE="origin/main@$BRANCH_BASE_SHA"
-elif BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 main 2>/dev/null)"; then
-  BRANCH_BASE="main@$BRANCH_BASE_SHA"
-  BRANCH_BASE_WARN="origin/main unresolved; falling back to local main"
+_GH_BASE_REF=""
+if command -v gh >/dev/null 2>&1; then
+  _GH_BASE_REF="$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)"
+fi
+_BASE_REF="${_GH_BASE_REF:-}"
+if [ -z "$_BASE_REF" ]; then
+  _BASE_REF="$(git -C "$REPO_ROOT" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's@^refs/remotes/origin/@@' || true)"
+fi
+: "${_BASE_REF:=main}"
+if BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 "origin/$_BASE_REF" 2>/dev/null)"; then
+  BRANCH_BASE="origin/${_BASE_REF}@$BRANCH_BASE_SHA"
+elif BRANCH_BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 "$_BASE_REF" 2>/dev/null)"; then
+  BRANCH_BASE="${_BASE_REF}@$BRANCH_BASE_SHA"
+  BRANCH_BASE_WARN="origin/$_BASE_REF unresolved; falling back to local $_BASE_REF"
 else
   BRANCH_BASE="unresolved"
-  BRANCH_BASE_WARN="origin/main and main both unresolved; PM should treat branch context as untrusted"
+  BRANCH_BASE_WARN="base ref '$_BASE_REF' unresolved; PM should treat branch context as untrusted"
 fi
 
 if [ -n "$BRANCH_BASE_SHA" ] && AHEAD_BY="$(git -C "$REPO_ROOT" rev-list --count "$BRANCH_BASE_SHA..$CURRENT_SHA" 2>/dev/null)"; then
@@ -171,11 +181,7 @@ RECENTLY_MERGED=()
 
 collect_recently_merged() {
   local raw_output
-  local parsed_objects
-  local obj
   local count
-  local num
-  local title
   local line
   local used_template=0
 
@@ -184,29 +190,12 @@ collect_recently_merged() {
     return 1
   fi
 
-  if command -v jq >/dev/null 2>&1; then
-    used_template=1
-    raw_output="$(gh pr list --state merged --limit 5 --json number,title --jq '.[] | "#\(.number) \(.title)"' 2>/dev/null || true)"
-  else
-    raw_output="$(gh pr list --state merged --limit 5 --json number,title 2>/dev/null || true)"
-    if [ -n "$raw_output" ]; then
-      parsed_objects="$(printf '%s\n' "$raw_output" | tr -d '\n' | sed -E 's/^\\[//' | sed -E 's/\\]$//' | sed -E 's/\\},[[:space:]]*\\{/\\}\n\\{/g')"
-      count=0
-      while IFS= read -r obj; do
-        [ -z "$obj" ] && continue
-        num="$(printf '%s' "$obj" | sed -n 's/.*\"number\":[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p')"
-        title="$(printf '%s' "$obj" | sed -n 's/.*\"title\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p')"
-        if [ -n "$num" ] && [ -n "$title" ]; then
-          RECENTLY_MERGED+=("#$num $title")
-          count=$((count + 1))
-          [ "$count" -ge 5 ] && break
-        fi
-      done <<EOF
-$parsed_objects
-EOF
-      return 0
-    fi
+  if ! command -v jq >/dev/null 2>&1; then
+    RECENTLY_MERGED_WARN="jq command not found; recently_merged set to []"
+    return 1
   fi
+  used_template=1
+  raw_output="$(gh pr list --state merged --limit 5 --json number,title --jq '.[] | "#\(.number) \(.title)"' 2>/dev/null || true)"
 
   if [ "$used_template" -eq 1 ] && [ -n "$raw_output" ]; then
     count=0
@@ -230,7 +219,7 @@ EOF
   return 1
 }
 
-collect_recently_merged
+collect_recently_merged || true
 
 HAS_MAKEFILE=false
 [ -f "$REPO_ROOT/Makefile" ] && HAS_MAKEFILE=true

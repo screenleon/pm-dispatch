@@ -1,0 +1,28 @@
+# core/policy/run-states.yaml
+#
+# Run lifecycle states. Consumed by core/schema/run.schema.json (state
+# field, inline enum kept in sync). A Run represents one executor
+# dispatch (one codex/claude invocation per brief).
+
+states:
+  - pending       # brief written, not yet dispatched
+  - dispatched   # executor invoked, in flight
+  - verifying    # executor returned; main-thread parsing footer / self_verify
+  - ok           # terminal: clean exit, self_verify passed, diff matches brief
+  - partial      # terminal: exit 0 but verification gaps or unexpected stderr
+  - failed       # terminal: non-zero exit OR catastrophic verification failure
+
+transitions:
+  pending:
+    - dispatched
+    - failed     # dispatch script rejected the brief
+  dispatched:
+    - verifying
+    - failed     # timeout / sandbox kill
+  verifying:
+    - ok
+    - partial
+    - failed
+  ok: []         # terminal
+  partial: []    # terminal
+  failed: []     # terminal

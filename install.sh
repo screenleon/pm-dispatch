@@ -239,6 +239,28 @@ echo "  ($us_count linked, $us_conflicts conflicts)"
 
 echo
 
+# Share assets - model-aliases.tsv must be co-installed with scripts so
+# ~/.claude/scripts/codex-dispatch.sh resolves $SCRIPT_DIR/../share/model-aliases.tsv correctly.
+echo "==> share assets"
+SHARE_DEST="$CLAUDE_HOME/share"
+if [[ ! -d "$SHARE_DEST" ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would mkdir $SHARE_DEST"
+  else
+    mkdir -p "$SHARE_DEST"
+    echo "  mkdir  $SHARE_DEST"
+  fi
+fi
+sa_count=0; sa_conflicts=0
+if link "$REPO_ROOT/share/model-aliases.tsv" "$SHARE_DEST/model-aliases.tsv"; then
+  sa_count=$((sa_count + 1))
+else
+  sa_conflicts=$((sa_conflicts + 1))
+fi
+echo "  ($sa_count linked, $sa_conflicts conflicts)"
+
+echo
+
 # pm-schema: symlink ~/.claude/.pm -> pm-dispatch/pm so cross-repo
 # path references (rollup.sh default out, memory prose, schema.md
 # consumers) keep working.

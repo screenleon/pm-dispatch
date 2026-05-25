@@ -1,0 +1,63 @@
+{
+  "title": "Run",
+  "description": "One executor dispatch (one brief invocation against an executor). Records the dispatch parameters and trace pointers; does NOT duplicate trace contents (which live in the adapter-managed trace directory).",
+  "type": "object",
+  "required": ["id", "schema_version", "task_id", "executor", "state", "created_ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
+    },
+    "executor": {
+      "enum": ["codex", "claude"],
+      "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
+    },
+    "dispatch_route": {
+      "enum": ["main_thread_bash_background", "agent_executor"],
+      "description": "Editing source-of-truth: core/policy/dispatch-routes.yaml. Keep in sync."
+    },
+    "model": {
+      "type": "string",
+      "description": "PM-facing alias OR wire model id. Aliases resolved via share/model-aliases.tsv."
+    },
+    "brief_file": {
+      "type": "string",
+      "description": "Absolute path to the brief markdown file (typically /tmp/brief-<slug>-XXXXXX.md)."
+    },
+    "working_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "state": {
+      "enum": ["pending", "dispatched", "verifying", "ok", "partial", "failed"],
+      "description": "Editing source-of-truth: core/policy/run-states.yaml. Keep in sync."
+    },
+    "trace_path": {
+      "type": "string",
+      "description": "Absolute path to the executor trace file. Run row does NOT include trace contents."
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "started_ts": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "finished_ts": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "created_ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

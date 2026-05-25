@@ -1,0 +1,67 @@
+{
+  "title": "Handover",
+  "description": "The dispatch envelope: metadata header of a `dispatch_handover_v1` fenced block. The runtime-layer handover validator enforces the metadata contract.",
+  "type": "object",
+  "required": [
+    "handover_version",
+    "executor",
+    "dispatch_route",
+    "working_dir",
+    "brief_file",
+    "sandbox",
+    "approval",
+    "timeout",
+    "model",
+    "skip_git_check",
+    "fallback_allowed"
+  ],
+  "properties": {
+    "handover_version": {
+      "const": 2
+    },
+    "executor": {
+      "enum": ["codex", "claude"],
+      "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
+    },
+    "dispatch_route": {
+      "enum": ["main_thread_bash_background", "agent_executor"],
+      "description": "Editing source-of-truth: core/policy/dispatch-routes.yaml. Keep in sync."
+    },
+    "working_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "brief_file": {
+      "type": "string",
+      "description": "Absolute path; main thread writes via mktemp -p /tmp brief-<slug>-XXXXXX.md mode 0600."
+    },
+    "sandbox": {
+      "enum": ["workspace-write", "read-only", "danger-full-access"]
+    },
+    "approval": {
+      "enum": ["never", "on-request", "on-failure"],
+      "description": "Validator rejects values other than `never` for the bash route — see bash-route-approval-never feedback memory."
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    },
+    "model": {
+      "type": "string",
+      "description": "PM-facing alias OR wire id OR `default`. Aliases resolved via share/model-aliases.tsv."
+    },
+    "skip_git_check": {
+      "type": "boolean",
+      "description": "Validator hard-rejects true on the bash route — fallback to Agent(codex-executor) for that case."
+    },
+    "fallback_allowed": {
+      "type": "boolean"
+    },
+    "snapshot_file": {
+      "type": "string",
+      "description": "Optional. Path to a PM-generated context snapshot. Agent uses it for orientation; security-sensitive fields (branch, SHA) must be re-derived from git before being acted upon."
+    }
+  },
+  "additionalProperties": false
+}

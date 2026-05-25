@@ -1,0 +1,68 @@
+{
+  "title": "ContextPack",
+  "description": "A pluggable pre-dispatch context bundle assembled from sources (rg, git-log, memory, codegraph, ...). Categorical typed arrays enable per-source attribution + confidence ranking.",
+  "type": "object",
+  "required": ["schema_version", "task_id", "built_ts", "sources", "files"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
+    },
+    "built_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "version"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Source identifier — e.g. rg, git-log, memory, codegraph. Free string; pluggable via core/context-pack/source.interface.md."
+          },
+          "version": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "files":    { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "symbols":  { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "memories": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "risks":    { "type": "array", "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["ref", "source", "confidence"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "What the item points at. File path, symbol fqn, memory slug, risk id."
+        },
+        "source": {
+          "type": "string",
+          "description": "Must match a sources[].name in this pack."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,114 @@
+# core/state/layout.yaml
+#
+# Machine-readable specification of the pm-dispatch state-store layout.
+# Definitions only — does NOT include the writer logic.
+#
+# Path placeholders:
+#   $STORE         := $PM_DISPATCH_STATE_ROOT
+#                     resolution order (evaluated by state-writer.sh):
+#                       1. $PM_DISPATCH_STATE_ROOT   (explicit override)
+#                       2. $XDG_DATA_HOME/pm-dispatch/state  (if XDG_DATA_HOME set)
+#                       3. store_root_default below  (fallback)
+#   $PROJECT       := sha1(git rev-parse --show-toplevel) — partitioning key
+#   $TASK_ID       := pattern ^[A-Z]{1,4}-[0-9]+$ (task.schema.json)
+#   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review id suffix)
+#   $YYYYMM        := archive rotation period
+
+version: 1
+store_root_env: PM_DISPATCH_STATE_ROOT
+store_root_default: "~/.local/share/pm-dispatch/state"
+store_root_xdg_subpath: "pm-dispatch/state"
+
+# Global files (cross-project)
+global:
+  - path: "$STORE/VERSION"
+    format: text
+    description: "Plain text, contents match the current schema_version."
+  - path: "$STORE/store.lock"
+    format: lockfile
+    description: "Reserved for cross-project ops; serialize_with_lock target for global operations."
+
+# Per-project partition
+project_partition:
+  root: "$STORE/projects/$PROJECT/"
+
+  files:
+    - path: "repo.json"
+      schema: null
+      description: "{repo_path, repo_name, first_seen_ts} — debug aid + future re-partitioning hook."
+      write_strategy: write-temp-then-rename
+
+    - path: "runs.jsonl"
+      schema: ../schema/run.schema.json
+      description: "Append-only Run rows. One row per executor dispatch."
+      write_strategy: append-locked
+      lock: runs.lock
+      rotation:
+        threshold_bytes: 52428800   # 50 MB
+        threshold_days: 90
+        archive_path: archive/runs-$YYYYMM.jsonl.gz
+
+    - path: "runs.lock"
+      format: lockfile
+      description: "Per-project, per-entity lock for runs.jsonl. serialize_with_lock target."
+
+    - path: "events.jsonl"
+      schema: ../schema/event.schema.json
+      description: "Append-only Event rows. State changes, hook firings, decisions."
+      write_strategy: append-locked
+      lock: events.lock
+      rotation:
+        threshold_bytes: 52428800
+        threshold_days: 90
+        archive_path: archive/events-$YYYYMM.jsonl.gz
+
+    - path: "events.lock"
+      format: lockfile
+
+  subdirs:
+    - path: "tasks/"
+      file_pattern: "$TASK_ID.json"
+      schema: ../schema/task.schema.json
+      description: "Latest Task projection per id. One file per task; individually addressable. Write-temp-then-rename for atomicity."
+      write_strategy: write-temp-then-rename
+
+    - path: "reviews/"
+      file_pattern: "rev-$TS_HEX.json"
+      schema: ../schema/review.schema.json
+      description: "One file per Review. Sparse, low-volume."
+      write_strategy: write-temp-then-rename
+
+    - path: "decisions/"
+      file_pattern: "dec-YYYY-MM-DD-<slug>.json"
+      schema: ../schema/decision.schema.json
+      description: "Mirrors DECISIONS.md index rows."
+      write_strategy: write-temp-then-rename
+
+    - path: "context-packs/"
+      file_pattern: "$TASK_ID-$TS_HEX.json"
+      schema: ../schema/context-pack.schema.json
+      description: "ContextPack snapshots. Keep last 5 per task_id."
+      write_strategy: write-temp-then-rename
+      retention: "keep-last-5-per-task"
+
+    - path: "archive/"
+      description: "Rotated JSONL segments from runs.jsonl / events.jsonl. Gzipped."
+      file_patterns:
+        - "runs-$YYYYMM.jsonl.gz"
+        - "events-$YYYYMM.jsonl.gz"
+
+# Writer-boundary contract
+writer:
+  description: "Single designated write boundary. The runtime layer owns the concrete module binding; only the designated writer module may write to $STORE paths."
+  entry_points:
+    - runs_append
+    - events_append
+    - task_upsert
+    - review_upsert
+    - decision_upsert
+
+# Forbidden writers (aspirational contract; no enforcement test exists yet)
+forbidden:
+  - "any path under $STORE/ written without serialize_with_lock"
+  - "any path under $STORE/ written by code outside the designated writer module (see writer.description above)"
+  - "any hard-coded path; all paths must be resolved through this file"

@@ -213,6 +213,7 @@ test_install_manifest_atomic() {
     [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
   done
   [[ -d "$REPO_ROOT/pm" ]] && expected_entries=$((expected_entries + 1))
+  [[ -f "$REPO_ROOT/share/model-aliases.tsv" ]] && expected_entries=$((expected_entries + 1))
   shopt -u nullglob
 
   manifest="$home/.claude/.pm-dispatch/install-manifest.json"
@@ -1857,5 +1858,102 @@ test_install_sh_copy_fallback_banner
 test_install_sh_no_banner_dry_run
 test_filter_no_match_exits_nonzero
 test_install_manifest_atomic
+
+test_install_share_asset_installed() {
+  # Verifies install.sh installs share/model-aliases.tsv to ~/.claude/share/
+  # and records it in the install manifest (so uninstall can clean it up).
+  #
+  # Steps:
+  #   1. Run install.sh in a temp HOME.
+  #   2. Assert share/model-aliases.tsv exists at ~/.claude/share/.
+  #   3. Assert model-aliases.tsv is referenced in the install manifest JSON.
+  local name="install-share-asset-installed"
+  should_run "$name" || return 0
+  local home manifest
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc"
+    return
+  fi
+  if [[ ! -e "$home/.claude/share/model-aliases.tsv" ]]; then
+    fail "$name" "share/model-aliases.tsv not installed to ~/.claude/share/"
+    return
+  fi
+  manifest="$home/.claude/.pm-dispatch/install-manifest.json"
+  if ! grep -q "model-aliases.tsv" "$manifest" 2>/dev/null; then
+    fail "$name" "model-aliases.tsv not found in install manifest"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_share_asset_conflict() {
+  # Verifies install.sh exits 0 when ~/.claude/share/model-aliases.tsv already
+  # exists from another source (conflict path must be graceful, not fatal).
+  #
+  # Steps:
+  #   1. Pre-create ~/.claude/share/model-aliases.tsv with existing content.
+  #   2. Run install.sh in that same temp HOME.
+  #   3. Assert install.sh exits 0 (graceful conflict handling, no fatal error).
+  local name="install-share-asset-conflict"
+  should_run "$name" || return 0
+  local home
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude/share"
+  printf 'existing-content\n' > "$home/.claude/share/model-aliases.tsv"
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc on share asset conflict (expected 0)"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_share_asset_uninstall() {
+  # Verifies uninstall.sh removes ~/.claude/share/model-aliases.tsv when it
+  # was installed by install.sh (manifest-driven removal).
+  #
+  # Steps:
+  #   1. Run install.sh to install share/model-aliases.tsv into temp HOME.
+  #   2. Run uninstall.sh on that same temp HOME.
+  #   3. Assert model-aliases.tsv no longer exists at ~/.claude/share/.
+  local name="install-share-asset-uninstall"
+  should_run "$name" || return 0
+  local home
+  home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+  if [[ ! -e "$home/.claude/share/model-aliases.tsv" ]]; then
+    fail "$name" "precondition: model-aliases.tsv not installed"
+    return
+  fi
+  HOME="$home" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  if [[ -e "$home/.claude/share/model-aliases.tsv" ]]; then
+    fail "$name" "model-aliases.tsv still present after uninstall"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_share_asset_installed
+test_install_share_asset_conflict
+test_install_share_asset_uninstall
 
 th_summary

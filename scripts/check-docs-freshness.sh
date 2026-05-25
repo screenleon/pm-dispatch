@@ -161,7 +161,12 @@ run_unit_readme() {
     return
   fi
 
-  latest_tag="$(git -C "$REPO_ROOT" tag --sort=-creatordate --list 'v[0-9]*.[0-9]*.[0-9]*' | head -1 || true)"
+  _tags_raw="$(git -C "$REPO_ROOT" tag --list 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)"
+  latest_tag=""
+  if [[ -n "$_tags_raw" ]]; then
+    readarray -t _all_tags <<< "$_tags_raw"
+    latest_tag="$(max_version "${_all_tags[@]}")"
+  fi
   readme_match="$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' "$readme" 2>/dev/null || true)"
 
   if [[ -z "$readme_match" ]]; then
@@ -360,6 +365,8 @@ main() {
   run_unit_backlog
   emit_summary
 
+  # Exit codes: 0=all checks clean; 1=warnings present (non-blocking by design,
+  # do not use as a hard CI gate without filtering warnings); 2=errors or startup failure.
   if [[ "$FAIL_COUNT" -gt 0 ]]; then
     exit 2
   fi

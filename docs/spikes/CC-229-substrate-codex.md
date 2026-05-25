@@ -2,7 +2,7 @@
 
 ## Section A — Entity type sketches
 
-Below are 7 ≤30-line JSON Schema sketches, chosen for parser-agnostic, CLI-agnostic state definitions in `core/` aligned to the entities in scope §2 (`Task`, `Run`, `Event`, `Review`, `Decision`, `Brief`, `ContextPack`).  
+Below are 7 ≤30-line JSON Schema sketches, chosen for parser-agnostic, CLI-agnostic state definitions in `core/` aligned to the entities in scope §2 (`Task`, `Run`, `Event`, `Review`, `Decision`, `Brief`, `ContextPack`).
 Source of location and targets are from `docs/spikes/CC-229-substrate-scope.md:37-49`.
 
 ### Task (`core/schema/task.schema.json`)
@@ -194,7 +194,7 @@ core/
 └─ state.lock
 ```
 
-Design notes (CLI-agnostic location, per-machine scope, locking, and compatibility with future split): scope defines CLI-agnostic storage under `~/.claude/.pm/state/` and says state is per-machine, gitignored, and accessed via `pmctl` path indirection. These files are therefore definitions only; runtime writes belong to M2. See scope lines 62–63 and 71.  
+Design notes (CLI-agnostic location, per-machine scope, locking, and compatibility with future split): scope defines CLI-agnostic storage under `~/.claude/.pm/state/` and says state is per-machine, gitignored, and accessed via `pmctl` path indirection. These files are therefore definitions only; runtime writes belong to M2. See scope lines 62–63 and 71.
 (`core/state/layout.yaml` is the single source of truth for names, lock scope, and index policy.)
 
 ## Section C — Module dependency graph
@@ -235,14 +235,13 @@ Constraint: `core/` remains definition-only, consistent with synthesis guidance 
 
 ## Section F — Risks + alternatives considered
 
-- Risk: choosing a global state log now may interleave repos and increase cross-project noise; we mitigate by including `task_id`/`run_id` partitioning metadata and reserving per-project directories for a future versioned migration.  
-- Risk: hard-closing `executor` to `{codex, claude}` in M1 could force a breaking change later; the chosen mitigation is explicit versioned breaking events aligned to M1 freeze policy.  
-- Alternative rejected: per-project directories for every state file was rejected as higher M1 complexity and mismatch with current migration constraints; global state keeps the single migration path tractable.  
-- Risk: `routing_log.md` render regeneration might hide malformed rows if render logic is incorrect; this is mitigated by making JSONL canonical and testing render snapshots only, without altering the schema for existing readers.  
-- Risk: dual-policy/schema maintenance (`core/schema` + `core/policy`) may drift; mitigated by keeping policy files narrowly scoped and documenting enum owners in each schema as comments.  
-- Alternative rejected: PMCTL CLI command design in this spike was rejected as out-of-scope (`CC-215`, CC-232, etc.), and this output keeps only boundary references to M2 writers (`core/state` → `runtime`).  
-- Alternative rejected: migrating `pm-prep-snapshot.sh` behavior in M1 was rejected (schema-only) to honor the requirement that only routing log migration is budgeted for M1.  
-- Risk: index file growth without rotation may eventually degrade read performance; mitigation is append-only event logs plus optional off-cycle archival (not in M1) and sparse index strategy.  
-- Alternative rejected: generating TypeScript interfaces in M1 was rejected to avoid a second source of truth before MCP introduces Node consumers.  
+- Risk: choosing a global state log now may interleave repos and increase cross-project noise; we mitigate by including `task_id`/`run_id` partitioning metadata and reserving per-project directories for a future versioned migration.
+- Risk: hard-closing `executor` to `{codex, claude}` in M1 could force a breaking change later; the chosen mitigation is explicit versioned breaking events aligned to M1 freeze policy.
+- Alternative rejected: per-project directories for every state file was rejected as higher M1 complexity and mismatch with current migration constraints; global state keeps the single migration path tractable.
+- Risk: `routing_log.md` render regeneration might hide malformed rows if render logic is incorrect; this is mitigated by making JSONL canonical and testing render snapshots only, without altering the schema for existing readers.
+- Risk: dual-policy/schema maintenance (`core/schema` + `core/policy`) may drift; mitigated by keeping policy files narrowly scoped and documenting enum owners in each schema as comments.
+- Alternative rejected: PMCTL CLI command design in this spike was rejected as out-of-scope (`CC-215`, CC-232, etc.), and this output keeps only boundary references to M2 writers (`core/state` → `runtime`).
+- Alternative rejected: migrating `pm-prep-snapshot.sh` behavior in M1 was rejected (schema-only) to honor the requirement that only routing log migration is budgeted for M1.
+- Risk: index file growth without rotation may eventually degrade read performance; mitigation is append-only event logs plus optional off-cycle archival (not in M1) and sparse index strategy.
+- Alternative rejected: generating TypeScript interfaces in M1 was rejected to avoid a second source of truth before MCP introduces Node consumers.
 - Risk: this spike intentionally does not define migration tooling and may leave gap between planned and executable steps; this is flagged explicitly because conversions are out-of-scope and belong to M1 implementation tickets.
-

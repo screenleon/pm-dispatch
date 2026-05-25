@@ -35,6 +35,10 @@ SUITE_NAMES=(
   test-pr-gate-profile
   test-claude-executor
   test-run-all-tests
+  test-lint-model-aliases
+  test-core-schemas
+  test-pm-prep-snapshot
+  test-schema-task-mirrors-backlog
 )
 
 declare -A SUITE_PATHS=(
@@ -63,6 +67,10 @@ declare -A SUITE_PATHS=(
   [test-pr-gate-profile]="scripts/test-pr-gate-profile.sh"
   [test-claude-executor]="scripts/test-claude-executor.sh"
   [test-run-all-tests]="scripts/test-run-all-tests.sh"
+  [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
+  [test-core-schemas]="scripts/test-core-schemas.sh"
+  [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"
+  [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
 )
 
 declare -A SKIP_REQUESTED=()

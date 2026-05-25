@@ -1,0 +1,62 @@
+{
+  "title": "Review",
+  "description": "A PR-gate review verdict, optionally with per-reviewer findings. `tier` mirrors /pr-gate tier names (express/standard/full/targeted). `findings_path` points at .gate-results/<gate-id>/<reviewer>.{json,md} — Review row is the INDEX, not the data.",
+  "type": "object",
+  "required": ["id", "schema_version", "task_id", "tier", "verdict", "findings", "created_ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^rev-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
+    },
+    "run_id": {
+      "type": ["string", "null"],
+      "description": "Optional link to the Run that triggered the gate."
+    },
+    "tier": {
+      "enum": ["express", "standard", "full", "targeted"]
+    },
+    "verdict": {
+      "enum": ["GO", "NO-GO", "pending"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reviewer", "verdict"],
+        "properties": {
+          "reviewer": {
+            "enum": ["critic", "qa-tester", "architecture-reviewer", "security-reviewer", "risk-reviewer"],
+            "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
+          },
+          "verdict": {
+            "enum": ["approve", "pass", "pass-not-applicable", "advise", "block-soft", "block", "needs-tests"],
+            "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "findings_path": {
+            "type": "string",
+            "description": "Path to the reviewer's full output. .gate-results/<gate-id>/<reviewer>.{json,md}."
+          }
+        }
+      }
+    },
+    "override_path": {
+      "type": ["string", "null"],
+      "description": "Path to override-justification doc when user overrides a hard-gate block."
+    },
+    "created_ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
