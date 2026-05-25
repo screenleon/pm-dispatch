@@ -42,7 +42,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ✅ (#159) |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ✅ (#157) |
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
-| CC-262 | `isolation_level` enum（`core/policy/` CC-231 延伸）— adapter 轉譯 map 及 dispatch 展開跨 M2/M3 完成 | ⏳ |
+| CC-262 | `isolation_level` enum（M1 延伸）— adapters/claude no-op map（M1）；adapters/codex 移 v0.4.0；dispatch 展開 M2；PM template M3 | ⏳ |
 
 ### M2 — 由抽取長出 runtime
 

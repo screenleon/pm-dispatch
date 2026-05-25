@@ -165,7 +165,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-261 | ⏸ deferred | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | — | P3 | hygiene |
-| CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/codex/isolation-map.yaml` + `adapters/claude/isolation-map.yaml` 各自轉譯；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | — | P2 | design |
+| CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/claude/isolation-map.yaml`（claude no-op map，v0.3.0）；`adapters/codex/isolation-map.yaml` 移至 v0.4.0；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | — | P2 | design |
 | CC-263 | 🟢 someday | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159 | P3 | — |
 
 ---
@@ -1940,8 +1940,8 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 
 **Requirement**:
 - `core/policy/`（CC-231 延伸）：新增 `isolation_level` enum，值為 `none | read-only | workspace-write | sandboxed`，附語意定義（none=無限制；read-only=不寫 FS；workspace-write=僅寫 project dir；sandboxed=完整隔離）
-- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → `{sandbox, approval, skip_git_check}` 原生欄位的對應表
-- `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）
+- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → `{sandbox, approval, skip_git_check}` 原生欄位的對應表（v0.4.0，暫緩）
+- `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）（v0.3.0 M1 殘留，當前範圍）
 - `agents/project-pm.md`：PM brief template 改寫 `isolation_level:` 取代三個原生欄位；說明三個原生欄位為 adapter-generated，PM 不直接填寫
 - `scripts/codex-dispatch.sh`：dispatch 前讀取 `adapters/codex/isolation-map.yaml` 展開 `isolation_level` → 原生欄位；遇未知值 → 立即 exit 1 with error
 
@@ -1952,6 +1952,8 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
 5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
 6. `bash scripts/run-all-tests.sh` → exit 0
+
+**Scope revision 2026-05-25**: adapters/codex 移至 v0.4.0；當前範圍為 M1（core/policy/ enum + adapters/claude/ no-op map）。
 
 ---
 
