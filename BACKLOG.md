@@ -113,7 +113,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | — | P2 | hygiene |
 | CC-229 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core schemas]** Create `core/schema/{task,run,event,review,decision}.schema.json` — the five first-class PM-runtime entities (docs/architecture/v0.3.0-synthesis.md §5.2). Re-home `pm/schema.md` (BACKLOG grammar) under `core/`. Ships no behavior change; schema locked at end of M1. **Spike phase landed via PR #156** (`docs/spikes/CC-229-substrate-{scope,claude,codex,synthesis}.md`); Q2/Q7/Q8 resolved 2026-05-24 (per-project partitioning / dual-write routing_log / `schema_version` field-only). Schema-only impl PR ready to author once PR #156 merges. | process | 2026-05-24 | pr:#156,pr:#157 | — | design |
-| CC-230 | ⏸ deferred | **[v0.3.0 M1: state store]** Build the `~/.local/share/pm-dispatch/state/` runtime state store — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + index, guarded by `serialize_with_lock()`. Migrate the machine-written `routing_log.md` auto-block to `runs.jsonl` (kills the machine-written-Markdown-table anti-pattern). `pmctl` is the only writer. | process | 2026-05-22 | — | P1 | design |
+| CC-230 | ✅ closed 2026-05-25 | **[v0.3.0 M1: state store]** Build the `~/.local/share/pm-dispatch/state/` runtime state store — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + index, guarded by `serialize_with_lock()`. Migrate the machine-written `routing_log.md` auto-block to `runs.jsonl` (kills the machine-written-Markdown-table anti-pattern). `pmctl` is the only writer. | process | 2026-05-22 | pr:#159 | P1 | design |
 | CC-231 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core policy extraction]** Extract `core/policy/` declarative tables — reviewer-policy (the gate matrix now prose-only in `agents/project-pm.md`), executor-enum (closed: codex/claude), dispatch-states (the dispatch state machine). Pure definitions, zero behavior. | process | 2026-05-22 | pr:#157 | — | design |
 | CC-232 | ✅ closed 2026-05-25 | **[v0.3.0 M1: context-pack schema]** Define `core/schema/context-pack.schema.json` + the context-enricher interface — a pluggable pre-dispatch context bundle (files/symbols/memories/risks) assembled from sources. Decouples context enrichment from `codex-dispatch.sh`; consumed via `pmctl context build`. | process | 2026-05-22 | pr:#157 | — | design |
 | CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
@@ -1233,22 +1233,11 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: CC-211 (epic), CC-230 (state store consumes these schemas).
 
-## CC-230 — state store: ~/.local/share/pm-dispatch/state/ (XDG)（deferred）
+## CC-230 — state store: ~/.local/share/pm-dispatch/state/ (XDG) ✅ 2026-05-25
 
-**Problem**: Run/event state is scattered — `.agent-trace/*.jsonl` plus a machine-written Markdown table in `routing_log.md` that nothing reads structurally (worst-of-both-worlds).
+**See**: `scripts/lib/state-writer.sh` + `scripts/codex-dispatch.sh` runs_append wiring + `scripts/test-state-store.sh` (18 cases) in pr:#159.
 
-**Why**: A single state store with one writer makes the substrate trustworthy and queryable.
-
-**Requirement**:
-- Build `~/.local/share/pm-dispatch/state/` — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + a small index, guarded by `serialize_with_lock()` (CC-104p).
-- Migrate the `routing_log.md` auto-block to `runs.jsonl` (the one budgeted migration; kills the machine-written-Markdown-table anti-pattern).
-- `pmctl` is the only writer; no hook/command/agent writes state files directly.
-
-**Milestone**: v0.3.0 M1.
-
-**Priority**: P1 — the runtime mutates this store.
-
-**Cross-link**: CC-229 (schemas), CC-215 (pmctl writes here).
+Dual-write strategy: `routing_log.md` stays in M1; `runs.jsonl` added in parallel. M2 cuts `hook-routing-log.sh`. Advisory follow-up: CC-263 (sha1sum portability, P3 someday).
 
 ## CC-231 — core/policy extraction ✅ 2026-05-25
 
