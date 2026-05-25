@@ -39,6 +39,7 @@ SUITE_NAMES=(
   test-core-schemas
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
+  test-state-store
 )
 
 declare -A SUITE_PATHS=(
@@ -71,6 +72,7 @@ declare -A SUITE_PATHS=(
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"
   [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
+  [test-state-store]="scripts/test-state-store.sh"
 )
 
 declare -A SKIP_REQUESTED=()

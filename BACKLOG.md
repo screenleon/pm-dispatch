@@ -166,6 +166,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-261 | ⏸ deferred | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | — | P3 | hygiene |
 | CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/codex/isolation-map.yaml` + `adapters/claude/isolation-map.yaml` 各自轉譯；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | — | P2 | design |
+| CC-263 | 🟢 someday | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159 | P3 | — |
 
 ---
 
@@ -1951,6 +1952,26 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
 5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
 6. `bash scripts/run-all-tests.sh` → exit 0
+
+---
+
+## CC-263 — state-writer: portable SHA-1 hash for project partitioning（someday）
+
+**Problem**: `_sw_project_key` in `scripts/lib/state-writer.sh` calls `sha1sum` directly to derive the per-project partition key. `sha1sum` is a GNU coreutils tool; it is absent on stock macOS (which ships `shasum -a 1`) and on some minimal Linux containers. When unavailable, the function silently falls back to `global`, mixing all project state into a single partition without any error log.
+
+**Why**: The `core/state/layout.yaml` contract defines `$PROJECT := sha1(git rev-parse --show-toplevel)`. A silent fallback violates this contract, making cross-repo state isolation unreliable on non-Linux platforms. `scripts/lib/portable.sh` already sets the precedent for cross-platform helpers (`serialize_with_lock`, `link_or_copy`, etc.); the hash helper belongs there.
+
+**Requirement**:
+- `scripts/lib/portable.sh`: add `_portable_sha1()` — tries `sha1sum`, then `shasum -a 1`, then returns 1 with a logged warning
+- `scripts/lib/state-writer.sh`: replace `sha1sum` call in `_sw_project_key` with `_portable_sha1`; if hash fails, log via `_sw_log_error` and fall back to `global`
+- `scripts/test-state-store.sh`: add a `case_project_key_no_sha1sum` test that stubs out both `sha1sum` and `shasum` from PATH and asserts `_sw_project_key` returns `global` (non-fatal) rather than erroring
+
+**Raised as**: [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5 (pr:#159).
+
+**Acceptance**:
+1. `bash scripts/test-state-store.sh` → all cases pass including the new stub test
+2. `bash scripts/run-all-tests.sh` → exit 0
+3. `grep -n 'sha1sum' scripts/lib/state-writer.sh` → only via `_portable_sha1`, no raw call
 
 **Milestone**: v0.3.0 跨三個 phase — M1（CC-231 延伸）：`core/policy/` 加 enum 定義；M2（CC-200）：`codex-dispatch.sh` 展開邏輯；M3（adapter layer）：`adapters/{codex,claude}/isolation-map.yaml` + PM template 更新。
 

@@ -94,6 +94,7 @@ jobs:
             patch-gitignore.sh
             pr-gate.sh
             setup-project.sh
+            state-writer.sh
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
             test-core-schemas.sh
@@ -112,6 +113,7 @@ jobs:
             test-pm-prep-snapshot.sh
             test-setup-project.sh
             test-skill-refine.sh
+            test-state-store.sh
             test-uninstall.sh
             test-usage-tracker.sh
             test-usage-weekly.sh
@@ -219,3 +221,10 @@ jobs:
       - uses: actions/checkout@v6
       - name: schema task mirrors backlog regression suite
         run: bash scripts/test-schema-task-mirrors-backlog.sh
+
+  test-state-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: state store regression suite
+        run: bash scripts/test-state-store.sh

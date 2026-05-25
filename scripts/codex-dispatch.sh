@@ -58,6 +58,11 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/model-aliases.tsv"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
   [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/model-aliases.tsv" || true
+  mkdir -p -- "$__codex_dispatch_snapshot_dir/lib"
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -79,6 +84,9 @@ BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
 PRINT_CMD=0
+
+# shellcheck source=scripts/lib/state-writer.sh
+. "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 
 _load_config_timeout() {
   local config_path="${PM_DISPATCH_CONFIG_FILE}"
@@ -306,6 +314,56 @@ else
 fi
 EXIT=$?
 set -e
+
+# --- state store: append Run row (best-effort; never fatal) ---
+{
+  # Extract task_id from brief file (first match of ^task_id: <ID>), fallback UNKN-0.
+  _SW_TASK_ID="UNKN-0"
+  if [[ -n "${BRIEF_FILE:-}" && -f "${BRIEF_FILE}" ]]; then
+    _SW_TID=$(grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+      "${BRIEF_FILE}" 2>/dev/null | head -1 | \
+      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
+    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
+  fi
+  if [[ "$_SW_TASK_ID" == "UNKN-0" && -n "${BRIEF:-}" ]]; then
+    _SW_TID=$(printf '%s' "$BRIEF" | grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+      2>/dev/null | head -1 | \
+      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
+    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
+  fi
+  _SW_STATE="failed"
+  [[ "$EXIT" -eq 0 ]] && _SW_STATE="ok"
+  _SW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+  _SW_HEX=$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  _SW_RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)-${_SW_HEX:0:6}"
+  _SW_TRACE_PATH="${TRACE:-}"
+  _SW_WORK_DIR="${WORK_DIR:-}"
+  _SW_MODEL_VAL="${MODEL:-}"
+  _SW_BRIEF_FILE_VAL="${BRIEF_FILE:-}"
+  # Route run row to target project partition, not the caller's cwd partition.
+  _SW_REPO_ROOT="${WORK_DIR:-}"
+  # Build JSON via jq to safely escape all string field values.
+  _SW_RUN_JSON="$(jq -cn \
+    --arg id "$_SW_RUN_ID" \
+    --arg task_id "$_SW_TASK_ID" \
+    --arg state "$_SW_STATE" \
+    --argjson exit_code "$EXIT" \
+    --arg model "$_SW_MODEL_VAL" \
+    --arg brief_file "$_SW_BRIEF_FILE_VAL" \
+    --arg working_dir "$_SW_WORK_DIR" \
+    --arg trace_path "$_SW_TRACE_PATH" \
+    --arg created_ts "$_SW_TS" \
+    '{schema_version:1,id:$id,task_id:$task_id,executor:"codex",state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
+    2>/dev/null || true)"
+  if [[ -z "$_SW_RUN_JSON" ]]; then
+    { type -t _sw_log_error >/dev/null 2>&1 && \
+      _sw_log_error "codex-dispatch: jq Run JSON construction failed (task_id=${_SW_TASK_ID} exit=${EXIT})"; } \
+      2>/dev/null || true
+  fi
+  if [[ -n "$_SW_RUN_JSON" && "$(type -t runs_append 2>/dev/null)" == function ]]; then
+    runs_append "$_SW_RUN_JSON" 2>/dev/null || true
+  fi
+} 2>/dev/null || true
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
