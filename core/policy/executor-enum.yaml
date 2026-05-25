@@ -1,10 +1,9 @@
 # core/policy/executor-enum.yaml
 #
 # Closed list of executor profiles pm-dispatch dispatches to.
-# Consumed by:
-#   - scripts/lib/handover-validate.sh
-#   - core/schema/run.schema.json     (inline enum, kept in sync)
-#   - core/schema/handover.schema.json (inline enum, kept in sync)
+# This enum is embedded inline in core/schema/run.schema.json and
+# core/schema/handover.schema.json (kept in sync).
+# Intended for consumption by runtime-layer validators (deferred to v0.3.x runtime phase); see core/README.md.
 #
 # Adding a value is a one-line YAML edit + a breaking version bump per the
 # schema versioning policy in core/README.md.

@@ -37,6 +37,7 @@ reviewers:
 # Verdict tokens any reviewer may emit (consumed by
 # review.schema.json findings[].verdict).
 verdicts:
+  - approve
   - pass
   - pass-not-applicable
   - advise

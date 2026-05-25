@@ -107,8 +107,8 @@ writer:
     - review_upsert
     - decision_upsert
 
-# Forbidden writers (enforced by layer-boundary test)
+# Forbidden writers (aspirational contract; no enforcement test exists yet)
 forbidden:
   - "any path under $STORE/ written without serialize_with_lock"
-  - "any path under $STORE/ written by code outside runtime/pmctl/"
+  - "any path under $STORE/ written by code outside the designated writer module (see writer.description above)"
   - "any hard-coded path; all paths must be resolved through this file"

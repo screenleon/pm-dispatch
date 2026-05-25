@@ -8,7 +8,8 @@
       "const": 1
     },
     "task_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
     },
     "built_ts": {
       "type": "string",

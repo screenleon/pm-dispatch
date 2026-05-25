@@ -1,10 +1,9 @@
 # core/policy/dispatch-routes.yaml
 #
 # Closed list of dispatch routes for a `dispatch_handover_v1` block.
-# Consumed by:
-#   - scripts/lib/handover-validate.sh
-#   - core/schema/handover.schema.json (inline enum, kept in sync)
+# Embedded inline in core/schema/handover.schema.json (kept in sync).
+# Intended for consumption by runtime-layer validators (deferred to v0.3.x runtime phase); see core/README.md.
 
 values:
-  - main_thread_bash_background    # codex route — main thread Bash() to scripts/codex-dispatch.sh
-  - agent_executor                  # claude-executor agent route
+  - main_thread_bash_background    # main thread background script route
+  - agent_executor                  # agent-based executor route

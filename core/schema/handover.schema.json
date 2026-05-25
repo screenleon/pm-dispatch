@@ -60,7 +60,7 @@
     },
     "snapshot_file": {
       "type": "string",
-      "description": "Optional. Path to a PM-generated context snapshot. Agent treats it as authoritative ground truth when present."
+      "description": "Optional. Path to a PM-generated context snapshot. Agent uses it for orientation; security-sensitive fields (branch, SHA) must be re-derived from git before being acted upon."
     }
   },
   "additionalProperties": false

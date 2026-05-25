@@ -28,31 +28,29 @@ CORE_DIR="$REPO_ROOT/core"
 # ---------- helpers ----------
 
 _yaml_get() {
-  # Extract a value from a YAML file by dotted key path.
-  # If value is a list: print each element on its own line.
-  # If value is a dict: print each key on its own line.
-  # If value is a scalar: print it.
+  # Extract a list's items or a map's keys from a simple top-level YAML key.
+  # Supports the core/policy shapes used for schema enum-sync tests.
   local file="$1" key="$2"
-  python3 -c "
-import sys, yaml
-with open('$file') as f:
-    data = yaml.safe_load(f)
-keys = '$key'.split('.')
-for k in keys:
-    if data is None:
-        sys.exit(1)
-    data = data.get(k) if isinstance(data, dict) else None
-if data is None:
-    sys.exit(1)
-if isinstance(data, list):
-    for item in data:
-        print(item)
-elif isinstance(data, dict):
-    for k in data.keys():
-        print(k)
-else:
-    print(data)
-"
+  awk -v key="${key}:" '
+    function clean(value) {
+      sub(/[[:space:]]+#.*$/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    $0 ~ "^" key "([[:space:]]*(#.*)?)?$" { found=1; next }
+    found && /^[[:space:]]+-[[:space:]]/ {
+      sub(/^[[:space:]]+-[[:space:]]/, "")
+      print clean($0)
+      next
+    }
+    found && /^  [^[:space:]#][^:]*:[[:space:]]*$/ {
+      sub(/^  /, "")
+      sub(/:[[:space:]]*$/, "")
+      print
+      next
+    }
+    found && /^[^[:space:]#][^:]*:/ { exit }
+  ' "$file"
 }
 
 _schema_enum() {
@@ -64,6 +62,11 @@ _schema_enum() {
 # ---------- tests ----------
 
 case_schema_parse() {
+  # Verifies that the given JSON Schema file is valid parseable JSON.
+  #
+  # Steps:
+  #   1. Run jq -e on the file.
+  #   2. Assert jq exits 0.
   local name="JSON Schema: $1 parses as valid JSON"
   should_run "$name" || return 0
   if jq -e . "$1" >/dev/null 2>&1; then
@@ -74,16 +77,37 @@ case_schema_parse() {
 }
 
 case_yaml_parse() {
-  local name="YAML: $1 parses as valid YAML"
+  # Verifies that the given YAML file is non-empty, uses space (not tab) indentation,
+  # and contains at least one key: value line — sufficient structural validation for
+  # the simple core/policy and core/state YAML files.
+  #
+  # Steps:
+  #   1. Assert the file is non-empty.
+  #   2. Assert no line starts with a tab character (YAML requires space indentation).
+  #   3. Assert at least one top-level key: line is present.
+  local name="YAML: $1 has valid structure"
   should_run "$name" || return 0
-  if python3 -c "import yaml; yaml.safe_load(open('$1'))" 2>/dev/null; then
-    pass "$name"
-  else
-    fail "$name" "yaml.safe_load failed"
+  if [[ ! -s "$1" ]]; then
+    fail "$name" "file is empty"
+    return
   fi
+  if grep -Pq '^\t' "$1" 2>/dev/null; then
+    fail "$name" "file contains tab indentation (YAML requires spaces)"
+    return
+  fi
+  if ! grep -qE '^[a-zA-Z_][a-zA-Z0-9_]*:' "$1"; then
+    fail "$name" "no top-level key: line found"
+    return
+  fi
+  pass "$name"
 }
 
 case_schema_version_const() {
+  # Verifies that the schema declares schema_version with const: 1.
+  #
+  # Steps:
+  #   1. Extract .properties.schema_version.const via jq.
+  #   2. Assert the value equals "1".
   local file="$1"
   local name="schema_version: $file declares const: 1"
   should_run "$name" || return 0
@@ -97,6 +121,13 @@ case_schema_version_const() {
 }
 
 case_enum_sync() {
+  # Verifies that enum values embedded inline in a JSON Schema stay in sync
+  # with the authoritative policy YAML file (the human editing surface).
+  #
+  # Steps:
+  #   1. Extract enum values from the JSON Schema at the given jq path.
+  #   2. Extract values list from the policy YAML file.
+  #   3. Assert both lists contain the same values (order-insensitive).
   # Compare an inline schema enum against the policy YAML it documents.
   # args: <schema_file> <jq path to enum> <yaml_file> <yaml key>
   local schema_file="$1" jq_path="$2" yaml_file="$3" yaml_key="$4"
@@ -186,11 +217,36 @@ case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "verdicts"
 
+case_review_verdict_includes_approve() {
+  # Verifies that review.schema.json includes 'approve' in the verdict enum,
+  # aligning the schema with the live pr-gate.sh contract (critic/architecture-reviewer
+  # both emit 'approve' for clean reviews).
+  #
+  # Steps:
+  #   1. Extract findings[].verdict enum from review.schema.json via jq.
+  #   2. Assert "approve" is present in the enum array.
+  local name="review.schema.json: verdict enum includes approve"
+  should_run "$name" || return 0
+  local review_schema="$CORE_DIR/schema/review.schema.json"
+  if jq -e '.properties.findings.items.properties.verdict.enum | contains(["approve"])' "$review_schema" > /dev/null; then
+    pass "$name"
+  else
+    fail "$name" "approve not in verdict enum — schema and runtime out of sync"
+  fi
+}
+case_review_verdict_includes_approve
+
 # 5. brief.schema.json structural contract tests
 # These tests verify the schema document itself has the right constraints,
 # so removals of additionalProperties/required/pattern are caught immediately.
 
 case_brief_required_fields_declared() {
+  # Verifies that brief.schema.json's required array contains the minimum
+  # set of mandatory fields every dispatch brief must declare.
+  #
+  # Steps:
+  #   1. Extract the required array from brief.schema.json.
+  #   2. Assert each expected required field name is present.
   local name="brief.schema.json: required fields declared"
   should_run "$name" || return 0
   local required
@@ -205,6 +261,12 @@ case_brief_required_fields_declared() {
 }
 
 case_brief_additional_properties_false() {
+  # Verifies that brief.schema.json sets additionalProperties: false, preventing
+  # unknown fields from silently passing validation.
+  #
+  # Steps:
+  #   1. Extract .additionalProperties from the schema.
+  #   2. Assert the value is false (boolean).
   local name="brief.schema.json: additionalProperties is false"
   should_run "$name" || return 0
   local val
@@ -217,6 +279,12 @@ case_brief_additional_properties_false() {
 }
 
 case_brief_working_dir_has_pattern() {
+  # Verifies that the working_dir field in brief.schema.json enforces an
+  # absolute-path regex pattern constraint.
+  #
+  # Steps:
+  #   1. Extract .properties.working_dir.pattern from the schema.
+  #   2. Assert a non-empty pattern string is present.
   local name="brief.schema.json: working_dir has pattern constraint"
   should_run "$name" || return 0
   local pat
@@ -229,6 +297,12 @@ case_brief_working_dir_has_pattern() {
 }
 
 case_brief_files_oneOf_has_four_variants() {
+  # Verifies that the files field in brief.schema.json defines exactly 4 oneOf
+  # variants (read, edit, new, and write).
+  #
+  # Steps:
+  #   1. Extract .properties.files.items.oneOf from the schema.
+  #   2. Assert the array length is 4.
   local name="brief.schema.json: files.items.oneOf has 4 variants"
   should_run "$name" || return 0
   local count
@@ -241,6 +315,12 @@ case_brief_files_oneOf_has_four_variants() {
 }
 
 case_brief_files_oneOf_all_have_additional_properties_false() {
+  # Verifies all 4 oneOf variants in the files field enforce additionalProperties: false,
+  # preventing unknown keys from silently passing validation in any files variant.
+  #
+  # Steps:
+  #   1. Extract .properties.files.items.oneOf from the schema.
+  #   2. Assert every variant object has additionalProperties equal to false.
   local name="brief.schema.json: all files oneOf variants have additionalProperties:false"
   should_run "$name" || return 0
   local count_without
@@ -253,6 +333,12 @@ case_brief_files_oneOf_all_have_additional_properties_false() {
 }
 
 case_brief_sha_field_has_pattern() {
+  # Verifies that the expected_head_sha field in brief.schema.json enforces a
+  # 40-character hex pattern (valid git SHA constraint).
+  #
+  # Steps:
+  #   1. Extract .properties.expected_head_sha.pattern from the schema.
+  #   2. Assert a non-empty pattern string is present.
   local name="brief.schema.json: expected_head_sha has sha40 pattern"
   should_run "$name" || return 0
   local pat

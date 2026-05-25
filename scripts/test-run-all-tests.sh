@@ -38,6 +38,10 @@ SUITE_NAMES=(
   test-pr-gate-profile
   test-claude-executor
   test-run-all-tests
+  test-lint-model-aliases
+  test-core-schemas
+  test-pm-prep-snapshot
+  test-schema-task-mirrors-backlog
 )
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
@@ -88,6 +92,10 @@ suite_path() {
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
     test-claude-executor) printf 'scripts/test-claude-executor.sh\n' ;;
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
+    test-lint-model-aliases) printf 'scripts/test-lint-model-aliases.sh\n' ;;
+    test-core-schemas) printf 'scripts/test-core-schemas.sh\n' ;;
+    test-pm-prep-snapshot) printf 'scripts/test-pm-prep-snapshot.sh\n' ;;
+    test-schema-task-mirrors-backlog) printf 'scripts/test-schema-task-mirrors-backlog.sh\n' ;;
     *) return 1 ;;
   esac
 }

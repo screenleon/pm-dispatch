@@ -162,6 +162,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-256 | 🔵 active | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. Filed in pr:#152. | ops/test | 2026-05-24 | pr:#152 | P3 | reuse-debt |
 | CC-257 | ✅ closed 2026-05-24 | **[pr-gate.sh stderr noise: 7× `final::` command-not-found per invocation]** Every `/pr-gate` run emitted 7 shell errors at `scripts/pr-gate.sh:362` (heredoc opening line for the codex brief construction). Root cause: unquoted heredoc delimiter (`<< BRIEF_EOF`) → bash performed command substitution on the 7 backticked `` `Final:` ``/`` `final:` `` tokens added by CC-252 (#147); identical 3-line block also present in synthesis-brief heredoc (SBRIEF_P2). Verdict + result file still emitted correctly so this was stderr noise only — but it obscured real shell errors and hit every PR. Fix: escape the 7 backtick pairs (`` ` `` → `` \` ``) in the 3 unique lines (each appearing in both BRIEF_EOF and SBRIEF_P2 = 6 line edits). Regression test `test_brief_construction_emits_no_shell_errors` asserts stderr contains zero `command not found` AND the brief still carries the cautionary tokens. | gate/ops | 2026-05-24 | pr:#154 | P3 | oss |
 | CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/hook-pm-write-guard.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-hooks.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
+| CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
+| CC-260 | 🟡 planned | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 
 ---
 
@@ -1825,7 +1827,7 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 
 **Problem**: `scripts/hook-pm-write-guard.sh` currently allows only `~/.claude/projects/<project>/memory/**`. Audit of 207 denies over 10 days identified 3 legitimate PM-author patterns being incorrectly denied (12 hits; the rest are red-team / regression-test traffic).
 
-**Why**: 
+**Why**:
 - `/tmp/<task-slug>/*.md` is the verbatim-as-attached-file pattern from `[[feedback_codex_brief_discipline]]` (Pattern 2). Current deny forces PM to fall back to inline embedding — the exact failure mode the pattern was written to avoid (apply_patch debug-loop hang).
 - `<repo>/docs/spikes/*-scope.md` / `*-rfc.md` are PM-authorship territory; the inline-return → main-thread-write round-trip is a no-value transcription step.
 - Memory writes through symlinked memory dir (`memory-private/` per `[[reference_memory_private_repo]]`) get denied because `realpath_m` chases the symlink before the allow-pattern match. Hook bug, not policy.
@@ -1851,3 +1853,49 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 **See**: `docs/spikes/CC-258-pm-write-guard-policy.md` (full design, audit data table, code change sketch, test coverage sketch, risks + mitigations).
 
 **Cross-link**: `[[feedback_codex_brief_discipline]]` (Pattern 2 origin), `[[feedback_spike_validation_mandatory]]` (why `/tmp/brief-*.md` stays denied), `[[reference_memory_private_repo]]` (symlink target).
+
+---
+
+## CC-259 — yaml.sh lib extraction（someday）
+
+**Problem**: `_yaml_get` (bash/awk list extractor) and `case_yaml_parse` (structural validator) are currently inlined in `scripts/test-core-schemas.sh`. When a second test script needs YAML parsing, these helpers will be copy-pasted, diverging over time.
+
+**Why**: Deferred from CC-229 M1 substrate PR to avoid expanding an already-large gate surface. The helpers were freshly written in CC-229 and have exactly one consumer; extraction before a second consumer exists is premature. Trigger for promotion: a new `test-*.sh` that needs to parse/validate YAML.
+
+**Requirement**:
+- Extract `_yaml_get` and `case_yaml_parse` into `scripts/lib/yaml.sh` (source-able, no side effects on load)
+- Wire `scripts/lib/yaml.sh` into `scripts/test-core-schemas.sh` via `source` (replace inline definitions)
+- Add `scripts/test-yaml-lib.sh` with independent unit tests for both helpers (cover key-found, key-missing, tab-indented, empty-file, no-key-line cases)
+- Wire `test-yaml-lib.sh` into `run-all-tests.sh` and `.github/workflows/lint.yml`
+- All existing test-core-schemas.sh cases must still pass (golden-parity)
+
+**Acceptance**:
+1. `grep -c "_yaml_get\|case_yaml_parse" scripts/lib/yaml.sh` ≥ 2 (both helpers present)
+2. `grep -q "source.*lib/yaml.sh" scripts/test-core-schemas.sh`
+3. `bash scripts/test-yaml-lib.sh` → exit 0
+4. `bash scripts/test-core-schemas.sh` → exit 0
+5. `bash scripts/run-all-tests.sh` → exit 0
+
+**Milestone**: v0.3.x (post-M1); pick up when a second YAML-parsing test script is introduced.
+
+**Priority**: P3 — no active consumer need today; purely technical debt prevention.
+
+## CC-260 — pr-gate.sh: include dirty-worktree diff in review scope（planned）
+
+**Problem**: When a branch has committed changes, `scripts/pr-gate.sh` uses `git diff "$BASE"...HEAD` to build the reviewer brief stat. This silently omits uncommitted tracked changes (`git diff HEAD`) and untracked files. During CC-229 Gate 12, the brief stat did not include `install.sh` and `scripts/test-schema-task-mirrors-backlog.sh` which were in the dirty worktree but not yet committed.
+
+**Why**: Gate reviewers can only assess what's in the brief. Silently omitting working-tree changes means new files and tracked modifications that haven't been committed are invisible to reviewers. This is especially impactful for long-running iterative gate sessions where fixes accumulate in the working tree before a final commit.
+
+**Requirement**:
+- Detect dirty worktree (tracked changes or untracked relevant files) when building gate briefs
+- Either include `git diff HEAD` output alongside `git diff "$BASE"...HEAD`, or emit a visible warning: `# warn: N dirty tracked / M untracked files excluded from brief — commit first for complete review`
+- Prefer the warning approach to avoid inflating brief size; the warning should appear in the brief header section
+
+**Acceptance**:
+1. When working tree has uncommitted tracked changes, gate brief includes either the full diff or a "dirty-tree" warning line
+2. `bash scripts/test-pr-gate.sh` → exit 0 (includes regression for dirty-tree warning)
+3. `bash scripts/run-all-tests.sh` → exit 0
+
+**Milestone**: v0.3.x (post-M1); prioritize before the next multi-gate iterative fix session.
+
+**Priority**: P2 — operational correctness for gate reviews; detected as real drift in CC-229 gate cycle.

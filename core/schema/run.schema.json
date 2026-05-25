@@ -1,6 +1,6 @@
 {
   "title": "Run",
-  "description": "One executor dispatch (one codex/claude invocation against a brief). Records the dispatch parameters + trace pointers; does NOT duplicate trace contents (which live in .agent-trace/codex-<ts>.{jsonl,last,stderr}).",
+  "description": "One executor dispatch (one brief invocation against an executor). Records the dispatch parameters and trace pointers; does NOT duplicate trace contents (which live in the adapter-managed trace directory).",
   "type": "object",
   "required": ["id", "schema_version", "task_id", "executor", "state", "created_ts"],
   "properties": {
@@ -13,7 +13,7 @@
     },
     "task_id": {
       "type": "string",
-      "pattern": "^[A-Z]{1,4}-[0-9]+$"
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
     },
     "executor": {
       "enum": ["codex", "claude"],
@@ -41,7 +41,7 @@
     },
     "trace_path": {
       "type": "string",
-      "description": "Absolute path to .agent-trace/codex-<ts>.jsonl. Run row does NOT include trace contents."
+      "description": "Absolute path to the executor trace file. Run row does NOT include trace contents."
     },
     "exit_code": {
       "type": "integer"

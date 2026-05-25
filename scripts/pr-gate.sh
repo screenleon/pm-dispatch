@@ -360,6 +360,7 @@ if [[ "$SEQUENTIAL" == "true" ]]; then
   fi
 
   cat > "$BRIEF_FILE" << BRIEF_EOF
+schema_version: 1
 working_dir: ${WORK_DIR}
 
 goal: Sequential ${TIER}-tier PR-gate review. Apply each reviewer's criteria to the changed files and write a structured verdict to ${OUTPUT_FILE}.
@@ -463,7 +464,7 @@ output_format: |
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
-  - has-conclusion: grep -c '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
+  - has-conclusion: grep -cE '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
 
   acceptance:
@@ -487,6 +488,17 @@ BRIEF_EOF
     SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
     if [[ "$SEQ_FINAL_COUNT" -ne 1 ]]; then
       printf 'Error: gate result file must contain exactly one %s: GO/NO-GO line (found %d).\n' "Final" "$SEQ_FINAL_COUNT" >&2
+      exit 1
+    fi
+    SEQ_FRONTMATTER_FINAL=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$OUTPUT_FILE")
+    if [[ -z "$SEQ_FRONTMATTER_FINAL" ]]; then
+      printf 'Error: gate result YAML frontmatter missing required field: final:\n' >&2
+      exit 1
+    fi
+    SEQ_BODY_FINAL=$(grep -E '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" | awk '{print $2}')
+    if [[ "$SEQ_FRONTMATTER_FINAL" != "$SEQ_BODY_FINAL" ]]; then
+      printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in sequential gate result.\n' \
+        "$SEQ_FRONTMATTER_FINAL" "$SEQ_BODY_FINAL" >&2
       exit 1
     fi
   else
@@ -544,6 +556,7 @@ else
     REVIEWER_NAMES+=("$r")
 
     cat > "$REVIEWER_BRIEF" << RBRIEF_EOF
+schema_version: 1
 working_dir: ${WORK_DIR}
 
 goal: You are acting as the ${r} reviewer. Read your agent definition, apply your specific review criteria to the changed files, and write your structured findings to ${REVIEWER_OUTPUT}.
@@ -738,6 +751,7 @@ RBRIEF_EOF
   # session from discovering or targeting reviewer output file locations.
 
   cat > "$SYNTHESIS_BRIEF" << SBRIEF_P1
+schema_version: 1
 working_dir: ${WORK_DIR}
 
 goal: You are project-pm. Synthesize the reviewer findings provided in the context below and write a final consolidated PR-gate result at ${OUTPUT_FILE}.

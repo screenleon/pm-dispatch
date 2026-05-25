@@ -33,7 +33,7 @@ core/context-pack/   → core/schema/  (source.interface.md references context-p
 `core/policy/` is a leaf — depends on nothing.
 `core/state/` does NOT import `core/policy/`.
 
-The runtime writer reads `core/schema/`, `core/state/layout.yaml`, and `core/policy/` to validate writes and resolve paths. Only the dedicated writer module may write to `~/.local/share/pm-dispatch/state/` paths.
+In the v0.3.x runtime phase, the designated writer module will read `core/schema/`, `core/state/layout.yaml`, and `core/policy/` to validate writes and resolve paths (runtime consumer deferred; M1 ships schema definitions only). Only the designated writer module may write to `~/.local/share/pm-dispatch/state/` paths.
 
 ## Schema versioning
 

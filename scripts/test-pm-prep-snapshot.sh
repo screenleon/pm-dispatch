@@ -79,6 +79,13 @@ require_no_match() {
   fi
 }
 
+# Verifies that pm-prep-snapshot.sh creates a snapshot file under /tmp
+# when run with no --out argument (default output path).
+#
+# Steps:
+#   1. Record a filesystem marker timestamp.
+#   2. Run pm-prep-snapshot.sh with no --out flag.
+#   3. Assert a new pm-snapshot-*.md file appears under /tmp newer than the marker.
 if should_run "cli-default-output"; then
   marker="$tmp_root/default-marker"
   touch "$marker"
@@ -95,6 +102,13 @@ if should_run "cli-default-output"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh writes the snapshot to the path
+# specified by the --out flag instead of the default /tmp location.
+#
+# Steps:
+#   1. Specify a custom output path via --out.
+#   2. Run pm-prep-snapshot.sh --out <custom-path>.
+#   3. Assert the snapshot file exists at the custom path.
 if should_run "cli-out-override"; then
   out="$tmp_root/pm-snapshot-override.md"
   if run_snapshot "$out" >/dev/null && [ -f "$out" ]; then
@@ -104,6 +118,13 @@ if should_run "cli-out-override"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh prints the output file path to stdout
+# so callers can capture the path of the generated snapshot.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh --out <path>.
+#   2. Capture stdout.
+#   3. Assert stdout equals the specified output path.
 if should_run "cli-stdout-echoes-out-path"; then
   out="$tmp_root/pm-snapshot-echo.md"
   captured="$(run_snapshot "$out" 2>/dev/null)"
@@ -114,6 +135,13 @@ if should_run "cli-stdout-echoes-out-path"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh prints the default /tmp snapshot path
+# to stdout even when --out is not specified.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh with no --out flag.
+#   2. Capture stdout.
+#   3. Assert stdout is a non-empty path that resolves to an existing file.
 if should_run "cli-stdout-echoes-default-path"; then
   marker="$tmp_root/echo-default-marker"
   : > "$marker"
@@ -126,6 +154,14 @@ if should_run "cli-stdout-echoes-default-path"; then
   fi
 fi
 
+# Verifies that the generated snapshot contains all required YAML frontmatter
+# fields: snapshot_ts, repo, branch_base, current_branch, ahead_by,
+# recently_merged, backlog_next_id, and project_tooling.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh and write output to a temp file.
+#   2. Assert each required frontmatter key is present with the expected regex pattern.
+#   3. Pass only if all assertions succeed.
 if should_run "frontmatter-core-fields"; then
   out="$tmp_root/frontmatter.md"
   run_snapshot "$out" >/dev/null
@@ -139,6 +175,13 @@ if should_run "frontmatter-core-fields"; then
   require_file_contains "$out" '^project_tooling:$' "frontmatter-core-fields: project_tooling"
 fi
 
+# Verifies that the project_tooling section in the snapshot reports the
+# correct boolean values for makefile, backlog_render_target, and has_validate_sh.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh and write output to a temp file.
+#   2. Assert project_tooling contains "makefile: false".
+#   3. Assert project_tooling contains "has_validate_sh: true".
 if should_run "frontmatter-project-tooling-values"; then
   out="$tmp_root/project-tooling.md"
   run_snapshot "$out" >/dev/null
@@ -147,6 +190,13 @@ if should_run "frontmatter-project-tooling-values"; then
   require_file_contains "$out" '^  has_validate_sh: true$' "frontmatter-project-tooling-values: has_validate_sh"
 fi
 
+# Verifies that pm-prep-snapshot.sh --focus includes a focus_tickets section
+# containing the specified CC ticket rows and body headings.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh --focus CC-243,CC-244.
+#   2. Assert output contains "## focus_tickets" section heading.
+#   3. Assert output contains table rows and body headings for both CC-243 and CC-244.
 if should_run "focus-tickets-section"; then
   out="$tmp_root/focus.md"
   run_snapshot "$out" --focus CC-243,CC-244 >/dev/null
@@ -157,6 +207,13 @@ if should_run "focus-tickets-section"; then
   require_file_contains_fixed "$out" "## CC-244 —" "focus-tickets-section: CC-244 body heading"
 fi
 
+# Verifies that pm-prep-snapshot.sh --focus emits a warning comment when
+# a specified CC ticket is not found in BACKLOG.md, and omits the focus section.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh --focus CC-999 (non-existent ticket).
+#   2. Assert output contains "# warn: CC-999 not found in BACKLOG.md".
+#   3. Assert no "## focus_tickets" section is emitted.
 if should_run "focus-missing-ticket-warn"; then
   out="$tmp_root/focus-missing.md"
   run_snapshot "$out" --focus CC-999 >/dev/null
@@ -164,12 +221,25 @@ if should_run "focus-missing-ticket-warn"; then
   require_no_match "$out" '^## focus_tickets' "focus-missing-ticket-warn: no focus section"
 fi
 
+# Verifies that pm-prep-snapshot.sh omits the focus_tickets section entirely
+# when --focus is not specified.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh without --focus.
+#   2. Assert output does not contain "## focus_tickets".
 if should_run "focus-omitted-no-section"; then
   out="$tmp_root/focus-omitted.md"
   run_snapshot "$out" >/dev/null
   require_no_match "$out" '^## focus_tickets' "focus-omitted-no-section"
 fi
 
+# Verifies that the recently_merged section is populated from gh pr list when
+# gh is available, and only warns when gh is genuinely absent.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh with a fake gh on PATH that returns stub PRs.
+#   2. Assert no "gh not found" warning appears in output.
+#   3. Assert output contains expected stub merged PR items.
 if should_run "recently-merged-gh-fallback-warns-only-when-needed"; then
   out="$tmp_root/recently-merged.md"
   run_snapshot "$out" >/dev/null
@@ -182,6 +252,12 @@ if should_run "recently-merged-gh-fallback-warns-only-when-needed"; then
   require_file_contains_fixed "$out" '  - "#129 fake merged pr two"' "recently-merged-gh-fallback-warns-only-when-needed: item two"
 fi
 
+# Verifies that pm-prep-snapshot.sh does not emit "command not found" errors
+# in the snapshot output (all required commands are present or gracefully absent).
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh and capture the snapshot output.
+#   2. Assert the snapshot file does not contain the string "command not found".
 if should_run "no-command-not-found-warnings"; then
   out="$tmp_root/no-command-not-found.md"
   run_snapshot "$out" >/dev/null
@@ -192,6 +268,13 @@ if should_run "no-command-not-found-warnings"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh outputs a file ending with a newline
+# so downstream tools that require POSIX-compliant text files work correctly.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh and write output to a temp file.
+#   2. Read the last byte of the output file.
+#   3. Assert the last byte is 0x0a (newline).
 if should_run "output-ends-with-newline"; then
   out="$tmp_root/newline.md"
   run_snapshot "$out" >/dev/null
@@ -203,6 +286,13 @@ if should_run "output-ends-with-newline"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh produces identical output across two runs
+# except for the snapshot_ts timestamp field.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh twice, writing to two separate files.
+#   2. Strip the snapshot_ts line from both files.
+#   3. Assert the remaining content is byte-identical.
 if should_run "deterministic-except-timestamp"; then
   first="$tmp_root/deterministic-a.md"
   second="$tmp_root/deterministic-b.md"
@@ -217,6 +307,13 @@ if should_run "deterministic-except-timestamp"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh exits non-zero with a clear error message
+# when run from a directory that is not inside a git repository.
+#
+# Steps:
+#   1. Create a temporary non-git directory.
+#   2. Run pm-prep-snapshot.sh from that directory.
+#   3. Assert exit is non-zero and error output contains "not inside a git repository".
 if should_run "error-hard-non-git"; then
   nongit="$tmp_root/non-git"
   mkdir -p "$nongit"
@@ -231,6 +328,13 @@ if should_run "error-hard-non-git"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh exits non-zero with a clear error message
+# when the --out path is inside a non-writable directory.
+#
+# Steps:
+#   1. Create a directory with mode 500 (no write permission).
+#   2. Run pm-prep-snapshot.sh --out <dir>/out.md.
+#   3. Assert exit is non-zero and error output contains "cannot write to output path".
 if should_run "error-hard-unwritable-output"; then
   ro="$tmp_root/unwritable"
   mkdir -p "$ro"
@@ -249,6 +353,12 @@ if should_run "error-hard-unwritable-output"; then
   chmod 700 "$ro"
 fi
 
+# Verifies that pm-prep-snapshot.sh --help exits 0 and prints "Usage:" to stderr.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh --help.
+#   2. Assert exit code is 0.
+#   3. Assert stderr contains "Usage:".
 if should_run "cli-help"; then
   if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --help >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
     if grep -q "^Usage:" /tmp/pm-prep-snapshot.err; then
@@ -261,6 +371,13 @@ if should_run "cli-help"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh exits non-zero with an "unknown argument"
+# error message when given an unrecognized flag.
+#
+# Steps:
+#   1. Run pm-prep-snapshot.sh --not-a-real-flag.
+#   2. Assert exit is non-zero.
+#   3. Assert stderr contains "unknown argument".
 if should_run "cli-unknown-flag"; then
   if (PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --not-a-real-flag >/tmp/pm-prep-snapshot.out 2>/tmp/pm-prep-snapshot.err); then
     fail "cli-unknown-flag" "expected non-zero exit for unknown flag"
@@ -273,26 +390,86 @@ if should_run "cli-unknown-flag"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh emits a branch_base warning and uses the
+# local main branch as fallback when origin/main remote is absent.
+#
+# Steps:
+#   1. Create a local git repo with a main branch but no origin remote.
+#   2. Run pm-prep-snapshot.sh pointing at that repo.
+#   3. Assert snapshot output contains "warn: origin/main unresolved" and
+#      branch_base references the local main commit SHA.
 if should_run "branch-base-warn-on-missing-origin-main"; then
   local_repo="$tmp_root/local-only-repo"
   mkdir -p "$local_repo"
-  ( cd "$local_repo"
-    git init -q -b main
-    git -c user.email=t@t -c user.name=T commit --allow-empty -q -m init
-    # No origin remote — origin/main cannot resolve.
-    # Use the real BACKLOG.md so the snapshot script can compute backlog_next_id.
-    cp "$REPO_ROOT/BACKLOG.md" .
-    out="$tmp_root/local-only-snap.md"
-    if PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$out" >/tmp/pm-prep-snapshot.err 2>&1; then
-      if grep -qE "^# warn: origin/main unresolved" "$out" && grep -qE "^branch_base: main@[0-9a-f]+" "$out"; then
-        pass "branch-base-warn-on-missing-origin-main"
-      else
-        fail "branch-base-warn-on-missing-origin-main" "missing warn line or wrong branch_base"
-      fi
+  git -C "$local_repo" init -q -b main
+  git -C "$local_repo" -c user.email=t@t -c user.name=T commit --allow-empty -q -m init
+  # No origin remote — origin/main cannot resolve.
+  # Use the real BACKLOG.md so the snapshot script can compute backlog_next_id.
+  cp "$REPO_ROOT/BACKLOG.md" "$local_repo/"
+  _snap_out="$tmp_root/local-only-snap.md"
+  _snap_exit=0
+  (cd "$local_repo" && PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$_snap_out") \
+    >/tmp/pm-prep-snapshot.err 2>&1 || _snap_exit=$?
+  if [[ "$_snap_exit" -eq 0 ]]; then
+    if grep -qE "^# warn: origin/main unresolved" "$_snap_out" && \
+       grep -qE "^branch_base: main@[0-9a-f]+" "$_snap_out"; then
+      pass "branch-base-warn-on-missing-origin-main"
     else
-      fail "branch-base-warn-on-missing-origin-main" "snapshot script must not hard-fail when origin/main unresolved"
+      fail "branch-base-warn-on-missing-origin-main" "missing warn line or wrong branch_base"
     fi
-  )
+  else
+    fail "branch-base-warn-on-missing-origin-main" "snapshot script must not hard-fail when origin/main unresolved"
+  fi
+fi
+
+# Verifies that when jq is absent from PATH, collect_recently_merged sets a warning
+# and pm-prep-snapshot.sh still exits 0 with recently_merged: [].
+#
+# Steps:
+#   1. Find the directory containing the real jq binary.
+#   2. Build a shadow dir with symlinks to all tools in that directory except jq.
+#   3. Run pm-prep-snapshot.sh with PATH="$FAKE_GH_DIR:$shadow_dir:remaining_path".
+#   4. Assert exit 0, output contains "# warn: jq command not found", recently_merged: [].
+if should_run "recently-merged-no-jq-warns"; then
+  _jq_real="$(command -v jq 2>/dev/null || true)"
+  _out="$tmp_root/no-jq.md"
+  if [[ -z "$_jq_real" ]]; then
+    # jq already absent - run directly without PATH manipulation
+    _exit=0
+    PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$_out" >/dev/null 2>&1 || _exit=$?
+  else
+    _jq_dir="$(dirname "$_jq_real")"
+    _shadow="$tmp_root/shadow-no-jq"
+    _jq_dirs=()
+    while IFS= read -r _jq_path; do
+      _jq_dirs+=("$(dirname "$_jq_path")")
+    done < <(type -P -a jq 2>/dev/null || true)
+    mkdir -p "$_shadow"
+    for _f in "$_jq_dir"/*; do
+      [[ "$(basename "$_f")" == "jq" ]] && continue
+      [[ -x "$_f" ]] || continue
+      ln -sf "$_f" "$_shadow/$(basename "$_f")" 2>/dev/null || true
+    done
+    _nojq_path="$FAKE_GH_DIR:$_shadow"
+    IFS=: read -ra _path_dirs <<< "$PATH"
+    for _pd in "${_path_dirs[@]}"; do
+      _skip=0
+      for _jq_pd in "${_jq_dirs[@]}"; do
+        [[ "$_pd" == "$_jq_pd" ]] && _skip=1
+      done
+      [[ "$_skip" -eq 1 ]] && continue
+      _nojq_path="$_nojq_path:$_pd"
+    done
+    _exit=0
+    PATH="$_nojq_path" "$SCRIPT_PATH" --out "$_out" >/dev/null 2>&1 || _exit=$?
+  fi
+  if [[ "$_exit" -ne 0 ]]; then
+    fail "recently-merged-no-jq-warns" "exit $_exit, expected 0 - snapshot must not hard-fail when jq absent"
+  else
+    require_file_contains "$_out" '# warn: jq command not found' "recently-merged-no-jq-warns: warn line"
+    require_file_contains "$_out" 'recently_merged: \[\]' "recently-merged-no-jq-warns: empty list"
+    pass "recently-merged-no-jq-warns"
+  fi
 fi
 
 th_summary

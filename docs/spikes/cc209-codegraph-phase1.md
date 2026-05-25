@@ -198,7 +198,7 @@ Phase 2 (benchmark) NOT executed — gated on PM review of this verdict.
   ▲  Already initialized in /home/screenleon/github/pm-dispatch
   │
   ●  Use "codegraph index" to re-index or "codegraph sync" to update
-  └  
+  └
 
   === angle-a query (definition lookup pass function) ===
   []
@@ -213,7 +213,7 @@ Phase 2 (benchmark) NOT executed — gated on PM review of this verdict.
   ◆  Initialized in /home/screenleon/github/pm-dispatch
   ...
   ▲  No files found to index
-  
+
   === angle-b query (CodeGraph context) ===
   {
     "query": "pass function in scripts/lib/test-harness.sh",

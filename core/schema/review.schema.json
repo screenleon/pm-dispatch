@@ -12,7 +12,8 @@
       "const": 1
     },
     "task_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
     },
     "run_id": {
       "type": ["string", "null"],
@@ -35,7 +36,7 @@
             "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
           },
           "verdict": {
-            "enum": ["pass", "pass-not-applicable", "advise", "block-soft", "block", "needs-tests"],
+            "enum": ["approve", "pass", "pass-not-applicable", "advise", "block-soft", "block", "needs-tests"],
             "description": "Editing source-of-truth: core/policy/reviewer-policy.yaml. Keep in sync."
           },
           "summary": {
