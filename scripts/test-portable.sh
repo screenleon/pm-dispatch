@@ -1205,10 +1205,12 @@ case_portable_sha1_shasum_fallback() {
   )" || true
   rm -rf "$fake_bin"
 
-  if [[ "$result" =~ ^[0-9a-f]{40}$ ]]; then
+  # Assert exact digest — our fake shasum always emits da39a3... (SHA-1 of empty).
+  # A regex-only check would pass any broken impl that returns an arbitrary 40-hex string.
+  if [[ "$result" == "da39a3ee5e6b4b0d3255bfef95601890afd80709" ]]; then
     pass "$name"
   else
-    fail "$name" "expected 40-char hex digest, got '${result:-empty}'"
+    fail "$name" "expected da39a3ee5e6b4b0d3255bfef95601890afd80709, got '${result:-empty}'"
   fi
 }
 
