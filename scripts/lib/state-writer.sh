@@ -46,7 +46,9 @@ _sw_project_key() {
   {
     local repo_root project_key
     if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
-      repo_root="${_SW_REPO_ROOT}"
+      # Resolve to git top-level so subdirectory dispatches hash the same key.
+      repo_root="$(git -C "${_SW_REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null \
+        || printf '%s\n' "${_SW_REPO_ROOT}")"
     elif repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
       :
     else

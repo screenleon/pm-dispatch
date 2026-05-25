@@ -320,13 +320,13 @@ set -e
   # Extract task_id from brief file (first match of ^task_id: <ID>), fallback UNKN-0.
   _SW_TASK_ID="UNKN-0"
   if [[ -n "${BRIEF_FILE:-}" && -f "${BRIEF_FILE}" ]]; then
-    _SW_TID=$(grep -oE 'task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+    _SW_TID=$(grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
       "${BRIEF_FILE}" 2>/dev/null | head -1 | \
       sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
     [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
   fi
   if [[ "$_SW_TASK_ID" == "UNKN-0" && -n "${BRIEF:-}" ]]; then
-    _SW_TID=$(printf '%s' "$BRIEF" | grep -oE 'task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+    _SW_TID=$(printf '%s' "$BRIEF" | grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
       2>/dev/null | head -1 | \
       sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
     [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"

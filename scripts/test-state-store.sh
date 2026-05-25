@@ -108,7 +108,7 @@ case_events_append() {
   should_run "$name" || return 0
   local store proj_dir
   store="$tmp_root/events-one"
-  PM_DISPATCH_STATE_ROOT="$store" events_append '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","type":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" events_append '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   if [[ -f "$proj_dir/events.jsonl" && "$(wc -l < "$proj_dir/events.jsonl")" == "1" ]]; then
     pass "$name"
@@ -261,6 +261,75 @@ case_dispatch_run_json_valid() {
   fi
 }
 
+case_dispatch_subdir_partition_key() {
+  # Verifies that dispatching with --cd pointing to a repo subdirectory writes
+  # the run row under the repo root's partition key, not the subdirectory's key.
+  #
+  # Steps:
+  #   1. git init a fresh tmpdir (repo_root); create a subdir inside it.
+  #   2. Compute the expected partition key for the repo root.
+  #   3. Run codex-dispatch.sh --cd <repo_root>/subdir.
+  #   4. Assert runs.jsonl appears under projects/<root_key>/, not subdir key.
+  local name="codex-dispatch.sh: subdirectory --cd resolves to repo root partition"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition
+  store="$tmp_root/subdir-store"
+  fake_bin_dir="$tmp_root/subdir-bin"
+  repo_root="$tmp_root/subdir-repo"
+  work_subdir="$repo_root/sub/dir"
+  mkdir -p "$fake_bin_dir" "$work_subdir"
+  ( cd "$repo_root" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
+  root_key="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null | sha1sum 2>/dev/null | cut -c1-40 || true)"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/subdir-brief.md"
+  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_subdir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  expected_partition="$store/projects/$root_key"
+  if [[ -f "$expected_partition/runs.jsonl" ]]; then
+    pass "$name"
+  else
+    local actual
+    actual="$(find "$store/projects" -name "runs.jsonl" 2>/dev/null | tr '\n' ' ' || true)"
+    fail "$name" "expected $expected_partition/runs.jsonl; found: ${actual:-none}"
+  fi
+}
+
+case_dispatch_task_id_anchor() {
+  # Verifies that prefixed keys like `parent_task_id:` are not mistaken for the
+  # real `task_id:` line when extracting the task attribution for the run row.
+  #
+  # Steps:
+  #   1. Write a brief with parent_task_id: CC-999 before task_id: CC-230.
+  #   2. Run fake-codex dispatch.
+  #   3. Assert that runs.jsonl has task_id == "CC-230", not "CC-999" or "UNKN-0".
+  local name="codex-dispatch.sh: task_id extraction is anchored (ignores parent_task_id)"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file task_id_found
+  store="$tmp_root/anchor-store"
+  fake_bin_dir="$tmp_root/anchor-bin"
+  work_dir="$tmp_root/anchor-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/anchor-brief.md"
+  # parent_task_id: appears BEFORE task_id: - unanchored grep would pick CC-999
+  printf 'parent_task_id: CC-999\ntask_id: CC-230\nDo nothing.\n' > "$brief_file"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  task_id_found=""
+  [[ -n "$runs_file" ]] && task_id_found="$(jq -r '.task_id' "$runs_file" 2>/dev/null | head -1 || true)"
+  if [[ "$task_id_found" == "CC-230" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected task_id=CC-230 but got task_id=${task_id_found:-none} (file=${runs_file:-none})"
+  fi
+}
+
 case_store_root_override
 case_store_root_xdg
 case_store_root_default
@@ -274,5 +343,7 @@ case_codex_dispatch_state_store_self_contained
 case_dispatch_creates_run_row
 case_dispatch_correct_partition
 case_dispatch_run_json_valid
+case_dispatch_subdir_partition_key
+case_dispatch_task_id_anchor
 
 th_summary
