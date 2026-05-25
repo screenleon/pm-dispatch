@@ -147,16 +147,19 @@ case_events_append() {
   #   1. Call events_append with a schema-valid Event JSON object.
   #   2. Resolve the project dir for the store root.
   #   3. Assert events.jsonl exists and has exactly one line.
+  #   4. Assert that line parses as valid JSON via jq.
   local name="events_append: creates events.jsonl"
   should_run "$name" || return 0
-  local store proj_dir
+  local store proj_dir line
   store="$tmp_root/events-one"
   PM_DISPATCH_STATE_ROOT="$store" events_append '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
-  if [[ -f "$proj_dir/events.jsonl" && "$(wc -l < "$proj_dir/events.jsonl")" == "1" ]]; then
+  line="$(cat "$proj_dir/events.jsonl" 2>/dev/null || true)"
+  if [[ -f "$proj_dir/events.jsonl" && "$(wc -l < "$proj_dir/events.jsonl")" == "1" ]] &&
+    jq . >/dev/null 2>&1 <<< "$line"; then
     pass "$name"
   else
-    fail "$name" "events.jsonl missing or wrong line count"
+    fail "$name" "events.jsonl not one valid JSON line"
   fi
 }
 
@@ -179,6 +182,28 @@ case_task_upsert() {
     pass "$name"
   else
     fail "$name" "task file mismatch"
+  fi
+}
+
+case_task_upsert_invalid_id() {
+  # Verifies that task_upsert with an invalid task_id returns 0 (non-fatal) and
+  # does not create any file, preventing path traversal or unexpected file creation.
+  #
+  # Steps:
+  #   1. Call task_upsert with "../evil" as task_id and any JSON body.
+  #   2. Assert the return code is 0.
+  #   3. Assert no file was created at or near the tasks/ dir.
+  local name="task_upsert: invalid task_id is rejected non-fatally, no file created"
+  should_run "$name" || return 0
+  local store proj_dir rc=0
+  store="$tmp_root/task-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "../evil" '{"id":"evil"}' || rc=$?
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  # Check: exit code is 0 AND no evil file was written anywhere in the store
+  if [[ "$rc" -eq 0 ]] && ! find "$store" -name "evil.json" -o -name "evil" 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc or unexpected file exists under $store"
   fi
 }
 
@@ -470,6 +495,7 @@ case_runs_append_valid_jsonl
 case_runs_append_appends
 case_events_append
 case_task_upsert
+case_task_upsert_invalid_id
 case_runs_append_read_only_nonfatal
 case_codex_dispatch_state_store_self_contained
 case_dispatch_creates_run_row
