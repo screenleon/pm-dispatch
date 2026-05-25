@@ -42,6 +42,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ⏳ |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ⏳ |
 | CC-232 | context-pack schema + context-enricher 介面 | ⏳ |
+| CC-262 | `isolation_level` enum（`core/policy/` CC-231 延伸）— adapter 轉譯 map 及 dispatch 展開跨 M2/M3 完成 | ⏳ |
 
 ### M2 — 由抽取長出 runtime
 
@@ -59,6 +60,7 @@
 | CC-059 | thin `commands/pm.md` | ⏳ |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
 | CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
+| CC-262 | `adapters/codex/isolation-map.yaml` + `adapters/claude/isolation-map.yaml`；PM template 改寫 `isolation_level:` | ⏳ |
 
 ### M4 — 概念吸收
 
@@ -74,6 +76,7 @@
 |---|---|---|
 | CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
 | CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
+| CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ⏳ |
 | — | v0.3.0 release prep | ⏳ |
 
 ### v0.3.0 範圍外 → v0.4.0
