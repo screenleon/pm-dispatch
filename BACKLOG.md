@@ -1931,7 +1931,6 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 **Cross-link**: `[[CC-229]]`（M1 substrate）、`[[CC-260_release_prep]]`（v0.3.0 release prep 票）。
 
 **Outcome**: 2026-05-25 — Both edits applied in PR #162.
-**Outcome (closed 2026-05-25)**: Both edits applied in PR #162.
 1. `core/README.md` — "will read…(runtime consumer deferred; M1 ships schema definitions only)" → present-tense, parenthetical removed.
 2. `agents/project-pm.md` — "v0.3.x runtime PR" → "a future runtime PR".
 All three acceptance grep checks pass.
@@ -1995,5 +1994,4 @@ All three acceptance grep checks pass.
 **Cross-link**: `[[CC-231]]`（executor-enum policy）、`[[CC-200]]`（executor-router）、`[[CC-215]]`（pmctl adapter generate）、`[[CC-101]]`（executor-contract schema origin）。
 
 **Outcome**: 2026-05-25 — `_portable_sha1()` added to `scripts/lib/portable.sh` with `FAKE_SHA1_MISSING=1` stub; `_sw_project_key` in `state-writer.sh` updated to use it; `case_project_key_no_sha1sum` test added. Shipped in PR #162.
-**Outcome (closed 2026-05-25)**: `_portable_sha1()` added to `scripts/lib/portable.sh` with `FAKE_SHA1_MISSING=1` stub; `_sw_project_key` in `state-writer.sh` updated to use it; `case_project_key_no_sha1sum` test added. Shipped in PR #162.
 **See**: pr:#162

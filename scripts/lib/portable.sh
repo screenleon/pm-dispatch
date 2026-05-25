@@ -185,9 +185,10 @@ serialize_with_lock() {
 # Read stdin and print a 40-character lowercase hex SHA-1 digest on stdout.
 # Tries sha1sum (GNU coreutils / Linux), then shasum -a 1 (macOS/BSD).
 # Returns 1 and logs a warning if neither is available.
-# Test shim: set FAKE_SHA1_MISSING=1 to force the failure path in tests.
+# Test shims: FAKE_SHA1_MISSING=1 forces both tools missing (tests failure path);
+# FAKE_SHA1SUM_MISSING=1 skips only sha1sum so the shasum fallback can be tested.
 _portable_sha1() {
-  if command -v sha1sum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
+  if command -v sha1sum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]] && [[ "${FAKE_SHA1SUM_MISSING:-}" != "1" ]]; then
     sha1sum | cut -c1-40
     return
   fi

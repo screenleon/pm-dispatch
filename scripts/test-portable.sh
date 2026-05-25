@@ -1183,6 +1183,35 @@ case_link_or_copy_copy_refresh_dry_run() {
   pass "$name"
 }
 
+case_portable_sha1_shasum_fallback() {
+  local name="portable-sha1: shasum fallback produces 40-char hex digest"
+  should_run "$name" || return 0
+
+  # Build a fake bin directory that contains shasum (but not sha1sum).
+  # FAKE_SHA1SUM_MISSING=1 prevents portable.sh from using the real sha1sum
+  # even if it exists on PATH, so the shasum branch is exercised.
+  local fake_bin
+  fake_bin="$(mktemp -d)"
+  # Fake shasum that outputs sha1sum-compatible format on any input.
+  printf '#!/bin/sh\nprintf "da39a3ee5e6b4b0d3255bfef95601890afd80709  -\\n"\n' \
+    > "$fake_bin/shasum"
+  chmod +x "$fake_bin/shasum"
+
+  local result
+  result="$(
+    FAKE_SHA1SUM_MISSING=1 PATH="$fake_bin:$PATH" \
+      bash -c ". '${REPO_ROOT}/scripts/lib/portable.sh'
+               printf 'test-input\n' | _portable_sha1" 2>/dev/null
+  )" || true
+  rm -rf "$fake_bin"
+
+  if [[ "$result" =~ ^[0-9a-f]{40}$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 40-char hex digest, got '${result:-empty}'"
+  fi
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1192,5 +1221,6 @@ case_link_or_copy_copy_refresh_stale
 case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
+case_portable_sha1_shasum_fallback
 
 th_summary
