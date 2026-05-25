@@ -355,6 +355,11 @@ set -e
     --arg created_ts "$_SW_TS" \
     '{schema_version:1,id:$id,task_id:$task_id,executor:"codex",state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
     2>/dev/null || true)"
+  if [[ -z "$_SW_RUN_JSON" ]]; then
+    { type -t _sw_log_error >/dev/null 2>&1 && \
+      _sw_log_error "codex-dispatch: jq Run JSON construction failed (task_id=${_SW_TASK_ID} exit=${EXIT})"; } \
+      2>/dev/null || true
+  fi
   if [[ -n "$_SW_RUN_JSON" && "$(type -t runs_append 2>/dev/null)" == function ]]; then
     runs_append "$_SW_RUN_JSON" 2>/dev/null || true
   fi

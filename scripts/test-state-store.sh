@@ -17,6 +17,12 @@ reset_state_env() {
 }
 
 case_store_root_override() {
+  # Verifies that PM_DISPATCH_STATE_ROOT env var overrides the default state store root path.
+  #
+  # Steps:
+  #   1. Unset all store-root env vars.
+  #   2. Call _sw_store_root with PM_DISPATCH_STATE_ROOT=/tmp/test-state-override.
+  #   3. Assert the printed path equals the override value.
   local name="state_store_root: PM_DISPATCH_STATE_ROOT override"
   should_run "$name" || return 0
   local out
@@ -30,6 +36,12 @@ case_store_root_override() {
 }
 
 case_store_root_xdg() {
+  # Verifies that XDG_DATA_HOME is used as a fallback store root when PM_DISPATCH_STATE_ROOT is unset.
+  #
+  # Steps:
+  #   1. Unset PM_DISPATCH_STATE_ROOT; set XDG_DATA_HOME=/tmp/test-xdg.
+  #   2. Call _sw_store_root.
+  #   3. Assert the printed path equals /tmp/test-xdg/pm-dispatch/state.
   local name="state_store_root: XDG_DATA_HOME fallback"
   should_run "$name" || return 0
   local out
@@ -43,6 +55,12 @@ case_store_root_xdg() {
 }
 
 case_store_root_default() {
+  # Verifies that the default store root ~/.local/share/pm-dispatch/state is used when no env override is set.
+  #
+  # Steps:
+  #   1. Unset PM_DISPATCH_STATE_ROOT and XDG_DATA_HOME; set HOME=/tmp/test-home.
+  #   2. Call _sw_store_root.
+  #   3. Assert the printed path equals /tmp/test-home/.local/share/pm-dispatch/state.
   local name="state_store_root: default path"
   should_run "$name" || return 0
   local out
@@ -56,6 +74,13 @@ case_store_root_default() {
 }
 
 case_state_store_init_structure() {
+  # Verifies that state_store_init creates all required project subdirs and a VERSION=1 file.
+  #
+  # Steps:
+  #   1. Set PM_DISPATCH_STATE_ROOT to a fresh tmpdir.
+  #   2. Call state_store_init.
+  #   3. Assert tasks/, reviews/, decisions/, context-packs/, and archive/ all exist.
+  #   4. Assert $STORE/VERSION contains exactly "1".
   local name="state_store_init: creates directory structure"
   should_run "$name" || return 0
   local store proj_dir missing=()
@@ -73,6 +98,13 @@ case_state_store_init_structure() {
 }
 
 case_runs_append_valid_jsonl() {
+  # Verifies that runs_append creates runs.jsonl with exactly one valid JSON line.
+  #
+  # Steps:
+  #   1. Call runs_append with a minimal valid Run JSON object.
+  #   2. Resolve the project dir for the store root.
+  #   3. Assert runs.jsonl exists and has exactly one line.
+  #   4. Assert that line parses as valid JSON via jq.
   local name="runs_append: creates runs.jsonl with valid JSONL"
   should_run "$name" || return 0
   local store proj_dir line
@@ -89,6 +121,11 @@ case_runs_append_valid_jsonl() {
 }
 
 case_runs_append_appends() {
+  # Verifies that a second runs_append call appends a new row rather than overwriting.
+  #
+  # Steps:
+  #   1. Call runs_append twice with distinct run IDs into the same store.
+  #   2. Assert runs.jsonl contains exactly two lines.
   local name="runs_append: second call appends (not overwrites)"
   should_run "$name" || return 0
   local store proj_dir
@@ -104,6 +141,12 @@ case_runs_append_appends() {
 }
 
 case_events_append() {
+  # Verifies that events_append creates events.jsonl with exactly one valid JSON line.
+  #
+  # Steps:
+  #   1. Call events_append with a schema-valid Event JSON object.
+  #   2. Resolve the project dir for the store root.
+  #   3. Assert events.jsonl exists and has exactly one line.
   local name="events_append: creates events.jsonl"
   should_run "$name" || return 0
   local store proj_dir
@@ -118,6 +161,12 @@ case_events_append() {
 }
 
 case_task_upsert() {
+  # Verifies that task_upsert atomically writes the task file using write-temp-then-rename.
+  #
+  # Steps:
+  #   1. Call task_upsert with task_id "CC-230" and a JSON body.
+  #   2. Resolve tasks/CC-230.json under the project dir.
+  #   3. Assert the file exists and its content matches the input JSON exactly.
   local name="task_upsert: write-temp-then-rename"
   should_run "$name" || return 0
   local store proj_dir task_file expected
@@ -134,6 +183,12 @@ case_task_upsert() {
 }
 
 case_runs_append_read_only_nonfatal() {
+  # Verifies that runs_append returns exit 0 even when the store root is read-only (best-effort).
+  #
+  # Steps:
+  #   1. Create a tmpdir and chmod it to 500 (read+execute, no write).
+  #   2. Call runs_append against that store; capture its exit code.
+  #   3. Restore permissions; assert exit code is 0.
   local name="runs_append: non-fatal on read-only store dir"
   should_run "$name" || return 0
   local store rc=0
@@ -150,6 +205,13 @@ case_runs_append_read_only_nonfatal() {
 }
 
 case_codex_dispatch_state_store_self_contained() {
+  # Verifies that the state-writer source guard in codex-dispatch.sh uses 2>/dev/null || true
+  # so the script is syntax-valid and functional even when state-writer.sh is absent.
+  #
+  # Steps:
+  #   1. Run bash -n on codex-dispatch.sh to verify syntax.
+  #   2. Grep for the '. ... 2>/dev/null || true' source guard line.
+  #   3. Assert both checks pass.
   local name="codex-dispatch.sh: state store block is self-contained"
   should_run "$name" || return 0
   if bash -n "$REPO_ROOT/scripts/codex-dispatch.sh" &&
@@ -330,6 +392,76 @@ case_dispatch_task_id_anchor() {
   fi
 }
 
+case_dispatch_inline_brief_task_id() {
+  # Verifies that task_id is correctly extracted when the brief is passed as an inline
+  # argument (-- <brief>) rather than a --brief-file, exercising the inline-BRIEF extraction
+  # branch of codex-dispatch.sh.
+  #
+  # Steps:
+  #   1. Create a fake codex that exits 0.
+  #   2. Run codex-dispatch.sh --cd <workdir> -- "task_id: CC-230\nDo nothing."
+  #      (inline brief form, no --brief-file).
+  #   3. Assert runs.jsonl row has task_id == "CC-230".
+  local name="codex-dispatch.sh: inline brief task_id extraction"
+  should_run "$name" || return 0
+  local store fake_bin_dir work_dir runs_file task_id_found
+  store="$tmp_root/inline-brief-store"
+  fake_bin_dir="$tmp_root/inline-brief-bin"
+  work_dir="$tmp_root/inline-brief-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" -- "task_id: CC-230
+Do nothing." >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  task_id_found=""
+  [[ -n "$runs_file" ]] && task_id_found="$(jq -r '.task_id' "$runs_file" 2>/dev/null | head -1 || true)"
+  if [[ "$task_id_found" == "CC-230" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected task_id=CC-230 but got '${task_id_found:-none}' (file=${runs_file:-none})"
+  fi
+}
+
+case_dispatch_failed_records_state() {
+  # Verifies that when the dispatched codex process exits non-zero, the run row
+  # records state:"failed" and the actual exit code, not "ok".
+  #
+  # Steps:
+  #   1. Create a fake codex that exits with code 42.
+  #   2. Write a brief file with task_id: CC-230.
+  #   3. Run codex-dispatch.sh (it exits non-zero but the wrapper may still exit 0).
+  #   4. Assert runs.jsonl row has state == "failed" and exit_code == 42.
+  local name="codex-dispatch.sh: failed dispatch records state:failed and exit code"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file state_found exit_found
+  store="$tmp_root/failed-dispatch-store"
+  fake_bin_dir="$tmp_root/failed-dispatch-bin"
+  work_dir="$tmp_root/failed-dispatch-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  printf '#!/usr/bin/env bash\nexit 42\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/failed-dispatch-brief.md"
+  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  state_found=""
+  exit_found=""
+  if [[ -n "$runs_file" ]]; then
+    state_found="$(jq -r '.state' "$runs_file" 2>/dev/null | head -1 || true)"
+    exit_found="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | head -1 || true)"
+  fi
+  if [[ "$state_found" == "failed" && "$exit_found" == "42" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected state=failed exit_code=42 but got state=${state_found:-none} exit_code=${exit_found:-none} (file=${runs_file:-none})"
+  fi
+}
+
 case_store_root_override
 case_store_root_xdg
 case_store_root_default
@@ -345,5 +477,7 @@ case_dispatch_correct_partition
 case_dispatch_run_json_valid
 case_dispatch_subdir_partition_key
 case_dispatch_task_id_anchor
+case_dispatch_inline_brief_task_id
+case_dispatch_failed_records_state
 
 th_summary
