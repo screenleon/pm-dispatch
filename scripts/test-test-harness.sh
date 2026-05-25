@@ -12,6 +12,7 @@ FAIL_COUNT=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Uses own pass_case/fail_case counter (not harness pass/fail): tests the harness itself via subprocess probes.
 pass_case() {
   PASS_COUNT=$((PASS_COUNT + 1))
   printf 'PASS: %s\n' "$1"
@@ -21,14 +22,6 @@ fail_case() {
   FAIL_COUNT=$((FAIL_COUNT + 1))
   FAILED_CASES+=("$1")
   printf 'FAIL: %s: %s\n' "$1" "$2"
-}
-
-assert_contains() {
-  local name="$1" haystack="$2" needle="$3"
-  if [[ "$haystack" != *"$needle" ]]; then
-    fail_case "$name" "missing output: $needle"
-    return 1
-  fi
 }
 
 assert_file_equals() {

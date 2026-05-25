@@ -8,6 +8,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`scripts/test-test-harness.sh`** — removed dead `assert_contains()` definition (never called; file uses own `pass_case`/`fail_case` framework for cyclic-test-vs-SUT reasons). Added header comment documenting the framework choice (CC-256).
+- **`scripts/test-run-all-tests.sh`** — added comment above local `assert_contains()` explaining why it stays local: orchestrator uses `pass_case`/`fail_case`, not the unified harness counters (CC-256).
+- **BACKLOG** — closed CC-254 (harness assert_* no auto-pass; shipped PR #149) and CC-256 (3-file assert_* migration audit; completed).
+
 ## [0.2.0] — 2026-05-22
 
 **Theme**: Cross-platform operations, environment health tooling, and schema improvements.

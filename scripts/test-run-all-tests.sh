@@ -58,6 +58,7 @@ fail_case() {
   printf 'FAIL: %s: %s\n' "$1" "$2"
 }
 
+# local helper — orchestrator uses pass_case/fail_case, not harness pass/fail; see CC-256
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" != *"$needle"* ]]; then

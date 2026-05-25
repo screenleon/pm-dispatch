@@ -158,14 +158,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-252 | ✅ closed 2026-05-24 | **[/pr-gate brief template: harden `Final:` line emission]** Discovered while running /pr-gate on CC-249 spike (#146 area): the CC-250 (#144) brief template asks codex to write `Final: GO\|NO-GO` in `## Gate Conclusion`, but codex applied prose markdown emphasis (`**Final: GO**`), which fails pr-gate.sh's `^Final: (GO\|NO-GO)$` parity grep → false-negative exit-1 even though the verdict is GO. Fix: the brief template in `scripts/pr-gate.sh` MUST tell codex the `Final:` line is **exact format, no bold, no leading/trailing markup, at start-of-line**, and add a frontmatter-vs-Final-line parity self-check to the template (the verdict in frontmatter `final:` must match the Final line). Discovered as a CC-250 follow-up; the verdict-extraction works, only the back-compat regex fails. | gate/ops | 2026-05-23 | pr:#147 | P3 | oss |
 | CC-253 | 🔵 active | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-255 | 🔵 active | **[Spike infrastructure: rubric + brief template improvements]** PR #151 codegraph Phase 1 surfaced 2 spike-infra gaps that misled codex: (a) verdict rubric must enumerate sandbox-block as a "local env" example alongside peerDep (codex misapplied RED criterion because sandbox isolation wasn't an explicit local-env class in the rubric); (b) spike brief template must specify test target as a separate field from working directory — when target language-aware tools (e.g. codegraph) are evaluated, the brief must commit to a representative target codebase, not let codex pick on its own (Phase 1 brief said "pick a symbol in pm-dispatch" which pre-committed wrong target). Touch points: `/tmp/cc<NNN>-content/verdict-rubric.md` templates, `docs/spikes/README.md` skeleton, `docs/dispatch-brief.md` schema add optional `test_target:` field for spike briefs. | process | 2026-05-24 | pr:TBD | P3 | spike |
-| CC-254 | 🔵 active | **[CC-249 PR-B.1 amendment: harness assert_* helpers no auto-pass]** PR-B.1 (#148) harness helpers auto-called `pass "$name"` on success. PR-B.2 (consumer migration) attempted dispatch 2026-05-24 surfaced design conflict: existing 13 consumers follow `assert_X "$name" && pass "$name"` pattern (assert is check, consumer calls pass) — pure rename would cause double-count. Codex defensively shadowed harness by re-defining 4 helpers locally in each consumer (violating Q3 break-and-rewrite rule). Real fix: remove auto-pass from harness; consumers keep explicit `pass` (unchanged behavior on success, helper still calls `fail` on failure). Self-tests amended to call pass explicitly after assert. After this lands, PR-B.2 reverts to pure rename + delete local defs (the simple migration spike originally envisioned). | ops/test | 2026-05-24 | pr:#149 | P2 | reuse-debt |
-| CC-256 | 🔵 active | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. Filed in pr:#152. | ops/test | 2026-05-24 | pr:#152 | P3 | reuse-debt |
+| CC-254 | ✅ closed 2026-05-24 | **[CC-249 PR-B.1 amendment: harness assert_* helpers no auto-pass]** PR-B.1 (#148) harness helpers auto-called `pass "$name"` on success. PR-B.2 (consumer migration) attempted dispatch 2026-05-24 surfaced design conflict: existing 13 consumers follow `assert_X "$name" && pass "$name"` pattern (assert is check, consumer calls pass) — pure rename would cause double-count. Codex defensively shadowed harness by re-defining 4 helpers locally in each consumer (violating Q3 break-and-rewrite rule). Real fix: remove auto-pass from harness; consumers keep explicit `pass` (unchanged behavior on success, helper still calls `fail` on failure). Self-tests amended to call pass explicitly after assert. After this lands, PR-B.2 reverts to pure rename + delete local defs (the simple migration spike originally envisioned). | ops/test | 2026-05-24 | pr:#149 | P2 | reuse-debt |
+| CC-256 | ✅ closed 2026-05-25 | **[CC-249 reuse-debt tail: assert_* migration for the 3 excluded test files]** PR-B.2 v2 (CC-249 consumer migration) deliberately excluded 3 files from the unified `assert_*` rename: `test-test-harness.sh` (tests the harness itself — cyclic dependency on `assert_string_contains`/`assert_file_contains`/`assert_exit`/`assert_file_matches`; 13 helper call-sites), `test-run-all-tests.sh` (orchestrator with `assert_*` self-checks of a different shape; 2 call-sites), `test-hooks.sh` (assertion-style file with 0 unified-helper call-sites — likely no migration needed beyond audit). Defer rationale: each needs its own per-file analysis (cyclic test-vs-system-under-test for test-test-harness, orchestrator-vs-case-runner for test-run-all-tests, drift confirmation for test-hooks) — not a mechanical rename batch. CC-249 epic closes as scoped (10/13 consumers); this ticket carries the residual. Filed in pr:#152. | ops/test | 2026-05-24 | pr:#152,pr:#161 | P3 | reuse-debt |
 | CC-257 | ✅ closed 2026-05-24 | **[pr-gate.sh stderr noise: 7× `final::` command-not-found per invocation]** Every `/pr-gate` run emitted 7 shell errors at `scripts/pr-gate.sh:362` (heredoc opening line for the codex brief construction). Root cause: unquoted heredoc delimiter (`<< BRIEF_EOF`) → bash performed command substitution on the 7 backticked `` `Final:` ``/`` `final:` `` tokens added by CC-252 (#147); identical 3-line block also present in synthesis-brief heredoc (SBRIEF_P2). Verdict + result file still emitted correctly so this was stderr noise only — but it obscured real shell errors and hit every PR. Fix: escape the 7 backtick pairs (`` ` `` → `` \` ``) in the 3 unique lines (each appearing in both BRIEF_EOF and SBRIEF_P2 = 6 line edits). Regression test `test_brief_construction_emits_no_shell_errors` asserts stderr contains zero `command not found` AND the brief still carries the cautionary tokens. | gate/ops | 2026-05-24 | pr:#154 | P3 | oss |
 | CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/hook-pm-write-guard.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-hooks.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-261 | ⏸ deferred | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | — | P3 | hygiene |
-| CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/codex/isolation-map.yaml` + `adapters/claude/isolation-map.yaml` 各自轉譯；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | — | P2 | design |
+| CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/claude/isolation-map.yaml`（claude no-op map，v0.3.0）；`adapters/codex/isolation-map.yaml` 移至 v0.4.0；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | — | P2 | design |
 | CC-263 | 🟢 someday | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159 | P3 | — |
 
 ---
@@ -1677,7 +1677,7 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 
 **See**: CC-250 (#144 origin), `[[feedback_codex_brief_discipline]]`.
 
-## CC-254 — CC-249 PR-B.1 amendment: harness assert_* no auto-pass（active）
+## CC-254 — CC-249 PR-B.1 amendment: harness assert_* no auto-pass ✅ 2026-05-24
 
 **Problem**: PR-B.1 (#148) shipped harness `assert_*` helpers that auto-called `pass "$name"` on success. Spike Q1-Q5 assumed simple rename migration. PR-B.2 (consumer migration) dispatch 2026-05-24 surfaced a deeper design gap: the 13 consumer test scripts ALL follow the `assert_X "$name" ...; pass "$name"` pattern — `assert_*` is a check, the consumer separately calls `pass` to increment the counter. Pure rename would double-count PASS (harness implicit pass + consumer explicit pass). Codex defensively shadowed the harness by re-defining the 4 helpers in 9 of 13 consumer files (Q3 rejected this — "no shim, no deprecation"). Dispatch hit timeout 124 with 9 apply_patch failures in the 4 complex files; 9/11 consumers ended in shadow-shim state.
 
@@ -1699,6 +1699,10 @@ The 3 patterns documented here address layers 2 / 3 / 4. Layer 1 (context budget
 **Priority**: P2 — unblocks PR-B.2 (consumer migration); CC-249 epic stuck until this lands.
 
 **Cross-link**: CC-249 (parent epic), `docs/spikes/CC-249.md` (spike that missed this gap — amendment will update spike's Open Risks section), `[[feedback_codex_brief_discipline]]` (CC-251 — discipline that helped Codex catch and HALT-loop on the conflict rather than silently mis-migrate).
+
+**Outcome** (2026-05-24): Shipped in PR #149 (`fix(cc-254): harness assert_* no auto-pass + 3 process artifacts from PR-B.2 retro`). All 4 assert_* helpers (`assert_exit`, `assert_file_contains`, `assert_file_matches`, `assert_string_contains`) return 0 silently on success; the 4 pass-path self-tests in `scripts/test-test-harness.sh` call `pass` explicitly. Enabled PR-B.2 v2 (CC-249, PR #152) to complete pure-rename consumer migration of 10/13 files (−114 LoC).
+
+**See**: `scripts/lib/test-harness.sh` lines 148–188 (helpers), `scripts/test-test-harness.sh` lines 313–385 (self-tests), CC-249 (#148, #149, #152).
 
 ## CC-253 — CC-209 Phase 2: codegraph benchmark on representative target codebase（active）
 
@@ -1792,7 +1796,7 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 
 **See**: `scripts/pr-gate.sh` heredocs BRIEF_EOF + SBRIEF_P2 (escaped backticks), `scripts/test-pr-gate.sh::test_brief_construction_emits_no_shell_errors` (regression), CC-252 (origin), CC-250 (template lineage), `[[feedback_gate_finding_triage]]` (severity rule).
 
-## CC-256 — CC-249 reuse-debt tail: 3 excluded test files（active）
+## CC-256 — CC-249 reuse-debt tail: 3 excluded test files ✅ 2026-05-25
 
 **Problem**: CC-249 spike (#146) Q1-Q5 + PR-B.2 v2 (this PR) migrated 10 of 13 consumer `test-*.sh` files off divergent local `assert_*` helpers onto the unified harness helpers from PR-B.1 (#148, amended by CC-254 #149). 3 files were deliberately excluded from the v2 migration batch:
 
@@ -1818,6 +1822,13 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 **Priority**: P3 — each file is small and the surface area is bounded; not blocking anything downstream. CC-249 epic closure does not depend on this.
 
 **Cross-link**: CC-249 (parent epic, closed by the PR that introduces this row), CC-254 (#149, the harness amendment that enabled the v2 migration), `[[feedback_test_migration_format_preservation]]` (preservation contract any sub-migration here must honour).
+
+**Outcome** (2026-05-25): Per-file audit completed.
+- `test-test-harness.sh`: `assert_contains()` defined at line 26 but never called (dead code). Deleted definition. Added header comment explaining the file uses its own `pass_case`/`fail_case` framework because it tests the harness itself via subprocess probes — sourcing the unified harness at top-level would be a cyclic dependency.
+- `test-run-all-tests.sh`: `assert_contains()` defined at line 61, called once at line 163. Orchestrator shape (runs suites as subprocesses, uses `pass_case`/`fail_case` counter) is incompatible with the unified harness `pass`/`fail` counter. Kept local with a one-line comment documenting the rationale.
+- `test-hooks.sh`: 0 unified-helper call-sites confirmed. No changes needed. Closed as no-op.
+
+**See**: CC-249 (parent epic), CC-254 (#149, harness amendment that enabled PR-B.2).
 
 ## CC-258 — pm-write-guard hook policy revision（deferred）
 
@@ -1929,18 +1940,24 @@ Heredoc starts at line 362 (`cat > "$BRIEF_FILE" << BRIEF_EOF`) — unquoted del
 
 **Requirement**:
 - `core/policy/`（CC-231 延伸）：新增 `isolation_level` enum，值為 `none | read-only | workspace-write | sandboxed`，附語意定義（none=無限制；read-only=不寫 FS；workspace-write=僅寫 project dir；sandboxed=完整隔離）
-- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → `{sandbox, approval, skip_git_check}` 原生欄位的對應表
-- `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）
+- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → `{sandbox, approval, skip_git_check}` 原生欄位的對應表（v0.4.0，暫緩）
+- `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）（v0.3.0 M1 殘留，當前範圍）
 - `agents/project-pm.md`：PM brief template 改寫 `isolation_level:` 取代三個原生欄位；說明三個原生欄位為 adapter-generated，PM 不直接填寫
 - `scripts/codex-dispatch.sh`：dispatch 前讀取 `adapters/codex/isolation-map.yaml` 展開 `isolation_level` → 原生欄位；遇未知值 → 立即 exit 1 with error
 
-**Acceptance**:
+**Acceptance (M1 scope — adapters/claude only)**:
 1. `grep -q "isolation_level" core/policy/executor-enum.yaml` → match（或對應 policy 檔案）
-2. `cat adapters/codex/isolation-map.yaml` → 包含全部 4 個 isolation_level 的映射
-3. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
+2. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
+3. `bash scripts/run-all-tests.sh` → exit 0
+
+**Acceptance (M2 scope — deferred)**:
 4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
 5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
-6. `bash scripts/run-all-tests.sh` → exit 0
+
+**Acceptance (v0.4.0 scope — adapters/codex deferred)**:
+6. `cat adapters/codex/isolation-map.yaml` → 包含全部 4 個 isolation_level 的映射
+
+**Scope revision 2026-05-25**: adapters/codex 移至 v0.4.0；當前範圍為 M1（core/policy/ enum + adapters/claude/ no-op map）。
 
 ---
 
