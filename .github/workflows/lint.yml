@@ -159,6 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - run: git fetch --depth=1 origin main
       - name: install/uninstall regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh
 
@@ -201,6 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - run: git fetch --depth=1 origin main
       - name: pm-prep-snapshot regression suite
         run: bash scripts/test-pm-prep-snapshot.sh
 

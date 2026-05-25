@@ -181,11 +181,7 @@ RECENTLY_MERGED=()
 
 collect_recently_merged() {
   local raw_output
-  local parsed_objects
-  local obj
   local count
-  local num
-  local title
   local line
   local used_template=0
 
