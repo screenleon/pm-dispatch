@@ -160,6 +160,107 @@ case_codex_dispatch_state_store_self_contained() {
   fi
 }
 
+case_dispatch_creates_run_row() {
+  # Verifies that invoking codex-dispatch.sh with a fake codex binary writes
+  # exactly one row to runs.jsonl under the state store, confirming the end-to-end
+  # dispatch-to-state-store path works.
+  #
+  # Steps:
+  #   1. Create a fake `codex` script that exits 0 and emit no output.
+  #   2. Write a brief file containing a task_id field.
+  #   3. Run codex-dispatch.sh --cd <workdir> --brief-file <brief> with the fake
+  #      codex on PATH and PM_DISPATCH_STATE_ROOT pointing to a fresh tmpdir.
+  #   4. Assert runs.jsonl exists anywhere under the store root.
+  local name="codex-dispatch.sh: creates runs.jsonl row after dispatch"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir
+  store="$tmp_root/dispatch-run"
+  fake_bin_dir="$tmp_root/dispatch-bin"
+  work_dir="$tmp_root/dispatch-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/dispatch-brief.md"
+  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  local runs_file
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  if [[ -n "$runs_file" && -s "$runs_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "runs.jsonl not created or empty in $store"
+  fi
+}
+
+case_dispatch_correct_partition() {
+  # Verifies that codex-dispatch.sh writes the run row into the target repo's
+  # project partition (derived from WORK_DIR's git root), not the caller's cwd.
+  #
+  # Steps:
+  #   1. git init a fresh tmpdir (work_dir) so it has its own git root.
+  #   2. Compute the expected sha1 partition key for work_dir.
+  #   3. Run codex-dispatch.sh --cd <work_dir>.
+  #   4. Assert runs.jsonl appears under projects/<expected_key>/, not elsewhere.
+  local name="codex-dispatch.sh: run written to target project partition"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir work_dir_key expected_partition
+  store="$tmp_root/partition-store"
+  fake_bin_dir="$tmp_root/partition-bin"
+  work_dir="$tmp_root/partition-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  ( cd "$work_dir" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
+  work_dir_key="$(printf '%s\n' "$work_dir" | sha1sum 2>/dev/null | cut -c1-40 || true)"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/partition-brief.md"
+  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  expected_partition="$store/projects/$work_dir_key"
+  if [[ -f "$expected_partition/runs.jsonl" ]]; then
+    pass "$name"
+  else
+    local actual
+    actual="$(find "$store/projects" -name "runs.jsonl" 2>/dev/null | tr '\n' ' ' || true)"
+    fail "$name" "expected $expected_partition/runs.jsonl; found: ${actual:-none}"
+  fi
+}
+
+case_dispatch_run_json_valid() {
+  # Verifies that runs.jsonl row produced by codex-dispatch.sh is valid JSON
+  # even when MODEL contains characters that would corrupt raw printf interpolation.
+  #
+  # Steps:
+  #   1. Create a fake codex that exits 0.
+  #   2. Run codex-dispatch.sh with --model set to a value with quotes/backslashes.
+  #   3. Assert the runs.jsonl row parses with jq (exit 0).
+  local name="codex-dispatch.sh: run row is valid JSON with special chars in model"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file
+  store="$tmp_root/json-valid"
+  fake_bin_dir="$tmp_root/json-valid-bin"
+  work_dir="$tmp_root/json-valid-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
+  chmod +x "$fake_bin_dir/codex"
+  brief_file="$tmp_root/json-valid-brief.md"
+  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  # Use a model name with characters that would corrupt printf-based JSON
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    --cd "$work_dir" --model 'model-with-"quotes"' \
+    --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  if [[ -n "$runs_file" ]] && jq -e . "$runs_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "runs.jsonl missing or not valid JSON (file=${runs_file:-none})"
+  fi
+}
+
 case_store_root_override
 case_store_root_xdg
 case_store_root_default
@@ -170,5 +271,8 @@ case_events_append
 case_task_upsert
 case_runs_append_read_only_nonfatal
 case_codex_dispatch_state_store_self_contained
+case_dispatch_creates_run_row
+case_dispatch_correct_partition
+case_dispatch_run_json_valid
 
 th_summary

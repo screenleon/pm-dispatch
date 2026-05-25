@@ -45,13 +45,17 @@ _sw_store_root() {
 _sw_project_key() {
   {
     local repo_root project_key
-    if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
-      project_key="$(printf '%s\n' "$repo_root" | sha1sum 2>/dev/null | cut -c1-40 2>/dev/null || true)"
-      if [[ -n "$project_key" ]]; then
-        printf '%s\n' "$project_key"
-      else
-        printf 'global\n'
-      fi
+    if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
+      repo_root="${_SW_REPO_ROOT}"
+    elif repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
+      :
+    else
+      printf 'global\n'
+      return 0
+    fi
+    project_key="$(printf '%s\n' "$repo_root" | sha1sum 2>/dev/null | cut -c1-40 2>/dev/null || true)"
+    if [[ -n "$project_key" ]]; then
+      printf '%s\n' "$project_key"
     else
       printf 'global\n'
     fi
@@ -125,6 +129,10 @@ events_append() {
 task_upsert() {
   {
     local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
+    if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
+      _sw_log_error "task_upsert: invalid task_id='${task_id}'"
+      return 0
+    fi
     state_store_init
     proj_dir="$(_sw_project_dir)"
     tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX")" || {

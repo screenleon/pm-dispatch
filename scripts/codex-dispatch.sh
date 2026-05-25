@@ -340,11 +340,22 @@ set -e
   _SW_WORK_DIR="${WORK_DIR:-}"
   _SW_MODEL_VAL="${MODEL:-}"
   _SW_BRIEF_FILE_VAL="${BRIEF_FILE:-}"
-  printf -v _SW_RUN_JSON \
-    '{"schema_version":1,"id":"%s","task_id":"%s","executor":"codex","state":"%s","exit_code":%d,"model":"%s","brief_file":"%s","working_dir":"%s","trace_path":"%s","created_ts":"%s"}' \
-    "$_SW_RUN_ID" "$_SW_TASK_ID" "$_SW_STATE" "$EXIT" \
-    "$_SW_MODEL_VAL" "$_SW_BRIEF_FILE_VAL" "$_SW_WORK_DIR" "$_SW_TRACE_PATH" "$_SW_TS"
-  if [[ "$(type -t runs_append 2>/dev/null)" == function ]]; then
+  # Route run row to target project partition, not the caller's cwd partition.
+  _SW_REPO_ROOT="${WORK_DIR:-}"
+  # Build JSON via jq to safely escape all string field values.
+  _SW_RUN_JSON="$(jq -cn \
+    --arg id "$_SW_RUN_ID" \
+    --arg task_id "$_SW_TASK_ID" \
+    --arg state "$_SW_STATE" \
+    --argjson exit_code "$EXIT" \
+    --arg model "$_SW_MODEL_VAL" \
+    --arg brief_file "$_SW_BRIEF_FILE_VAL" \
+    --arg working_dir "$_SW_WORK_DIR" \
+    --arg trace_path "$_SW_TRACE_PATH" \
+    --arg created_ts "$_SW_TS" \
+    '{schema_version:1,id:$id,task_id:$task_id,executor:"codex",state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
+    2>/dev/null || true)"
+  if [[ -n "$_SW_RUN_JSON" && "$(type -t runs_append 2>/dev/null)" == function ]]; then
     runs_append "$_SW_RUN_JSON" 2>/dev/null || true
   fi
 } 2>/dev/null || true
