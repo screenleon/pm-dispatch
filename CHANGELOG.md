@@ -8,11 +8,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`core/policy/isolation-level.yaml`** — new policy enum: `none | read-only | workspace-write | sandboxed`; adapters translate these intent values to executor-native flags (CC-262 M1).
+- **`adapters/claude/isolation-map.yaml`** — no-op translation table for claude-executor; all four isolation levels map to empty native-flags (CC-262 M1).
+- **`scripts/lib/portable.sh` `_portable_sha1()`** — cross-platform SHA-1 helper: tries `sha1sum` (GNU/Linux), falls back to `shasum -a 1` (macOS/BSD), returns 1 with a logged warning if both are missing. `FAKE_SHA1_MISSING=1` test shim included (CC-263).
+
 ### Changed
 
+- **`scripts/lib/state-writer.sh` `_sw_project_key()`** — replaces raw `sha1sum` call with `_portable_sha1()`; hash failures now log via `_sw_log_error` and fall back to `global` partition (CC-263).
+- **`core/README.md`** and **`agents/project-pm.md`** — removed v0.3.x forward-reference language now that M1 is shipped; prose updated to present tense (CC-261).
 - **`scripts/test-test-harness.sh`** — removed dead `assert_contains()` definition (never called; file uses own `pass_case`/`fail_case` framework for cyclic-test-vs-SUT reasons). Added header comment documenting the framework choice (CC-256).
 - **`scripts/test-run-all-tests.sh`** — added comment above local `assert_contains()` explaining why it stays local: orchestrator uses `pass_case`/`fail_case`, not the unified harness counters (CC-256).
 - **BACKLOG** — closed CC-254 (harness assert_* no auto-pass; shipped PR #149) and CC-256 (3-file assert_* migration audit; completed).
+
+### Test coverage
+
+- `test-state-store.sh case_project_key_no_sha1sum` — stubs both sha1sum and shasum, asserts _sw_project_key returns `global` non-fatally (CC-263).
 
 ## [0.2.0] — 2026-05-22
 

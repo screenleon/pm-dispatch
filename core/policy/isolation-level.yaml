@@ -1,0 +1,17 @@
+# core/policy/isolation-level.yaml
+#
+# Closed list of executor isolation_level values that pm-dispatch briefs declare.
+# Adapters translate these intent values to executor-native flags.
+# See core/README.md for schema-versioning policy.
+#
+# Semantic definitions:
+#   none             – no isolation; executor may read/write anywhere
+#   read-only        – executor must not modify the filesystem
+#   workspace-write  – executor may write only within the project working directory
+#   sandboxed        – full isolation; executor runs in an ephemeral sandbox
+
+values:
+  - none
+  - read-only
+  - workspace-write
+  - sandboxed

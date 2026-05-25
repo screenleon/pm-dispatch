@@ -181,6 +181,24 @@ serialize_with_lock() {
   fi
 }
 
+# _portable_sha1
+# Read stdin and print a 40-character lowercase hex SHA-1 digest on stdout.
+# Tries sha1sum (GNU coreutils / Linux), then shasum -a 1 (macOS/BSD).
+# Returns 1 and logs a warning if neither is available.
+# Test shim: set FAKE_SHA1_MISSING=1 to force the failure path in tests.
+_portable_sha1() {
+  if command -v sha1sum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
+    sha1sum | cut -c1-40
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
+    shasum -a 1 | cut -c1-40
+    return
+  fi
+  printf '[portable.sh] _portable_sha1: neither sha1sum nor shasum available\n' >&2
+  return 1
+}
+
 # file_size_bytes <file>
 # Print file size in bytes on stdout. Portable across GNU stat (linux),
 # BSD stat (macos), and wc -c fallback (any). Returns 1 (and prints

@@ -487,6 +487,27 @@ case_dispatch_failed_records_state() {
   fi
 }
 
+case_project_key_no_sha1sum() {
+  local name="project_key: no sha1sum or shasum falls back to global"
+  # Create a minimal repo so _sw_project_key has a git root to hash.
+  local tmp_root
+  tmp_root="$(mktemp -d)"
+  git -C "$tmp_root" init -q
+  # Force both sha1sum and shasum unavailable via FAKE_SHA1_MISSING=1.
+  # Source state-writer.sh (which sources portable.sh) and call _sw_project_key.
+  local result
+  result="$(
+    FAKE_SHA1_MISSING=1 _SW_REPO_ROOT="$tmp_root" \
+      bash -c "source '$REPO_ROOT/scripts/lib/state-writer.sh' 2>/dev/null; _sw_project_key"
+  )" || true
+  rm -rf "$tmp_root"
+  if [[ "$result" == "global" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 'global' but got '${result:-empty}'"
+  fi
+}
+
 case_store_root_override
 case_store_root_xdg
 case_store_root_default
@@ -505,5 +526,6 @@ case_dispatch_subdir_partition_key
 case_dispatch_task_id_anchor
 case_dispatch_inline_brief_task_id
 case_dispatch_failed_records_state
+case_project_key_no_sha1sum
 
 th_summary

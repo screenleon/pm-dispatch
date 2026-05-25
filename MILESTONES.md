@@ -42,7 +42,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ✅ (#159) |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ✅ (#157) |
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
-| CC-262 | `isolation_level` enum（M1 延伸）— adapters/claude no-op map（M1）；adapters/codex 移 v0.4.0；dispatch 展開 M2；PM template M3 | ⏳ |
+| CC-262 | `isolation_level` enum（M1 延伸）— adapters/claude no-op map（M1）；adapters/codex 移 v0.4.0；dispatch 展開 M2；PM template M3 | ✅ (#162) |
 
 ### M2 — 由抽取長出 runtime
 
@@ -76,7 +76,7 @@
 |---|---|---|
 | CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
 | CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
-| CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ⏳ |
+| CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
 | — | v0.3.0 release prep | ⏳ |
 
 ### v0.3.0 範圍外 → v0.4.0

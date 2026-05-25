@@ -1,0 +1,16 @@
+# adapters/claude/isolation-map.yaml
+#
+# Translation table: isolation_level → claude-executor native flags.
+# claude-executor has no sandbox, approval, or skip_git_check flags;
+# all isolation levels map to no-op (empty native-flags object).
+# This file's presence satisfies CC-262 M1 acceptance criterion 2.
+
+mappings:
+  none:
+    native_flags: {}
+  read-only:
+    native_flags: {}
+  workspace-write:
+    native_flags: {}
+  sandboxed:
+    native_flags: {}
