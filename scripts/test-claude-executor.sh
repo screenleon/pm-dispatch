@@ -127,11 +127,53 @@ scratch_isolation() {
   pass "$name"
 }
 
+# ── case 5: trace write contract ─────────────────────────────────────────────
+
+trace_write_contract() {
+  local name="claude-executor/trace write contract"
+  should_run "$name" || return 0
+
+  local work_dir
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf "$work_dir"' RETURN
+
+  # Simulate the Write trace steps from agents/claude-executor.md
+  mkdir -p "$work_dir/.agent-trace"
+  local ts
+  ts=$(date +%Y%m%d-%H%M%S)-$$
+  local last_file="$work_dir/.agent-trace/claude-$ts.last"
+  printf 'status: ok\nbash scripts/run-all-tests.sh: pass\n' > "$last_file"
+  ln -sfn "claude-$ts.last" "$work_dir/.agent-trace/latest.last"
+
+  # 1. latest.last must be a symlink
+  if [[ ! -L "$work_dir/.agent-trace/latest.last" ]]; then
+    fail "$name" "latest.last is not a symlink"
+    return
+  fi
+
+  # 2. symlink must resolve inside .agent-trace
+  local resolved
+  resolved="$(readlink -f "$work_dir/.agent-trace/latest.last" 2>/dev/null || true)"
+  if [[ -z "$resolved" || "${resolved#"$work_dir/.agent-trace/"}" == "$resolved" ]]; then
+    fail "$name" "latest.last resolves outside .agent-trace: $resolved"
+    return
+  fi
+
+  # 3. exact cmd: pass line must be present (dispatch-post-verify uses grep -qxF)
+  if ! grep -qxF "bash scripts/run-all-tests.sh: pass" "$work_dir/.agent-trace/latest.last"; then
+    fail "$name" "exact 'cmd: pass' line not found in trace (whole-line match required)"
+    return
+  fi
+
+  pass "$name"
+}
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 claude_metadata_validates
 unknown_executor_rejected
 self_verify_executes
 scratch_isolation
+trace_write_contract
 
 th_summary

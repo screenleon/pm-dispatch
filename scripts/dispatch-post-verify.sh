@@ -119,7 +119,11 @@ if [[ -n "$BRIEF_FILE" ]]; then
 fi
 
 if [[ "$FAILED" -eq 0 ]]; then
-  printf 'OK\n'
+  if [[ -z "$BRIEF_FILE" ]]; then
+    printf 'OK-NOBRIEF: self_verify checks skipped\n'
+  else
+    printf 'OK\n'
+  fi
   exit 0
 fi
 
