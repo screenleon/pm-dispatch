@@ -128,6 +128,7 @@ jobs:
             test-test-harness.sh
             test-lint-model-aliases.sh
             test-schema-task-mirrors-backlog.sh
+            test-brief-validate.sh
 
   test-doctor:
     runs-on: ubuntu-latest
