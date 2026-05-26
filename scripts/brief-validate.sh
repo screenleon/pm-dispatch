@@ -22,6 +22,48 @@ has_files_section() {
   grep -Eq '^files:' "$brief"
 }
 
+has_files_entries() {
+  local brief="$1"
+  awk '
+    /^[a-z_]+:[[:space:]]*/ {
+      if ($0 ~ /^files:/) {
+        in_files = 1
+        next
+      }
+      if (in_files) {
+        in_files = 0
+      }
+    }
+    in_files && /^[[:space:]]*-[[:space:]]+[^[:space:]]/ {
+      found = 1
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$brief"
+}
+
+has_acceptance_entries() {
+  local brief="$1"
+  awk '
+    /^[a-z_]+:[[:space:]]*/ {
+      if ($0 ~ /^acceptance:/) {
+        in_acceptance = 1
+        next
+      }
+      if (in_acceptance) {
+        in_acceptance = 0
+      }
+    }
+    in_acceptance && /^[[:space:]]*-[[:space:]]+[^[:space:]]/ {
+      found = 1
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$brief"
+}
+
 has_file_writing_entry() {
   local brief="$1"
   awk '
@@ -98,7 +140,9 @@ has_required_field "$brief" "schema_version" || reject "missing field 'schema_ve
 has_required_field "$brief" "working_dir" || reject "missing field 'working_dir'"
 has_required_field "$brief" "goal" || reject "missing field 'goal'"
 has_files_section "$brief" || reject "missing field 'files'"
+has_files_entries "$brief" || reject "missing field 'files'"
 grep -Eq '^acceptance:' "$brief" || reject "missing field 'acceptance'"
+has_acceptance_entries "$brief" || reject "missing field 'acceptance'"
 
 if has_file_writing_entry "$brief" && ! has_self_verify_entry "$brief"; then
   reject "missing field 'self_verify'"

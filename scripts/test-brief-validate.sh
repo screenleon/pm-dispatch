@@ -147,6 +147,22 @@ EOF
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'files'"
 }
 
+case_reject_empty_files_section() {
+  local name="reject-empty-files-section"
+  should_run "$name" || return 0
+  local brief="$tmpdir/empty-files-section.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Empty files section.
+files:
+acceptance:
+  - files section must contain entries
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: missing field 'files'"
+}
+
 case_reject_missing_acceptance() {
   local name="reject-missing-acceptance"
   should_run "$name" || return 0
@@ -159,6 +175,22 @@ files:
   - write: docs/dispatch-brief.md
 self_verify:
   - bash scripts/test-brief-validate.sh
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: missing field 'acceptance'"
+}
+
+case_reject_empty_acceptance_section() {
+  local name="reject-empty-acceptance-section"
+  should_run "$name" || return 0
+  local brief="$tmpdir/empty-acceptance-section.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Empty acceptance section.
+files:
+  - read: README.md
+acceptance:
 EOF
 
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'acceptance'"
@@ -317,7 +349,9 @@ case_reject_missing_schema_version
 case_reject_missing_working_dir
 case_reject_missing_goal
 case_reject_missing_files
+case_reject_empty_files_section
 case_reject_missing_acceptance
+case_reject_empty_acceptance_section
 case_reject_write_no_self_verify
 case_reject_new_no_self_verify
 case_reject_edit_no_self_verify
