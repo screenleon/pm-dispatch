@@ -120,6 +120,18 @@ working_dir_value() {
   ' "$brief"
 }
 
+schema_version_value() {
+  local brief="$1"
+  awk '
+    /^schema_version:[[:space:]]*/ {
+      sub(/^schema_version:[[:space:]]*/, "", $0)
+      gsub(/[[:space:]]/, "", $0)
+      print
+      exit
+    }
+  ' "$brief"
+}
+
 if [[ "${1:-}" == "--help" ]]; then
   usage
   exit 0
@@ -137,6 +149,11 @@ if [[ ! -f "$brief" ]]; then
 fi
 
 has_required_field "$brief" "schema_version" || reject "missing field 'schema_version'"
+schema_ver="$(schema_version_value "$brief")"
+if [[ "$schema_ver" != "1" ]]; then
+  reject "invalid field 'schema_version': expected 1"
+fi
+
 has_required_field "$brief" "working_dir" || reject "missing field 'working_dir'"
 has_required_field "$brief" "goal" || reject "missing field 'goal'"
 has_files_section "$brief" || reject "missing field 'files'"
@@ -149,6 +166,10 @@ if has_file_writing_entry "$brief" && ! has_self_verify_entry "$brief"; then
 fi
 
 workdir="$(working_dir_value "$brief")"
+if [[ -n "$workdir" && "$workdir" != /* ]]; then
+  reject "working_dir must be an absolute path"
+fi
+
 if [[ -n "$workdir" && ! -d "$workdir" ]]; then
   reject "working_dir not found on disk: $workdir"
 fi
