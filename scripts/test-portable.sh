@@ -1183,6 +1183,61 @@ case_link_or_copy_copy_refresh_dry_run() {
   pass "$name"
 }
 
+case_portable_sha1_shasum_fallback() {
+  local name="portable-sha1: shasum fallback produces 40-char hex digest"
+  should_run "$name" || return 0
+
+  # Build a fake bin directory that contains shasum (but not sha1sum).
+  # FAKE_SHA1SUM_MISSING=1 prevents portable.sh from using the real sha1sum
+  # even if it exists on PATH, so the shasum branch is exercised.
+  local fake_bin
+  fake_bin="$(mktemp -d)"
+  # shasum shim that delegates to openssl so stdin is actually hashed.
+  # FAKE_SHA1SUM_MISSING=1 blocks the direct sha1sum branch; this shim proves
+  # the shasum branch passes stdin through rather than returning a fixed digest.
+  # shasum shim: ignore -a 1 args (shasum-specific) and delegate stdin to openssl.
+  printf '#!/bin/sh\nopenssl dgst -sha1 < /dev/stdin | awk '"'"'{print $NF}'"'"'\n' > "$fake_bin/shasum"
+  chmod +x "$fake_bin/shasum"
+
+  local result
+  result="$(
+    FAKE_SHA1SUM_MISSING=1 PATH="$fake_bin:$PATH" \
+      bash -c ". '${REPO_ROOT}/scripts/lib/portable.sh'
+               printf 'test-input\n' | _portable_sha1" 2>/dev/null
+  )" || true
+  rm -rf "$fake_bin"
+
+  # SHA-1("test-input\n") = 19877dd23a7175600bf62729888d5cea95ccb85a.
+  # An input-independent fake would return a different constant; wrong routing would
+  # return the sha1sum-branch hash for a different input or empty.
+  if [[ "$result" == "19877dd23a7175600bf62729888d5cea95ccb85a" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 19877dd23a7175600bf62729888d5cea95ccb85a, got '${result:-empty}'"
+  fi
+}
+
+case_portable_sha1_both_missing() {
+  local name="portable-sha1: both tools missing exits non-zero and warns"
+  should_run "$name" || return 0
+
+  local stderr_file rc
+  stderr_file="$(mktemp)"
+  FAKE_SHA1_MISSING=1 bash -c "
+    . '${REPO_ROOT}/scripts/lib/portable.sh'
+    printf 'test\n' | _portable_sha1
+  " >/dev/null 2>"$stderr_file" && rc=0 || rc=$?
+  local stderr_out
+  stderr_out="$(cat "$stderr_file")"
+  rm -f "$stderr_file"
+
+  if [[ "$rc" -ne 0 ]] && [[ "$stderr_out" == *"neither sha1sum nor shasum"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero rc and warning; got rc=${rc} stderr='${stderr_out:-empty}'"
+  fi
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1192,5 +1247,7 @@ case_link_or_copy_copy_refresh_stale
 case_link_or_copy_copy_no_refresh_when_up_to_date
 case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
+case_portable_sha1_shasum_fallback
+case_portable_sha1_both_missing
 
 th_summary

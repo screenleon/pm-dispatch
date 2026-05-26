@@ -350,6 +350,49 @@ case_brief_sha_field_has_pattern() {
   fi
 }
 
+case_isolation_level_adapter_parity() {
+  local name="adapters/claude: isolation-map.yaml keys match core/policy/isolation-level.yaml values"
+  should_run "$name" || return 0
+
+  local policy_file adapter_file
+  policy_file="$CORE_DIR/policy/isolation-level.yaml"
+  adapter_file="$REPO_ROOT/adapters/claude/isolation-map.yaml"
+
+  if [[ ! -f "$policy_file" ]]; then
+    fail "$name" "missing: $policy_file"; return
+  fi
+  if [[ ! -f "$adapter_file" ]]; then
+    fail "$name" "missing: $adapter_file"; return
+  fi
+
+  local policy_vals adapter_keys missing_in_adapter missing_in_policy
+  mapfile -t policy_vals  < <(_yaml_get "$policy_file"  "values")
+  mapfile -t adapter_keys < <(_yaml_get "$adapter_file" "mappings")
+
+  missing_in_adapter=()
+  for v in "${policy_vals[@]}"; do
+    if ! printf '%s\n' "${adapter_keys[@]}" | grep -qxF "$v"; then
+      missing_in_adapter+=("$v")
+    fi
+  done
+
+  missing_in_policy=()
+  for k in "${adapter_keys[@]}"; do
+    if ! printf '%s\n' "${policy_vals[@]}" | grep -qxF "$k"; then
+      missing_in_policy+=("$k")
+    fi
+  done
+
+  if [[ ${#missing_in_adapter[@]} -eq 0 ]] && [[ ${#missing_in_policy[@]} -eq 0 ]]; then
+    pass "$name"
+  else
+    local msg=""
+    [[ ${#missing_in_adapter[@]} -gt 0 ]] && msg+="policy values missing in adapter: ${missing_in_adapter[*]}; "
+    [[ ${#missing_in_policy[@]} -gt 0 ]] && msg+="adapter keys not in policy: ${missing_in_policy[*]}"
+    fail "$name" "$msg"
+  fi
+}
+
 # 5. brief.schema.json structural contract tests
 BRIEF_SCHEMA="$CORE_DIR/schema/brief.schema.json"
 case_brief_required_fields_declared
@@ -358,5 +401,8 @@ case_brief_working_dir_has_pattern
 case_brief_files_oneOf_has_four_variants
 case_brief_files_oneOf_all_have_additional_properties_false
 case_brief_sha_field_has_pattern
+
+# 6. Adapter parity tests
+case_isolation_level_adapter_parity
 
 th_summary

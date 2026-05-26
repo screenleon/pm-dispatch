@@ -3,7 +3,7 @@
 
 SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/portable.sh
-if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
+if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function ]]; then
   _SW_SHELL_FLAGS="$-"
   _SW_PIPEFAIL=0
   set -o | grep -qE '^pipefail[[:space:]]+on$' && _SW_PIPEFAIL=1
@@ -55,7 +55,10 @@ _sw_project_key() {
       printf 'global\n'
       return 0
     fi
-    project_key="$(printf '%s\n' "$repo_root" | sha1sum 2>/dev/null | cut -c1-40 2>/dev/null || true)"
+    if ! project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null)"; then
+      _sw_log_error "_sw_project_key: failed to hash repo root; falling back to global: $repo_root"
+      project_key=""
+    fi
     if [[ -n "$project_key" ]]; then
       printf '%s\n' "$project_key"
     else
