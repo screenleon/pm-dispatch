@@ -196,6 +196,8 @@ bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
 
 Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks that `self_verify` commands appear in the executor's final message. Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed.
 
+> **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
+
 ## Self-verify macros
 
 Reusable phrases. Drop into `self_verify` block of any brief.

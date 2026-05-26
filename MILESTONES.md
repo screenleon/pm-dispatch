@@ -79,7 +79,7 @@
 | CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
 | CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
 | CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
-| CC-265 | 移除 `/caveman` 與 `/caveman-commit`（brief 已就緒；需更新 `expected_head_sha` 至 CC-264b merge 後） | ⏳ |
+| CC-265 | 移除 `/caveman` 與 `/caveman-commit` | ✅ 2026-05-26 |
 | — | v0.3.0 release prep | ⏳ |
 
 ### v0.3.0 範圍外 → v0.4.0

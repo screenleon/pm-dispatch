@@ -391,6 +391,60 @@ case_brief_not_found() {
   pass "$name"
 }
 
+# A failed executor status fails even when self_verify passes.
+# Steps:
+# 1. Create a trace whose latest.last contains status: failed and a passing self_verify line.
+# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
+# 3. Assert exit 1 and output containing the executor status failure.
+case_fail_executor_status_failed() {
+  local name="fail-executor-status-failed"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: failed
+bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  assert_string_contains "$name" "$out" "executor reported non-success" || return 0
+  pass "$name"
+}
+
+# A partial executor status fails even when self_verify passes.
+# Steps:
+# 1. Create a trace whose latest.last contains status: partial and a passing self_verify line.
+# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
+# 3. Assert exit 1 and output containing the executor status failure.
+case_fail_executor_status_partial() {
+  local name="fail-executor-status-partial"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: partial
+bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  assert_string_contains "$name" "$out" "executor reported non-success" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -407,5 +461,7 @@ case_symlink_stderr_outofdir_rejected
 case_show_stderr
 case_usage_no_args
 case_brief_not_found
+case_fail_executor_status_failed
+case_fail_executor_status_partial
 
 th_summary

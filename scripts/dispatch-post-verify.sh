@@ -82,6 +82,14 @@ printf '\n'
 
 FAILED=0
 
+EXECUTOR_STATUS="$(grep -iE '^status: (failed|partial)' "$LATEST_LAST" || true)"
+if [[ -n "$EXECUTOR_STATUS" ]]; then
+  while IFS= read -r status_line; do
+    printf 'FAILED: executor reported non-success outcome: %s\n' "$status_line"
+  done <<< "$EXECUTOR_STATUS"
+  FAILED=1
+fi
+
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'
   while IFS= read -r cmd; do
