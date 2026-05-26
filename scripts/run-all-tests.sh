@@ -30,6 +30,7 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-dispatch-post-verify
   test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
@@ -64,6 +65,7 @@ declare -A SUITE_PATHS=(
   [test-commands]="scripts/test-commands.sh"
   [test-commands-runner]="scripts/test-commands-runner.sh"
   [test-dispatch-handover]="scripts/test-dispatch-handover.sh"
+  [test-dispatch-post-verify]="scripts/test-dispatch-post-verify.sh"
   [test-check-docs-freshness]="scripts/test-check-docs-freshness.sh"
   [test-skill-refine]="scripts/test-skill-refine.sh"
   [test-pr-gate-profile]="scripts/test-pr-gate-profile.sh"

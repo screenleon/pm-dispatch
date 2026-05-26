@@ -165,9 +165,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-261 | ✅ closed 2026-05-25 | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | pr:#162 | P3 | hygiene |
-| CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/claude/isolation-map.yaml`（claude no-op map，v0.3.0）；`adapters/codex/isolation-map.yaml` 移至 v0.4.0；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
+| CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-263 | ✅ closed 2026-05-25 | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159,pr:#162 | P3 | — |
 | CC-264 | 🔵 active | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | — | P2 | — |
+| CC-265 | 🔵 active | **[移除 /caveman 與 /caveman-commit 指令]** caveman 壓縮模式省略內容，在設計/架構討論中造成關鍵約束遺失，導致傳達錯誤。刪除 `commands/caveman.md`、`commands/caveman-commit.md`；移除 `scripts/test-commands.sh` 的 caveman 測試段落；更新 CHANGELOG。Brief 已就緒：`.codex-briefs/brief-cc265-remove-caveman.md`（需更新 `expected_head_sha` 至 CC-264b merge 後 HEAD 再派發）。 | process | 2026-05-26 | — | P2 | hygiene |
+| CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
 
 ---
 
@@ -2076,3 +2078,66 @@ PR B — output contract + dispatch-post-verify.sh:
 - claude path: +16s at end (write .agent-trace/) relative to task duration of 5-10 min. Acceptable.
 
 **Cross-link**: `[[CC-036]]`（dispatch async ergonomics）、`[[CC-040]]`（executor-contract schema）、`[[CC-262]]`（isolation_level abstraction — same goal/executor separation principle）、`[[feedback_dispatch_direct_bash]]`（workaround measurement）。
+
+## CC-265 — 移除 /caveman 與 /caveman-commit 指令（active）
+
+**Problem**: `/caveman` 指令的文字壓縮模式（lite/full/ultra）在節省 token 的同時，會省略回應中的約束、邊界條件、設計細節，在設計/架構討論中造成關鍵資訊遺失，導致後續實作出現傳達錯誤。壓縮帶來的 token 節省不值得這個風險。
+
+**Removal scope**:
+- `commands/caveman.md` — delete
+- `commands/caveman-commit.md` — delete
+- `scripts/test-commands.sh` — 移除 caveman/caveman-commit 測試段落（lines ~90–215）；保留 pre-impl.md Q4 與 agent output-brevity 段落
+- `CHANGELOG.md` — 新增 `### Removed` 條目；更新 v0.2.0 test-commands.sh 描述
+- `BACKLOG.md` — CC-013 row 標記 "Removed in CC-265"
+
+**Why remove** (not just deprecate): caveman 在任何壓縮等級下都無法安全用於設計討論，且沒有已知的安全使用場景值得維護這個 code path。
+
+**Brief**: `.codex-briefs/brief-cc265-remove-caveman.md` — 已就緒，但 `expected_head_sha` 需更新至 CC-264b PR merge 後的 HEAD 才能派發。
+
+**Acceptance**:
+1. `commands/caveman.md` 不存在
+2. `commands/caveman-commit.md` 不存在
+3. `bash scripts/test-commands.sh` exits 0（pre-impl + agent-brevity 測試仍通過）
+4. `bash scripts/run-all-tests.sh` exits 0（suite 數量不變）
+5. `CHANGELOG.md [Unreleased]` 有 `### Removed` 段落
+
+**Milestone**: v0.3.0 M5（release prep 前置清理）。
+
+**Priority**: P2 — 移除會造成傳達錯誤的功能，應在 v0.3.0 release 前完成。
+
+**Cross-link**: `[[CC-013]]`（original caveman ship, PR #82）。
+
+---
+
+## CC-266 — adapters/claude: Codex-as-PM → Claude-as-executor shell dispatch（deferred, M3）
+
+**Problem**: `agents/claude-executor.md` 描述的是「Claude 作為主線程、自己執行任務」的路徑。當主線程是 Codex（PM 在 Codex 環境執行）並想派發 Claude 作為 executor 時，這條路徑無法被外部呼叫——Codex 沒有 `Agent` tool，無法直接啟動 claude-executor subagent。
+
+**The concrete gap**:
+
+```
+現有：
+  Codex-as-PM → scripts/codex-dispatch.sh → codex CLI（executor）
+  Claude-as-PM → Agent tool → claude-executor（executor）
+
+缺失：
+  Codex-as-PM → ??? → Claude CLI → claude-executor（executor）
+```
+
+**Design target（M3 `adapters/claude/` 補完）**:
+
+`adapters/claude/dispatch.sh`（或等效）定義從 Codex 環境透過 shell 呼叫 Claude CLI 的路徑：
+1. 組合 brief 內容
+2. 呼叫 `claude --print "..."` 或 `claude -f <brief_file>` 等等效 CLI 介面
+3. 捕捉輸出，確保 Claude executor 寫 `.agent-trace/claude-<ts>.last` + `latest.last` symlink（CC-264b output contract）
+4. `scripts/dispatch-post-verify.sh` 讀取結果（executor-agnostic，不需感知呼叫者是 Codex 或 Claude）
+
+**Relation to CC-262**: CC-262 抽象化 isolation（executor 在什麼環境跑）；CC-266 補完 dispatch 側（主線程如何跨工具呼叫另一個 executor）。`adapters/claude/` 目前只有 `isolation-map.yaml`（CC-262 M1 交付物），dispatch 路徑是 M3 缺口。
+
+**Prerequisites**: CC-264b（output contract + dispatch-post-verify.sh），CC-262 M2（codex adapter isolation map）。
+
+**Recommended first step**: spike — 驗證 `claude --print` 或其他 CLI flag 能從 Codex subprocess 環境被呼叫並返回可解析輸出。
+
+**Priority**: P3 — deferred to M3；Codex-as-PM 路徑未啟用前不阻塞任何流程。
+
+**Cross-link**: `[[CC-262]]`（isolation 抽象，M1/M2）、`[[CC-264]]`（output contract）、`[[CC-036]]`（dispatch ergonomics）。

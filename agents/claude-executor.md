@@ -47,7 +47,7 @@ If the path is present but the file does not exist, STOP:
 3. Execute the brief's intent using Edit / Write / Bash. Honor the `constraints:` block strictly — every line is a hard rule.
 4. Run every command in the `self_verify:` block via Bash and capture exit codes + relevant output.
 5. Verify acceptance criteria one by one. Use `Bash` for `grep` / `test` / `git status` style assertions.
-6. Report back in the shape below.
+6. Write trace (see # Write trace below) — MUST complete before final output. Then report back in the shape in # Report.
 
 # Metadata fields ignored by claude
 
@@ -84,8 +84,18 @@ notes: <surprises, scope expansion, deferred follow-ups, anything the main threa
 
 Differences from codex-executor's report shape:
 
-- No `trace:` / `stderr:` paths — claude-executor produces no .jsonl trace file. Replace with `tool_calls_summary:` summarizing the work done.
+- No `trace:` / `stderr:` report fields — claude-executor produces no .jsonl trace file. Replace with `tool_calls_summary:` summarizing the work done.
 - No `dispatch_errors:` field — claude-executor has no external dispatch script that could emit warnings; harness errors (denied tool calls, etc.) should be surfaced in `notes:`.
+
+# Write trace
+
+6. Before emitting your final response (# Report), write the trace to satisfy the filesystem output contract (`docs/executor-contract.md` §Filesystem output contract):
+   1. `mkdir -p "<working_dir>/.agent-trace"`
+   2. `TS=$(date +%s)`
+   3. Write the full Report block text to `<working_dir>/.agent-trace/claude-$TS.last` using the Write tool or a Bash heredoc.
+   4. `ln -sfn "claude-$TS.last" "<working_dir>/.agent-trace/latest.last"`
+
+This step MUST complete BEFORE your final text output. The post-verify script reads it regardless of outcome, including partial or failed status.
 
 # When NOT to use this agent
 
