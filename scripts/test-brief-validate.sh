@@ -265,6 +265,51 @@ case_reject_empty_brief() {
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'schema_version'"
 }
 
+case_help_exits_zero() {
+  local name="help-exits-zero"
+  should_run "$name" || return 0
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" --help 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"usage"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 output~'usage'; got rc=$rc output='$output'"
+  fi
+}
+
+case_no_args_exits_usage() {
+  local name="no-args-exits-usage"
+  should_run "$name" || return 0
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 2 && "$output" == *"usage"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=2 output~'usage'; got rc=$rc output='$output'"
+  fi
+}
+
+case_extra_args_exits_usage() {
+  local name="extra-args-exits-usage"
+  should_run "$name" || return 0
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" a b 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 2 && "$output" == *"usage"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=2 output~'usage'; got rc=$rc output='$output'"
+  fi
+}
+
 case_valid_read_only_brief
 case_valid_write_with_self_verify
 case_valid_new_with_self_verify
@@ -280,5 +325,8 @@ case_reject_untagged_no_self_verify
 case_reject_working_dir_not_found
 case_reject_file_not_found
 case_reject_empty_brief
+case_help_exits_zero
+case_no_args_exits_usage
+case_extra_args_exits_usage
 
 th_summary
