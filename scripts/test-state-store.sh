@@ -497,12 +497,12 @@ case_project_key_shasum_fallback() {
   fake_bin="$(mktemp -d)"
   git -C "$tmp_git" init -q
 
-  # shasum shim that ignores -a 1 args and delegates stdin to real sha1sum
-  printf '#!/bin/sh\nsha1sum\n' > "$fake_bin/shasum"
+  # shasum shim that ignores -a 1 args and delegates stdin to openssl
+  printf '#!/bin/sh\nopenssl dgst -sha1 < /dev/stdin | awk '"'"'{print $NF}'"'"'\n' > "$fake_bin/shasum"
   chmod +x "$fake_bin/shasum"
 
   # FAKE_SHA1SUM_MISSING=1 blocks the direct sha1sum branch in _portable_sha1;
-  # the shasum shim in fake_bin provides a working fallback via sha1sum internally.
+  # the shasum shim in fake_bin provides a working fallback via openssl internally.
   result="$(
     FAKE_SHA1SUM_MISSING=1 PATH="$fake_bin:$PATH" _SW_REPO_ROOT="$tmp_git" \
       bash -c "source '$REPO_ROOT/scripts/lib/state-writer.sh' 2>/dev/null

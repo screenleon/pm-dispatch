@@ -1192,11 +1192,11 @@ case_portable_sha1_shasum_fallback() {
   # even if it exists on PATH, so the shasum branch is exercised.
   local fake_bin
   fake_bin="$(mktemp -d)"
-  # shasum shim that delegates to the real sha1sum so stdin is actually hashed.
+  # shasum shim that delegates to openssl so stdin is actually hashed.
   # FAKE_SHA1SUM_MISSING=1 blocks the direct sha1sum branch; this shim proves
   # the shasum branch passes stdin through rather than returning a fixed digest.
-  # shasum shim: ignore -a 1 args (shasum-specific) and delegate stdin to sha1sum.
-  printf '#!/bin/sh\nsha1sum\n' > "$fake_bin/shasum"
+  # shasum shim: ignore -a 1 args (shasum-specific) and delegate stdin to openssl.
+  printf '#!/bin/sh\nopenssl dgst -sha1 < /dev/stdin | awk '"'"'{print $NF}'"'"'\n' > "$fake_bin/shasum"
   chmod +x "$fake_bin/shasum"
 
   local result

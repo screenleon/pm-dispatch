@@ -33,7 +33,7 @@ core/context-pack/   → core/schema/  (source.interface.md references context-p
 `core/policy/` is a leaf — depends on nothing.
 `core/state/` does NOT import `core/policy/`.
 
-The designated writer module (`scripts/lib/state-writer.sh`) is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. Validating writes against `core/schema/`, `core/state/layout.yaml`, and `core/policy/` is the intended contract; the current implementation handles path resolution and state writes without validating against the definition layer (integration deferred to a future milestone).
+The designated writer module (in the `scripts/` layer) is the sole manager of writes to `~/.local/share/pm-dispatch/state/` paths. Validating writes against `core/schema/`, `core/state/layout.yaml`, and `core/policy/` is the intended contract; the current implementation handles path resolution and state writes without validating against the definition layer (integration deferred to a future milestone).
 
 ## Schema versioning
 
