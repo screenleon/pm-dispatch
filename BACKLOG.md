@@ -20,7 +20,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-010 | ✅ closed 2026-05-14 | `/memory-compress` 指令：壓縮 MEMORY.md 條目減少 inject token 量 | ux/memory | 2026-05-14 | pr:#45 | — | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
-| CC-013 | ✅ closed 2026-05-18 | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 | ux | 2026-05-14 | pr:#82 | — | — |
+| CC-013 | ✅ closed 2026-05-18 | `/caveman` token 壓縮 skill：lite/full/ultra 模式，長 session 降低 token 消耗 Removed in CC-265. | ux | 2026-05-14 | pr:#82 | — | — |
 | CC-014 | 🟡 deferred | `using-git-worktrees` skill：parallel PR gate 隔離開發環境 | arch | 2026-05-14 | — | — | — |
 | CC-015 | 🟡 deferred | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — | — | — |
 | CC-016 | ✅ closed 2026-05-14 | gate NO-GO fix-loop 效率：PM brief 撰寫策略（discovery + --targeted + source-first） | process | 2026-05-14 | pr:#43 | — | — |
@@ -168,7 +168,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-263 | ✅ closed 2026-05-25 | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159,pr:#162 | P3 | — |
 | CC-264 | 🔵 active | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | — | P2 | — |
-| CC-265 | 🔵 active | **[移除 /caveman 與 /caveman-commit 指令]** caveman 壓縮模式省略內容，在設計/架構討論中造成關鍵約束遺失，導致傳達錯誤。刪除 `commands/caveman.md`、`commands/caveman-commit.md`；移除 `scripts/test-commands.sh` 的 caveman 測試段落；更新 CHANGELOG。Brief 已就緒：`.codex-briefs/brief-cc265-remove-caveman.md`（需更新 `expected_head_sha` 至 CC-264b merge 後 HEAD 再派發）。 | process | 2026-05-26 | — | P2 | hygiene |
+| CC-265 | ✅ closed 2026-05-26 | Remove `/caveman` and `/caveman-commit` commands. | process | 2026-05-26 | — | P2 | hygiene |
 | CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
 
 ---
@@ -224,6 +224,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 ## CC-013 — `/caveman` token 壓縮 skill ✅ 2026-05-18
 
 **See**: BACKLOG-ARCHIVE.md
+
+**Removed in CC-265** -- `commands/caveman.md` and `commands/caveman-commit.md` deleted; `test-commands.sh` caveman sections removed.
 
 ## CC-016 — gate NO-GO fix-loop 效率 ✅ 2026-05-14
 
@@ -2079,7 +2081,12 @@ PR B — output contract + dispatch-post-verify.sh:
 
 **Cross-link**: `[[CC-036]]`（dispatch async ergonomics）、`[[CC-040]]`（executor-contract schema）、`[[CC-262]]`（isolation_level abstraction — same goal/executor separation principle）、`[[feedback_dispatch_direct_bash]]`（workaround measurement）。
 
-## CC-265 — 移除 /caveman 與 /caveman-commit 指令（active）
+## CC-265 — Remove /caveman and /caveman-commit commands ✅ 2026-05-26
+
+**Status**: closed
+**Description**: Remove `/caveman` and `/caveman-commit` commands.
+
+**See**: CHANGELOG.md
 
 **Problem**: `/caveman` 指令的文字壓縮模式（lite/full/ultra）在節省 token 的同時，會省略回應中的約束、邊界條件、設計細節，在設計/架構討論中造成關鍵資訊遺失，導致後續實作出現傳達錯誤。壓縮帶來的 token 節省不值得這個風險。
 
@@ -2090,9 +2097,11 @@ PR B — output contract + dispatch-post-verify.sh:
 - `CHANGELOG.md` — 新增 `### Removed` 條目；更新 v0.2.0 test-commands.sh 描述
 - `BACKLOG.md` — CC-013 row 標記 "Removed in CC-265"
 
+**Outcome**: `commands/caveman.md` and `commands/caveman-commit.md` deleted; `scripts/test-commands.sh` caveman sections removed; CHANGELOG and BACKLOG updated.
+
 **Why remove** (not just deprecate): caveman 在任何壓縮等級下都無法安全用於設計討論，且沒有已知的安全使用場景值得維護這個 code path。
 
-**Brief**: `.codex-briefs/brief-cc265-remove-caveman.md` — 已就緒，但 `expected_head_sha` 需更新至 CC-264b PR merge 後的 HEAD 才能派發。
+**Brief**: `.codex-briefs/brief-cc265-remove-caveman.md`
 
 **Acceptance**:
 1. `commands/caveman.md` 不存在

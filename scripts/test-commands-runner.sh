@@ -66,7 +66,7 @@ case_list_mode_starts_with_case_name() {
 }
 
 # Behavior: --filter with a middle-of-name pattern proves contains-substring matching, not prefix matching.
-# Steps: 1. Invoke test-commands.sh with VERBOSE=1 and --filter "Rules:"; 2. Assert exit 0; 3. Assert per-case PASS/FAIL lines include "Rules:" and exclude non-matching cases.
+# Steps: 1. Invoke test-commands.sh with VERBOSE=1 and --filter "Q4"; 2. Assert exit 0; 3. Assert per-case PASS/FAIL lines include "Q4" and exclude non-matching cases.
 case_filter_valid_pattern_passes() {
   local name="cli-filter-valid-pattern-passes" out err case_lines status detail
   should_run "$name" || return 0
@@ -74,13 +74,13 @@ case_filter_valid_pattern_passes() {
   err="$tmp_root/$name.err"
   case_lines="$tmp_root/$name.case-lines"
 
-  VERBOSE=1 bash "$SCRIPT_UNDER_TEST" --filter "Rules:" > "$out" 2> "$err"
+  VERBOSE=1 bash "$SCRIPT_UNDER_TEST" --filter "Q4" > "$out" 2> "$err"
   status=$?
 
   assert_exit "$name" "$status" 0 || return 0
   grep -E '^  (PASS|FAIL) ' "$out" > "$case_lines" || true
-  assert_file_contains "$name" "$case_lines" "Rules:" || return 0
-  if ! detail="$(assert_all_case_lines_match "$out" '^  (PASS|FAIL) ' "Rules:")"; then
+  assert_file_contains "$name" "$case_lines" "Q4" || return 0
+  if ! detail="$(assert_all_case_lines_match "$out" '^  (PASS|FAIL) ' "Q4")"; then
     fail "$name" "$detail"
     return 0
   fi
