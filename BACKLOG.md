@@ -167,6 +167,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-261 | ✅ closed 2026-05-25 | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | pr:#162 | P3 | hygiene |
 | CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/claude/isolation-map.yaml`（claude no-op map，v0.3.0）；`adapters/codex/isolation-map.yaml` 移至 v0.4.0；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-263 | ✅ closed 2026-05-25 | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159,pr:#162 | P3 | — |
+| CC-264 | 🔵 active | **[dispatch overhead reduction]** `codex-executor` subagent 2.5x overhead（~40 tool calls × 8s ≈ 6 min）—其中 validation + post-verify 不需要 LLM intelligence。換成 shell-based `scripts/brief-validate.sh`（pre-dispatch 欄位驗證）+ `scripts/codex-post-verify.sh`（post-dispatch 結構化報告），overhead 降至 ~10s，維持完整 validation + reporting。 | ux/process | 2026-05-26 | — | P2 | — |
 
 ---
 
@@ -1995,3 +1996,61 @@ All three acceptance grep checks pass.
 
 **Outcome**: 2026-05-25 — `_portable_sha1()` added to `scripts/lib/portable.sh` with `FAKE_SHA1_MISSING=1` stub; `_sw_project_key` in `state-writer.sh` updated to use it; `case_project_key_no_sha1sum` test added. Shipped in PR #162.
 **See**: pr:#162
+
+---
+
+## CC-264 — Dispatch overhead reduction: shell-based brief-validate + codex-post-verify（active）
+
+**Problem**: Using `codex-executor` as a subagent adds ~6 min overhead (2.5x ratio) on top of a ~4 min codex execution. Measured 2026-05-25: 40 tool calls × 8s LLM API latency = ~320s, plus `run-all-tests.sh` self-verify = 60–120s. The validation (required field presence) and verification (reading .last, git diff, .stderr) steps do not require LLM intelligence — they are shell-level file reads and git operations.
+
+**Root cause**: Every tool call from an LLM subagent pays a full API round-trip. The codex-executor agent makes ~10 tool calls pre-dispatch (read brief, read schema docs, field validation reasoning) and ~20–30 tool calls post-dispatch (read .last, .jsonl trace, .stderr, git status, git diff, cross-check self_verify lines). None of these require LLM decision-making.
+
+**Why**: The current workaround (direct `Bash(codex-dispatch.sh, run_in_background:true)`) eliminates the overhead but loses all structured validation and reporting. The goal is to restore both at shell speed, not LLM speed.
+
+**Design: 3-phase shell pipeline**
+
+```
+Phase 1 — Pre-dispatch validation (shell, <1s):
+  scripts/brief-validate.sh <brief-file>
+  ├── schema_version, working_dir, goal, files, self_verify present
+  ├── working_dir directory exists on disk
+  └── any write:/new: entry → self_verify required
+  Output: VALID or REJECT: missing field <name>
+
+Phase 2 — Dispatch (unchanged):
+  Bash(scripts/codex-dispatch.sh --cd <dir> --brief-file <path>, run_in_background:true)
+
+Phase 3 — Post-dispatch verification (shell, <5s):
+  scripts/codex-post-verify.sh <work_dir> [<brief_file>]
+  ├── cat .agent-trace/latest.last
+  ├── git -C <work_dir> diff --stat
+  ├── git -C <work_dir> status --short
+  ├── scan .agent-trace/latest.stderr (non-empty → WARN)
+  └── extract self_verify block from brief → check each command appears in .last
+  Output: status: ok | partial | failed + structured report
+```
+
+**Requirement**:
+1. `scripts/brief-validate.sh` — pure bash/awk, no external deps beyond `grep`. Validates required fields, working_dir existence, file-writing → self_verify rule. Exits 0 = VALID, 1 = REJECT (with message).
+2. `scripts/codex-post-verify.sh` — reads `.agent-trace/latest.{last,stderr}`, runs git ops, outputs structured report. Exits 0 = ok, 1 = partial/failed.
+3. `scripts/test-brief-validate.sh` — unit tests for all rejection and pass paths.
+4. `scripts/test-codex-post-verify.sh` — unit tests with fixture `.last` / `.stderr` files.
+5. Wire both into `scripts/run-all-tests.sh` + CI `lint.yml`.
+6. Update `docs/dispatch-brief.md §Dispatch protocol` to document the 3-phase pipeline.
+7. Update `agents/codex-executor.md` to reference the shell pipeline as the primary route; agent remains for the existing 5-condition fallback list only.
+
+**Out of scope**: Changing `codex-dispatch.sh` itself; changing the brief schema; removing codex-executor agent.
+
+**Acceptance**:
+1. `bash scripts/brief-validate.sh /tmp/valid-brief.md` → exit 0, output `VALID`
+2. `bash scripts/brief-validate.sh /tmp/missing-self-verify-brief.md` → exit 1, output contains `REJECT: missing field 'self_verify'`
+3. `bash scripts/codex-post-verify.sh /tmp/fixture-workdir /tmp/fixture-brief.md` → exit 0, output contains `status: ok`
+4. `bash scripts/test-brief-validate.sh` → all cases pass
+5. `bash scripts/test-codex-post-verify.sh` → all cases pass
+6. `bash scripts/run-all-tests.sh` → exit 0
+
+**Milestone**: v0.3.x — next active priority after PR #162 merges.
+
+**Priority**: P2 — affects every dispatch; current workaround (direct Bash) loses validation and reporting.
+
+**Cross-link**: `[[CC-036]]`（dispatch async ergonomics）、`[[CC-040]]`（executor-contract schema）、`[[feedback_dispatch_direct_bash]]`（workaround measurement）。
