@@ -164,6 +164,38 @@ acceptance:
   - test suite still green
 ```
 
+## Dispatch protocol
+
+The recommended 3-phase shell dispatch pipeline. Each phase is a single Bash call from the main thread — no subagent spawned.
+
+### Phase 1 — Pre-dispatch validation (shell, <1s)
+
+```bash
+bash scripts/brief-validate.sh <brief-file>
+```
+
+Validates required fields (`schema_version`, `working_dir`, `goal`, `files`, `acceptance`) and enforces `self_verify` for file-writing briefs. Exits 0 = VALID; exits 1 = REJECT with reason. Run before dispatching to catch schema errors without wasting a full codex execution.
+
+### Phase 2 — Dispatch (executor-specific)
+
+```bash
+# codex profile:
+bash scripts/codex-dispatch.sh --cd <work_dir> --brief-file <brief-file>
+
+# claude profile:
+# dispatch via Agent(claude-executor)
+```
+
+Invoke in background from the main thread. Wait for completion notification.
+
+### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s) [CC-264b — coming soon]
+
+```bash
+bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
+```
+
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks that `self_verify` commands appear in the executor's final message. Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed. (Implemented in CC-264b.)
+
 ## Self-verify macros
 
 Reusable phrases. Drop into `self_verify` block of any brief.

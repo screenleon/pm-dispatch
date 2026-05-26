@@ -43,6 +43,7 @@ SUITE_NAMES=(
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
+  test-brief-validate
 )
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
@@ -99,6 +100,7 @@ suite_path() {
     test-pm-prep-snapshot) printf 'scripts/test-pm-prep-snapshot.sh\n' ;;
     test-schema-task-mirrors-backlog) printf 'scripts/test-schema-task-mirrors-backlog.sh\n' ;;
     test-state-store) printf 'scripts/test-state-store.sh\n' ;;
+    test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
     *) return 1 ;;
   esac
 }
