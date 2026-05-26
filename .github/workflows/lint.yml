@@ -143,6 +143,13 @@ jobs:
       - name: portable helper regression suite
         run: ./scripts/test-portable.sh
 
+  test-brief-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: brief validator regression suite
+        run: bash scripts/test-brief-validate.sh
+
   test-pr-gate-profile:
     runs-on: ubuntu-latest
     steps:

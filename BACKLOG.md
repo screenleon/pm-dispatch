@@ -167,7 +167,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-261 | ✅ closed 2026-05-25 | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | pr:#162 | P3 | hygiene |
 | CC-262 | ⏸ deferred | **[Executor isolation 抽象層]** `sandbox`/`approval`/`skip_git_check` 是 Codex 原生欄位卻洩漏進 brief schema，PM 替 claude-executor 填 no-op 值是 leaky abstraction。設計目標「功能與執行環境分離」：`core/policy/` 加 `isolation_level` enum（`none/read-only/workspace-write/sandboxed`）；`adapters/claude/isolation-map.yaml`（claude no-op map，v0.3.0）；`adapters/codex/isolation-map.yaml` 移至 v0.4.0；`codex-dispatch.sh` dispatch 前展開；PM brief 改寫 `isolation_level:` 取代三個原生欄位。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-263 | ✅ closed 2026-05-25 | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159,pr:#162 | P3 | — |
-| CC-264 | 🔵 active | **[dispatch overhead reduction]** `codex-executor` subagent 2.5x overhead（~40 tool calls × 8s ≈ 6 min）—其中 validation + post-verify 不需要 LLM intelligence。換成 shell-based `scripts/brief-validate.sh`（pre-dispatch 欄位驗證）+ `scripts/codex-post-verify.sh`（post-dispatch 結構化報告），overhead 降至 ~10s，維持完整 validation + reporting。 | ux/process | 2026-05-26 | — | P2 | — |
+| CC-264 | 🔵 active | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | — | P2 | — |
 
 ---
 
@@ -1999,58 +1999,80 @@ All three acceptance grep checks pass.
 
 ---
 
-## CC-264 — Dispatch overhead reduction: shell-based brief-validate + codex-post-verify（active）
+## CC-264 — Dispatch overhead reduction + executor-agnostic output contract（active）
 
-**Problem**: Using `codex-executor` as a subagent adds ~6 min overhead (2.5x ratio) on top of a ~4 min codex execution. Measured 2026-05-25: 40 tool calls × 8s LLM API latency = ~320s, plus `run-all-tests.sh` self-verify = 60–120s. The validation (required field presence) and verification (reading .last, git diff, .stderr) steps do not require LLM intelligence — they are shell-level file reads and git operations.
+**Problem**: Two coupled issues:
+1. `codex-executor` as a subagent adds ~6 min overhead (2.5x ratio): 40 tool calls × 8s LLM API latency = ~320s. The validation and verification steps don't require LLM intelligence.
+2. Post-dispatch verification was designed codex-specific (`codex-post-verify.sh`), but the executor-abstraction principle requires the output contract to be unified — any executor should produce the same output format so the same shell tool can verify any execution.
 
-**Root cause**: Every tool call from an LLM subagent pays a full API round-trip. The codex-executor agent makes ~10 tool calls pre-dispatch (read brief, read schema docs, field validation reasoning) and ~20–30 tool calls post-dispatch (read .last, .jsonl trace, .stderr, git status, git diff, cross-check self_verify lines). None of these require LLM decision-making.
+**Root cause**: Overhead = LLM subagent for shell-level work. Leak = executor-specific output path not standardized in `docs/executor-contract.md`.
 
-**Why**: The current workaround (direct `Bash(codex-dispatch.sh, run_in_background:true)`) eliminates the overhead but loses all structured validation and reporting. The goal is to restore both at shell speed, not LLM speed.
+**Why**: The executor-contract already decouples the input (brief schema) from the executor. The output must follow the same principle: all executors write to the same filesystem location so verification is executor-agnostic. Connection to CC-262 (isolation_level abstraction): same "goal vs executor" separation principle applied to the output layer.
 
-**Design: 3-phase shell pipeline**
+**Design: executor-agnostic 3-phase shell pipeline**
 
 ```
 Phase 1 — Pre-dispatch validation (shell, <1s):
   scripts/brief-validate.sh <brief-file>
-  ├── schema_version, working_dir, goal, files, self_verify present
-  ├── working_dir directory exists on disk
-  └── any write:/new: entry → self_verify required
-  Output: VALID or REJECT: missing field <name>
+  Validates required fields + self_verify for file-writing briefs + working_dir existence.
+  Exit 0: VALID | Exit 1: REJECT: <reason>
 
-Phase 2 — Dispatch (unchanged):
-  Bash(scripts/codex-dispatch.sh --cd <dir> --brief-file <path>, run_in_background:true)
+Phase 2 — Dispatch (executor-specific; this layer is intentionally different):
+  codex:  Bash(scripts/codex-dispatch.sh --cd <dir> --brief-file <path>, run_in_background:true)
+  claude: Agent(claude-executor, ...) — must now also write to .agent-trace/
 
-Phase 3 — Post-dispatch verification (shell, <5s):
-  scripts/codex-post-verify.sh <work_dir> [<brief_file>]
-  ├── cat .agent-trace/latest.last
-  ├── git -C <work_dir> diff --stat
-  ├── git -C <work_dir> status --short
-  ├── scan .agent-trace/latest.stderr (non-empty → WARN)
-  └── extract self_verify block from brief → check each command appears in .last
-  Output: status: ok | partial | failed + structured report
+Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s):
+  scripts/dispatch-post-verify.sh <work_dir> [<brief_file>]
+  Reads .agent-trace/latest.{last,stderr}, git diff/status, self_verify check.
+  Exit 0: ok | Exit 1: partial/failed
 ```
 
+**Output contract (new — added to executor-contract.md)**:
+
+All executors MUST write to `<work_dir>/.agent-trace/`:
+- `<executor>-<ts>.last` — final summary message (plain text)
+- `latest.last` — symlink to the most recent `.last` file
+- `latest.stderr` — error output (optional; may be empty)
+
+`codex-dispatch.sh` already satisfies this contract (codex profile). `claude-executor` must add a final step to write `claude-<ts>.last` + `latest.last` symlink.
+
 **Requirement**:
-1. `scripts/brief-validate.sh` — pure bash/awk, no external deps beyond `grep`. Validates required fields, working_dir existence, file-writing → self_verify rule. Exits 0 = VALID, 1 = REJECT (with message).
-2. `scripts/codex-post-verify.sh` — reads `.agent-trace/latest.{last,stderr}`, runs git ops, outputs structured report. Exits 0 = ok, 1 = partial/failed.
-3. `scripts/test-brief-validate.sh` — unit tests for all rejection and pass paths.
-4. `scripts/test-codex-post-verify.sh` — unit tests with fixture `.last` / `.stderr` files.
-5. Wire both into `scripts/run-all-tests.sh` + CI `lint.yml`.
-6. Update `docs/dispatch-brief.md §Dispatch protocol` to document the 3-phase pipeline.
-7. Update `agents/codex-executor.md` to reference the shell pipeline as the primary route; agent remains for the existing 5-condition fallback list only.
 
-**Out of scope**: Changing `codex-dispatch.sh` itself; changing the brief schema; removing codex-executor agent.
+PR A — brief-validate.sh:
+1. `scripts/brief-validate.sh` — pure bash/awk. Validates required fields, file-writing → self_verify, working_dir existence. Exit 0=VALID, 1=REJECT, 2=usage.
+2. `scripts/test-brief-validate.sh` — 12+ cases covering all pass/reject/edge paths.
+3. Wire into `scripts/run-all-tests.sh` + `scripts/test-run-all-tests.sh` + CI `lint.yml`.
+4. `docs/dispatch-brief.md` — append `## Dispatch protocol` section (Phase 1 + Phase 2; Phase 3 placeholder for PR B).
 
-**Acceptance**:
-1. `bash scripts/brief-validate.sh /tmp/valid-brief.md` → exit 0, output `VALID`
-2. `bash scripts/brief-validate.sh /tmp/missing-self-verify-brief.md` → exit 1, output contains `REJECT: missing field 'self_verify'`
-3. `bash scripts/codex-post-verify.sh /tmp/fixture-workdir /tmp/fixture-brief.md` → exit 0, output contains `status: ok`
-4. `bash scripts/test-brief-validate.sh` → all cases pass
-5. `bash scripts/test-codex-post-verify.sh` → all cases pass
-6. `bash scripts/run-all-tests.sh` → exit 0
+PR B — output contract + dispatch-post-verify.sh:
+5. `docs/executor-contract.md` — add `## Filesystem output contract` section specifying `.agent-trace/` standard.
+6. `agents/claude-executor.md` — add final Report step: write `$WORK_DIR/.agent-trace/claude-<ts>.last` + `latest.last` symlink.
+7. `scripts/dispatch-post-verify.sh` — executor-agnostic post-verify (reads `.agent-trace/latest.{last,stderr}`, git ops, self_verify check). Exit 0=ok, 1=partial/failed.
+8. `scripts/test-dispatch-post-verify.sh` — fixture-based tests.
+9. Wire into `scripts/run-all-tests.sh` + `scripts/test-run-all-tests.sh` + CI `lint.yml`.
+10. `docs/dispatch-brief.md` — fill in Phase 3 placeholder.
+11. `agents/codex-executor.md` — update lifecycle-leak note to reference shell pipeline as primary.
 
-**Milestone**: v0.3.x — next active priority after PR #162 merges.
+**Out of scope**: Changing `codex-dispatch.sh` itself; changing brief schema; removing codex-executor agent.
 
-**Priority**: P2 — affects every dispatch; current workaround (direct Bash) loses validation and reporting.
+**Acceptance (PR A)**:
+1. `bash scripts/brief-validate.sh /tmp/valid-brief.md` → exit 0, prints `VALID`
+2. `bash scripts/brief-validate.sh /tmp/no-self-verify.md` → exit 1, contains `REJECT: missing field 'self_verify'`
+3. `bash scripts/test-brief-validate.sh` → all cases pass
+4. `bash scripts/run-all-tests.sh` → exit 0 (31 suites)
 
-**Cross-link**: `[[CC-036]]`（dispatch async ergonomics）、`[[CC-040]]`（executor-contract schema）、`[[feedback_dispatch_direct_bash]]`（workaround measurement）。
+**Acceptance (PR B)**:
+5. `grep "Filesystem output contract" docs/executor-contract.md` → match
+6. `bash scripts/dispatch-post-verify.sh /tmp/fixture-workdir /tmp/fixture-brief.md` → exit 0, contains `status: ok`
+7. `bash scripts/test-dispatch-post-verify.sh` → all cases pass
+8. `bash scripts/run-all-tests.sh` → exit 0 (32 suites)
+
+**Milestone**: v0.3.x — PR A first; PR B after PR A merges.
+
+**Priority**: P2 — affects every dispatch; overhead saving ~6 min/dispatch on codex path.
+
+**Overhead impact**:
+- codex path: 6 min overhead → ~6s (shell only). Saving: ~99%.
+- claude path: +16s at end (write .agent-trace/) relative to task duration of 5-10 min. Acceptable.
+
+**Cross-link**: `[[CC-036]]`（dispatch async ergonomics）、`[[CC-040]]`（executor-contract schema）、`[[CC-262]]`（isolation_level abstraction — same goal/executor separation principle）、`[[feedback_dispatch_direct_bash]]`（workaround measurement）。
