@@ -106,7 +106,7 @@ fi
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'
   while IFS= read -r cmd; do
-    if grep -qF "${cmd}: pass" "$LATEST_LAST"; then
+    if grep -qxF "${cmd}: pass" "$LATEST_LAST"; then
       printf '  FOUND: %s\n' "$cmd"
     else
       printf '  MISSING: %s\n' "$cmd"

@@ -496,6 +496,31 @@ EOF
   pass "$name"
 }
 
+# A latest.last containing a misleading substring is not accepted as a self_verify pass.
+# Steps:
+# 1. Create a trace whose latest.last contains a line that embeds "<cmd>: pass" as a substring.
+# 2. Run dispatch-post-verify.sh with a brief requiring that command.
+# 3. Assert exit 1 and output containing "MISSING".
+case_fail_selfverify_substring_pass() {
+  local name="fail-selfverify-substring-pass"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "MISSING: bash scripts/run-all-tests.sh: pass not found"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "MISSING" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -516,5 +541,6 @@ case_brief_not_found
 case_fail_executor_status_failed
 case_fail_executor_status_partial
 case_fail_executor_status_blocked
+case_fail_selfverify_substring_pass
 
 th_summary
