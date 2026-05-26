@@ -174,7 +174,7 @@ The recommended 3-phase shell dispatch pipeline. Each phase is a single Bash cal
 bash scripts/brief-validate.sh <brief-file>
 ```
 
-Validates required fields (`schema_version`, `working_dir`, `goal`, `files`) and enforces `self_verify` for file-writing briefs. Exits 0 = VALID; exits 1 = REJECT with reason. Run before dispatching to catch schema errors without wasting a full codex execution.
+Validates required fields (`schema_version`, `working_dir`, `goal`, `files`, `acceptance`) and enforces `self_verify` for file-writing briefs. Exits 0 = VALID; exits 1 = REJECT with reason. Run before dispatching to catch schema errors without wasting a full codex execution.
 
 ### Phase 2 — Dispatch (executor-specific)
 
@@ -183,10 +183,10 @@ Validates required fields (`schema_version`, `working_dir`, `goal`, `files`) and
 bash scripts/codex-dispatch.sh --cd <work_dir> --brief-file <brief-file>
 
 # claude profile:
-# dispatch via Agent(claude-executor) — see docs/executor-contract.md
+# dispatch via Agent(claude-executor)
 ```
 
-Invoke in background from the main thread. Wait for completion notification. Both executors write to `<work_dir>/.agent-trace/latest.last` (see `docs/executor-contract.md §Filesystem output contract`).
+Invoke in background from the main thread. Wait for completion notification.
 
 ### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s) [CC-264b — coming soon]
 

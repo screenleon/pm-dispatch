@@ -98,6 +98,7 @@ has_required_field "$brief" "schema_version" || reject "missing field 'schema_ve
 has_required_field "$brief" "working_dir" || reject "missing field 'working_dir'"
 has_required_field "$brief" "goal" || reject "missing field 'goal'"
 has_files_section "$brief" || reject "missing field 'files'"
+grep -Eq '^acceptance:' "$brief" || reject "missing field 'acceptance'"
 
 if has_file_writing_entry "$brief" && ! has_self_verify_entry "$brief"; then
   reject "missing field 'self_verify'"

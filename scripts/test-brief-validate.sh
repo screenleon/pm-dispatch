@@ -47,6 +47,8 @@ goal: Inspect dispatch docs.
 files:
   - read: docs/dispatch-brief.md
   - read: scripts/test-portable.sh
+acceptance:
+  - validator accepts read-only briefs
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -62,6 +64,8 @@ working_dir: $REPO_ROOT
 goal: Update dispatch docs.
 files:
   - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs updated
 self_verify:
   - bash scripts/test-brief-validate.sh
 EOF
@@ -79,6 +83,8 @@ working_dir: $REPO_ROOT
 goal: Add a validator.
 files:
   - new: scripts/brief-validate.sh
+acceptance:
+  - validator added
 self_verify:
   - bash scripts/brief-validate.sh --help
 EOF
@@ -141,6 +147,23 @@ EOF
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'files'"
 }
 
+case_reject_missing_acceptance() {
+  local name="reject-missing-acceptance"
+  should_run "$name" || return 0
+  local brief="$tmpdir/missing-acceptance.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update docs without acceptance.
+files:
+  - write: docs/dispatch-brief.md
+self_verify:
+  - bash scripts/test-brief-validate.sh
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: missing field 'acceptance'"
+}
+
 case_reject_write_no_self_verify() {
   local name="reject-write-no-self-verify"
   should_run "$name" || return 0
@@ -151,6 +174,8 @@ working_dir: $REPO_ROOT
 goal: Update docs without verification.
 files:
   - write: docs/dispatch-brief.md
+acceptance:
+  - write entries require self verification
 EOF
 
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'self_verify'"
@@ -166,6 +191,42 @@ working_dir: $REPO_ROOT
 goal: Add a file without verification.
 files:
   - new: scripts/new-tool.sh
+acceptance:
+  - new entries require self verification
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: missing field 'self_verify'"
+}
+
+case_reject_edit_no_self_verify() {
+  local name="reject-edit-no-self-verify"
+  should_run "$name" || return 0
+  local brief="$tmpdir/edit-no-self-verify.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Edit a file without verification.
+files:
+  - edit: docs/dispatch-brief.md
+acceptance:
+  - edit entries require self verification
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: missing field 'self_verify'"
+}
+
+case_reject_untagged_no_self_verify() {
+  local name="reject-untagged-no-self-verify"
+  should_run "$name" || return 0
+  local brief="$tmpdir/untagged-no-self-verify.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Touch a file without verification.
+files:
+  - docs/dispatch-brief.md
+acceptance:
+  - untagged entries require self verification
 EOF
 
   assert_validation "$name" "$brief" 1 "REJECT: missing field 'self_verify'"
@@ -181,6 +242,8 @@ working_dir: /tmp/this-does-not-exist-xyz
 goal: Missing working dir path.
 files:
   - read: README.md
+acceptance:
+  - working dir must exist
 EOF
 
   assert_validation "$name" "$brief" 1 "REJECT: working_dir not found"
@@ -209,8 +272,11 @@ case_reject_missing_schema_version
 case_reject_missing_working_dir
 case_reject_missing_goal
 case_reject_missing_files
+case_reject_missing_acceptance
 case_reject_write_no_self_verify
 case_reject_new_no_self_verify
+case_reject_edit_no_self_verify
+case_reject_untagged_no_self_verify
 case_reject_working_dir_not_found
 case_reject_file_not_found
 case_reject_empty_brief
