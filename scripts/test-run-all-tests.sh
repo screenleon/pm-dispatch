@@ -33,6 +33,7 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-dispatch-post-verify
   test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
@@ -91,6 +92,7 @@ suite_path() {
     test-commands) printf 'scripts/test-commands.sh\n' ;;
     test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
     test-dispatch-handover) printf 'scripts/test-dispatch-handover.sh\n' ;;
+    test-dispatch-post-verify) printf 'scripts/test-dispatch-post-verify.sh\n' ;;
     test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
     test-claude-executor) printf 'scripts/test-claude-executor.sh\n' ;;
@@ -166,6 +168,20 @@ test_list() {
     assert_contains "$name" "$out" "$suite" || return
   done
   pass_case "$name"
+}
+
+test_known_suite_count() {
+  local name="known-suite-count"
+  # Behavior: the aggregator has exactly the expected number of registered suites.
+  # Steps: invoke --list; count output lines; assert the count is 32.
+  local out status=0 actual_count expected_count=32
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
+  actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status SUITE_TOTAL=$SUITE_TOTAL listed=$actual_count expected=$expected_count out=$out"
+  fi
 }
 
 test_skip_unknown_suite() {
@@ -394,6 +410,7 @@ test_dispatch_pm_scripts_via_bash() {
 }
 
 test_list
+test_known_suite_count
 test_skip_unknown_suite
 test_skip_known_suite
 test_suite_not_found_skip

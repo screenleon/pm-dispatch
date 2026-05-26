@@ -188,13 +188,13 @@ bash scripts/codex-dispatch.sh --cd <work_dir> --brief-file <brief-file>
 
 Invoke in background from the main thread. Wait for completion notification.
 
-### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s) [CC-264b — coming soon]
+### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s)
 
 ```bash
 bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
-Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks that `self_verify` commands appear in the executor's final message. Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed. (Implemented in CC-264b.)
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks that `self_verify` commands appear in the executor's final message. Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed.
 
 ## Self-verify macros
 

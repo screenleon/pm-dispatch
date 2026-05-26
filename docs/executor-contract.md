@@ -38,6 +38,27 @@ Every executor must produce these three artifacts in its report:
 
 The diff is the source of truth for work completion. The report is narrative context and must not replace file-level evidence.
 
+## Filesystem output contract
+
+All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
+
+| File | Description |
+|---|---|
+| `<executor>-<ts>.last` | Final agent message, plain text; for example, `codex-1748000000.last` or `claude-1748000000.last`. |
+| `latest.last` | Symlink or regular file pointing to the most recent `.last` content. |
+| `latest.stderr` | Symlink or regular file containing error output; optional; may be empty; codex profile only. |
+
+### Path validation rules
+
+- `latest.last` and `latest.stderr` MUST be symlinks or files whose resolved path stays within `<work_dir>/.agent-trace/`. A symlink pointing outside that directory causes `dispatch-post-verify.sh` to exit 1.
+- The `<executor>-<ts>.last` basename format is: executor name (alphanumeric, hyphens allowed; no path separators) + `-` + Unix epoch timestamp (`date +%s`) + `.last`. Example: `codex-1748000000.last`, `claude-1748000000.last`.
+- `dispatch-post-verify.sh` validates symlink targets for both `latest.last` and `latest.stderr` before reading their contents. Executors that write trace files outside `.agent-trace/` violate this contract and will fail Phase 3.
+- Self-verify result format: when an executor runs self_verify commands and writes the report to `latest.last`, each command MUST appear in one of these formats: (a) success: `cmd: pass`, (b) failure: `cmd: fail: <reason>`. `dispatch-post-verify.sh` rejects any matched self_verify command line that contains `": fail"` after the command text.
+
+`<ts>` is Unix epoch at dispatch time (`date +%s`).
+
+Note: codex profile — `scripts/codex-dispatch.sh` already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check.
+
 ## Executor profiles
 
 | Aspect | codex profile | claude profile |

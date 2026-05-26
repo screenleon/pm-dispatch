@@ -10,7 +10,7 @@ Output is relayed to the main thread, not read directly by the user. No preamble
 
 Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
 
-> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `dispatch_handover_v1` block. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/dispatch-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
+> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(scripts/codex-dispatch.sh, run_in_background:true)` from a `dispatch_handover_v1` block. Phase 3 post-verification is `scripts/dispatch-post-verify.sh` (CC-264b), which reads `.agent-trace/latest.last` written by `codex-dispatch.sh`. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/dispatch-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
 # Validation
 

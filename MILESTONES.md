@@ -48,6 +48,7 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
+| CC-264 | dispatch pipeline quality：PR A `brief-validate.sh`（✅ #163）+ PR B `dispatch-post-verify.sh` executor-agnostic Phase 3 post-verify | ⚠️ partial (#163) |
 | CC-202 | handover-validator framework → `pmctl validate` | ⏳ |
 | CC-204 | hook framework → guard engine → `pmctl guard check` | ⏳ |
 | CC-200 | executor-router → dispatch runner | ⏳ |
@@ -60,7 +61,8 @@
 | CC-059 | thin `commands/pm.md` | ⏳ |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
 | CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
-| CC-262 | `adapters/claude/isolation-map.yaml`；PM template 改寫 `isolation_level:`（adapters/codex → v0.4.0） | ⏳ |
+| CC-262 | `agents/project-pm.md` PM template 改寫 `isolation_level:`（M3 residual；M1 adapters/claude 已 ship #162） | ⏳ |
+| CC-266 | `adapters/claude/dispatch.sh`：Codex-as-PM → Claude CLI dispatch 路徑（shell-level invocation；output contract via `.agent-trace/latest.last`） | ⏳ |
 
 ### M4 — 概念吸收
 
@@ -77,6 +79,7 @@
 | CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
 | CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
 | CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
+| CC-265 | 移除 `/caveman` 與 `/caveman-commit`（brief 已就緒；需更新 `expected_head_sha` 至 CC-264b merge 後） | ⏳ |
 | — | v0.3.0 release prep | ⏳ |
 
 ### v0.3.0 範圍外 → v0.4.0
