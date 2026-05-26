@@ -13,7 +13,7 @@ VALIDATOR="$REPO_ROOT/scripts/brief-validate.sh"
 th_init "$@"
 
 tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir" "$tmp_root"' EXIT
+trap 'rm -rf "$tmpdir"' EXIT
 
 write_brief() {
   local path="$1"
