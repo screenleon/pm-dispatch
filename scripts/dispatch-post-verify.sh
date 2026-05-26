@@ -2,6 +2,10 @@
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/portable.sh
+source "$SCRIPT_DIR/lib/portable.sh"
+
 usage() {
   printf 'usage: %s <work_dir> [brief_file]\n' "$0" >&2
 }
@@ -28,7 +32,16 @@ if [[ ! -d "$TRACE_DIR" ]]; then
   exit 1
 fi
 
-TRACE_ABS="$(readlink -f "$TRACE_DIR" 2>/dev/null || echo "$TRACE_DIR")"
+if [[ -L "$TRACE_DIR" ]]; then
+  TRACE_DIR_RESOLVED="$(realpath_m "$TRACE_DIR" 2>/dev/null || true)"
+  WORK_ABS="$(realpath_m "$WORK_DIR" 2>/dev/null || echo "$WORK_DIR")"
+  if [[ -z "$TRACE_DIR_RESOLVED" || "${TRACE_DIR_RESOLVED#"$WORK_ABS/"}" == "$TRACE_DIR_RESOLVED" ]]; then
+    printf 'FAILED: .agent-trace symlink target is outside work dir: %s\n' "$TRACE_DIR_RESOLVED"
+    exit 1
+  fi
+fi
+
+TRACE_ABS="$(realpath_m "$TRACE_DIR" 2>/dev/null || echo "$TRACE_DIR")"
 
 if [[ ! -e "$LATEST_LAST" && ! -L "$LATEST_LAST" ]]; then
   printf 'FAILED: latest.last not found: %s\n' "$LATEST_LAST"
@@ -41,7 +54,7 @@ if [[ ! -s "$LATEST_LAST" ]]; then
 fi
 
 if [[ -L "$LATEST_LAST" ]]; then
-  LAST_RESOLVED="$(readlink -f "$LATEST_LAST" 2>/dev/null || true)"
+  LAST_RESOLVED="$(realpath_m "$LATEST_LAST" 2>/dev/null || true)"
   if [[ -z "$LAST_RESOLVED" || "${LAST_RESOLVED#"$TRACE_ABS/"}" == "$LAST_RESOLVED" ]]; then
     printf 'FAILED: latest.last symlink target is outside .agent-trace: %s\n' "$LAST_RESOLVED"
     exit 1
@@ -53,7 +66,7 @@ tail -50 "$LATEST_LAST"
 printf '\n'
 
 if [[ -L "$LATEST_STDERR" ]]; then
-  STDERR_RESOLVED="$(readlink -f "$LATEST_STDERR" 2>/dev/null || true)"
+  STDERR_RESOLVED="$(realpath_m "$LATEST_STDERR" 2>/dev/null || true)"
   if [[ -z "$STDERR_RESOLVED" || "${STDERR_RESOLVED#"$TRACE_ABS/"}" == "$STDERR_RESOLVED" ]]; then
     printf 'FAILED: latest.stderr symlink target is outside .agent-trace: %s\n' "$STDERR_RESOLVED"
     exit 1
@@ -82,7 +95,7 @@ printf '\n'
 
 FAILED=0
 
-EXECUTOR_STATUS="$(grep -iE '^status: (failed|partial)' "$LATEST_LAST" || true)"
+EXECUTOR_STATUS="$(grep -iE '^status: (failed|partial|blocked)' "$LATEST_LAST" || true)"
 if [[ -n "$EXECUTOR_STATUS" ]]; then
   while IFS= read -r status_line; do
     printf 'FAILED: executor reported non-success outcome: %s\n' "$status_line"
