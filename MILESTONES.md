@@ -48,7 +48,7 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-264 | dispatch pipeline quality：PR A `brief-validate.sh`（✅ #163）+ PR B `dispatch-post-verify.sh` executor-agnostic Phase 3 post-verify | ⚠️ partial (#163) |
+| CC-264 | dispatch pipeline quality：PR A `brief-validate.sh`（✅ #163/#164）+ PR B `dispatch-post-verify.sh` executor-agnostic Phase 3 post-verify（✅ #167） | ✅ (#163,#164,#167) |
 | CC-202 | handover-validator framework → `pmctl validate` | ⏳ |
 | CC-204 | hook framework → guard engine → `pmctl guard check` | ⏳ |
 | CC-200 | executor-router → dispatch runner | ⏳ |
