@@ -13,11 +13,15 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 . "$_SCRIPT_DIR/lib/portable.sh"
 # shellcheck source=scripts/lib/memory.sh
 . "$_SCRIPT_DIR/lib/memory.sh"
-unset _SCRIPT_DIR
 
 HOOK_NAME="hook-routing-log"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/routing-log.err"
+LOG_FILE="$ERR_FILE"
+# shellcheck source=scripts/lib/hook-framework.sh
+. "$_SCRIPT_DIR/lib/hook-framework.sh"
+unset _SCRIPT_DIR
+
 AUTO_START="<!-- routing-log:auto-block:start -->"
 AUTO_END="<!-- routing-log:auto-block:end -->"
 MAX_SIZE=1048576
