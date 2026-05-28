@@ -20,6 +20,7 @@ SUITE_NAMES=(
   test-usage-tracker
   test-pm-scripts
   test-codex-dispatch
+  test-executor-router
   test-pr-gate
   test-setup-project
   test-patch-gitignore
@@ -30,6 +31,7 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-handover-validate
   test-dispatch-post-verify
   test-check-docs-freshness
   test-skill-refine
@@ -55,6 +57,7 @@ declare -A SUITE_PATHS=(
   [test-usage-tracker]="scripts/test-usage-tracker.sh"
   [test-pm-scripts]="pm/scripts/test/run-tests.sh"
   [test-codex-dispatch]="scripts/test-codex-dispatch.sh"
+  [test-executor-router]="scripts/test-executor-router.sh"
   [test-pr-gate]="scripts/test-pr-gate.sh"
   [test-setup-project]="scripts/test-setup-project.sh"
   [test-patch-gitignore]="scripts/test-patch-gitignore.sh"
@@ -65,6 +68,7 @@ declare -A SUITE_PATHS=(
   [test-commands]="scripts/test-commands.sh"
   [test-commands-runner]="scripts/test-commands-runner.sh"
   [test-dispatch-handover]="scripts/test-dispatch-handover.sh"
+  [test-handover-validate]="scripts/test-handover-validate.sh"
   [test-dispatch-post-verify]="scripts/test-dispatch-post-verify.sh"
   [test-check-docs-freshness]="scripts/test-check-docs-freshness.sh"
   [test-skill-refine]="scripts/test-skill-refine.sh"

@@ -63,6 +63,13 @@ jobs:
       - name: pr-gate regression suite
         run: ./scripts/test-pr-gate.sh
 
+  test-executor-router:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: executor router regression suite
+        run: bash scripts/test-executor-router.sh
+
   test-skill-refine:
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +81,7 @@ jobs:
         with:
           scandir: ./scripts
           ignore_names: >-
+            executor-router.sh
             handover-validate.sh
             codex-dispatch.sh
             codex-watch.sh
@@ -101,6 +109,8 @@ jobs:
             test-commands.sh
             test-commands-runner.sh
             test-dispatch-handover.sh
+            test-executor-router.sh
+            test-handover-validate.sh
             test-hooks.sh
             test-install.sh
             test-lint-frontmatter.sh
@@ -202,6 +212,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: dispatch handover regression suite
         run: ./scripts/test-dispatch-handover.sh
+
+  test-handover-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: handover validator regression suite
+        run: bash scripts/test-handover-validate.sh
 
   test-lint-model-aliases:
     runs-on: ubuntu-latest

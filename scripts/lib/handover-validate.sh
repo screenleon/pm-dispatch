@@ -48,16 +48,22 @@ handover_has_dotdot_segment() {
   [[ "$value" == ".." || "$value" == ../* || "$value" == */.. || "$value" == */../* ]]
 }
 
-handover_extract_block() {
-  local input=${1-}
+handover_extract_fenced_block() {
+  local fence_name=${1-}
+  local input=${2-}
 
-  if [[ $# -eq 0 ]]; then
+  if [[ $# -lt 1 || $# -gt 2 || -z "$fence_name" ]]; then
+    handover_reject handover_block "expected fence name and optional input"
+    return 1
+  fi
+
+  if [[ $# -eq 1 ]]; then
     input="$(cat)"
   fi
 
-  awk '
-    BEGIN { in_block = 0; found = 0; closed = 0; block = "" }
-    /^```dispatch_handover_v1$/ { in_block = 1; found = 1; next }
+  awk -v fence_name="$fence_name" '
+    BEGIN { in_block = 0; found = 0; closed = 0; block = ""; open = "```" fence_name }
+    $0 == open { in_block = 1; found = 1; next }
     in_block && /^```$/ { closed = 1; printf "%s", block; exit }
     in_block { block = block $0 ORS; next }
     END {
@@ -68,6 +74,16 @@ handover_extract_block() {
       }
     }
   ' <<<"$input"
+}
+
+handover_extract_block() {
+  local input=${1-}
+
+  if [[ $# -eq 0 ]]; then
+    input="$(cat)"
+  fi
+
+  handover_extract_fenced_block dispatch_handover_v1 "$input"
 }
 
 handover_extract_metadata() {
@@ -331,6 +347,7 @@ handover_safe_argv() {
 export METADATA_REJECT_CHARS
 export -f handover_reject
 export -f handover_has_dotdot_segment
+export -f handover_extract_fenced_block
 export -f handover_extract_block
 export -f handover_extract_metadata
 export -f handover_extract_body

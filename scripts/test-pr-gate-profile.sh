@@ -343,6 +343,41 @@ test_executor_auto_without_codex() {
   pass "$name"
 }
 
+test_no_lib_copy_mode_uses_inline_executor_fallback() {
+  local name="no-lib-copy-mode-uses-inline-executor-fallback"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" isolated_cwd="$dir/isolated-cwd"
+  local out="$dir/out" err="$dir/err"
+  local no_codex_path
+  mkdir -p "$dir" "$isolated_cwd"
+
+  create_runner "$runner"
+  create_repo "$repo"
+  no_codex_path="$(build_no_codex_path "$dir")"
+
+  if [[ -e "$runner/lib" ]]; then
+    fail "$name" "copy-mode fixture unexpectedly contains lib/"
+    return
+  fi
+
+  set +e
+  (
+    cd "$isolated_cwd"
+    HOME="$home" PATH="$no_codex_path" "$runner/pr-gate.sh" --cd "$repo" --executor auto --base __missing_base__
+  ) > "$out" 2> "$err"
+  local code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit from missing base ref"
+    return
+  fi
+  assert_contains "$name" "$err" "Error: base ref not found: __missing_base__" || return
+  assert_not_contains "$name" "$err" "executor router not found" || return
+  assert_not_contains "$name" "$err" "executor-router.sh" || return
+  pass "$name"
+}
+
 test_executor_invalid_value_rejected() {
   local name="executor-invalid-value-rejected"
   local dir="$TMP_ROOT/$name"
@@ -449,6 +484,7 @@ run_case "executor-claude-sequential-emits-single-brief-handover" test_executor_
 run_case "executor-claude-parallel-emits-multi-brief-handover" test_executor_claude_parallel_emits_multi_brief_handover
 run_case "executor-auto-with-codex" test_executor_auto_with_codex
 run_case "executor-auto-without-codex" test_executor_auto_without_codex
+run_case "no-lib-copy-mode-uses-inline-executor-fallback" test_no_lib_copy_mode_uses_inline_executor_fallback
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "pr-gate-handover-fence-shape" test_pr_gate_handover_fence_shape
