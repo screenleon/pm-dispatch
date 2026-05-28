@@ -1080,7 +1080,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P3. Implement after CC-218.
 
-## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（deferred）
+## CC-200 — Reuse debt: `scripts/lib/executor-router.sh`（in-progress）
 
 **Problem**: `/pm` and `/pr-gate` each encode codex/claude routing logic separately.
 **Why**: A third consumer would turn the duplicated route logic into a maintenance cost and make executor behavior easier to drift.
@@ -1095,7 +1095,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Requirement**: Move executor-profile detection into a shared shim, likely `scripts/lib/portable.sh` or a focused executor helper, and update both consumers.
 **Closed**: `codex_available()` + `detect_executor_profile()` added to `scripts/lib/portable.sh`; `install-hooks.sh` / `pr-gate.sh` / `doctor.sh` (×2) consumers updated; `pr-gate.sh` + `doctor.sh` source the shim behind a graceful copy-mode fallback. +4 `test-portable.sh` cases, +1 `test-doctor.sh` regression case. PR #123 (v0.3.0 M0).
 
-## CC-202 — Reuse debt: handover validator framework（deferred）
+## CC-202 — Reuse debt: handover validator framework（in-progress）
 
 **Problem**: `dispatch_handover_v1` and `pr-gate-handover_v1` validators duplicate fence, metadata, and body validation structure.
 **Why**: Future handover schemas should not require hand-written validation boilerplate for every shared grammar rule.
