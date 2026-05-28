@@ -28,13 +28,27 @@ around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 | Hook | When it runs | Failure behaviour |
 |---|---|---|
 | `.pm-dispatch/pre-gate.sh` | before any reviewer dispatch | non-zero exit aborts the entire gate |
-| `.pm-dispatch/post-gate.sh` | after all reviewers finish, before result handover | non-zero exit marks gate as failed |
+| `.pm-dispatch/post-gate.sh` | after all reviewers finish successfully, before result handover | non-zero exit marks gate as failed |
 
 **Hook contract**:
 - Runs as the main thread user (full machine access).
 - Working directory is set to the project root (`$WORK_DIR`).
 - If the file exists but is not executable, pm-dispatch prints a warning and skips it.
 - Non-zero exit code from either hook aborts the gate.
+
+> **Important — post-gate is success-only**: `post-gate.sh` only runs when the
+> entire gate succeeds (all reviewers + synthesis + integrity checks pass).
+> If a reviewer or synthesis step fails, post-gate is **not** invoked.
+> For teardown that must always run (e.g., `docker compose down`), use a bash
+> `trap` inside `pre-gate.sh` itself so cleanup is guaranteed regardless of the
+> gate outcome:
+>
+> ```bash
+> # .pm-dispatch/pre-gate.sh — self-cleaning via trap
+> cleanup() { docker compose -f docker-compose.test.yml down; }
+> trap cleanup EXIT
+> docker compose -f docker-compose.test.yml up -d db
+> ```
 
 **Example: Docker Compose database**
 

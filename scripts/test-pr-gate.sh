@@ -2322,10 +2322,78 @@ test_post_gate_hook_aborts_on_failure() {
   pass "$name"
 }
 
+test_pre_gate_hook_not_executable() {
+  local name="pre-gate-hook-not-executable"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  # intentionally NOT chmod +x
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (non-executable hook must be skipped, not abort)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "not executable" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "hook body ran despite file not being executable"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_not_executable() {
+  local name="post-gate-hook-not-executable"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  # intentionally NOT chmod +x
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (non-executable hook must be skipped, not abort)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "not executable" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "hook body ran despite file not being executable"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
 run_test test_post_gate_hook_aborts_on_failure
+run_test test_pre_gate_hook_not_executable
+run_test test_post_gate_hook_not_executable
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 
