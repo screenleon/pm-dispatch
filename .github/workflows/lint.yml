@@ -129,6 +129,8 @@ jobs:
             test-executor-router.sh
             test-pmctl-adapter-generate.sh
             test-handover-validate.sh
+            hook-framework.sh
+            test-hook-framework.sh
             test-hooks.sh
             test-install.sh
             test-lint-frontmatter.sh
