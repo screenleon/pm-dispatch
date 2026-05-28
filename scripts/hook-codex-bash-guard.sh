@@ -39,13 +39,14 @@ set -uo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
-unset _SCRIPT_DIR
 
 HOOK_NAME="hook-codex-bash-guard"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
+HK_BYPASS_ENV="CLAUDE_HOOK_CODEX_GUARD"
+# shellcheck source=scripts/lib/hook-framework.sh
+. "$_SCRIPT_DIR/lib/hook-framework.sh"
 
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS:-$_SCRIPT_DIR/codex-dispatch.sh}"
 _ABS_NO_HOME="${DISPATCH_ABS#"$HOME/"}"
 DISPATCH_REL="~/$_ABS_NO_HOME"
@@ -75,19 +76,8 @@ GIT_WRITE_FLAGS=(--output --out-file --output-directory)
 
 # ---------- helpers ----------
 
-audit() {
-  local decision="$1" reason="${2:-}" target="${3:-}"
-  mkdir -p "$LOG_DIR" 2>/dev/null || return 0
-  local ts
-  ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
-  printf '%s %s agent=%s tool=%s decision=%s reason=%q target=%q\n' \
-    "$ts" "$HOOK_NAME" "${agent_type:-?}" "${tool_name:-?}" "$decision" "$reason" "$target" \
-    >> "$LOG_FILE" 2>/dev/null || true
-}
-
-deny() {
+hk_deny_message() {
   local reason="$1"
-  audit deny "$reason" "${command:-}"
   cat >&2 <<EOF
 codex-executor: blocked by $HOOK_NAME — $reason
 
@@ -115,12 +105,6 @@ trace flags the rest of the pipeline relies on.
 
 Bypass for one turn: set CLAUDE_HOOK_CODEX_GUARD=off (logged).
 EOF
-  exit 2
-}
-
-allow() {
-  audit allow "${1:-ok}" "${command:-}"
-  exit 0
 }
 
 is_under_read_root() {
@@ -151,19 +135,19 @@ validate_path_token() {
 
   # Globs anywhere are denied.
   case "$p" in
-    *\**|*\?*|*\[*|*\]*) deny "glob char in $what: $p" ;;
+    *\**|*\?*|*\[*|*\]*) hk_deny "glob char in $what: $p" "$command" ;;
   esac
 
   # `..` as a path segment (e.g. `..`, `../foo`, `foo/..`, `foo/../bar`).
   # Pure substring check would reject `foo..bar` (legitimate); restrict to
   # cases where `..` is bounded by `/` or string edges.
   if [[ "$p" =~ (^|/)\.\.($|/) ]]; then
-    deny "path traversal (\`..\`) in $what: $p"
+    hk_deny "path traversal (\`..\`) in $what: $p" "$command"
   fi
 
   case "$p" in
-    "~"*) deny "tilde path in $what (use absolute under a read root): $p" ;;
-    /*)   is_under_read_root "$p" || deny "path $what outside read roots: $p" ;;
+    "~"*) hk_deny "tilde path in $what (use absolute under a read root): $p" "$command" ;;
+    /*)   is_under_read_root "$p" || hk_deny "path $what outside read roots: $p" "$command" ;;
   esac
 }
 
@@ -233,12 +217,12 @@ validate_dispatch_args() {
     case "$p" in
       --brief-file=*)
         val="${p#*=}"
-        [[ -n "$val" ]] || deny "--brief-file requires a path"
+        [[ -n "$val" ]] || hk_deny "--brief-file requires a path" "$command"
         validate_path_token "$val" "--brief-file"
         ;;
       --brief-file)
         if [[ -z "${parts[i+1]:-}" ]]; then
-          deny "--brief-file requires a path"
+          hk_deny "--brief-file requires a path" "$command"
         fi
         validate_path_token "${parts[i+1]}" "--brief-file"
         ;;
@@ -250,45 +234,27 @@ validate_dispatch_args() {
 
 # ---------- preflight ----------
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "$HOOK_NAME: jq missing on PATH — install jq or set CLAUDE_HOOK_CODEX_GUARD=off" >&2
-  exit 2
-fi
-
-if [[ "$(detect_platform)" != "windows" ]] && ! command -v realpath >/dev/null 2>&1; then
-  echo "$HOOK_NAME: realpath missing on PATH — install coreutils or set CLAUDE_HOOK_CODEX_GUARD=off" >&2
-  exit 2
-fi
+hk_require_jq
+hk_require_realpath
 
 # ---------- parse input ----------
 # Read input first so bypass and audit lines can include agent/tool identity.
 
-input="$(cat)"
-
-agent_type="$(jq -r '.agent_type // ""' <<<"$input" 2>/dev/null)" || {
-  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
-  exit 2
-}
-tool_name="$(jq -r '.tool_name // ""' <<<"$input" 2>/dev/null)" || {
-  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
-  exit 2
-}
+hk_read_json
 
 # No-op for any caller other than the codex-executor subagent / Bash tool.
-[[ "$agent_type" != "codex-executor" ]] && exit 0
-[[ "$tool_name" != "Bash" ]] && exit 0
+[[ "$HK_AGENT_TYPE" != "codex-executor" ]] && exit 0
+[[ "$HK_TOOL_NAME" != "Bash" ]] && exit 0
 
-command="$(jq -r '.tool_input.command // ""' <<<"$input" 2>/dev/null)" || {
-  audit deny "jq failed on tool_input.command" ""
+command="$(hk_jq '.tool_input.command // ""')" || {
+  hk_audit deny "jq failed on tool_input.command" ""
   echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
   exit 2
 }
+HK_TARGET="$command"
 
 # Bypass AFTER parse so audit line records the actual call being bypassed.
-if [[ "${CLAUDE_HOOK_CODEX_GUARD:-}" == "off" ]]; then
-  audit bypass "CLAUDE_HOOK_CODEX_GUARD=off" "$command"
-  exit 0
-fi
+hk_check_bypass CLAUDE_HOOK_CODEX_GUARD
 
 # Reject background mode. The dispatch script must run foreground so the
 # codex-executor subagent process stays alive until codex finishes; otherwise
@@ -302,16 +268,16 @@ fi
 # plausible paths are checked; treat the multi-path strategy as deliberate
 # policy, not a TODO — the right fix is `+= path on next bypass observation`
 # rather than `pick one canonical path`.
-run_in_bg_a="$(jq -r '.tool_input.run_in_background // empty' <<<"$input" 2>/dev/null)"
-run_in_bg_b="$(jq -r '.run_in_background // empty' <<<"$input" 2>/dev/null)"
-run_in_bg_c="$(jq -r '.tool_options.run_in_background // empty' <<<"$input" 2>/dev/null)"
+run_in_bg_a="$(hk_jq '.tool_input.run_in_background // empty')"
+run_in_bg_b="$(hk_jq '.run_in_background // empty')"
+run_in_bg_c="$(hk_jq '.tool_options.run_in_background // empty')"
 
 if [[ "$run_in_bg_a" == "true" || "$run_in_bg_b" == "true" || "$run_in_bg_c" == "true" ]]; then
-  deny "run_in_background:true forbidden on codex-executor Bash (orphans dispatch — see codex-executor.md §Dispatch)"
+  hk_deny "run_in_background:true forbidden on codex-executor Bash (orphans dispatch — see codex-executor.md §Dispatch)" "$command"
 fi
 
 if [[ -z "$command" ]]; then
-  deny "tool_input.command empty"
+  hk_deny "tool_input.command empty" "$command"
 fi
 
 # ---------- character-level rejection ----------
@@ -325,10 +291,10 @@ fi
 # document this as a known parse limitation).
 
 if [[ "$command" == *$'\n'* ]]; then
-  deny "newline in command"
+  hk_deny "newline in command" "$command"
 fi
 if [[ "$command" == *$'\r'* ]]; then
-  deny "carriage return in command"
+  hk_deny "carriage return in command" "$command"
 fi
 
 # Quotes are rejected because our tokenizer (`read -r -a`) does NOT honor shell
@@ -336,14 +302,14 @@ fi
 # the path-validation case statement (which only matches `/*` literally). Since
 # command chaining is forbidden anyway, quotes serve no purpose here.
 if [[ "$command" == *\"* ]]; then
-  deny "double-quote in command"
+  hk_deny "double-quote in command" "$command"
 fi
 if [[ "$command" == *\'* ]]; then
-  deny "single-quote in command"
+  hk_deny "single-quote in command" "$command"
 fi
 
 if [[ "$command" =~ [\;\&\|\$\`\(\)\<\>\{\}\\] ]]; then
-  deny "shell metacharacter in command (one of ;&|\$\`()<>{}\\)"
+  hk_deny "shell metacharacter in command (one of ;&|\$\`()<>{}\\)" "$command"
 fi
 
 # ---------- tokenize ----------
@@ -358,7 +324,7 @@ case "$verb" in
     # Validate any path args after the verb (e.g. --cd <abs>); brief is the
     # final arg and may legitimately be a non-path string.
     validate_dispatch_args
-    allow "dispatch script"
+    hk_allow "dispatch script" "$command"
     ;;
 esac
 
@@ -370,7 +336,7 @@ if [[ "$verb" == "git" ]]; then
     p="${parts[i]}"
     for wf in "${GIT_WRITE_FLAGS[@]}"; do
       case "$p" in
-        "$wf"|"$wf"=*) deny "git write flag: $p" ;;
+        "$wf"|"$wf"=*) hk_deny "git write flag: $p" "$command" ;;
       esac
     done
   done
@@ -383,7 +349,7 @@ if [[ "$verb" == "git" ]]; then
   # option arguments as subcommands.
   if [[ "${parts[1]:-}" == "-C" ]]; then
     if [[ -z "${parts[2]:-}" || -z "${parts[3]:-}" ]]; then
-      deny "git -C requires <dir> <subcmd>"
+      hk_deny "git -C requires <dir> <subcmd>" "$command"
     fi
     # Validate the -C directory against read roots before accepting the
     # subcommand. Without this `git -C /etc status` would let `git ls-files`
@@ -395,7 +361,7 @@ if [[ "$verb" == "git" ]]; then
     subcmd="${parts[1]}"
     rest_start=2
   else
-    deny "unsupported git form (only \`git <subcmd>\` and \`git -C <dir> <subcmd>\` allowed)"
+    hk_deny "unsupported git form (only \`git <subcmd>\` and \`git -C <dir> <subcmd>\` allowed)" "$command"
   fi
 
   allowed=0
@@ -408,7 +374,7 @@ if [[ "$verb" == "git" ]]; then
     for ((i=rest_start; i<${#parts[@]}; i++)); do
       case "${parts[i]}" in
         -d|-D|--delete|-m|-M|--move|-c|-C|--copy|--unset-upstream|--set-upstream-to=*|--track=*|--no-track|--edit-description|-f|--force)
-          deny "git branch with destructive/mutating flag: ${parts[i]}"
+          hk_deny "git branch with destructive/mutating flag: ${parts[i]}" "$command"
           ;;
       esac
     done
@@ -423,19 +389,19 @@ if [[ "$verb" == "git" ]]; then
         allowed=1
         ;;
       "")
-        deny "bare 'git stash' is mutating (defaults to push); use 'git stash list' or 'git stash show'"
+        hk_deny "bare 'git stash' is mutating (defaults to push); use 'git stash list' or 'git stash show'" "$command"
         ;;
       *)
-        deny "git stash subverb not in read-only allowlist: $stash_sub (allowed: list, show)"
+        hk_deny "git stash subverb not in read-only allowlist: $stash_sub (allowed: list, show)" "$command"
         ;;
     esac
   fi
 
   if [[ "$allowed" == "1" ]]; then
     validate_args "$rest_start"
-    allow "git $subcmd"
+    hk_allow "git $subcmd" "$command"
   fi
-  deny "git subcommand not in read-only allowlist: $subcmd"
+  hk_deny "git subcommand not in read-only allowlist: $subcmd" "$command"
 fi
 
 # ---------- allowlist: read-only verbs ----------
@@ -443,10 +409,10 @@ fi
 for v in "${READONLY_VERBS[@]}"; do
   if [[ "$verb" == "$v" ]]; then
     validate_args 1
-    allow "verb $v"
+    hk_allow "verb $v" "$command"
   fi
 done
 
 # ---------- default deny ----------
 
-deny "verb not in allowlist: $verb"
+hk_deny "verb not in allowlist: $verb" "$command"
