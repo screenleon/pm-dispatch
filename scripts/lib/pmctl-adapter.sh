@@ -48,6 +48,7 @@ pmctl_adapter_generate() {
   [[ -d "$adapter_dir" ]] && pmctl_die "adapter already exists: adapters/$name"
 
   mkdir -p "$adapter_dir"
+  trap 'rm -rf "$adapter_dir" 2>/dev/null || true; trap - ERR' ERR
 
   pmctl_write_new_file "$adapter_dir/adapter.yaml" 0644 <<EOF
 schema_version: 1
@@ -99,6 +100,7 @@ bash "adapters/$name/run.sh" "\$@"
 Do not edit generated files listed in \`adapter.yaml\`; regenerate them with \`pmctl adapter generate $name\`.
 EOF
 
+  trap - ERR
   printf 'pmctl: generated adapter %s at %s\n' "$name" "${adapter_dir#$REPO_ROOT/}"
 }
 

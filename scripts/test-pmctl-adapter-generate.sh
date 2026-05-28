@@ -45,6 +45,8 @@ assert_exists() {
   return 1
 }
 
+# Behavior: rejects missing adapter name with non-zero exit
+# Steps: invoke adapter generate without a name and check the usage error
 if should_run "rejects missing name"; then
   name="rejects missing name"
   repo="$tmp_root/$name"
@@ -58,6 +60,8 @@ if should_run "rejects missing name"; then
   fi
 fi
 
+# Behavior: rejects unsafe adapter names before writing files
+# Steps: invoke adapter generate with uppercase input and check validation
 if should_run "rejects unsafe name"; then
   name="rejects unsafe name"
   repo="$tmp_root/$name"
@@ -71,6 +75,8 @@ if should_run "rejects unsafe name"; then
   fi
 fi
 
+# Behavior: rejects adapter names absent from the executor enum
+# Steps: build an enum without codex and check the policy error
 if should_run "rejects unknown executor"; then
   name="rejects unknown executor"
   repo="$tmp_root/$name"
@@ -84,6 +90,8 @@ if should_run "rejects unknown executor"; then
   fi
 fi
 
+# Behavior: creates exactly the four generated adapter files
+# Steps: generate codex and count/check the expected files
 if should_run "creates all four files"; then
   name="creates all four files"
   repo="$tmp_root/$name"
@@ -101,6 +109,8 @@ if should_run "creates all four files"; then
   fi
 fi
 
+# Behavior: generated run.sh has executable permission and mode 755
+# Steps: generate codex and inspect run.sh mode and executable bit
 if should_run "run.sh is executable"; then
   name="run.sh is executable"
   repo="$tmp_root/$name"
@@ -114,6 +124,8 @@ if should_run "run.sh is executable"; then
   fi
 fi
 
+# Behavior: adapter.yaml contains the expected top-level contract fields
+# Steps: generate codex and compare adapter.yaml field order and count
 if should_run "adapter.yaml has 8 fields"; then
   name="adapter.yaml has 8 fields"
   repo="$tmp_root/$name"
@@ -129,6 +141,8 @@ if should_run "adapter.yaml has 8 fields"; then
   fi
 fi
 
+# Behavior: isolation-map includes every configured isolation level
+# Steps: generate codex and compare map entries against policy values
 if should_run "isolation-map covers all levels"; then
   name="isolation-map covers all levels"
   repo="$tmp_root/$name"
@@ -147,6 +161,8 @@ if should_run "isolation-map covers all levels"; then
   fi
 fi
 
+# Behavior: refuses to overwrite an existing generated adapter
+# Steps: generate codex twice and check the overwrite error
 if should_run "refuses overwrite"; then
   name="refuses overwrite"
   repo="$tmp_root/$name"
@@ -161,6 +177,8 @@ if should_run "refuses overwrite"; then
   fi
 fi
 
+# Behavior: unknown pmctl subcommands still route to the generic error
+# Steps: invoke an unsupported adapter subcommand and check the error
 if should_run "unknown command routes to error"; then
   name="unknown command routes to error"
   repo="$tmp_root/$name"
@@ -174,6 +192,8 @@ if should_run "unknown command routes to error"; then
   fi
 fi
 
+# Behavior: generated run.sh points at pmctl dispatch run
+# Steps: generate codex and grep run.sh for the dispatch exec path
 if should_run "run.sh points at pmctl dispatch run"; then
   name="run.sh points at pmctl dispatch run"
   repo="$tmp_root/$name"
@@ -183,6 +203,22 @@ if should_run "run.sh points at pmctl dispatch run"; then
     pass "$name"
   else
     fail "$name" "run.sh did not contain pmctl dispatch run exec"
+  fi
+fi
+
+# Behavior: generated run.sh reaches the dispatch/run route without unknown command
+# Steps: generate testrouter, invoke run.sh, and inspect stub output
+if should_run "run.sh reaches dispatch route"; then
+  name="run.sh reaches dispatch route"
+  repo="$tmp_root/$name"
+  make_fixture_repo "$repo" "testrouter"
+  run_pmctl "$repo" adapter generate testrouter >/dev/null
+  status=0
+  out="$(REPO_ROOT="$repo" bash "$repo/adapters/testrouter/run.sh" --help 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"pmctl dispatch run: adapter dispatch stub"* && "$out" != *"unknown command"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
   fi
 fi
 
