@@ -91,7 +91,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-203 | ✅ closed 2026-05-24 | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ `test-*.sh` 各寫 `--filter`/`--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一。Incremental：PR #127 建 harness + 2 pilot、PR #128 遷 test-install/test-claude-executor、PR #135-#140 遷 GROUP-B 16 file（751 cases preserved）、PR #142 加 `--format`/`--fail-fast` options、PR #152 (CC-249 PR-B.2 v2) 完成 assert_* migration。22/23 test-*.sh 已上 harness；剩 test-run-all-tests.sh (orchestrator) per [[feedback_test_migration_format_preservation]] 評估後 out-of-scope；test-test-harness/test-hooks 的 assert_* 殘餘走 CC-256。 | ops/test | 2026-05-17 | pr:#127,pr:#128,pr:#135,pr:#136,pr:#137,pr:#138,pr:#139,pr:#140,pr:#142,pr:#152 | P2 | reuse-debt |
 | CC-204 | 🔵 active | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
-| CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
+| CC-206 | 🔵 active | **[gate lifecycle hooks + sandbox limitations guide]** `pr-gate.sh` 加入 `.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` hook 點，讓主線程在 dispatch 前後執行 repo-level infra 操作（Docker 啟動、DB seed 等）；新增 `docs/sandbox-limitations.md` 說明 sandbox 能力邊界與各類解法（Docker Compose pre-gate、Go `GOCACHE` 重導等）；吸收 CC-271 的文件範圍 | ops/gate/docs | 2026-05-20 | issue:#103 | P1 | — |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | — | P3 | — |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
@@ -174,6 +174,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 | CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | — | P3 | — |
 | CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
+| CC-271 | 🟡 deferred | **[process: Go build cache redirect — sandbox limitations guide]** Go GOCACHE 說明文件範圍已折入 CC-206（`docs/sandbox-limitations.md`）；CC-206 ship 後同步關閉。根本原因：sandbox `/home` 唯讀，`GOCACHE=/tmp/go-cache` 是最小正確解法（不切斷 module source 存取）。 | process/DX | 2026-05-28 | issue:#173 | P2 | — |
+| CC-272 | 🟡 deferred | **[process: brief template — omit commit block; document main-thread commit delegation]** 每個 brief 末尾的 `git add + git commit` 均被 `hook-codex-bash-guard` 擋住，executor 回報 `status: partial`（即使程式碼正確），主線程每次都必須手動 commit。推薦 Option A：從 brief template 移除 commit block，在 `docs/dispatch-brief.md` 明文「commit 永遠委派主線程」。Option B：hook allowlist 加入無破壞性 git add/commit。 | process/DX | 2026-05-28 | issue:#173 | P2 | — |
 
 ---
 
@@ -718,27 +720,40 @@ script-layer）、CC-202（handover validator framework）
 - [ ] `dispatch_handover_v1` block 含 `executor` 欄位，pr-gate skill 可解析同一格式
 - [ ] 一般 `/pm <task>`（無 arch 特徵）維持背景執行，行為不變
 
-## CC-206 — gate lifecycle hook（deferred）
+## CC-206 — gate lifecycle hooks + sandbox limitations guide（active）
 
-**Problem**: Codex sandbox 無法存取 Docker socket，導致需要 Docker backed services（Postgres、Redis 等）的整合測試在 gate 中無法執行。主線程（Claude Code session）有 Docker 權限，但 pr-gate.sh 目前無法讓主線程在 dispatch 前後執行 repo-specific 操作。
+**Problem**: Codex sandbox 無法存取 Docker socket，導致需要 Docker backed services（Postgres、Redis 等）的整合測試在 gate 中無法執行。主線程（Claude Code session）有 Docker 權限，但 `pr-gate.sh` 目前無法讓主線程在 dispatch 前後執行 repo-specific 操作。更廣義地說：這是「主線程有能力 X，Codex sandbox 沒有」的通用問題，缺乏一個統一的說明讓使用者知道各類限制的解法。
 
-**Why**: 這是「主線程有能力 X，Codex sandbox 沒有」的通用問題，不只是 Docker。若直接在 pr-gate.sh 加 `--compose-file` flag 會把 Docker 耦合進 PM 工具；正確的分層是 pm-dispatch 提供 hook 點、repo 實作內容（與 git hooks 設計哲學相同）。
+**Why**: 正確的分層是 pm-dispatch 提供 hook 點、repo 自行實作內容（與 git hooks 設計哲學相同）。Docker Compose flag 直接加進 `pr-gate.sh` 會把 infra 耦合進 PM 工具。pm-dispatch 也應提供 `docs/sandbox-limitations.md` 讓使用者在遇到 sandbox 邊界時有單一查閱點。
 
-**Requirement**:
-1. `pr-gate.sh` 在 dispatch reviewers 前，若 `.pm-dispatch/pre-gate.sh` 存在則執行（主線程）
-2. `pr-gate.sh` 在所有 reviewer sessions 完成後，若 `.pm-dispatch/post-gate.sh` 存在則執行（主線程）
-3. hook 執行失敗（exit non-zero）時 gate 中止並報錯，不繼續 dispatch
-4. hook 不存在時 gate 行為完全不變（backward compatible）
-5. 文件說明 hook 慣例，範例：Docker Compose 啟動/停止
+**Deliverables**:
+
+**(A) `scripts/pr-gate.sh` — hook 機制**
+1. dispatch reviewers 前：若 `.pm-dispatch/pre-gate.sh` 存在且可執行，主線程執行它
+2. 所有 reviewer sessions 完成後：若 `.pm-dispatch/post-gate.sh` 存在，主線程執行它
+3. pre-gate hook exit non-zero → gate 中止，不 dispatch reviewers
+4. 兩個 hook 均不存在 → gate 行為完全不變（backward compatible）
+
+**(B) `docs/sandbox-limitations.md` — 使用者文件（吸收 CC-271 範圍）**
+- 說明 Codex sandbox 能力邊界（read-only `/home`、無 Docker socket、無對外網路等）
+- Section 1：Gate hooks（`pre-gate.sh` / `post-gate.sh`）— 什麼時候用、怎麼寫、Docker Compose 完整範例
+- Section 2：Dispatch brief 中的 Go build cache — `GOCACHE=/tmp/go-cache` 模式說明與 `self_verify` 範例
+- Section 3：其他常見限制與 workaround（未來可擴充）
+
+**(C) `docs/dispatch-brief.md` — 小更新**
+- 加入 "Go repo" 小節，指向 `sandbox-limitations.md`
 
 **Acceptance criteria**:
 - [ ] `.pm-dispatch/pre-gate.sh` 存在且可執行 → gate 在 dispatch 前執行它（主線程）
 - [ ] `.pm-dispatch/post-gate.sh` 存在 → gate 在所有 reviewer 完成後執行它
-- [ ] pre-gate hook exit 1 → gate 中止，不 dispatch reviewer
-- [ ] 兩個 hook 均不存在 → gate 行為與現行相同（無 regression）
-- [ ] CONTRIBUTING.md 或 docs/ 有使用範例（Docker Compose 場景）
+- [ ] pre-gate hook exit 1 → gate 中止，不 dispatch reviewers
+- [ ] 兩個 hook 均不存在 → gate 行為與現行相同（regression test pass）
+- [ ] `docs/sandbox-limitations.md` 存在，包含 Docker Compose 範例與 Go GOCACHE 說明
+- [ ] `scripts/test-pr-gate.sh`（或獨立 `test-gate-hooks.sh`）覆蓋 hook 存在/不存在/exit-1 三個 case
 
-**See**: issue #103
+**See**: issue:#103（hook 機制）、issue:#173 Pattern 2（Go GOCACHE）
+
+**Cross-link**: `[[CC-271]]`（文件範圍折入此票）、`[[CC-064]]`（未來 bootstrap wizard 可引導建立 pre-gate.sh）
 
 ## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh（deferred）
 
@@ -2226,3 +2241,50 @@ This makes directory creation the mutex.
 **Dependencies**: None.
 
 **Priority**: P3 — low probability, reversible.
+
+---
+
+## CC-271 — process: Go build cache redirect — sandbox limitations guide（deferred → folded into CC-206）
+
+> **Note**: The documentation scope of this ticket (Go `GOCACHE` redirect explanation) has been folded into **CC-206** under `docs/sandbox-limitations.md`. This ticket will close when CC-206 ships.
+
+**Root cause**: The Codex sandbox makes `/home` read-only. Go's build cache (`GOCACHE`, default `~/.cache/go/build`) requires write access to store compiled artifacts. `go build` fails because it cannot write to `GOCACHE`. Codex then attempts `cp -a <module-cache> /tmp` — incorrectly conflating the build cache with the module download cache — which the workspace-write sandbox policy blocks (compound path). The retry loop (cp → block → discover `GOPATH=/tmp/gopath` → attempt) costs ~10-15 min per dispatch.
+
+**Sandbox access map**:
+
+| Path | Access | Purpose |
+|------|--------|---------|
+| `~/go/pkg/mod` (or `$GOPATH/pkg/mod`) | read-only ✓ | module source — Go can read this fine |
+| `~/.cache/go/build` (`GOCACHE`) | **no write ✗** | compiled artifacts — root cause of failure |
+| `/tmp` | read-write ✓ | redirect target |
+
+**Fix**: Standardize `GOCACHE=/tmp/go-cache go build ./...` (and `go test`) in the brief `self_verify` template for Go target repos. This redirects only the writable build artifact layer; module source stays accessible at the original read-only path — no re-download required.
+
+**Why not `GOPATH=/tmp/gopath`**: Moving the entire `GOPATH` severs access to already-downloaded modules, forcing Go to re-download them from the network (if sandbox allows) or fail. `GOCACHE` redirect is the minimal, correct intervention.
+
+**Alternative — vendor mode**: `go mod vendor` + `go build -mod=vendor` eliminates all cache dependencies entirely (fully offline, reproducible). Trade-off: vendor directory adds repo size (tens to hundreds of MB) and requires sync on dependency updates. Prefer for projects with strict reproducibility requirements.
+
+**Impact**: Every Go-target dispatch (e.g. JapanJob backend). Fix is brief template documentation only.
+
+**See**: issue:#173 (Pattern 2)
+
+**Priority**: P2 — reproducible on every Go dispatch; doc-only fix is low effort.
+
+---
+
+## CC-272 — process: brief template — omit commit block; document main-thread commit delegation（deferred）
+
+**Problem**: Every brief ends with a `git add + git commit` block that `hook-codex-bash-guard` blocks. The executor marks the commit step as failed and reports `status: partial` in the output summary — even when all code changes are correct. The main thread must manually stage and commit after every dispatch. The brief template implicitly encourages adding a commit block, creating a permanent noise signal.
+
+**Options**:
+- **A (preferred)**: Remove the commit block from the brief template and document in `docs/dispatch-brief.md` that commit is always delegated to the main thread. Update `self_verify` template to stop including `git commit` as a success criterion.
+- **B**: Add `git add` + `git commit` (without destructive flags) to `hook-codex-bash-guard` allowlist. Requires security review of hook policy (`[[CC-066]]`).
+- **C**: `scripts/codex-dispatch.sh` reads a `.commit-msg` file written by the executor and performs the commit on its behalf; executor stays sandboxed.
+
+**Impact**: Every dispatch shows false `status: partial`; creates a recurring manual step the main thread must remember.
+
+**See**: issue:#173 (Pattern 3)
+
+**Cross-link**: `[[CC-066]]` (declarative policy.yml for hook allowlist — relevant if Option B chosen)
+
+**Priority**: P2 — every dispatch affected; Option A is pure documentation with immediate noise reduction.

@@ -44,15 +44,15 @@
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
 | CC-262 | `isolation_level` enum（M1 延伸）— adapters/claude no-op map（M1）；adapters/codex 移 v0.4.0；dispatch 展開 M2；PM template M3 | ✅ (#162) |
 
-### M2 — 由抽取長出 runtime
+### M2 — 由抽取長出 runtime — ✅ complete 2026-05-28
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-264 | dispatch pipeline quality：PR A `brief-validate.sh`（✅ #163/#164）+ PR B `dispatch-post-verify.sh` executor-agnostic Phase 3 post-verify（✅ #167） | ✅ (#163,#164,#167) |
-| CC-202 | handover-validator framework → `pmctl validate` | ⏳ |
-| CC-204 | hook framework → guard engine → `pmctl guard check` | ⏳ |
-| CC-200 | executor-router → dispatch runner | ⏳ |
-| CC-215 | `bin/pmctl` MVP（全子命令 `--json` 輸出） | ⏳ |
+| CC-202 | handover-validator framework 抽取（→ `pmctl validate` 串接移 M3） | ✅ (#170) |
+| CC-204 | hook framework 抽取（→ `pmctl guard check` 串接移 M3） | ✅ (#172) |
+| CC-200 | executor-router 抽取（→ dispatch runner 串接移 M3） | ✅ (#170) |
+| CC-215 | `cli/pmctl` adapter generate subcommand（C-now + D-stub）；剩餘子命令移 M3 | ✅ (#171) |
 
 ### M3 — 重新接 Claude adapter
 
