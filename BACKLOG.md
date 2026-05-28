@@ -176,6 +176,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-271 | 🟡 deferred | **[process: Go build cache redirect — sandbox limitations guide]** Go GOCACHE 說明文件範圍已折入 CC-206（`docs/sandbox-limitations.md`）；CC-206 ship 後同步關閉。根本原因：sandbox `/home` 唯讀，`GOCACHE=/tmp/go-cache` 是最小正確解法（不切斷 module source 存取）。 | process/DX | 2026-05-28 | — | P2 | — |
 | CC-272 | 🟡 deferred | **[process: brief template — omit commit block; document main-thread commit delegation]** 每個 brief 末尾的 `git add + git commit` 均被 `hook-codex-bash-guard` 擋住，executor 回報 `status: partial`（即使程式碼正確），主線程每次都必須手動 commit。推薦 Option A：從 brief template 移除 commit block，在 `docs/dispatch-brief.md` 明文「commit 永遠委派主線程」。Option B：hook allowlist 加入無破壞性 git add/commit。 | process/DX | 2026-05-28 | — | P2 | — |
+| CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
 
 ---
 
@@ -2288,3 +2289,21 @@ This makes directory creation the mutex.
 **Cross-link**: `[[CC-066]]` (declarative policy.yml for hook allowlist — relevant if Option B chosen)
 
 **Priority**: P2 — every dispatch affected; Option A is pure documentation with immediate noise reduction.
+
+---
+
+## CC-273 — arch: unified lifecycle hook event spec（deferred）
+
+**Problem**: CC-206 added `pre-gate.sh` / `post-gate.sh` hooks directly into `scripts/pr-gate.sh`. If future tools (e.g., `codex-dispatch.sh`, `brief-validate.sh`) also need hook points, each script will independently add its own pre/post blocks — resulting in inconsistent naming, invocation contracts, and user documentation.
+
+**Proposed direction**: Define a shared lifecycle event spec:
+- Convention: `.pm-dispatch/hooks/<event>.sh` (e.g., `hooks/pre-gate.sh`, `hooks/post-dispatch.sh`)
+- Single call site in a helper (e.g., `lib/run-lifecycle-hook.sh <event>`)
+- Consistent contract: runs from project root as main thread; non-zero aborts the triggering operation
+- Single `docs/lifecycle-hooks.md` covering all events (supersedes the pattern docs in `sandbox-limitations.md`)
+
+**When to activate**: When a **second** hook point is requested (not gate). Design cost before that point exceeds the benefit.
+
+**Cross-link**: `[[CC-206]]` (first hook point — gate pre/post)
+
+**Priority**: P3 — no current requirement; activate when second hook point emerges.
