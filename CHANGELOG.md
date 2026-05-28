@@ -10,12 +10,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`scripts/dispatch-post-verify.sh`** — executor-agnostic Phase 3 post-verify pipeline: reads `.agent-trace/latest.last`, enforces exact `cmd: pass` whole-line self-verify match, validates symlink targets stay inside `.agent-trace/`, and rejects `failed`/`partial`/`blocked` executor status. 21 fixture-based test cases in `scripts/test-dispatch-post-verify.sh` (CC-264 PR B).
+- **`scripts/test-dispatch-post-verify.sh`** — 21-case fixture suite covering happy path, boundary, negative inputs, symlink safety, and the exact executor output contract (CC-264 PR B).
+- **`scripts/test-claude-executor.sh`** — 5 regression cases for the claude-executor trace-write and self-verify contract (CC-264b).
 - **`core/policy/isolation-level.yaml`** — new policy enum: `none | read-only | workspace-write | sandboxed`; adapters translate these intent values to executor-native flags (CC-262 M1).
 - **`adapters/claude/isolation-map.yaml`** — no-op translation table for claude-executor; all four isolation levels map to empty native-flags (CC-262 M1).
 - **`scripts/lib/portable.sh` `_portable_sha1()`** — cross-platform SHA-1 helper: tries `sha1sum` (GNU/Linux), falls back to `shasum -a 1` (macOS/BSD), returns 1 with a logged warning if both are missing. `FAKE_SHA1_MISSING=1` test shim included (CC-263).
 
 ### Changed
 
+- **`agents/claude-executor.md`** — self-verify format hardened: exact whole-line `cmd: pass` / `cmd: fail: <reason>` matching; `status:blocked` check; portable `realpath`; trace-dir symlink guard; `OK-NOBRIEF` mode for briefless runs (CC-264b).
+- **`docs/executor-contract.md`** — updated with filesystem output contract details and executor `latest.last` symlink timestamp format (CC-264b).
+- **`scripts/hook-save-rate-limits.sh`** — added `CLAUDE_STATUSLINE_CHAIN_ACTIVE` / `CAS_STATUSLINE_CHAIN_ACTIVE` guard to prevent infinite loop when a chain script calls back into the same hook.
+- **`scripts/run-all-tests.sh`** — registered `test-dispatch-post-verify.sh` and `test-claude-executor.sh` suites (CC-264 PR B).
 - **`scripts/lib/state-writer.sh` `_sw_project_key()`** — replaces raw `sha1sum` call with `_portable_sha1()`; hash failures now log via `_sw_log_error` and fall back to `global` partition (CC-263).
 - **`core/README.md`** and **`agents/project-pm.md`** — removed v0.3.x forward-reference language now that M1 is shipped; prose updated to present tense (CC-261).
 - **`scripts/test-test-harness.sh`** — removed dead `assert_contains()` definition (never called; file uses own `pass_case`/`fail_case` framework for cyclic-test-vs-SUT reasons). Added header comment documenting the framework choice (CC-256).
@@ -29,6 +36,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Test coverage
 
+- `test-dispatch-post-verify.sh` — 21 cases (CC-264 PR B); see `scripts/test-dispatch-post-verify.sh`.
+- `test-claude-executor.sh` — 5 cases (CC-264b); see `scripts/test-claude-executor.sh`.
 - `test-state-store.sh case_project_key_no_sha1sum` — stubs both sha1sum and shasum, asserts _sw_project_key returns `global` non-fatally (CC-263).
 
 ## [0.2.0] — 2026-05-22

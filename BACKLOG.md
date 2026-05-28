@@ -167,9 +167,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-261 | ✅ closed 2026-05-25 | **[v0.3.x 前瞻文字更新]** `core/README.md` 的 "will read…(runtime consumer deferred; M1 ships schema definitions only)" 及 `agents/project-pm.md` 的 "v0.3.x runtime PR" 在 v0.3.0 runtime 落地後變成誤導性描述；前者改現在式並移除括號說明，後者改版本無關的 "a future runtime PR"。自 v0.3.0 release prep 的 self_verify 步驟觸發。 | docs/process | 2026-05-25 | pr:#162 | P3 | hygiene |
 | CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-263 | ✅ closed 2026-05-25 | **[state-writer: portable SHA-1 hash for project partitioning]** `_sw_project_key` uses `sha1sum` (GNU coreutils only); platforms without it silently fall back to `global` partition, mixing all project state into a single directory. Fix: add a `_portable_sha1` helper to `scripts/lib/portable.sh` (try `sha1sum`, then `shasum -a 1`, then fail loudly) and consume it from `_sw_project_key`; add a no-`sha1sum` PATH regression in `test-state-store.sh`. Raised as [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5. | ops/process | 2026-05-25 | pr:#159,pr:#162 | P3 | — |
-| CC-264 | 🔵 active | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | — | P2 | — |
+| CC-264 | ✅ closed 2026-05-28 | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | pr:#163,pr:#164,pr:#167 | P2 | — |
 | CC-265 | ✅ closed 2026-05-26 | Remove `/caveman` and `/caveman-commit` commands. | process | 2026-05-26 | — | P2 | hygiene |
 | CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
+| CC-267 | 🔵 active | **[bug: executor:claude gate path — Write blocked in background subagent]** `pr-gate.sh --executor claude` 派出的 background `claude-executor` subagent 需要 Write gate result file，但 background mode 下 Write 新檔案被拒 → result 靜默丟失。Fix：在 `pr-gate.sh` emit handover block 前先 `mkdir -p` + `touch "$output_file"`，讓 agent 改用 `Edit`（允許）。 | gate/ops | 2026-05-28 | — | P2 | oss |
+| CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 
 ---
 
@@ -2003,7 +2005,11 @@ All three acceptance grep checks pass.
 
 ---
 
-## CC-264 — Dispatch overhead reduction + executor-agnostic output contract（active）
+## CC-264 — Dispatch overhead reduction + executor-agnostic output contract ✅ 2026-05-28
+
+**Status**: ✅ closed — PRs: #163 (PR A: brief-validate.sh), #164 + #167 (PR B: dispatch-post-verify.sh + CC-264b hardening)
+
+**See**: CHANGELOG.md
 
 **Problem**: Two coupled issues:
 1. `codex-executor` as a subagent adds ~6 min overhead (2.5x ratio): 40 tool calls × 8s LLM API latency = ~320s. The validation and verification steps don't require LLM intelligence.
@@ -2150,3 +2156,44 @@ PR B — output contract + dispatch-post-verify.sh:
 **Priority**: P3 — deferred to M3；Codex-as-PM 路徑未啟用前不阻塞任何流程。
 
 **Cross-link**: `[[CC-262]]`（isolation 抽象，M1/M2）、`[[CC-264]]`（output contract）、`[[CC-036]]`（dispatch ergonomics）。
+
+---
+
+## CC-267 — bug: executor:claude gate path — Write blocked in background subagent（active）
+
+**Problem**: When `pr-gate.sh --executor claude` emits a `pr-gate-handover_v1` block and the calling skill fans out a `claude-executor` subagent with `run_in_background:true`, the subagent needs to **create** the gate result file. `Write` on a new file is denied in background mode — there is no interactive session to approve the permission. Subagent exits without writing; gate result is silently lost.
+
+**Contrast with executor:codex**: Unaffected — Codex runs as a separate process not subject to the Claude Code permission model.
+
+**Root cause**: Gate result file path is computed in `pr-gate.sh` but the file is not pre-created before the handover block is emitted. Background agent can `Edit` an existing file but cannot `Write` to a new path.
+
+**Fix (trivial — 2 lines in pr-gate.sh)**:
+
+```bash
+mkdir -p "$(dirname "$output_file")"
+touch "$output_file"
+```
+
+Add immediately after `output_file` is computed and before the handover block is emitted.
+
+**Acceptance criteria**:
+- [ ] `/pr-gate --executor claude` produces a gate result file even when the output path did not exist before the gate run
+- [ ] Regression test in `scripts/test-pr-gate.sh` verifies the pre-creation behavior
+
+**Priority**: P2 — the claude executor gate path silently fails for all users without a pre-existing output file.
+
+**See**: issue:#165
+
+**Cross-link**: `[[CC-217]]`（claude-executor background dispatch）、`[[CC-238]]`（fan-out hardening）、`[[CC-264]]`（executor-agnostic output contract）。
+
+---
+
+## CC-268 — docs: run_in_background default async escalation undocumented（deferred）
+
+**Problem**: Agent tool called without `run_in_background:true` may silently promote the subagent to async mode and return `Async agent launched successfully` instead of blocking. Observed with `codex-executor` (ran ~3m45s async without the flag). Docs say "Claude decides" but give no criteria; callers cannot reliably predict whether the dispatch blocks the main thread.
+
+**Priority**: P3 — docs clarity only; no functional impact on existing flows.
+
+**Proposed fix**: Document in `commands/pm.md` or `docs/executor-contract.md` which subagent types always run async, and whether/when the default blocks.
+
+**See**: issue:#166
