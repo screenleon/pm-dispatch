@@ -70,6 +70,13 @@ jobs:
       - name: executor router regression suite
         run: bash scripts/test-executor-router.sh
 
+  test-pmctl-adapter-generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl adapter generate regression suite
+        run: bash scripts/test-pmctl-adapter-generate.sh
+
   test-skill-refine:
     runs-on: ubuntu-latest
     steps:
@@ -82,6 +89,9 @@ jobs:
           scandir: ./scripts
           ignore_names: >-
             executor-router.sh
+            pmctl-adapter.sh
+            pmctl-fs.sh
+            pmctl-policy.sh
             handover-validate.sh
             codex-dispatch.sh
             codex-watch.sh
@@ -110,6 +120,7 @@ jobs:
             test-commands-runner.sh
             test-dispatch-handover.sh
             test-executor-router.sh
+            test-pmctl-adapter-generate.sh
             test-handover-validate.sh
             test-hooks.sh
             test-install.sh

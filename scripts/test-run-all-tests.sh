@@ -24,6 +24,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-executor-router
+  test-pmctl-adapter-generate
   test-pr-gate
   test-setup-project
   test-patch-gitignore
@@ -84,6 +85,7 @@ suite_path() {
     test-pm-scripts) printf 'pm/scripts/test/run-tests.sh\n' ;;
     test-codex-dispatch) printf 'scripts/test-codex-dispatch.sh\n' ;;
     test-executor-router) printf 'scripts/test-executor-router.sh\n' ;;
+    test-pmctl-adapter-generate) printf 'scripts/test-pmctl-adapter-generate.sh\n' ;;
     test-pr-gate) printf 'scripts/test-pr-gate.sh\n' ;;
     test-setup-project) printf 'scripts/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'scripts/test-patch-gitignore.sh\n' ;;
@@ -177,8 +179,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 34.
-  local out status=0 actual_count expected_count=34
+  # Steps: invoke --list; count output lines; assert the count is 35.
+  local out status=0 actual_count expected_count=35
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then
