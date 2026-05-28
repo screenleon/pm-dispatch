@@ -216,6 +216,7 @@ mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
+touch "$OUTPUT_FILE"
 
 _self="$0"
 while [[ -L "$_self" ]]; do
@@ -448,7 +449,7 @@ output_format: |
   - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
-  - matched by the regex ^Final: (GO|NO-GO)$
+  - matched by the regex ^Final: (GO|NO-GO)\$
   - the value MUST equal the frontmatter \`final:\` field (case-sensitive)
   Examples that BREAK the parser and MUST NOT be emitted: \`**Final: GO**\`, \`Final: **GO**\`, \` Final: GO\`, \`Final: Go\`.
 
@@ -459,12 +460,12 @@ output_format: |
   - <bullet> (or "none" when recommended=false)
 
   Escalation is recommended when:
-  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/
+  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|\$)|(^|/)migrations?/|^\.github/
   (b) at least one reviewer returned advise|block-soft.
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
-  - has-conclusion: grep -cE '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
+  - has-conclusion: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
 
   acceptance:
@@ -849,7 +850,7 @@ output_format: |
   - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
-  - matched by the regex ^Final: (GO|NO-GO)$
+  - matched by the regex ^Final: (GO|NO-GO)\$
   - the value MUST equal the frontmatter \`final:\` field (case-sensitive)
   Examples that BREAK the parser and MUST NOT be emitted: \`**Final: GO**\`, \`Final: **GO**\`, \` Final: GO\`, \`Final: Go\`.
 
@@ -860,7 +861,7 @@ output_format: |
   - <bullet> (or "none" when recommended=false)
 
   Escalation is recommended when:
-  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|$)|(^|/)migrations?/|^\.github/
+  (a) any diff file matches (^|[/_.-])(auth|oauth|jwt|session|secret|password|token|credential|cors|csrf|webhook|sudo|ssh|payment|billing)([/_.-]|\$)|(^|/)migrations?/|^\.github/
   (b) at least one reviewer returned advise|block-soft.
 
   Recommended follow-ups:
@@ -870,7 +871,7 @@ output_format: |
 
 self_verify:
   - file-exists: ${OUTPUT_FILE}
-  - has-final: grep -cE '^Final: (GO|NO-GO)$' ${OUTPUT_FILE} should be exactly 1
+  - has-final: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
   - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}
 

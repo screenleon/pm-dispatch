@@ -596,6 +596,62 @@ test_output_directory_created() {
   pass "$name"
 }
 
+test_output_file_pre_created_before_handover() {
+  # Verifies that the gate output file exists on disk at the moment the
+  # pr-gate-handover_v1 'output_file:' line is emitted to stdout, so a
+  # background claude-executor subagent can Edit (not Write) the file.
+  # Steps:
+  #   1. Create a test repo (express tier, docs change) + runner + agents
+  #   2. Run pr-gate --executor claude, streaming stdout through a named pipe
+  #   3. When the 'output_file: <path>' handover line is observed in real-time,
+  #      assert -f "$path" at that exact moment
+  #   4. Assert gate exits 0 and the handover line was observed
+  local name="output-file-pre-created-before-handover"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" pipe="$dir/gate.pipe"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  mkfifo "$pipe"
+  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" --base main --executor claude \
+    > "$pipe" 2>"$err" &
+  local gate_pid=$!
+
+  local file_existed_at_handover=false observed_handover=false result_path=""
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$out"
+    if [[ "$line" == *"output_file: "* ]]; then
+      observed_handover=true
+      result_path="${line#*output_file: }"
+      [[ -f "$result_path" ]] && file_existed_at_handover=true
+    fi
+  done < "$pipe"
+
+  set +e
+  wait "$gate_pid"
+  local code=$?
+  set -e
+  rm -f "$pipe"
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  if [[ "$observed_handover" != "true" ]]; then
+    fail "$name" "no 'output_file:' line was emitted in the handover block"
+    return
+  fi
+  if [[ "$file_existed_at_handover" != "true" ]]; then
+    fail "$name" "output file did not exist when 'output_file: $result_path' was emitted"
+    return
+  fi
+  pass "$name"
+}
+
 test_parallel_launches_per_reviewer() {
   # Verifies --parallel mode launches one dispatch per reviewer and a synthesis.
   local name="parallel-launches-per-reviewer"
@@ -2026,6 +2082,7 @@ run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
+run_test test_output_file_pre_created_before_handover
 run_test test_standard_tier_detection
 run_test test_full_tier_line_count
 run_test test_full_tier_sensitive_file

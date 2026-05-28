@@ -66,7 +66,7 @@ create_runner() {
   cp "$REPO_ROOT/scripts/pr-gate.sh" "$dir/pr-gate.sh"
   chmod +x "$dir/pr-gate.sh"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
+  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
     if [[ -n "$src" ]]; then
       ln -sf "$src" "$dir/$cmd"
@@ -155,7 +155,7 @@ build_no_codex_path() {
   local dir="$1/no-codex-bin"
   mkdir -p "$dir"
   local cmd
-  for cmd in bash git date readlink dirname basename cp mkdir ln cat grep sort wc awk sed mktemp rm cat sort head tail tr wc awk date sha256sum shasum git; do
+  for cmd in bash git date readlink dirname basename cp mkdir touch ln cat grep sort wc awk sed mktemp rm cat sort head tail tr wc awk date sha256sum shasum git; do
     src="$(command -v "$cmd" 2>/dev/null || true)"
     if [[ -n "$src" ]]; then
       ln -sf "$src" "$dir/$cmd"
