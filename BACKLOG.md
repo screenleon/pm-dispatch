@@ -173,6 +173,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-267 | ✅ closed 2026-05-28 | **[bug: executor:claude gate path — Write blocked in background subagent]** `pr-gate.sh --executor claude` 派出的 background `claude-executor` subagent 需要 Write gate result file，但 background mode 下 Write 新檔案被拒 → result 靜默丟失。Fix：在 `pr-gate.sh` emit handover block 前先 `mkdir -p` + `touch "$output_file"`，讓 agent 改用 `Edit`（允許）。 | gate/ops | 2026-05-28 | pr:#169 | P2 | oss |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 | CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | — | P3 | — |
+| CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 
 ---
 
@@ -2203,3 +2204,24 @@ PR B — output contract + dispatch-post-verify.sh:
 **Dependencies**: CC-230（state store 目錄已建立）
 
 **Priority**: P3 — 現有 workaround（從 chain 移除）可用；不阻斷其他工作。
+
+## CC-270 — test: concurrent pmctl adapter generate guard（deferred）
+
+**Problem**: `pmctl_adapter_generate` precheck + `mkdir -p` + ERR trap sequence is not
+atomic. Two concurrent calls with the same name can race: one failing run's trap removes
+the other run's partial output.
+
+**Blast radius**: Local generated adapter directory deleted. Reproducible by deleting
+`adapters/<name>` and re-running `pmctl adapter generate <name>`. No persistent data
+loss, no external side effects.
+
+**Why deferred**: Single-developer workflow makes concurrent invocation unlikely. The
+recovery path (delete and regenerate) is documented.
+
+**Fix path**: Replace `[[ -d $adapter_dir ]] && die` + `mkdir -p` with an atomic
+`mkdir "$adapter_dir" 2>/dev/null || die "adapter already exists: adapters/$name"`.
+This makes directory creation the mutex.
+
+**Dependencies**: None.
+
+**Priority**: P3 — low probability, reversible.

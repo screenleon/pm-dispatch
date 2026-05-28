@@ -45,6 +45,26 @@ assert_exists() {
   return 1
 }
 
+assert_isolation_native_flags() {
+  local name="$1" isomap="$2" level="$3" expected="$4"
+  local actual
+
+  actual="$(awk -v level="$level" '
+    $0 == "  " level ":" {
+      getline
+      sub(/[[:space:]]+$/, "", $0)
+      print
+      exit
+    }
+  ' "$isomap")"
+
+  if [[ "$actual" == "$expected" ]]; then
+    return 0
+  fi
+  fail "$name" "expected '$expected', got '$actual'"
+  return 1
+}
+
 # Behavior: rejects missing adapter name with non-zero exit
 # Steps: invoke adapter generate without a name and check the usage error
 if should_run "rejects missing name"; then
@@ -141,23 +161,25 @@ if should_run "adapter.yaml has 8 fields"; then
   fi
 fi
 
-# Behavior: isolation-map includes every configured isolation level
-# Steps: generate codex and compare map entries against policy values
-if should_run "isolation-map covers all levels"; then
-  name="isolation-map covers all levels"
+# Behavior: generated isolation-map.yaml has correct exact native flag values
+# Steps: generate codex and compare all isolation level mappings against expected values
+if should_run "isolation-map exact flag values"; then
+  name="isolation-map exact flag values"
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
-  ok=1
-  while IFS= read -r level; do
-    if ! grep -Fq "  $level:" "$repo/adapters/codex/isolation-map.yaml"; then
-      ok=0
-      fail "$name" "missing isolation level: $level"
-      break
-    fi
-  done < <(awk '$1 == "-" { print $2 }' "$repo/core/policy/isolation-level.yaml")
-  if [[ "$ok" -eq 1 ]]; then
-    pass "$name"
+  isomap="$repo/adapters/codex/isolation-map.yaml"
+  if assert_isolation_native_flags "$name (none)" "$isomap" "none" '    native_flags: {}'; then
+    pass "$name (none)"
+  fi
+  if assert_isolation_native_flags "$name (read-only)" "$isomap" "read-only" '    native_flags: { "--sandbox": "read-only" }'; then
+    pass "$name (read-only)"
+  fi
+  if assert_isolation_native_flags "$name (workspace-write)" "$isomap" "workspace-write" '    native_flags: { "--sandbox": "workspace-write" }'; then
+    pass "$name (workspace-write)"
+  fi
+  if assert_isolation_native_flags "$name (sandboxed)" "$isomap" "sandboxed" '    native_flags: { "--sandbox": "workspace-write" }  # best-effort: Codex has no full-isolation equivalent; treated as workspace-write'; then
+    pass "$name (sandboxed)"
   fi
 fi
 
