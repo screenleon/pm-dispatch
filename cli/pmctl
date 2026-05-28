@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# pm-dispatch runtime CLI.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+for _lib in pmctl-policy pmctl-fs pmctl-adapter; do
+  # shellcheck source=/dev/null
+  [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
+done
+unset _lib
+
+pmctl_die() {
+  printf 'pmctl: %s\n' "$*" >&2
+  exit 2
+}
+
+cmd="${1:-}"
+shift 2>/dev/null || true
+sub="${1:-}"
+shift 2>/dev/null || true
+
+case "$cmd/$sub" in
+  adapter/generate)
+    if ! declare -F pmctl_adapter_generate >/dev/null; then
+      pmctl_die "adapter generate unavailable"
+    fi
+    pmctl_adapter_generate "$@"
+    ;;
+  dispatch/run)
+    # Stub: full runtime dispatch lands in a later CC-215 slice.
+    # Accepts --adapter <name> and any brief args; prints a trace line.
+    dispatch_adapter="<none>"
+    if [[ "${1:-}" == "--adapter" && -n "${2:-}" ]]; then
+      dispatch_adapter="$2"
+    fi
+    printf 'pmctl dispatch run: adapter dispatch stub (runtime not yet wired)\n' >&2
+    printf 'adapter: %s\n' "$dispatch_adapter" >&2
+    exit 0
+    ;;
+  ""/)
+    pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"
+    ;;
+  *)
+    pmctl_die "unknown command: $cmd $sub"
+    ;;
+esac
