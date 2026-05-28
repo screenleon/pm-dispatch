@@ -172,6 +172,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
 | CC-267 | ✅ closed 2026-05-28 | **[bug: executor:claude gate path — Write blocked in background subagent]** `pr-gate.sh --executor claude` 派出的 background `claude-executor` subagent 需要 Write gate result file，但 background mode 下 Write 新檔案被拒 → result 靜默丟失。Fix：在 `pr-gate.sh` emit handover block 前先 `mkdir -p` + `touch "$output_file"`，讓 agent 改用 `Edit`（允許）。 | gate/ops | 2026-05-28 | pr:#169 | P2 | oss |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
+| CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | CC-230 | P3 | — |
 
 ---
 
@@ -2184,3 +2185,21 @@ PR B — output contract + dispatch-post-verify.sh:
 **Proposed fix**: Document in `commands/pm.md` or `docs/executor-contract.md` which subagent types always run async, and whether/when the default blocks.
 
 **See**: issue:#166
+
+## CC-269 — ops: hook-save-rate-limits.sh 應寫到 pm-dispatch 自己的 state 路徑（deferred）
+
+**Problem**: `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 及其他工具共用同一檔名，多工具安裝時造成互相覆蓋。
+
+**Why**: pm-dispatch 和 claude-account-switcher 是獨立工具，各自的 rate-limit 資料應存於各自的 state 目錄，不應依賴共用檔名作為「約定」。
+
+**Requirement**:
+- `scripts/hook-save-rate-limits.sh` 改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 目錄）
+- 更新所有讀取此路徑的腳本（doctor.sh、usage 相關腳本等）
+- install.sh / uninstall.sh 同步更新 manifest（若有對應條目）
+- 設計上：`~/.claude/rate-limits.json` 屬於 Claude Code / claude-account-switcher，pm-dispatch 不寫該路徑
+
+**Context**: 2026-05-28 發現 — statusline-chain.conf 中 pm-dispatch hook 與 claude-account-switcher hook 同時寫到相同檔案。暫時從 chain 移除 pm-dispatch hook 以解除衝突；此票為正式修復。
+
+**Dependencies**: CC-230（state store 目錄已建立）
+
+**Priority**: P3 — 現有 workaround（從 chain 移除）可用；不阻斷其他工作。
