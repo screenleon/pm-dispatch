@@ -216,6 +216,7 @@ mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
+touch "$OUTPUT_FILE"
 
 _self="$0"
 while [[ -L "$_self" ]]; do

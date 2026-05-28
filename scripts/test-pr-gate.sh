@@ -596,6 +596,17 @@ test_output_directory_created() {
   pass "$name"
 }
 
+test_output_file_pre_created_before_handover() {
+  local name="output-file-pre-created-before-handover"
+  should_run "$name" || return 0
+
+  if ! grep -A1 'mkdir -p.*OUTPUT_FILE' "$REPO_ROOT/scripts/pr-gate.sh" | grep -q 'touch.*OUTPUT_FILE'; then
+    fail "$name" "touch line was not found immediately after output directory creation"
+    return
+  fi
+  pass "$name"
+}
+
 test_parallel_launches_per_reviewer() {
   # Verifies --parallel mode launches one dispatch per reviewer and a synthesis.
   local name="parallel-launches-per-reviewer"
@@ -2026,6 +2037,7 @@ run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
+run_test test_output_file_pre_created_before_handover
 run_test test_standard_tier_detection
 run_test test_full_tier_line_count
 run_test test_full_tier_sensitive_file
