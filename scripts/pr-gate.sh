@@ -89,16 +89,94 @@ while [[ -L "$_self" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/lib/executor-router.sh"
-if [[ ! -f "$EXECUTOR_ROUTER_PATH" && -f "scripts/lib/executor-router.sh" ]]; then
-  EXECUTOR_ROUTER_PATH="scripts/lib/executor-router.sh"
-fi
-if [[ -f "$EXECUTOR_ROUTER_PATH" ]]; then
+if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   # shellcheck source=scripts/lib/executor-router.sh
   . "$EXECUTOR_ROUTER_PATH"
   EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
 else
-  printf 'Error: executor router not found: %s\n' "$SCRIPT_DIR/lib/executor-router.sh" >&2
-  exit 1
+  EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
+
+  detect_executor_auto() {
+    if command -v codex >/dev/null 2>&1; then
+      printf 'codex\n'
+    else
+      printf 'claude\n'
+    fi
+  }
+
+  resolve_executor() {
+    local option=${1-}
+
+    [[ $# -eq 1 ]] || {
+      printf 'executor-router: resolve_executor expects exactly one argument\n' >&2
+      return 2
+    }
+
+    case "$option" in
+      auto) detect_executor_auto ;;
+      codex|claude) printf '%s\n' "$option" ;;
+      *)
+        printf 'executor-router: unknown executor: %s (expected codex, claude, or auto)\n' "$option" >&2
+        return 2
+        ;;
+    esac
+  }
+
+  dispatch_route_for() {
+    local executor=${1-}
+
+    [[ $# -eq 1 ]] || {
+      printf 'executor-router: dispatch_route_for expects exactly one argument\n' >&2
+      return 2
+    }
+
+    case "$executor" in
+      codex) printf 'main_thread_bash_background\n' ;;
+      claude) printf 'agent_executor\n' ;;
+      *)
+        printf 'executor-router: unknown executor: %s (expected codex or claude)\n' "$executor" >&2
+        return 2
+        ;;
+    esac
+  }
+
+  executor_router_safe_argv() {
+    local value=${1-}
+    printf '%q' "$value"
+  }
+
+  dispatch_via_codex() {
+    local brief_file=${1-}
+    local working_dir=${2-}
+    local model=${3-}
+    local sandbox=${4-}
+    local approval=${5-}
+    local timeout=${6-}
+    local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
+    local -a cmd
+    local arg
+    local first=1
+
+    [[ $# -eq 6 ]] || {
+      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout\n' >&2
+      return 2
+    }
+
+    cmd=(bash "$dispatch_script" --cd "$working_dir" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
+    if [[ -n "$model" && "$model" != "default" ]]; then
+      cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
+    fi
+
+    for arg in "${cmd[@]}"; do
+      if [[ "$first" -eq 1 ]]; then
+        first=0
+      else
+        printf ' '
+      fi
+      executor_router_safe_argv "$arg"
+    done
+    printf '\n'
+  }
 fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
