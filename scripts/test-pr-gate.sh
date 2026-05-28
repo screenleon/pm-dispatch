@@ -2204,6 +2204,128 @@ test_gate_result_reviewer_verdicts_are_valid() {
   pass "$name"
 }
 
+test_pre_gate_hook_runs() {
+  local name="pre-gate-hook-runs"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$hook_marker" ]]; then
+    fail "$name" "pre-gate hook did not run (marker missing)"
+    return
+  fi
+  pass "$name"
+}
+
+test_pre_gate_hook_aborts_gate_on_failure() {
+  local name="pre-gate-hook-aborts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief_marker="$dir/brief.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  CODEX_GATE_BRIEF_EXISTS_MARKER="$brief_marker" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-gate hook fails"
+    return
+  fi
+  if [[ -f "$brief_marker" ]]; then
+    fail "$name" "brief was written after pre-gate hook failure (dispatch must not run)"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_runs() {
+  local name="post-gate-hook-runs"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$hook_marker" ]]; then
+    fail "$name" "post-gate hook did not run (marker missing)"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_aborts_on_failure() {
+  local name="post-gate-hook-aborts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when post-gate hook fails"
+    return
+  fi
+  pass "$name"
+}
+
+run_test test_pre_gate_hook_runs
+run_test test_pre_gate_hook_aborts_gate_on_failure
+run_test test_post_gate_hook_runs
+run_test test_post_gate_hook_aborts_on_failure
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 

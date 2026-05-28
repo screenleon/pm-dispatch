@@ -420,6 +420,19 @@ printf 'pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
 printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
+# ── Pre-gate hook ──────────────────────────────────────────────────────────
+_PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
+if [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
+  printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable — skipping\n' >&2
+elif [[ -x "$_PRE_GATE_HOOK" ]]; then
+  printf 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
+  if ! (cd "$WORK_DIR" && bash "$_PRE_GATE_HOOK"); then
+    printf 'Error: pre-gate hook failed — gate aborted\n' >&2
+    exit 1
+  fi
+  printf 'pre-gate hook completed.\n\n'
+fi
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
 
@@ -1015,6 +1028,19 @@ SBRIEF_P2
     add_pr_gate_handover_entry synthesis "" "$SYNTHESIS_BRIEF" "$OUTPUT_FILE"
   fi
 
+fi
+
+# ── Post-gate hook ─────────────────────────────────────────────────────────
+_POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
+if [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
+  printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
+elif [[ -x "$_POST_GATE_HOOK" ]]; then
+  printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
+  if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
+    printf 'Error: post-gate hook failed\n' >&2
+    exit 1
+  fi
+  printf 'post-gate hook completed.\n'
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────

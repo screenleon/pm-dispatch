@@ -198,6 +198,24 @@ Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks t
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 
+### Go repo self_verify
+
+The Codex sandbox cannot write to `~/.cache/go/build` (GOCACHE) because `/home`
+is read-only. Set `GOCACHE=/tmp/go-cache` in every `self_verify` command that
+invokes `go build` or `go test` — this redirects compiled artifacts to `/tmp`
+without severing module access.
+
+```yaml
+self_verify:
+  - cmd: "GOCACHE=/tmp/go-cache go build ./..."
+    expect: "exits 0"
+  - cmd: "GOCACHE=/tmp/go-cache go test ./..."
+    expect: "exits 0"
+```
+
+See [sandbox-limitations.md](sandbox-limitations.md) for details on the full
+capability boundary and additional patterns (Docker, external DBs).
+
 ## Self-verify macros
 
 Reusable phrases. Drop into `self_verify` block of any brief.
