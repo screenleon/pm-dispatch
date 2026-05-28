@@ -23,6 +23,7 @@ SUITE_NAMES=(
   test-usage-tracker
   test-pm-scripts
   test-codex-dispatch
+  test-executor-router
   test-pr-gate
   test-setup-project
   test-patch-gitignore
@@ -33,6 +34,7 @@ SUITE_NAMES=(
   test-commands
   test-commands-runner
   test-dispatch-handover
+  test-handover-validate
   test-dispatch-post-verify
   test-check-docs-freshness
   test-skill-refine
@@ -81,6 +83,7 @@ suite_path() {
     test-usage-tracker) printf 'scripts/test-usage-tracker.sh\n' ;;
     test-pm-scripts) printf 'pm/scripts/test/run-tests.sh\n' ;;
     test-codex-dispatch) printf 'scripts/test-codex-dispatch.sh\n' ;;
+    test-executor-router) printf 'scripts/test-executor-router.sh\n' ;;
     test-pr-gate) printf 'scripts/test-pr-gate.sh\n' ;;
     test-setup-project) printf 'scripts/test-setup-project.sh\n' ;;
     test-patch-gitignore) printf 'scripts/test-patch-gitignore.sh\n' ;;
@@ -92,6 +95,7 @@ suite_path() {
     test-commands) printf 'scripts/test-commands.sh\n' ;;
     test-commands-runner) printf 'scripts/test-commands-runner.sh\n' ;;
     test-dispatch-handover) printf 'scripts/test-dispatch-handover.sh\n' ;;
+    test-handover-validate) printf 'scripts/test-handover-validate.sh\n' ;;
     test-dispatch-post-verify) printf 'scripts/test-dispatch-post-verify.sh\n' ;;
     test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
@@ -173,8 +177,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 32.
-  local out status=0 actual_count expected_count=32
+  # Steps: invoke --list; count output lines; assert the count is 34.
+  local out status=0 actual_count expected_count=34
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then

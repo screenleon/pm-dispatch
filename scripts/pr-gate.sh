@@ -43,6 +43,9 @@ OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
+DISPATCH_MODEL="default"
+DISPATCH_SANDBOX="workspace-write"
+DISPATCH_APPROVAL="never"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -77,6 +80,30 @@ case "$EXECUTOR_OPTION" in
     exit 2
     ;;
 esac
+
+_self="$0"
+while [[ -L "$_self" ]]; do
+  _self_dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
+done
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/lib/executor-router.sh"
+if [[ ! -f "$EXECUTOR_ROUTER_PATH" && -f "scripts/lib/executor-router.sh" ]]; then
+  EXECUTOR_ROUTER_PATH="scripts/lib/executor-router.sh"
+fi
+if [[ -f "$EXECUTOR_ROUTER_PATH" ]]; then
+  # shellcheck source=scripts/lib/executor-router.sh
+  . "$EXECUTOR_ROUTER_PATH"
+  EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
+else
+  printf 'Error: executor router not found: %s\n' "$SCRIPT_DIR/lib/executor-router.sh" >&2
+  exit 1
+fi
+
+EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
+
+unset _self _self_dir EXECUTOR_ROUTER_PATH
 
 cd "$WORK_DIR"
 
@@ -217,34 +244,6 @@ mkdir -p "$BRIEF_DIR"
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 touch "$OUTPUT_FILE"
-
-_self="$0"
-while [[ -L "$_self" ]]; do
-  _self_dir="$(cd "$(dirname "$_self")" && pwd)"
-  _self="$(readlink "$_self")"
-  [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
-done
-SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
-# Source portable.sh for codex_available(); graceful fallback for standalone
-# copies (test harness, copy-mode install) where the sibling lib/ is absent.
-if [[ -f "$SCRIPT_DIR/lib/portable.sh" ]]; then
-  # shellcheck source=scripts/lib/portable.sh
-  . "$SCRIPT_DIR/lib/portable.sh"
-else
-  codex_available() { command -v codex >/dev/null 2>&1; }
-fi
-
-if [[ "$EXECUTOR_OPTION" == "auto" ]]; then
-  if codex_available; then
-    EXECUTOR="codex"
-  else
-    EXECUTOR="claude"
-  fi
-else
-  EXECUTOR="$EXECUTOR_OPTION"
-fi
-
-unset _self _self_dir
 
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
@@ -474,10 +473,8 @@ self_verify:
 BRIEF_EOF
 
   if [[ "$EXECUTOR" == "codex" ]]; then
-    bash "$SCRIPT_DIR/codex-dispatch.sh" \
-      --cd "$WORK_DIR" \
-      --timeout "$TIMEOUT" \
-      --brief-file "$BRIEF_FILE"
+    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+    eval "$CODEX_DISPATCH_CMD"
 
     # Validate sequential output: must exist, be non-empty, contain exactly one
     # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
@@ -607,11 +604,8 @@ acceptance:
 RBRIEF_EOF
 
     if [[ "$EXECUTOR" == "codex" ]]; then
-      bash "$SCRIPT_DIR/codex-dispatch.sh" \
-        --cd "$WORK_DIR" \
-        --timeout "$TIMEOUT" \
-        --brief-file "$REVIEWER_BRIEF" \
-        > "$DISPATCH_LOG" 2>&1 &
+      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+      eval "$CODEX_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
       DISPATCH_PIDS+=($!)
       printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
     else
@@ -882,10 +876,8 @@ acceptance:
 SBRIEF_P2
 
   printf '  [synthesis] running PM consolidation...\n'
-  bash "$SCRIPT_DIR/codex-dispatch.sh" \
-    --cd "$WORK_DIR" \
-    --timeout "$TIMEOUT" \
-    --brief-file "$SYNTHESIS_BRIEF"
+  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+  eval "$CODEX_DISPATCH_CMD"
 
   # Validate synthesis output: must exist, be non-empty, contain exactly one
   # Final: GO|NO-GO line, and match the shell-computed verdict.
