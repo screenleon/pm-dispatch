@@ -37,6 +37,11 @@ fw_read_json_populates_agent() {
   [[ "$HK_AGENT_TYPE" == "project-pm" ]]
 }
 
+fw_jq_agent_type() {
+  hk_read_json
+  hk_jq '.agent_type'
+}
+
 fw_deny() {
   HK_TARGET="/tmp/deny-target"
   hk_deny "blocked reason"
@@ -62,10 +67,31 @@ fw_validate_relative_path() {
   hk_validate_path "relative/path.md"
 }
 
+fw_validate_path_arg() {
+  hk_validate_path "$1"
+  printf '%s\n' "$HK_ABS_PATH"
+}
+
+fw_validate_path_realpath_failure() {
+  realpath_m() {
+    return 1
+  }
+  hk_validate_path "/tmp/path-that-realpath-cannot-resolve"
+}
+
 fw_require_jq_missing() {
   mkdir -p "$tmp_root/no-jq-bin"
   PATH="$tmp_root/no-jq-bin"
   hk_require_jq
+}
+
+fw_require_realpath_available() {
+  hk_require_realpath
+}
+
+fw_require_realpath_missing() {
+  PATH=""
+  hk_require_realpath
 }
 
 test_read_json_malformed() {
@@ -87,6 +113,19 @@ test_read_json_populates_agent() {
   run_in_framework '{"agent_type":"project-pm","tool_name":"Edit","tool_input":{}}' \
     fw_read_json_populates_agent >/dev/null 2>&1 || status=$?
   assert_exit "$name" "$status" 0 && pass "$name"
+}
+
+test_jq_returns_agent_type() {
+  local name="hk_jq: returns agent_type field"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(run_in_framework '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{}}' \
+    fw_jq_agent_type 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == "codex-executor" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status expected codex-executor, got: $out"
+  fi
 }
 
 test_deny_audits_and_exits() {
@@ -158,6 +197,31 @@ test_validate_relative_path() {
   fi
 }
 
+test_validate_valid_absolute_path() {
+  local name="hk_validate_path: valid absolute path"
+  should_run "$name" || return 0
+  local tmp out status=0
+  tmp="$(mktemp "$tmp_root/valid-path.XXXXXX")"
+  out="$(run_in_framework '{}' fw_validate_path_arg "$tmp" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && -n "$out" && "$out" == /* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status HK_ABS_PATH=$out"
+  fi
+}
+
+test_validate_realpath_failure() {
+  local name="hk_validate_path: realpath-like failure"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(run_in_framework '{}' fw_validate_path_realpath_failure 2>&1)" || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"realpath failed on file_path"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_require_jq_missing() {
   local name="hk_require_jq: exits 2 when jq absent"
   should_run "$name" || return 0
@@ -170,13 +234,48 @@ test_require_jq_missing() {
   fi
 }
 
+test_require_realpath_available() {
+  local name="hk_require_realpath: realpath present"
+  should_run "$name" || return 0
+  local status=0
+  if command -v realpath >/dev/null 2>&1; then
+    run_in_framework '{}' fw_require_realpath_available >/dev/null 2>&1 || status=$?
+    assert_exit "$name" "$status" 0 && pass "$name"
+  else
+    pass "$name"
+  fi
+}
+
+test_require_realpath_missing() {
+  local name="hk_require_realpath: behavior when missing"
+  should_run "$name" || return 0
+  local out platform status=0
+  case "${PM_DISPATCH_PLATFORM:-${OSTYPE:-}}" in
+    windows|msys*|cygwin*|mingw*) platform="windows" ;;
+    *) platform="non-windows" ;;
+  esac
+  out="$(run_in_framework '{}' fw_require_realpath_missing 2>&1)" || status=$?
+  if [[ "$platform" == "windows" ]]; then
+    assert_exit "$name" "$status" 0 && pass "$name"
+  elif [[ "$status" -eq 2 && "$out" == *"realpath missing on PATH"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
 test_read_json_malformed
 test_read_json_populates_agent
+test_jq_returns_agent_type
 test_deny_audits_and_exits
 test_allow_audits_and_exits
 test_bypass_allows
 test_validate_empty_path
 test_validate_relative_path
+test_validate_valid_absolute_path
+test_validate_realpath_failure
 test_require_jq_missing
+test_require_realpath_available
+test_require_realpath_missing
 
 th_summary
