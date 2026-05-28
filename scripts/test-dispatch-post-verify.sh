@@ -336,6 +336,30 @@ case_symlink_stderr_outofdir_rejected() {
   pass "$name"
 }
 
+# A symlinked .agent-trace directory whose target is outside the work dir is rejected.
+# Steps:
+# 1. Create a real trace dir outside the work_dir.
+# 2. Create work_dir/.agent-trace as a symlink pointing outside.
+# 3. Run dispatch-post-verify.sh.
+# 4. Assert exit 1.
+case_fail_trace_dir_is_symlink() {
+  local name="fail-trace-dir-is-symlink"
+  should_run "$name" || return 0
+  local work_dir out rc outside_trace
+
+  work_dir="$(make_work_dir "$name")"
+  outside_trace="$tmpdir/${name}-outside-trace"
+  mkdir -p "$outside_trace"
+  printf 'status: ok\n' > "$outside_trace/latest.last"
+  ln -s "$outside_trace" "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  pass "$name"
+}
+
 # A non-empty latest.stderr is shown in post-dispatch verification output.
 # Steps:
 # 1. Create a valid latest.last and a non-empty latest.stderr file.
@@ -391,6 +415,112 @@ case_brief_not_found() {
   pass "$name"
 }
 
+# A failed executor status fails even when self_verify passes.
+# Steps:
+# 1. Create a trace whose latest.last contains status: failed and a passing self_verify line.
+# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
+# 3. Assert exit 1 and output containing the executor status failure.
+case_fail_executor_status_failed() {
+  local name="fail-executor-status-failed"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: failed
+bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  assert_string_contains "$name" "$out" "executor reported non-success" || return 0
+  pass "$name"
+}
+
+# A partial executor status fails even when self_verify passes.
+# Steps:
+# 1. Create a trace whose latest.last contains status: partial and a passing self_verify line.
+# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
+# 3. Assert exit 1 and output containing the executor status failure.
+case_fail_executor_status_partial() {
+  local name="fail-executor-status-partial"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: partial
+bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  assert_string_contains "$name" "$out" "executor reported non-success" || return 0
+  pass "$name"
+}
+
+# A blocked executor status fails even when self_verify passes.
+# Steps:
+# 1. Create a trace whose latest.last contains status: blocked and a passing self_verify line.
+# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
+# 3. Assert exit 1 and output containing the executor status failure.
+case_fail_executor_status_blocked() {
+  local name="fail-executor-status-blocked"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: blocked
+bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  assert_string_contains "$name" "$out" "executor reported non-success" || return 0
+  pass "$name"
+}
+
+# A latest.last containing a misleading substring is not accepted as a self_verify pass.
+# Steps:
+# 1. Create a trace whose latest.last contains a line that embeds "<cmd>: pass" as a substring.
+# 2. Run dispatch-post-verify.sh with a brief requiring that command.
+# 3. Assert exit 1 and output containing "MISSING".
+case_fail_selfverify_substring_pass() {
+  local name="fail-selfverify-substring-pass"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "MISSING: bash scripts/run-all-tests.sh: pass not found"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "MISSING" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -404,8 +534,13 @@ case_fail_selfverify_skipped
 case_symlink_indir_valid
 case_symlink_outofdir_rejected
 case_symlink_stderr_outofdir_rejected
+case_fail_trace_dir_is_symlink
 case_show_stderr
 case_usage_no_args
 case_brief_not_found
+case_fail_executor_status_failed
+case_fail_executor_status_partial
+case_fail_executor_status_blocked
+case_fail_selfverify_substring_pass
 
 th_summary

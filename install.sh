@@ -221,6 +221,8 @@ fi
 echo "==> legacy cleanup"
 remove_legacy_symlink "$SCRIPTS_DEST/codex-pr-gate.sh" "$REPO_ROOT/scripts/codex-pr-gate.sh"
 remove_legacy_symlink "$CLAUDE_HOME/commands/codex-pr-gate.md" "$REPO_ROOT/commands/codex-pr-gate.md"
+remove_legacy_symlink "$CLAUDE_HOME/commands/caveman.md" "$REPO_ROOT/commands/caveman.md"
+remove_legacy_symlink "$CLAUDE_HOME/commands/caveman-commit.md" "$REPO_ROOT/commands/caveman-commit.md"
 remove_legacy_symlink "$SCRIPTS_DEST/claude-usage.sh" "$REPO_ROOT/scripts/claude-usage.sh"
 
 us_count=0; us_conflicts=0

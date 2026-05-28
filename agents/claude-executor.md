@@ -75,12 +75,19 @@ After completing the brief's `goal`:
 status: ok | partial | failed
 brief: <one-line restatement of goal>
 files_changed: <git diff --stat output, abbreviated to file list + ± counts>
-self_verify: <per-line status: each verify step + result; "pass" or "fail: <reason>">
+self_verify:
+  bash scripts/test-foo.sh: pass
+  bash scripts/test-bar.sh: fail: exit 1, expected all tests to pass
 acceptance: <per-line status: each acceptance bullet + evidence>
 summary: <2-4 lines, what you actually did>
 tool_calls_summary: <count or short list of major tool ops: e.g. "12 Edit, 3 Bash (tests), 4 Read">
 notes: <surprises, scope expansion, deferred follow-ups, anything the main thread should know>
 ```
+
+**Self-verify format requirement**: each command MUST appear as its own line in the
+exact format `<cmd>: pass` (success) or `<cmd>: fail: <reason>` (failure). No prefix,
+no extra text. `dispatch-post-verify.sh` uses whole-line matching (`grep -qxF`) and
+will report MISSING if the line is not an exact match.
 
 Differences from codex-executor's report shape:
 
@@ -91,7 +98,7 @@ Differences from codex-executor's report shape:
 
 6. Before emitting your final response (# Report), write the trace to satisfy the filesystem output contract (`docs/executor-contract.md` §Filesystem output contract):
    1. `mkdir -p "<working_dir>/.agent-trace"`
-   2. `TS=$(date +%s)`
+   2. `TS=$(date +%Y%m%d-%H%M%S)-$$`
    3. Write the full Report block text to `<working_dir>/.agent-trace/claude-$TS.last` using the Write tool or a Bash heredoc.
    4. `ln -sfn "claude-$TS.last" "<working_dir>/.agent-trace/latest.last"`
 

@@ -43,10 +43,10 @@ fi
 # Use bash -c to preserve full command-string semantics (quoted args,
 # bash -c wrappers, env prefixes, etc.) from the original statusLine.command.
 _chain_conf="${_config_dir}/statusline-chain.conf"
-if [[ -f "$_chain_conf" ]]; then
+if [[ "${CLAUDE_STATUSLINE_CHAIN_ACTIVE:-${CAS_STATUSLINE_CHAIN_ACTIVE:-}}" != "1" && -f "$_chain_conf" ]]; then
     _chain=$(head -1 "$_chain_conf")
     if [[ -n "$_chain" ]]; then
-        printf '%s' "$payload" | bash -c "$_chain" || true
+        printf '%s' "$payload" | CLAUDE_STATUSLINE_CHAIN_ACTIVE=1 CAS_STATUSLINE_CHAIN_ACTIVE=1 bash -c "$_chain" || true
     fi
 fi
 

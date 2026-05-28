@@ -22,6 +22,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`scripts/test-run-all-tests.sh`** — added comment above local `assert_contains()` explaining why it stays local: orchestrator uses `pass_case`/`fail_case`, not the unified harness counters (CC-256).
 - **BACKLOG** — closed CC-254 (harness assert_* no auto-pass; shipped PR #149) and CC-256 (3-file assert_* migration audit; completed).
 
+### Removed
+
+- **`/caveman` slash command (`commands/caveman.md`)** -- token-compression skill removed; text compression causes information loss in design/architecture discussions where omitted constraints lead to misunderstandings (CC-265).
+- **`/caveman-commit` slash command (`commands/caveman-commit.md`)** -- removed alongside `/caveman` (CC-265).
+
 ### Test coverage
 
 - `test-state-store.sh case_project_key_no_sha1sum` — stubs both sha1sum and shasum, asserts _sw_project_key returns `global` non-fatally (CC-263).
@@ -44,7 +49,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`DECISIONS.md`** — repo-level architectural decision log; `validate.sh` guards that referenced IDs exist (CC-067).
 - **`CONTRIBUTING.md`** + **`CODE_OF_CONDUCT.md`** — source-available contributor guidelines + Contributor Covenant 2.1 (CC-031).
 - **`commands/skill-refine.md`** Prerequisites section documenting `CLAUDE_MEMORY_DIR` requirement (CC-025b).
-- **`scripts/test-commands.sh`** — contract-lint CI test for `/caveman` and `/caveman-commit` behavioral contracts; wired into `lint.yml` `test-commands` job (CC-039/CC-053).
+- **`scripts/test-commands.sh`** — contract-lint CI test for `pre-impl.md` Q4 contract and agent output-brevity contract; wired into `lint.yml` `test-commands` job (CC-039/CC-053). `/caveman` and `/caveman-commit` contracts were removed in CC-265.
 
 ### Changed
 
