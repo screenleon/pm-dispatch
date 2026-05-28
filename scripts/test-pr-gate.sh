@@ -2205,6 +2205,9 @@ test_gate_result_reviewer_verdicts_are_valid() {
 }
 
 test_pre_gate_hook_runs() {
+  # Verifies that an executable .pm-dispatch/pre-gate.sh runs before dispatch.
+  # Steps: create repo + executable pre-gate that writes a marker; run gate; assert
+  # exit 0 and marker exists.
   local name="pre-gate-hook-runs"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2237,6 +2240,9 @@ test_pre_gate_hook_runs() {
 }
 
 test_pre_gate_hook_aborts_gate_on_failure() {
+  # Verifies that a pre-gate hook exiting non-zero aborts the gate before dispatch.
+  # Steps: create repo + pre-gate that exits 1; run gate with brief marker; assert
+  # non-zero exit and brief marker does NOT exist (dispatch never reached).
   local name="pre-gate-hook-aborts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2266,6 +2272,9 @@ test_pre_gate_hook_aborts_gate_on_failure() {
 }
 
 test_post_gate_hook_runs() {
+  # Verifies that an executable .pm-dispatch/post-gate.sh runs after dispatch completes.
+  # Steps: create repo + executable post-gate that writes a marker; run gate; assert
+  # exit 0 and marker exists.
   local name="post-gate-hook-runs"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2298,6 +2307,8 @@ test_post_gate_hook_runs() {
 }
 
 test_post_gate_hook_aborts_on_failure() {
+  # Verifies that a post-gate hook exiting non-zero causes the gate to exit non-zero.
+  # Steps: create repo + post-gate that exits 1; run gate; assert non-zero exit.
   local name="post-gate-hook-aborts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2323,6 +2334,9 @@ test_post_gate_hook_aborts_on_failure() {
 }
 
 test_pre_gate_hook_not_executable() {
+  # Verifies that a non-executable pre-gate.sh emits a warning and is skipped (not an abort).
+  # Steps: create repo + pre-gate without chmod +x; run gate; assert exit 0, stderr
+  # contains "not executable", and hook marker does NOT exist.
   local name="pre-gate-hook-not-executable"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2356,6 +2370,9 @@ test_pre_gate_hook_not_executable() {
 }
 
 test_post_gate_hook_not_executable() {
+  # Verifies that a non-executable post-gate.sh emits a warning and is skipped (not an abort).
+  # Steps: create repo + post-gate without chmod +x; run gate; assert exit 0, stderr
+  # contains "not executable", and hook marker does NOT exist.
   local name="post-gate-hook-not-executable"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"

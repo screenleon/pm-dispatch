@@ -25,52 +25,51 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 The gate lifecycle hooks let the main thread start and stop infrastructure
 around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 
-| Hook | When it runs | Failure behaviour |
-|---|---|---|
-| `.pm-dispatch/pre-gate.sh` | before any reviewer dispatch | non-zero exit aborts the entire gate |
-| `.pm-dispatch/post-gate.sh` | after all reviewers finish successfully, before result handover | non-zero exit marks gate as failed |
+| Hook | When it runs | Executor support | Failure behaviour |
+|---|---|---|---|
+| `.pm-dispatch/pre-gate.sh` | before any reviewer dispatch | codex, claude | non-zero exit aborts the entire gate |
+| `.pm-dispatch/post-gate.sh` | after all reviewers finish (codex only, success path) | **codex only** | non-zero exit marks gate as failed |
 
 **Hook contract**:
 - Runs as the main thread user (full machine access).
 - Working directory is set to the project root (`$WORK_DIR`).
 - If the file exists but is not executable, pm-dispatch prints a warning and skips it.
-- Non-zero exit code from either hook aborts the gate.
+- Non-zero exit from either hook aborts the gate.
 
-> **Important — post-gate is success-only**: `post-gate.sh` only runs when the
-> entire gate succeeds (all reviewers + synthesis + integrity checks pass).
-> If a reviewer or synthesis step fails, post-gate is **not** invoked.
-> For teardown that must always run (e.g., `docker compose down`), use a bash
-> `trap` inside `pre-gate.sh` itself so cleanup is guaranteed regardless of the
-> gate outcome:
->
-> ```bash
-> # .pm-dispatch/pre-gate.sh — self-cleaning via trap
-> cleanup() { docker compose -f docker-compose.test.yml down; }
-> trap cleanup EXIT
-> docker compose -f docker-compose.test.yml up -d db
-> ```
+> **`--executor claude` limitation**: On the claude executor route, `pr-gate.sh`
+> emits a handover block and exits before reviewers run. `post-gate.sh` is therefore
+> **not invoked** on that route (a notice is printed to stderr). Pre-gate works
+> normally on both routes.
 
-**Example: Docker Compose database**
+**Two post-gate usage patterns**
+
+Depending on your use case, choose the right approach:
+
+**(A) Teardown that must always run** (e.g., `docker compose down`, even if a reviewer fails):
+Use a bash `trap` inside `pre-gate.sh` — cleanup is then guaranteed regardless of gate outcome.
 
 ```bash
-# .pm-dispatch/pre-gate.sh
+# .pm-dispatch/pre-gate.sh — always-teardown via trap
 #!/usr/bin/env bash
 set -euo pipefail
+cleanup() { docker compose -f docker-compose.test.yml down; }
+trap cleanup EXIT
 docker compose -f docker-compose.test.yml up -d db
-# Wait until the DB accepts connections
-until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do
-  sleep 1
-done
+until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
 ```
+
+**(B) Action that should run only on gate success** (e.g., posting a Slack notification, tagging a build):
+Use `post-gate.sh` directly. It runs only after all reviewers and synthesis succeed.
 
 ```bash
-# .pm-dispatch/post-gate.sh
+# .pm-dispatch/post-gate.sh — success-only action
 #!/usr/bin/env bash
 set -euo pipefail
-docker compose -f docker-compose.test.yml down
+# Only reached when gate verdict is GO
+curl -s -X POST "$SLACK_WEBHOOK" -d '{"text":"Gate passed — ready to open PR"}'
 ```
 
-Make both files executable:
+Make hook files executable after creating them:
 
 ```bash
 chmod +x .pm-dispatch/pre-gate.sh .pm-dispatch/post-gate.sh

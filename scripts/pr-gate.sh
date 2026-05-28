@@ -1031,8 +1031,14 @@ SBRIEF_P2
 fi
 
 # ── Post-gate hook ─────────────────────────────────────────────────────────
+# On the claude executor route this script is a handover producer only; reviewers
+# run outside this script, so post-gate cannot fire at true gate completion here.
 _POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
-if [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
+if [[ "$EXECUTOR" == "claude" ]]; then
+  if [[ -f "$_POST_GATE_HOOK" ]]; then
+    printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude — reviewers execute outside this script on that route\n' >&2
+  fi
+elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
   printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
 elif [[ -x "$_POST_GATE_HOOK" ]]; then
   printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
