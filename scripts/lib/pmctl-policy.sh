@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Sourceable policy enum helpers for pmctl.
+#
+# pmctl-policy.sh - list-only YAML reader for core/policy/*.yaml files.
+# Reads files with a top-level 'values:' list (one value per "  - <value>" line).
+# This is NOT a general YAML parser; it will silently misread nested mappings,
+# inline sequences, or multi-line scalars. Keep policy files as flat value lists.
 
 pmctl_policy_values() {
   local file="${1:-}"

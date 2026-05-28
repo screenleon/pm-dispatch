@@ -54,6 +54,8 @@ pmctl_adapter_generate() {
 # adapter.yaml - AUTHORED manifest for adapters/$name/.
 # This file is the source of truth. Do not add it to generated_files.
 # pmctl regeneration must not edit this file.
+# Required fields (8): schema_version, adapter_name, executor, cli_binary,
+#   isolation_map_ref, runner_ref, dispatch_contract, generated_files
 # Edit this file to configure the adapter; regenerate the other files with:
 #   pmctl adapter generate $name  (will refuse to overwrite existing adapter)
 schema_version: 1
@@ -78,6 +80,9 @@ EOF
       printf '  %s:\n' "$isolation_level"
       if [[ "$name/$isolation_level" == "codex/sandboxed" ]]; then
         printf '    native_flags: %s  # best-effort: Codex has no full-isolation equivalent; treated as workspace-write\n' "$native_flags"
+      elif [[ "$name/$isolation_level" == "codex/none" ]]; then
+        printf '    native_flags: %s\n' "$native_flags"
+        printf '    # intentional: isolation_level none means no restriction; no Codex isolation flag applied\n'
       else
         printf '    native_flags: %s\n' "$native_flags"
       fi
@@ -108,7 +113,8 @@ Wire the target CLI command surface to execute:
 bash "adapters/$name/run.sh" "\$@"
 \`\`\`
 
-Do not edit generated files listed in \`adapter.yaml\`; regenerate them with \`pmctl adapter generate $name\`.
+Do not edit generated files listed in \`adapter.yaml\`.
+To regenerate: delete \`adapters/$name/\` then rerun \`pmctl adapter generate $name\`.
 EOF
 
   trap - ERR
