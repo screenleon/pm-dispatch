@@ -1122,9 +1122,10 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 ## CC-204 — Reuse debt: hook framework（in-progress）
 
-**Problem**: pm-write-guard, codex-bash-guard, codex-write-guard, and routing-log hooks repeat stdin JSON parsing, decision matrix, and audit-log structure.
-**Why**: The hook layer has enough shared behavior that copy-paste-modify makes policy and logging drift likely.
-**Requirement**: Extract a shared hook framework for stdin JSON parsing, policy decisions, and audit logging, while preserving hook-specific policy rules.
+**Problem**: pm-write-guard, codex-bash-guard, and codex-write-guard repeat stdin JSON parsing, decision matrix, and audit-log structure.
+**Why**: The guard hook layer has enough shared behavior that copy-paste-modify makes policy and logging drift likely.
+**Requirement**: Extract a shared hook framework (`scripts/lib/hook-framework.sh`) for stdin JSON parsing, policy decisions, and audit logging, while preserving hook-specific policy rules.
+**Scope note**: `hook-routing-log.sh` is intentionally excluded — it uses custom jq-free JSON parsing and structured JSONL audit logging with rotation/locking, fundamentally different from the guard hook pattern. It remains independent.
 
 ## CC-221 — copy-mode refresh semantics ✅ 2026-05-21
 
