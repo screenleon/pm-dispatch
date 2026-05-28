@@ -597,13 +597,42 @@ test_output_directory_created() {
 }
 
 test_output_file_pre_created_before_handover() {
+  # Verifies that the gate output file is created on disk before the handover
+  # block is emitted, so a background claude-executor subagent can use Edit
+  # (which requires an existing file) rather than Write.
   local name="output-file-pre-created-before-handover"
   should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
 
-  if ! grep -A1 'mkdir -p.*OUTPUT_FILE' "$REPO_ROOT/scripts/pr-gate.sh" | grep -q 'touch.*OUTPUT_FILE'; then
-    fail "$name" "touch line was not found immediately after output directory creation"
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --executor claude
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
     return
   fi
+
+  local result_path
+  result_path=$(awk '/^result: /{print $2}' "$out")
+  if [[ -z "$result_path" ]]; then
+    fail "$name" "no 'result: <path>' line found in gate stdout"
+    return
+  fi
+
+  if [[ ! -f "$result_path" ]]; then
+    fail "$name" "gate output file was not pre-created before handover: $result_path"
+    return
+  fi
+
+  assert_file_contains "$name" "$out" "output_file: $result_path" || return
   pass "$name"
 }
 
