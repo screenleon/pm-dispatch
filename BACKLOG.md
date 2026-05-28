@@ -170,7 +170,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-264 | ✅ closed 2026-05-28 | **[dispatch overhead reduction + executor-agnostic output contract]** `codex-executor` subagent 2.5x overhead → shell pipeline；同時統一 output contract（所有 executor 寫 `.agent-trace/latest.last`）讓 post-verify executor-agnostic。PR A：`brief-validate.sh` + 測試 + CI；PR B：output contract（executor-contract.md + claude-executor.md）+ `dispatch-post-verify.sh` + 測試 + CI。 | arch/process | 2026-05-26 | pr:#163,pr:#164,pr:#167 | P2 | — |
 | CC-265 | ✅ closed 2026-05-26 | Remove `/caveman` and `/caveman-commit` commands. | process | 2026-05-26 | — | P2 | hygiene |
 | CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
-| CC-267 | 🔵 active | **[bug: executor:claude gate path — Write blocked in background subagent]** `pr-gate.sh --executor claude` 派出的 background `claude-executor` subagent 需要 Write gate result file，但 background mode 下 Write 新檔案被拒 → result 靜默丟失。Fix：在 `pr-gate.sh` emit handover block 前先 `mkdir -p` + `touch "$output_file"`，讓 agent 改用 `Edit`（允許）。 | gate/ops | 2026-05-28 | — | P2 | oss |
+| CC-267 | ✅ closed 2026-05-28 | **[bug: executor:claude gate path — Write blocked in background subagent]** `pr-gate.sh --executor claude` 派出的 background `claude-executor` subagent 需要 Write gate result file，但 background mode 下 Write 新檔案被拒 → result 靜默丟失。Fix：在 `pr-gate.sh` emit handover block 前先 `mkdir -p` + `touch "$output_file"`，讓 agent 改用 `Edit`（允許）。 | gate/ops | 2026-05-28 | pr:#169 | P2 | oss |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 
 ---
@@ -2159,7 +2159,7 @@ PR B — output contract + dispatch-post-verify.sh:
 
 ---
 
-## CC-267 — bug: executor:claude gate path — Write blocked in background subagent（active）
+## CC-267 — bug: executor:claude gate path — Write blocked in background subagent ✅ 2026-05-28
 
 **Problem**: When `pr-gate.sh --executor claude` emits a `pr-gate-handover_v1` block and the calling skill fans out a `claude-executor` subagent with `run_in_background:true`, the subagent needs to **create** the gate result file. `Write` on a new file is denied in background mode — there is no interactive session to approve the permission. Subagent exits without writing; gate result is silently lost.
 
@@ -2167,22 +2167,9 @@ PR B — output contract + dispatch-post-verify.sh:
 
 **Root cause**: Gate result file path is computed in `pr-gate.sh` but the file is not pre-created before the handover block is emitted. Background agent can `Edit` an existing file but cannot `Write` to a new path.
 
-**Fix (trivial — 2 lines in pr-gate.sh)**:
+**Fix**: `touch "$OUTPUT_FILE"` immediately after `mkdir -p "$(dirname "$OUTPUT_FILE")"` at `scripts/pr-gate.sh:219`, before `emit_pr_gate_handover_block`. Regression test (`test_output_file_pre_created_before_handover`) uses a named pipe to verify the file exists at the moment the `output_file:` handover line is emitted.
 
-```bash
-mkdir -p "$(dirname "$output_file")"
-touch "$output_file"
-```
-
-Add immediately after `output_file` is computed and before the handover block is emitted.
-
-**Acceptance criteria**:
-- [ ] `/pr-gate --executor claude` produces a gate result file even when the output path did not exist before the gate run
-- [ ] Regression test in `scripts/test-pr-gate.sh` verifies the pre-creation behavior
-
-**Priority**: P2 — the claude executor gate path silently fails for all users without a pre-existing output file.
-
-**See**: issue:#165
+**See**: issue:#165, pr:#169
 
 **Cross-link**: `[[CC-217]]`（claude-executor background dispatch）、`[[CC-238]]`（fan-out hardening）、`[[CC-264]]`（executor-agnostic output contract）。
 

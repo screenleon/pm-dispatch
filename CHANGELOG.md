@@ -17,6 +17,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`adapters/claude/isolation-map.yaml`** — no-op translation table for claude-executor; all four isolation levels map to empty native-flags (CC-262 M1).
 - **`scripts/lib/portable.sh` `_portable_sha1()`** — cross-platform SHA-1 helper: tries `sha1sum` (GNU/Linux), falls back to `shasum -a 1` (macOS/BSD), returns 1 with a logged warning if both are missing. `FAKE_SHA1_MISSING=1` test shim included (CC-263).
 
+### Fixed
+
+- **`scripts/pr-gate.sh`** — pre-create gate output file (`touch "$OUTPUT_FILE"`) before emitting the `pr-gate-handover_v1` handover block; fixes silent result loss when a background `claude-executor` subagent cannot `Write` to a new file path (CC-267).
+- **`scripts/pr-gate.sh`** — escape literal `$` in unquoted heredoc templates (`\$)`, `\$'`) in the brief escalation regex and self-verify grep pattern to prevent sporadic bash parse errors (CC-257 residual).
+
 ### Changed
 
 - **`agents/claude-executor.md`** — self-verify format hardened: exact whole-line `cmd: pass` / `cmd: fail: <reason>` matching; `status:blocked` check; portable `realpath`; trace-dir symlink guard; `OK-NOBRIEF` mode for briefless runs (CC-264b).
