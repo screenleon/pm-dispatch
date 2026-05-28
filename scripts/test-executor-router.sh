@@ -90,4 +90,9 @@ if should_run "dispatch_via_codex: safe argv passthrough"; then
   fi
 fi
 
+if should_run "dispatch_via_codex: non-default model"; then
+  result="$(dispatch_via_codex "/tmp/brief.md" "/repo" "sonnet" "workspace-write" "never" "1200")"
+  printf '%s\n' "$result" | grep -q -- '--model sonnet' && pass "dispatch_via_codex: non-default model" || fail "dispatch_via_codex: non-default model" "expected --model sonnet in: $result"
+fi
+
 th_summary

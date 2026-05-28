@@ -11,11 +11,13 @@ done
 EXECUTOR_ROUTER_LIB_DIR="$(cd "$(dirname "$_EXECUTOR_ROUTER_SELF")" && pwd)"
 EXECUTOR_ROUTER_SCRIPT_DIR="$(cd "$EXECUTOR_ROUTER_LIB_DIR/.." && pwd)"
 
-# shellcheck source=scripts/lib/portable.sh
-. "$EXECUTOR_ROUTER_LIB_DIR/portable.sh"
+# Local helper: avoid importing portable.sh shell policy into caller space.
+_er_codex_available() {
+  command -v codex >/dev/null 2>&1
+}
 
 detect_executor_auto() {
-  if codex_available; then
+  if _er_codex_available; then
     printf 'codex\n'
   else
     printf 'claude\n'
@@ -103,6 +105,7 @@ unset _EXECUTOR_ROUTER_SELF _EXECUTOR_ROUTER_DIR
 
 export EXECUTOR_ROUTER_LIB_DIR
 export EXECUTOR_ROUTER_SCRIPT_DIR
+export -f _er_codex_available
 export -f detect_executor_auto
 export -f resolve_executor
 export -f dispatch_route_for
