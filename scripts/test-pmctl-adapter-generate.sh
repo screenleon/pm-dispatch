@@ -237,7 +237,7 @@ if should_run "run.sh reaches dispatch route"; then
   run_pmctl "$repo" adapter generate testrouter >/dev/null
   status=0
   out="$(REPO_ROOT="$repo" bash "$repo/adapters/testrouter/run.sh" --help 2>&1)" || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"pmctl dispatch run: adapter dispatch stub"* && "$out" != *"unknown command"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"pmctl dispatch run: adapter dispatch stub"* && "$out" == *"adapter: testrouter"* && "$out" != *"unknown command"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
