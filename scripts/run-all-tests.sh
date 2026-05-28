@@ -13,6 +13,7 @@ SUITE_NAMES=(
   lint-agents
   lint-scripts
   test-hooks
+  test-hook-framework
   test-migrate
   test-install
   test-uninstall
@@ -51,6 +52,7 @@ declare -A SUITE_PATHS=(
   [lint-agents]="scripts/lint-agents.sh"
   [lint-scripts]="scripts/lint-scripts.sh"
   [test-hooks]="scripts/test-hooks.sh"
+  [test-hook-framework]="scripts/test-hook-framework.sh"
   [test-migrate]="scripts/test-migrate-routing-log.sh"
   [test-install]="scripts/test-install.sh"
   [test-uninstall]="scripts/test-uninstall.sh"

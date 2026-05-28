@@ -56,6 +56,13 @@ jobs:
       - name: Hook regression suite
         run: ./scripts/test-hooks.sh
 
+  test-hook-framework:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Hook framework regression suite
+        run: ./scripts/test-hook-framework.sh
+
   test-pr-gate:
     runs-on: ubuntu-latest
     steps:

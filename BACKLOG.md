@@ -89,7 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-201 | ✅ closed 2026-05-23 | **[Reuse debt]** `detect_executor_profile()` shim 進 `scripts/lib/portable.sh` — `install-hooks.sh` + `pr-gate.sh` 各自重複 `command -v codex` 判斷 | arch/reuse | 2026-05-17 | pr:#123 | — | reuse-debt |
 | CC-202 | 🔵 active | **[Reuse debt]** handover validator framework — `dispatch_handover_v1` 與 `pr-gate-handover_v1` 共用 fence/metadata/body validator 抽象；future handover schemas 不再手刻 | arch/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-203 | ✅ closed 2026-05-24 | **[Reuse debt]** `scripts/lib/test-harness.sh` — 8+ `test-*.sh` 各寫 `--filter`/`--list`/`should_run()`/PASS-FAIL counter/scratch dir setup；source-able 共用 lib 統一。Incremental：PR #127 建 harness + 2 pilot、PR #128 遷 test-install/test-claude-executor、PR #135-#140 遷 GROUP-B 16 file（751 cases preserved）、PR #142 加 `--format`/`--fail-fast` options、PR #152 (CC-249 PR-B.2 v2) 完成 assert_* migration。22/23 test-*.sh 已上 harness；剩 test-run-all-tests.sh (orchestrator) per [[feedback_test_migration_format_preservation]] 評估後 out-of-scope；test-test-harness/test-hooks 的 assert_* 殘餘走 CC-256。 | ops/test | 2026-05-17 | pr:#127,pr:#128,pr:#135,pr:#136,pr:#137,pr:#138,pr:#139,pr:#140,pr:#142,pr:#152 | P2 | reuse-debt |
-| CC-204 | ⏸ deferred | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
+| CC-204 | 🔵 active | **[Reuse debt]** hook framework — pm-write-guard/codex-bash-guard/codex-write-guard/routing-log 共通 stdin-json-parse → decision-matrix → audit-log 結構；目前 copy-paste-modify | arch/hook/reuse | 2026-05-17 | — | — | reuse-debt |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-206 | ⏸ deferred | gate lifecycle hook：`.pm-dispatch/pre-gate.sh` / `.pm-dispatch/post-gate.sh` — 主線程在 dispatch 前後執行 repo-level 腳本（Docker 啟動、DB seed 等 Codex sandbox 無法執行的 infra 操作）；hook 不存在時 gate 行為不變 | ops/gate | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
@@ -1120,7 +1120,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **See**: PR #127, #128, #135-#140, #142, #152; CC-247, CC-248, CC-249, CC-256, `[[feedback_test_migration_format_preservation]]`, `[[feedback_ci_shellcheck_test_exclude]]`, `[[feedback_codex_brief_discipline]]`.
 
-## CC-204 — Reuse debt: hook framework（deferred）
+## CC-204 — Reuse debt: hook framework（in-progress）
 
 **Problem**: pm-write-guard, codex-bash-guard, codex-write-guard, and routing-log hooks repeat stdin JSON parsing, decision matrix, and audit-log structure.
 **Why**: The hook layer has enough shared behavior that copy-paste-modify makes policy and logging drift likely.

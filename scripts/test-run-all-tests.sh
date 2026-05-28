@@ -16,6 +16,7 @@ SUITE_NAMES=(
   lint-agents
   lint-scripts
   test-hooks
+  test-hook-framework
   test-migrate
   test-install
   test-uninstall
@@ -77,6 +78,7 @@ suite_path() {
     lint-agents) printf 'scripts/lint-agents.sh\n' ;;
     lint-scripts) printf 'scripts/lint-scripts.sh\n' ;;
     test-hooks) printf 'scripts/test-hooks.sh\n' ;;
+    test-hook-framework) printf 'scripts/test-hook-framework.sh\n' ;;
     test-migrate) printf 'scripts/test-migrate-routing-log.sh\n' ;;
     test-install) printf 'scripts/test-install.sh\n' ;;
     test-uninstall) printf 'scripts/test-uninstall.sh\n' ;;
@@ -179,8 +181,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 35.
-  local out status=0 actual_count expected_count=35
+  # Steps: invoke --list; count output lines; assert the count is 36.
+  local out status=0 actual_count expected_count=36
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then
