@@ -74,6 +74,10 @@ if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
   cp "$brief_file" "$CODEX_GATE_CAPTURE_BRIEF"
 fi
 
+if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF:-}" && "$brief_file" != *-synthesis.md ]]; then
+  cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF"
+fi
+
 # Simulate reviewer-side injection (tracked file modification during reviewer dispatch).
 if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
@@ -2625,6 +2629,44 @@ test_parallel_synthesis_brief_ascii_separator() {
   pass "$name"
 }
 
+test_parallel_reviewer_brief_ascii_separator() {
+  # CC-275 regression: verifies that the per-reviewer brief emitted in parallel
+  # mode by pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014).
+  # Uses CODEX_GATE_CAPTURE_REVIEWER_BRIEF which captures the last non-synthesis
+  # brief dispatched during a parallel run.
+  local name="parallel-reviewer-brief-ascii-separator"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$reviewer_brief" ]]; then
+    fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
+    return
+  fi
+  # Reviewer brief heading format must use ASCII -- not em dash
+  assert_file_contains "$name" "$reviewer_brief" "file:line --" || return
+  # No em dash bytes (UTF-8 E2 80 94) must remain in the reviewer brief
+  if grep -q $'\xe2\x80\x94' "$reviewer_brief" 2>/dev/null; then
+    fail "$name" "em dash (U+2014) found in parallel reviewer brief -- CC-275 regression"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -2637,6 +2679,7 @@ run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
 run_test test_seq_brief_ascii_separator
 run_test test_parallel_synthesis_brief_ascii_separator
+run_test test_parallel_reviewer_brief_ascii_separator
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 
