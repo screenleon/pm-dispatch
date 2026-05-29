@@ -327,10 +327,17 @@ handover_validate_all_metadata() {
   value="$(handover_get_field "$metadata" brief_file)" || return 1
   handover_validate_brief_file "$value" || return 1
 
-  # Validate isolation_level (canonical) OR legacy native trio (backward compat)
+  # Validate isolation_level (canonical) OR legacy native trio (backward compat).
+  # Mixing both is rejected to enforce clear migration path.
   local _iso_val
   _iso_val="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_val=""
   if [[ -n "$_iso_val" ]]; then
+    # Reject if legacy sandbox field is also present alongside isolation_level
+    local _legacy_sandbox
+    _legacy_sandbox="$(handover_get_field "$metadata" sandbox 2>/dev/null)" || _legacy_sandbox=""
+    if [[ -n "$_legacy_sandbox" ]]; then
+      handover_reject isolation_level "cannot mix isolation_level with legacy sandbox/approval/skip_git_check fields; use isolation_level only" || return 1
+    fi
     handover_validate_isolation_level "$_iso_val" || return 1
   else
     value="$(handover_get_field "$metadata" sandbox)" || return 1

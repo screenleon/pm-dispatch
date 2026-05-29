@@ -7,7 +7,7 @@ The executor-level abstraction is defined in [docs/executor-contract.md](docs/ex
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) are still required for schema stability but are accepted-as-no-op by `claude`; use canonical values (`workspace-write`, `never`, `false`).
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
 
 ## Required fields
 
@@ -292,11 +292,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 1200
 model: default
-skip_git_check: false
 fallback_allowed: true
 ---
 working_dir: ${PM_DISPATCH_REPO}
@@ -330,12 +328,13 @@ Metadata fields:
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
-| `sandbox` | yes | Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
-| `approval` | yes | Bash route accepts only `never`; other values require Agent(codex-executor) fallback. |
+| `isolation_level` | yes (new) | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. Cannot be mixed with legacy `sandbox`/`approval`/`skip_git_check`. |
 | `timeout` | yes | `1200` fallback after `CODEX_DISPATCH_TIMEOUT` and config; public env fallback chain below. |
 | `model` | yes | `default` or a specific Codex model name. |
-| `skip_git_check` | yes | Bash route accepts only `false`; `true` requires Agent(codex-executor) fallback. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
+| `sandbox` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
+| `approval` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `never`. |
+| `skip_git_check` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `false`. |
 | `snapshot_file` | no | Absolute path to a PM-generated context snapshot; if present, PM uses it for orientation. PM re-derives security-sensitive fields (current branch, HEAD SHA) from git — see `agents/project-pm.md` `## Snapshot ingestion`. |
 
 ### Env / config precedence

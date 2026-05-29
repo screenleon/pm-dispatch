@@ -561,36 +561,75 @@ skip_git_check_true_rejects_case() {
 }
 
 # Behavior: isolation_level workspace-write is accepted.
+# Steps:
+#   1. Validate isolation_level workspace-write.
+#   2. Assert validation succeeds.
 isolation_level_workspace_write_accepts_case() {
   handover_validate_isolation_level workspace-write >/dev/null 2>&1
 }
 
 # Behavior: isolation_level sandboxed is accepted.
+# Steps:
+#   1. Validate isolation_level sandboxed.
+#   2. Assert validation succeeds.
 isolation_level_sandboxed_accepts_case() {
   handover_validate_isolation_level sandboxed >/dev/null 2>&1
 }
 
 # Behavior: isolation_level workspace-network is accepted.
+# Steps:
+#   1. Validate isolation_level workspace-network.
+#   2. Assert validation succeeds.
 isolation_level_workspace_network_accepts_case() {
   handover_validate_isolation_level workspace-network >/dev/null 2>&1
 }
 
 # Behavior: isolation_level none is accepted.
+# Steps:
+#   1. Validate isolation_level none.
+#   2. Assert validation succeeds.
 isolation_level_none_accepts_case() {
   handover_validate_isolation_level none >/dev/null 2>&1
 }
 
 # Behavior: isolation_level read-only is accepted.
+# Steps:
+#   1. Validate isolation_level read-only.
+#   2. Assert validation succeeds.
 isolation_level_read_only_accepts_case() {
   handover_validate_isolation_level read-only >/dev/null 2>&1
 }
 
-# Behavior: unknown isolation_level value is rejected.
+# Behavior: Unknown isolation_level value is rejected.
+# Steps:
+#   1. Validate isolation_level full-access (not in enum).
+#   2. Assert the reject audit names isolation_level.
 isolation_level_unknown_rejects_case() {
   expect_reject_reason isolation_level "unknown isolation_level value" handover_validate_isolation_level full-access
 }
 
-# Behavior: handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
+# Behavior: Full metadata validation rejects an invalid isolation_level value.
+# Steps:
+#   1. Build a complete metadata block with isolation_level set to an unknown value.
+#   2. Assert handover_validate_all_metadata rejects and the audit names isolation_level.
+all_metadata_invalid_isolation_level_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-invalid-isolation.md
+isolation_level: full-access
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
+}
+
+# Behavior: Handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
+# Steps:
+#   1. Build a metadata block with isolation_level workspace-write, no sandbox/approval/skip_git_check.
+#   2. Assert handover_validate_all_metadata succeeds.
 all_metadata_with_isolation_level_accepts_case() {
   local block
   block="handover_version: 2
@@ -605,7 +644,10 @@ fallback_allowed: true"
   handover_validate_all_metadata "$block" >/dev/null 2>&1
 }
 
-# Behavior: handover block with isolation_level but no sandbox still passes required_fields check.
+# Behavior: Handover block with isolation_level but no sandbox still passes required_fields check.
+# Steps:
+#   1. Build metadata with isolation_level present, sandbox/approval/skip_git_check absent.
+#   2. Assert handover_validate_required_fields succeeds.
 required_fields_with_isolation_level_accepts_case() {
   local block
   block="handover_version: 2
@@ -620,7 +662,10 @@ fallback_allowed: true"
   handover_validate_required_fields "$block" >/dev/null 2>&1
 }
 
-# Behavior: handover block with no isolation_level and no sandbox fails required_fields check.
+# Behavior: Handover block with no isolation_level and no sandbox fails required_fields check.
+# Steps:
+#   1. Build metadata without isolation_level and without sandbox/approval/skip_git_check.
+#   2. Assert handover_validate_required_fields rejects.
 required_fields_missing_both_isolation_and_sandbox_rejects_case() {
   local block
   block="handover_version: 2
@@ -632,6 +677,27 @@ timeout: 1200
 model: default
 fallback_allowed: true"
   ! handover_validate_required_fields "$block" >/dev/null 2>&1
+}
+
+# Behavior: Handover block mixing isolation_level with legacy sandbox field is rejected.
+# Steps:
+#   1. Build metadata with both isolation_level and sandbox present.
+#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+all_metadata_mixed_isolation_and_sandbox_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-mixed-fields.md
+isolation_level: workspace-write
+sandbox: workspace-write
+approval: never
+skip_git_check: false
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
 }
 
 # Behavior: Timeout 1200 is accepted.
@@ -971,9 +1037,11 @@ run_case "handover/isolation_level workspace-network accepts" isolation_level_wo
 run_case "handover/isolation_level none accepts" isolation_level_none_accepts_case
 run_case "handover/isolation_level read-only accepts" isolation_level_read_only_accepts_case
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
+run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
 run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
 run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case
+run_case "handover/all metadata mixed isolation and sandbox rejects" all_metadata_mixed_isolation_and_sandbox_rejects_case
 run_case "handover/working_dir match accepts" working_dir_match_accepts_case
 run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
 run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case
