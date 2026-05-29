@@ -7,7 +7,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 每個受管 repo（active product repo）在 repo root 持有：
 
-- `BACKLOG.md` — 工作條目單一真理（active + 近期 closed stub）
+- `BACKLOG.md` — 工作集單一真理（**僅非終態條目**；終態 closed/dropped 依 §4 移至 `BACKLOG-ARCHIVE.md`）
 - `DECISIONS.md` — 已沉澱的設計決策日誌（既有檔案沿用）
 - `BACKLOG-ARCHIVE.md` — 歸檔倉，僅在膨脹政策觸發時建立
 
@@ -28,15 +28,15 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 - 條目編號 `<PREFIX>-NNN`，PREFIX 為 repo 縮寫（例：`PA` for project-alpha, `PB` for project-beta）。
 - ID 永久穩定：**永不重用、永不重排**。新增固定取「目前最大號 + 1」。
-- closed / dropped 條目保留 ID，狀態欄變更，body 折疊。
+- closed / dropped 條目保留 ID（永不重用）；狀態欄變更後依 §4 移至 `BACKLOG-ARCHIVE.md`。
 
 ### 2.3 Status enum
 
 八個可接受 status token：
 
 - `🔵 active` — 仍在 backlog，包含尚未開工 / 進行中 / 阻塞中（細節寫在 body）
-- `✅ closed YYYY-MM-DD` — 已 ship，body 折疊為 closed stub（§2.6）
-- `🚫 dropped YYYY-MM-DD` — 不做了，body 折疊為 stub 並指向 DECISIONS
+- `✅ closed YYYY-MM-DD` — 已 ship；依 §4 移至 `BACKLOG-ARCHIVE.md`（working-set，不留 stub）
+- `🚫 dropped YYYY-MM-DD` — 不做了；依 §4 移至 `BACKLOG-ARCHIVE.md`（如有決策，被歸檔的 body 內留 `See: DECISIONS.md`）
 - `✅ done` — **soft-close**：已完成但不需要 PR 追蹤或具體日期的項目（例：文件新增、config 設定）。body 保持 active 格式（Problem/Why/Requirement），不需折疊為 stub；不需要 `See:` 引用。
 - `⏸ deferred` — **延後**：不是不做，而是等待外部條件（依賴項、時機）再推進。body 保持 active 格式；與 `🔵 active` 的差異是「現在刻意不排程」。
 - `🟡 deferred` — **明確延後（alternate）**：`⏸ deferred` 的同義視覺變體；語義相同，validator 兩者皆接受。
@@ -143,9 +143,9 @@ Alias（寫入時自動正規化，PM agent 解析時容錯）：`architecture` 
 
 ### 2.6 Closed / dropped stub
 
-closed 條目有兩種折疊形式：
+working-set 模型（§4）下，closed / dropped 條目會被移出 BACKLOG.md，**新 close 不產生 in-place stub**。下列兩種 stub 形式為**過渡 / legacy 表示**（close 後尚未 archive 的暫態，或舊資料）——validator 仍接受、下次 archive run 會清除：
 
-**DECISIONS-backed stub**（預設）：outcome 已沉澱到 DECISIONS.md 時使用。
+**DECISIONS-backed stub**（過渡：close 後尚未 archive、且 outcome 已沉澱到 DECISIONS.md 時）。
 
 ```
 ## JS-008 — Japanese-first 文法解釋契約 ✅ 2026-04-30
@@ -220,16 +220,17 @@ PM agent 讀 backlog 時：
 
 新增條目：
 
-1. 讀 index table 取最大號，+1 為新 ID。
+1. 新 ID = **BACKLOG.md index 與 BACKLOG-ARCHIVE.md 兩處最大號 + 1**。終態票只在 archive（§4），只讀 index 取最大號會重用已歸檔 ID、違反 §2.2「永不重用」。
 2. 在 index table 末端追加列。
 3. 在 body 區尾端追加三層段落。
 4. 兩處同一 commit / 同一 write 必須一起更新。
 
-狀態變更（active → closed/dropped）：
+狀態變更（active → closed/dropped）—— working-set 模型（§4）：
 
-1. 更新 index Status 欄。
-2. 替換 body 為 stub（保留 H2 標題與 ID）。
-3. 若有對應 DECISIONS entry，stub 內 `See:` 必填。
+1. 更新 index Status 欄為 `✅ closed YYYY-MM-DD` 或 `🚫 dropped YYYY-MM-DD`。
+2. 執行 `scripts/archive-closed-backlog.sh`：該條目的 **index row + body 一併移出** BACKLOG.md、body append 至 BACKLOG-ARCHIVE.md，**不留 stub**。若有對應 DECISIONS entry，把 `**See**: DECISIONS.md#...` 行留在被歸檔的 body 內。
+3. 結果：BACKLOG.md 不再含該條目。
+4. 過渡相容：若暫不歸檔，可依 §2.6 在原位留一個 stub 讓 validator 通過（下次 archive run 會清掉）；但預設應 close + archive 同步完成於同一變更。
 
 進度筆記（status note）：
 
