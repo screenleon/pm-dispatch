@@ -2308,3 +2308,22 @@ This makes directory creation the mutex.
 **Cross-link**: `[[CC-206]]` (first hook point — gate pre/post)
 
 **Priority**: P3 — no current requirement; activate when second hook point emerges.
+
+---
+
+## CC-274 — docs: reconcile CC-262 planning text with shipped isolation implementation
+
+**Problem**: CC-262 in BACKLOG.md has three stale areas flagged by Round 11 gate critic:
+1. Requirement block lists only 4 enum values (`none | read-only | workspace-write | sandboxed`) — `workspace-network` (shipped in M2 / PR #175) is missing.
+2. Sandboxed semantic still says "完整隔離" but the Codex adapter maps it to `workspace-write` (best-effort, no true ephemeral mode); `core/policy/isolation-level.yaml` and adapter comments now reflect this.
+3. Acceptance (M2) and Acceptance (v0.4.0) still mark `codex-dispatch.sh` expansion and `adapters/codex/isolation-map.yaml` as "deferred" — both shipped in PR #175.
+
+**Fix**:
+- Update CC-262 Requirement block to list all 5 enum values including `workspace-network`.
+- Correct sandboxed semantic to "best-effort strongest isolation; Codex maps to workspace-write".
+- Mark M2 and v0.4.0 acceptance criteria as landed (PR #175).
+
+**area**: docs
+**Priority**: P2 — stale planning text causes confusion when reading the BACKLOG for future isolation work.
+
+**Raised by**: critic [medium] × 3, Round 11 gate (feat/cc206-gate-hooks).
