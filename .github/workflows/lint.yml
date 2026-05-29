@@ -285,6 +285,13 @@ jobs:
       - name: state store regression suite
         run: bash scripts/test-state-store.sh
 
+  test-archive-closed-backlog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: archive-closed-backlog regression suite
+        run: bash scripts/test-archive-closed-backlog.sh
+
   lint-backlog:
     runs-on: ubuntu-latest
     steps:

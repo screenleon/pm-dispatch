@@ -23,9 +23,10 @@ TODAY="$(date +%Y-%m-%d)"
 
 TMP_BACKLOG="$(mktemp)"
 TMP_COUNT="$(mktemp)"
-trap 'rm -f "$TMP_BACKLOG" "$TMP_COUNT"' EXIT
+TMP_ARCHIVE_APPEND="$(mktemp)"
+trap 'rm -f "$TMP_BACKLOG" "$TMP_COUNT" "$TMP_ARCHIVE_APPEND"' EXIT
 
-awk -v archive_file="$ARCHIVE" -v dry_run="$DRY_RUN" -v count_file="$TMP_COUNT" '
+awk -v archive_append="$TMP_ARCHIVE_APPEND" -v dry_run="$DRY_RUN" -v count_file="$TMP_COUNT" '
 function flush_section(    i, has_see) {
   has_see = 0
   for (i = 1; i <= body_n; i++) {
@@ -37,9 +38,9 @@ function flush_section(    i, has_see) {
 
   if (is_terminal && !has_see) {
     if (!dry_run) {
-      printf "%s\n", section_hdr >> archive_file
+      printf "%s\n", section_hdr >> archive_append
       for (i = 1; i <= body_n; i++) {
-        printf "%s\n", body[i] >> archive_file
+        printf "%s\n", body[i] >> archive_append
       }
     }
     archived++
@@ -104,9 +105,13 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 if [[ "$archived_count" -gt 0 ]]; then
+  TMP_ARCHIVE="$(mktemp)"
+  trap 'rm -f "$TMP_BACKLOG" "$TMP_COUNT" "$TMP_ARCHIVE_APPEND" "$TMP_ARCHIVE"' EXIT
+  cat "$ARCHIVE" "$TMP_ARCHIVE_APPEND" > "$TMP_ARCHIVE"
+  sed -i "s/^Last archived: .*/Last archived: $TODAY/" "$TMP_ARCHIVE"
+  sed -i "s/^<!-- pm-dispatch: backlog-archive [0-9-]* -->/<!-- pm-dispatch: backlog-archive $TODAY -->/" "$TMP_ARCHIVE"
   mv "$TMP_BACKLOG" "$BACKLOG"
-  sed -i "s/^Last archived: .*/Last archived: $TODAY/" "$ARCHIVE"
-  sed -i "s/^<!-- pm-dispatch: backlog-archive [0-9-]* -->/<!-- pm-dispatch: backlog-archive $TODAY -->/" "$ARCHIVE"
+  mv "$TMP_ARCHIVE" "$ARCHIVE"
 fi
 
 printf 'Archived %d section(s)\n' "$archived_count"

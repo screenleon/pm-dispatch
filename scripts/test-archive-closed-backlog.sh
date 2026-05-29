@@ -245,9 +245,37 @@ case_dropped_section() {
   pass "$name"
 }
 
+case_unknown_flag() {
+  local name="archive-unknown-flag"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/unknown-flag"
+  mkdir -p "$repo/scripts"
+  cp "$ARCHIVER" "$repo/scripts/archive-closed-backlog.sh"
+  printf '' > "$repo/BACKLOG.md"
+  printf '' > "$repo/BACKLOG-ARCHIVE.md"
+
+  local output rc=0
+  set +e
+  output=$(bash "$repo/scripts/archive-closed-backlog.sh" --unsupported-flag 2>&1)
+  rc=$?
+  set -e
+
+  if [[ "$rc" -ne 1 ]]; then
+    fail "$name" "expected exit 1 for unknown flag, got $rc"
+    return
+  fi
+  if [[ "$output" != *"unknown arg"* ]]; then
+    fail "$name" "expected 'unknown arg' in output, got: $output"
+    return
+  fi
+  pass "$name"
+}
+
 case_happy_path
 case_idempotency
 case_dry_run
 case_dropped_section
+case_unknown_flag
 
 th_summary
