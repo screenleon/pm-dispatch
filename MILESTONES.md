@@ -42,7 +42,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ✅ (#159) |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ✅ (#157) |
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
-| CC-262 | `isolation_level` enum（M1 延伸）— adapters/claude no-op map（M1）；adapters/codex 移 v0.4.0；dispatch 展開 M2；PM template M3 | ✅ (#162) |
+| CC-262 | `isolation_level` enum 全三段完成 — adapters/claude no-op map（#162）；codex-dispatch 展開（#175）；PM template（#180）；adapters/codex 移 v0.4.0 | ✅ (#162/#175/#180) |
 
 ### M2 — 由抽取長出 runtime — ✅ complete 2026-05-28
 
@@ -61,8 +61,21 @@
 | CC-059 | thin `commands/pm.md` | ⏳ |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
 | CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
-| CC-262 | `agents/project-pm.md` PM template 改寫 `isolation_level:`（M3 residual；M1 adapters/claude 已 ship #162） | ⏳ |
+| CC-206 | gate lifecycle hooks（pre/post-gate + `--allow-hooks` opt-in + `--isolation` flag） | ✅ (#175) |
+| CC-271 | `docs/sandbox-limitations.md`（folded into CC-206 PR） | ✅ (#175) |
+| CC-262 | `agents/project-pm.md` PM template 改寫 `isolation_level:`（M3 residual；M1 adapters/claude 已 ship #162） | ✅ (#180) |
 | CC-266 | `adapters/claude/dispatch.sh`：Codex-as-PM → Claude CLI dispatch 路徑（shell-level invocation；output contract via `.agent-trace/latest.last`） | ⏳ |
+
+### BACKLOG Hygiene Track（平行於 M3/M4；P1 優先）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-277 | 修正 BACKLOG.md 所有 E-code（E-AREA-ENUM / E-REFS-PREFIX / stale active rows）→ `validate.sh` exit 0（P1） | ⏳ |
+| CC-278 | 將 `validate.sh` 接入 CI `lint.yml`（Phase 1 warn-only；Phase 2 hard-fail after CC-277）（P2） | ⏳ |
+| CC-279 | `scripts/archive-closed-backlog.sh` — idempotent bloat-policy executor（P2） | ⏳ |
+| CC-280 | 執行 archive script，壓縮當前 BACKLOG 膨脹（deferred until CC-279）（P2） | 🟡 deferred |
+| CC-281 | BACKLOG index 分割 Active / Terminal（comment delimiter；deferred until CC-280）（P3） | 🟡 deferred |
+| CC-282 | `pmctl backlog sync` → SQLite derived query layer（deferred until CC-215 M3）（P3） | 🟡 deferred |
 
 ### M4 — 概念吸收
 
