@@ -12,6 +12,16 @@
     "model",
     "fallback_allowed"
   ],
+  "oneOf": [
+    {
+      "required": ["isolation_level"],
+      "description": "Canonical form: isolation_level present, legacy trio absent. No-mixing enforced at runtime by handover_validate_all_metadata."
+    },
+    {
+      "required": ["sandbox", "approval", "skip_git_check"],
+      "description": "Legacy form (backward compat): legacy trio present, isolation_level absent."
+    }
+  ],
   "properties": {
     "handover_version": {
       "const": 2

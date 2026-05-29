@@ -402,6 +402,42 @@ case_brief_files_oneOf_has_four_variants
 case_brief_files_oneOf_all_have_additional_properties_false
 case_brief_sha_field_has_pattern
 
+# isolation_level enum in handover.schema.json synced with isolation-level.yaml
+case_enum_sync "$CORE_DIR/schema/handover.schema.json" \
+  '.properties.isolation_level.enum' \
+  "$CORE_DIR/policy/isolation-level.yaml" \
+  "values"
+
+# handover schema oneOf encodes canonical (isolation_level) vs legacy (sandbox+approval+skip_git_check)
+case_handover_schema_oneOf_canonical_and_legacy() {
+  local name="handover.schema.json: oneOf has canonical isolation_level branch and legacy sandbox branch"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/handover.schema.json"
+  if [[ ! -f "$schema_file" ]]; then
+    fail "$name" "missing: $schema_file"; return
+  fi
+  # Verify oneOf exists with at least 2 branches
+  local one_of_len
+  one_of_len="$(jq '.oneOf | length' "$schema_file" 2>/dev/null)"
+  if [[ "$one_of_len" -lt 2 ]]; then
+    fail "$name" "oneOf must have at least 2 branches, got: $one_of_len"; return
+  fi
+  # Verify isolation_level branch exists
+  local has_iso_branch
+  has_iso_branch="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["isolation_level"])) ] | length' "$schema_file" 2>/dev/null)"
+  if [[ "$has_iso_branch" -lt 1 ]]; then
+    fail "$name" "oneOf missing isolation_level required branch"; return
+  fi
+  # Verify legacy branch exists
+  local has_legacy_branch
+  has_legacy_branch="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["sandbox","approval","skip_git_check"])) ] | length' "$schema_file" 2>/dev/null)"
+  if [[ "$has_legacy_branch" -lt 1 ]]; then
+    fail "$name" "oneOf missing legacy sandbox/approval/skip_git_check required branch"; return
+  fi
+  pass "$name"
+}
+case_handover_schema_oneOf_canonical_and_legacy
+
 # 6. Adapter parity tests
 case_isolation_level_adapter_parity
 
