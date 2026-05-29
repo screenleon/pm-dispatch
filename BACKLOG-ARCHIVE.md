@@ -1654,3 +1654,9 @@ All three acceptance grep checks pass.
 
 **See**: DECISIONS.md 2026-05-30 (backlog-working-set-contract).
 
+## CC-282 — [DX/product] pmctl backlog sync — SQLite derived query layer 🚫 2026-05-30
+
+**Dropped**: absorbed into [[CC-287]] (`pmctl backlog`). CC-287 delivers `backlog view --status/--area/--milestone` directly over the working-set index (grep/awk), which is sufficient for the maintainer's query needs. A SQLite derived store was the controversial part (it does not reduce BACKLOG.md size — see the 2026-05-30 working-set analysis) and is an optional future optimization, not a v0.3.0 requirement. Re-file under v0.4.0 if indexed queries are ever genuinely needed.
+
+**See**: [[CC-287]] (absorbing ticket), DECISIONS.md 2026-05-30.
+

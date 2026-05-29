@@ -54,17 +54,27 @@
 | CC-200 | executor-router 抽取（→ dispatch runner 串接移 M3） | ✅ (#170) |
 | CC-215 | `cli/pmctl` adapter generate subcommand（C-now + D-stub，#171）；`task`/`decision`/`backlog`/`guard`/`trace`/`safe-bash` 子命令未建 | ⚠️ partial (#171) |
 
-### M3 — 重新接 Claude adapter
+### M3 — pmctl runtime spine + 對稱薄 adapter（host-independent executor 核心）
+
+完成 M2 未竟的 runtime 層。**原則**：executor 一律是 CLI subprocess，由 `pmctl dispatch run --adapter <X>` 統一叫起，**不依賴誰是主線程**；`Agent()` 僅為「Claude 當 host」時的最佳化捷徑。共用邏輯（brief / guard / route / validate / post-verify）住 `pmctl` + `scripts/lib`；adapter 只放 executor 專屬 invocation + 統一輸出契約（`.agent-trace/latest.last`）。v0.3.0 內 claude 與 codex 兩個 executor 都要實做、且四格（PM × executor）全通。
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-287 | `pmctl backlog`（view / lint / archive；吸收 CC-282） | ⏳ |
+| CC-288 | `pmctl guard check`（接 CC-204 hook-framework；guard 邏輯共用、觸發方式 per-adapter） | ⏳ |
+| CC-289 | `pmctl dispatch run`（**走 B**：擁有共用流程；codex-dispatch.sh 瘦成 `adapters/codex/dispatch.sh`） | ⏳ |
+| CC-266 | `adapters/claude/dispatch.sh`（`claude --print` 薄 executor，使 codex-as-PM → claude-executor 可行；含 Phase-1 feasibility 檢查） | ⏳ |
+| CC-233 | `scripts/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ⏳ |
+
+### M4 — Claude 指令 / skill 介面（舊 M3 剩餘）
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-059 | thin `commands/pm.md` | ⏳ |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
-| CC-233 | `scripts/test-layer-boundaries.sh` 分層邊界測試 | ⏳ |
 | CC-206 | gate lifecycle hooks（pre/post-gate + `--allow-hooks` opt-in + `--isolation` flag） | ✅ (#175) |
 | CC-271 | `docs/sandbox-limitations.md`（folded into CC-206 PR） | ✅ (#175) |
 | CC-262 | `agents/project-pm.md` PM template 改寫 `isolation_level:`（M3 residual；M1 adapters/claude 已 ship #162） | ✅ (#180) |
-| CC-266 | `adapters/claude/dispatch.sh`：Codex-as-PM → Claude CLI dispatch 路徑（shell-level invocation；output contract via `.agent-trace/latest.last`） | ⏳ |
 
 ### BACKLOG Hygiene Track（平行於 M3/M4；P1 優先）
 
@@ -77,7 +87,7 @@
 | CC-281 | BACKLOG index 分割 Active / Terminal（comment delimiter；deferred until CC-280）（P3） | 🟡 deferred |
 | CC-282 | `pmctl backlog sync` → SQLite derived query layer（deferred until CC-215 M3）（P3） | 🟡 deferred |
 
-### M4 — 概念吸收
+### M5 — 概念吸收
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
@@ -85,7 +95,7 @@
 | CC-235 | Task lifecycle gate — spec→design→plan 強制（Superpowers） | ⏳ |
 | CC-237 | context-enricher baseline — rg/git/memory sources | ⏳ |
 
-### M5 — spike workflow + release
+### M6 — spike workflow + release
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
@@ -97,6 +107,7 @@
 
 ### v0.3.0 範圍外 → v0.4.0
 
+- **pmctl 剩餘子命令** — `pmctl validate`（接 CC-202 handover-validate）、`pmctl task / decision / trace`（state-ops，建在 CC-230 state store 上）、`pmctl safe-bash`。v0.3.0 spine 只放 backlog + guard + dispatch 三個 load-bearing 面。
 - CC-216 — `mcp/pm-dispatch-server` 實作（v0.3.0 只放 `mcp/README.md` 工具介面規格作為 `pmctl` 設計約束）
 - `adapters/codex` / `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）
 - AI Night Shift autonomy loop — 不做

@@ -53,7 +53,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-226 | ⏸ deferred | **[lint-frontmatter: extract shared dq-escape validation helper]** `check_frontmatter()` 內有 4 個 collection branch 各自重複相同的 dq escape whitelist regex、adjacent-quote check、empty-entry check，未來修改一個 branch 容易遺漏其他三個，造成 parity gap。建議抽取成 shared bash helper，或以 parity test 確保 4 個 branch 永遠同步。Raised as [medium] advisory in gate-20260522-171123. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
-| CC-233 | ⏸ deferred | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation calls. Cheap structural guard against architecture drift. | test | 2026-05-22 | — | P3 | design |
+| CC-233 | 🔵 active | **[v0.3.0 M3: layer-boundary test]** Add `scripts/test-layer-boundaries.sh` enforcing the four-layer dependency discipline — grep `core/` for forbidden tokens (CLI names, `~/.claude`, bash), grep `adapters/` for state-mutation/shared-logic calls. The executable enforcer of the upper/lower separation (keeps thin adapters from re-fattening). | test | 2026-05-22 | — | P2 | design |
 | CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
@@ -77,7 +77,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
-| CC-266 | 🟡 deferred | **[adapters/claude: shell-level dispatch for Codex-as-PM → Claude-as-executor path]** 當主線程是 Codex（PM 在 Codex 環境執行）、想派發 Claude 作為 executor 時，`agents/claude-executor.md`（假設 Claude 是主線程）無法被直接呼叫。`adapters/claude/` 需補 dispatch 側：定義如何從 Codex 環境透過 CLI（`claude --print ...` 或等效呼叫）啟動 Claude executor，並讓它仍寫 `.agent-trace/latest.last` 滿足 output contract。M3 階段實作 `adapters/claude/dispatch.sh`（或等效）時的關鍵設計考量。 | arch | 2026-05-26 | — | P3 | design |
+| CC-266 | 🔵 active | **[v0.3.0 M3: `adapters/claude/dispatch.sh` — claude as host-independent CLI executor]** Canonical claude-executor path = `claude --print` subprocess (not `Agent()`, which only exists when Claude is the main thread). Makes the codex-as-PM → claude-as-executor cell work and completes the 4-cell PM×executor matrix. Thin adapter: invocation + `.agent-trace/latest.last` output contract only; shared logic stays in pmctl ([[CC-289]]). **Phase-1: feasibility check** — confirm headless `claude -p` satisfies the contract (brief intake, working-dir edits, capturable final message + trace, permission mode) before full impl. | arch/portability | 2026-05-26 | — | P1 | design |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 | CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | — | P3 | — |
 | CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
@@ -85,9 +85,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
-| CC-282 | 🟡 deferred | **[DX: pmctl backlog sync — SQLite derived query layer]** Add `pmctl backlog sync` subcommand that imports BACKLOG.md into a local SQLite database (backlog.db, gitignored). Enables fast indexed queries (`pmctl backlog view --status active`, `--area ops`, `--milestone M3`). SQLite is a derived store — BACKLOG.md remains the human-editable source of truth. Depends on CC-215 pmctl core landing (M3/M4). | DX/product | 2026-05-29 | — | P3 | — |
 | CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
+| CC-287 | 🔵 active | **[v0.3.0 M3: `pmctl backlog` subcommand]** First real pmctl subcommand (Phase-2 anchor; the maintainer's active pain). `pmctl backlog view [--status/--area/--milestone]` (filtered render over the working-set index), `pmctl backlog lint` (wrap `validate.sh`), `pmctl backlog archive` (wrap `archive-closed-backlog.sh`). Executor-agnostic, pure runtime layer; builds on the working-set contract ([[CC-284]]). Absorbs [[CC-282]] (SQLite backing is an optional later optimization, not required). | arch/DX | 2026-05-30 | — | P1 | design |
+| CC-288 | 🔵 active | **[v0.3.0 M3: `pmctl guard check`]** Wire the CC-204-extracted `scripts/lib/hook-framework.sh` behind `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`. Guard **logic** becomes shared/executor-agnostic; **trigger** stays per-adapter (Claude PreToolUse auto-hook vs codex/other explicit `pmctl guard check` call — an inherent CLI-capability difference, not a design flaw). Lets any host enforce the same guard. | arch/security | 2026-05-30 | — | P1 | design |
+| CC-289 | 🔵 active | **[v0.3.0 M3: `pmctl dispatch run` (approach B — thin adapters)]** pmctl OWNS the shared dispatch flow (brief construct → guard → route → invoke adapter → read output contract → post-verify), composing the M2-extracted libs (executor-router/handover-validate/brief-validate/dispatch-post-verify). Slim the 475-line `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + `.agent-trace/latest.last` glue only). Replaces the current `dispatch run` stub. Pairs with [[CC-266]] (claude thin adapter) for the host-independent executor matrix. | arch/portability | 2026-05-30 | — | P1 | design |
 
 ---
 
@@ -1013,7 +1015,9 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 ---
 
-## CC-266 — adapters/claude: Codex-as-PM → Claude-as-executor shell dispatch（deferred, M3）
+## CC-266 — adapters/claude: claude as host-independent CLI executor 🔵 active
+
+**Principle (2026-05-30)**: the canonical claude-executor path is a `claude --print` **CLI subprocess**, invoked by `pmctl dispatch run --adapter claude` regardless of which tool is the PM/host. `Agent()`-spawn (`agents/claude-executor.md`) is kept only as a same-host optimization when Claude is the PM. This is what makes the codex-as-PM → claude-executor cell work and completes the 4-cell PM×executor matrix. The adapter is **thin** (invocation + `.agent-trace/latest.last` glue); shared flow lives in pmctl ([[CC-289]]).
 
 **Problem**: `agents/claude-executor.md` 描述的是「Claude 作為主線程、自己執行任務」的路徑。當主線程是 Codex（PM 在 Codex 環境執行）並想派發 Claude 作為 executor 時，這條路徑無法被外部呼叫——Codex 沒有 `Agent` tool，無法直接啟動 claude-executor subagent。
 
@@ -1042,9 +1046,9 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **Recommended first step**: spike — 驗證 `claude --print` 或其他 CLI flag 能從 Codex subprocess 環境被呼叫並返回可解析輸出。
 
-**Priority**: P3 — deferred to M3；Codex-as-PM 路徑未啟用前不阻塞任何流程。
+**Priority**: P1 — v0.3.0 M3；host-independence 的承重點。**Phase-1 first**: feasibility 檢查（headless `claude -p` 能否吃 brief、在 working-dir 改檔、產出可擷取的 final message + trace、permission mode 設定）再進實作。
 
-**Cross-link**: `[[CC-262]]`（isolation 抽象，M1/M2）、`[[CC-264]]`（output contract）、`[[CC-036]]`（dispatch ergonomics）。
+**Cross-link**: `[[CC-289]]`（pmctl dispatch run 共用流程）、`[[CC-262]]`（isolation 抽象）、`[[CC-264]]`（output contract）、`[[CC-036]]`（dispatch ergonomics）。
 
 ---
 
@@ -1228,20 +1232,6 @@ This makes directory creation the mutex.
 
 **Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
 
-## CC-282 — [DX/product] pmctl backlog sync — SQLite derived query layer 🟡 deferred
-
-**Problem**: Querying BACKLOG.md requires awk/grep. No fast indexed access exists for "show all active items in area:ops" or "list all M3 items". The current workaround is manual grep or reading the full index.
-
-**Why**: Deferred until CC-215 pmctl core (M3/M4) provides the CLI entry point. SQLite as a derived store (not source of truth) enables rich queries without changing the human-editable markdown contract.
-
-**Requirement**:
-1. `pmctl backlog sync` subcommand: parses BACKLOG.md index table, writes rows to `backlog.db` (SQLite, gitignored).
-2. `pmctl backlog view [--status active|deferred|closed] [--area AREA] [--milestone M3]`: queries backlog.db and renders a filtered markdown table to stdout.
-3. BACKLOG.md remains the source of truth; `backlog.db` is a derived artifact (not committed).
-4. `pmctl backlog sync` is idempotent and can be called by `archive-closed-backlog.sh` post-run.
-
-**Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-279]]` (archive script).
-
 ## CC-285 — [ops] archiver safe-drop: don't drop a terminal row whose body exists nowhere 🟡 deferred
 
 **Problem**: `scripts/archive-closed-backlog.sh` drops a terminal index row (`✅ closed` / `🚫 dropped`) even when no body section accompanies it in BACKLOG.md and none already exists in BACKLOG-ARCHIVE.md. It emits a per-id stderr warning, but the row metadata is removed (recoverable only via git).
@@ -1265,4 +1255,47 @@ This makes directory creation the mutex.
 2. Retire pm-prep-snapshot's CC-hardcoded derivation once pmctl provides next-id.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-282]]` (pmctl backlog), `[[CC-284]]` (working-set + the CC-only fix this generalizes).
+
+## CC-287 — [v0.3.0 M3] `pmctl backlog` subcommand 🔵 active
+
+**Problem**: pmctl is a stub ([[CC-215]] ⚠️ partial). The maintainer's active pain is backlog management, and the working-set contract ([[CC-284]]) just stabilized the BACKLOG.md shape — the ideal anchor for the first real pmctl subcommand (Phase-2 of the 2026-05-30 plan).
+
+**Why**: `pmctl backlog` is executor-agnostic, pure runtime-layer (lower layer in the upper/lower split), and gives daily value immediately. Building it on the stabilized working-set shape avoids baking a soon-to-change structure into the parser.
+
+**Requirement**:
+1. `pmctl backlog view [--status …] [--area …] [--milestone …]` — filtered render over the working-set index (grep/awk; no SQLite — see [[CC-282]] drop).
+2. `pmctl backlog lint` — wrap `pm/scripts/validate.sh`.
+3. `pmctl backlog archive` — wrap `scripts/archive-closed-backlog.sh`.
+4. Layer discipline: no `~/.claude` / CLI-name coupling in the backlog logic (enforced by [[CC-233]]).
+
+**Cross-link**: `[[CC-215]]` (pmctl spine), `[[CC-284]]` (working-set contract), `[[CC-282]]` (absorbed), `[[CC-286]]` (prefix-generic next-id belongs here).
+
+## CC-288 — [v0.3.0 M3] `pmctl guard check` 🔵 active
+
+**Problem**: guard logic lives in Claude-only PreToolUse hooks (`hook-codex-bash-guard.sh`, `hook-pm-write-guard.sh`). A non-Claude host (codex-as-PM) cannot enforce the same guard. CC-204 already extracted the framework to `scripts/lib/hook-framework.sh`; it is not yet wired behind pmctl.
+
+**Why**: moving guard **logic** into `pmctl guard check` makes it shared/executor-agnostic — any host enforces the identical policy. The **trigger** stays per-adapter (Claude PreToolUse auto-hook vs codex/other explicit `pmctl guard check` call); that asymmetry is an inherent CLI-capability difference, not a design flaw.
+
+**Requirement**:
+1. `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>` → exit non-zero + reason on deny, composing `scripts/lib/hook-framework.sh`.
+2. Claude PreToolUse hooks may shell to `pmctl guard check` (single source of policy) rather than duplicating logic.
+3. Document the trigger-asymmetry (auto-hook vs explicit) in the executor contract.
+
+**Cross-link**: `[[CC-204]]` (hook-framework extraction), `[[CC-215]]` (pmctl spine), `[[CC-289]]` (dispatch calls guard).
+
+## CC-289 — [v0.3.0 M3] `pmctl dispatch run` — approach B (thin adapters) 🔵 active
+
+**Problem**: dispatch shared logic is fused into the 475-line `scripts/codex-dispatch.sh`. If `adapters/claude/` ([[CC-266]]) re-implements it, the two adapters drift — breaking the "only the executor differs" goal.
+
+**Why (approach B)**: pmctl OWNS the shared dispatch flow; adapters become thin. This is the only structure that achieves host-independent, drift-free executor swapping. The shared logic is already extracted into libs (M2: executor-router/handover-validate/brief-validate/dispatch-post-verify), so B is mostly composition.
+
+**Requirement**:
+1. `pmctl dispatch run --adapter <X> [brief args]` owns: brief construct → `pmctl guard check` → route → invoke adapter → read `.agent-trace/latest.last` → `dispatch-post-verify.sh`.
+2. Slim `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + output-contract glue only); preserve crash-safety + the existing regression suite.
+3. Replace the current `dispatch run` stub.
+4. Pairs with [[CC-266]] (claude thin adapter) → 4-cell PM×executor matrix all green.
+
+**Risk**: touches the battle-tested `codex-dispatch.sh`. Mitigation: shared bits already in libs; full regression suite + pr-gate; slim incrementally.
+
+**Cross-link**: `[[CC-200]]` (executor-router), `[[CC-202]]` (handover-validate), `[[CC-266]]` (claude adapter), `[[CC-215]]` (pmctl spine).
 
