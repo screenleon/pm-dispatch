@@ -438,6 +438,77 @@ case_handover_schema_oneOf_canonical_and_legacy() {
 }
 case_handover_schema_oneOf_canonical_and_legacy
 
+# handover schema oneOf branches carry 'not' constraints that prevent mixing
+case_handover_schema_oneOf_not_constraints() {
+  local name="handover.schema.json: oneOf branches have not-constraints preventing canonical/legacy mixing"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/handover.schema.json"
+  if [[ ! -f "$schema_file" ]]; then
+    fail "$name" "missing: $schema_file"; return
+  fi
+  # Canonical branch must have a 'not' that excludes at least one legacy field
+  local canonical_not_len
+  canonical_not_len="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["isolation_level"])) | .not ] | map(select(. != null)) | length' "$schema_file" 2>/dev/null)"
+  if [[ "$canonical_not_len" -lt 1 ]]; then
+    fail "$name" "canonical oneOf branch is missing a 'not' constraint to exclude legacy fields"; return
+  fi
+  # Legacy branch must have a 'not' that excludes isolation_level
+  local legacy_not_excl_iso
+  legacy_not_excl_iso="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["sandbox","approval","skip_git_check"])) | .not | select(. != null) | .. | objects | select(.required != null) | select(.required | contains(["isolation_level"])) ] | length' "$schema_file" 2>/dev/null)"
+  if [[ "$legacy_not_excl_iso" -lt 1 ]]; then
+    fail "$name" "legacy oneOf branch is missing a 'not' that excludes isolation_level"; return
+  fi
+  pass "$name"
+}
+case_handover_schema_oneOf_not_constraints
+
+# handover schema oneOf instance semantics: canonical-only valid, legacy-only valid, mixed invalid
+case_handover_schema_oneOf_instance_semantics() {
+  local name="handover.schema.json: oneOf instance semantics"
+  should_run "$name" || return 0
+  if ! command -v jsonschema >/dev/null 2>&1; then
+    pass "$name (skip: jsonschema not available)"
+    return
+  fi
+  local schema_file="$CORE_DIR/schema/handover.schema.json"
+  local base='{"handover_version":2,"executor":"codex","dispatch_route":"agent_executor","working_dir":"/tmp/t","brief_file":"/tmp/b.md","timeout":120,"model":"default","fallback_allowed":false'
+  local tmpdir; tmpdir="$(mktemp -d)"
+
+  # canonical-only: must be valid
+  printf '%s,"isolation_level":"workspace-write"}' "$base" > "$tmpdir/canonical.json"
+  if ! jsonschema -i "$tmpdir/canonical.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "canonical-only (isolation_level only) must be valid"; rm -rf "$tmpdir"; return
+  fi
+
+  # legacy-only: must be valid
+  printf '%s,"sandbox":"workspace-write","approval":"never","skip_git_check":false}' "$base" > "$tmpdir/legacy.json"
+  if ! jsonschema -i "$tmpdir/legacy.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "legacy-only (sandbox+approval+skip_git_check) must be valid"; rm -rf "$tmpdir"; return
+  fi
+
+  # missing-both: must be invalid (no oneOf branch satisfied)
+  printf '%s}' "$base" > "$tmpdir/missing.json"
+  if jsonschema -i "$tmpdir/missing.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "missing-both (no isolation metadata) must be invalid"; rm -rf "$tmpdir"; return
+  fi
+
+  # mixed (isolation_level + full legacy trio): must be invalid
+  printf '%s,"isolation_level":"workspace-write","sandbox":"workspace-write","approval":"never","skip_git_check":false}' "$base" > "$tmpdir/mixed.json"
+  if jsonschema -i "$tmpdir/mixed.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "mixed canonical+legacy must be invalid"; rm -rf "$tmpdir"; return
+  fi
+
+  # partial-mix (isolation_level + single legacy field): must be invalid
+  printf '%s,"isolation_level":"workspace-write","sandbox":"workspace-write"}' "$base" > "$tmpdir/partial.json"
+  if jsonschema -i "$tmpdir/partial.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "partial-mix (isolation_level + sandbox) must be invalid"; rm -rf "$tmpdir"; return
+  fi
+
+  rm -rf "$tmpdir"
+  pass "$name"
+}
+case_handover_schema_oneOf_instance_semantics
+
 # 6. Adapter parity tests
 case_isolation_level_adapter_parity
 

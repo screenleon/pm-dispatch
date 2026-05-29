@@ -15,10 +15,18 @@
   "oneOf": [
     {
       "required": ["isolation_level"],
-      "description": "Canonical form: isolation_level present, legacy trio absent. No-mixing enforced at runtime by handover_validate_all_metadata."
+      "not": {
+        "anyOf": [
+          {"required": ["sandbox"]},
+          {"required": ["approval"]},
+          {"required": ["skip_git_check"]}
+        ]
+      },
+      "description": "Canonical form: isolation_level present, legacy trio absent."
     },
     {
       "required": ["sandbox", "approval", "skip_git_check"],
+      "not": {"required": ["isolation_level"]},
       "description": "Legacy form (backward compat): legacy trio present, isolation_level absent."
     }
   ],
