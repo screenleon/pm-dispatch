@@ -1449,3 +1449,202 @@ PR B — output contract + dispatch-post-verify.sh:
 **Result (2026-05-30)**: Ran `scripts/archive-closed-backlog.sh`. Archived CC-275, CC-277, CC-278 via the script; CC-279 archived manually because its body quotes the literal stub sentinel `**See**: BACKLOG-ARCHIVE.md`, which the script's `has_see` guard mis-reads as already-stubbed (filed as a follow-up). Validator green afterward.
 
 **Cross-link**: `[[CC-279]]` (archiver script + the sentinel false-negative follow-up), `[[CC-281]]` (index split easier after this).
+## CC-005 — install.sh preflight 改為 opt-in via `--verify` ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-027 — PreToolUse `hook-tool-trace.sh` ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-028 — PostToolUse `hook-routing-log.sh` ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-029 — `test-codex-dispatch.sh` 加入 CI ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-034 — `install-hooks.sh` 改名/移動 bug ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-039 — shared-schema brief enrichment + `/pre-impl` Q4 audit ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-047 — `scripts/codex-dispatch.sh` model alias mapping ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-055 — `commands/pr-gate.md` frontmatter YAML fixed ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-056 — `scripts/lint-frontmatter.sh` + CI job ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-057 — README `skills/` layout row removed ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-100 — [CC-OSS Phase 1] Sanitize personal paths ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-101 — [CC-OSS Phase 2 spike] Executor-contract schema ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-102 — [CC-OSS Phase 2 impl] `claude-executor` agent + install profile ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-103 — [CC-OSS Phase 3] Portability shim ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104 — [CC-OSS Phase 4] Onboarding docs batch ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-105 — [CC-OSS Phase 5] BACKLOG cleanup + v0.1.0 release ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-024 — `test-usage-weekly.sh` 加入 GitHub Actions CI ✅ 2026-05-15
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-200 — Reuse debt: `scripts/lib/executor-router.sh` ✅ 2026-05-28
+**See**: BACKLOG-ARCHIVE.md
+
+**Problem**: `/pm` and `/pr-gate` each encode codex/claude routing logic separately.
+**Why**: A third consumer would turn the duplicated route logic into a maintenance cost and make executor behavior easier to drift.
+**Requirement**: Extract shared codex/claude routing into `scripts/lib/executor-router.sh`, preserving existing CLI behavior for current callers.
+
+## CC-202 — Reuse debt: handover validator framework ✅ 2026-05-28
+**See**: BACKLOG-ARCHIVE.md
+
+**Problem**: `dispatch_handover_v1` and `pr-gate-handover_v1` validators duplicate fence, metadata, and body validation structure.
+**Why**: Future handover schemas should not require hand-written validation boilerplate for every shared grammar rule.
+**Requirement**: Extract a reusable handover validator framework that schema-specific validators can configure.
+
+## CC-204 — Reuse debt: hook framework ✅ 2026-05-28
+**See**: BACKLOG-ARCHIVE.md
+
+**Problem**: pm-write-guard, codex-bash-guard, and codex-write-guard repeat stdin JSON parsing, decision matrix, and audit-log structure.
+**Why**: The guard hook layer has enough shared behavior that copy-paste-modify makes policy and logging drift likely.
+**Requirement**: Extract a shared hook framework (`scripts/lib/hook-framework.sh`) for stdin JSON parsing, policy decisions, and audit logging, while preserving hook-specific policy rules.
+**Scope note**: `hook-routing-log.sh` is intentionally excluded — it uses custom jq-free JSON parsing and structured JSONL audit logging with rotation/locking, fundamentally different from the guard hook pattern. It remains independent.
+
+## CC-261 — v0.3.x 前瞻文字更新（deferred）
+
+**Problem**: `core/README.md` 寫了未來式 "In the v0.3.x runtime phase, the designated writer module **will read**…" 加括號 "(runtime consumer deferred; M1 ships schema definitions only)"；`agents/project-pm.md` 的 exception rule 硬綁 "v0.3.x runtime PR"。v0.3.0 runtime 落地後，這兩段文字描述的是已完成而非未來的狀態，會誤導維護者。
+
+**Why**: 文件的前瞻性語言是為了讓 M1 開發者知道 runtime 尚未實作；一旦實作落地，繼續存在的 "will" / "deferred" 說明成為雜訊，且版本號硬綁會在後續里程碑造成永久 drift。
+
+**Requirement**:
+- `core/README.md`: "will read" → 現在式；移除 "(runtime consumer deferred; M1 ships schema definitions only)" 括號整段
+- `agents/project-pm.md`: "explicitly defer the runtime consumer to a v0.3.x runtime PR" → "explicitly defer the runtime consumer to a future runtime PR"（版本無關，永久有效）
+
+**Acceptance**:
+1. `grep "v0.3.x runtime phase" core/README.md` → no match
+2. `grep "M1 ships schema definitions only" core/README.md` → no match
+3. `grep "v0.3.x runtime PR" agents/project-pm.md` → no match
+
+**Milestone**: v0.3.0 M5（release prep）— 加入 v0.3.0 release PR 的 self_verify 清單，PR 合併前必須通過。
+
+**Priority**: P3 — doc cleanup；不阻擋任何功能，但 0.3.0 正式 release 前必須清掉。
+
+**Cross-link**: `[[CC-229]]`（M1 substrate）、`[[CC-260_release_prep]]`（v0.3.0 release prep 票）。
+
+**Outcome**: 2026-05-25 — Both edits applied in PR #162.
+1. `core/README.md` — "will read…(runtime consumer deferred; M1 ships schema definitions only)" → present-tense, parenthetical removed.
+2. `agents/project-pm.md` — "v0.3.x runtime PR" → "a future runtime PR".
+All three acceptance grep checks pass.
+**See**: pr:#162
+
+---
+
+## CC-263 — state-writer: portable SHA-1 hash for project partitioning（someday）
+
+**Problem**: `_sw_project_key` in `scripts/lib/state-writer.sh` calls `sha1sum` directly to derive the per-project partition key. `sha1sum` is a GNU coreutils tool; it is absent on stock macOS (which ships `shasum -a 1`) and on some minimal Linux containers. When unavailable, the function silently falls back to `global`, mixing all project state into a single partition without any error log.
+
+**Why**: The `core/state/layout.yaml` contract defines `$PROJECT := sha1(git rev-parse --show-toplevel)`. A silent fallback violates this contract, making cross-repo state isolation unreliable on non-Linux platforms. `scripts/lib/portable.sh` already sets the precedent for cross-platform helpers (`serialize_with_lock`, `link_or_copy`, etc.); the hash helper belongs there.
+
+**Requirement**:
+- `scripts/lib/portable.sh`: add `_portable_sha1()` — tries `sha1sum`, then `shasum -a 1`, then returns 1 with a logged warning
+- `scripts/lib/state-writer.sh`: replace `sha1sum` call in `_sw_project_key` with `_portable_sha1`; if hash fails, log via `_sw_log_error` and fall back to `global`
+- `scripts/test-state-store.sh`: add a `case_project_key_no_sha1sum` test that stubs out both `sha1sum` and `shasum` from PATH and asserts `_sw_project_key` returns `global` (non-fatal) rather than erroring
+
+**Raised as**: [medium] by critic, architecture-reviewer, and risk-reviewer in CC-230 gate 5 (pr:#159).
+
+**Acceptance**:
+1. `bash scripts/test-state-store.sh` → all cases pass including the new stub test
+2. `bash scripts/run-all-tests.sh` → exit 0
+3. `grep -n 'sha1sum' scripts/lib/state-writer.sh` → only via `_portable_sha1`, no raw call
+
+**Milestone**: v0.3.0 跨三個 phase — M1（CC-231 延伸）：`core/policy/` 加 enum 定義；M2（CC-200）：`codex-dispatch.sh` 展開邏輯；M3（adapter layer）：`adapters/{codex,claude}/isolation-map.yaml` + PM template 更新。
+
+**Priority**: P2 — 架構正確性；目前 no-op 填法是 workaround，不阻斷功能但隨著 executor 增加越來越難維護。
+
+**Cross-link**: `[[CC-231]]`（executor-enum policy）、`[[CC-200]]`（executor-router）、`[[CC-215]]`（pmctl adapter generate）、`[[CC-101]]`（executor-contract schema origin）。
+
+**Outcome**: 2026-05-25 — `_portable_sha1()` added to `scripts/lib/portable.sh` with `FAKE_SHA1_MISSING=1` stub; `_sw_project_key` in `state-writer.sh` updated to use it; `case_project_key_no_sha1sum` test added. Shipped in PR #162.
+**See**: pr:#162
+
+---
+
+## CC-283 — [bug] archive-closed-backlog.sh sentinel false-negative ✅ 2026-05-30
+
+**Problem**: `scripts/archive-closed-backlog.sh` decides whether a `## CC-NNN — … ✅/🚫` section is already archived by scanning its entire body for the regex `**See**:.*BACKLOG-ARCHIVE`. A closed ticket whose body legitimately *quotes* that stub sentinel — e.g. CC-279, whose requirement text describes the stubbing behavior — matches the guard and is silently skipped. The section can never be collapsed, and once it is marked closed the validator flags `E-CLOSURE-NO-SEE` (closed section with no See stub), so a green validator now requires a manual archive of that one ticket.
+
+**Why**: Surfaced during CC-280 (the first operational archive run): the script archived CC-275/277/278 but skipped CC-279, which had to be moved to `BACKLOG-ARCHIVE.md` by hand. Low severity (rare — only closed tickets that quote the sentinel), but it makes the archiver non-self-healing for exactly the tickets that document it.
+
+**Requirement**:
+1. Anchor stub detection so it only matches a section that *is* a stub, not one that mentions the sentinel — e.g. treat a section as already-stubbed only when its first non-empty content line is `**See**: BACKLOG-ARCHIVE.md`.
+2. Add a regression fixture: a closed section whose body contains the literal string `**See**: BACKLOG-ARCHIVE.md` must still be archived exactly once.
+
+**Cross-link**: `[[CC-279]]` (the archiver script), `[[CC-280]]` (run that surfaced it).
+
+## CC-284 — [process] backlog working-set contract: schema §4 rewrite + archiver row-shedding ✅ 2026-05-30
+
+**Problem**: `pm/schema.md` §4 kept terminal tickets in `BACKLOG.md` forever — closed/dropped bodies were stubbed but index rows were never removed. The file grew monotonically (at decision time 84 of ~158 index rows were terminal; ~400 lines of dead rows + stubs). A query layer (`pmctl backlog`, CC-282) would sit on top of the mess without removing it.
+
+**Why**: Two independent analyses (Claude main thread + Codex gpt-5.4) converged: the growth root cause is historical ballast retained in the working file, and the fix must change the *contract*, not add tooling on top. Settling the contract first also de-risks the future `pmctl backlog` parser (no baking-in of a structure already slated to change).
+
+**Requirement** (delivered):
+1. Schema §4 → working-set model: terminal tickets' index row + body both leave `BACKLOG.md`; body moves to `BACKLOG-ARCHIVE.md`; no `**See**:` stub. §2.6 stub marked legacy, §6.1 lookup order updated. Policy/archiver change only — no parse-marker bump (stays v1.2), validate.sh untouched.
+2. `scripts/archive-closed-backlog.sh` rewritten: reads terminal status from the index Status column (§6.1), drops the row, moves the body, dedups by archived heading — which dissolves CC-283 (no more body-prose sentinel scan).
+3. Regression suite extended to 11 cases (row removal, CC-283 sentinel, `✅ done` soft-close preserved, legacy-stub sweep, partial-write recovery).
+4. `DECISIONS.md` 2026-05-30 entry; one-time migration of the 84 terminal rows run in this PR.
+
+**Outcome**: BACKLOG.md reduced to a non-terminal working set; closed-ticket lookup via `BACKLOG-ARCHIVE.md` headings or git history. Backward-compatible: legacy stubs remain valid input, `validate.sh` unchanged, other pm-schema repos unaffected until they run the new archiver.
+
+**Cross-link**: `[[CC-283]]` (dissolved by the rewrite), `[[CC-280]]` (prior manual archive run), `[[CC-281]]` (in-place index split — superseded by this model; to be reconciled in hygiene follow-up), `[[CC-282]]` (`pmctl backlog` now builds on the stabilized shape), DECISIONS.md 2026-05-30.
+## CC-025b — `/skill-refine` M1+M2 advisory follow-ups ✅ 2026-05-18
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-036b — dispatch handover authorized-override reconciliation ✅ 2026-05-16
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-102b — CC-102 PR-gate advisory follow-ups ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-103b — /pr-gate executor split ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104h — CC-104 handover schema docs ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+
+## CC-104i — CC-104 install.sh profile docs ✅ 2026-05-17
+
+**See**: BACKLOG-ARCHIVE.md
+

@@ -154,7 +154,7 @@ closed 條目有兩種折疊形式：
 **See**: DECISIONS.md#2026-04-30-japanese-first-explanations-with-chinese-reveal
 ```
 
-**Archive-backed stub**（膨脹觸發後的批量歸檔）：完整 prose 已移至 `BACKLOG-ARCHIVE.md` 時使用；只需 `**See**:` 指標，無需 `**Outcome**`。
+**Archive-backed stub**（legacy；working-set 模型下已不再產生）：歷史上批量歸檔曾在原位留下只含 `**See**:` 指標的 stub。
 
 ```
 ## CC-NNN — title ✅ 2026-05-18
@@ -162,7 +162,9 @@ closed 條目有兩種折疊形式：
 **See**: BACKLOG-ARCHIVE.md
 ```
 
-`Why / Requirement` 兩種形式均不保留，避免雙真理。
+§4（2026-05-30 修訂）改採 working-set 模型：終態條目的 row + body 整個移出 BACKLOG.md，**不再留 stub**。此形式僅作為**合法的既有輸入**保留（archiver 會在下次 run 清掉它），新歸檔不應產生它。
+
+`Why / Requirement` 在 DECISIONS-backed stub 中不保留，避免雙真理。
 
 ### 2.7 Code TODO 追蹤條目（optional pattern）
 
@@ -184,20 +186,23 @@ closed 條目有兩種折疊形式：
 - 與 BACKLOG closure 對應的 entry 在內文首行寫 `Closes: BACKLOG.md#JS-NNN`。
 - 純跨切面決策（無 backlog 對應）允許 standalone，但需在 Context 解釋為何不掛 backlog。
 
-## 4. 檔案膨脹政策
+## 4. 檔案膨脹政策（working-set 模型）
 
-對 BACKLOG.md：
+BACKLOG.md 是**工作集**，不是歷史帳本：只承載非終態條目（active / deferred / someday / ⚠️ partial / `✅ done` soft-close）。終態條目（`✅ closed YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`）整個移出至 `BACKLOG-ARCHIVE.md`。
 
-- 行數 > 500 **或** closed/dropped 條目佔比 > 50% 時，觸發歸檔。
-- 歸檔動作：將 closed/dropped 條目的 body section 整段移至 `BACKLOG-ARCHIVE.md`；在 BACKLOG.md 原位留下 **closed stub**（heading 含 `✅ YYYY-MM-DD` 或 `🚫 YYYY-MM-DD`，加 `**See**: BACKLOG-ARCHIVE.md` 指標）；index row 保留、不移除。
-- BACKLOG.md 永遠保留 index table 及 closed stubs，方便一眼掃描所有條目的狀態；完整歷史在 `BACKLOG-ARCHIVE.md`。
-- DECISIONS.md 不歸檔（決策不過期）。
+- **觸發**：行數 > 500 **或** 終態條目佔比 > 50%。working-set 模型下，定期執行 archive 後兩者都不應再被觸發；觸發代表久未歸檔。
+- **歸檔動作**（`scripts/archive-closed-backlog.sh`）：對每個終態條目，**index row 與 body section 同時移出** BACKLOG.md；body 整段 append 到 `BACKLOG-ARCHIVE.md`。**不留 `**See**:` stub** —— row 已移除，原位指標失去意義。
+- **終態判定以 index table 的 Status 欄為準**（§6.1 唯一真理）。`✅ done` soft-close（§2.3，無日期）不是終態，不歸檔。
+- **查詢已關閉條目**：grep `BACKLOG-ARCHIVE.md` 的 body heading（含 id / title / status / date）；完整 index-row metadata（area / refs / priority 等）保留在 git history。
+- **向後相容**：既有 `**See**:` archive-backed stub（§2.6）仍為合法輸入；下次 archive run 會一併清掉（row 為終態 → 移除；該 stub 的 heading 已存在於 archive → body 不重複 append）。跨 repo 尚未遷移者不受影響——validator 對「條目缺席」與「留 stub」皆通過。
+- BACKLOG-ARCHIVE.md 與 DECISIONS.md 不歸檔（決策不過期）。
 
 ## 5. 跨 repo 採用規則
 
 - **採用**：active product repo（current: project-alpha, project-beta, project-gamma 等有持續開發的 repo）。
 - **跳過**：純 sandbox / 一次性實驗 / 純內容 repo（看個案決定）。
-- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.2 -->`（v1.2 為當前版本；v1.1/v1 file 仍被 validator 接受；design epic 在所有 v1.x 版本中均有效），否則 PM agent 視為未採用、不解析。
+- 採用時 BACKLOG.md 頂部必須有 `<!-- pm-schema: v1.2 -->`（v1.2 為當前 parse-contract 版本；v1.1/v1 file 仍被 validator 接受；design epic 在所有 v1.x 版本中均有效），否則 PM agent 視為未採用、不解析。
+- §4 working-set 歸檔（2026-05-30 修訂）是 archiver 行為與 PM 互動契約的變更，**不改 parse 格式**，因此不需要 bump 檔頂 marker；既有 v1.2 file 直接適用。
 - schema 升級（v2 等）時，`.pm/schema.md` bump 版本，受管 repo 逐個遷移；混用版本期間 PM agent 依個別檔頂部宣告解析。
 
 ## 6. 與 PM agent 互動契約
@@ -206,9 +211,10 @@ closed 條目有兩種折疊形式：
 
 PM agent 讀 backlog 時：
 
-1. 先解析 index table → 取得條目清單與 status 概覽。
+1. 先解析 index table → 取得條目清單與 status 概覽。working-set 模型下（§4）index 只含非終態條目，掃描成本與 backlog 歷史長度無關。
 2. 僅在需要 body 時才解析該條目段落（按 H2 anchor 定位）。
 3. 不依賴 body 中的非結構化敘述做狀態判斷；status 唯一來源是 index table 的 Status 欄。
+4. 已關閉 / 已捨棄條目不在 BACKLOG.md；需查歷史時讀 `BACKLOG-ARCHIVE.md`（body heading 含 id / status / date）或 git history。
 
 ### 6.2 寫入紀律
 

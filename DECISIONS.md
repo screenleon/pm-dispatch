@@ -7,6 +7,65 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-05-30: backlog-working-set-contract
+
+Closes: BACKLOG.md#CC-284
+
+### Context
+
+`pm/schema.md` §4 intentionally kept terminal tickets in `BACKLOG.md` forever:
+closed/dropped body sections were collapsed to a `**See**: BACKLOG-ARCHIVE.md`
+stub but **index rows were never removed** (old §4: "index row 保留、不移除").
+`BACKLOG.md` therefore grew monotonically — at the time of this decision 87 of
+158 index rows (>50%) were terminal, and ~400 lines were dead stubs + rows. Two
+independent analyses (Claude main thread + Codex gpt-5.4) converged: the root
+cause of growth is historical ballast retained in the working file, and a query
+layer (`pmctl backlog`, CC-282) would sit on top of the mess without removing it.
+
+### Decision
+
+`BACKLOG.md` becomes a **working set**: it carries only non-terminal tickets
+(active / deferred / someday / ⚠️ partial / `✅ done` soft-close). A terminal
+ticket — index status `✅ closed YYYY-MM-DD` or `🚫 dropped YYYY-MM-DD` — has
+**both its index row and its body section removed**; the body moves to
+`BACKLOG-ARCHIVE.md` with **no `**See**:` stub** left behind. Status is read
+from the index Status column (§6.1). `scripts/archive-closed-backlog.sh` was
+rewritten to implement this (and the rewrite dissolves the CC-283 sentinel
+false-negative, since dedup now matches archived headings rather than scanning
+body prose for `**See**:`). This is a §4 policy + archiver change, not a parse
+change, so the `<!-- pm-schema: v1.2 -->` file marker is unchanged and
+validate.sh is untouched.
+
+Closed-ticket lookup is by `grep BACKLOG-ARCHIVE.md` (headings carry id / status
+/ date) or git history (full row metadata). This PR ships the mechanism +
+contract only; the one-time migration of the existing 87 terminal rows is a
+follow-up (PR-B).
+
+### Alternatives considered
+
+- **Split index into Active/Terminal in-place (CC-281)**: readability patch
+  only; does not bound file growth. Rejected as insufficient.
+- **`pmctl backlog sync` → SQLite (CC-282)**: ergonomics/query layer; leaves the
+  markdown source bloated. Deferred — it now sits on the stabilized shape.
+- **Rebuild a full index table inside BACKLOG-ARCHIVE.md**: preserves row
+  metadata but adds archive-structure complexity and migration risk. Rejected
+  for PR-A; row metadata is recoverable from git history, and a derived archive
+  index can be generated later by `pmctl backlog`.
+- **Keep stubs, just drop rows**: leaves orphan `**See**:` bodies with no index
+  entry, tripping the validator's index↔body 1:1 invariant. Rejected.
+
+### Constraints introduced
+
+- The archiver determines terminal status from the **index** row, not the body
+  heading; a future tool that closes a ticket must update the index Status
+  column for archival to pick it up.
+- Backward compatibility is preserved: pre-existing `**See**:` stubs remain
+  valid input (swept on next run); `validate.sh` is unchanged and treats both
+  "ticket absent" and "ticket stubbed" as passing, so other pm-schema repos are
+  not broken until they choose to run the new archiver.
+- Full closed-ticket index metadata (area/refs/priority) is no longer in the
+  live file; it lives in git history and the archived body heading.
+
 ## 2026-05-25: state-root-xdg
 
 ### Context
