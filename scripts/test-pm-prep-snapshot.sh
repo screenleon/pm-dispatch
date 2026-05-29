@@ -190,21 +190,25 @@ if should_run "frontmatter-project-tooling-values"; then
   require_file_contains "$out" '^  has_validate_sh: true$' "frontmatter-project-tooling-values: has_validate_sh"
 fi
 
-# Verifies that pm-prep-snapshot.sh --focus includes a focus_tickets section
-# containing the specified CC ticket rows and body headings.
+# Verifies that pm-prep-snapshot.sh --focus includes a focus_tickets section.
+# Exercises BOTH resolution paths against the live repo:
+#   - CC-244 is a non-terminal (working-set) ticket → index row + body.
+#   - CC-243 is terminal (archived under the §4 working-set contract) → body
+#     resolved from BACKLOG-ARCHIVE.md with an "archived" note and no index row.
 #
 # Steps:
 #   1. Run pm-prep-snapshot.sh --focus CC-243,CC-244.
-#   2. Assert output contains "## focus_tickets" section heading.
-#   3. Assert output contains table rows and body headings for both CC-243 and CC-244.
+#   2. Assert "## focus_tickets" heading is emitted.
+#   3. Assert live CC-244 yields an index row + body heading.
+#   4. Assert archived CC-243 yields the archived note + body heading (from archive).
 if should_run "focus-tickets-section"; then
   out="$tmp_root/focus.md"
   run_snapshot "$out" --focus CC-243,CC-244 >/dev/null
   require_file_contains_fixed "$out" "## focus_tickets" "focus-tickets-section: heading"
-  require_file_contains_fixed "$out" "| CC-243 |" "focus-tickets-section: CC-243 row"
-  require_file_contains_fixed "$out" "## CC-243 —" "focus-tickets-section: CC-243 body heading"
-  require_file_contains_fixed "$out" "| CC-244 |" "focus-tickets-section: CC-244 row"
-  require_file_contains_fixed "$out" "## CC-244 —" "focus-tickets-section: CC-244 body heading"
+  require_file_contains_fixed "$out" "| CC-244 |" "focus-tickets-section: CC-244 (live) row"
+  require_file_contains_fixed "$out" "## CC-244 —" "focus-tickets-section: CC-244 (live) body heading"
+  require_file_contains_fixed "$out" "# CC-243: archived (terminal)" "focus-tickets-section: CC-243 (archived) note"
+  require_file_contains_fixed "$out" "## CC-243 —" "focus-tickets-section: CC-243 (archived) body heading from archive"
 fi
 
 # Verifies that pm-prep-snapshot.sh --focus emits a warning comment when
@@ -212,13 +216,37 @@ fi
 #
 # Steps:
 #   1. Run pm-prep-snapshot.sh --focus CC-999 (non-existent ticket).
-#   2. Assert output contains "# warn: CC-999 not found in BACKLOG.md".
+#   2. Assert output contains "# warn: CC-999 not found ...".
 #   3. Assert no "## focus_tickets" section is emitted.
 if should_run "focus-missing-ticket-warn"; then
   out="$tmp_root/focus-missing.md"
   run_snapshot "$out" --focus CC-999 >/dev/null
-  require_file_contains_fixed "$out" '# warn: CC-999 not found in BACKLOG.md' "focus-missing-ticket-warn: warning"
+  require_file_contains_fixed "$out" '# warn: CC-999 not found in BACKLOG.md or BACKLOG-ARCHIVE.md' "focus-missing-ticket-warn: warning"
   require_no_match "$out" '^## focus_tickets' "focus-missing-ticket-warn: no focus section"
+fi
+
+# Verifies backlog_next_id accounts for IDs that live only in BACKLOG-ARCHIVE.md
+# under the working-set contract (pm-schema §4/§2.2). Terminal tickets hold the
+# highest IDs; deriving next-id from BACKLOG.md alone would reuse an archived ID.
+#
+# Steps:
+#   1. Compute the highest CC-NNN across BOTH BACKLOG.md and BACKLOG-ARCHIVE.md.
+#   2. Run the snapshot and read backlog_next_id.
+#   3. Assert next-id == global max + 1 (strictly greater than any archived ID).
+if should_run "next-id-includes-archive"; then
+  name="next-id-includes-archive"
+  out="$tmp_root/next-id.md"
+  run_snapshot "$out" >/dev/null
+  next_id_num="$(awk -F'CC-' '/^backlog_next_id:/ { n=$2+0; print n }' "$out")"
+  global_max="$(cat "$REPO_ROOT/BACKLOG.md" "$REPO_ROOT/BACKLOG-ARCHIVE.md" \
+    | grep -oE 'CC-[0-9]+' | sed 's/CC-0*//' | sort -n | tail -1)"
+  if [ -z "$next_id_num" ]; then
+    fail "$name" "could not parse backlog_next_id from snapshot"
+  elif [ "$next_id_num" -gt "$global_max" ]; then
+    pass "$name"
+  else
+    fail "$name" "next-id $next_id_num must exceed global max id $global_max (archived IDs ignored?)"
+  fi
 fi
 
 # Verifies that pm-prep-snapshot.sh omits the focus_tickets section entirely
