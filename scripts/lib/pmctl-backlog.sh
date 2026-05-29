@@ -35,11 +35,31 @@ pmctl_backlog_view() {
     esac
   done
 
-  awk -v status_filter="$status_filter" -v area_filter="$area_filter" '
+awk -v status_filter="$status_filter" -v area_filter="$area_filter" '
 function trim(s) {
   gsub(/^[[:space:]]+/, "", s)
   gsub(/[[:space:]]+$/, "", s)
   return s
+}
+
+function status_matches(field, filter, toks, n, i) {
+  n = split(field, toks, /[[:space:]]+/)
+  for (i = 1; i <= n; i++) {
+    if (toks[i] == filter) {
+      return 1
+    }
+  }
+  return 0
+}
+
+function area_matches(field, filter, toks, n, i) {
+  n = split(field, toks, /[[:space:]\/]+/)
+  for (i = 1; i <= n; i++) {
+    if (toks[i] == filter) {
+      return 1
+    }
+  }
+  return 0
 }
 
 BEGIN {
@@ -72,8 +92,8 @@ in_index && /^\| [A-Z]+-[0-9]/ {
   status = trim(cols[2])
   area = trim(cols[4])
 
-  if ((status_filter == "" || index(status, status_filter) > 0) &&
-      (area_filter == "" || index(area, area_filter) > 0)) {
+  if ((status_filter == "" || status_matches(status, status_filter)) &&
+      (area_filter == "" || area_matches(area, area_filter))) {
     print $0
   }
 }
