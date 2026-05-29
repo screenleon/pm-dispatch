@@ -111,7 +111,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-226 | ⏸ deferred | **[lint-frontmatter: extract shared dq-escape validation helper]** `check_frontmatter()` 內有 4 個 collection branch 各自重複相同的 dq escape whitelist regex、adjacent-quote check、empty-entry check，未來修改一個 branch 容易遺漏其他三個，造成 parity gap。建議抽取成 shared bash helper，或以 parity test 確保 4 個 branch 永遠同步。Raised as [medium] advisory in gate-20260522-171123. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-227 | ⏸ deferred | **[lint-frontmatter: extract YAML subset parser into lib/yaml-frontmatter.sh]** `lint-frontmatter.sh` 同時包含 CLI 解析、frontmatter 邊界偵測、~150 行 YAML subset parser，三個職責混在同一檔案。建議將 `check_frontmatter()` 搬到 `scripts/lib/yaml-frontmatter.sh`，讓 `lint-frontmatter.sh` 成為薄 CLI 包裝，`doctor.sh` 可 source lib 取代 fork subprocess，與 CC-226 建議合併進行。User feedback after CC-058 gating. | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
-| CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | — | P2 | hygiene |
+| CC-228 | ⏸ deferred | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
 | CC-229 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core schemas]** Create `core/schema/{task,run,event,review,decision}.schema.json` — the five first-class PM-runtime entities (docs/architecture/v0.3.0-synthesis.md §5.2). Re-home `pm/schema.md` (BACKLOG grammar) under `core/`. Ships no behavior change; schema locked at end of M1. **Spike phase landed via PR #156** (`docs/spikes/CC-229-substrate-{scope,claude,codex,synthesis}.md`); Q2/Q7/Q8 resolved 2026-05-24 (per-project partitioning / dual-write routing_log / `schema_version` field-only). Schema-only impl PR ready to author once PR #156 merges. | process | 2026-05-24 | pr:#156,pr:#157 | — | design |
 | CC-230 | ✅ closed 2026-05-25 | **[v0.3.0 M1: state store]** Build the `~/.local/share/pm-dispatch/state/` runtime state store — single-writer JSONL (`runs.jsonl`, `events.jsonl`) + index, guarded by `serialize_with_lock()`. Migrate the machine-written `routing_log.md` auto-block to `runs.jsonl` (kills the machine-written-Markdown-table anti-pattern). `pmctl` is the only writer. | process | 2026-05-22 | pr:#159 | P1 | design |
 | CC-231 | ✅ closed 2026-05-25 | **[v0.3.0 M1: core policy extraction]** Extract `core/policy/` declarative tables — reviewer-policy (the gate matrix now prose-only in `agents/project-pm.md`), executor-enum (closed: codex/claude), dispatch-states (the dispatch state machine). Pure definitions, zero behavior. | process | 2026-05-22 | pr:#157 | — | design |
@@ -180,6 +180,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
 | CC-275 | ✅ closed 2026-05-29 | **[bug: pr-gate.sh exits 127 after result write — em dash bytes misinterpreted as command]** Full-tier gate 完成後 exit 127（`$'\200\224': command not found`）；result file 正確，只有 exit code 錯誤。em dash（U+2014）在某些 bash locale 下後兩 bytes 被解析成命令。Fix：把所有 `—` 換成 ASCII `--`。 | gate | 2026-05-29 | pr:#179 | P1 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
+| CC-277 | 🔵 active | **[backlog hygiene: fix CC-228 E-codes — reach validate.sh exit 0 on main]** Correct all pre-existing validator errors in BACKLOG.md: invalid area tokens (ops/hook, arch/dep, filesystem/caveat, etc.), bare CC-NNN refs (add valid prefix), stale active status rows (CC-200/202/204/262/275 closed but still active). Prerequisite for wiring validate.sh into CI. | process | 2026-05-29 | — | P1 | hygiene |
+| CC-278 | 🔵 active | **[ops: wire validate.sh into CI lint.yml — warn-only then enforce]** Add a lint.yml job that runs `pm/scripts/validate.sh BACKLOG.md`; Phase 1: warn-only (`\|\| true`) with an error-count summary step; Phase 2: hard-fail after CC-277 lands and validator exits 0 on main. | ops/test | 2026-05-29 | — | P2 | hygiene |
+| CC-279 | 🔵 active | **[ops: write scripts/archive-closed-backlog.sh — standalone bloat-policy executor]** Implement an idempotent shell script that applies pm-schema §4 bloat policy: find all ✅ closed / 🚫 dropped body sections in BACKLOG.md, append compressed entries to BACKLOG-ARCHIVE.md, replace body with `**See**: BACKLOG-ARCHIVE.md` stub, update archive header timestamp. No pmctl dependency — pmctl will call this script when it lands. | ops/process | 2026-05-29 | — | P2 | hygiene |
+| CC-280 | 🟡 deferred | **[process: run archive-closed-backlog.sh to collapse current bloat]** Execute CC-279 script against the current repo state. BACKLOG.md currently exceeds the 500-line policy threshold and >50% of rows are terminal — both bloat-policy triggers are active. Deferred until CC-279 script exists. | process | 2026-05-29 | — | P2 | hygiene |
+| CC-281 | 🟡 deferred | **[process/docs: split BACKLOG index into Active and Terminal sub-sections]** Insert a comment delimiter (`<!-- active items above \| terminal items below -->`) between active/deferred rows and terminal (closed/dropped/superseded) rows in the index table. Active rows float to top, improving PM agent scan efficiency. Use comment delimiter (not H2 header) to preserve PM agent index parsing contract (pm-schema §6.1). Deferred until CC-280 (archive run) completes to minimize churn. | process/docs | 2026-05-29 | — | P3 | hygiene |
+| CC-282 | 🟡 deferred | **[DX: pmctl backlog sync — SQLite derived query layer]** Add `pmctl backlog sync` subcommand that imports BACKLOG.md into a local SQLite database (backlog.db, gitignored). Enables fast indexed queries (`pmctl backlog view --status active`, `--area ops`, `--milestone M3`). SQLite is a derived store — BACKLOG.md remains the human-editable source of truth. Depends on CC-215 pmctl core landing (M3/M4). | DX/product | 2026-05-29 | — | P3 | — |
 
 ---
 
@@ -1780,3 +1786,86 @@ This makes directory creation the mutex.
 
 **Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
 
+## CC-277 — [backlog hygiene] fix CC-228 E-codes — reach validate.sh exit 0 🔵 active
+
+**Problem**: `pm/scripts/validate.sh BACKLOG.md` exits 1 on `main` with ~20 pre-existing E-codes:
+- E-AREA-ENUM: rows using invalid area tokens (`ops/hook`, `arch/dep`, `filesystem/caveat`, `ops/trace/portability`, `arch/hook/portability`, `docs/install/ux`, `arch/hook/reuse`, `process/schema`, `arch/config`, `ops/dispatch`, `ops/portable`, `ops/validator`, `ops/repo`)
+- E-REFS-PREFIX: rows with bare `CC-NNN` refs instead of valid prefixed form (`decisions:`, `roadmap:`, `commit:`, `feedback:`)
+- Stale active rows: CC-200/CC-202/CC-204 (closed via PR #170) still show `🔵 active`
+
+**Why**: Without a green validator, CI enforcement (CC-278) cannot be enabled. Errors accumulate silently.
+
+**Requirement**:
+1. For each E-AREA-ENUM row: rewrite area cell to use only valid enum tokens (max 2 tokens separated by `/`).
+2. For each E-REFS-PREFIX row: change bare `CC-NNN` to `roadmap:CC-NNN` or `decisions:CC-NNN` as appropriate.
+3. For stale active rows: update status to `✅ closed YYYY-MM-DD` with correct date, add PR ref.
+4. After all fixes: `bash pm/scripts/validate.sh BACKLOG.md` exits 0 (no E-codes remain).
+
+**Cross-link**: `[[CC-228]]` (parent), `[[CC-278]]` (unblocked by this).
+
+## CC-278 — [ops] validate.sh in CI — warn-only then enforce 🔵 active
+
+**Problem**: `pm/scripts/validate.sh` encodes real BACKLOG invariants (index↔body parity, area enum, ref prefix, date format) but is not wired into `.github/workflows/lint.yml`. Errors accumulate on every PR without any CI signal.
+
+**Why**: Without CI enforcement, all other BACKLOG hygiene improvements rot immediately after they are applied. CC-277 fixes the current debt; CC-278 ensures debt cannot re-accumulate.
+
+**Requirement**:
+1. Phase 1 (merged with or after CC-277): Add a `lint-backlog` job to `lint.yml` that runs `bash pm/scripts/validate.sh BACKLOG.md || true`; include a step that counts and prints error lines so CI output is informative even when the job passes.
+2. Phase 2 (after CC-277 exits 0 on main): Remove `|| true`; job hard-fails on any E-code.
+3. No new CLI flag in validate.sh needed — use `|| true` at the shell level for Phase 1.
+
+**Cross-link**: `[[CC-277]]` (prerequisite for Phase 2), `[[CC-228]]`.
+
+## CC-279 — [ops] scripts/archive-closed-backlog.sh — idempotent bloat-policy executor 🔵 active
+
+**Problem**: BACKLOG.md archiving (pm-schema §4 bloat policy: >500 lines OR >50% terminal items) is a fully manual operation. The 2026-05-29 archiving run (CC-049 Tier 2) required an ad-hoc Python script with no permanent home. There is no repeatable tool.
+
+**Why**: Without a persistent, tested script, archiving will be deferred until the file becomes unmanageable again. The script is independent of pmctl (CC-215) — pmctl will call it as a subcommand when that CLI lands, not replace it.
+
+**Requirement**:
+1. `scripts/archive-closed-backlog.sh` — bash script, idempotent, accepts optional `--dry-run` flag.
+2. Finds all `## CC-NNN — ... ✅` and `## CC-NNN — ... 🚫` body sections in BACKLOG.md that are NOT already stubs.
+3. Appends each to BACKLOG-ARCHIVE.md (full body content, preserving header format).
+4. Replaces each body in BACKLOG.md with `**See**: BACKLOG-ARCHIVE.md` stub.
+5. Updates `Last archived: YYYY-MM-DD` header in BACKLOG-ARCHIVE.md.
+6. Exits 0; prints count of archived sections.
+7. Regression test in `scripts/test-archive-closed-backlog.sh` covering: happy path, idempotency (running twice produces no double-archive), dry-run output.
+
+**Cross-link**: `[[CC-280]]` (first operational run), `[[CC-215]]` (pmctl will wrap this).
+
+## CC-280 — [process] run archive-closed-backlog.sh to collapse current BACKLOG bloat 🟡 deferred
+
+**Problem**: BACKLOG.md currently exceeds the pm-schema §4 bloat policy threshold (>500 lines, >50% terminal rows). The 2026-05-29 archiving run reduced the file but it is already approaching threshold again as new closed items accumulate.
+
+**Why**: Deferred until CC-279 script exists. Once CC-279 is merged, this ticket is the first operational use — a PR that runs the script and records the result.
+
+**Requirement**: Run `bash scripts/archive-closed-backlog.sh`, commit result, verify validator still passes, open PR.
+
+**Cross-link**: `[[CC-279]]` (prerequisite script), `[[CC-281]]` (index split easier after this).
+
+## CC-281 — [process/docs] split BACKLOG index into Active and Terminal sub-sections 🟡 deferred
+
+**Problem**: The index table mixes 19 active/deferred rows with 99+ terminal rows. PM agents scanning the index for "what's next" must parse the entire table. Readers and agents both benefit from active rows floating to the top.
+
+**Why**: Deferred until CC-280 (archive run) completes. Doing the split before archiving creates a larger diff and more merge risk.
+
+**Requirement**:
+1. Insert `<!-- active items above | terminal items below -->` comment between the last active/deferred row and the first terminal (✅/🚫/superseded) row.
+2. Do NOT use an H2 header as the delimiter — it would break PM agent index parsing (pm-schema §6.1 assumes a single contiguous index table).
+3. Update pm-schema §6.1 comment to note the comment delimiter convention.
+
+**Cross-link**: `[[CC-280]]` (prerequisite), `[[CC-278]]` (CI enforcement keeps the split honest).
+
+## CC-282 — [DX/product] pmctl backlog sync — SQLite derived query layer 🟡 deferred
+
+**Problem**: Querying BACKLOG.md requires awk/grep. No fast indexed access exists for "show all active items in area:ops" or "list all M3 items". The current workaround is manual grep or reading the full index.
+
+**Why**: Deferred until CC-215 pmctl core (M3/M4) provides the CLI entry point. SQLite as a derived store (not source of truth) enables rich queries without changing the human-editable markdown contract.
+
+**Requirement**:
+1. `pmctl backlog sync` subcommand: parses BACKLOG.md index table, writes rows to `backlog.db` (SQLite, gitignored).
+2. `pmctl backlog view [--status active|deferred|closed] [--area AREA] [--milestone M3]`: queries backlog.db and renders a filtered markdown table to stdout.
+3. BACKLOG.md remains the source of truth; `backlog.db` is a derived artifact (not committed).
+4. `pmctl backlog sync` is idempotent and can be called by `archive-closed-backlog.sh` post-run.
+
+**Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-279]]` (archive script).
