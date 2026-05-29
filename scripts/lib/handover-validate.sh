@@ -332,12 +332,14 @@ handover_validate_all_metadata() {
   local _iso_val
   _iso_val="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_val=""
   if [[ -n "$_iso_val" ]]; then
-    # Reject if legacy sandbox field is also present alongside isolation_level
-    local _legacy_sandbox
-    _legacy_sandbox="$(handover_get_field "$metadata" sandbox 2>/dev/null)" || _legacy_sandbox=""
-    if [[ -n "$_legacy_sandbox" ]]; then
-      handover_reject isolation_level "cannot mix isolation_level with legacy sandbox/approval/skip_git_check fields; use isolation_level only" || return 1
-    fi
+    # Reject if any legacy field is also present alongside isolation_level
+    local _lf _legacy_val
+    for _lf in sandbox approval skip_git_check; do
+      _legacy_val="$(handover_get_field "$metadata" "$_lf" 2>/dev/null)" || _legacy_val=""
+      if [[ -n "$_legacy_val" ]]; then
+        handover_reject isolation_level "cannot mix isolation_level with legacy sandbox/approval/skip_git_check fields; use isolation_level only" || return 1
+      fi
+    done
     handover_validate_isolation_level "$_iso_val" || return 1
   else
     value="$(handover_get_field "$metadata" sandbox)" || return 1

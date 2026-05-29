@@ -367,8 +367,10 @@ PM short-form model aliases are resolved from the source-of-truth file
 Direct Bash dispatch shape:
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
+
+When dispatching a legacy brief that has `sandbox:` instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`.
 
 Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
 
@@ -379,11 +381,12 @@ Before constructing this Bash command, the dispatcher MUST source `scripts/lib/h
 - `handover_validate_dispatch_route`
 - `handover_validate_working_dir`
 - `handover_validate_brief_file`
-- `handover_validate_sandbox`
-- `handover_validate_approval`
+- `handover_validate_isolation_level` (when `isolation_level:` present) **OR** the legacy trio below (when absent):
+  - `handover_validate_sandbox`
+  - `handover_validate_approval`
+  - `handover_validate_skip_git_check`
 - `handover_validate_timeout`
 - `handover_validate_model`
-- `handover_validate_skip_git_check`
 - `handover_validate_fallback_allowed`
 
 Rejected example:
@@ -417,12 +420,11 @@ Argument order is stable:
 1. `bash <abs path>/scripts/codex-dispatch.sh`
 2. `--cd <safe working_dir>`
 3. `--model <safe model>` only if `model` is not `default`
-4. `--sandbox <safe sandbox>`
-5. `--approval <safe approval>`
-6. `--timeout <safe timeout>`
-7. `--brief-file <safe brief_file>`
+4. `--isolation <safe isolation_level>` (canonical) OR `--sandbox <safe sandbox> --approval <safe approval>` (legacy fallback when `isolation_level` is absent)
+5. `--timeout <safe timeout>`
+6. `--brief-file <safe brief_file>`
 
-The Bash route never emits `--skip-git-check`. Validator hard-rejects `skip_git_check: true`; callers needing this flag must use the Agent(codex-executor) fallback, which passes it through `codex-executor`'s own override mechanism.
+The Bash route never emits `--skip-git-check`. Validator hard-rejects `skip_git_check: true`; callers needing this flag must use the Agent(codex-executor) fallback.
 
 Quoting and command-shape rules:
 

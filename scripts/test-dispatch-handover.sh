@@ -689,10 +689,46 @@ all_metadata_mixed_isolation_and_sandbox_rejects_case() {
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
-brief_file: /tmp/brief-mixed-fields.md
+brief_file: /tmp/brief-mixed-sandbox.md
 isolation_level: workspace-write
 sandbox: workspace-write
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
+}
+
+# Behavior: Handover block mixing isolation_level with legacy approval field is rejected.
+# Steps:
+#   1. Build metadata with both isolation_level and approval present.
+#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+all_metadata_mixed_isolation_and_approval_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-mixed-approval.md
+isolation_level: workspace-write
 approval: never
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
+}
+
+# Behavior: Handover block mixing isolation_level with legacy skip_git_check field is rejected.
+# Steps:
+#   1. Build metadata with both isolation_level and skip_git_check present.
+#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+all_metadata_mixed_isolation_and_skip_git_check_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-mixed-skip.md
+isolation_level: workspace-write
 skip_git_check: false
 timeout: 1200
 model: default
@@ -1042,6 +1078,8 @@ run_case "handover/all metadata with isolation_level accepts" all_metadata_with_
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
 run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case
 run_case "handover/all metadata mixed isolation and sandbox rejects" all_metadata_mixed_isolation_and_sandbox_rejects_case
+run_case "handover/all metadata mixed isolation and approval rejects" all_metadata_mixed_isolation_and_approval_rejects_case
+run_case "handover/all metadata mixed isolation and skip_git_check rejects" all_metadata_mixed_isolation_and_skip_git_check_rejects_case
 run_case "handover/working_dir match accepts" working_dir_match_accepts_case
 run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
 run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case
