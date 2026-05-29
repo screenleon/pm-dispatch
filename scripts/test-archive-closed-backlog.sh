@@ -78,6 +78,15 @@ count_literal() {
 }
 
 case_happy_path() {
+  # Verifies that a non-stub closed (✅) section body is appended to BACKLOG-ARCHIVE.md,
+  # replaced with a **See** stub in BACKLOG.md, and archive timestamps are updated.
+  #
+  # Steps:
+  #   1. Create BACKLOG.md with one non-stub closed section and one active section.
+  #   2. Create BACKLOG-ARCHIVE.md with a minimal header.
+  #   3. Run archive-closed-backlog.sh.
+  #   4. Assert exit 0, stub in BACKLOG.md, body in BACKLOG-ARCHIVE.md,
+  #      active section unchanged, timestamps updated, output "Archived 1 section(s)".
   local name="archive-happy-path"
   should_run "$name" || return 0
 
@@ -131,6 +140,14 @@ case_happy_path() {
 }
 
 case_idempotency() {
+  # Verifies that running the script twice does not create duplicate archive entries.
+  #
+  # Steps:
+  #   1. Create same fixtures as happy path.
+  #   2. Run archive-closed-backlog.sh once (first run).
+  #   3. Run archive-closed-backlog.sh a second time (second run).
+  #   4. Assert second run exits 0, output "Archived 0 section(s)",
+  #      and the section header appears exactly once in BACKLOG-ARCHIVE.md.
   local name="archive-idempotency"
   should_run "$name" || return 0
 
@@ -170,6 +187,13 @@ case_idempotency() {
 }
 
 case_dry_run() {
+  # Verifies that --dry-run reports the count of archiveable sections but makes no file changes.
+  #
+  # Steps:
+  #   1. Create fixtures with one non-stub closed section; snapshot both files.
+  #   2. Run archive-closed-backlog.sh --dry-run.
+  #   3. Assert exit 0, output "Would archive 1 section(s)",
+  #      and both files are byte-identical to their snapshots.
   local name="archive-dry-run"
   should_run "$name" || return 0
 
@@ -207,6 +231,14 @@ case_dry_run() {
 }
 
 case_dropped_section() {
+  # Verifies that dropped (🚫) sections are archived and stubbed identically to closed (✅) sections.
+  #
+  # Steps:
+  #   1. Create BACKLOG.md with one non-stub dropped section.
+  #   2. Create minimal BACKLOG-ARCHIVE.md.
+  #   3. Run archive-closed-backlog.sh.
+  #   4. Assert exit 0, stub in BACKLOG.md, body in BACKLOG-ARCHIVE.md,
+  #      output "Archived 1 section(s)".
   local name="archive-dropped-section"
   should_run "$name" || return 0
 
@@ -246,6 +278,12 @@ case_dropped_section() {
 }
 
 case_unknown_flag() {
+  # Verifies that an unsupported CLI flag causes the script to exit 1 with an error message.
+  #
+  # Steps:
+  #   1. Create minimal BACKLOG.md and BACKLOG-ARCHIVE.md.
+  #   2. Run archive-closed-backlog.sh --unsupported-flag.
+  #   3. Assert exit 1 and output contains "unknown arg".
   local name="archive-unknown-flag"
   should_run "$name" || return 0
 
