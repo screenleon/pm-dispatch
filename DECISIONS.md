@@ -65,6 +65,11 @@ follow-up (PR-B).
   not broken until they choose to run the new archiver.
 - Full closed-ticket index metadata (area/refs/priority) is no longer in the
   live file; it lives in git history and the archived body heading.
+- Accepted tradeoff: the archiver drops a terminal index row even when no body
+  section accompanies it. In a valid backlog this cannot happen (validate.sh
+  enforces index↔body 1:1); it only arises from malformed/partial state, is
+  git-recoverable, and the archiver emits a per-id stderr warning rather than
+  removing it silently. Not treated as a hard data-loss path.
 
 ## 2026-05-25: state-root-xdg
 

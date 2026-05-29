@@ -163,6 +163,10 @@ done < "$BACKLOG_FILE"
 # Terminal tickets live only in BACKLOG-ARCHIVE.md under the working-set
 # contract (pm-schema §4), and they hold the highest IDs. Fold the archive's
 # max into MAX_CC_ID so next-id never reuses an archived ID (§2.2 "永不重用").
+# NOTE: this tool is pm-dispatch-specific by design — it emits CC-NNN IDs
+# (NEXT_TICKET_ID below) and the BACKLOG.md index scan above is likewise CC-only,
+# so the CC- archive scan here is intentionally consistent, not a contract
+# narrowing. A cross-repo next-id belongs in pmctl, which derives the prefix.
 if [ -f "$ARCHIVE_FILE" ]; then
   archive_max="$(awk '
     /^## CC-[0-9]/ {
