@@ -1,9 +1,9 @@
-<!-- pm-dispatch: backlog-archive 2026-05-19 -->
+<!-- pm-dispatch: backlog-archive 2026-05-30 -->
 # pm-dispatch backlog — archive
 
 Closed ticket detail sections archived from BACKLOG.md (CC-049).
 Index entries with ✅ status and PR refs remain in BACKLOG.md for scanning.
-Last archived: 2026-05-29
+Last archived: 2026-05-30
 
 ---
 
@@ -1368,3 +1368,84 @@ PR B — output contract + dispatch-post-verify.sh:
 **Priority**: P2 — reproducible on every Go dispatch; doc-only fix is low effort.
 
 ---
+## CC-275 — bug: pr-gate.sh exits 127 after result write due to em dash bytes misinterpreted as command ✅ 2026-05-29
+
+**Problem**: After a successful full-tier gate run (result file written correctly), `scripts/pr-gate.sh` exits with code 127:
+```
+/path/to/scripts/pr-gate.sh: line 1054: $'\200\224': command not found
+```
+`\200\224` (0x80 0x94) are the last two bytes of the UTF-8 em dash sequence (E2 80 94). Bash misparses the multi-byte UTF-8 sequence in certain shell versions/locales, treating the trailing bytes as a standalone command token. The gate result and verdict are correct — only the exit code is wrong. This causes any automated workflow (CI, main-thread exit-code check) to see a false failure.
+
+**Affected lines** (approx, post-PR-#175):
+- `scripts/pr-gate.sh` around line 1054: `printf 'Error: reviewer artifact(s) modified after review phase — synthesis-side tampering detected: %s\n'`
+- Other em dash occurrences in the script
+
+**Fix**: Replace all em dash (`—`, U+2014) characters in shell `printf` format strings and heredocs within `scripts/pr-gate.sh` with ASCII equivalents (e.g., `--` or `: `). No behaviour change.
+
+**Acceptance**:
+1. `grep -c $'\xe2\x80\x94' scripts/pr-gate.sh` → 0 (no em dashes remaining)
+2. `bash scripts/run-all-tests.sh` → exit 0
+3. Full gate run exits 0 on GO result and exits 1 on NO-GO result (no exit 127)
+
+**area**: gate
+**Raised by**: issue:#176 (2026-05-29)
+**Priority**: P1 — reliability bug; wrong exit code breaks CI and main-thread gate loop detection.
+
+**See**: pr:#179
+
+---
+
+## CC-277 — [backlog hygiene] fix CC-228 E-codes — reach validate.sh exit 0 ✅ 2026-05-30
+
+**Problem**: `pm/scripts/validate.sh BACKLOG.md` exits 1 on `main` with ~20 pre-existing E-codes:
+- E-AREA-ENUM: rows using invalid area values or too many area tokens
+- E-REFS-PREFIX: rows with bare `CC-NNN` refs instead of valid prefixed form (`decisions:`, `roadmap:`, `commit:`, `feedback:`)
+- Stale active rows: CC-200/CC-202/CC-204 (closed via PR #170) still show `🔵 active`
+
+**Why**: Without a green validator, CI enforcement (CC-278) cannot be enabled. Errors accumulate silently.
+
+**Requirement**:
+1. For each E-AREA-ENUM row: rewrite area cell to use only valid enum tokens (max 2 tokens separated by `/`).
+2. For each E-REFS-PREFIX row: change bare `CC-NNN` to `roadmap:CC-NNN` or `decisions:CC-NNN` as appropriate.
+3. For stale active rows: update status to `✅ closed YYYY-MM-DD` with correct date, add PR ref.
+4. After all fixes: `bash pm/scripts/validate.sh BACKLOG.md` exits 0 (no E-codes remain).
+
+**Cross-link**: `[[CC-228]]` (parent), `[[CC-278]]` (unblocked by this).
+
+## CC-278 — [ops] validate.sh in CI — warn-only then enforce ✅ 2026-05-30
+
+**Problem**: `pm/scripts/validate.sh` encodes real BACKLOG invariants (index↔body parity, area enum, ref prefix, date format) but is not wired into `.github/workflows/lint.yml`. Errors accumulate on every PR without any CI signal.
+
+**Why**: Without CI enforcement, all other BACKLOG hygiene improvements rot immediately after they are applied. CC-277 fixes the current debt; CC-278 ensures debt cannot re-accumulate.
+
+**Requirement**:
+1. Phase 1 (merged with or after CC-277): Add a `lint-backlog` job to `lint.yml` that runs `bash pm/scripts/validate.sh BACKLOG.md || true`; include a step that counts and prints error lines so CI output is informative even when the job passes.
+2. Phase 2 (after CC-277 exits 0 on main): Remove `|| true`; job hard-fails on any E-code.
+3. No new CLI flag in validate.sh needed — use `|| true` at the shell level for Phase 1.
+
+**Cross-link**: `[[CC-277]]` (prerequisite for Phase 2), `[[CC-228]]`.
+
+## CC-279 — [ops] scripts/archive-closed-backlog.sh — idempotent bloat-policy executor ✅ 2026-05-30
+
+**Problem**: BACKLOG.md archiving (pm-schema §4 bloat policy: >500 lines OR >50% terminal items) is a fully manual operation. The 2026-05-29 archiving run (CC-049 Tier 2) required an ad-hoc Python script with no permanent home. There is no repeatable tool.
+
+**Why**: Without a persistent, tested script, archiving will be deferred until the file becomes unmanageable again. The script is independent of pmctl (CC-215) — pmctl will call it as a subcommand when that CLI lands, not replace it.
+
+**Requirement**:
+1. `scripts/archive-closed-backlog.sh` — bash script, idempotent, accepts optional `--dry-run` flag.
+2. Finds all `## CC-NNN — ... ✅` and `## CC-NNN — ... 🚫` body sections in BACKLOG.md that are NOT already stubs.
+3. Appends each to BACKLOG-ARCHIVE.md (full body content, preserving header format).
+4. Replaces each body in BACKLOG.md with `**See**: BACKLOG-ARCHIVE.md` stub.
+5. Updates `Last archived: YYYY-MM-DD` header in BACKLOG-ARCHIVE.md.
+6. Exits 0; prints count of archived sections.
+7. Regression test in `scripts/test-archive-closed-backlog.sh` covering: happy path, idempotency (running twice produces no double-archive), dry-run output.
+
+**Cross-link**: `[[CC-280]]` (first operational run), `[[CC-215]]` (pmctl will wrap this).
+
+## CC-280 — [process] run archive-closed-backlog.sh to collapse current BACKLOG bloat ✅ 2026-05-30
+
+**Problem**: BACKLOG.md closed-ticket detail sections accumulate and breach the pm-schema §4 bloat policy (>500 lines OR >50% terminal). Needed the first operational run of the CC-279 archiver.
+
+**Result (2026-05-30)**: Ran `scripts/archive-closed-backlog.sh`. Archived CC-275, CC-277, CC-278 via the script; CC-279 archived manually because its body quotes the literal stub sentinel `**See**: BACKLOG-ARCHIVE.md`, which the script's `has_see` guard mis-reads as already-stubbed (filed as a follow-up). Validator green afterward.
+
+**Cross-link**: `[[CC-279]]` (archiver script + the sentinel false-negative follow-up), `[[CC-281]]` (index split easier after this).
