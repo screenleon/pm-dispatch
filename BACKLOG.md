@@ -178,6 +178,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-272 | 🟡 deferred | **[process: brief template — omit commit block; document main-thread commit delegation]** 每個 brief 末尾的 `git add + git commit` 均被 `hook-codex-bash-guard` 擋住，executor 回報 `status: partial`（即使程式碼正確），主線程每次都必須手動 commit。推薦 Option A：從 brief template 移除 commit block，在 `docs/dispatch-brief.md` 明文「commit 永遠委派主線程」。Option B：hook allowlist 加入無破壞性 git add/commit。 | process/DX | 2026-05-28 | — | P2 | — |
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
+| CC-275 | 🔵 active | **[bug: pr-gate.sh exits 127 after result write — em dash bytes misinterpreted as command]** Full-tier gate 完成後 exit 127（`$'\200\224': command not found`）；result file 正確，只有 exit code 錯誤。em dash（U+2014）在某些 bash locale 下後兩 bytes 被解析成命令。Fix：把所有 `—` 換成 ASCII `--`。 | gate | 2026-05-29 | — | P1 | — |
+| CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 
 ---
 
@@ -2328,3 +2330,60 @@ This makes directory creation the mutex.
 **Priority**: P2 — stale planning text causes confusion when reading the BACKLOG for future isolation work.
 
 **Raised by**: critic [medium] × 3, Round 11 gate (feat/cc206-gate-hooks).
+
+---
+
+## CC-275 — bug: pr-gate.sh exits 127 after result write due to em dash bytes misinterpreted as command
+
+**Problem**: After a successful full-tier gate run (result file written correctly), `scripts/pr-gate.sh` exits with code 127:
+```
+/path/to/scripts/pr-gate.sh: line 1054: $'\200\224': command not found
+```
+`\200\224` (0x80 0x94) are the last two bytes of the UTF-8 em dash sequence (E2 80 94). Bash misparses the multi-byte UTF-8 sequence in certain shell versions/locales, treating the trailing bytes as a standalone command token. The gate result and verdict are correct — only the exit code is wrong. This causes any automated workflow (CI, main-thread exit-code check) to see a false failure.
+
+**Affected lines** (approx, post-PR-#175):
+- `scripts/pr-gate.sh` around line 1054: `printf 'Error: reviewer artifact(s) modified after review phase — synthesis-side tampering detected: %s\n'`
+- Other em dash occurrences in the script
+
+**Fix**: Replace all em dash (`—`, U+2014) characters in shell `printf` format strings and heredocs within `scripts/pr-gate.sh` with ASCII equivalents (e.g., `--` or `: `). No behaviour change.
+
+**Acceptance**:
+1. `grep -c $'\xe2\x80\x94' scripts/pr-gate.sh` → 0 (no em dashes remaining)
+2. `bash scripts/run-all-tests.sh` → exit 0
+3. Full gate run exits 0 on GO result and exits 1 on NO-GO result (no exit 127)
+
+**area**: gate
+**Raised by**: issue:#176 (2026-05-29)
+**Priority**: P1 — reliability bug; wrong exit code breaks CI and main-thread gate loop detection.
+
+---
+
+## CC-276 — feat: persistent gate override declarations to reduce re-statement across rounds
+
+**Problem**: Each `pr-gate.sh` run spawns fresh reviewer sessions with no memory of previous rounds. When users consciously accept a known risk (storage cleanup failure, Docker unavailable in sandbox, etc.) and provide an override declaration, Round N+1 reviewers see the same code with no context of the previous override and re-block. Users must re-state identical override declarations every round. Observed: 9+ rounds on a single PR primarily due to re-blocking on already-accepted known risks.
+
+**Requirement**:
+- `pr-gate.sh` accepts `--override-file <path>` flag (Option A) OR auto-discovers `.gate-overrides.md` at repo root (Option B)
+- Override file format: freeform markdown with per-reviewer override declarations (see issue for example)
+- Reviewer brief preamble injects override content with instruction: "Do not re-block on these specific items unless the diff changes the risk materially"
+- When no override file is present, behaviour is unchanged (backward compatible)
+
+**Override file example** (`.gate-overrides.md`):
+```markdown
+## Gate Overrides (permanent, owner-accepted)
+
+- [security] I accept that storage cleanup may fail after DB anonymization.
+  Accepted: 2026-05-20. Owner: @screenleon.
+- [risk] Docker is unavailable in the gate sandbox; integration tests pass locally.
+  Accepted: 2026-05-20. Owner: @screenleon.
+```
+
+**Acceptance**:
+1. `bash scripts/pr-gate.sh --cd . --override-file .gate-overrides.md` — override content injected into all 5 reviewer prompts
+2. Reviewers that previously blocked on an overridden item return pass/advise (not block) when the diff is unchanged
+3. `bash scripts/test-pr-gate.sh` → exit 0 (new test covering override injection)
+4. No override file → behaviour identical to today
+
+**area**: gate/process
+**Raised by**: issue:#174 (2026-05-28)
+**Priority**: P2 — DX improvement; reduces friction on PRs with known-accepted risks across multi-round gate iteration.
