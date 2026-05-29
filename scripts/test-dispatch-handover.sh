@@ -626,6 +626,25 @@ fallback_allowed: true"
   expect_reject isolation_level handover_validate_all_metadata "$block"
 }
 
+# Behavior: isolation_level none is rejected on main_thread_bash_background route.
+# Steps:
+#   1. Build metadata with isolation_level none and dispatch_route main_thread_bash_background.
+#   2. Assert handover_validate_all_metadata rejects — none maps to danger-full-access which
+#      is not supported on the Bash route; the Agent fallback route must be used instead.
+all_metadata_isolation_none_bash_route_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-none-bash.md
+isolation_level: none
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
+}
+
 # Behavior: Handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
 # Steps:
 #   1. Build a metadata block with isolation_level workspace-write, no sandbox/approval/skip_git_check.
@@ -1074,6 +1093,7 @@ run_case "handover/isolation_level none accepts" isolation_level_none_accepts_ca
 run_case "handover/isolation_level read-only accepts" isolation_level_read_only_accepts_case
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
 run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
+run_case "handover/all metadata isolation none bash route rejects" all_metadata_isolation_none_bash_route_rejects_case
 run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
 run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case

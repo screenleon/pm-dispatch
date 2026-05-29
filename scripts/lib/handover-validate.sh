@@ -341,6 +341,16 @@ handover_validate_all_metadata() {
       fi
     done
     handover_validate_isolation_level "$_iso_val" || return 1
+    # isolation_level:none maps to danger-full-access in the Codex adapter.
+    # The Bash dispatch route does not support full-access; reject it here so
+    # PM-authored briefs cannot reach danger-full-access through unattended dispatch.
+    if [[ "$_iso_val" == "none" ]]; then
+      local _route
+      _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
+      if [[ "$_route" == "main_thread_bash_background" ]]; then
+        handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
+      fi
+    fi
   else
     value="$(handover_get_field "$metadata" sandbox)" || return 1
     handover_validate_sandbox "$value" || return 1
