@@ -2413,7 +2413,7 @@ test_post_gate_hook_not_executable() {
 test_post_gate_hook_skipped_on_nogo() {
   # Verifies that post-gate.sh is NOT invoked when the gate result is NO-GO.
   # Even with --allow-hooks, post-gate is a success-only hook.
-  local name="post-gate-hook-skipped-on-no-go"
+  local name="test_post_gate_hook_skipped_on_nogo-post-gate-hook-skipped-on-no-go"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -2430,9 +2430,14 @@ test_post_gate_hook_skipped_on_nogo() {
   chmod +x "$repo/.pm-dispatch/post-gate.sh"
 
   set +e
-  CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  CODEX_GATE_STUB_VERDICT=block-soft CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "gate exited 0 for NO-GO result — expected non-zero exit"
+    return
+  fi
   if ! grep -q '^result: ' "$out"; then
     fail "$name" "gate stdout lacks 'result:' line — gate may have aborted before reaching post-gate check"
     return
@@ -2483,6 +2488,36 @@ test_hook_skipped_without_allow_hooks() {
   pass "$name"
 }
 
+test_isolation_flag_validation() {
+  # Verifies that pr-gate.sh rejects unknown --isolation values before dispatch.
+  local name="test_isolation_flag_validation-isolation-flag-validation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --isolation bogus-level
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "must be one of" || return
+  assert_file_contains "$name" "$err" "none" || return
+  assert_file_contains "$name" "$err" "read-only" || return
+  assert_file_contains "$name" "$err" "workspace-write" || return
+  assert_file_contains "$name" "$err" "workspace-network" || return
+  assert_file_contains "$name" "$err" "sandboxed" || return
+  pass "$name"
+}
+
 test_isolation_forwarding_through_pr_gate() {
   # Verifies that --isolation workspace-network is forwarded from pr-gate.sh
   # to codex-dispatch.sh. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
@@ -2530,6 +2565,7 @@ run_test test_pre_gate_hook_not_executable
 run_test test_post_gate_hook_not_executable
 run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
+run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid

@@ -87,6 +87,16 @@ case "$EXECUTOR_OPTION" in
     ;;
 esac
 
+if [[ -n "$DISPATCH_ISOLATION" ]]; then
+  case "$DISPATCH_ISOLATION" in
+    none|read-only|workspace-write|workspace-network|sandboxed) ;;
+    *)
+      printf "Error: --isolation must be one of: none | read-only | workspace-write | workspace-network | sandboxed (got: %s)\n" "$DISPATCH_ISOLATION" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 _self="$0"
 while [[ -L "$_self" ]]; do
   _self_dir="$(cd "$(dirname "$_self")" && pwd)"
@@ -1059,7 +1069,7 @@ elif [[ "$ALLOW_HOOKS" != "true" ]]; then
 elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
   printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
 elif [[ -x "$_POST_GATE_HOOK" ]]; then
-  _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}')
+  _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
   if [[ "$_GATE_FINAL" != "GO" ]]; then
     printf '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
   else
@@ -1075,3 +1085,8 @@ fi
 # ── Print result path for caller ─────────────────────────────────────────────
 emit_pr_gate_handover_block
 printf '\nresult: %s\n' "$OUTPUT_FILE"
+
+_FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
+if [[ "$EXECUTOR" != "claude" && "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then
+  exit 1
+fi

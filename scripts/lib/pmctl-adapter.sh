@@ -15,6 +15,7 @@ pmctl_adapter_native_flags() {
     codex/none) printf '{}' ;;
     codex/read-only) printf '{ "--sandbox": "read-only" }' ;;
     codex/workspace-write) printf '{ "--sandbox": "workspace-write" }' ;;
+    codex/workspace-network) printf '{ "--sandbox": "workspace-write" }' ;;
     codex/sandboxed) printf '{ "--sandbox": "workspace-write" }' ;;
     *) printf '{}' ;;
   esac
@@ -80,6 +81,8 @@ EOF
       printf '  %s:\n' "$isolation_level"
       if [[ "$name/$isolation_level" == "codex/sandboxed" ]]; then
         printf '    native_flags: %s  # best-effort: Codex has no full-isolation equivalent; treated as workspace-write\n' "$native_flags"
+      elif [[ "$name/$isolation_level" == "codex/workspace-network" ]]; then
+        printf '    native_flags: %s  # network_access enabled via sandbox_workspace_write.network_access=true; not representable as a single --sandbox flag\n' "$native_flags"
       elif [[ "$name/$isolation_level" == "codex/none" ]]; then
         printf '    native_flags: %s\n' "$native_flags"
         printf '    # intentional: isolation_level none means no restriction; no Codex isolation flag applied\n'

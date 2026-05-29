@@ -13,7 +13,8 @@
 #   read-only        – read files only; no writes
 #   workspace-write  – write within project working directory only (default)
 #   workspace network – workspace-write + TCP localhost access enabled
-#   sandboxed        – most restrictive workspace-write; no network
+#   sandboxed        – best-effort; Codex has no true ephemeral mode; maps to
+#                     workspace-write with no network (strongest available constraint)
 
 mappings:
   none:

@@ -10,7 +10,8 @@
 #   workspace-write  – executor may write only within the project working directory
 #   workspace-network – workspace-write + TCP localhost access; use when
 #                       pre-gate.sh starts a local service the executor needs
-#   sandboxed        – full isolation; executor runs in an ephemeral sandbox
+#   sandboxed        – strongest available isolation; each adapter applies its tightest
+#                     supported constraint (Codex: workspace-write, no network access)
 
 values:
   - none
