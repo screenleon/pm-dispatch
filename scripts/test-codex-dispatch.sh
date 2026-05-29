@@ -768,6 +768,32 @@ case_isolation_sandboxed() {
   pass "$name"
 }
 
+# ---- 29: print-cmd with no brief exits 0 and emits command ----
+case_print_cmd_no_brief() {
+  local name="print-cmd no-brief exits 0 and emits command"
+  should_run "$name" || return 0
+  local _work29 _out29 _err29 _exit29
+
+  _work29="$(mktemp -d)"
+  git init -q "$_work29"
+  _err29="$(mktemp)"
+
+  set +e
+  _out29="$("$DISPATCH" --cd "$_work29" --print-cmd 2>"$_err29")"
+  _exit29=$?
+  set -e
+
+  if [[ "$_exit29" -ne 0 ]]; then
+    fail "$name" "exit $_exit29 - expected 0; print-cmd with no brief must not fail"
+    return
+  fi
+  if [[ -z "$_out29" ]]; then
+    fail "$name" "empty output - expected assembled command on stdout"
+    return
+  fi
+  pass "$name"
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -796,5 +822,6 @@ case_isolation_unknown_level_exits_error
 case_isolation_none
 case_isolation_read_only
 case_isolation_sandboxed
+case_print_cmd_no_brief
 
 th_summary

@@ -79,24 +79,6 @@ if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
 fi
 
-case "$EXECUTOR_OPTION" in
-  auto|codex|claude) ;;
-  *)
-    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
-    exit 2
-    ;;
-esac
-
-if [[ -n "$DISPATCH_ISOLATION" ]]; then
-  case "$DISPATCH_ISOLATION" in
-    none|read-only|workspace-write|workspace-network|sandboxed) ;;
-    *)
-      printf "Error: --isolation must be one of: none | read-only | workspace-write | workspace-network | sandboxed (got: %s)\n" "$DISPATCH_ISOLATION" >&2
-      exit 2
-      ;;
-  esac
-fi
-
 _self="$0"
 while [[ -L "$_self" ]]; do
   _self_dir="$(cd "$(dirname "$_self")" && pwd)"
@@ -195,6 +177,38 @@ else
     done
     printf '\n'
   }
+fi
+
+case "$EXECUTOR_OPTION" in
+  auto|codex|claude) ;;
+  *)
+    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
+    exit 2
+    ;;
+esac
+
+_validate_isolation_level() {
+  local level="$1" policy_file="$2"
+  if [[ -r "$policy_file" ]]; then
+    if ! grep -qE "^  - ${level}$" "$policy_file"; then
+      local valid_levels
+      valid_levels="$(grep -E "^  - " "$policy_file" | sed 's/^  - //' | tr '\n' ' ' | sed 's/ $//')"
+      printf "Error: --isolation must be one of: %s (got: %s)\n" "$valid_levels" "$level" >&2
+      return 2
+    fi
+  else
+    case "$level" in
+      none|read-only|workspace-write|workspace-network|sandboxed) ;;
+      *)
+        printf "Error: --isolation must be one of: none | read-only | workspace-write | workspace-network | sandboxed (got: %s)\n" "$level" >&2
+        return 2
+        ;;
+    esac
+  fi
+}
+
+if [[ -n "$DISPATCH_ISOLATION" ]]; then
+  _validate_isolation_level "$DISPATCH_ISOLATION" "$SCRIPT_DIR/../core/policy/isolation-level.yaml" || exit 2
 fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
@@ -1075,6 +1089,7 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
   else
     printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
     if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
+      printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero — this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
       printf 'Error: post-gate hook failed\n' >&2
       exit 1
     fi
