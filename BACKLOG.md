@@ -1791,7 +1791,7 @@ This makes directory creation the mutex.
 **Problem**: `pm/scripts/validate.sh BACKLOG.md` exits 1 on `main` with ~20 pre-existing E-codes:
 - E-AREA-ENUM: rows using invalid area tokens (`ops/hook`, `arch/dep`, `filesystem/caveat`, `ops/trace/portability`, `arch/hook/portability`, `docs/install/ux`, `arch/hook/reuse`, `process/schema`, `arch/config`, `ops/dispatch`, `ops/portable`, `ops/validator`, `ops/repo`)
 - E-REFS-PREFIX: rows with bare `CC-NNN` refs instead of valid prefixed form (`decisions:`, `roadmap:`, `commit:`, `feedback:`)
-- Stale active rows: CC-200/CC-202/CC-204 (closed via PR #170), CC-262 (M3 closed via PR #180), CC-275 (closed via PR #179) still show `🔵 active`
+- Stale active rows: CC-200/CC-202/CC-204 (closed via PR #170) still show `🔵 active`
 
 **Why**: Without a green validator, CI enforcement (CC-278) cannot be enabled. Errors accumulate silently.
 
@@ -1799,7 +1799,7 @@ This makes directory creation the mutex.
 1. For each E-AREA-ENUM row: rewrite area cell to use only valid enum tokens (max 2 tokens separated by `/`).
 2. For each E-REFS-PREFIX row: change bare `CC-NNN` to `roadmap:CC-NNN` or `decisions:CC-NNN` as appropriate.
 3. For stale active rows: update status to `✅ closed YYYY-MM-DD` with correct date, add PR ref.
-4. After all fixes: `bash pm/scripts/validate.sh BACKLOG.md` exits 0 (only E-AREA-ENUM and E-REFS-PREFIX remain, not E-INDEX-MISMATCH or others).
+4. After all fixes: `bash pm/scripts/validate.sh BACKLOG.md` exits 0 (no E-codes remain).
 
 **Cross-link**: `[[CC-228]]` (parent), `[[CC-278]]` (unblocked by this).
 
