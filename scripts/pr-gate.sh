@@ -33,6 +33,7 @@ set -euo pipefail
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
+#   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -43,6 +44,7 @@ OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
+ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
 DISPATCH_APPROVAL="never"
@@ -59,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
+    --allow-hooks) ALLOW_HOOKS=true;       shift;;
     -h|--help)
       sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
@@ -422,7 +425,11 @@ printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
 _PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
-if [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
+if [[ "$ALLOW_HOOKS" != "true" ]]; then
+  if [[ -f "$_PRE_GATE_HOOK" ]]; then
+    printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+  fi
+elif [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
   printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable — skipping\n' >&2
 elif [[ -x "$_PRE_GATE_HOOK" ]]; then
   printf 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
@@ -1033,20 +1040,31 @@ fi
 # ── Post-gate hook ─────────────────────────────────────────────────────────
 # On the claude executor route this script is a handover producer only; reviewers
 # run outside this script, so post-gate cannot fire at true gate completion here.
+# On the codex route, post-gate runs only when --allow-hooks is set AND the
+# gate result is GO — it is a success-only side-effect hook, not a teardown hook.
 _POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
 if [[ "$EXECUTOR" == "claude" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
     printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude — reviewers execute outside this script on that route\n' >&2
   fi
+elif [[ "$ALLOW_HOOKS" != "true" ]]; then
+  if [[ -f "$_POST_GATE_HOOK" ]]; then
+    printf 'Warning: .pm-dispatch/post-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+  fi
 elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
   printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
 elif [[ -x "$_POST_GATE_HOOK" ]]; then
-  printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
-  if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
-    printf 'Error: post-gate hook failed\n' >&2
-    exit 1
+  _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}')
+  if [[ "$_GATE_FINAL" != "GO" ]]; then
+    printf '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
+  else
+    printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
+    if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
+      printf 'Error: post-gate hook failed\n' >&2
+      exit 1
+    fi
+    printf 'post-gate hook completed.\n'
   fi
-  printf 'post-gate hook completed.\n'
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────

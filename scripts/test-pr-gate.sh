@@ -2225,7 +2225,7 @@ test_pre_gate_hook_runs() {
   chmod +x "$repo/.pm-dispatch/pre-gate.sh"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -2257,7 +2257,7 @@ test_pre_gate_hook_aborts_gate_on_failure() {
   chmod +x "$repo/.pm-dispatch/pre-gate.sh"
 
   set +e
-  CODEX_GATE_BRIEF_EXISTS_MARKER="$brief_marker" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  CODEX_GATE_BRIEF_EXISTS_MARKER="$brief_marker" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -2292,7 +2292,7 @@ test_post_gate_hook_runs() {
   chmod +x "$repo/.pm-dispatch/post-gate.sh"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -2323,7 +2323,7 @@ test_post_gate_hook_aborts_on_failure() {
   chmod +x "$repo/.pm-dispatch/post-gate.sh"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -eq 0 ]]; then
@@ -2354,7 +2354,7 @@ test_pre_gate_hook_not_executable() {
   # intentionally NOT chmod +x
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -2390,7 +2390,7 @@ test_post_gate_hook_not_executable() {
   # intentionally NOT chmod +x
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
@@ -2405,12 +2405,79 @@ test_post_gate_hook_not_executable() {
   pass "$name"
 }
 
+test_post_gate_hook_skipped_on_nogo() {
+  # Verifies that post-gate.sh is NOT invoked when the gate result is NO-GO.
+  # Even with --allow-hooks, post-gate is a success-only hook.
+  local name="post-gate-hook-skipped-on-no-go"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "post-gate hook ran despite NO-GO gate result — must be skipped"
+    return
+  fi
+  pass "$name"
+}
+
+test_hook_skipped_without_allow_hooks() {
+  # Verifies that executable hook scripts are silently skipped (with a warning) when
+  # --allow-hooks is not passed. This is the default safe mode.
+  local name="gate-hook-skipped-without-allow-hooks"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code — gate must not abort when hook is skipped without --allow-hooks"
+    return
+  fi
+  assert_file_contains "$name" "$err" "pass --allow-hooks" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "pre-gate hook ran without --allow-hooks flag"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
 run_test test_post_gate_hook_aborts_on_failure
 run_test test_pre_gate_hook_not_executable
 run_test test_post_gate_hook_not_executable
+run_test test_post_gate_hook_skipped_on_nogo
+run_test test_hook_skipped_without_allow_hooks
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 

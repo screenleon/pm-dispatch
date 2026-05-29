@@ -22,19 +22,29 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 
 ## Pattern 1: Infrastructure setup before/after gate (Docker, DBs, etc.)
 
+> **Security notice — `--allow-hooks` required**: Hook scripts are loaded from
+> `.pm-dispatch/` inside the checked-out repository. A branch under review may
+> supply or modify these scripts. By default pm-dispatch skips hooks and prints a
+> warning. Pass `--allow-hooks` only for repositories and branches you trust.
+>
+> ```bash
+> bash scripts/pr-gate.sh --cd . --allow-hooks
+> ```
+
 The gate lifecycle hooks let the main thread start and stop infrastructure
 around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 
 | Hook | When it runs | Executor support | Failure behaviour |
 |---|---|---|---|
 | `.pm-dispatch/pre-gate.sh` | before any reviewer dispatch | codex, claude | non-zero exit aborts the entire gate |
-| `.pm-dispatch/post-gate.sh` | after all reviewers finish (codex only, success path) | **codex only** | non-zero exit marks gate as failed |
+| `.pm-dispatch/post-gate.sh` | after all reviewers finish, **only when gate result is GO** (codex only) | **codex only** | non-zero exit marks gate as failed |
 
 **Hook contract**:
 - Runs as the main thread user (full machine access).
 - Working directory is set to the project root (`$WORK_DIR`).
 - If the file exists but is not executable, pm-dispatch prints a warning and skips it.
 - Non-zero exit from either hook aborts the gate.
+- **`--allow-hooks` required**: hooks are skipped by default unless this flag is passed.
 
 > **`--executor claude` limitation**: On the claude executor route, `pr-gate.sh`
 > emits a handover block and exits before reviewers run. `post-gate.sh` is therefore
@@ -46,17 +56,25 @@ around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 Depending on your use case, choose the right approach:
 
 **(A) Teardown that must always run** (e.g., `docker compose down`, even if a reviewer fails):
-Use a bash `trap` inside `pre-gate.sh` — cleanup is then guaranteed regardless of gate outcome.
+Wrap `pr-gate.sh` in a shell function or CI step that uses a `trap` in the
+**caller**, not inside `pre-gate.sh`. The hook exits after setup; any `trap`
+inside it cleans up immediately, not after the gate finishes.
 
 ```bash
-# .pm-dispatch/pre-gate.sh — always-teardown via trap
+# wrapper script or CI step
 #!/usr/bin/env bash
 set -euo pipefail
 cleanup() { docker compose -f docker-compose.test.yml down; }
 trap cleanup EXIT
+
 docker compose -f docker-compose.test.yml up -d db
 until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
+
+bash scripts/pr-gate.sh --cd . --allow-hooks
 ```
+
+The teardown trap is now in scope for the full gate run. Alternatively, use a
+CI `finally` / `always` block for the same effect.
 
 **(B) Action that should run only on gate success** (e.g., posting a Slack notification, tagging a build):
 Use `post-gate.sh` directly. It runs only after all reviewers and synthesis succeed.
