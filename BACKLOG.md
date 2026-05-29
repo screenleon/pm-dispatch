@@ -397,49 +397,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 **See**: BACKLOG-ARCHIVE.md
 
-## CC-104d — [Windows dogfood r1] hook-codex-bash-guard.sh hardcoded read-root 🟡 deferred
-
-**Problem**: `hook-codex-bash-guard.sh:54` defaults read-root to `$HOME/github`; repos under `~/Documents/github/` or arbitrary Windows paths are not covered. `CLAUDE_HOOK_CODEX_READ_ROOTS` env override exists but the wrong default silently restricts hooks.
-**Fix**: Derive from `PM_DISPATCH_REPO` parent or remove the hardcoded default.
-
-## CC-104e — [Windows dogfood r1] WSL ↔ Windows memory path divergence 🟡 deferred
-
-**Problem**: Project ID is path-sanitized working dir. Same repo at `~/github/pm-dispatch` (WSL) and `C:\Users\...\github\pm-dispatch` (Windows) produces different IDs → memory is partitioned across environments.
-**Fix**: Document workaround (symlink, or `PM_DISPATCH_PROJECT_ID` override); harness-level issue upstream.
-
-## CC-104f — [Windows dogfood r1] jq hard-dependency in hooks layer 🟡 deferred
-
-**Problem**: Hooks layer hard-depends on `jq`. Options: vendor static `gojq` binary (3 MB × 3 platforms), or expose `--no-hooks` install mode for jq-less users.
-**Decision**: `--no-hooks` preferred — keeps no-auto-install principle.
-
-## CC-104g — [Windows dogfood r1] portable.sh test fixes ⚠️ partial 2026-05-17
-
-**Problem**: `mkdir_lock` FIFO sync passes ✅ but underlying `mkdir` on Git Bash allows second concurrent acquire — real Windows portability bug. See CC-104k for the UNC/9P root cause.
-**See**: pr:#80
-
-## CC-104j — [Windows dogfood r1/r2] test-dispatch-handover.sh symlink fixture on Git Bash 🟡 deferred
-
-**Problem**: `brief_file_symlink_rejects_case` uses `ln -s` for fixture; on Git Bash falls back to copy → validator treats as regular file → test fails. Fix: add `[[ -L "$link" ]]` precondition → SKIP.
-
-## CC-104k — [Windows dogfood] UNC/9P filesystem mkdir atomicity caveat 🟡 deferred
-
-**Problem**: `mkdir` is atomic on local NTFS but NOT on `\\wsl.localhost\...` (9P UNC). Running pm-dispatch from a WSL UNC path on Windows breaks concurrent lock semantics.
-**Fix**: Document install-on-local-disk caveat; add preflight UNC path detection + warning. See CC-104r for the docs/warning follow-up.
-
-## CC-104m — [Windows dogfood] Platform layout — multi-target projection 🟡 deferred
-
-**Problem**: pm-dispatch is currently Claude-only by install.sh target. Introduce `~/.pm-dispatch/content/` as canonical view with symlink-project to `~/.claude/` and future tool targets.
-**Scope**: Post-v0.1.0, deferred until Codex/Cursor/Aider integration need surfaces.
-
-## CC-104r — [Windows dogfood r3] hook-tool-trace.sh performance budget on Windows ⏸ deferred
-
-**Problem**: Actual: 27990 ms vs 3500 ms budget on WSL UNC path (9P is ~8× slower than local disk). Not a pm-dispatch code bug.
-**Fix**: (a) `docs/platform-support.md` warn; (b) preflight detects UNC path → skips budget assertion.
-
-## CC-104s — [Windows dogfood r3] hook-tool-trace.sh path normalization on Git Bash 🟡 deferred
-
-**Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
-
 ## CC-105 — [CC-OSS Phase 5] BACKLOG cleanup + v0.1.0 release ✅ 2026-05-17
 
 **See**: BACKLOG-ARCHIVE.md
@@ -1777,3 +1734,47 @@ This makes directory creation the mutex.
 **area**: gate/process
 **Raised by**: issue:#174 (2026-05-28)
 **Priority**: P2 — DX improvement; reduces friction on PRs with known-accepted risks across multi-round gate iteration.
+
+## CC-104d — [Windows dogfood r1] hook-codex-bash-guard.sh hardcoded read-root 🟡 deferred
+
+**Problem**: `hook-codex-bash-guard.sh:54` defaults read-root to `$HOME/github`; repos under `~/Documents/github/` or arbitrary Windows paths are not covered. `CLAUDE_HOOK_CODEX_READ_ROOTS` env override exists but the wrong default silently restricts hooks.
+**Fix**: Derive from `PM_DISPATCH_REPO` parent or remove the hardcoded default.
+
+## CC-104e — [Windows dogfood r1] WSL ↔ Windows memory path divergence 🟡 deferred
+
+**Problem**: Project ID is path-sanitized working dir. Same repo at `~/github/pm-dispatch` (WSL) and `C:\Users\...\github\pm-dispatch` (Windows) produces different IDs → memory is partitioned across environments.
+**Fix**: Document workaround (symlink, or `PM_DISPATCH_PROJECT_ID` override); harness-level issue upstream.
+
+## CC-104f — [Windows dogfood r1] jq hard-dependency in hooks layer 🟡 deferred
+
+**Problem**: Hooks layer hard-depends on `jq`. Options: vendor static `gojq` binary (3 MB × 3 platforms), or expose `--no-hooks` install mode for jq-less users.
+**Decision**: `--no-hooks` preferred — keeps no-auto-install principle.
+
+## CC-104g — [Windows dogfood r1] portable.sh test fixes ⚠️ partial 2026-05-17
+
+**Problem**: `mkdir_lock` FIFO sync passes ✅ but underlying `mkdir` on Git Bash allows second concurrent acquire — real Windows portability bug. See CC-104k for the UNC/9P root cause.
+**See**: pr:#80
+
+## CC-104j — [Windows dogfood r1/r2] test-dispatch-handover.sh symlink fixture on Git Bash 🟡 deferred
+
+**Problem**: `brief_file_symlink_rejects_case` uses `ln -s` for fixture; on Git Bash falls back to copy → validator treats as regular file → test fails. Fix: add `[[ -L "$link" ]]` precondition → SKIP.
+
+## CC-104k — [Windows dogfood] UNC/9P filesystem mkdir atomicity caveat 🟡 deferred
+
+**Problem**: `mkdir` is atomic on local NTFS but NOT on `\\wsl.localhost\...` (9P UNC). Running pm-dispatch from a WSL UNC path on Windows breaks concurrent lock semantics.
+**Fix**: Document install-on-local-disk caveat; add preflight UNC path detection + warning. See CC-104r for the docs/warning follow-up.
+
+## CC-104m — [Windows dogfood] Platform layout — multi-target projection 🟡 deferred
+
+**Problem**: pm-dispatch is currently Claude-only by install.sh target. Introduce `~/.pm-dispatch/content/` as canonical view with symlink-project to `~/.claude/` and future tool targets.
+**Scope**: Post-v0.1.0, deferred until Codex/Cursor/Aider integration need surfaces.
+
+## CC-104r — [Windows dogfood r3] hook-tool-trace.sh performance budget on Windows ⏸ deferred
+
+**Problem**: Actual: 27990 ms vs 3500 ms budget on WSL UNC path (9P is ~8× slower than local disk). Not a pm-dispatch code bug.
+**Fix**: (a) `docs/platform-support.md` warn; (b) preflight detects UNC path → skips budget assertion.
+
+## CC-104s — [Windows dogfood r3] hook-tool-trace.sh path normalization on Git Bash 🟡 deferred
+
+**Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
+

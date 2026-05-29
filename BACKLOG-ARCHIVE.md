@@ -1368,4 +1368,3 @@ PR B — output contract + dispatch-post-verify.sh:
 **Priority**: P2 — reproducible on every Go dispatch; doc-only fix is low effort.
 
 ---
-
