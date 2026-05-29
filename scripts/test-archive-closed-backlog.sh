@@ -310,10 +310,141 @@ case_unknown_flag() {
   pass "$name"
 }
 
+case_no_terminal_sections() {
+  # Verifies that a BACKLOG.md with only active sections exits 0, reports
+  # "Archived 0 section(s)", and leaves both files byte-identical.
+  #
+  # Steps:
+  #   1. Create BACKLOG.md with only one active (non-terminal) section.
+  #   2. Create a minimal BACKLOG-ARCHIVE.md.
+  #   3. Snapshot both files.
+  #   4. Run archive-closed-backlog.sh.
+  #   5. Assert exit 0, output "Archived 0 section(s)", and both files are unchanged.
+  local name="archive-no-terminal-sections"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/no-terminal"
+  setup_repo "$repo"
+  write_archive "$repo"
+  cat > "$repo/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+## CC-010 - active only
+
+**Problem**: still open
+
+EOF
+  cp "$repo/BACKLOG.md" "$repo/BACKLOG.before"
+  cp "$repo/BACKLOG-ARCHIVE.md" "$repo/BACKLOG-ARCHIVE.before"
+
+  local output="" rc=0
+  set +e
+  output="$(run_archiver "$repo" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "script exited $rc: $output"
+    return
+  fi
+  if [[ "$output" != *"Archived 0 section(s)"* ]]; then
+    fail "$name" "unexpected output: $output"
+    return
+  fi
+  if ! cmp -s "$repo/BACKLOG.before" "$repo/BACKLOG.md"; then
+    fail "$name" "BACKLOG.md changed on no-op run"
+    return
+  fi
+  if ! cmp -s "$repo/BACKLOG-ARCHIVE.before" "$repo/BACKLOG-ARCHIVE.md"; then
+    fail "$name" "BACKLOG-ARCHIVE.md changed on no-op run"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_recovery_partial_write() {
+  # Verifies safe recovery when BACKLOG-ARCHIVE.md was already updated (archive written)
+  # but BACKLOG.md was not yet stubbed (simulating a partial-write failure between the
+  # two mv operations). A retry must stub BACKLOG.md without duplicating the archive entry.
+  #
+  # Steps:
+  #   1. Create BACKLOG.md with a non-stub closed section (body still present).
+  #   2. Create BACKLOG-ARCHIVE.md that ALREADY contains the same section body
+  #      (simulating the state after archive mv succeeded but backlog mv failed).
+  #   3. Run archive-closed-backlog.sh.
+  #   4. Assert exit 0, BACKLOG.md has stub, BACKLOG-ARCHIVE.md has section exactly once.
+  local name="archive-recovery-partial-write"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/recovery"
+  setup_repo "$repo"
+
+  # Backlog still has the body (archive mv succeeded, backlog mv did not)
+  cat > "$repo/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+## CC-020 - recovery test ✅ 2026-01-01
+
+**Problem**: partial write body
+
+**Why**: testing recovery
+
+EOF
+
+  # Archive already has the section from the first (partial) run
+  cat > "$repo/BACKLOG-ARCHIVE.md" <<'EOF'
+<!-- pm-dispatch: backlog-archive 2026-01-01 -->
+# archive
+
+Last archived: 2026-01-01
+
+---
+
+## CC-020 - recovery test ✅ 2026-01-01
+
+**Problem**: partial write body
+
+**Why**: testing recovery
+
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(run_archiver "$repo" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "script exited $rc: $output"
+    return
+  fi
+  if ! grep -Fq '**See**: BACKLOG-ARCHIVE.md' "$repo/BACKLOG.md"; then
+    fail "$name" "stub not written after recovery run"
+    return
+  fi
+  if grep -Fq '**Problem**: partial write body' "$repo/BACKLOG.md"; then
+    fail "$name" "original body still in BACKLOG.md after recovery"
+    return
+  fi
+  local count
+  count="$(count_literal "$repo/BACKLOG-ARCHIVE.md" '## CC-020')"
+  if [[ "$count" != "1" ]]; then
+    fail "$name" "expected CC-020 exactly once in archive, got $count"
+    return
+  fi
+
+  pass "$name"
+}
+
 case_happy_path
 case_idempotency
 case_dry_run
 case_dropped_section
 case_unknown_flag
+case_no_terminal_sections
+case_recovery_partial_write
 
 th_summary
