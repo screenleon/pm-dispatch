@@ -52,7 +52,7 @@
 | CC-202 | handover-validator framework 抽取（→ `pmctl validate` 串接移 M3） | ✅ (#170) |
 | CC-204 | hook framework 抽取（→ `pmctl guard check` 串接移 M3） | ✅ (#172) |
 | CC-200 | executor-router 抽取（→ dispatch runner 串接移 M3） | ✅ (#170) |
-| CC-215 | `cli/pmctl` adapter generate subcommand（C-now + D-stub）；剩餘子命令移 M3 | ✅ (#171) |
+| CC-215 | `cli/pmctl` adapter generate subcommand（C-now + D-stub，#171）；`task`/`decision`/`backlog`/`guard`/`trace`/`safe-bash` 子命令未建 | ⚠️ partial (#171) |
 
 ### M3 — 重新接 Claude adapter
 

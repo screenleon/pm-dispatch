@@ -1648,3 +1648,9 @@ All three acceptance grep checks pass.
 
 **See**: BACKLOG-ARCHIVE.md
 
+## CC-281 — [process/docs] split BACKLOG index into Active and Terminal sub-sections 🚫 2026-05-30
+
+**Dropped**: superseded by the working-set contract ([[CC-284]]). The premise — index mixes active rows with 99+ terminal rows — no longer holds: terminal `✅ closed` / `🚫 dropped` rows now leave BACKLOG.md entirely (move to BACKLOG-ARCHIVE.md), so the index already contains only non-terminal rows. An in-place active/terminal split delimiter is therefore unnecessary.
+
+**See**: DECISIONS.md 2026-05-30 (backlog-working-set-contract).
+
