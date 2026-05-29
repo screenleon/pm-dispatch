@@ -46,6 +46,7 @@ SUITE_NAMES=(
   test-schema-task-mirrors-backlog
   test-state-store
   test-brief-validate
+  test-archive-closed-backlog
 )
 
 declare -A SUITE_PATHS=(
@@ -85,6 +86,7 @@ declare -A SUITE_PATHS=(
   [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
   [test-state-store]="scripts/test-state-store.sh"
   [test-brief-validate]="scripts/test-brief-validate.sh"
+  [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
 )
 
 declare -A SKIP_REQUESTED=()
