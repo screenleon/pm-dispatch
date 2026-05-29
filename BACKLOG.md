@@ -43,7 +43,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones M0–M5 — see docs/architecture/v0.3.0-synthesis.md and MILESTONES.md v0.3.0. Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
-| CC-215 | 🔵 active | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|antigravity\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. Depends on CC-211. | arch/portability | 2026-05-21 | — | — | design |
+| CC-215 | ⚠️ partial 2026-05-28 | **[pmctl — core CLI entrypoint]** Implement `cli/pmctl` as the language-agnostic runtime for pm-dispatch. Interface: `pmctl task create/claim/dispatch/status/review`, `pmctl decision add`, `pmctl backlog sync`, `pmctl trace tail`, `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`, `pmctl adapter generate <claude\|codex\|antigravity\|opencode>`. AI CLI adapters become thin wrappers: Claude `/pm task-123` → `pmctl task dispatch task-123 --agent claude`; Codex equivalent calls the same binary. Guard logic moves from Claude-only hooks into pmctl so any CLI without hook support can call `pmctl guard check` from a command wrapper or `pmctl safe-bash "cmd"`. Adapter generator (`pmctl adapter generate`) produces per-CLI config from core agent definitions — prevents 4-way drift. **Partial**: `adapter generate` (#171) + `dispatch run` stub shipped; `task`/`decision`/`backlog`/`guard`/`trace`/`safe-bash` unbuilt (see body). Depends on CC-211. | arch/portability | 2026-05-21 | pr:#171 | P2 | design |
 | CC-216 | ⏸ deferred | **[MCP server — pm-dispatch-server]** **Deferred to v0.4.0** — v0.3.0 ships only `mcp/README.md` (the intended tool surface, as a `pmctl` interface design constraint); the server is built once `pmctl` is stable. Implement `mcp/pm-dispatch-server` exposing pm-dispatch operations as MCP tools: pm_list_tasks, pm_read_task, pm_create_task, pm_update_status, pm_add_decision, pm_request_review, pm_dispatch_to_agent, pm_read_trace, pm_guard_check. Enables Claude Code, OpenCode, Antigravity CLI, and any future MCP-capable AI tool to share one PM system without per-tool command wiring. MCP becomes the universal bridge; adapters handle only auth / config / format differences. Implementation path: thin Node.js or Python wrapper over pmctl subprocesses (avoids duplicating logic), or native bash MCP server once spec stabilises. Depends on CC-211, CC-215 (pmctl stable before wrapping). | arch/portability | 2026-05-21 | — | — | design |
 | CC-220 | ⏸ deferred | **[spike agent + `/spike` skill]** Implement `agents/spike.md` and `commands/spike.md`. Spike agent is a **planner** (like `project-pm`): reads a BACKLOG spike ticket, plans 2–3 investigation angles, returns a `spike_plan` block; the **main thread** fans out one Agent per angle (subagents cannot spawn subagents); the spike agent is re-invoked to synthesise findings into `docs/spikes/CC-NNN.md` and update the `Result log`. Modeled on `/pr-gate`'s reviewer fan-out. v0.3.0 M5. Depends on CC-218. | process/DX | 2026-05-21 | — | P3 | design |
 | CC-212 | ⏸ deferred | **[CC-207 advise follow-up]** `make_junction_windows()` 仍用 inline PowerShell 字串傳路徑（`-Path '$win_src' -Target '$win_dst'`），但 `remove_junction_windows()` 已改用 `PM_DISPATCH_RM_DST` env var；兩者路徑傳遞慣例不一致，且 inline 字串在路徑含單引號時會壞掉。修正：改用 `PM_DISPATCH_MAKE_SRC` / `PM_DISPATCH_MAKE_DST` env var 傳入，統一 PowerShell 邊界慣例。Raised by critic + architecture-reviewer in gate-20260521-115634 as [medium] advise. | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
@@ -85,8 +85,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
-| CC-281 | 🟡 deferred | **[process/docs: split BACKLOG index into Active and Terminal sub-sections]** Insert a comment delimiter (`<!-- active items above \| terminal items below -->`) between active/deferred rows and terminal (closed/dropped/superseded) rows in the index table. Active rows float to top, improving PM agent scan efficiency. Use comment delimiter (not H2 header) to preserve PM agent index parsing contract (pm-schema §6.1). Deferred until CC-280 (archive run) completes to minimize churn. | process/docs | 2026-05-29 | — | P3 | hygiene |
 | CC-282 | 🟡 deferred | **[DX: pmctl backlog sync — SQLite derived query layer]** Add `pmctl backlog sync` subcommand that imports BACKLOG.md into a local SQLite database (backlog.db, gitignored). Enables fast indexed queries (`pmctl backlog view --status active`, `--area ops`, `--milestone M3`). SQLite is a derived store — BACKLOG.md remains the human-editable source of truth. Depends on CC-215 pmctl core landing (M3/M4). | DX/product | 2026-05-29 | — | P3 | — |
+| CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
+| CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 
 ---
 
@@ -531,7 +532,9 @@ document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
 
 **Priority**: P3 — tiny fix, fold into next docs PR.
 
-## CC-215 — pmctl — core CLI entrypoint（active）
+## CC-215 — pmctl — core CLI entrypoint（⚠️ partial）
+
+**Status (2026-05-30)**: `cli/pmctl` exists as a thin spine. **Shipped**: `adapter generate <claude|codex|antigravity|opencode>` (PR #171, real, via `scripts/lib/pmctl-adapter.sh`) + `dispatch run` (stub — prints a trace line, runtime not wired). **Open**: `task create/claim/dispatch/status/review`, `decision add`, `backlog sync/view`, `trace tail`, `guard check`, `safe-bash` — none implemented. The M2-extracted libs (executor-router CC-200, handover-validate CC-202, hook-framework CC-204) are NOT yet wired into pmctl subcommands. This remainder is not currently placed in any milestone (M3 table omits it); needs a v0.3.0-vs-v0.4.0 scope decision. Per the 2026-05-30 Phase-2 discussion, the recommended first real subcommand is `pmctl backlog` (the maintainer's active pain), building on the working-set contract ([[CC-284]]).
 
 **Problem**: pm-dispatch has no language-agnostic runtime binary. All orchestration logic is
 reached through Claude-specific hooks and commands, preventing non-Claude CLIs from accessing
@@ -1225,19 +1228,6 @@ This makes directory creation the mutex.
 
 **Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
 
-## CC-281 — [process/docs] split BACKLOG index into Active and Terminal sub-sections 🟡 deferred
-
-**Problem**: The index table mixes 19 active/deferred rows with 99+ terminal rows. PM agents scanning the index for "what's next" must parse the entire table. Readers and agents both benefit from active rows floating to the top.
-
-**Why**: Deferred until CC-280 (archive run) completes. Doing the split before archiving creates a larger diff and more merge risk.
-
-**Requirement**:
-1. Insert `<!-- active items above | terminal items below -->` comment between the last active/deferred row and the first terminal (✅/🚫/superseded) row.
-2. Do NOT use an H2 header as the delimiter — it would break PM agent index parsing (pm-schema §6.1 assumes a single contiguous index table).
-3. Update pm-schema §6.1 comment to note the comment delimiter convention.
-
-**Cross-link**: `[[CC-280]]` (prerequisite), `[[CC-278]]` (CI enforcement keeps the split honest).
-
 ## CC-282 — [DX/product] pmctl backlog sync — SQLite derived query layer 🟡 deferred
 
 **Problem**: Querying BACKLOG.md requires awk/grep. No fast indexed access exists for "show all active items in area:ops" or "list all M3 items". The current workaround is manual grep or reading the full index.
@@ -1251,4 +1241,28 @@ This makes directory creation the mutex.
 4. `pmctl backlog sync` is idempotent and can be called by `archive-closed-backlog.sh` post-run.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-279]]` (archive script).
+
+## CC-285 — [ops] archiver safe-drop: don't drop a terminal row whose body exists nowhere 🟡 deferred
+
+**Problem**: `scripts/archive-closed-backlog.sh` drops a terminal index row (`✅ closed` / `🚫 dropped`) even when no body section accompanies it in BACKLOG.md and none already exists in BACKLOG-ARCHIVE.md. It emits a per-id stderr warning, but the row metadata is removed (recoverable only via git).
+
+**Why**: In a valid backlog this cannot happen — `pm/scripts/validate.sh` enforces an index↔body 1:1 invariant, so a terminal row always has a body to archive. It only arises from malformed/partial state. Recorded as an accepted tradeoff in DECISIONS 2026-05-30. This ticket tracks the defense-in-depth improvement if that invariant ever weakens.
+
+**Requirement**:
+1. When a terminal row's body is found in neither BACKLOG.md (this run) nor BACKLOG-ARCHIVE.md, do NOT drop the row; keep it and emit a loud warning for manual reconciliation.
+2. Regression fixture: terminal row + no body anywhere → row preserved + warning (not removed).
+
+**Cross-link**: `[[CC-284]]` (working-set contract / archiver), pr-gate finding on PR #186.
+
+## CC-286 — [arch] pmctl: prefix-generic next-id derivation 🟡 deferred
+
+**Problem**: `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` for the `CC-` prefix only — it emits `CC-NNN` and scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max `CC-` id. Other-prefix repos (JS-, PA-) are not handled; a generic next-id that only read the working-set index would also reuse archived IDs (the §2.2 hazard fixed CC-only in CC-284).
+
+**Why**: pm-prep-snapshot is pm-dispatch-specific by design, so its CC-coupling is currently consistent (not a regression). But the cross-repo next-id belongs in `pmctl`, deriving the prefix from the target repo and scanning both the working set and the archive. Surfaced by pr-gate critic + architecture-reviewer on PR #186.
+
+**Requirement**:
+1. `pmctl` next-id: derive prefix from the repo's existing IDs (or config); compute max across BACKLOG.md + BACKLOG-ARCHIVE.md; `+1`.
+2. Retire pm-prep-snapshot's CC-hardcoded derivation once pmctl provides next-id.
+
+**Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-282]]` (pmctl backlog), `[[CC-284]]` (working-set + the CC-only fix this generalizes).
 
