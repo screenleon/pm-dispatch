@@ -275,6 +275,29 @@ handover_validate_skip_git_check() {
   esac
 }
 
+handover_validate_isolation_level() {
+  local value=${1-}
+  handover_validate_metadata_value isolation_level "$value" || return 1
+
+  # Load valid enum from core/policy/isolation-level.yaml (source of truth).
+  # This library lives at scripts/lib/; the policy file is two levels up.
+  local _lib_dir
+  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local _policy="${_lib_dir}/../../core/policy/isolation-level.yaml"
+
+  if [[ -f "$_policy" ]]; then
+    if ! awk -v val="$value" '/^values:/{f=1;next} f && /^  - /{sub(/^  - /,""); if($0==val){found=1;exit}} END{exit !found}' "$_policy" 2>/dev/null; then
+      handover_reject isolation_level "unknown isolation_level value; check core/policy/isolation-level.yaml for valid values" || return 1
+    fi
+  else
+    # Fallback: hardcoded list (kept in sync with isolation-level.yaml)
+    case "$value" in
+      none|read-only|workspace-write|workspace-network|sandboxed) return 0 ;;
+      *) handover_reject isolation_level "unknown isolation_level value; expected one of: none read-only workspace-write workspace-network sandboxed" ;;
+    esac
+  fi
+}
+
 handover_validate_fallback_allowed() {
   local value=${1-}
 
@@ -288,10 +311,17 @@ handover_validate_fallback_allowed() {
 handover_validate_required_fields() {
   local metadata=${1-}
   local field
-
-  for field in handover_version executor dispatch_route working_dir brief_file sandbox approval timeout model skip_git_check fallback_allowed; do
+  for field in handover_version executor dispatch_route working_dir brief_file timeout model fallback_allowed; do
     handover_get_field "$metadata" "$field" >/dev/null || return 1
   done
+  # Accept isolation_level (new canonical form) OR the legacy native trio
+  local _iso_check
+  _iso_check="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_check=""
+  if [[ -z "$_iso_check" ]]; then
+    for field in sandbox approval skip_git_check; do
+      handover_get_field "$metadata" "$field" >/dev/null || return 1
+    done
+  fi
 }
 
 handover_validate_all_metadata() {
@@ -310,16 +340,44 @@ handover_validate_all_metadata() {
   handover_validate_working_dir "$value" || return 1
   value="$(handover_get_field "$metadata" brief_file)" || return 1
   handover_validate_brief_file "$value" || return 1
-  value="$(handover_get_field "$metadata" sandbox)" || return 1
-  handover_validate_sandbox "$value" || return 1
-  value="$(handover_get_field "$metadata" approval)" || return 1
-  handover_validate_approval "$value" || return 1
+
+  # Validate isolation_level (canonical) OR legacy native trio (backward compat).
+  # Mixing both is rejected to enforce clear migration path.
+  local _iso_val
+  _iso_val="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_val=""
+  if [[ -n "$_iso_val" ]]; then
+    # Reject if any legacy field is also present alongside isolation_level
+    local _lf _legacy_val
+    for _lf in sandbox approval skip_git_check; do
+      _legacy_val="$(handover_get_field "$metadata" "$_lf" 2>/dev/null)" || _legacy_val=""
+      if [[ -n "$_legacy_val" ]]; then
+        handover_reject isolation_level "cannot mix isolation_level with legacy sandbox/approval/skip_git_check fields; use isolation_level only" || return 1
+      fi
+    done
+    handover_validate_isolation_level "$_iso_val" || return 1
+    # isolation_level:none maps to danger-full-access in the Codex adapter.
+    # The Bash dispatch route does not support full-access; reject it here so
+    # PM-authored briefs cannot reach danger-full-access through unattended dispatch.
+    if [[ "$_iso_val" == "none" ]]; then
+      local _route
+      _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
+      if [[ "$_route" == "main_thread_bash_background" ]]; then
+        handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
+      fi
+    fi
+  else
+    value="$(handover_get_field "$metadata" sandbox)" || return 1
+    handover_validate_sandbox "$value" || return 1
+    value="$(handover_get_field "$metadata" approval)" || return 1
+    handover_validate_approval "$value" || return 1
+    value="$(handover_get_field "$metadata" skip_git_check)" || return 1
+    handover_validate_skip_git_check "$value" || return 1
+  fi
+
   value="$(handover_get_field "$metadata" timeout)" || return 1
   handover_validate_timeout "$value" || return 1
   value="$(handover_get_field "$metadata" model)" || return 1
   handover_validate_model "$value" || return 1
-  value="$(handover_get_field "$metadata" skip_git_check)" || return 1
-  handover_validate_skip_git_check "$value" || return 1
   value="$(handover_get_field "$metadata" fallback_allowed)" || return 1
   handover_validate_fallback_allowed "$value"
 }
@@ -363,6 +421,7 @@ export -f handover_validate_approval
 export -f handover_validate_timeout
 export -f handover_validate_model
 export -f handover_validate_skip_git_check
+export -f handover_validate_isolation_level
 export -f handover_validate_fallback_allowed
 export -f handover_validate_required_fields
 export -f handover_validate_all_metadata

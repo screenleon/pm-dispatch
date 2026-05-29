@@ -98,7 +98,7 @@ Record the split decision in project memory and surface it to the user. Never le
 
 ## Executor selection
 
-PM writes briefs against the abstract contract in `docs/executor-contract.md`, while still using this file as the concrete schema for brief fields. Two executor profiles are implemented today: `codex` (full profile; runs briefs via the Codex CLI) and `claude` (minimal profile; runs briefs via the `claude-executor` subagent using main-thread Claude tools). The default is set at install time via `./install.sh --profile minimal|full` and auto-detected from `command -v codex` when unset. PM may override per-brief by setting `executor:` in the `dispatch_handover_v1` block. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) remain required by the validator for schema stability and should be set to canonical no-op values (`workspace-write`, `never`, `false`) when targeting `claude`.
+PM writes briefs against the abstract contract in `docs/executor-contract.md`, while still using this file as the concrete schema for brief fields. Two executor profiles are implemented today: `codex` (full profile; runs briefs via the Codex CLI) and `claude` (minimal profile; runs briefs via the `claude-executor` subagent using main-thread Claude tools). The default is set at install time via `./install.sh --profile minimal|full` and auto-detected from `command -v codex` when unset. PM may override per-brief by setting `executor:` in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags at dispatch time. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted by the validator for backward compatibility with pre-M3 briefs but must not appear in new PM-authored briefs.
 
 ## Writing a brief for codex-executor
 
@@ -139,11 +139,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}
 brief_file: /tmp/brief-<repo>-<slug>-<utc-ts>-<rand>.md
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 1200
 model: default
-skip_git_check: false
 fallback_allowed: true
 ---
 working_dir: ${PM_DISPATCH_REPO}

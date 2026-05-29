@@ -178,7 +178,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-272 | 🟡 deferred | **[process: brief template — omit commit block; document main-thread commit delegation]** 每個 brief 末尾的 `git add + git commit` 均被 `hook-codex-bash-guard` 擋住，executor 回報 `status: partial`（即使程式碼正確），主線程每次都必須手動 commit。推薦 Option A：從 brief template 移除 commit block，在 `docs/dispatch-brief.md` 明文「commit 永遠委派主線程」。Option B：hook allowlist 加入無破壞性 git add/commit。 | process/DX | 2026-05-28 | — | P2 | — |
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
-| CC-275 | 🔵 active | **[bug: pr-gate.sh exits 127 after result write — em dash bytes misinterpreted as command]** Full-tier gate 完成後 exit 127（`$'\200\224': command not found`）；result file 正確，只有 exit code 錯誤。em dash（U+2014）在某些 bash locale 下後兩 bytes 被解析成命令。Fix：把所有 `—` 換成 ASCII `--`。 | gate | 2026-05-29 | — | P1 | — |
+| CC-275 | ✅ closed 2026-05-29 | **[bug: pr-gate.sh exits 127 after result write — em dash bytes misinterpreted as command]** Full-tier gate 完成後 exit 127（`$'\200\224': command not found`）；result file 正確，只有 exit code 錯誤。em dash（U+2014）在某些 bash locale 下後兩 bytes 被解析成命令。Fix：把所有 `—` 換成 ASCII `--`。 | gate | 2026-05-29 | pr:#179 | P1 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 
 ---
@@ -2333,7 +2333,7 @@ This makes directory creation the mutex.
 
 ---
 
-## CC-275 — bug: pr-gate.sh exits 127 after result write due to em dash bytes misinterpreted as command
+## CC-275 — bug: pr-gate.sh exits 127 after result write due to em dash bytes misinterpreted as command ✅ 2026-05-29
 
 **Problem**: After a successful full-tier gate run (result file written correctly), `scripts/pr-gate.sh` exits with code 127:
 ```
@@ -2355,6 +2355,8 @@ This makes directory creation the mutex.
 **area**: gate
 **Raised by**: issue:#176 (2026-05-29)
 **Priority**: P1 — reliability bug; wrong exit code breaks CI and main-thread gate loop detection.
+
+**See**: pr:#179
 
 ---
 

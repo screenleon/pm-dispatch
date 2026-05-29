@@ -90,7 +90,14 @@ yaml_quote() {
 }
 
 SNAPSHOT_TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-REPO_NAME="$(basename "$REPO_ROOT")"
+# Derive repo name from git remote URL so worktrees get the correct name.
+_remote_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+if [[ -n "$_remote_url" ]]; then
+  REPO_NAME="${_remote_url##*/}"
+  REPO_NAME="${REPO_NAME%.git}"
+else
+  REPO_NAME="$(basename "$REPO_ROOT")"
+fi
 
 CURRENT_BRANCH_NAME="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"

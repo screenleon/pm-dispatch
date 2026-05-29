@@ -8,12 +8,27 @@
     "dispatch_route",
     "working_dir",
     "brief_file",
-    "sandbox",
-    "approval",
     "timeout",
     "model",
-    "skip_git_check",
     "fallback_allowed"
+  ],
+  "oneOf": [
+    {
+      "required": ["isolation_level"],
+      "not": {
+        "anyOf": [
+          {"required": ["sandbox"]},
+          {"required": ["approval"]},
+          {"required": ["skip_git_check"]}
+        ]
+      },
+      "description": "Canonical form: isolation_level present, legacy trio absent."
+    },
+    {
+      "required": ["sandbox", "approval", "skip_git_check"],
+      "not": {"required": ["isolation_level"]},
+      "description": "Legacy form (backward compat): legacy trio present, isolation_level absent."
+    }
   ],
   "properties": {
     "handover_version": {
@@ -35,12 +50,17 @@
       "type": "string",
       "description": "Absolute path; main thread writes via mktemp -p /tmp brief-<slug>-XXXXXX.md mode 0600."
     },
+    "isolation_level": {
+      "enum": ["none", "read-only", "workspace-write", "workspace-network", "sandboxed"],
+      "description": "Canonical isolation intent. Adapter layer translates to executor-native flags. Cannot be mixed with legacy sandbox/approval/skip_git_check fields. Source of truth: core/policy/isolation-level.yaml. isolation_level:none is not accepted on main_thread_bash_background route (maps to danger-full-access)."
+    },
     "sandbox": {
-      "enum": ["workspace-write", "read-only", "danger-full-access"]
+      "enum": ["workspace-write", "read-only", "danger-full-access"],
+      "description": "Legacy field, accepted when isolation_level is absent (backward compat for pre-M3 briefs). New briefs must use isolation_level instead."
     },
     "approval": {
       "enum": ["never", "on-request", "on-failure"],
-      "description": "Validator rejects values other than `never` for the bash route — see bash-route-approval-never feedback memory."
+      "description": "Legacy field, accepted when isolation_level is absent. Validator rejects values other than never for the bash route."
     },
     "timeout": {
       "type": "integer",
@@ -53,7 +73,7 @@
     },
     "skip_git_check": {
       "type": "boolean",
-      "description": "Validator hard-rejects true on the bash route — fallback to Agent(codex-executor) for that case."
+      "description": "Legacy field, accepted when isolation_level is absent. Validator hard-rejects true on the bash route."
     },
     "fallback_allowed": {
       "type": "boolean"
