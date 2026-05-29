@@ -7,6 +7,33 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-05-30: pmctl-spine-scope-and-host-independent-executor
+
+### Context
+
+pmctl was a ~1.2KB stub (CC-215 ⚠️ partial): only `adapter generate` + a `dispatch run` stub shipped. The maintainer's goal: a maintainable architecture with the upper (adapter) and lower (runtime) layers separated, such that switching between claude and codex changes **only the executor** — all other logic is shared. A second requirement surfaced: the current claude executor relies on `Agent()` (only available when Claude is the main thread), so codex-as-PM cannot dispatch claude-as-executor — the 4-cell PM×executor matrix is broken.
+
+### Decision
+
+**pmctl enters v0.3.0 as the runtime spine**, scoped to three load-bearing subcommands; the rest defer to v0.4.0.
+
+1. **Host-independent executor**: the canonical executor invocation is a **CLI subprocess** (`claude --print`, `codex exec`), driven uniformly by `pmctl dispatch run --adapter <X>`, independent of which tool is the PM/host. `Agent()`-spawn (`agents/claude-executor.md`) is demoted to a same-host optimization for when Claude is the PM. This makes all 4 PM×executor cells work.
+2. **Approach B (thin adapters)**: pmctl OWNS the shared dispatch flow (brief → guard → route → invoke → read output contract → post-verify), composing the M2-extracted libs. Adapters (`adapters/{claude,codex}/dispatch.sh`) are thin: executor invocation + `.agent-trace/latest.last` glue only. The 475-line `codex-dispatch.sh` is slimmed into `adapters/codex/dispatch.sh`. Rejected approach A (pmctl wraps the fat script) because the claude adapter would re-implement shared logic → drift, breaking "only the executor differs".
+3. **v0.3.0 spine = `pmctl backlog` (CC-287) + `pmctl guard check` (CC-288) + `pmctl dispatch run` (CC-289)** + the two thin adapters (CC-289 codex, CC-266 claude) + the layer-boundary test (CC-233). These three surfaces = PM + security + execution.
+4. **Milestone restructure**: pmctl spine inserted as M3 (runtime sits below adapters architecturally); the old "Claude adapter" M3 → M4 (Claude command/skill surface: CC-059, CC-061); concept-absorption M4 → M5; spike+release M5 → M6.
+
+### Alternatives considered
+
+- **Approach A** (pmctl wraps fat codex-dispatch.sh): faster, but adapters stay fat and drift — rejected (fails the maintainability/separation goal).
+- **Full pmctl in v0.3.0** (task/decision/trace/validate/safe-bash too): too large for a single maintainer; those are state-ops/niceties, not load-bearing for the host-independence thesis — deferred to v0.4.0.
+- **Keep claude-executor `Agent()`-only**: leaves codex-as-PM → claude-executor permanently broken — rejected.
+
+### Constraints introduced
+
+- Guard trigger is necessarily per-adapter (Claude PreToolUse auto-hook vs explicit `pmctl guard check`); only the guard **logic** is shared. Accepted as inherent CLI-capability difference.
+- CC-266 must begin with a Phase-1 feasibility check: headless `claude -p` must satisfy the executor output contract before full implementation; if it cannot, the claude-executor mechanism needs rethinking.
+- `scripts/test-layer-boundaries.sh` (CC-233) is the executable enforcer that keeps thin adapters from re-absorbing shared logic.
+
 ## 2026-05-30: backlog-working-set-contract
 
 Closes: BACKLOG.md#CC-284
