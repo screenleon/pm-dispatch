@@ -718,6 +718,56 @@ EOF
   pass "$name"
 }
 
+case_orphan_terminal_row_warns() {
+  # A terminal index row with NO matching body section: the row is dropped and
+  # a warning is emitted to stderr so the operator can reconcile (no silent
+  # data loss). The active ticket is preserved.
+  local name="archive-orphan-terminal-row-warns"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/orphan-row"
+  setup_repo "$repo"
+  write_archive "$repo"
+  cat > "$repo/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-090 | ✅ closed 2026-01-01 | orphan row, no body | ops | 2026-01-01 | pr:#3 | — | — |
+| CC-091 | 🔵 active | live | ops | 2026-01-02 | — | — | — |
+
+## CC-091 — live 🔵 active
+
+**Problem**: active body
+
+EOF
+
+  local stderr_out="" rc=0
+  set +e
+  stderr_out="$(run_archiver "$repo" 2>&1 >/dev/null)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "script exited $rc: $stderr_out"
+    return
+  fi
+  if [[ "$stderr_out" != *"CC-090"*"terminal index row dropped"* ]]; then
+    fail "$name" "expected orphan-row warning for CC-090, got: $stderr_out"
+    return
+  fi
+  if grep -Eq '^\| CC-090 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "orphan terminal row CC-090 not dropped"
+    return
+  fi
+  if ! grep -Eq '^\| CC-091 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "active row CC-091 was removed"
+    return
+  fi
+
+  pass "$name"
+}
+
 case_happy_path
 case_idempotency
 case_dry_run
@@ -730,5 +780,6 @@ case_cc283_sentinel_regression
 case_soft_close_done_kept
 case_legacy_stub_sweep
 case_recovery_partial_write
+case_orphan_terminal_row_warns
 
 th_summary

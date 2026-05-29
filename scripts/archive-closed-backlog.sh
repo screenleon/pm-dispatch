@@ -67,11 +67,14 @@ function id_from_header(line,    s) {
 }
 function flush_section(    i) {
   if (cur_terminal) {
-    if (!dry_run && !(section_hdr in known_archived)) {
-      printf "%s\n", section_hdr >> detail_append
-      for (i = 1; i <= body_n; i++) printf "%s\n", body[i] >> detail_append
+    body_seen_for[cur_id] = 1
+    if (!(section_hdr in known_archived)) {
+      newly_archived++
+      if (!dry_run) {
+        printf "%s\n", section_hdr >> detail_append
+        for (i = 1; i <= body_n; i++) printf "%s\n", body[i] >> detail_append
+      }
     }
-    archived_body[cur_id] = 1
     # dropped from BACKLOG (no stub left behind)
   } else {
     print section_hdr
@@ -133,14 +136,22 @@ in_section {
 
 END {
   if (in_section) flush_section()
-  printf "%d\n", removed_rows > count_file
+  # Observability: a terminal index row with no body section in BACKLOG is just
+  # a row drop — flag it so operators can reconcile (its body should already be
+  # in the archive or in git history; a true orphan would otherwise be silent).
+  for (id in terminal_id) {
+    if (!(id in body_seen_for)) {
+      printf "warning: %s — terminal index row dropped with no matching body section in BACKLOG.md (body already archived or orphaned)\n", id > "/dev/stderr"
+    }
+  }
+  printf "%d %d\n", removed_rows, newly_archived > count_file
 }
 ' "$ARCHIVE" "$BACKLOG" > "$TMP_BACKLOG"
 
-archived_count="$(cat "$TMP_COUNT")"
+read -r archived_count newly_count < "$TMP_COUNT"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  printf 'Would archive %d ticket(s)\n' "$archived_count"
+  printf 'Would archive %d ticket(s) (%d body section(s) new to archive)\n' "$archived_count" "$newly_count"
   exit 0
 fi
 
@@ -156,4 +167,4 @@ if [[ "$archived_count" -gt 0 ]]; then
   mv "$TMP_BACKLOG" "$BACKLOG"
 fi
 
-printf 'Archived %d ticket(s)\n' "$archived_count"
+printf 'Archived %d ticket(s) (%d body section(s) new to archive)\n' "$archived_count" "$newly_count"
