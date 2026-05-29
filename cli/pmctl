@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -26,6 +26,24 @@ case "$cmd/$sub" in
       pmctl_die "adapter generate unavailable"
     fi
     pmctl_adapter_generate "$@"
+    ;;
+  backlog/view)
+    if ! declare -F pmctl_backlog_view >/dev/null; then
+      pmctl_die "backlog view unavailable"
+    fi
+    pmctl_backlog_view "$REPO_ROOT/BACKLOG.md" "$@"
+    ;;
+  backlog/lint)
+    if ! declare -F pmctl_backlog_lint >/dev/null; then
+      pmctl_die "backlog lint unavailable"
+    fi
+    pmctl_backlog_lint "$REPO_ROOT"
+    ;;
+  backlog/archive)
+    if ! declare -F pmctl_backlog_archive >/dev/null; then
+      pmctl_die "backlog archive unavailable"
+    fi
+    pmctl_backlog_archive "$REPO_ROOT" "$@"
     ;;
   dispatch/run)
     # Stub: full runtime dispatch lands in a later CC-215 slice.
