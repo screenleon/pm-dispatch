@@ -180,12 +180,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
 | CC-275 | ✅ closed 2026-05-29 | **[bug: pr-gate.sh exits 127 after result write — em dash bytes misinterpreted as command]** Full-tier gate 完成後 exit 127（`$'\200\224': command not found`）；result file 正確，只有 exit code 錯誤。em dash（U+2014）在某些 bash locale 下後兩 bytes 被解析成命令。Fix：把所有 `—` 換成 ASCII `--`。 | gate | 2026-05-29 | pr:#179 | P1 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
-| CC-277 | 🔵 active | **[backlog hygiene: fix CC-228 E-codes — reach validate.sh exit 0 on main]** Correct all pre-existing validator errors in BACKLOG.md: invalid area values, bare CC-NNN refs (add valid prefix), stale active status rows (CC-200/202/204/262/275 closed but still active). Prerequisite for wiring validate.sh into CI. | process | 2026-05-29 | — | P1 | hygiene |
-| CC-278 | 🔵 active | **[ops: wire validate.sh into CI lint.yml — warn-only then enforce]** Add a lint.yml job that runs `pm/scripts/validate.sh BACKLOG.md`; Phase 1: warn-only (`\|\| true`) with an error-count summary step; Phase 2: hard-fail after CC-277 lands and validator exits 0 on main. | ops/test | 2026-05-29 | — | P2 | hygiene |
-| CC-279 | 🔵 active | **[ops: write scripts/archive-closed-backlog.sh — standalone bloat-policy executor]** Implement an idempotent shell script that applies pm-schema §4 bloat policy: find all ✅ closed / 🚫 dropped body sections in BACKLOG.md, append compressed entries to BACKLOG-ARCHIVE.md, replace body with `**See**: BACKLOG-ARCHIVE.md` stub, update archive header timestamp. No pmctl dependency — pmctl will call this script when it lands. | ops/process | 2026-05-29 | — | P2 | hygiene |
-| CC-280 | 🟡 deferred | **[process: run archive-closed-backlog.sh to collapse current bloat]** Execute CC-279 script against the current repo state. BACKLOG.md currently exceeds the 500-line policy threshold and >50% of rows are terminal — both bloat-policy triggers are active. Deferred until CC-279 script exists. | process | 2026-05-29 | — | P2 | hygiene |
+| CC-277 | ✅ closed 2026-05-30 | **[backlog hygiene: fix CC-228 E-codes — reach validate.sh exit 0 on main]** Correct all pre-existing validator errors in BACKLOG.md: invalid area values, bare CC-NNN refs (add valid prefix), stale active status rows (CC-200/202/204/262/275 closed but still active). Prerequisite for wiring validate.sh into CI. | process | 2026-05-29 | pr:#183 | P1 | hygiene |
+| CC-278 | ✅ closed 2026-05-30 | **[ops: wire validate.sh into CI lint.yml — warn-only then enforce]** Add a lint.yml job that runs `pm/scripts/validate.sh BACKLOG.md`; Phase 1: warn-only (`\|\| true`) with an error-count summary step; Phase 2: hard-fail after CC-277 lands and validator exits 0 on main. | ops/test | 2026-05-29 | pr:#184 | P2 | hygiene |
+| CC-279 | ✅ closed 2026-05-30 | **[ops: write scripts/archive-closed-backlog.sh — standalone bloat-policy executor]** Implement an idempotent shell script that applies pm-schema §4 bloat policy: find all ✅ closed / 🚫 dropped body sections in BACKLOG.md, append compressed entries to BACKLOG-ARCHIVE.md, replace body with `**See**: BACKLOG-ARCHIVE.md` stub, update archive header timestamp. No pmctl dependency — pmctl will call this script when it lands. | ops/process | 2026-05-29 | pr:#184 | P2 | hygiene |
+| CC-280 | ✅ closed 2026-05-30 | **[process: run archive-closed-backlog.sh to collapse current bloat]** Execute CC-279 script against the current repo state. BACKLOG.md currently exceeds the 500-line policy threshold and >50% of rows are terminal — both bloat-policy triggers are active. Deferred until CC-279 script exists. | process | 2026-05-29 | pr:#185 | P2 | hygiene |
 | CC-281 | 🟡 deferred | **[process/docs: split BACKLOG index into Active and Terminal sub-sections]** Insert a comment delimiter (`<!-- active items above \| terminal items below -->`) between active/deferred rows and terminal (closed/dropped/superseded) rows in the index table. Active rows float to top, improving PM agent scan efficiency. Use comment delimiter (not H2 header) to preserve PM agent index parsing contract (pm-schema §6.1). Deferred until CC-280 (archive run) completes to minimize churn. | process/docs | 2026-05-29 | — | P3 | hygiene |
 | CC-282 | 🟡 deferred | **[DX: pmctl backlog sync — SQLite derived query layer]** Add `pmctl backlog sync` subcommand that imports BACKLOG.md into a local SQLite database (backlog.db, gitignored). Enables fast indexed queries (`pmctl backlog view --status active`, `--area ops`, `--milestone M3`). SQLite is a derived store — BACKLOG.md remains the human-editable source of truth. Depends on CC-215 pmctl core landing (M3/M4). | DX/product | 2026-05-29 | — | P3 | — |
+| CC-283 | 🟡 deferred | **[bug: archive-closed-backlog.sh sentinel false-negative]** The archiver's `has_see` guard scans a section body for `**See**:.*BACKLOG-ARCHIVE` to decide whether it is already stubbed. Any closed ticket whose body *quotes* that sentinel (e.g. CC-279, which documents the stubbing behavior) is mis-read as already-archived and silently skipped — it can never be collapsed, and a closed-but-unstubbed section then trips `E-CLOSURE-NO-SEE`. Surfaced during CC-280 (CC-279 had to be archived by hand). Fix: anchor stub detection to the section's first content line / exact stub match, not a substring-anywhere scan. | ops | 2026-05-30 | — | P3 | hygiene |
 
 ---
 
@@ -1691,30 +1692,7 @@ This makes directory creation the mutex.
 
 ## CC-275 — bug: pr-gate.sh exits 127 after result write due to em dash bytes misinterpreted as command ✅ 2026-05-29
 
-**Problem**: After a successful full-tier gate run (result file written correctly), `scripts/pr-gate.sh` exits with code 127:
-```
-/path/to/scripts/pr-gate.sh: line 1054: $'\200\224': command not found
-```
-`\200\224` (0x80 0x94) are the last two bytes of the UTF-8 em dash sequence (E2 80 94). Bash misparses the multi-byte UTF-8 sequence in certain shell versions/locales, treating the trailing bytes as a standalone command token. The gate result and verdict are correct — only the exit code is wrong. This causes any automated workflow (CI, main-thread exit-code check) to see a false failure.
-
-**Affected lines** (approx, post-PR-#175):
-- `scripts/pr-gate.sh` around line 1054: `printf 'Error: reviewer artifact(s) modified after review phase — synthesis-side tampering detected: %s\n'`
-- Other em dash occurrences in the script
-
-**Fix**: Replace all em dash (`—`, U+2014) characters in shell `printf` format strings and heredocs within `scripts/pr-gate.sh` with ASCII equivalents (e.g., `--` or `: `). No behaviour change.
-
-**Acceptance**:
-1. `grep -c $'\xe2\x80\x94' scripts/pr-gate.sh` → 0 (no em dashes remaining)
-2. `bash scripts/run-all-tests.sh` → exit 0
-3. Full gate run exits 0 on GO result and exits 1 on NO-GO result (no exit 127)
-
-**area**: gate
-**Raised by**: issue:#176 (2026-05-29)
-**Priority**: P1 — reliability bug; wrong exit code breaks CI and main-thread gate loop detection.
-
-**See**: pr:#179
-
----
+**See**: BACKLOG-ARCHIVE.md
 
 ## CC-276 — feat: persistent gate override declarations to reduce re-statement across rounds
 
@@ -1789,62 +1767,21 @@ This makes directory creation the mutex.
 
 **Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
 
-## CC-277 — [backlog hygiene] fix CC-228 E-codes — reach validate.sh exit 0 🔵 active
+## CC-277 — [backlog hygiene] fix CC-228 E-codes — reach validate.sh exit 0 ✅ 2026-05-30
 
-**Problem**: `pm/scripts/validate.sh BACKLOG.md` exits 1 on `main` with ~20 pre-existing E-codes:
-- E-AREA-ENUM: rows using invalid area values or too many area tokens
-- E-REFS-PREFIX: rows with bare `CC-NNN` refs instead of valid prefixed form (`decisions:`, `roadmap:`, `commit:`, `feedback:`)
-- Stale active rows: CC-200/CC-202/CC-204 (closed via PR #170) still show `🔵 active`
+**See**: BACKLOG-ARCHIVE.md
 
-**Why**: Without a green validator, CI enforcement (CC-278) cannot be enabled. Errors accumulate silently.
+## CC-278 — [ops] validate.sh in CI — warn-only then enforce ✅ 2026-05-30
 
-**Requirement**:
-1. For each E-AREA-ENUM row: rewrite area cell to use only valid enum tokens (max 2 tokens separated by `/`).
-2. For each E-REFS-PREFIX row: change bare `CC-NNN` to `roadmap:CC-NNN` or `decisions:CC-NNN` as appropriate.
-3. For stale active rows: update status to `✅ closed YYYY-MM-DD` with correct date, add PR ref.
-4. After all fixes: `bash pm/scripts/validate.sh BACKLOG.md` exits 0 (no E-codes remain).
+**See**: BACKLOG-ARCHIVE.md
 
-**Cross-link**: `[[CC-228]]` (parent), `[[CC-278]]` (unblocked by this).
+## CC-279 — [ops] scripts/archive-closed-backlog.sh — idempotent bloat-policy executor ✅ 2026-05-30
 
-## CC-278 — [ops] validate.sh in CI — warn-only then enforce 🔵 active
+**See**: BACKLOG-ARCHIVE.md
 
-**Problem**: `pm/scripts/validate.sh` encodes real BACKLOG invariants (index↔body parity, area enum, ref prefix, date format) but is not wired into `.github/workflows/lint.yml`. Errors accumulate on every PR without any CI signal.
+## CC-280 — [process] run archive-closed-backlog.sh to collapse current BACKLOG bloat ✅ 2026-05-30
 
-**Why**: Without CI enforcement, all other BACKLOG hygiene improvements rot immediately after they are applied. CC-277 fixes the current debt; CC-278 ensures debt cannot re-accumulate.
-
-**Requirement**:
-1. Phase 1 (merged with or after CC-277): Add a `lint-backlog` job to `lint.yml` that runs `bash pm/scripts/validate.sh BACKLOG.md || true`; include a step that counts and prints error lines so CI output is informative even when the job passes.
-2. Phase 2 (after CC-277 exits 0 on main): Remove `|| true`; job hard-fails on any E-code.
-3. No new CLI flag in validate.sh needed — use `|| true` at the shell level for Phase 1.
-
-**Cross-link**: `[[CC-277]]` (prerequisite for Phase 2), `[[CC-228]]`.
-
-## CC-279 — [ops] scripts/archive-closed-backlog.sh — idempotent bloat-policy executor 🔵 active
-
-**Problem**: BACKLOG.md archiving (pm-schema §4 bloat policy: >500 lines OR >50% terminal items) is a fully manual operation. The 2026-05-29 archiving run (CC-049 Tier 2) required an ad-hoc Python script with no permanent home. There is no repeatable tool.
-
-**Why**: Without a persistent, tested script, archiving will be deferred until the file becomes unmanageable again. The script is independent of pmctl (CC-215) — pmctl will call it as a subcommand when that CLI lands, not replace it.
-
-**Requirement**:
-1. `scripts/archive-closed-backlog.sh` — bash script, idempotent, accepts optional `--dry-run` flag.
-2. Finds all `## CC-NNN — ... ✅` and `## CC-NNN — ... 🚫` body sections in BACKLOG.md that are NOT already stubs.
-3. Appends each to BACKLOG-ARCHIVE.md (full body content, preserving header format).
-4. Replaces each body in BACKLOG.md with `**See**: BACKLOG-ARCHIVE.md` stub.
-5. Updates `Last archived: YYYY-MM-DD` header in BACKLOG-ARCHIVE.md.
-6. Exits 0; prints count of archived sections.
-7. Regression test in `scripts/test-archive-closed-backlog.sh` covering: happy path, idempotency (running twice produces no double-archive), dry-run output.
-
-**Cross-link**: `[[CC-280]]` (first operational run), `[[CC-215]]` (pmctl will wrap this).
-
-## CC-280 — [process] run archive-closed-backlog.sh to collapse current BACKLOG bloat 🟡 deferred
-
-**Problem**: BACKLOG.md currently exceeds the pm-schema §4 bloat policy threshold (>500 lines, >50% terminal rows). The 2026-05-29 archiving run reduced the file but it is already approaching threshold again as new closed items accumulate.
-
-**Why**: Deferred until CC-279 script exists. Once CC-279 is merged, this ticket is the first operational use — a PR that runs the script and records the result.
-
-**Requirement**: Run `bash scripts/archive-closed-backlog.sh`, commit result, verify validator still passes, open PR.
-
-**Cross-link**: `[[CC-279]]` (prerequisite script), `[[CC-281]]` (index split easier after this).
+**See**: BACKLOG-ARCHIVE.md
 
 ## CC-281 — [process/docs] split BACKLOG index into Active and Terminal sub-sections 🟡 deferred
 
@@ -1872,3 +1809,15 @@ This makes directory creation the mutex.
 4. `pmctl backlog sync` is idempotent and can be called by `archive-closed-backlog.sh` post-run.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-279]]` (archive script).
+
+## CC-283 — [bug] archive-closed-backlog.sh sentinel false-negative 🟡 deferred
+
+**Problem**: `scripts/archive-closed-backlog.sh` decides whether a `## CC-NNN — … ✅/🚫` section is already archived by scanning its entire body for the regex `**See**:.*BACKLOG-ARCHIVE`. A closed ticket whose body legitimately *quotes* that stub sentinel — e.g. CC-279, whose requirement text describes the stubbing behavior — matches the guard and is silently skipped. The section can never be collapsed, and once it is marked closed the validator flags `E-CLOSURE-NO-SEE` (closed section with no See stub), so a green validator now requires a manual archive of that one ticket.
+
+**Why**: Surfaced during CC-280 (the first operational archive run): the script archived CC-275/277/278 but skipped CC-279, which had to be moved to `BACKLOG-ARCHIVE.md` by hand. Low severity (rare — only closed tickets that quote the sentinel), but it makes the archiver non-self-healing for exactly the tickets that document it.
+
+**Requirement**:
+1. Anchor stub detection so it only matches a section that *is* a stub, not one that mentions the sentinel — e.g. treat a section as already-stubbed only when its first non-empty content line is `**See**: BACKLOG-ARCHIVE.md`.
+2. Add a regression fixture: a closed section whose body contains the literal string `**See**: BACKLOG-ARCHIVE.md` must still be archived exactly once.
+
+**Cross-link**: `[[CC-279]]` (the archiver script), `[[CC-280]]` (run that surfaced it).
