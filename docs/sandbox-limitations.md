@@ -12,15 +12,15 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 | `/home` (outside project) | read/write | read-only |
 | Docker socket | available | not available |
 | Network (outbound) | available | not available (verify in practice) |
-| TCP localhost | available | **not available** (network-namespace isolated) |
+| TCP localhost | available | **not available** by default; available with `--isolation workspace-network` |
 | `~/.cache/go/build` (GOCACHE) | read/write | not writable (read-only `/home`) |
 | `/tmp` | read/write | read/write |
 
-> **Network note**: The Codex sandbox runs in an isolated network namespace.
-> TCP connections to localhost services started by the main thread (e.g. a DB
-> started by a pre-gate hook) are **not reachable** from inside the sandbox —
-> confirmed by empirical test (curl exit 7, connection refused).
-> For integration tests that need a live service, see Pattern 3 below.
+> **Network note**: The Codex sandbox runs in an isolated network namespace by default.
+> TCP connections to localhost services started by the main thread are **not reachable**
+> from inside the sandbox (confirmed by empirical test: curl exit 7, connection refused).
+> To enable TCP localhost access, use `--isolation workspace-network` when running the gate —
+> this sets `sandbox_workspace_write.network_access=true` via the codex adapter. See Pattern 3.
 
 ## Pattern 1: Infrastructure setup before/after gate (Docker, DBs, etc.)
 
@@ -135,13 +135,14 @@ to read the diff — they do not re-run the tests.
 #!/usr/bin/env bash
 set -euo pipefail
 
+cleanup() { docker compose -f docker-compose.test.yml down 2>/dev/null || true; }
+trap cleanup EXIT
+
 docker compose -f docker-compose.test.yml up -d db
 until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
 
 # Run integration tests on the main thread (full network access)
 make test-integration
-
-docker compose -f docker-compose.test.yml down
 ```
 
 Then run the gate:

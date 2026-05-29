@@ -45,6 +45,11 @@ create_runner() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Capture raw dispatch args for isolation-forwarding tests.
+if [[ -n "${CODEX_GATE_CAPTURE_DISPATCH_ARGS:-}" ]]; then
+  printf '%s\n' "$@" > "$CODEX_GATE_CAPTURE_DISPATCH_ARGS"
+fi
+
 brief_file=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -2470,6 +2475,45 @@ test_hook_skipped_without_allow_hooks() {
   pass "$name"
 }
 
+test_isolation_forwarding_through_pr_gate() {
+  # Verifies that --isolation workspace-network is forwarded from pr-gate.sh
+  # to codex-dispatch.sh. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
+  # all raw args the stub dispatch received.
+  local name="isolation-forwarding-through-pr-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" dispatch_args="$dir/dispatch.args"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_DISPATCH_ARGS="$dispatch_args" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --isolation workspace-network
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$dispatch_args" ]]; then
+    fail "$name" "dispatch args file not written — CODEX_GATE_CAPTURE_DISPATCH_ARGS not picked up"
+    return
+  fi
+  if ! grep -qx -- '--isolation' "$dispatch_args"; then
+    fail "$name" "--isolation flag not forwarded to codex-dispatch.sh"
+    return
+  fi
+  if ! grep -qx 'workspace-network' "$dispatch_args"; then
+    fail "$name" "workspace-network value not forwarded to codex-dispatch.sh"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -2478,6 +2522,7 @@ run_test test_pre_gate_hook_not_executable
 run_test test_post_gate_hook_not_executable
 run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
+run_test test_isolation_forwarding_through_pr_gate
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 

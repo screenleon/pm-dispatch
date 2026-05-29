@@ -13,7 +13,8 @@
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] [--print-cmd] --brief-file <path>
+#                     [--timeout <seconds>] [--print-cmd]
+#                     --brief-file <path>
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
 #                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
@@ -230,7 +231,7 @@ if [[ -n "$BRIEF_FILE" && "$BRIEF_FROM_ARGV" -eq 1 ]]; then
   exit 2
 fi
 if [[ -n "$BRIEF_FILE" ]]; then
-  if [[ ! -r "$BRIEF_FILE" || ( ! -f "$BRIEF_FILE" && ! -c "$BRIEF_FILE" ) ]]; then
+  if [[ ! -f "$BRIEF_FILE" || ! -r "$BRIEF_FILE" ]]; then
     echo "Error: brief file not found or not readable: $BRIEF_FILE" >&2
     exit 2
   fi
