@@ -95,4 +95,9 @@ if should_run "dispatch_via_codex: non-default model"; then
   printf '%s\n' "$result" | grep -q -- '--model gpt-5.5' && pass "dispatch_via_codex: non-default model" || fail "dispatch_via_codex: non-default model" "expected --model gpt-5.5 in: $result"
 fi
 
+if should_run "dispatch_via_codex: isolation passthrough"; then
+  result="$(dispatch_via_codex "/tmp/brief.md" "/repo" "default" "workspace-write" "never" "1200" "workspace-network")"
+  printf '%s\n' "$result" | grep -q -- '--isolation workspace-network' && pass "dispatch_via_codex: isolation passthrough" || fail "dispatch_via_codex: isolation passthrough" "expected --isolation workspace-network in: $result"
+fi
+
 th_summary

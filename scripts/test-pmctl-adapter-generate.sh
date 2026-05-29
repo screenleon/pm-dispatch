@@ -181,6 +181,9 @@ if should_run "isolation-map exact flag values"; then
   if assert_isolation_native_flags "$name (sandboxed)" "$isomap" "sandboxed" '    native_flags: { "--sandbox": "workspace-write" }  # best-effort: Codex has no full-isolation equivalent; treated as workspace-write'; then
     pass "$name (sandboxed)"
   fi
+  if assert_isolation_native_flags "$name (workspace-network)" "$isomap" "workspace-network" '    native_flags: { "--sandbox": "workspace-write", "-c": "sandbox_workspace_write.network_access=true" }'; then
+    pass "$name (workspace-network)"
+  fi
 fi
 
 # Behavior: refuses to overwrite an existing generated adapter

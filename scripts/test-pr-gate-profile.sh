@@ -460,6 +460,50 @@ test_pr_gate_handover_fence_shape() {
   pass "$name"
 }
 
+test_executor_claude_post_gate_hook_not_invoked() {
+  # Verifies that .pm-dispatch/post-gate.sh is NOT run when --executor claude is used.
+  # On the claude route pr-gate.sh emits a handover block and exits; reviewers run
+  # outside the script, so post-gate cannot fire at true gate completion here.
+  #
+  # Steps:
+  #   1. Create repo with an executable post-gate.sh that writes a marker.
+  #   2. Run gate with --executor claude --base main.
+  #   3. Assert gate exits 0 and handover block is present.
+  #   4. Assert marker does NOT exist (hook body was not called).
+  #   5. Assert stderr contains the executor-route notice.
+  local name="executor-claude-post-gate-hook-not-invoked"
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo"
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" "$runner" --executor claude --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "post-gate hook ran on --executor claude (must not run inside script)"
+    return
+  fi
+  assert_contains "$name" "$err" "will not run on --executor claude" || return
+  pass "$name"
+}
+
 test_commands_pr_gate_md_has_both_routes() {
   local name="commands-pr-gate-md-has-both-routes"
   local target="$REPO_ROOT/commands/pr-gate.md"
@@ -485,6 +529,7 @@ run_case "executor-claude-parallel-emits-multi-brief-handover" test_executor_cla
 run_case "executor-auto-with-codex" test_executor_auto_with_codex
 run_case "executor-auto-without-codex" test_executor_auto_without_codex
 run_case "no-lib-copy-mode-uses-inline-executor-fallback" test_no_lib_copy_mode_uses_inline_executor_fallback
+run_case "executor-claude-post-gate-hook-not-invoked" test_executor_claude_post_gate_hook_not_invoked
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "pr-gate-handover-fence-shape" test_pr_gate_handover_fence_shape

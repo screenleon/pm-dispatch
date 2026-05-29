@@ -45,6 +45,11 @@ create_runner() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Capture raw dispatch args for isolation-forwarding tests.
+if [[ -n "${CODEX_GATE_CAPTURE_DISPATCH_ARGS:-}" ]]; then
+  printf '%s\n' "$@" > "$CODEX_GATE_CAPTURE_DISPATCH_ARGS"
+fi
+
 brief_file=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -2204,6 +2209,364 @@ test_gate_result_reviewer_verdicts_are_valid() {
   pass "$name"
 }
 
+test_pre_gate_hook_runs() {
+  # Verifies that an executable .pm-dispatch/pre-gate.sh runs before dispatch.
+  # Steps: create repo + executable pre-gate that writes a marker; run gate; assert
+  # exit 0 and marker exists.
+  local name="pre-gate-hook-runs"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$hook_marker" ]]; then
+    fail "$name" "pre-gate hook did not run (marker missing)"
+    return
+  fi
+  pass "$name"
+}
+
+test_pre_gate_hook_aborts_gate_on_failure() {
+  # Verifies that a pre-gate hook exiting non-zero aborts the gate before dispatch.
+  # Steps: create repo + pre-gate that exits 1; run gate with brief marker; assert
+  # non-zero exit and brief marker does NOT exist (dispatch never reached).
+  local name="pre-gate-hook-aborts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief_marker="$dir/brief.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  CODEX_GATE_BRIEF_EXISTS_MARKER="$brief_marker" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-gate hook fails"
+    return
+  fi
+  if [[ -f "$brief_marker" ]]; then
+    fail "$name" "brief was written after pre-gate hook failure (dispatch must not run)"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_runs() {
+  # Verifies that an executable .pm-dispatch/post-gate.sh runs after dispatch completes.
+  # Steps: create repo + executable post-gate that writes a marker; run gate; assert
+  # exit 0 and marker exists.
+  local name="post-gate-hook-runs"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$hook_marker" ]]; then
+    fail "$name" "post-gate hook did not run (marker missing)"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_aborts_on_failure() {
+  # Verifies that a post-gate hook exiting non-zero causes the gate to exit non-zero.
+  # Steps: create repo + post-gate that exits 1; run gate; assert non-zero exit.
+  local name="post-gate-hook-aborts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when post-gate hook fails"
+    return
+  fi
+  pass "$name"
+}
+
+test_pre_gate_hook_not_executable() {
+  # Verifies that a non-executable pre-gate.sh emits a warning and is skipped (not an abort).
+  # Steps: create repo + pre-gate without chmod +x; run gate; assert exit 0, stderr
+  # contains "not executable", and hook marker does NOT exist.
+  local name="pre-gate-hook-not-executable"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  # intentionally NOT chmod +x
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (non-executable hook must be skipped, not abort)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "not executable" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "hook body ran despite file not being executable"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_not_executable() {
+  # Verifies that a non-executable post-gate.sh emits a warning and is skipped (not an abort).
+  # Steps: create repo + post-gate without chmod +x; run gate; assert exit 0, stderr
+  # contains "not executable", and hook marker does NOT exist.
+  local name="post-gate-hook-not-executable"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  # intentionally NOT chmod +x
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (non-executable hook must be skipped, not abort)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "not executable" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "hook body ran despite file not being executable"
+    return
+  fi
+  pass "$name"
+}
+
+test_post_gate_hook_skipped_on_nogo() {
+  # Verifies that post-gate.sh is NOT invoked when the gate result is NO-GO.
+  # Even with --allow-hooks, post-gate is a success-only hook.
+  local name="test_post_gate_hook_skipped_on_nogo-post-gate-hook-skipped-on-no-go"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/post-gate.sh"
+  chmod +x "$repo/.pm-dispatch/post-gate.sh"
+
+  set +e
+  CODEX_GATE_STUB_VERDICT=block-soft CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "gate exited 0 for NO-GO result — expected non-zero exit"
+    return
+  fi
+  if ! grep -q '^result: ' "$out"; then
+    fail "$name" "gate stdout lacks 'result:' line — gate may have aborted before reaching post-gate check"
+    return
+  fi
+  if ! grep -q 'Skipping post-gate hook' "$out"; then
+    fail "$name" "expected 'Skipping post-gate hook' in stdout — gate did not reach the post-gate decision point"
+    return
+  fi
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "post-gate hook ran despite NO-GO gate result — must be skipped"
+    return
+  fi
+  pass "$name"
+}
+
+test_hook_skipped_without_allow_hooks() {
+  # Verifies that executable hook scripts are silently skipped (with a warning) when
+  # --allow-hooks is not passed. This is the default safe mode.
+  local name="gate-hook-skipped-without-allow-hooks"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/.pm-dispatch"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'touch "%s"\n' "$hook_marker"
+  } > "$repo/.pm-dispatch/pre-gate.sh"
+  chmod +x "$repo/.pm-dispatch/pre-gate.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code — gate must not abort when hook is skipped without --allow-hooks"
+    return
+  fi
+  assert_file_contains "$name" "$err" "pass --allow-hooks" || return
+  if [[ -f "$hook_marker" ]]; then
+    fail "$name" "pre-gate hook ran without --allow-hooks flag"
+    return
+  fi
+  pass "$name"
+}
+
+test_isolation_flag_validation() {
+  # Verifies that pr-gate.sh rejects unknown --isolation values before dispatch.
+  local name="test_isolation_flag_validation-isolation-flag-validation"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --isolation bogus-level
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "must be one of" || return
+  assert_file_contains "$name" "$err" "none" || return
+  assert_file_contains "$name" "$err" "read-only" || return
+  assert_file_contains "$name" "$err" "workspace-write" || return
+  assert_file_contains "$name" "$err" "workspace-network" || return
+  assert_file_contains "$name" "$err" "sandboxed" || return
+  pass "$name"
+}
+
+test_isolation_forwarding_through_pr_gate() {
+  # Verifies that --isolation workspace-network is forwarded from pr-gate.sh
+  # to codex-dispatch.sh. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
+  # all raw args the stub dispatch received.
+  local name="isolation-forwarding-through-pr-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" dispatch_args="$dir/dispatch.args"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_DISPATCH_ARGS="$dispatch_args" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --isolation workspace-network
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$dispatch_args" ]]; then
+    fail "$name" "dispatch args file not written — CODEX_GATE_CAPTURE_DISPATCH_ARGS not picked up"
+    return
+  fi
+  if ! grep -qx -- '--isolation' "$dispatch_args"; then
+    fail "$name" "--isolation flag not forwarded to codex-dispatch.sh"
+    return
+  fi
+  if ! grep -qx 'workspace-network' "$dispatch_args"; then
+    fail "$name" "workspace-network value not forwarded to codex-dispatch.sh"
+    return
+  fi
+  pass "$name"
+}
+
+run_test test_pre_gate_hook_runs
+run_test test_pre_gate_hook_aborts_gate_on_failure
+run_test test_post_gate_hook_runs
+run_test test_post_gate_hook_aborts_on_failure
+run_test test_pre_gate_hook_not_executable
+run_test test_post_gate_hook_not_executable
+run_test test_post_gate_hook_skipped_on_nogo
+run_test test_hook_skipped_without_allow_hooks
+run_test test_isolation_flag_validation
+run_test test_isolation_forwarding_through_pr_gate
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 

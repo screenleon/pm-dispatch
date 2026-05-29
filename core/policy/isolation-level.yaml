@@ -8,10 +8,14 @@
 #   none             – no isolation; executor may read/write anywhere
 #   read-only        – executor must not modify the filesystem
 #   workspace-write  – executor may write only within the project working directory
-#   sandboxed        – full isolation; executor runs in an ephemeral sandbox
+#   workspace-network – workspace-write + TCP localhost access; use when
+#                       pre-gate.sh starts a local service the executor needs
+#   sandboxed        – strongest available isolation; each adapter applies its tightest
+#                     supported constraint (Codex: workspace-write, no network access)
 
 values:
   - none
   - read-only
   - workspace-write
+  - workspace-network
   - sandboxed

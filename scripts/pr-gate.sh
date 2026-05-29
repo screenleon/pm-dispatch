@@ -30,9 +30,11 @@ set -euo pipefail
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
+#   --isolation <level>  isolation level: none|read-only|workspace-write|workspace-network|sandboxed
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
+#   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -43,8 +45,10 @@ OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
+ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
+DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
 
 while [[ $# -gt 0 ]]; do
@@ -56,9 +60,11 @@ while [[ $# -gt 0 ]]; do
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
+    --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
+    --allow-hooks) ALLOW_HOOKS=true;       shift;;
     -h|--help)
       sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
@@ -72,14 +78,6 @@ fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
 fi
-
-case "$EXECUTOR_OPTION" in
-  auto|codex|claude) ;;
-  *)
-    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
-    exit 2
-    ;;
-esac
 
 _self="$0"
 while [[ -L "$_self" ]]; do
@@ -152,13 +150,14 @@ else
     local sandbox=${4-}
     local approval=${5-}
     local timeout=${6-}
+    local isolation_level=${7-}
     local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
     local -a cmd
     local arg
     local first=1
 
-    [[ $# -eq 6 ]] || {
-      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout\n' >&2
+    [[ $# -eq 6 || $# -eq 7 ]] || {
+      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
       return 2
     }
 
@@ -166,6 +165,7 @@ else
     if [[ -n "$model" && "$model" != "default" ]]; then
       cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
     fi
+    [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
 
     for arg in "${cmd[@]}"; do
       if [[ "$first" -eq 1 ]]; then
@@ -177,6 +177,38 @@ else
     done
     printf '\n'
   }
+fi
+
+case "$EXECUTOR_OPTION" in
+  auto|codex|claude) ;;
+  *)
+    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
+    exit 2
+    ;;
+esac
+
+_validate_isolation_level() {
+  local level="$1" policy_file="$2"
+  if [[ -r "$policy_file" ]]; then
+    if ! grep -qE "^  - ${level}$" "$policy_file"; then
+      local valid_levels
+      valid_levels="$(grep -E "^  - " "$policy_file" | sed 's/^  - //' | tr '\n' ' ' | sed 's/ $//')"
+      printf "Error: --isolation must be one of: %s (got: %s)\n" "$valid_levels" "$level" >&2
+      return 2
+    fi
+  else
+    case "$level" in
+      none|read-only|workspace-write|workspace-network|sandboxed) ;;
+      *)
+        printf "Error: --isolation must be one of: none | read-only | workspace-write | workspace-network | sandboxed (got: %s)\n" "$level" >&2
+        return 2
+        ;;
+    esac
+  fi
+}
+
+if [[ -n "$DISPATCH_ISOLATION" ]]; then
+  _validate_isolation_level "$DISPATCH_ISOLATION" "$SCRIPT_DIR/../core/policy/isolation-level.yaml" || exit 2
 fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
@@ -420,6 +452,23 @@ printf 'pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
 printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
+# ── Pre-gate hook ──────────────────────────────────────────────────────────
+_PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
+if [[ "$ALLOW_HOOKS" != "true" ]]; then
+  if [[ -f "$_PRE_GATE_HOOK" ]]; then
+    printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+  fi
+elif [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
+  printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable — skipping\n' >&2
+elif [[ -x "$_PRE_GATE_HOOK" ]]; then
+  printf 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
+  if ! (cd "$WORK_DIR" && bash "$_PRE_GATE_HOOK"); then
+    printf 'Error: pre-gate hook failed — gate aborted\n' >&2
+    exit 1
+  fi
+  printf 'pre-gate hook completed.\n\n'
+fi
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
 
@@ -551,7 +600,7 @@ self_verify:
 BRIEF_EOF
 
   if [[ "$EXECUTOR" == "codex" ]]; then
-    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
     eval "$CODEX_DISPATCH_CMD"
 
     # Validate sequential output: must exist, be non-empty, contain exactly one
@@ -682,7 +731,7 @@ acceptance:
 RBRIEF_EOF
 
     if [[ "$EXECUTOR" == "codex" ]]; then
-      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
       eval "$CODEX_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
       DISPATCH_PIDS+=($!)
       printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
@@ -954,7 +1003,7 @@ acceptance:
 SBRIEF_P2
 
   printf '  [synthesis] running PM consolidation...\n'
-  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
   eval "$CODEX_DISPATCH_CMD"
 
   # Validate synthesis output: must exist, be non-empty, contain exactly one
@@ -1017,6 +1066,42 @@ SBRIEF_P2
 
 fi
 
+# ── Post-gate hook ─────────────────────────────────────────────────────────
+# On the claude executor route this script is a handover producer only; reviewers
+# run outside this script, so post-gate cannot fire at true gate completion here.
+# On the codex route, post-gate runs only when --allow-hooks is set AND the
+# gate result is GO — it is a success-only side-effect hook, not a teardown hook.
+_POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
+if [[ "$EXECUTOR" == "claude" ]]; then
+  if [[ -f "$_POST_GATE_HOOK" ]]; then
+    printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude — reviewers execute outside this script on that route\n' >&2
+  fi
+elif [[ "$ALLOW_HOOKS" != "true" ]]; then
+  if [[ -f "$_POST_GATE_HOOK" ]]; then
+    printf 'Warning: .pm-dispatch/post-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+  fi
+elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
+  printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
+elif [[ -x "$_POST_GATE_HOOK" ]]; then
+  _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
+  if [[ "$_GATE_FINAL" != "GO" ]]; then
+    printf '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
+  else
+    printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
+    if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
+      printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero — this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
+      printf 'Error: post-gate hook failed\n' >&2
+      exit 1
+    fi
+    printf 'post-gate hook completed.\n'
+  fi
+fi
+
 # ── Print result path for caller ─────────────────────────────────────────────
 emit_pr_gate_handover_block
 printf '\nresult: %s\n' "$OUTPUT_FILE"
+
+_FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
+if [[ "$EXECUTOR" != "claude" && "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then
+  exit 1
+fi

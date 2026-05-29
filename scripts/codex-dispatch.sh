@@ -11,9 +11,12 @@
 #
 # Usage:
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
+#                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
-#                     [--timeout <seconds>] [--print-cmd] --brief-file <path>
+#                     [--timeout <seconds>] [--print-cmd]
+#                     --brief-file <path>
 #   codex-dispatch.sh --cd <dir> [--model <m>] [--sandbox <mode>]
+#                     [--isolation <level>]
 #                     [--approval <mode>] [--skip-git-check]
 #                     [--timeout <seconds>] [--print-cmd] -- <brief...>
 #
@@ -26,6 +29,7 @@
 #
 # Defaults:
 #   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
+#   --isolation empty            (none | read-only | workspace-write | workspace-network | sandboxed)
 #   --approval never             (never | on-failure | on-request | untrusted)
 #   --timeout  precedence: brief field > CODEX_DISPATCH_TIMEOUT env >
 #             ~/.pm-dispatch/config [dispatch.default_timeout] > 1200 fallback
@@ -56,8 +60,13 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   __codex_dispatch_snapshot="$__codex_dispatch_snapshot_dir/codex-dispatch.sh"
   __codex_dispatch_source_repo="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   __codex_dispatch_alias_source="$__codex_dispatch_source_repo/share/model-aliases.tsv"
+  __codex_dispatch_isolation_source="$__codex_dispatch_source_repo/adapters/codex/isolation-map.yaml"
   cp -- "${BASH_SOURCE[0]}" "$__codex_dispatch_snapshot"
   [[ -r "$__codex_dispatch_alias_source" ]] && cp -- "$__codex_dispatch_alias_source" "$__codex_dispatch_snapshot_dir/model-aliases.tsv" || true
+  if [[ -r "$__codex_dispatch_isolation_source" ]]; then
+    mkdir -p -- "$__codex_dispatch_snapshot_dir/adapters/codex"
+    cp -- "$__codex_dispatch_isolation_source" "$__codex_dispatch_snapshot_dir/adapters/codex/isolation-map.yaml"
+  fi
   mkdir -p -- "$__codex_dispatch_snapshot_dir/lib"
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
@@ -73,6 +82,7 @@ trap 'rm -rf -- "$__codex_dispatch_snapshot_dir"' EXIT
 WORK_DIR=""
 MODEL=""
 SANDBOX="workspace-write"
+ISOLATION=""   # isolation_level from brief; expanded to --sandbox + -c flags
 APPROVAL="never"
 SKIP_GIT_CHECK=0
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -194,6 +204,7 @@ while [[ $# -gt 0 ]]; do
     --cd) WORK_DIR="$2"; shift 2;;
     --model) MODEL="$2"; shift 2;;
     --sandbox) SANDBOX="$2"; shift 2;;
+    --isolation) ISOLATION="$2"; shift 2;;
     --approval) APPROVAL="$2"; shift 2;;
     --skip-git-check) SKIP_GIT_CHECK=1; shift;;
     --timeout) TIMEOUT="$2"; shift 2;;
@@ -227,12 +238,14 @@ if [[ -n "$BRIEF_FILE" ]]; then
   BRIEF="$(<"$BRIEF_FILE")"
 fi
 if [[ -z "$BRIEF" ]]; then
-  if [[ -n "$BRIEF_FILE" ]]; then
+  if [[ "$PRINT_CMD" -eq 1 ]]; then
+    BRIEF=""
+  elif [[ -n "$BRIEF_FILE" ]]; then
     echo "Error: brief file is empty: $BRIEF_FILE" >&2
   else
     echo "Error: brief is required; prefer --brief-file <path> (inline form after -- is only for trivial smoke checks)" >&2
   fi
-  exit 2
+  [[ "$PRINT_CMD" -eq 1 ]] || exit 2
 fi
 if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
   echo "Error: --timeout must be a non-negative integer (got: $TIMEOUT)" >&2
@@ -266,6 +279,50 @@ if [[ "$PRINT_CMD" -ne 1 ]]; then
   STDERR_LOG="$TRACE_DIR/codex-$TS.stderr"
 fi
 
+# ── Isolation-level expansion ─────────────────────────────────────────────
+# Reads adapters/codex/isolation-map.yaml and expands ISOLATION into SANDBOX
+# and CONFIG_OVERRIDES. Snapshot executions read the copied adapter file.
+CONFIG_OVERRIDES=()
+if [[ -n "$ISOLATION" ]]; then
+  _ADAPTER_FILE="$SCRIPT_DIR/adapters/codex/isolation-map.yaml"
+  [[ -f "$_ADAPTER_FILE" ]] || _ADAPTER_FILE="$SCRIPT_DIR/../adapters/codex/isolation-map.yaml"
+  if [[ ! -f "$_ADAPTER_FILE" ]]; then
+    printf 'codex-dispatch: error: adapters/codex/isolation-map.yaml not found (expected at %s)\n' "$_ADAPTER_FILE" >&2
+    exit 2
+  fi
+  # Parse the sandbox value for the requested isolation level.
+  # YAML structure: mappings:\n  <level>:\n    sandbox: <value>
+  _ISO_SANDBOX=""
+  _IN_LEVEL=0
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    _line="${_line%$'\r'}"
+    # Detect entry start: "  <level>:" (2-space indent)
+    if [[ "$_line" =~ ^[[:space:]]{2}([a-z-]+):[[:space:]]*$ ]]; then
+      _cur="${BASH_REMATCH[1]}"
+      [[ "$_cur" == "$ISOLATION" ]] && _IN_LEVEL=1 || _IN_LEVEL=0
+      continue
+    fi
+    [[ "$_IN_LEVEL" -eq 0 ]] && continue
+    # sandbox: value
+    if [[ "$_line" =~ ^[[:space:]]{4}sandbox:[[:space:]]*(.+)$ ]]; then
+      _ISO_SANDBOX="${BASH_REMATCH[1]}"
+      _ISO_SANDBOX="${_ISO_SANDBOX#\'}" ; _ISO_SANDBOX="${_ISO_SANDBOX%\'}"
+    fi
+    # config_overrides list items: "      - 'key=value'"
+    if [[ "$_line" =~ ^[[:space:]]{6}-[[:space:]]+\'(.+)\'$ ]]; then
+      CONFIG_OVERRIDES+=("${BASH_REMATCH[1]}")
+    fi
+    if [[ "$_line" =~ ^[[:space:]]{6}-[[:space:]]+\"(.+)\"$ ]]; then
+      CONFIG_OVERRIDES+=("${BASH_REMATCH[1]}")
+    fi
+  done < "$_ADAPTER_FILE"
+  if [[ -z "$_ISO_SANDBOX" ]]; then
+    printf 'codex-dispatch: error: unknown isolation_level %q (not in adapters/codex/isolation-map.yaml)\n' "$ISOLATION" >&2
+    exit 2
+  fi
+  SANDBOX="$_ISO_SANDBOX"
+fi
+
 CMD=(codex exec
   --cd "$WORK_DIR"
   --sandbox "$SANDBOX"
@@ -273,6 +330,9 @@ CMD=(codex exec
   --json
   --output-last-message "$LAST"
 )
+for _override in "${CONFIG_OVERRIDES[@]:-}"; do
+  [[ -n "$_override" ]] && CMD+=(-c "$_override")
+done
 [[ -n "$MODEL" ]] && CMD+=(-m "$MODEL_RESOLVED")
 [[ -n "$MODEL_RESOLVED_EFFORT" ]] && CMD+=(-c "model_reasoning_effort=\"$MODEL_RESOLVED_EFFORT\"")
 [[ "$SKIP_GIT_CHECK" -eq 1 ]] && CMD+=(--skip-git-repo-check)
@@ -286,6 +346,7 @@ CMD+=("-")
   echo "  cwd:      $WORK_DIR"
   echo "  model:    $MODEL_DISPLAY"
   echo "  sandbox:  $SANDBOX"
+  [[ -n "$ISOLATION" ]] && echo "  isolation: $ISOLATION"
   echo "  approval: $APPROVAL"
   echo "  timeout:  ${TIMEOUT}s"
   echo "  trace:    $TRACE"
