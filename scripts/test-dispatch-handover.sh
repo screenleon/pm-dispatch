@@ -560,6 +560,80 @@ skip_git_check_true_rejects_case() {
   expect_reject_reason skip_git_check "not supported by bash route" handover_validate_skip_git_check true
 }
 
+# Behavior: isolation_level workspace-write is accepted.
+isolation_level_workspace_write_accepts_case() {
+  handover_validate_isolation_level workspace-write >/dev/null 2>&1
+}
+
+# Behavior: isolation_level sandboxed is accepted.
+isolation_level_sandboxed_accepts_case() {
+  handover_validate_isolation_level sandboxed >/dev/null 2>&1
+}
+
+# Behavior: isolation_level workspace-network is accepted.
+isolation_level_workspace_network_accepts_case() {
+  handover_validate_isolation_level workspace-network >/dev/null 2>&1
+}
+
+# Behavior: isolation_level none is accepted.
+isolation_level_none_accepts_case() {
+  handover_validate_isolation_level none >/dev/null 2>&1
+}
+
+# Behavior: isolation_level read-only is accepted.
+isolation_level_read_only_accepts_case() {
+  handover_validate_isolation_level read-only >/dev/null 2>&1
+}
+
+# Behavior: unknown isolation_level value is rejected.
+isolation_level_unknown_rejects_case() {
+  expect_reject_reason isolation_level "unknown isolation_level value" handover_validate_isolation_level full-access
+}
+
+# Behavior: handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
+all_metadata_with_isolation_level_accepts_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-isolation-test.md
+isolation_level: workspace-write
+timeout: 1200
+model: default
+fallback_allowed: true"
+  handover_validate_all_metadata "$block" >/dev/null 2>&1
+}
+
+# Behavior: handover block with isolation_level but no sandbox still passes required_fields check.
+required_fields_with_isolation_level_accepts_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-isolation-req-test.md
+isolation_level: workspace-write
+timeout: 1200
+model: default
+fallback_allowed: true"
+  handover_validate_required_fields "$block" >/dev/null 2>&1
+}
+
+# Behavior: handover block with no isolation_level and no sandbox fails required_fields check.
+required_fields_missing_both_isolation_and_sandbox_rejects_case() {
+  local block
+  block="handover_version: 2
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-missing-isolation.md
+timeout: 1200
+model: default
+fallback_allowed: true"
+  ! handover_validate_required_fields "$block" >/dev/null 2>&1
+}
+
 # Behavior: Timeout 1200 is accepted.
 # Steps:
 #   1. Validate timeout 1200.
@@ -891,6 +965,15 @@ run_case "handover/all metadata valid accepts" all_metadata_valid_accepts_case
 run_case "handover/all metadata invalid field rejects" all_metadata_invalid_field_rejects_case
 run_case "handover/required fields all present accepts" required_fields_all_present_accepts_case
 run_case "handover/required fields missing dispatch_route rejects" required_fields_missing_dispatch_route_rejects_case
+run_case "handover/isolation_level workspace-write accepts" isolation_level_workspace_write_accepts_case
+run_case "handover/isolation_level sandboxed accepts" isolation_level_sandboxed_accepts_case
+run_case "handover/isolation_level workspace-network accepts" isolation_level_workspace_network_accepts_case
+run_case "handover/isolation_level none accepts" isolation_level_none_accepts_case
+run_case "handover/isolation_level read-only accepts" isolation_level_read_only_accepts_case
+run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
+run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
+run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
+run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case
 run_case "handover/working_dir match accepts" working_dir_match_accepts_case
 run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
 run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case

@@ -275,6 +275,15 @@ handover_validate_skip_git_check() {
   esac
 }
 
+handover_validate_isolation_level() {
+  local value=${1-}
+  handover_validate_metadata_value isolation_level "$value" || return 1
+  case "$value" in
+    none|read-only|workspace-write|workspace-network|sandboxed) return 0 ;;
+    *) handover_reject isolation_level "unknown isolation_level value; expected one of: none read-only workspace-write workspace-network sandboxed" ;;
+  esac
+}
+
 handover_validate_fallback_allowed() {
   local value=${1-}
 
@@ -288,10 +297,17 @@ handover_validate_fallback_allowed() {
 handover_validate_required_fields() {
   local metadata=${1-}
   local field
-
-  for field in handover_version executor dispatch_route working_dir brief_file sandbox approval timeout model skip_git_check fallback_allowed; do
+  for field in handover_version executor dispatch_route working_dir brief_file timeout model fallback_allowed; do
     handover_get_field "$metadata" "$field" >/dev/null || return 1
   done
+  # Accept isolation_level (new canonical form) OR the legacy native trio
+  local _iso_check
+  _iso_check="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_check=""
+  if [[ -z "$_iso_check" ]]; then
+    for field in sandbox approval skip_git_check; do
+      handover_get_field "$metadata" "$field" >/dev/null || return 1
+    done
+  fi
 }
 
 handover_validate_all_metadata() {
@@ -310,16 +326,25 @@ handover_validate_all_metadata() {
   handover_validate_working_dir "$value" || return 1
   value="$(handover_get_field "$metadata" brief_file)" || return 1
   handover_validate_brief_file "$value" || return 1
-  value="$(handover_get_field "$metadata" sandbox)" || return 1
-  handover_validate_sandbox "$value" || return 1
-  value="$(handover_get_field "$metadata" approval)" || return 1
-  handover_validate_approval "$value" || return 1
+
+  # Validate isolation_level (canonical) OR legacy native trio (backward compat)
+  local _iso_val
+  _iso_val="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_val=""
+  if [[ -n "$_iso_val" ]]; then
+    handover_validate_isolation_level "$_iso_val" || return 1
+  else
+    value="$(handover_get_field "$metadata" sandbox)" || return 1
+    handover_validate_sandbox "$value" || return 1
+    value="$(handover_get_field "$metadata" approval)" || return 1
+    handover_validate_approval "$value" || return 1
+    value="$(handover_get_field "$metadata" skip_git_check)" || return 1
+    handover_validate_skip_git_check "$value" || return 1
+  fi
+
   value="$(handover_get_field "$metadata" timeout)" || return 1
   handover_validate_timeout "$value" || return 1
   value="$(handover_get_field "$metadata" model)" || return 1
   handover_validate_model "$value" || return 1
-  value="$(handover_get_field "$metadata" skip_git_check)" || return 1
-  handover_validate_skip_git_check "$value" || return 1
   value="$(handover_get_field "$metadata" fallback_allowed)" || return 1
   handover_validate_fallback_allowed "$value"
 }
@@ -363,6 +388,7 @@ export -f handover_validate_approval
 export -f handover_validate_timeout
 export -f handover_validate_model
 export -f handover_validate_skip_git_check
+export -f handover_validate_isolation_level
 export -f handover_validate_fallback_allowed
 export -f handover_validate_required_fields
 export -f handover_validate_all_metadata

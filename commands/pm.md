@@ -26,10 +26,10 @@ The abstract contract both routes implement is documented in `docs/executor-cont
 ### Route A — `executor: codex`
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --sandbox <safe sandbox> --approval <safe approval> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. The bash route never emits `--skip-git-check`: validator hard-rejects `skip_git_check: true`, so callers needing that flag must take the `Agent(codex-executor)` fallback instead. Insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
+The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. When the handover block uses the legacy `sandbox:` field instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`. New briefs must use `isolation_level:`. The bash route never emits `--skip-git-check`: validator hard-rejects `skip_git_check: true`, so callers needing that flag must take the `Agent(codex-executor)` fallback instead. Insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
 Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
 
@@ -39,7 +39,7 @@ Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-br
 Agent(subagent_type: "claude-executor", prompt: "<safe brief_file abs path>", run_in_background: true, description: "Run claude-executor for <slug>")
 ```
 
-The `claude-executor` agent self-executes the brief using its own tool surface (`Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep`) and returns one structured report. No external dispatch script is involved. Codex-only metadata fields (`sandbox`, `approval`, `skip_git_check`) are still **required by the validator** for schema stability and should be set to canonical no-op values (`workspace-write`, `never`, `false`); the agent itself ignores them. See `agents/claude-executor.md` for the agent's contract and `docs/executor-contract.md` for the profile comparison.
+The `claude-executor` agent self-executes the brief using its own tool surface (`Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep`) and returns one structured report. No external dispatch script is involved. Use `isolation_level: workspace-write` (or appropriate level) in the metadata; the legacy fields (`sandbox`, `approval`, `skip_git_check`) are accepted for backward compatibility but new briefs must use `isolation_level:`. The agent itself ignores isolation metadata. See `agents/claude-executor.md` for the agent's contract and `docs/executor-contract.md` for the profile comparison.
 
 ### Choosing the route
 
