@@ -13,6 +13,9 @@ fi
 
 REPO_ROOT="$(git -C "$WORKING_DIR" rev-parse --show-toplevel)"
 BACKLOG_FILE="$REPO_ROOT/BACKLOG.md"
+# Under the working-set contract (pm-schema §4), terminal tickets live only in
+# the archive; --focus falls back here so a closed ticket can still be pulled.
+ARCHIVE_FILE="$REPO_ROOT/BACKLOG-ARCHIVE.md"
 if [ ! -f "$BACKLOG_FILE" ]; then
   echo "error: BACKLOG.md not found at $BACKLOG_FILE" >&2
   exit 1
@@ -156,6 +159,26 @@ while IFS= read -r backlog_line; do
     esac
   fi
 done < "$BACKLOG_FILE"
+
+# Terminal tickets live only in BACKLOG-ARCHIVE.md under the working-set
+# contract (pm-schema §4), and they hold the highest IDs. Fold the archive's
+# max into MAX_CC_ID so next-id never reuses an archived ID (§2.2 "永不重用").
+if [ -f "$ARCHIVE_FILE" ]; then
+  archive_max="$(awk '
+    /^## CC-[0-9]/ {
+      line=$0
+      sub(/^## CC-0*/, "", line)
+      sub(/[^0-9].*/, "", line)
+      n=line+0
+      if (n > max) max=n
+    }
+    END { print max+0 }
+  ' "$ARCHIVE_FILE")"
+  if [ "$archive_max" -gt "$MAX_CC_ID" ]; then
+    MAX_CC_ID="$archive_max"
+  fi
+fi
+
 BACKLOG_NEXT_ID="$((MAX_CC_ID + 1))"
 NEXT_TICKET_ID=$(printf 'CC-%03d' "$BACKLOG_NEXT_ID")
 
@@ -174,13 +197,14 @@ collect_backlog_row() {
 
 collect_backlog_body() {
   local ticket="$1"
+  local file="${2:-$BACKLOG_FILE}"
   awk -v t="$ticket" '
     $0 ~ "^##[[:space:]]*" t "([[:space:]]|—|$)" { found=1; print; next }
     found {
       if ($0 ~ "^## ") { exit }
       print
     }
-  ' "$BACKLOG_FILE"
+  ' "$file"
 }
 
 RECENTLY_MERGED_WARN=""
@@ -287,16 +311,25 @@ TMP_OUT="$(mktemp "${OUT_PATH}.tmp.XXXXXX")"
       [ -z "$ticket_id" ] && continue
       row="$(collect_backlog_row "$ticket_id")"
       body="$(collect_backlog_body "$ticket_id")"
-      if [ -n "$row" ] && [ -n "$body" ]; then
+      archived=0
+      if [ -z "$body" ] && [ -f "$ARCHIVE_FILE" ]; then
+        # Terminal ticket: no working-set row, body lives in the archive.
+        body="$(collect_backlog_body "$ticket_id" "$ARCHIVE_FILE")"
+        [ -n "$body" ] && archived=1
+      fi
+      if [ -n "$row" ] || [ -n "$body" ]; then
         if [ "$focus_emitted" -eq 0 ]; then
           printf '## focus_tickets\n\n'
           focus_emitted=1
         fi
-        printf '%s\n' "$row"
-        printf '\n'
-        printf '%s\n\n' "$body"
+        if [ -n "$row" ]; then
+          printf '%s\n\n' "$row"
+        elif [ "$archived" -eq 1 ]; then
+          printf '# %s: archived (terminal) — body from BACKLOG-ARCHIVE.md; no working-set index row\n\n' "$ticket_id"
+        fi
+        [ -n "$body" ] && printf '%s\n\n' "$body"
       else
-        printf '# warn: %s not found in BACKLOG.md\n' "$ticket_id"
+        printf '# warn: %s not found in BACKLOG.md or BACKLOG-ARCHIVE.md\n' "$ticket_id"
       fi
     done
   fi
