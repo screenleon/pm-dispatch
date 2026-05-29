@@ -472,4 +472,32 @@ if should_run "recently-merged-no-jq-warns"; then
   fi
 fi
 
+# Verifies that pm-prep-snapshot.sh derives repo name from the origin remote
+# URL basename when available, not from the working directory name.
+#
+# Steps:
+#   1. Create a local git repo in a dir named "my-local-dir".
+#   2. Add an origin remote whose URL basename differs: canonical-repo-name.git.
+#   3. Run pm-prep-snapshot.sh pointing at that repo.
+#   4. Assert repo: canonical-repo-name (from remote), not my-local-dir.
+if should_run "repo-name-from-remote-url"; then
+  _wt_root="$tmp_root/my-local-dir"
+  mkdir -p "$_wt_root"
+  git -C "$_wt_root" init -q -b main
+  git -C "$_wt_root" -c user.email=t@t -c user.name=T commit --allow-empty -q -m init
+  git -C "$_wt_root" remote add origin "git@github.com:org/canonical-repo-name.git"
+  cp "$REPO_ROOT/BACKLOG.md" "$_wt_root/"
+  _rn_out="$tmp_root/remote-repo-name-snap.md"
+  _rn_exit=0
+  (cd "$_wt_root" && PATH="$FAKE_GH_DIR:$PATH" "$SCRIPT_PATH" --out "$_rn_out") \
+    >/tmp/pm-prep-snapshot-remote.err 2>&1 || _rn_exit=$?
+  if [[ "$_rn_exit" -eq 0 ]]; then
+    require_file_contains "$_rn_out" '^repo: canonical-repo-name$' "repo-name-from-remote-url: repo field uses remote basename"
+    require_no_match "$_rn_out" '^repo: my-local-dir$' "repo-name-from-remote-url: must not use directory name"
+    pass "repo-name-from-remote-url"
+  else
+    fail "repo-name-from-remote-url" "snapshot exited $_rn_exit, expected 0 - see /tmp/pm-prep-snapshot-remote.err"
+  fi
+fi
+
 th_summary
