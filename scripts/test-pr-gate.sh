@@ -2433,6 +2433,14 @@ test_post_gate_hook_skipped_on_nogo() {
   CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
   local code=$?
   set -e
+  if ! grep -q '^result: ' "$out"; then
+    fail "$name" "gate stdout lacks 'result:' line — gate may have aborted before reaching post-gate check"
+    return
+  fi
+  if ! grep -q 'Skipping post-gate hook' "$out"; then
+    fail "$name" "expected 'Skipping post-gate hook' in stdout — gate did not reach the post-gate decision point"
+    return
+  fi
   if [[ -f "$hook_marker" ]]; then
     fail "$name" "post-gate hook ran despite NO-GO gate result — must be skipped"
     return

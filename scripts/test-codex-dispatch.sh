@@ -614,6 +614,12 @@ case_alias_source_installed_helper_fallback() {
 
 # ---- 23: isolation workspace-network generates network override ----
 case_isolation_workspace_network() {
+  # Verifies that --isolation workspace-network generates --sandbox workspace-write
+  # plus the sandbox_workspace_write.network_access=true config override.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation workspace-network --print-cmd.
+  # 3. Assert output contains --sandbox workspace-write AND network_access=true.
   local name="isolation-workspace-network"
   local dir brief out
   should_run "$name" || return 0
@@ -636,6 +642,12 @@ case_isolation_workspace_network() {
 
 # ---- 24: isolation workspace-write does not generate network override ----
 case_isolation_workspace_write_no_network() {
+  # Verifies that --isolation workspace-write generates --sandbox workspace-write
+  # without any network_access config override.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation workspace-write --print-cmd.
+  # 3. Assert output contains --sandbox workspace-write and does NOT contain network_access.
   local name="isolation-workspace-write-no-network"
   local dir brief out
   should_run "$name" || return 0
@@ -658,6 +670,11 @@ case_isolation_workspace_write_no_network() {
 
 # ---- 25: unknown isolation level exits 2 ----
 case_isolation_unknown_level_exits_error() {
+  # Verifies that an unrecognised isolation level causes codex-dispatch.sh to exit 2.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation unknown-level --print-cmd.
+  # 3. Assert exit code is exactly 2.
   local name="isolation-unknown-level-error"
   local dir brief code
   should_run "$name" || return 0
@@ -672,6 +689,80 @@ case_isolation_unknown_level_exits_error() {
   rm -rf "$dir"
   if [[ "$code" -ne 2 ]]; then
     fail "$name" "expected exit 2 for unknown isolation level; got $code"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 26: isolation none generates danger-full-access sandbox ----
+case_isolation_none() {
+  # Verifies that --isolation none generates --sandbox danger-full-access.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation none --print-cmd.
+  # 3. Assert output contains --sandbox danger-full-access.
+  local name="isolation-none"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation none --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- '--sandbox danger-full-access'; then
+    fail "$name" "expected --sandbox danger-full-access in output; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 27: isolation read-only generates read-only sandbox ----
+case_isolation_read_only() {
+  # Verifies that --isolation read-only generates --sandbox read-only.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation read-only --print-cmd.
+  # 3. Assert output contains --sandbox read-only.
+  local name="isolation-read-only"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation read-only --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- '--sandbox read-only'; then
+    fail "$name" "expected --sandbox read-only in output; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 28: isolation sandboxed generates workspace-write without network override ----
+case_isolation_sandboxed() {
+  # Verifies that --isolation sandboxed generates --sandbox workspace-write
+  # without any network_access config override.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --isolation sandboxed --print-cmd.
+  # 3. Assert output contains --sandbox workspace-write and does NOT contain network_access.
+  local name="isolation-sandboxed"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation sandboxed --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- '--sandbox workspace-write'; then
+    fail "$name" "expected --sandbox workspace-write; got: $out"
+    return
+  fi
+  if printf '%s\n' "$out" | grep -q 'network_access'; then
+    fail "$name" "sandboxed must not add network_access override; got: $out"
     return
   fi
   pass "$name"
@@ -702,5 +793,8 @@ case_alias_source_installed_helper_fallback
 case_isolation_workspace_network
 case_isolation_workspace_write_no_network
 case_isolation_unknown_level_exits_error
+case_isolation_none
+case_isolation_read_only
+case_isolation_sandboxed
 
 th_summary

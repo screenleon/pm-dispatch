@@ -156,13 +156,25 @@ network access. If `make test-integration` fails, the hook exits non-zero and th
 aborts before dispatching any reviewers. If it passes, reviewers proceed to review the
 code diff only — they do not need network access.
 
-**Codex `self_verify` limitation**: Do not add DB-connection commands to `self_verify`
-blocks in Codex briefs. The sandbox cannot reach localhost services and the command
-will always fail with connection refused.
+**Codex `self_verify` limitation**: By default, the sandbox is network-isolated and
+cannot reach localhost services — do not add DB-connection commands to `self_verify`
+blocks unless the gate was invoked with `--isolation workspace-network`, which enables
+TCP localhost access inside the executor. The pre-gate.sh pattern above remains the
+preferred approach for integration tests because failures abort the gate before any
+token budget is spent.
 
 **Alternative — `--executor claude`**: If you need reviewers to run commands that
 require network access, use `--executor claude`. Claude subagents inherit the main
 thread's environment including Docker and localhost.
+
+**When to use pre-gate.sh vs `--isolation workspace-network`**
+
+| Situation | Recommended approach |
+|---|---|
+| Integration tests must pass *before* reviewers see the diff (fail fast, save token budget) | `pre-gate.sh` with `--allow-hooks` (Pattern 3) |
+| The executor needs live TCP access *during* `self_verify` (e.g., a running service already started by the user) | `--isolation workspace-network` |
+| Teardown must run on both success and failure | Caller-level `trap cleanup EXIT` (Pattern 1A) |
+| Reviewers need network access (external API calls, package downloads) | `--executor claude` (inherits main-thread environment) |
 
 ## Adding new patterns
 

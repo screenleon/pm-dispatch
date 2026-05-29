@@ -730,10 +730,10 @@ script-layer）、CC-202（handover validator framework）
 **Deliverables**:
 
 **(A) `scripts/pr-gate.sh` — hook 機制**
-1. dispatch reviewers 前：若 `.pm-dispatch/pre-gate.sh` 存在且可執行，主線程執行它
-2. 所有 reviewer sessions 完成後：若 `.pm-dispatch/post-gate.sh` 存在，主線程執行它
+1. dispatch reviewers 前：若 `.pm-dispatch/pre-gate.sh` 存在且可執行，且 `--allow-hooks` flag 已傳入，主線程執行它
+2. 所有 reviewer sessions 完成後：若 `.pm-dispatch/post-gate.sh` 存在且可執行，且 `--allow-hooks` 已傳入，且 gate 結果為 GO，主線程執行它
 3. pre-gate hook exit non-zero → gate 中止，不 dispatch reviewers
-4. 兩個 hook 均不存在 → gate 行為完全不變（backward compatible）
+4. 兩個 hook 均不存在、或未傳 `--allow-hooks` → gate 行為完全不變（backward compatible）
 
 **(B) `docs/sandbox-limitations.md` — 使用者文件（吸收 CC-271 範圍）**
 - 說明 Codex sandbox 能力邊界（read-only `/home`、無 Docker socket、無對外網路等）
@@ -745,8 +745,9 @@ script-layer）、CC-202（handover validator framework）
 - 加入 "Go repo" 小節，指向 `sandbox-limitations.md`
 
 **Acceptance criteria**:
-- [ ] `.pm-dispatch/pre-gate.sh` 存在且可執行 → gate 在 dispatch 前執行它（主線程）
-- [ ] `.pm-dispatch/post-gate.sh` 存在 → gate 在所有 reviewer 完成後執行它
+- [ ] `--allow-hooks` 傳入 + `.pm-dispatch/pre-gate.sh` 存在且可執行 → gate 在 dispatch 前執行它（主線程）
+- [ ] `--allow-hooks` 傳入 + `.pm-dispatch/post-gate.sh` 存在且可執行 + gate 結果 GO → gate 在所有 reviewer 完成後執行它
+- [ ] 未傳 `--allow-hooks` → hook 跳過（印 warning），gate 行為不變
 - [ ] pre-gate hook exit 1 → gate 中止，不 dispatch reviewers
 - [ ] 兩個 hook 均不存在 → gate 行為與現行相同（regression test pass）
 - [ ] `docs/sandbox-limitations.md` 存在，包含 Docker Compose 範例與 Go GOCACHE 說明
