@@ -278,10 +278,24 @@ handover_validate_skip_git_check() {
 handover_validate_isolation_level() {
   local value=${1-}
   handover_validate_metadata_value isolation_level "$value" || return 1
-  case "$value" in
-    none|read-only|workspace-write|workspace-network|sandboxed) return 0 ;;
-    *) handover_reject isolation_level "unknown isolation_level value; expected one of: none read-only workspace-write workspace-network sandboxed" ;;
-  esac
+
+  # Load valid enum from core/policy/isolation-level.yaml (source of truth).
+  # This library lives at scripts/lib/; the policy file is two levels up.
+  local _lib_dir
+  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local _policy="${_lib_dir}/../../core/policy/isolation-level.yaml"
+
+  if [[ -f "$_policy" ]]; then
+    if ! awk -v val="$value" '/^values:/{f=1;next} f && /^  - /{sub(/^  - /,""); if($0==val){found=1;exit}} END{exit !found}' "$_policy" 2>/dev/null; then
+      handover_reject isolation_level "unknown isolation_level value; check core/policy/isolation-level.yaml for valid values" || return 1
+    fi
+  else
+    # Fallback: hardcoded list (kept in sync with isolation-level.yaml)
+    case "$value" in
+      none|read-only|workspace-write|workspace-network|sandboxed) return 0 ;;
+      *) handover_reject isolation_level "unknown isolation_level value; expected one of: none read-only workspace-write workspace-network sandboxed" ;;
+    esac
+  fi
 }
 
 handover_validate_fallback_allowed() {

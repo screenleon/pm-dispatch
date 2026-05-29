@@ -46,7 +46,8 @@ Use as needed; not all briefs require all of them.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
-- **`sandbox`** / **`approval`** — only set when overriding the defaults (`workspace-write` / `never`). Caller must authorize.
+- **`isolation_level`** — use for new briefs: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none` (requires `agent_executor` dispatch route). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`.
+- **`sandbox`** / **`approval`** (legacy) — backward-compat only; accepted when `isolation_level` is absent; new briefs must use `isolation_level`.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
