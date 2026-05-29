@@ -12,13 +12,15 @@ Understanding the boundary helps you write `self_verify` blocks that actually wo
 | `/home` (outside project) | read/write | read-only |
 | Docker socket | available | not available |
 | Network (outbound) | available | not available (verify in practice) |
-| TCP localhost | available | available |
+| TCP localhost | available | **not available** (network-namespace isolated) |
 | `~/.cache/go/build` (GOCACHE) | read/write | not writable (read-only `/home`) |
 | `/tmp` | read/write | read/write |
 
-> **Network note**: External network access from the Codex sandbox is currently unconfirmed.
-> TCP connections to localhost (e.g. a DB started by a pre-gate hook) are reachable.
-> Verify external connectivity in practice before relying on it in a brief.
+> **Network note**: The Codex sandbox runs in an isolated network namespace.
+> TCP connections to localhost services started by the main thread (e.g. a DB
+> started by a pre-gate hook) are **not reachable** from inside the sandbox —
+> confirmed by empirical test (curl exit 7, connection refused).
+> For integration tests that need a live service, see Pattern 3 below.
 
 ## Pattern 1: Infrastructure setup before/after gate (Docker, DBs, etc.)
 
@@ -93,9 +95,6 @@ Make hook files executable after creating them:
 chmod +x .pm-dispatch/pre-gate.sh .pm-dispatch/post-gate.sh
 ```
 
-With the database running, the Codex sandbox can reach it via TCP localhost,
-so brief `self_verify` commands like `go test ./...` will have a live DB available.
-
 ## Pattern 2: Go build in brief self_verify
 
 Go requires a writable build cache (`GOCACHE`, default `~/.cache/go/build`).
@@ -120,6 +119,49 @@ the minimal correct intervention.
 **Vendor mode (alternative)**: If your project uses `go mod vendor`, you can
 run `go build -mod=vendor ./...` without any cache at all. This is useful for
 strict reproducibility but requires the vendor directory to be committed.
+
+## Pattern 3: Integration tests that need a live service
+
+Because the Codex sandbox is network-isolated, integration tests that connect
+to a database or other TCP service must run on the **main thread**, not inside
+a Codex brief's `self_verify` block.
+
+The correct pattern: run integration tests in `pre-gate.sh` (which has full
+machine access), then let gate reviewers check the code. The reviewers only need
+to read the diff — they do not re-run the tests.
+
+```bash
+# .pm-dispatch/pre-gate.sh — start DB, run integration tests, stop DB
+#!/usr/bin/env bash
+set -euo pipefail
+
+docker compose -f docker-compose.test.yml up -d db
+until docker compose -f docker-compose.test.yml exec -T db pg_isready -q; do sleep 1; done
+
+# Run integration tests on the main thread (full network access)
+make test-integration
+
+docker compose -f docker-compose.test.yml down
+```
+
+Then run the gate:
+
+```bash
+bash scripts/pr-gate.sh --cd . --allow-hooks
+```
+
+**Why this works**: `pre-gate.sh` runs as the main-thread user with full Docker and
+network access. If `make test-integration` fails, the hook exits non-zero and the gate
+aborts before dispatching any reviewers. If it passes, reviewers proceed to review the
+code diff only — they do not need network access.
+
+**Codex `self_verify` limitation**: Do not add DB-connection commands to `self_verify`
+blocks in Codex briefs. The sandbox cannot reach localhost services and the command
+will always fail with connection refused.
+
+**Alternative — `--executor claude`**: If you need reviewers to run commands that
+require network access, use `--executor claude`. Claude subagents inherit the main
+thread's environment including Docker and localhost.
 
 ## Adding new patterns
 
