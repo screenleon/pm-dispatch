@@ -74,6 +74,10 @@ if [[ -n "${CODEX_GATE_CAPTURE_BRIEF:-}" ]]; then
   cp "$brief_file" "$CODEX_GATE_CAPTURE_BRIEF"
 fi
 
+if [[ -n "${CODEX_GATE_CAPTURE_REVIEWER_BRIEF:-}" && "$brief_file" != *-synthesis.md ]]; then
+  cp "$brief_file" "$CODEX_GATE_CAPTURE_REVIEWER_BRIEF"
+fi
+
 # Simulate reviewer-side injection (tracked file modification during reviewer dispatch).
 if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
@@ -97,7 +101,7 @@ if [[ "${CODEX_GATE_STUB_VERDICT_PREFIX_ONLY:-}" == "1" && "$brief_file" != *-sy
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
-    printf '## stub-reviewer — approved\nVerdict: approved. Prefix-only bypass attempt.\n' > "$output_path"
+    printf '## stub-reviewer -- approved\nVerdict: approved. Prefix-only bypass attempt.\n' > "$output_path"
   fi
   exit 0
 fi
@@ -109,7 +113,7 @@ if [[ "${CODEX_GATE_STUB_MULTIPLE_VERDICTS:-}" == "1" && "$brief_file" != *-synt
   output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}')
   if [[ -n "$output_path" ]]; then
     mkdir -p "$(dirname "$output_path")"
-    printf '## stub-reviewer — approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' > "$output_path"
+    printf '## stub-reviewer -- approve\nVerdict: approve. First verdict line.\nSome additional content.\nVerdict: block. Second verdict line.\n' > "$output_path"
   fi
   exit 0
 fi
@@ -145,12 +149,12 @@ escalation:
   reason: []
 ---
 
-# PR-Gate Result — stub tier (parallel codex mode)
+# PR-Gate Result -- stub tier (parallel codex mode)
 **Date**: 2026-01-01
 **Reviewers**: stub
 **Not reviewed**: none
 
-## stub-reviewer — advise
+## stub-reviewer -- advise
 - stub finding
 
 ## Cross-Reviewer Overlaps
@@ -231,7 +235,7 @@ case "$effective_mode" in
         fi
         # Reviewer brief: CODEX_GATE_STUB_VERDICT controls the verdict line (default advise).
         stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
-        printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+        printf '## stub-reviewer -- %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
         if [[ "$(basename "$output_path")" == pr-gate-result-* || "$(basename "$output_path")" == gate-* ]]; then
           printf 'Final: GO\n' >> "$output_path"
         fi
@@ -1381,10 +1385,10 @@ if [[ "$brief_file" == *-synthesis.md ]]; then
     printf 'tampered-by-synthesis\n' >> "$reviewer_artifact"
   fi
   # Write valid synthesis output so other checks pass (frontmatter required by CC-250 parity check)
-  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: skipped\n  qa-tester: skipped\n  architecture-reviewer: skipped\n  security-reviewer: skipped\n  risk-reviewer: skipped\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer — advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\n## Escalation\n**Recommended**: false\n**Reviewers**: none\n**Reason**:\n- none\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: skipped\n  qa-tester: skipped\n  architecture-reviewer: skipped\n  security-reviewer: skipped\n  risk-reviewer: skipped\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer -- advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\n## Escalation\n**Recommended**: false\n**Reviewers**: none\n**Reason**:\n- none\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
 else
   stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
-  printf '## stub-reviewer — %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
+  printf '## stub-reviewer -- %s\nVerdict: %s. Stub output.\n' "$stub_verdict" "$stub_verdict" > "$output_path"
 fi
 exit 0
 TWRAP_EOF
@@ -2557,6 +2561,112 @@ test_isolation_forwarding_through_pr_gate() {
   pass "$name"
 }
 
+test_seq_brief_ascii_separator() {
+  # CC-275 regression: verifies that the sequential brief emitted by
+  # pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014) bytes.
+  # Fails if any em dash byte sequence (UTF-8: E2 80 94) is present in the brief.
+  local name="seq-brief-ascii-separator"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  # Template heading must use ASCII -- not em dash
+  assert_file_contains "$name" "$brief" "PR-Gate Result --" || return
+  # Reviewer heading format must use ASCII -- not em dash
+  assert_file_contains "$name" "$brief" "## {reviewer-name} -- {verdict}" || return
+  # No em dash bytes (UTF-8 E2 80 94) must remain in the brief
+  if grep -qP '\xe2\x80\x94' "$brief" 2>/dev/null || grep -q $'\xe2\x80\x94' "$brief" 2>/dev/null; then
+    fail "$name" "em dash (U+2014) found in sequential brief -- CC-275 regression"
+    return
+  fi
+  pass "$name"
+}
+
+test_parallel_synthesis_brief_ascii_separator() {
+  # CC-275 regression: verifies that the parallel synthesis brief emitted by
+  # pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014) bytes.
+  # In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
+  local name="parallel-synthesis-brief-ascii-separator"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  # Synthesis result template heading must use ASCII --
+  assert_file_contains "$name" "$brief" "PR-Gate Result --" || return
+  # Reviewer heading format must use ASCII -- not em dash
+  assert_file_contains "$name" "$brief" "## {reviewer-name} -- {verdict}" || return
+  # No em dash bytes must remain in the synthesis brief
+  if grep -qP '\xe2\x80\x94' "$brief" 2>/dev/null || grep -q $'\xe2\x80\x94' "$brief" 2>/dev/null; then
+    fail "$name" "em dash (U+2014) found in synthesis brief -- CC-275 regression"
+    return
+  fi
+  pass "$name"
+}
+
+test_parallel_reviewer_brief_ascii_separator() {
+  # CC-275 regression: verifies that the per-reviewer brief emitted in parallel
+  # mode by pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014).
+  # Uses CODEX_GATE_CAPTURE_REVIEWER_BRIEF which captures the last non-synthesis
+  # brief dispatched during a parallel run.
+  local name="parallel-reviewer-brief-ascii-separator"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$reviewer_brief" ]]; then
+    fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
+    return
+  fi
+  # Reviewer brief heading format must use ASCII -- not em dash
+  assert_file_contains "$name" "$reviewer_brief" "file:line --" || return
+  # No em dash bytes (UTF-8 E2 80 94) must remain in the reviewer brief
+  if grep -q $'\xe2\x80\x94' "$reviewer_brief" 2>/dev/null; then
+    fail "$name" "em dash (U+2014) found in parallel reviewer brief -- CC-275 regression"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -2567,6 +2677,9 @@ run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
 run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
+run_test test_seq_brief_ascii_separator
+run_test test_parallel_synthesis_brief_ascii_separator
+run_test test_parallel_reviewer_brief_ascii_separator
 run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 

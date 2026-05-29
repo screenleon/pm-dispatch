@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# pr-gate.sh — PR-gate review via a dispatched session
+# pr-gate.sh -- PR-gate review via a dispatched session
 #
 # DEFAULT (single-session / sequential):
 #   All reviewers run in order inside ONE combined dispatch session.
@@ -24,8 +24,8 @@ set -euo pipefail
 #
 # Options:
 #   --cd <dir>           working directory (required)
-#   --tier <tier>        express|standard|full — overrides auto-detection
-#   --reviewers <list>   comma-separated names — overrides tier default (targeted re-gate)
+#   --tier <tier>        express|standard|full -- overrides auto-detection
+#   --reviewers <list>   comma-separated names -- overrides tier default (targeted re-gate)
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
@@ -262,7 +262,7 @@ if ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
     END { print s+0 }
   ')
 else
-  # No branch commits — fall back to working tree changes
+  # No branch commits -- fall back to working tree changes
   DIFF_FILES=$(git diff HEAD --name-only; git ls-files --others --exclude-standard)
   DIFF_STAT=$(git diff HEAD --stat)
   BINARY_HIT=$(git diff HEAD --numstat | { grep -c $'^-\t-\t' || true; })
@@ -298,7 +298,7 @@ else
   elif [[ "$SENSITIVE_HIT" -gt 0 || "$LINES" -gt 500 ]]; then
     TIER=full
   elif [[ "$LINES" -lt 100 && "${BINARY_HIT:-0}" -eq 0 ]]; then
-    # Binary files have no line count but represent real changes — treat as standard+
+    # Binary files have no line count but represent real changes -- treat as standard+
     TIER=express
   else
     TIER=standard
@@ -448,7 +448,7 @@ done <<< "$ALL_REVIEW_FILES"
 DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
 ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
-printf 'pr-gate: %s tier — %s\n' "$TIER" "$REVIEWER_DISPLAY"
+printf 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
 printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
@@ -456,14 +456,14 @@ printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 _PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
 if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_PRE_GATE_HOOK" ]]; then
-    printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+    printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
   fi
 elif [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
-  printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable — skipping\n' >&2
+  printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable -- skipping\n' >&2
 elif [[ -x "$_PRE_GATE_HOOK" ]]; then
   printf 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
   if ! (cd "$WORK_DIR" && bash "$_PRE_GATE_HOOK"); then
-    printf 'Error: pre-gate hook failed — gate aborted\n' >&2
+    printf 'Error: pre-gate hook failed -- gate aborted\n' >&2
     exit 1
   fi
   printf 'pre-gate hook completed.\n\n'
@@ -549,12 +549,12 @@ output_format: |
     reason: []
   ---
 
-  # PR-Gate Result — ${TIER} tier (codex mode)
+  # PR-Gate Result -- ${TIER} tier (codex mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
   **Not reviewed**: ${SKIPPED_DISPLAY}
 
-  ## {reviewer-name} — {verdict}
+  ## {reviewer-name} -- {verdict}
   {findings, one per bullet, with [severity] and file:line}
 
   (repeat for each reviewer in order)
@@ -571,7 +571,7 @@ output_format: |
   Final: GO|NO-GO
   {required fixes if NO-GO; override path if any block-soft}
 
-  CRITICAL — the Final: line above MUST be emitted EXACTLY in this shape:
+  CRITICAL -- the Final: line above MUST be emitted EXACTLY in this shape:
   - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
@@ -607,7 +607,7 @@ BRIEF_EOF
     # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
     if [[ ! -s "$OUTPUT_FILE" ]]; then
       printf 'Error: sequential gate did not produce the result file: %s\n' "$OUTPUT_FILE" >&2
-      printf 'Gate aborted — codex session may have exited 0 without completing.\n' >&2
+      printf 'Gate aborted -- codex session may have exited 0 without completing.\n' >&2
       exit 1
     fi
     SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
@@ -633,7 +633,7 @@ BRIEF_EOF
 else
 
   # ── Multi-session mode (--parallel): one independent dispatch per reviewer + synthesis ──
-  # Each reviewer runs in its own session with no shared context — eliminates
+  # Each reviewer runs in its own session with no shared context -- eliminates
   # anchoring bias that can occur when all reviewers share one session window.
   # Followed by a PM synthesis session that consolidates all individual results.
   # Higher token cost vs single-session; suitable for auth/payment/migration paths.
@@ -655,7 +655,7 @@ else
     _HASH_CMD="shasum -a 256"
   fi
   if [[ -z "$_HASH_CMD" ]]; then
-    printf 'Error: no sha256sum or shasum found — cannot fingerprint worktree for injection detection.\n' >&2
+    printf 'Error: no sha256sum or shasum found -- cannot fingerprint worktree for injection detection.\n' >&2
     exit 1
   fi
 
@@ -711,15 +711,15 @@ task:
   2. Review the changed files strictly from the ${r} perspective only.
      Do not attempt to cover other reviewer dimensions.
   3. Write a structured findings block with:
-     - Findings: [severity] file:line — description (low/medium/high)
+     - Findings: [severity] file:line -- description (low/medium/high)
      - Explicit verdict: approve | advise | block-soft | block
      - One-sentence rationale for your verdict
 
   Write your complete review to ${REVIEWER_OUTPUT}.
 
 output_format: |
-  ## ${r} — {verdict}
-  - [{severity}] {file:line} — {finding description}
+  ## ${r} -- {verdict}
+  - [{severity}] {file:line} -- {finding description}
 
   Verdict: {approve | advise | block-soft | block}. {One-sentence rationale.}
 
@@ -744,7 +744,7 @@ RBRIEF_EOF
   if [[ "$EXECUTOR" == "codex" ]]; then
     printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
-    # Wait for all reviewer sessions. Any non-zero exit aborts the gate — an
+    # Wait for all reviewer sessions. Any non-zero exit aborts the gate -- an
     # incomplete review cannot certify a valid gate result.
     # Hash each reviewer output immediately after its PID exits so we capture
     # the content before any concurrently-running reviewer session can modify it.
@@ -765,11 +765,11 @@ RBRIEF_EOF
     if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
       printf 'Error: %d reviewer session(s) failed: %s\n' \
         "${#FAILED_REVIEWERS[@]}" "${FAILED_REVIEWERS[*]}" >&2
-      printf 'Gate aborted — fix the failing session or use --sequential to diagnose.\n' >&2
+      printf 'Gate aborted -- fix the failing session or use --sequential to diagnose.\n' >&2
       exit 1
     fi
 
-    # Verify every reviewer wrote a non-empty output file — a codex session can
+    # Verify every reviewer wrote a non-empty output file -- a codex session can
     # exit 0 without completing its task, which would leave the synthesis brief
     # with nothing to consolidate and could produce a spurious GO.
     MISSING_OUTPUTS=()
@@ -783,7 +783,7 @@ RBRIEF_EOF
     if [[ "${#MISSING_OUTPUTS[@]}" -gt 0 ]]; then
       printf 'Error: reviewer output missing or empty for: %s\n' "${MISSING_OUTPUTS[*]}" >&2
       printf 'A reviewer session may have exited 0 without writing its findings file.\n' >&2
-      printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+      printf 'Gate aborted -- use --sequential to diagnose.\n' >&2
       exit 1
     fi
 
@@ -802,14 +802,14 @@ RBRIEF_EOF
     if [[ "${#INVALID_OUTPUTS[@]}" -gt 0 ]]; then
       printf 'Error: reviewer output must contain exactly one valid Verdict line for: %s\n' "${INVALID_OUTPUTS[*]}" >&2
       printf 'Expected: exactly one of: Verdict: approve|advise|block-soft|block\n' >&2
-      printf 'Gate aborted — use --sequential to diagnose.\n' >&2
+      printf 'Gate aborted -- use --sequential to diagnose.\n' >&2
       exit 1
     fi
 
     # Cross-reviewer artifact tamper detection: re-hash every reviewer output and
     # compare with the hash captured immediately after that reviewer's PID exited.
     # A mismatch means a concurrently-running reviewer session modified this file
-    # after it was completed — fail closed before synthesis can run on tainted data.
+    # after it was completed -- fail closed before synthesis can run on tainted data.
     CROSS_TAMPERED=()
     for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
       rf="${REVIEWER_OUTPUT_FILES[$i]}"
@@ -827,18 +827,18 @@ RBRIEF_EOF
       exit 1
     fi
 
-  # Worktree integrity check — detect prompt-injected tracked-file modifications.
+  # Worktree integrity check -- detect prompt-injected tracked-file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
   # catches new untracked source files (gate artifacts are gitignored, excluded).
   _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
   _POST_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
   if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
-    printf 'Error: reviewer sessions modified working tree — possible prompt injection.\n' >&2
+    printf 'Error: reviewer sessions modified working tree -- possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
     exit 1
   fi
 
-  # Reviewer artifact integrity — snapshot each reviewer output file content now,
+  # Reviewer artifact integrity -- snapshot each reviewer output file content now,
   # before synthesis, to detect synthesis-side tampering of reviewer artifacts.
   # Reviewer outputs are gitignored and not covered by the worktree hash above.
   REVIEWER_ARTIFACT_HASHES=()
@@ -896,7 +896,7 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 
-  Reviewer findings (embedded — do NOT attempt to read any external reviewer output file):
+  Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
 SBRIEF_P1
 
   for i in "${!REVIEWER_OUTPUT_FILES[@]}"; do
@@ -943,12 +943,12 @@ output_format: |
     reason: []
   ---
 
-  # PR-Gate Result — ${TIER} tier (parallel codex mode)
+  # PR-Gate Result -- ${TIER} tier (parallel codex mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
   **Not reviewed**: ${SKIPPED_DISPLAY}
 
-  ## {reviewer-name} — {verdict}
+  ## {reviewer-name} -- {verdict}
   {Copy findings from that reviewer's findings block above, one bullet per finding with [severity] and file:line}
 
   Verdict: {verdict from reviewer findings}. {rationale}
@@ -967,7 +967,7 @@ output_format: |
   Final: GO|NO-GO
   {required fixes if NO-GO; override path if any block or block-soft}
 
-  CRITICAL — the Final: line above MUST be emitted EXACTLY in this shape:
+  CRITICAL -- the Final: line above MUST be emitted EXACTLY in this shape:
   - plain text, no markdown emphasis (NO surrounding **, NO backticks, NO italic)
   - at start of line (no leading whitespace)
   - literal token GO or NO-GO (uppercase, hyphen for NO-GO)
@@ -1011,7 +1011,7 @@ SBRIEF_P2
   # Multiple or conflicting Final: lines indicate a manipulated/corrupt artifact.
   if [[ ! -s "$OUTPUT_FILE" ]]; then
     printf 'Error: PM synthesis did not produce the gate result file: %s\n' "$OUTPUT_FILE" >&2
-    printf 'Gate aborted — synthesis session may have exited 0 without completing.\n' >&2
+    printf 'Gate aborted -- synthesis session may have exited 0 without completing.\n' >&2
     exit 1
   fi
   FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
@@ -1021,7 +1021,7 @@ SBRIEF_P2
   fi
   SYNTHESIS_FINAL=$(grep -E '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" | awk '{print $2}')
   if [[ "$SYNTHESIS_FINAL" != "$SHELL_FINAL" ]]; then
-    printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) — gate result may have been manipulated.\n' \
+    printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated.\n' \
       "$SYNTHESIS_FINAL" "$SHELL_FINAL" >&2
     exit 1
   fi
@@ -1048,16 +1048,16 @@ SBRIEF_P2
     fi
   done
   if [[ "${#TAMPERED_ARTIFACTS[@]}" -gt 0 ]]; then
-    printf 'Error: reviewer artifact(s) modified after review phase — synthesis-side tampering detected: %s\n' \
+    printf 'Error: reviewer artifact(s) modified after review phase -- synthesis-side tampering detected: %s\n' \
       "${TAMPERED_ARTIFACTS[*]}" >&2
     exit 1
   fi
 
-  # Post-synthesis integrity check — same dual-hash guard for tracked files.
+  # Post-synthesis integrity check -- same dual-hash guard for tracked files.
   _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
   _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
   if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then
-    printf 'Error: synthesis session modified working tree — possible prompt injection.\n' >&2
+    printf 'Error: synthesis session modified working tree -- possible prompt injection.\n' >&2
     exit 1
   fi
   else
@@ -1070,18 +1070,18 @@ fi
 # On the claude executor route this script is a handover producer only; reviewers
 # run outside this script, so post-gate cannot fire at true gate completion here.
 # On the codex route, post-gate runs only when --allow-hooks is set AND the
-# gate result is GO — it is a success-only side-effect hook, not a teardown hook.
+# gate result is GO -- it is a success-only side-effect hook, not a teardown hook.
 _POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
 if [[ "$EXECUTOR" == "claude" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
-    printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude — reviewers execute outside this script on that route\n' >&2
+    printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude -- reviewers execute outside this script on that route\n' >&2
   fi
 elif [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
-    printf 'Warning: .pm-dispatch/post-gate.sh present but skipped — pass --allow-hooks to execute repo-local hook scripts\n' >&2
+    printf 'Warning: .pm-dispatch/post-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
   fi
 elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
-  printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable — skipping\n' >&2
+  printf 'Warning: .pm-dispatch/post-gate.sh exists but is not executable -- skipping\n' >&2
 elif [[ -x "$_POST_GATE_HOOK" ]]; then
   _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
   if [[ "$_GATE_FINAL" != "GO" ]]; then
@@ -1089,7 +1089,7 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
   else
     printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
     if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
-      printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero — this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
+      printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero -- this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
       printf 'Error: post-gate hook failed\n' >&2
       exit 1
     fi
