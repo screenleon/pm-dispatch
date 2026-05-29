@@ -30,6 +30,7 @@ set -euo pipefail
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
+#   --isolation <level>  isolation level: none|read-only|workspace-write|workspace-network|sandboxed
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
@@ -47,6 +48,7 @@ EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
+DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
 
 while [[ $# -gt 0 ]]; do
@@ -58,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
+    --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
@@ -155,13 +158,14 @@ else
     local sandbox=${4-}
     local approval=${5-}
     local timeout=${6-}
+    local isolation_level=${7-}
     local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
     local -a cmd
     local arg
     local first=1
 
-    [[ $# -eq 6 ]] || {
-      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout\n' >&2
+    [[ $# -eq 6 || $# -eq 7 ]] || {
+      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
       return 2
     }
 
@@ -169,6 +173,7 @@ else
     if [[ -n "$model" && "$model" != "default" ]]; then
       cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
     fi
+    [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
 
     for arg in "${cmd[@]}"; do
       if [[ "$first" -eq 1 ]]; then
@@ -571,7 +576,7 @@ self_verify:
 BRIEF_EOF
 
   if [[ "$EXECUTOR" == "codex" ]]; then
-    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
     eval "$CODEX_DISPATCH_CMD"
 
     # Validate sequential output: must exist, be non-empty, contain exactly one
@@ -702,7 +707,7 @@ acceptance:
 RBRIEF_EOF
 
     if [[ "$EXECUTOR" == "codex" ]]; then
-      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
       eval "$CODEX_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
       DISPATCH_PIDS+=($!)
       printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
@@ -974,7 +979,7 @@ acceptance:
 SBRIEF_P2
 
   printf '  [synthesis] running PM consolidation...\n'
-  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT")" || exit 2
+  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
   eval "$CODEX_DISPATCH_CMD"
 
   # Validate synthesis output: must exist, be non-empty, contain exactly one

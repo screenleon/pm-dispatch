@@ -1,0 +1,34 @@
+# adapters/codex/isolation-map.yaml
+#
+# Translation table: isolation_level → codex-executor native flags.
+# codex-dispatch.sh reads this file to expand the isolation_level field
+# from a brief into --sandbox and -c config_overrides for the codex CLI.
+#
+# Fields per entry:
+#   sandbox          – value for codex exec --sandbox
+#   config_overrides – list of -c key=value strings appended to the command
+#
+# Semantic definitions (source of truth: core/policy/isolation-level.yaml):
+#   none             – no isolation; full machine access
+#   read-only        – read files only; no writes
+#   workspace-write  – write within project working directory only (default)
+#   workspace network – workspace-write + TCP localhost access enabled
+#   sandboxed        – most restrictive workspace-write; no network
+
+mappings:
+  none:
+    sandbox: danger-full-access
+    config_overrides: []
+  read-only:
+    sandbox: read-only
+    config_overrides: []
+  workspace-write:
+    sandbox: workspace-write
+    config_overrides: []
+  workspace-network:
+    sandbox: workspace-write
+    config_overrides:
+      - 'sandbox_workspace_write.network_access=true'
+  sandboxed:
+    sandbox: workspace-write
+    config_overrides: []

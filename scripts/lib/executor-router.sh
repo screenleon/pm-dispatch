@@ -65,7 +65,7 @@ executor_router_safe_argv() {
   printf '%q' "$value"
 }
 
-# dispatch_via_codex <brief_file> <working_dir> <model> <sandbox> <approval> <timeout>
+# dispatch_via_codex <brief_file> <working_dir> <model> <sandbox> <approval> <timeout> [isolation_level]
 # Prints a safely-quoted shell command string. The caller still owns when/how to
 # execute it, including foreground/background dispatch and redirection.
 dispatch_via_codex() {
@@ -75,13 +75,14 @@ dispatch_via_codex() {
   local sandbox=${4-}
   local approval=${5-}
   local timeout=${6-}
+  local isolation_level=${7-}
   local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
   local -a cmd
   local arg
   local first=1
 
-  [[ $# -eq 6 ]] || {
-    printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout\n' >&2
+  [[ $# -eq 6 || $# -eq 7 ]] || {
+    printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
     return 2
   }
 
@@ -89,6 +90,7 @@ dispatch_via_codex() {
   if [[ -n "$model" && "$model" != "default" ]]; then
     cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
   fi
+  [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
 
   for arg in "${cmd[@]}"; do
     if [[ "$first" -eq 1 ]]; then

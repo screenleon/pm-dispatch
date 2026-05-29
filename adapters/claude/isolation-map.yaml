@@ -12,5 +12,7 @@ mappings:
     native_flags: {}
   workspace-write:
     native_flags: {}
+  workspace-network:
+    native_flags: {}
   sandboxed:
     native_flags: {}

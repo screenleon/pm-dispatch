@@ -612,6 +612,71 @@ case_alias_source_installed_helper_fallback() {
   rm -rf "$_root" "$_work"; rm -f "$_brief"
 }
 
+# ---- 23: isolation workspace-network generates network override ----
+case_isolation_workspace_network() {
+  local name="isolation-workspace-network"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation workspace-network --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- '--sandbox workspace-write'; then
+    fail "$name" "expected --sandbox workspace-write in output; got: $out"
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -q 'sandbox_workspace_write.network_access=true'; then
+    fail "$name" "expected sandbox_workspace_write.network_access=true in output; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 24: isolation workspace-write does not generate network override ----
+case_isolation_workspace_write_no_network() {
+  local name="isolation-workspace-write-no-network"
+  local dir brief out
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation workspace-write --print-cmd 2>&1)"
+  rm -rf "$dir"
+  if ! printf '%s\n' "$out" | grep -q -- '--sandbox workspace-write'; then
+    fail "$name" "expected --sandbox workspace-write; got: $out"
+    return
+  fi
+  if printf '%s\n' "$out" | grep -q 'network_access'; then
+    fail "$name" "workspace-write must not add network_access override; got: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# ---- 25: unknown isolation level exits 2 ----
+case_isolation_unknown_level_exits_error() {
+  local name="isolation-unknown-level-error"
+  local dir brief code
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: isolation test\n' > "$brief"
+  set +e
+  bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation unknown-level --print-cmd >/dev/null 2>&1
+  code=$?
+  set -e
+  rm -rf "$dir"
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for unknown isolation level; got $code"
+    return
+  fi
+  pass "$name"
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -634,5 +699,8 @@ case_timeout_precedence_brief_field
 case_alias_source_missing_exits_2
 case_alias_source_malformed_exits_nonzero
 case_alias_source_installed_helper_fallback
+case_isolation_workspace_network
+case_isolation_workspace_write_no_network
+case_isolation_unknown_level_exits_error
 
 th_summary
