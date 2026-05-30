@@ -40,6 +40,11 @@ run_pmctl() {
   "$repo/cli/pmctl" "$@"
 }
 
+# Portable octal-mode read: GNU `stat -c` then BSD/macOS `stat -f`.
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
 assert_exists() {
   local name="$1" path="$2"
   if [[ -e "$path" ]]; then
@@ -141,7 +146,7 @@ if should_run "dispatch.sh is an executable stub"; then
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
-  mode="$(stat -c '%a' "$repo/adapters/codex/dispatch.sh")"
+  mode="$(file_mode "$repo/adapters/codex/dispatch.sh")"
   status=0
   bash "$repo/adapters/codex/dispatch.sh" >/dev/null 2>&1 || status=$?
   if [[ -x "$repo/adapters/codex/dispatch.sh" && "$mode" == "755" && "$status" -ne 0 ]]; then
@@ -158,7 +163,7 @@ if should_run "run.sh is executable"; then
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
-  mode="$(stat -c '%a' "$repo/adapters/codex/run.sh")"
+  mode="$(file_mode "$repo/adapters/codex/run.sh")"
   if [[ -x "$repo/adapters/codex/run.sh" && "$mode" == "755" ]]; then
     pass "$name"
   else

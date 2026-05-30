@@ -386,8 +386,33 @@ case_symlinked_adapter_rejected() {
   rm -rf "$fixture" "$work"; rm -f "$target"
 }
 
+# ---- 17: a non-core adapter-specific flag is forwarded unchanged ----
+# pmctl consumes --adapter and peeks --cd/--brief-file; every other flag (here
+# --approval, which pmctl does not interpret) must pass through to the adapter
+# verbatim and in order.
+case_arg_passthrough() {
+  local name="dispatch/non-core flag forwarded to adapter unchanged"
+  should_run "$name" || return 0
+  local work brief out code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  set +e
+  out="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+         --approval on-request --print-cmd 2>/dev/null)"; code=$?
+  set -e
+  # The codex adapter renders --approval into `approval_policy="<val>"`; seeing the
+  # exact value proves the flag+value were forwarded unchanged and in order.
+  if [[ "$code" -eq 0 ]] && grep -q 'approval_policy="on-request"' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code"
+  fi
+  rm -rf "$work"
+}
+
 case_missing_adapter
 case_unknown_adapter
+case_arg_passthrough
 case_adapter_resolution_and_route
 case_brief_validation_blocks
 case_guard_denies_dispatch
