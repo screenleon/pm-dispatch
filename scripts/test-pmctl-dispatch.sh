@@ -332,6 +332,60 @@ case_guard_unavailable_fails_closed() {
   rm -rf "$work"
 }
 
+# ---- 14: missing --cd is rejected ----
+case_missing_cd() {
+  local name="dispatch/missing --cd rejected"
+  should_run "$name" || return 0
+  local err code
+  set +e
+  err="$("$PMCTL" dispatch run --adapter codex --brief-file /tmp/x.md 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi '\-\-cd <dir> is required' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+}
+
+# ---- 15: missing --brief-file is rejected (no brief-less path) ----
+case_missing_brief_file() {
+  local name="dispatch/missing --brief-file rejected"
+  should_run "$name" || return 0
+  local work err code
+  work="$(mktemp -d)"; git init -q "$work"
+  set +e
+  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi '\-\-brief-file <path> is required' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work"
+}
+
+# ---- 16: a symlinked adapter dispatch.sh is rejected (trust-boundary escape) ----
+case_symlinked_adapter_rejected() {
+  local name="dispatch/symlinked adapter dispatch.sh rejected"
+  should_run "$name" || return 0
+  local fixture target work brief code err
+  fixture="$(mktemp -d)"
+  mkdir -p "$fixture/adapters/evil"
+  target="$(mktemp)"; printf '#!/usr/bin/env bash\nexit 0\n' > "$target"; chmod +x "$target"
+  ln -s "$target" "$fixture/adapters/evil/dispatch.sh"   # points OUTSIDE the repo
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="/tmp/brief-pmctl-dispatch-$$-evil.md"; printf 'schema_version: 1\n' > "$brief"; _BRIEFS+=("$brief")
+  set +e
+  err="$(pmctl_dispatch_run "$fixture" --adapter evil --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'must not be a symlink' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$fixture" "$work"; rm -f "$target"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_adapter_resolution_and_route
@@ -345,5 +399,8 @@ case_inline_brief_rejected
 case_route_failure_branch
 case_routing_unavailable_fails_closed
 case_guard_unavailable_fails_closed
+case_missing_cd
+case_missing_brief_file
+case_symlinked_adapter_rejected
 
 th_summary

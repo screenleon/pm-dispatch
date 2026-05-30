@@ -97,7 +97,11 @@ SKIP_GIT_CHECK=0
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PM_DISPATCH_CONFIG_FILE="${HOME}/.pm-dispatch/config"
 PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/model-aliases.tsv"
+# Fallbacks, in order: snapshot-flat (`../share`, the installed-helper layout)
+# then repo-source layout from adapters/codex/ (`../../share`). The latter keeps
+# alias resolution working if the self-snapshot bootstrap is ever bypassed.
 [[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../share/model-aliases.tsv"
+[[ -f "$PM_DISPATCH_ALIAS_FILE" ]] || PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/../../share/model-aliases.tsv"
 TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
@@ -294,7 +298,9 @@ fi
 CONFIG_OVERRIDES=()
 if [[ -n "$ISOLATION" ]]; then
   _ADAPTER_FILE="$SCRIPT_DIR/adapters/codex/isolation-map.yaml"
+  # Snapshot-flat layout first, then repo-source layout from adapters/codex/.
   [[ -f "$_ADAPTER_FILE" ]] || _ADAPTER_FILE="$SCRIPT_DIR/../adapters/codex/isolation-map.yaml"
+  [[ -f "$_ADAPTER_FILE" ]] || _ADAPTER_FILE="$SCRIPT_DIR/isolation-map.yaml"
   if [[ ! -f "$_ADAPTER_FILE" ]]; then
     printf 'codex-dispatch: error: adapters/codex/isolation-map.yaml not found (expected at %s)\n' "$_ADAPTER_FILE" >&2
     exit 2

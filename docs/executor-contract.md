@@ -85,6 +85,8 @@ The **trigger** is asymmetric by capability, not by policy:
 
 This asymmetry is inherent to the host's CLI capabilities — both paths evaluate the same policy. `--profile` selects the policy because pm and codex have different allow-lists (pm pre-write → memory dir only; codex pre-write → `/tmp/brief-*.md` only). Claude PreToolUse hooks may later shell to `pmctl guard check` to collapse to a single source, but today they remain the policy source the CLI composes.
 
+**On the two dispatch entrypoints (single policy, not split-brain):** `pmctl dispatch run` is the policy surface — it runs `brief-validate` + `pmctl guard check` before invoking the adapter. The codex adapter (`adapters/codex/dispatch.sh`, and its `scripts/codex-dispatch.sh` compatibility shim) is also directly callable — that is the codex-executor agent path, where the **same** guard policy is enforced by the Claude PreToolUse auto-hook on the brief-file Write. So both entrypoints are guarded by one policy with two triggers (the asymmetry above); the directly-callable adapter is the low-level primitive, not an unguarded bypass. A non-Claude host that calls the adapter directly (outside both `pmctl dispatch run` and a PreToolUse-capable agent) is responsible for calling `pmctl guard check` itself, exactly as the non-Claude row above requires.
+
 The surface is **fail-closed**: a success exit (`0`) always means a registered policy ran and permitted the action — never that enforcement was skipped. Exit codes:
 
 | Exit | Meaning |

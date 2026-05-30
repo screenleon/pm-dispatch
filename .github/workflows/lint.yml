@@ -100,7 +100,6 @@ jobs:
             pmctl-backlog.sh
             pmctl-fs.sh
             pmctl-policy.sh
-            pmctl-dispatch.sh
             handover-validate.sh
             codex-dispatch.sh
             codex-watch.sh

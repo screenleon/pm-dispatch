@@ -130,9 +130,35 @@ pmctl_dispatch_run() {
   # 1. Resolve adapter by convention — the name is now a validated bare identifier.
   local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
   if [[ ! -f "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: unknown adapter %q (no %s)\n' "$adapter" "$adapter_path" >&2
+    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; `pmctl adapter generate` scaffolds it.\n' "$adapter" "$adapter_path" >&2
     return 2
   fi
+
+  # Containment: the adapter script must be a regular file (not a symlink) whose
+  # physical directory stays within repo_root/adapters/. Name validation already
+  # blocks `../` in the token; this additionally blocks a symlinked dispatch.sh
+  # (or symlinked adapter dir) from escaping the trust boundary to execute an
+  # arbitrary script outside the repo.
+  if [[ -L "$adapter_path" ]]; then
+    printf 'pmctl dispatch run: adapter dispatch script must not be a symlink: %s\n' "$adapter_path" >&2
+    return 2
+  fi
+  local _adapters_base _adapter_dir_real
+  if ! _adapters_base="$(cd -P -- "$repo_root/adapters" 2>/dev/null && pwd -P)"; then
+    printf 'pmctl dispatch run: adapters directory not found under %s\n' "$repo_root" >&2
+    return 2
+  fi
+  if ! _adapter_dir_real="$(cd -P -- "$(dirname "$adapter_path")" 2>/dev/null && pwd -P)"; then
+    printf 'pmctl dispatch run: cannot resolve adapter directory for %q\n' "$adapter" >&2
+    return 2
+  fi
+  case "$_adapter_dir_real" in
+    "$_adapters_base"/?*) : ;;
+    *)
+      printf 'pmctl dispatch run: adapter path escapes the adapters/ boundary: %s\n' "$_adapter_dir_real" >&2
+      return 2
+      ;;
+  esac
 
   # 2. Route — the dispatch ALLOWLIST. Fail closed: a missing routing registry
   #    must refuse the dispatch, never silently skip the allowlist.

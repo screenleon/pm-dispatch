@@ -116,20 +116,38 @@ fi
 
 # Behavior: creates exactly the four generated adapter files
 # Steps: generate codex and count/check the expected files
-if should_run "creates all four files"; then
-  name="creates all four files"
+if should_run "creates all five files"; then
+  name="creates all five files"
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
   count="$(find "$repo/adapters/codex" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-  if [[ "$count" == "4" ]] &&
+  if [[ "$count" == "5" ]] &&
     assert_exists "$name" "$repo/adapters/codex/adapter.yaml" &&
     assert_exists "$name" "$repo/adapters/codex/isolation-map.yaml" &&
+    assert_exists "$name" "$repo/adapters/codex/dispatch.sh" &&
     assert_exists "$name" "$repo/adapters/codex/run.sh" &&
     assert_exists "$name" "$repo/adapters/codex/README.md"; then
     pass "$name"
   else
-    fail "$name" "expected exactly 4 generated files, got $count"
+    fail "$name" "expected exactly 5 generated files, got $count"
+  fi
+fi
+
+# Behavior: generated dispatch.sh is an executable (755) stub that fails loudly
+# until wired, so a freshly generated adapter is reachable but not silently broken.
+if should_run "dispatch.sh is an executable stub"; then
+  name="dispatch.sh is an executable stub"
+  repo="$tmp_root/$name"
+  make_fixture_repo "$repo"
+  run_pmctl "$repo" adapter generate codex >/dev/null
+  mode="$(stat -c '%a' "$repo/adapters/codex/dispatch.sh")"
+  status=0
+  bash "$repo/adapters/codex/dispatch.sh" >/dev/null 2>&1 || status=$?
+  if [[ -x "$repo/adapters/codex/dispatch.sh" && "$mode" == "755" && "$status" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "mode=$mode status=$status"
   fi
 fi
 
@@ -237,9 +255,9 @@ fi
 
 # Behavior: generated run.sh reaches the dispatch/run route (the real CC-289
 # orchestrator), not the generic unknown-command error.
-# Steps: generate testrouter, invoke run.sh; the orchestrator is reached and
-# resolves the adapter by convention — here adapters/testrouter/dispatch.sh does
-# not exist, so it fails with its OWN message (proving the route was taken).
+# Steps: generate testrouter, invoke run.sh --help (no --cd). The orchestrator is
+# reached and emits its OWN message (a missing required-arg error here), which
+# proves the dispatch/run route was taken rather than the unknown-command path.
 if should_run "run.sh reaches dispatch route"; then
   name="run.sh reaches dispatch route"
   repo="$tmp_root/$name"
