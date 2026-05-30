@@ -115,7 +115,7 @@ pmctl_dispatch_run() {
   # Strict identifier: a bare adapter name, never a path. Blocks `../` traversal
   # and any value that could resolve a dispatch.sh outside adapters/<name>/.
   if ! [[ "$adapter" =~ ^[a-z][a-z0-9_-]*$ ]]; then
-    printf 'pmctl dispatch run: invalid adapter name %q (must match ^[a-z][a-z0-9_-]*$ — a bare name, not a path)\n' "$adapter" >&2
+    printf 'pmctl dispatch run: invalid adapter name %q (must be a bare lowercase identifier: a letter, then letters/digits/hyphen/underscore — no path separators)\n' "$adapter" >&2
     return 2
   fi
   if [[ -z "$work_dir" ]]; then
@@ -130,7 +130,7 @@ pmctl_dispatch_run() {
   # 1. Resolve adapter by convention — the name is now a validated bare identifier.
   local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
   if [[ ! -f "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; `pmctl adapter generate` scaffolds it.\n' "$adapter" "$adapter_path" >&2
+    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; run pmctl adapter generate to scaffold it.\n' "$adapter" "$adapter_path" >&2
     return 2
   fi
 
