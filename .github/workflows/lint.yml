@@ -130,6 +130,7 @@ jobs:
             test-executor-router.sh
             test-pmctl-adapter-generate.sh
             test-pmctl-backlog.sh
+            test-pmctl-guard.sh
             test-handover-validate.sh
             hook-framework.sh
             test-hook-framework.sh
