@@ -2561,6 +2561,68 @@ test_isolation_forwarding_through_pr_gate() {
   pass "$name"
 }
 
+test_unknown_arg_message() {
+  # Verifies an unrecognized flag exits 2 AND prints an actionable accepted-flags
+  # list (not just a bare "Unknown arg"), so callers self-correct on first failure.
+  local name="unknown-arg-message"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --bogus-flag
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Unknown arg: --bogus-flag" || return
+  assert_file_contains "$name" "$err" "Accepted:" || return
+  assert_file_contains "$name" "$err" "--reviewers|--targeted" || return
+  pass "$name"
+}
+
+test_targeted_alias() {
+  # Verifies --targeted is accepted as an alias of --reviewers (the /pr-gate skill
+  # and the script's own comments use "targeted" vocabulary). Scoping a parallel
+  # gate to critic must launch critic only — same as --reviewers critic.
+  local name="targeted-alias"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --targeted critic --parallel
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (stderr: $(head -3 "$err" 2>/dev/null))"
+    return
+  fi
+  if grep -qi "unknown arg" "$err"; then
+    fail "$name" "--targeted was rejected as an unknown arg"
+    return
+  fi
+  assert_file_contains "$name" "$out" "launched critic" || return
+  if grep -q "launched qa-tester" "$out"; then
+    fail "$name" "--targeted critic did not scope reviewers — qa-tester was launched"
+    return
+  fi
+  pass "$name"
+}
+
 test_seq_brief_ascii_separator() {
   # CC-275 regression: verifies that the sequential brief emitted by
   # pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014) bytes.
@@ -2677,6 +2739,8 @@ run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
 run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
+run_test test_unknown_arg_message
+run_test test_targeted_alias
 run_test test_seq_brief_ascii_separator
 run_test test_parallel_synthesis_brief_ascii_separator
 run_test test_parallel_reviewer_brief_ascii_separator

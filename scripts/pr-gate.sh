@@ -26,6 +26,7 @@ set -euo pipefail
 #   --cd <dir>           working directory (required)
 #   --tier <tier>        express|standard|full -- overrides auto-detection
 #   --reviewers <list>   comma-separated names -- overrides tier default (targeted re-gate)
+#   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
@@ -56,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --cd)         WORK_DIR="$2";           shift 2;;
     --tier)       TIER_OVERRIDE="$2";      shift 2;;
     --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
+    --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
     --scope)      SCOPE="$2";              shift 2;;
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
@@ -68,7 +70,10 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
-    *) printf 'Unknown arg: %s\n' "$1" >&2; exit 2;;
+    *)
+      printf 'Unknown arg: %s\n' "$1" >&2
+      printf 'Accepted: --cd --tier --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks (-h for help)\n' >&2
+      exit 2;;
   esac
 done
 
