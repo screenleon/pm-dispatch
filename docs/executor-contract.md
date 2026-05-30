@@ -72,6 +72,27 @@ Note: codex profile — `scripts/codex-dispatch.sh` already satisfies this contr
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Owner/peer hands-on environments where same-shell execution and direct main-thread editing are preferred. |
 | Status | Implemented (primary route). | Implemented — `agents/claude-executor.md` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
 
+## Guard enforcement
+
+Guard policy (what a profile may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`hook-pm-write-guard.sh`, `hook-codex-write-guard.sh`, `hook-codex-bash-guard.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --profile <pm|codex> --file/--command <val>`. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
+
+The **trigger** is asymmetric by capability, not by policy:
+
+| Host | Guard trigger |
+|---|---|
+| Claude | PreToolUse auto-hook fires before each `Edit`/`Write`/`Bash`; enforcement is automatic and cannot be skipped by the agent. |
+| Non-Claude (e.g. codex-as-PM) | The host has no PreToolUse equivalent, so it MUST call `pmctl guard check` explicitly before the action and honor a non-zero exit as a deny. |
+
+This asymmetry is inherent to the host's CLI capabilities — both paths evaluate the same policy. `--profile` selects the policy because pm and codex have different allow-lists (pm pre-write → memory dir only; codex pre-write → `/tmp/brief-*.md` only). Claude PreToolUse hooks may later shell to `pmctl guard check` to collapse to a single source, but today they remain the policy source the CLI composes.
+
+The surface is **fail-closed**: a success exit (`0`) always means a registered policy ran and permitted the action — never that enforcement was skipped. Exit codes:
+
+| Exit | Meaning |
+|---|---|
+| `0` | a registered policy ran and **allowed** the action |
+| `2` | usage error (bad/missing flags) **or** a registered policy **denied** the action (the hook's own deny exit is propagated) |
+| `3` | request recognized but **no policy registered** to evaluate it — `pm/pre-bash` (project-pm never runs Bash) and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". |
+
 ## Selection
 
 Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract.

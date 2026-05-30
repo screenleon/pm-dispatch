@@ -301,6 +301,13 @@ jobs:
       - name: pmctl backlog regression suite
         run: bash scripts/test-pmctl-backlog.sh
 
+  test-pmctl-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl guard check regression suite
+        run: bash scripts/test-pmctl-guard.sh
+
   lint-backlog:
     runs-on: ubuntu-latest
     steps:
