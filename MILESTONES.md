@@ -60,8 +60,8 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-287 | `pmctl backlog`（view / lint / archive；吸收 CC-282） | ⏳ |
-| CC-288 | `pmctl guard check`（接 CC-204 hook-framework；guard 邏輯共用、觸發方式 per-adapter） | ⏳ |
+| CC-287 | `pmctl backlog`（view / lint / archive；吸收 CC-282） | ✅ (#190) |
+| CC-288 | `pmctl guard check`（接 CC-204 hook-framework；guard 邏輯共用、觸發方式 per-adapter） | ✅ (#191) |
 | CC-289 | `pmctl dispatch run`（**走 B**：擁有共用流程；codex-dispatch.sh 瘦成 `adapters/codex/dispatch.sh`） | ⏳ |
 | CC-266 | `adapters/claude/dispatch.sh`（`claude --print` 薄 executor，使 codex-as-PM → claude-executor 可行；含 Phase-1 feasibility 檢查） | ⏳ |
 | CC-233 | `scripts/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ⏳ |

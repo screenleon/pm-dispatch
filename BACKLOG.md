@@ -87,8 +87,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 | CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
-| CC-287 | 🔵 active | **[v0.3.0 M3: `pmctl backlog` subcommand]** First real pmctl subcommand (Phase-2 anchor; the maintainer's active pain). `pmctl backlog view [--status/--area/--milestone]` (filtered render over the working-set index), `pmctl backlog lint` (wrap `validate.sh`), `pmctl backlog archive` (wrap `archive-closed-backlog.sh`). Executor-agnostic, pure runtime layer; builds on the working-set contract ([[CC-284]]). Absorbs [[CC-282]] (SQLite backing is an optional later optimization, not required). | arch/DX | 2026-05-30 | — | P1 | design |
-| CC-288 | 🔵 active | **[v0.3.0 M3: `pmctl guard check`]** Wire the CC-204-extracted `scripts/lib/hook-framework.sh` behind `pmctl guard check --event <pre-write\|pre-bash\|post-task> --file/--command <val>`. Guard **logic** becomes shared/executor-agnostic; **trigger** stays per-adapter (Claude PreToolUse auto-hook vs codex/other explicit `pmctl guard check` call — an inherent CLI-capability difference, not a design flaw). Lets any host enforce the same guard. | arch/security | 2026-05-30 | — | P1 | design |
 | CC-289 | 🔵 active | **[v0.3.0 M3: `pmctl dispatch run` (approach B — thin adapters)]** pmctl OWNS the shared dispatch flow (brief construct → guard → route → invoke adapter → read output contract → post-verify), composing the M2-extracted libs (executor-router/handover-validate/brief-validate/dispatch-post-verify). Slim the 475-line `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + `.agent-trace/latest.last` glue only). Replaces the current `dispatch run` stub. Pairs with [[CC-266]] (claude thin adapter) for the host-independent executor matrix. | arch/portability | 2026-05-30 | — | P1 | design |
 
 ---
@@ -1255,33 +1253,6 @@ This makes directory creation the mutex.
 2. Retire pm-prep-snapshot's CC-hardcoded derivation once pmctl provides next-id.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-282]]` (pmctl backlog), `[[CC-284]]` (working-set + the CC-only fix this generalizes).
-
-## CC-287 — [v0.3.0 M3] `pmctl backlog` subcommand 🔵 active
-
-**Problem**: pmctl is a stub ([[CC-215]] ⚠️ partial). The maintainer's active pain is backlog management, and the working-set contract ([[CC-284]]) just stabilized the BACKLOG.md shape — the ideal anchor for the first real pmctl subcommand (Phase-2 of the 2026-05-30 plan).
-
-**Why**: `pmctl backlog` is executor-agnostic, pure runtime-layer (lower layer in the upper/lower split), and gives daily value immediately. Building it on the stabilized working-set shape avoids baking a soon-to-change structure into the parser.
-
-**Requirement**:
-1. `pmctl backlog view [--status …] [--area …] [--milestone …]` — filtered render over the working-set index (grep/awk; no SQLite — see [[CC-282]] drop).
-2. `pmctl backlog lint` — wrap `pm/scripts/validate.sh`.
-3. `pmctl backlog archive` — wrap `scripts/archive-closed-backlog.sh`.
-4. Layer discipline: no `~/.claude` / CLI-name coupling in the backlog logic (enforced by [[CC-233]]).
-
-**Cross-link**: `[[CC-215]]` (pmctl spine), `[[CC-284]]` (working-set contract), `[[CC-282]]` (absorbed), `[[CC-286]]` (prefix-generic next-id belongs here).
-
-## CC-288 — [v0.3.0 M3] `pmctl guard check` 🔵 active
-
-**Problem**: guard logic lives in Claude-only PreToolUse hooks (`hook-codex-bash-guard.sh`, `hook-pm-write-guard.sh`). A non-Claude host (codex-as-PM) cannot enforce the same guard. CC-204 already extracted the framework to `scripts/lib/hook-framework.sh`; it is not yet wired behind pmctl.
-
-**Why**: moving guard **logic** into `pmctl guard check` makes it shared/executor-agnostic — any host enforces the identical policy. The **trigger** stays per-adapter (Claude PreToolUse auto-hook vs codex/other explicit `pmctl guard check` call); that asymmetry is an inherent CLI-capability difference, not a design flaw.
-
-**Requirement**:
-1. `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>` → exit non-zero + reason on deny, composing `scripts/lib/hook-framework.sh`.
-2. Claude PreToolUse hooks may shell to `pmctl guard check` (single source of policy) rather than duplicating logic.
-3. Document the trigger-asymmetry (auto-hook vs explicit) in the executor contract.
-
-**Cross-link**: `[[CC-204]]` (hook-framework extraction), `[[CC-215]]` (pmctl spine), `[[CC-289]]` (dispatch calls guard).
 
 ## CC-289 — [v0.3.0 M3] `pmctl dispatch run` — approach B (thin adapters) 🔵 active
 

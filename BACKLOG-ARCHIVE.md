@@ -1660,3 +1660,38 @@ All three acceptance grep checks pass.
 
 **See**: [[CC-287]] (absorbing ticket), DECISIONS.md 2026-05-30.
 
+## CC-287 — [v0.3.0 M3] `pmctl backlog` subcommand ✅ 2026-05-30
+
+**Problem**: pmctl is a stub ([[CC-215]] ⚠️ partial). The maintainer's active pain is backlog management, and the working-set contract ([[CC-284]]) just stabilized the BACKLOG.md shape — the ideal anchor for the first real pmctl subcommand (Phase-2 of the 2026-05-30 plan).
+
+**Why**: `pmctl backlog` is executor-agnostic, pure runtime-layer (lower layer in the upper/lower split), and gives daily value immediately. Building it on the stabilized working-set shape avoids baking a soon-to-change structure into the parser.
+
+**Requirement**:
+1. `pmctl backlog view [--status …] [--area …] [--milestone …]` — filtered render over the working-set index (grep/awk; no SQLite — see [[CC-282]] drop).
+2. `pmctl backlog lint` — wrap `pm/scripts/validate.sh`.
+3. `pmctl backlog archive` — wrap `scripts/archive-closed-backlog.sh`.
+4. Layer discipline: no `~/.claude` / CLI-name coupling in the backlog logic (enforced by [[CC-233]]).
+
+**Cross-link**: `[[CC-215]]` (pmctl spine), `[[CC-284]]` (working-set contract), `[[CC-282]]` (absorbed), `[[CC-286]]` (prefix-generic next-id belongs here).
+
+## CC-288 — [v0.3.0 M3] `pmctl guard check` ✅ 2026-05-30
+
+**Problem**: guard logic lives in Claude-only PreToolUse hooks (`hook-codex-bash-guard.sh`, `hook-pm-write-guard.sh`). A non-Claude host (codex-as-PM) cannot enforce the same guard. CC-204 already extracted the framework to `scripts/lib/hook-framework.sh`; it is not yet wired behind pmctl.
+
+**Why**: moving guard **logic** into `pmctl guard check` makes it shared/executor-agnostic — any host enforces the identical policy. The **trigger** stays per-adapter (Claude PreToolUse auto-hook vs codex/other explicit `pmctl guard check` call); that asymmetry is an inherent CLI-capability difference, not a design flaw.
+
+**Requirement**:
+1. `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>` → exit non-zero + reason on deny, composing `scripts/lib/hook-framework.sh`.
+2. Claude PreToolUse hooks may shell to `pmctl guard check` (single source of policy) rather than duplicating logic.
+3. Document the trigger-asymmetry (auto-hook vs explicit) in the executor contract.
+
+**Cross-link**: `[[CC-204]]` (hook-framework extraction), `[[CC-215]]` (pmctl spine), `[[CC-289]]` (dispatch calls guard).
+
+## CC-290 — [ops/DX] pr-gate flag ergonomics ✅ 2026-05-30
+
+**Problem**: two `pr-gate.sh` flag papercuts caused avoidable dispatch failures. (1) The `/pr-gate` skill and the script's own comments call a reviewer-scoped re-gate "targeted", but the flag is `--reviewers` — invoking the raw script with `--targeted` failed with `Unknown arg`. (2) An unrecognized flag printed only `Unknown arg: X` and exited, forcing a source read to recover.
+
+**Resolution** (pr:#192): `--targeted` is now an alias of `--reviewers` (forgiving whether invoked via skill or directly); the unknown-arg path prints the accepted-flags list. Covered by `test_unknown_arg_message` + `test_targeted_alias` in `scripts/test-pr-gate.sh`.
+
+**Cross-link**: surfaced while running gates for `[[CC-288]]`.
+
