@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -44,6 +44,12 @@ case "$cmd/$sub" in
       pmctl_die "backlog archive unavailable"
     fi
     pmctl_backlog_archive "$REPO_ROOT" "$@"
+    ;;
+  guard/check)
+    if ! declare -F pmctl_guard_check >/dev/null; then
+      pmctl_die "guard check unavailable"
+    fi
+    pmctl_guard_check "$REPO_ROOT" "$@"
     ;;
   dispatch/run)
     # Stub: full runtime dispatch lands in a later CC-215 slice.
