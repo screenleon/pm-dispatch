@@ -79,7 +79,7 @@ if should_run "dispatch_via_codex: safe argv passthrough"; then
   cmd="$(dispatch_via_codex "$brief_file" "$work_dir" default workspace-write never 1200)"
   eval "set -- $cmd"
   if [[ "$1" == "bash" &&
-        "$2" == "$REPO_ROOT/scripts/codex-dispatch.sh" &&
+        "$2" == "$REPO_ROOT/adapters/codex/dispatch.sh" &&
         "$3" == "--cd" &&
         "$4" == "$work_dir" &&
         "${11}" == "--brief-file" &&

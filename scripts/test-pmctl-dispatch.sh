@@ -15,6 +15,12 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# Sourced for the route-failure branch test, which drives pmctl_dispatch_run
+# directly against a fixture repo_root (see case_route_failure_branch).
+# shellcheck source=scripts/lib/executor-router.sh
+. "$SCRIPT_DIR/lib/executor-router.sh"
+# shellcheck source=scripts/lib/pmctl-dispatch.sh
+. "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
 th_init "$@"
 
 # A guard-allowed brief path is /tmp/brief-<...>.md (codex pre-write allow-list).
@@ -81,7 +87,7 @@ case_unknown_adapter() {
   should_run "$name" || return 0
   local err code
   set +e
-  err="$("$PMCTL" dispatch run --adapter nope --cd /tmp 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --adapter nope --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'unknown adapter' <<<"$err"; then
     pass "$name"
@@ -227,6 +233,63 @@ FAKEOF
   rm -rf "$work" "$bindir"
 }
 
+# ---- 9: invalid adapter name (path-like) is rejected before path resolution ----
+case_invalid_adapter_name() {
+  local name="dispatch/invalid adapter name rejected (no path traversal)"
+  should_run "$name" || return 0
+  local err code
+  set +e
+  err="$("$PMCTL" dispatch run --adapter ../codex --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'invalid adapter name' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+}
+
+# ---- 10: inline brief form (--) is refused (no policy bypass) ----
+case_inline_brief_rejected() {
+  local name="dispatch/inline brief form refused (policy bypass closed)"
+  should_run "$name" || return 0
+  local work err code
+  work="$(mktemp -d)"; git init -q "$work"
+  set +e
+  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" -- do a thing 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'inline brief form' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work"
+}
+
+# ---- 11: present-but-non-routable adapter is blocked by the allowlist ----
+# Drives pmctl_dispatch_run directly against a fixture repo whose adapter dir
+# exists but whose name is not a registered route — exercising the route-failure
+# branch (the dispatch allowlist) before brief-validate/guard are reached.
+case_route_failure_branch() {
+  local name="dispatch/non-routable adapter blocked by allowlist"
+  should_run "$name" || return 0
+  local fixture brief code err
+  fixture="$(mktemp -d)"
+  mkdir -p "$fixture/adapters/faketest"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/adapters/faketest/dispatch.sh"
+  chmod +x "$fixture/adapters/faketest/dispatch.sh"
+  brief="/tmp/brief-pmctl-dispatch-$$-route.md"
+  printf 'schema_version: 1\n' > "$brief"; _BRIEFS+=("$brief")
+  set +e
+  err="$(pmctl_dispatch_run "$fixture" --adapter faketest --cd "$fixture" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'not a routable executor' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$fixture"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_adapter_resolution_and_route
@@ -235,5 +298,8 @@ case_guard_denies_dispatch
 case_happy_path_post_verify_ok
 case_adapter_exit_propagated
 case_post_verify_failure
+case_invalid_adapter_name
+case_inline_brief_rejected
+case_route_failure_branch
 
 th_summary

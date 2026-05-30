@@ -76,7 +76,10 @@ dispatch_via_codex() {
   local approval=${5-}
   local timeout=${6-}
   local isolation_level=${7-}
-  local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
+  # Canonical adapter path (CC-289). The legacy scripts/codex-dispatch.sh is a
+  # compatibility symlink shim for external callers; internal code points at the
+  # real adapter so shim removal touches no internal call sites.
+  local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/codex/dispatch.sh"
   local -a cmd
   local arg
   local first=1

@@ -2,31 +2,40 @@
 
 # Executor-agnostic dispatch orchestrator (CC-289, approach B).
 #
-# `pmctl dispatch run --adapter <name> [args]` OWNS the shared dispatch flow and
-# composes the M2-extracted pieces; the adapter under `adapters/<name>/dispatch.sh`
-# stays thin (executor invocation + `.agent-trace/latest.last` output-contract
-# glue only). This is the structure that lets switching executors change ONLY the
-# adapter — all surrounding logic is shared here.
+# `pmctl dispatch run --adapter <name> --cd <dir> --brief-file <path>` OWNS the
+# shared dispatch flow and composes the M2-extracted pieces; the adapter under
+# `adapters/<name>/dispatch.sh` stays thin (executor invocation + the
+# `.agent-trace/latest.last` output-contract glue only).
 #
 # Flow (each step is executor-agnostic except step 5):
-#   1. resolve adapter by convention   adapters/<name>/dispatch.sh
-#   2. route                            executor-router: known executor + route
-#   3. brief-validate                   scripts/brief-validate.sh (when --brief-file)
-#   4. guard                            pmctl guard check (shared policy, per-profile)
-#   5. invoke adapter subprocess        the ONLY executor-specific step
-#   6. read output contract             .agent-trace/latest.last (read-only)
-#   7. post-verify                      scripts/dispatch-post-verify.sh
+#   1. validate adapter name (strict identifier) + resolve by convention
+#   2. route + allowlist             executor-router: MANDATORY, fail-closed
+#   3. brief-validate                scripts/brief-validate.sh
+#   4. guard                         pmctl guard check (shared policy, MANDATORY)
+#   5. invoke adapter subprocess     the ONLY executor-specific step
+#   6. read output contract          .agent-trace/latest.last (read-only)
+#   7. post-verify                   scripts/dispatch-post-verify.sh
 #
-# Boundary rules this surface MUST honour:
-#   - No executor-specific invocation tokens here (`codex exec`, isolation-map,
-#     model-alias). Those live in the adapter. The only executor identity used is
-#     the adapter NAME string (path resolution + guard --profile).
+# Policy invariants (every dispatch through pmctl is validated AND guarded —
+# there is no bypass door):
+#   - `--brief-file` is REQUIRED; the inline `-- <brief>` form is rejected, so no
+#     execution can skip brief-validate + guard. (The adapter still accepts inline
+#     form for direct smoke checks, but the policy surface — pmctl — does not.)
+#   - `--adapter` MUST be a bare identifier `^[a-z][a-z0-9_-]*$`; it is never a
+#     path, so a crafted value cannot traverse out of `adapters/` to execute an
+#     arbitrary `dispatch.sh`.
+#   - Routing is the allowlist: the executor MUST resolve to a registered route.
+#     If the routing registry (executor-router) or the guard (pmctl-guard) is not
+#     available, the dispatch is REFUSED — the allowlist/guard is never skipped.
 #   - The ONLY data read back from an adapter is the output contract
 #     (latest.last + exit code) — never the executor-internal trace format.
+#   - No executor-specific invocation tokens live here; the only executor identity
+#     used is the adapter NAME string (path resolution + guard --profile).
 #
 # Exit-code contract:
 #   0  — adapter succeeded and post-verify passed (or was skipped on dry-run)
-#   2  — usage error, unknown adapter, brief rejected, or guard denied
+#   2  — usage error, invalid/unknown/non-routable adapter, brief rejected,
+#        guard denied, or a required dependency (router/guard) unavailable
 #   1  — post-verify failed after a successful adapter run
 #   *  — any other non-zero adapter exit is propagated verbatim
 
@@ -78,12 +87,11 @@ pmctl_dispatch_run() {
         shift
         ;;
       --)
-        # Inline brief form: forward the separator and ALL remaining words
-        # verbatim without parsing them as flags.
-        forward+=("$1")
-        shift
-        forward+=("$@")
-        break
+        # Inline brief form skips brief-validate + guard, so it is a policy
+        # bypass. Refuse it at the orchestrator (the policy surface); briefs must
+        # be written to a file and passed via --brief-file.
+        printf 'pmctl dispatch run: inline brief form (--) is not supported; write the brief to a file and pass --brief-file so policy checks (brief-validate + guard) can run\n' >&2
+        return 2
         ;;
       *)
         forward+=("$1")
@@ -92,47 +100,65 @@ pmctl_dispatch_run() {
     esac
   done
 
+  # ── Required, validated inputs ───────────────────────────────────────────
   if [[ -z "$adapter" ]]; then
     printf 'pmctl dispatch run: --adapter <name> is required\n' >&2
     return 2
   fi
+  # Strict identifier: a bare adapter name, never a path. Blocks `../` traversal
+  # and any value that could resolve a dispatch.sh outside adapters/<name>/.
+  if ! [[ "$adapter" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+    printf 'pmctl dispatch run: invalid adapter name %q (must match ^[a-z][a-z0-9_-]*$ — a bare name, not a path)\n' "$adapter" >&2
+    return 2
+  fi
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch run: --cd <dir> is required\n' >&2
+    return 2
+  fi
+  if [[ -z "$brief_file" ]]; then
+    printf 'pmctl dispatch run: --brief-file <path> is required (every dispatch must carry a validatable brief)\n' >&2
+    return 2
+  fi
 
-  # 1. Resolve adapter by convention — no per-executor branch. Adding an executor
-  #    means adding adapters/<name>/dispatch.sh, with zero edits to this surface.
+  # 1. Resolve adapter by convention — the name is now a validated bare identifier.
   local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
   if [[ ! -f "$adapter_path" ]]; then
     printf 'pmctl dispatch run: unknown adapter %q (no %s)\n' "$adapter" "$adapter_path" >&2
     return 2
   fi
 
-  # 2. Route — confirm the adapter names a known executor and resolve its route.
-  if declare -F dispatch_route_for >/dev/null; then
-    local route
-    if ! route="$(dispatch_route_for "$adapter" 2>/dev/null)"; then
-      printf 'pmctl dispatch run: %q is not a routable executor\n' "$adapter" >&2
-      return 2
-    fi
-    printf 'pmctl dispatch run: adapter=%s route=%s\n' "$adapter" "$route" >&2
+  # 2. Route — the dispatch ALLOWLIST. Fail closed: a missing routing registry
+  #    must refuse the dispatch, never silently skip the allowlist.
+  if ! declare -F dispatch_route_for >/dev/null; then
+    printf 'pmctl dispatch run: routing registry unavailable (executor-router not sourced) — refusing to dispatch without allowlist enforcement\n' >&2
+    return 2
+  fi
+  local route
+  if ! route="$(dispatch_route_for "$adapter" 2>/dev/null)"; then
+    printf 'pmctl dispatch run: %q is not a routable executor (not in the dispatch allowlist)\n' "$adapter" >&2
+    return 2
+  fi
+  printf 'pmctl dispatch run: adapter=%s route=%s\n' "$adapter" "$route" >&2
+
+  # 3. Brief-validate (shared) — always runs; there is no brief-less path.
+  local brief_result=0
+  local brief_msg
+  brief_msg="$(bash "$repo_root/scripts/brief-validate.sh" "$brief_file" 2>&1)" || brief_result=$?
+  if [[ "$brief_result" -ne 0 ]]; then
+    printf 'pmctl dispatch run: brief failed validation: %s\n%s\n' "$brief_file" "$brief_msg" >&2
+    return 2
   fi
 
-  # 3. Brief-validate (shared) — only when a brief file is supplied.
-  if [[ -n "$brief_file" ]]; then
-    local brief_result=0
-    local brief_msg
-    brief_msg="$(bash "$repo_root/scripts/brief-validate.sh" "$brief_file" 2>&1)" || brief_result=$?
-    if [[ "$brief_result" -ne 0 ]]; then
-      printf 'pmctl dispatch run: brief failed validation: %s\n%s\n' "$brief_file" "$brief_msg" >&2
-      return 2
-    fi
+  # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
+  #    Gates the executor's brief-file write for this profile via the same code
+  #    path the PreToolUse hooks enforce.
+  if ! declare -F pmctl_guard_check >/dev/null; then
+    printf 'pmctl dispatch run: guard unavailable (pmctl-guard not sourced) — refusing to dispatch without policy enforcement\n' >&2
+    return 2
   fi
-
-  # 4. Guard (shared policy) — gate the executor's brief-file write for this
-  #    profile before invoking it. Same code path the PreToolUse hooks enforce.
-  if [[ -n "$brief_file" ]] && declare -F pmctl_guard_check >/dev/null; then
-    if ! pmctl_guard_check "$repo_root" --event pre-write --profile "$adapter" --file "$brief_file"; then
-      printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
-      return 2
-    fi
+  if ! pmctl_guard_check "$repo_root" --event pre-write --profile "$adapter" --file "$brief_file"; then
+    printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
+    return 2
   fi
 
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
@@ -153,18 +179,9 @@ pmctl_dispatch_run() {
 
   # 7. Post-verify (shared) reads the output contract (latest.last) and validates
   #    the run against the work dir + brief. Only runs after a clean adapter exit.
-  if [[ -n "$work_dir" ]]; then
-    if [[ -n "$brief_file" ]]; then
-      if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "$work_dir" "$brief_file"; then
-        printf 'pmctl dispatch run: post-verify failed\n' >&2
-        return 1
-      fi
-    else
-      if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "$work_dir"; then
-        printf 'pmctl dispatch run: post-verify failed\n' >&2
-        return 1
-      fi
-    fi
+  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "$work_dir" "$brief_file"; then
+    printf 'pmctl dispatch run: post-verify failed\n' >&2
+    return 1
   fi
 
   return "$exit_code"
