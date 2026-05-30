@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -52,15 +52,10 @@ case "$cmd/$sub" in
     pmctl_guard_check "$REPO_ROOT" "$@"
     ;;
   dispatch/run)
-    # Stub: full runtime dispatch lands in a later CC-215 slice.
-    # Accepts --adapter <name> and any brief args; prints a trace line.
-    dispatch_adapter="<none>"
-    if [[ "${1:-}" == "--adapter" && -n "${2:-}" ]]; then
-      dispatch_adapter="$2"
+    if ! declare -F pmctl_dispatch_run >/dev/null; then
+      pmctl_die "dispatch run unavailable"
     fi
-    printf 'pmctl dispatch run: adapter dispatch stub (runtime not yet wired)\n' >&2
-    printf 'adapter: %s\n' "$dispatch_adapter" >&2
-    exit 0
+    pmctl_dispatch_run "$REPO_ROOT" "$@"
     ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"

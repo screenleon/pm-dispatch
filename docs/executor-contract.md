@@ -58,13 +58,13 @@ All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
 
 `<ts>` is a wall-clock timestamp plus PID written at dispatch time by `date +%Y%m%d-%H%M%S`-PID.
 
-Note: codex profile — `scripts/codex-dispatch.sh` already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check.
+Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts/codex-dispatch.sh` compatibility shim, and invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check, composed by `pmctl dispatch run` after the adapter returns.
 
 ## Executor profiles
 
 | Aspect | codex profile | claude profile |
 |---|---|---|
-| Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
+| Invoker | PM writes the brief to a file and runs `pmctl dispatch run --adapter codex --brief-file <path>`, which validates + guards before invoking the `adapters/codex/dispatch.sh` adapter (codex CLI performs the execution step). The legacy `scripts/codex-dispatch.sh` shim remains for direct/legacy callers but bypasses the pmctl policy flow. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
 | Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract. |
 | Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
 | Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | `/pr-gate` now routes through `executor` selection: existing codex path continues unchanged, and claude path fan-outs `pr-gate-handover_v1` entries to `claude-executor` then runs the synthesis flow. |
@@ -84,6 +84,8 @@ The **trigger** is asymmetric by capability, not by policy:
 | Non-Claude (e.g. codex-as-PM) | The host has no PreToolUse equivalent, so it MUST call `pmctl guard check` explicitly before the action and honor a non-zero exit as a deny. |
 
 This asymmetry is inherent to the host's CLI capabilities — both paths evaluate the same policy. `--profile` selects the policy because pm and codex have different allow-lists (pm pre-write → memory dir only; codex pre-write → `/tmp/brief-*.md` only). Claude PreToolUse hooks may later shell to `pmctl guard check` to collapse to a single source, but today they remain the policy source the CLI composes.
+
+**On the two dispatch entrypoints (single policy, not split-brain):** `pmctl dispatch run` is the policy surface — it runs `brief-validate` + `pmctl guard check` before invoking the adapter. The codex adapter (`adapters/codex/dispatch.sh`, and its `scripts/codex-dispatch.sh` compatibility shim) is also directly callable — that is the codex-executor agent path, where the **same** guard policy is enforced by the Claude PreToolUse auto-hook on the brief-file Write. So both entrypoints are guarded by one policy with two triggers (the asymmetry above); the directly-callable adapter is the low-level primitive, not an unguarded bypass. A non-Claude host that calls the adapter directly (outside both `pmctl dispatch run` and a PreToolUse-capable agent) is responsible for calling `pmctl guard check` itself, exactly as the non-Claude row above requires.
 
 The surface is **fail-closed**: a success exit (`0`) always means a registered policy ran and permitted the action — never that enforcement was skipped. Exit codes:
 
