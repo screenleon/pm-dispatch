@@ -58,7 +58,7 @@ All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
 
 `<ts>` is a wall-clock timestamp plus PID written at dispatch time by `date +%Y%m%d-%H%M%S`-PID.
 
-Note: codex profile — `scripts/codex-dispatch.sh` already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check.
+Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts/codex-dispatch.sh` compatibility shim, and invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check, composed by `pmctl dispatch run` after the adapter returns.
 
 ## Executor profiles
 

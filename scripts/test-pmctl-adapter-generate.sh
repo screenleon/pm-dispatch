@@ -18,6 +18,10 @@ make_fixture_repo() {
   cp "$REPO_ROOT/scripts/lib/pmctl-adapter.sh" "$repo/scripts/lib/pmctl-adapter.sh"
   cp "$REPO_ROOT/scripts/lib/pmctl-fs.sh" "$repo/scripts/lib/pmctl-fs.sh"
   cp "$REPO_ROOT/scripts/lib/pmctl-policy.sh" "$repo/scripts/lib/pmctl-policy.sh"
+  # Dispatch orchestrator libs: pmctl now routes `dispatch run` to the shared
+  # flow (CC-289), so the fixture must carry them to exercise that route.
+  cp "$REPO_ROOT/scripts/lib/pmctl-dispatch.sh" "$repo/scripts/lib/pmctl-dispatch.sh"
+  cp "$REPO_ROOT/scripts/lib/executor-router.sh" "$repo/scripts/lib/executor-router.sh"
   chmod +x "$repo/cli/pmctl"
 
   {
@@ -231,8 +235,11 @@ if should_run "run.sh points at pmctl dispatch run"; then
   fi
 fi
 
-# Behavior: generated run.sh reaches the dispatch/run route without unknown command
-# Steps: generate testrouter, invoke run.sh, and inspect stub output
+# Behavior: generated run.sh reaches the dispatch/run route (the real CC-289
+# orchestrator), not the generic unknown-command error.
+# Steps: generate testrouter, invoke run.sh; the orchestrator is reached and
+# resolves the adapter by convention — here adapters/testrouter/dispatch.sh does
+# not exist, so it fails with its OWN message (proving the route was taken).
 if should_run "run.sh reaches dispatch route"; then
   name="run.sh reaches dispatch route"
   repo="$tmp_root/$name"
@@ -240,7 +247,10 @@ if should_run "run.sh reaches dispatch route"; then
   run_pmctl "$repo" adapter generate testrouter >/dev/null
   status=0
   out="$(REPO_ROOT="$repo" bash "$repo/adapters/testrouter/run.sh" --help 2>&1)" || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"pmctl dispatch run: adapter dispatch stub"* && "$out" == *"adapter: testrouter"* && "$out" != *"unknown command"* ]]; then
+  if [[ "$status" -ne 0 \
+        && "$out" == *"pmctl dispatch run:"* \
+        && "$out" != *"unknown command"* \
+        && "$out" != *"dispatch run unavailable"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"

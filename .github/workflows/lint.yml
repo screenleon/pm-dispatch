@@ -100,6 +100,7 @@ jobs:
             pmctl-backlog.sh
             pmctl-fs.sh
             pmctl-policy.sh
+            pmctl-dispatch.sh
             handover-validate.sh
             codex-dispatch.sh
             codex-watch.sh
@@ -123,6 +124,7 @@ jobs:
             state-writer.sh
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
+            test-pmctl-dispatch.sh
             test-core-schemas.sh
             test-commands.sh
             test-commands-runner.sh

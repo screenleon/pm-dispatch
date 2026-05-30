@@ -10,6 +10,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`scripts/lib/pmctl-dispatch.sh` + `pmctl dispatch run`** — executor-agnostic dispatch orchestrator (CC-289, approach B). pmctl OWNS the shared flow: resolve adapter by convention (`adapters/<name>/dispatch.sh`) → route → `brief-validate` → `pmctl guard check` (per-profile policy) → invoke adapter subprocess → read the `.agent-trace/latest.last` output contract → `dispatch-post-verify`. The only data read back from an adapter is `latest.last` + exit code; no executor-specific tokens live in pmctl. Replaces the prior `dispatch run` stub.
+- **`adapters/codex/dispatch.sh`** — the codex adapter, relocated from `scripts/codex-dispatch.sh` (now a compatibility **symlink shim** so existing callers keep working; to be removed in a later cleanup). Stays thin: executor invocation + output-contract glue only. Self-snapshot crash-safety preserved; repo-root resolution now follows the shim symlink (CC-289).
+- **`scripts/test-pmctl-dispatch.sh`** — 8-case suite for the orchestrator: missing/unknown adapter, adapter-by-convention resolution + route trace, brief-validation block, guard deny, happy-path post-verify, adapter exit-code passthrough, and post-verify failure (CC-289).
 - **`scripts/dispatch-post-verify.sh`** — executor-agnostic Phase 3 post-verify pipeline: reads `.agent-trace/latest.last`, enforces exact `cmd: pass` whole-line self-verify match, validates symlink targets stay inside `.agent-trace/`, and rejects `failed`/`partial`/`blocked` executor status. 21 fixture-based test cases in `scripts/test-dispatch-post-verify.sh` (CC-264 PR B).
 - **`scripts/test-dispatch-post-verify.sh`** — 21-case fixture suite covering happy path, boundary, negative inputs, symlink safety, and the exact executor output contract (CC-264 PR B).
 - **`scripts/test-claude-executor.sh`** — 5 regression cases for the claude-executor trace-write and self-verify contract (CC-264b).
@@ -27,7 +30,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`agents/claude-executor.md`** — self-verify format hardened: exact whole-line `cmd: pass` / `cmd: fail: <reason>` matching; `status:blocked` check; portable `realpath`; trace-dir symlink guard; `OK-NOBRIEF` mode for briefless runs (CC-264b).
 - **`docs/executor-contract.md`** — updated with filesystem output contract details and executor `latest.last` symlink timestamp format (CC-264b).
 - **`scripts/hook-save-rate-limits.sh`** — added `CLAUDE_STATUSLINE_CHAIN_ACTIVE` / `CAS_STATUSLINE_CHAIN_ACTIVE` guard to prevent infinite loop when a chain script calls back into the same hook.
-- **`scripts/run-all-tests.sh`** — registered `test-dispatch-post-verify.sh` and `test-claude-executor.sh` suites (CC-264 PR B).
+- **`scripts/run-all-tests.sh`** — registered `test-dispatch-post-verify.sh` and `test-claude-executor.sh` suites (CC-264 PR B). Registered `test-pmctl-dispatch.sh`; mirrored the new suite into `test-run-all-tests.sh` (count 37→38) (CC-289).
+- **`cli/pmctl`** — `dispatch run` now sources `executor-router` + `pmctl-dispatch` and routes to `pmctl_dispatch_run`; the legacy stub is removed (CC-289).
+- **`scripts/test-pmctl-adapter-generate.sh`** — fixture now carries the dispatch orchestrator libs; the "reaches dispatch route" case asserts the real orchestrator is reached rather than the old stub message (CC-289).
 - **`scripts/lib/state-writer.sh` `_sw_project_key()`** — replaces raw `sha1sum` call with `_portable_sha1()`; hash failures now log via `_sw_log_error` and fall back to `global` partition (CC-263).
 - **`core/README.md`** and **`agents/project-pm.md`** — removed v0.3.x forward-reference language now that M1 is shipped; prose updated to present tense (CC-261).
 - **`scripts/test-test-harness.sh`** — removed dead `assert_contains()` definition (never called; file uses own `pass_case`/`fail_case` framework for cyclic-test-vs-SUT reasons). Added header comment documenting the framework choice (CC-256).
