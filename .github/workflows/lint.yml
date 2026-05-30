@@ -126,6 +126,7 @@ jobs:
             test-codex-dispatch.sh
             test-pmctl-dispatch.sh
             test-claude-dispatch.sh
+            test-layer-boundaries.sh
             test-core-schemas.sh
             test-commands.sh
             test-commands-runner.sh
@@ -240,6 +241,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: claude-dispatch adapter regression suite
         run: ./scripts/test-claude-dispatch.sh
+
+  test-layer-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: layer-boundary enforcer
+        run: ./scripts/test-layer-boundaries.sh
 
   test-dispatch-handover:
     runs-on: ubuntu-latest
