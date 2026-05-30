@@ -105,6 +105,7 @@ jobs:
             codex-watch.sh
             hook-codex-bash-guard.sh
             hook-codex-write-guard.sh
+            hook-claude-write-guard.sh
             hook-inject-memory.sh
             hook-log-claude-usage.sh
             hook-pm-write-guard.sh
@@ -124,6 +125,7 @@ jobs:
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
             test-pmctl-dispatch.sh
+            test-claude-dispatch.sh
             test-core-schemas.sh
             test-commands.sh
             test-commands-runner.sh
@@ -231,6 +233,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: codex-dispatch regression suite
         run: ./scripts/test-codex-dispatch.sh
+
+  test-claude-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: claude-dispatch adapter regression suite
+        run: ./scripts/test-claude-dispatch.sh
 
   test-dispatch-handover:
     runs-on: ubuntu-latest

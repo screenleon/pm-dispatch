@@ -16,7 +16,7 @@
 # Profile dimension: the existing hooks key on `agent_type`, and pm vs codex have
 # DIFFERENT allow-lists (pm pre-write → memory dir only; codex pre-write →
 # /tmp/brief-*.md only). `--event` alone is therefore ambiguous, so this surface
-# requires `--profile <pm|codex>` to select the policy.
+# requires `--profile <pm|codex|claude>` to select the policy.
 #
 # Fail-closed: a guard must never report success without evaluating a policy.
 # Any recognized (profile, event) cell that has no registered policy — e.g.
@@ -91,17 +91,18 @@ pmctl_guard_check() {
     return 2
   fi
   if [[ -z "$profile" ]]; then
-    printf 'pmctl guard check: missing --profile (want pm|codex)\n' >&2
+    printf 'pmctl guard check: missing --profile (want pm|codex|claude)\n' >&2
     return 2
   fi
 
   # Map profile → the agent_type identity the hooks key on.
   local agent_type
   case "$profile" in
-    pm)    agent_type="project-pm" ;;
-    codex) agent_type="codex-executor" ;;
+    pm)     agent_type="project-pm" ;;
+    codex)  agent_type="codex-executor" ;;
+    claude) agent_type="claude-executor" ;;
     *)
-      printf 'pmctl guard check: unknown profile: %s (want pm|codex)\n' "$profile" >&2
+      printf 'pmctl guard check: unknown profile: %s (want pm|codex|claude)\n' "$profile" >&2
       return 2
       ;;
   esac
@@ -125,13 +126,21 @@ pmctl_guard_check() {
   # Resolve the guard hook for the (profile, event) cell.
   local hook=""
   case "$profile/$event" in
-    pm/pre-write)    hook="hook-pm-write-guard.sh" ;;
-    codex/pre-write) hook="hook-codex-write-guard.sh" ;;
-    codex/pre-bash)  hook="hook-codex-bash-guard.sh" ;;
+    pm/pre-write)     hook="hook-pm-write-guard.sh" ;;
+    codex/pre-write)  hook="hook-codex-write-guard.sh" ;;
+    codex/pre-bash)   hook="hook-codex-bash-guard.sh" ;;
+    claude/pre-write) hook="hook-claude-write-guard.sh" ;;
     pm/pre-bash)
       # No PM bash guard exists: project-pm is a planner that never runs Bash.
       # No policy to evaluate → fail closed (deny), never silently allow.
       printf 'pmctl guard check: no guard policy registered for profile=pm event=pre-bash — denying\n' >&2
+      return 3
+      ;;
+    claude/pre-bash)
+      # claude-executor self-executes under harness permission prompts (and the
+      # CLI subprocess under --permission-mode); the dispatch flow guards only the
+      # brief-file pre-write. No pre-bash policy is registered here → fail closed.
+      printf 'pmctl guard check: no guard policy registered for profile=claude event=pre-bash — denying\n' >&2
       return 3
       ;;
   esac

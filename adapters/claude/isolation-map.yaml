@@ -1,18 +1,41 @@
 # adapters/claude/isolation-map.yaml
 #
-# Translation table: isolation_level → claude-executor native flags.
-# claude-executor has no sandbox, approval, or skip_git_check flags;
-# all isolation levels map to no-op (empty native-flags object).
-# This file's presence satisfies CC-262 M1 acceptance criterion 2.
+# RUNTIME adapter map — hand-authored, consumed by adapters/claude/dispatch.sh.
+# Format: permission_mode (the value for `claude --permission-mode`).
+#
+# NOTE: This is a claude-specific schema (permission_mode), DIFFERENT from the
+# codex adapter's sandbox:/config_overrides: schema and from the flat native_flags:
+# schema that `pmctl adapter generate` emits. Do not cross-pollinate.
+#
+# Why permission_mode is the right knob (verified empirically, CC-266): in
+# headless `claude -p` there is no interactive approver, so the permission mode
+# alone determines what the executor can mutate:
+#   acceptEdits       – edits in the working dir are auto-accepted (executor mode)
+#   default           – any tool needing approval is DENIED headlessly → no writes
+#   bypassPermissions – all permission checks skipped (full access)
+#
+# Semantic definitions (source of truth: core/policy/isolation-level.yaml):
+#   none             – no isolation; full machine access            → bypassPermissions
+#   read-only        – read files only; no writes                   → default
+#                      (best-effort: claude has no filesystem sandbox; `default`
+#                       blocks all permissioned tools headlessly, which also
+#                       blocks Bash — stricter than codex's read-only sandbox,
+#                       but never less safe)
+#   workspace-write  – write within the working directory (default) → acceptEdits
+#   workspace-network – workspace-write + network                   → acceptEdits
+#                      (claude has no separate network toggle; Bash network access
+#                       is always available — documented, not enforced here)
+#   sandboxed        – best-effort; claude has no true ephemeral mode → acceptEdits
+#                      (mirrors codex's "no full-isolation equivalent" framing)
 
 mappings:
   none:
-    native_flags: {}
+    permission_mode: bypassPermissions
   read-only:
-    native_flags: {}
+    permission_mode: default
   workspace-write:
-    native_flags: {}
+    permission_mode: acceptEdits
   workspace-network:
-    native_flags: {}
+    permission_mode: acceptEdits
   sandboxed:
-    native_flags: {}
+    permission_mode: acceptEdits

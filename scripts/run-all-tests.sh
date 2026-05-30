@@ -22,6 +22,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-pmctl-dispatch
+  test-claude-dispatch
   test-executor-router
   test-pmctl-adapter-generate
   test-pr-gate
@@ -63,6 +64,7 @@ declare -A SUITE_PATHS=(
   [test-pm-scripts]="pm/scripts/test/run-tests.sh"
   [test-codex-dispatch]="scripts/test-codex-dispatch.sh"
   [test-pmctl-dispatch]="scripts/test-pmctl-dispatch.sh"
+  [test-claude-dispatch]="scripts/test-claude-dispatch.sh"
   [test-executor-router]="scripts/test-executor-router.sh"
   [test-pmctl-adapter-generate]="scripts/test-pmctl-adapter-generate.sh"
   [test-pr-gate]="scripts/test-pr-gate.sh"

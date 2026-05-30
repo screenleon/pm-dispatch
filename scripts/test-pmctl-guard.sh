@@ -69,6 +69,30 @@ if should_run "codex-prebash-allow"; then
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
 
+# claude profile (CC-266): brief-file pre-write mirrors codex (/tmp/brief-*.md).
+if should_run "claude-prewrite-allow"; then
+  name="claude-prewrite-allow"
+  run_guard --event pre-write --profile claude --file /tmp/brief-task.md
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+fi
+
+if should_run "claude-prewrite-deny"; then
+  name="claude-prewrite-deny"
+  run_guard --event pre-write --profile claude --file "$HOME/not-a-brief.md"
+  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
+fi
+
+if should_run "claude-prebash-fail-closed"; then
+  # claude-executor self-executes under harness/--permission-mode; no pre-bash
+  # policy is registered in the dispatch guard → fail closed (exit 3).
+  name="claude-prebash-fail-closed"
+  run_guard --event pre-bash --profile claude --command "ls"
+  if assert_exit "$name" "$GUARD_EXIT" "3" &&
+    assert_string_contains "$name" "$GUARD_OUT" "no guard policy registered for profile=claude"; then
+    pass "$name"
+  fi
+fi
+
 if should_run "post-task-fail-closed"; then
   # post-task is reserved but unimplemented → fail closed (exit 3), never a
   # silent allow.
