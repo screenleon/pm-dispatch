@@ -290,6 +290,48 @@ case_route_failure_branch() {
   rm -rf "$fixture"
 }
 
+# ---- 12: fail-closed when the routing registry (executor-router) is absent ----
+# A missing allowlist must REFUSE the dispatch, never silently skip enforcement.
+case_routing_unavailable_fails_closed() {
+  local name="dispatch/routing registry unavailable fails closed"
+  should_run "$name" || return 0
+  local work code err
+  work="$(mktemp -d)"; git init -q "$work"
+  set +e
+  # Drop dispatch_route_for in a subshell; codex adapter exists + name is valid,
+  # so the function reaches the route step and must fail closed.
+  err="$( unset -f dispatch_route_for
+          pmctl_dispatch_run "$REPO_ROOT" --adapter codex --cd "$work" --brief-file /tmp/x.md 2>&1 )"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'routing registry unavailable' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work"
+}
+
+# ---- 13: fail-closed when the guard (pmctl-guard) is absent ----
+case_guard_unavailable_fails_closed() {
+  local name="dispatch/guard unavailable fails closed"
+  should_run "$name" || return 0
+  local work brief code err
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"   # valid brief so route + brief-validate pass
+  set +e
+  # pmctl_guard_check is not sourced here; unset is belt-and-suspenders. The flow
+  # passes route + brief-validate, then must fail closed at the guard step.
+  err="$( unset -f pmctl_guard_check
+          pmctl_dispatch_run "$REPO_ROOT" --adapter codex --cd "$work" --brief-file "$brief" 2>&1 )"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'guard unavailable' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_adapter_resolution_and_route
@@ -301,5 +343,7 @@ case_post_verify_failure
 case_invalid_adapter_name
 case_inline_brief_rejected
 case_route_failure_branch
+case_routing_unavailable_fails_closed
+case_guard_unavailable_fails_closed
 
 th_summary

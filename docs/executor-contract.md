@@ -64,7 +64,7 @@ Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts
 
 | Aspect | codex profile | claude profile |
 |---|---|---|
-| Invoker | PM writes brief and launches `scripts/codex-dispatch.sh`; codex CLI performs the execution step. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
+| Invoker | PM writes the brief to a file and runs `pmctl dispatch run --adapter codex --brief-file <path>`, which validates + guards before invoking the `adapters/codex/dispatch.sh` adapter (codex CLI performs the execution step). The legacy `scripts/codex-dispatch.sh` shim remains for direct/legacy callers but bypasses the pmctl policy flow. | PM writes brief and dispatches to main-thread tools (`Edit`/`Write`/`Bash`) directly. |
 | Sandbox model | codex-managed workspace-write semantics with explicit sandbox metadata in metadata header. | Main-thread execution surface; no codex sandbox metadata contract. |
 | Write/Bash mechanism | codex CLI drives edits and command execution. | Claude main-thread commands perform edits and checks directly, no codex CLI required. |
 | Reviewer pipeline trigger | Existing codex executor path triggers the reviewer pipeline after handoff completion. | `/pr-gate` now routes through `executor` selection: existing codex path continues unchanged, and claude path fan-outs `pr-gate-handover_v1` entries to `claude-executor` then runs the synthesis flow. |

@@ -16,6 +16,13 @@
 #   6. read output contract          .agent-trace/latest.last (read-only)
 #   7. post-verify                   scripts/dispatch-post-verify.sh
 #
+# The validate+guard invariant covers every dispatch that reaches an executor:
+# an adapter that resolves AND routes is always brief-validated and guarded
+# before invocation. Pre-flight rejections (invalid name, unknown adapter,
+# non-routable executor) fail fast BEFORE brief work — intentionally, since there
+# is no executor to guard for and no point validating a brief for a dispatch that
+# cannot run.
+#
 # Policy invariants (every dispatch through pmctl is validated AND guarded —
 # there is no bypass door):
 #   - `--brief-file` is REQUIRED; the inline `-- <brief>` form is rejected, so no
