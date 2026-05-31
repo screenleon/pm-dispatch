@@ -462,6 +462,18 @@ if should_run "profile-role-mutex"; then
   fi
 fi
 
+if should_run "profile-runtime-mutex"; then
+  # --profile carries the runtime itself, so --profile + --runtime is ambiguous
+  # (e.g. `--profile codex --runtime claude`) and is rejected, not silently
+  # resolved in favor of the profile.
+  name="profile-runtime-mutex"
+  run_guard --event pre-write --profile codex --runtime claude --file /tmp/brief-x.md
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "mutually exclusive"; then
+    pass "$name"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 12b. R2 equivalence — the CLI must produce identical allow/deny to the proven
 #     hooks. For each scenario, drive the hook DIRECTLY (the path test-hooks.sh

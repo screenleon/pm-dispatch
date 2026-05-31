@@ -28,7 +28,8 @@
 # `--profile pm|codex|claude` is a DEPRECATED back-compat alias (CC-291): it maps
 # to the (role, runtime) pair and emits one stderr warning. It conflated the two
 # axes (`pm` was a role name, `codex`/`claude` were runtime names). Prefer
-# `--role`/`--runtime`. `--profile` and `--role` are mutually exclusive.
+# `--role`/`--runtime`. `--profile` carries both axes, so it is mutually
+# exclusive with `--role` AND `--runtime`.
 #
 # Fail-closed: a guard must never report success without evaluating a policy.
 # Any recognized cell that has no registered policy — e.g. `pm/pre-bash`
@@ -118,9 +119,12 @@ pmctl_guard_check() {
     esac
   done
 
-  # --profile is the deprecated alias; it and --role are mutually exclusive.
-  if [[ "$profile_set" -eq 1 && "$role_set" -eq 1 ]]; then
-    printf 'pmctl guard check: --profile and --role are mutually exclusive (--profile is deprecated; use --role/--runtime)\n' >&2
+  # --profile is the deprecated alias; it carries BOTH axes itself, so it is
+  # mutually exclusive with --role AND --runtime. Allowing e.g.
+  # `--profile codex --runtime claude` would silently let the profile win — an
+  # ambiguous shape — so reject it rather than pick a precedence.
+  if [[ "$profile_set" -eq 1 && ( "$role_set" -eq 1 || "$runtime_set" -eq 1 ) ]]; then
+    printf 'pmctl guard check: --profile is mutually exclusive with --role/--runtime (--profile is deprecated; use --role/--runtime)\n' >&2
     return 2
   fi
 

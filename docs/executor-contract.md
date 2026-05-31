@@ -93,7 +93,7 @@ The surface is **fail-closed**: a success exit (`0`) always means a registered p
 |---|---|
 | `0` | a registered policy ran and **allowed** the action |
 | `2` | usage error (bad/missing flags) **or** a registered policy **denied** the action (the hook's own deny exit is propagated) |
-| `3` | request recognized but **no policy registered** to evaluate it — `pm/pre-bash` (project-pm never runs Bash) and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". |
+| `3` | request recognized but **no policy registered** to evaluate it — `pm/pre-bash` (project-pm never runs Bash), `executor` + `runtime=claude` + `pre-bash` (claude-executor self-executes under harness perms; no dispatch-guard bash policy), and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". |
 
 ## Selection
 
