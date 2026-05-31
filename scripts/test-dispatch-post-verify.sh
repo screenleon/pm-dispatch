@@ -806,7 +806,7 @@ case_flag_base_override() {
   run_validator rc out "$work_dir" --base basebranch
 
   assert_eq "$name" "$rc" 0 || return 0
-  assert_string_contains "$name" "$out" "(base: basebranch)" || return 0
+  assert_string_contains "$name" "$out" "(base: basebranch...HEAD)" || return 0
   # Worktree == HEAD (clean), so newfile.txt only shows when diffing vs basebranch;
   # a mutation that diffs HEAD would print an empty stat and fail this assertion.
   assert_string_contains "$name" "$out" "newfile.txt" || return 0
@@ -855,6 +855,44 @@ EOF
 
   assert_eq "$name" "$rc" 0 || return 0
   assert_string_contains "$name" "$out" "FOUND" || return 0
+  pass "$name"
+}
+
+# Three-dot base diff excludes commits the integration branch advanced past the
+# fork point, so an advanced base does not surface unrelated upstream changes as
+# spurious diff evidence (regression guard for the `<base>...HEAD` semantics).
+# Steps:
+# 1. Build a git repo: C0; branch intbase@C0; commit dispatch.txt on HEAD (C1);
+#    advance intbase with upstream.txt (C2); restore HEAD to the C1 branch.
+# 2. Run dispatch-post-verify.sh with --base intbase.
+# 3. Assert exit 0, the diff lists dispatch.txt, and does NOT list upstream.txt
+#    (a two-dot `git diff <base>` would leak upstream.txt as a removal).
+case_flag_base_advanced_excludes_upstream() {
+  local name="flag-base-advanced-excludes-upstream"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c0
+  git -C "$work_dir" branch intbase
+  : > "$work_dir/dispatch.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m c1
+  git -C "$work_dir" -c advice.detachedHead=false checkout -q intbase
+  : > "$work_dir/upstream.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m c2
+  git -C "$work_dir" checkout -q -
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --base intbase
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "dispatch.txt" || return 0
+  if [[ "$out" == *"upstream.txt"* ]]; then
+    fail "$name" "advanced-base upstream change leaked into diff evidence: $out"
+    return 0
+  fi
   pass "$name"
 }
 
@@ -916,6 +954,7 @@ case_flag_pm_invocation_shape
 case_flag_base_override
 case_flag_double_dash_positional
 case_flag_base_fallback_unavailable
+case_flag_base_advanced_excludes_upstream
 case_flag_stderr_override_missing_rejected
 
 th_summary

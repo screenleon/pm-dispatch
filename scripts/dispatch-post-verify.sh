@@ -129,9 +129,13 @@ fi
 printf '=== Git diff --stat ===\n'
 # Honor the caller-selected integration base (--base) so /pm dispatches targeting
 # a non-origin/main branch get base-correct diff evidence; default origin/main.
+# Three-dot (merge-base) form: show only what HEAD added since diverging from the
+# base, so an advanced integration branch does not surface unrelated upstream
+# commits as spurious diff evidence (matches the prior /pm `<base>...HEAD`
+# contract; uncommitted work is surfaced separately by `git status --short` below).
 DIFF_BASE="${BASE_OVERRIDE:-origin/main}"
-if git -C "$WORK_DIR" diff --stat "$DIFF_BASE" 2>/dev/null; then
-  printf '(base: %s)\n' "$DIFF_BASE"
+if git -C "$WORK_DIR" diff --stat "$DIFF_BASE...HEAD" 2>/dev/null; then
+  printf '(base: %s...HEAD)\n' "$DIFF_BASE"
 elif git -C "$WORK_DIR" diff --stat HEAD 2>/dev/null; then
   printf '(base: HEAD — %s unavailable)\n' "$DIFF_BASE"
 else
