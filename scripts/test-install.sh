@@ -1952,8 +1952,89 @@ test_install_share_asset_uninstall() {
   pass "$name"
 }
 
+test_install_claude_home_override() {
+  # Verifies an explicit CLAUDE_HOME env override redirects the install to a
+  # sandbox dir (NOT $HOME/.claude), so install changes can be rehearsed without
+  # touching the real config. Covers the cross-script consistency: agents/commands
+  # (install.sh), the manifest, AND the hook settings.json (install-hooks.sh) must
+  # all land in the override.
+  #
+  # Steps:
+  #   1. Run install.sh with CLAUDE_HOME pointed at a dir distinct from $HOME/.claude.
+  #   2. Assert install artifacts (.pm symlink, manifest, hook-wired settings.json)
+  #      land in the override.
+  #   3. Assert $HOME/.claude was NOT created (the override fully diverted the install).
+  local name="install-claude-home-override"
+  should_run "$name" || return 0
+  local home override
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" \
+    CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc"
+    return
+  fi
+  if [[ ! -L "$override/.pm" && ! -e "$override/.pm" ]]; then
+    fail "$name" ".pm not installed under CLAUDE_HOME override ($override)"
+    return
+  fi
+  if [[ ! -e "$override/.pm-dispatch/install-manifest.json" ]]; then
+    fail "$name" "manifest not written under CLAUDE_HOME override"
+    return
+  fi
+  if ! grep -q "hook-tool-trace.sh" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "hooks not wired into the override settings.json (install-hooks ignored CLAUDE_HOME)"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "\$HOME/.claude was created despite the CLAUDE_HOME override"
+    return
+  fi
+  pass "$name"
+}
+
+test_uninstall_claude_home_override() {
+  # Verifies uninstall.sh honors the same CLAUDE_HOME override, removing the
+  # sandbox install rather than touching $HOME/.claude.
+  #
+  # Steps:
+  #   1. Install into a CLAUDE_HOME override.
+  #   2. Run uninstall.sh with the same override.
+  #   3. Assert the override's install artifacts (.pm) are gone.
+  local name="uninstall-claude-home-override"
+  should_run "$name" || return 0
+  local home override
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  mkdir -p "$home"
+  HOME="$home" CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || true
+  if [[ ! -e "$override/.pm" && ! -L "$override/.pm" ]]; then
+    fail "$name" "precondition: .pm not installed under override"
+    return
+  fi
+  HOME="$home" CLAUDE_HOME="$override" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
+  if [[ -e "$override/.pm" || -L "$override/.pm" ]]; then
+    fail "$name" ".pm still present under override after uninstall"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
+test_install_claude_home_override
+test_uninstall_claude_home_override
 
 th_summary

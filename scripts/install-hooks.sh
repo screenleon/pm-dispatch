@@ -35,6 +35,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
+# Honor an explicit CLAUDE_HOME override (inherited from install.sh, or set when
+# running standalone), so hook wiring lands in the same dir as the rest of the
+# install. Defaults to ~/.claude.
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+
 # shellcheck source=scripts/lib/portable.sh
 . "$SCRIPT_DIR/lib/portable.sh"
 
@@ -85,7 +90,7 @@ if [[ "$PLATFORM" == "windows" && "$PROFILE" == "full" ]]; then
 fi
 
 repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
-settings="$HOME/.claude/settings.json"
+settings="$CLAUDE_HOME/settings.json"
 # shellcheck source=scripts/lib/memory-dir.sh
 . "$repo_root/scripts/lib/memory-dir.sh"
 
@@ -127,7 +132,7 @@ old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
 inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
-statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
+statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
 if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$migrate_routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2

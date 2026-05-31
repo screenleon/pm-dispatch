@@ -17,7 +17,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_HOME="$HOME/.claude"
+# Mirror install.sh: honor an explicit CLAUDE_HOME override so uninstall targets the
+# same sandbox dir an override-install used. Defaults to ~/.claude.
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
@@ -282,12 +284,12 @@ fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then
   if [[ "$safety_skipped" -eq 0 ]]; then
-    rm -rf "$HOME/.claude/.pm-dispatch"
+    rm -rf "$CLAUDE_HOME/.pm-dispatch"
   else
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
-  for d in "$HOME/.claude/agents" "$HOME/.claude/commands" "$HOME/.claude/skills" "$HOME/.claude/scripts"; do
+  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts"; do
     rmdir "$d" 2>/dev/null || true
   done
 fi

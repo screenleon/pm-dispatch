@@ -50,7 +50,11 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_HOME="$HOME/.claude"
+# Install destination. Honors an explicit CLAUDE_HOME override so the install can
+# target a sandbox dir (testing / dry-run rehearsal) without overriding the whole
+# $HOME. Defaults to ~/.claude. All install destinations derive from this — never
+# from a bare $HOME/.claude — so an override stays consistent.
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
@@ -267,7 +271,7 @@ echo
 # path references (rollup.sh default out, memory prose, schema.md
 # consumers) keep working.
 PM_SRC="$REPO_ROOT/pm"
-PM_DEST="$HOME/.claude/.pm"
+PM_DEST="$CLAUDE_HOME/.pm"
 if [[ -d "$PM_SRC" ]]; then
   echo "==> pm-schema"
   pm_conflicts=0
@@ -300,10 +304,13 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "  would create $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
     echo "  (hook wiring dry-run skipped — settings.json would be created first)"
   else
+    # CLAUDE_HOME passed per-call (not exported) so it scopes to hook wiring only
+    # and does NOT leak into --verify's run-all-tests preflight (which spawns
+    # nested installs that must default CLAUDE_HOME to their own HOME).
     if [[ -n "$PROFILE" ]]; then
-      bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile "$PROFILE"
+      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile "$PROFILE"
     else
-      bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
     fi
   fi
 else
@@ -312,10 +319,11 @@ else
     printf '{}\n' > "$CLAUDE_HOME/settings.json"
     echo "  created $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
   fi
+  # CLAUDE_HOME passed per-call (see dry-run branch above) — scoped, not exported.
   if [[ -n "$PROFILE" ]]; then
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile "$PROFILE"
+    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile "$PROFILE"
   else
-    bash "$REPO_ROOT/scripts/install-hooks.sh"
+    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh"
   fi
 fi
 echo
@@ -331,7 +339,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
 fi
 
-if ! manifest_flush "$HOME/.claude/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
+if ! manifest_flush "$CLAUDE_HOME/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
   echo "install: manifest write failed" >&2
   exit 3
 fi

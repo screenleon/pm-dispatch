@@ -1777,3 +1777,11 @@ All three acceptance grep checks pass.
 **Why**: skills 比 commands 更輕量（context on-demand），且是 Anthropic 現在主推的擴展方式。建立 2–3 個 starter skills 能讓 CC-014/015/026 有落地路徑，也修正 README 現有聲明。
 **Requirement**: 建立 `skills/dispatch-brief/SKILL.md`（封裝 brief 建立 + handover validate 流程）和 `skills/pr-gate-review/SKILL.md`（封裝 reviewer 派發流程）；在 install.sh 的 helper scripts 區段加入 `skills/` symlink；README skills/ 目錄說明改為實際有內容。先行條件：CC-057 (A) 完成後執行此條。
 
+## CC-294 — [ops] install.sh CLAUDE_HOME not overridable ✅ 2026-05-31
+
+**Closed**: `install.sh`, `uninstall.sh`, and `scripts/install-hooks.sh` now honor an explicit `CLAUDE_HOME` env override (`CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"`), and every install destination derives from `$CLAUDE_HOME` — the bare `$HOME/.claude` references that previously bypassed it (`.pm` dest + install manifest in install.sh; the hook `settings.json` + `statusline-chain.conf` in install-hooks.sh; the `.pm-dispatch` removal + leftover-dir sweep in uninstall.sh) are routed through it. `install.sh` passes `CLAUDE_HOME` to the `install-hooks.sh` calls **per-call (not exported)** so it does not leak into the `--verify` preflight's nested `run-all-tests` → test-install installs (which must default to their own `$HOME`). README install section documents the override. +2 `test-install.sh` cases assert an override redirects both install and uninstall and leaves `$HOME/.claude` untouched.
+
+**Problem**: destination was hardcoded `$HOME/.claude` with no env/flag override, so install changes could not be rehearsed against a sandbox dir without overriding the whole `$HOME` (a blunt instrument that also moves every other `$HOME` reference). Surfaced 2026-05-31 during CC-061 install verification — a `CLAUDE_HOME=<tmp>` attempt was silently ignored and symlinked branch-only skills into the real `~/.claude/skills/`.
+
+**Cross-link**: `[[CC-061]]` (where it surfaced).
+

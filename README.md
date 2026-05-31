@@ -75,7 +75,10 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 ./install.sh                          # apply (auto-detect profile)
 ./install.sh --profile minimal        # claude-only setup; skip codex hooks
 ./install.sh --profile full           # explicit codex setup
+CLAUDE_HOME=/tmp/sandbox ./install.sh # install into an alternate dir (sandbox/testing)
 ```
+
+The install destination defaults to `~/.claude`; set `CLAUDE_HOME` to install (and later `uninstall.sh`) into an alternate directory without touching your real config — useful for rehearsing install changes. `install.sh` and `uninstall.sh` must use the same `CLAUDE_HOME`.
 
 Idempotent — re-run safely after adding files. Per-file symlinks so other tools' agents in `~/.claude/agents/` are not clobbered. If a destination already exists and is not our symlink, it is skipped with a CONFLICT warning.
 
