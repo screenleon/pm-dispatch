@@ -1952,8 +1952,134 @@ test_install_share_asset_uninstall() {
   pass "$name"
 }
 
+test_install_claude_home_override() {
+  # Verifies an explicit CLAUDE_HOME env override redirects the install to a
+  # sandbox dir (NOT $HOME/.claude), so install changes can be rehearsed without
+  # touching the real config. Covers the cross-script consistency: agents/commands
+  # (install.sh), the manifest, AND the hook settings.json (install-hooks.sh) must
+  # all land in the override.
+  #
+  # Steps:
+  #   1. Run install.sh with CLAUDE_HOME pointed at a dir distinct from $HOME/.claude.
+  #   2. Assert install artifacts (.pm symlink, manifest, hook-wired settings.json)
+  #      land in the override.
+  #   3. Assert $HOME/.claude was NOT created (the override fully diverted the install).
+  local name="install-claude-home-override"
+  should_run "$name" || return 0
+  local home override
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" \
+    CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc"
+    return
+  fi
+  if [[ ! -L "$override/.pm" && ! -e "$override/.pm" ]]; then
+    fail "$name" ".pm not installed under CLAUDE_HOME override ($override)"
+    return
+  fi
+  if [[ ! -e "$override/.pm-dispatch/install-manifest.json" ]]; then
+    fail "$name" "manifest not written under CLAUDE_HOME override"
+    return
+  fi
+  if ! grep -q "hook-tool-trace.sh" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "hooks not wired into the override settings.json (install-hooks ignored CLAUDE_HOME)"
+    return
+  fi
+  if [[ -e "$home/.claude" ]]; then
+    fail "$name" "\$HOME/.claude was created despite the CLAUDE_HOME override"
+    return
+  fi
+  pass "$name"
+}
+
+test_uninstall_claude_home_override() {
+  # Verifies uninstall.sh honors the same CLAUDE_HOME override end-to-end: it
+  # removes the sandbox install (including hook cleanup via uninstall-hooks.sh)
+  # while leaving a pre-existing REAL $HOME/.claude config completely untouched.
+  # The real-home sentinel is the exact boundary CC-294 depends on — a regression
+  # where uninstall-hooks.sh edits $HOME/.claude/settings.json must fail this test.
+  #
+  # Steps:
+  #   1. Install into a CLAUDE_HOME override.
+  #   2. Plant a sentinel real-home config ($HOME/.claude/settings.json + marker).
+  #   3. Run uninstall.sh with the override; assert it exits 0 (no || true masking).
+  #   4. Assert the override's .pm and hook wiring are removed.
+  #   5. Assert the real-home sentinel survived byte-for-byte.
+  local name="uninstall-claude-home-override"
+  should_run "$name" || return 0
+  local home override
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local install_rc=$?
+  set -e
+  if [[ $install_rc -ne 0 ]]; then
+    fail "$name" "precondition: install.sh exited $install_rc"
+    return
+  fi
+  if [[ ! -e "$override/.pm" && ! -L "$override/.pm" ]]; then
+    fail "$name" "precondition: .pm not installed under override"
+    return
+  fi
+
+  # Sentinel real-home config that uninstall must NOT touch.
+  local sentinel_settings="$home/.claude/settings.json"
+  local sentinel_marker="$home/.claude/DO-NOT-TOUCH"
+  mkdir -p "$home/.claude"
+  printf '{"sentinel":"real-home-must-survive","statusLine":{"command":"/real/user/statusline"}}\n' > "$sentinel_settings"
+  printf 'real home marker\n' > "$sentinel_marker"
+  local sentinel_sum
+  sentinel_sum="$(md5sum "$sentinel_settings" | awk '{print $1}')"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
+  local uninstall_rc=$?
+  set -e
+  if [[ $uninstall_rc -ne 0 ]]; then
+    fail "$name" "uninstall.sh exited $uninstall_rc (expected 0)"
+    return
+  fi
+  if [[ -e "$override/.pm" || -L "$override/.pm" ]]; then
+    fail "$name" ".pm still present under override after uninstall"
+    return
+  fi
+  # Override hook cleanup: the override settings.json must have its managed hooks
+  # removed. With the pre-CC-294 bug (uninstall-hooks.sh resolving $HOME/.claude),
+  # this hook would survive in the override while real home was edited instead.
+  if grep -q "hook-tool-trace.sh" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "override settings.json still has managed hooks (uninstall-hooks ignored CLAUDE_HOME)"
+    return
+  fi
+  # Real-home boundary: sentinel settings + marker must survive unchanged.
+  if [[ ! -f "$sentinel_marker" ]]; then
+    fail "$name" "real-home marker \$HOME/.claude/DO-NOT-TOUCH was removed by override uninstall"
+    return
+  fi
+  if [[ "$(md5sum "$sentinel_settings" | awk '{print $1}')" != "$sentinel_sum" ]]; then
+    fail "$name" "real-home \$HOME/.claude/settings.json was mutated by override uninstall (uninstall-hooks ignored CLAUDE_HOME)"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
+test_install_claude_home_override
+test_uninstall_claude_home_override
 
 th_summary

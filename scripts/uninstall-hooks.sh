@@ -12,7 +12,11 @@ DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-settings="$HOME/.claude/settings.json"
+# Honor an explicit CLAUDE_HOME override (passed per-call by uninstall.sh, or set
+# when running standalone) so hook removal targets the same dir the install used.
+# Defaults to ~/.claude.
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+settings="$CLAUDE_HOME/settings.json"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "uninstall-hooks: jq is required" >&2
@@ -24,7 +28,7 @@ if [ ! -f "$settings" ]; then
   exit 0
 fi
 
-statusline_chain_conf="$HOME/.claude/statusline-chain.conf"
+statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
