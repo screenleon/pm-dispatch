@@ -1,0 +1,46 @@
+---
+name: pr-gate-review
+description: Use before opening a PR to run the tiered pre-PR review pipeline (critic, qa-tester, security-reviewer, risk-reviewer, architecture-reviewer) on the current branch. Covers tier/mode selection, the GO / NO-GO contract, and how to clear findings.
+---
+
+# PR-gate review
+
+A **thin pointer skill** — the gate is implemented by `scripts/pr-gate.sh` and the
+`/pr-gate` command; this skill says when to reach for it and how to read the result.
+
+## When to use
+
+You have a committed change on a branch and are about to open a PR. Run the gate
+first; do not open a PR on an un-gated change (per the project PR workflow:
+implement → pr-gate → fix NO-GO → push → PR).
+
+## How to run
+
+- Slash command: `/pr-gate` (see `commands/pr-gate.md`). It dispatches the
+  reviewers and writes a typed result to `.gate-results/`.
+- Direct: `bash scripts/pr-gate.sh --cd <repo> --executor auto [--parallel]`.
+
+**Tier / mode:**
+- Default = **sequential**, low token cost — routine code / docs / seed changes.
+- `--parallel` — reviewer independence; use for auth/payment/migration/sensitive
+  paths or load-bearing changes with wide blast radius.
+- Force a tier with `express` / `standard` / `full`; re-gate a subset with
+  `--targeted r1,r2`.
+
+## Reading the result
+
+The result file carries `pr_gate_result_v1` frontmatter with `final: GO|NO-GO`
+and per-reviewer verdicts. The `Final: GO|NO-GO` line is the parser-significant
+one (plain text, exact shape).
+
+- **NO-GO** (a reviewer returned `block`): fix the blocking finding. Per project
+  convention, clear **every** finding (high/med/low/advise) on a NO-GO, not just
+  the blocks, then re-gate.
+- **GO with advise**: not blocking, but prefer to clear cheap/meaningful advise
+  before the PR, or track it as a follow-up ticket.
+
+## Scope gotcha
+
+The gate diffs the branch against the base. Make sure local `main` is up to date
+(fast-forward to `origin/main`) before gating, or already-merged work can leak
+into the diff and produce spurious findings.

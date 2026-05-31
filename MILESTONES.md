@@ -71,7 +71,7 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-059 | thin `commands/pm.md` | ⏳ |
-| CC-061 | `skills/` 目錄 + starter SKILL.md | ⏳ |
+| CC-061 | `skills/` 目錄 + starter SKILL.md | ✅ 2026-05-31 |
 | CC-206 | gate lifecycle hooks（pre/post-gate + `--allow-hooks` opt-in + `--isolation` flag） | ✅ (#175) |
 | CC-271 | `docs/sandbox-limitations.md`（folded into CC-206 PR） | ✅ (#175) |
 | CC-262 | `agents/project-pm.md` PM template 改寫 `isolation_level:`（M3 residual；M1 adapters/claude 已 ship #162） | ✅ (#180) |

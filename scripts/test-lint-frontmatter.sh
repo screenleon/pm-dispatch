@@ -274,6 +274,40 @@ run_tmp_fail "lint-frontmatter/list-item-map-double-comma" \
 
 run_ok "lint-frontmatter/repo-scan"
 
+# -- skills/ scan coverage (CC-061) -------------------------------------------
+# Proves repo-scan mode descends into the nested skills/<name>/SKILL.md layout.
+# Without that loop a malformed SKILL.md would slip through (README claims skills/
+# is validated). A bad SKILL.md under --repo-root must make the lint fail; a good
+# one must pass.
+skills_scan_case() {
+  local bad_name="lint-frontmatter/skills-scanned-bad-fails"
+  local good_name="lint-frontmatter/skills-scanned-good-passes"
+  should_run "$bad_name" || { should_run "$good_name" || return 0; }
+
+  local root output status
+  root="$(mktemp -d)"
+  mkdir -p "$root/skills/sample"
+
+  # 1. malformed SKILL.md → scan must reject (non-zero).
+  printf -- '---\nname: [unclosed\n---\n\nbody\n' > "$root/skills/sample/SKILL.md"
+  output="$(cd "$REPO_ROOT" && bash "$LINTER" --repo-root "$root" 2>&1)"; status=$?
+  if should_run "$bad_name"; then
+    if [[ $status -ne 0 ]]; then record_pass "$bad_name"
+    else record_fail "$bad_name" "expected non-zero; skills/ not scanned? output: $output"; fi
+  fi
+
+  # 2. well-formed SKILL.md → scan must pass.
+  printf -- '---\nname: sample\ndescription: a valid sample skill\n---\n\nbody\n' > "$root/skills/sample/SKILL.md"
+  output="$(cd "$REPO_ROOT" && bash "$LINTER" --repo-root "$root" 2>&1)"; status=$?
+  if should_run "$good_name"; then
+    if [[ $status -eq 0 ]]; then record_pass "$good_name"
+    else record_fail "$good_name" "expected exit 0, got $status; output: $output"; fi
+  fi
+
+  rm -rf "$root"
+}
+skills_scan_case
+
 # -- side-effect guard --------------------------------------------------------
 
 assert_no_modification "lint-frontmatter/no-modification"

@@ -1769,3 +1769,11 @@ All three acceptance grep checks pass.
 
 **Cross-link**: `[[CC-200]]` (executor-router), `[[CC-202]]` (handover-validate), `[[CC-266]]` (claude adapter), `[[CC-215]]` (pmctl spine).
 
+## CC-061 — 建立 skills/ 目錄 + starter SKILL.md ✅ 2026-05-31
+
+**Closed**: shipped two thin starter skills — `skills/dispatch-brief/SKILL.md` (points to `docs/dispatch-brief.md` / `agents/project-pm.md` for the handover contract + the rules that bite) and `skills/pr-gate-review/SKILL.md` (points to `/pr-gate` + `scripts/pr-gate.sh`), both aligned to the Anthropic Agent Skills layout (`skills/<name>/SKILL.md`, `name` + `description` frontmatter). Also extended `scripts/lint-frontmatter.sh` to scan `skills/<name>/SKILL.md` (closing a second doc-drift: README §scripts claimed skills/ was linted but the scanner only covered agents/ + commands/) and added 2 `test-lint-frontmatter.sh` cases proving skills/ is scanned. `install.sh` already installs `skills/` (junction; verified it handles the nested layout). CC-014/015/026 now have the directory base they were waiting on. Merged via the CC-061 PR.
+
+**Problem**: README 和 CC-057 指出 `skills/` 目錄不存在，但 Anthropic Skills spec 定義 SKILL.md 為可重用能力包（只在需要時載入 context）。現有 `commands/pm.md`、`commands/pr-gate.md` 有大量重用邏輯，天然適合轉成 skills。CC-014（using-git-worktrees）、CC-015（systematic-debugging）、CC-026（/skill-distill）均等待 skills/ 基礎建設。
+**Why**: skills 比 commands 更輕量（context on-demand），且是 Anthropic 現在主推的擴展方式。建立 2–3 個 starter skills 能讓 CC-014/015/026 有落地路徑，也修正 README 現有聲明。
+**Requirement**: 建立 `skills/dispatch-brief/SKILL.md`（封裝 brief 建立 + handover validate 流程）和 `skills/pr-gate-review/SKILL.md`（封裝 reviewer 派發流程）；在 install.sh 的 helper scripts 區段加入 `skills/` symlink；README skills/ 目錄說明改為實際有內容。先行條件：CC-057 (A) 完成後執行此條。
+
