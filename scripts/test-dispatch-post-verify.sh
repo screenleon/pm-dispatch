@@ -49,6 +49,15 @@ write_latest_last() {
   printf '%s\n' "$content" > "$work_dir/.agent-trace/latest.last"
 }
 
+# Write a per-run (non-latest.*) trace file and echo its absolute path — used to
+# exercise the --last/--stderr override flags the /pm footer route relies on.
+write_named_trace() {
+  local work_dir="$1" fname="$2" content="$3"
+  mkdir -p "$work_dir/.agent-trace"
+  printf '%s\n' "$content" > "$work_dir/.agent-trace/$fname"
+  printf '%s\n' "$work_dir/.agent-trace/$fname"
+}
+
 # A work directory with a non-empty latest.last passes post-dispatch verification.
 # Steps:
 # 1. Create a work directory with .agent-trace/latest.last containing status text.
@@ -521,6 +530,154 @@ EOF
   pass "$name"
 }
 
+# --last overrides latest.last: verification reads the per-run file even when
+# no latest.last symlink exists (the /pm footer route never writes latest.*).
+case_flag_last_override_ok() {
+  local name="flag-last-override-ok"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "OK" || return 0
+  pass "$name"
+}
+
+# A --last path resolving outside the run's .agent-trace is rejected, same as a
+# latest.last symlink escape — race-safety guard must cover flag-supplied paths.
+case_flag_last_override_outside_rejected() {
+  local name="flag-last-override-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  mkdir -p "$work_dir/.agent-trace"
+  printf 'status: ok\n' > "$tmpdir/$name.outside.last"
+
+  run_validator rc out "$work_dir" --last "$tmpdir/$name.outside.last"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# A nonexistent --last path hits the same not-found stop as a missing latest.last.
+case_flag_last_override_missing() {
+  local name="flag-last-override-missing"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  mkdir -p "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir" --last "$work_dir/.agent-trace/nope.last"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "not found" || return 0
+  pass "$name"
+}
+
+# --stderr overrides latest.stderr: the per-run stderr content is surfaced.
+case_flag_stderr_override_shown() {
+  local name="flag-stderr-override-shown"
+  should_run "$name" || return 0
+  local work_dir err out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "boom-from-override")"
+
+  run_validator rc out "$work_dir" --stderr "$err"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "boom-from-override" || return 0
+  pass "$name"
+}
+
+# A --stderr path resolving outside .agent-trace is rejected when it exists.
+case_flag_stderr_override_outside_rejected() {
+  local name="flag-stderr-override-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  printf 'external stderr\n' > "$tmpdir/$name.outside.stderr"
+
+  run_validator rc out "$work_dir" --stderr "$tmpdir/$name.outside.stderr"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# --last given without --stderr falls back to latest.stderr (absent → tolerated).
+case_flag_last_only_stderr_fallback() {
+  local name="flag-last-only-stderr-fallback"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  if [[ "$out" == *"=== Stderr"* ]]; then
+    fail "$name" "unexpected stderr block with no stderr present: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+# --brief-file supplies the brief; self_verify runs against the resolved last.
+case_flag_brief_file() {
+  local name="flag-brief-file"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  pass "$name"
+}
+
+# --brief-file plus a second positional is ambiguous and rejected with usage (2).
+case_flag_brief_file_and_positional_ambiguous() {
+  local name="flag-brief-file-and-positional-ambiguous"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  printf 'self_verify:\n  - true\n' > "$brief"
+
+  run_validator rc out "$work_dir" "$brief" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
+# An unknown flag is rejected with usage (2).
+case_flag_unknown_rejected() {
+  local name="flag-unknown-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --bogus
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -542,5 +699,14 @@ case_fail_executor_status_failed
 case_fail_executor_status_partial
 case_fail_executor_status_blocked
 case_fail_selfverify_substring_pass
+case_flag_last_override_ok
+case_flag_last_override_outside_rejected
+case_flag_last_override_missing
+case_flag_stderr_override_shown
+case_flag_stderr_override_outside_rejected
+case_flag_last_only_stderr_fallback
+case_flag_brief_file
+case_flag_brief_file_and_positional_ambiguous
+case_flag_unknown_rejected
 
 th_summary

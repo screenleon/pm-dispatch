@@ -45,18 +45,20 @@ The `claude-executor` agent self-executes the brief using its own tool surface (
 
 Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) determines the default. PM may override per-brief by setting `executor:` in the handover metadata. If fallback is selected for codex, say why in one sentence, then dispatch `Agent(codex-executor)` with the pre-written brief file path. Otherwise, record the Bash task id (route A) or Agent task id (route B) and parse completion using the footer documented in `docs/dispatch-brief.md`.
 
-Main-thread completion handling for the Bash route:
+Main-thread completion handling for the Bash route (steps 1–3 and 5–6 are tool-call orchestration only the main thread can do; the verification body in step 4 is the shared, tested `scripts/dispatch-post-verify.sh`, not re-implemented prose):
 
 1. Keep a small conversation-state row for `task_id`, slug, `brief_file`, `working_dir`, expected files, and status.
 2. When the completion notification arrives, read `BashOutput(bash_id: <id>)`; do not infer completion from `.agent-trace/latest.*` symlinks.
 3. Parse the footer lines `trace:`, `last:`, `stderr:`, and `exit:` from the captured output.
-4. Read `<last>` for the final Codex message; if empty, inspect the JSONL trace for the last `agent_message`.
-5. Read `<stderr>` even on exit 0 and surface any content beyond the standard wrapper start/finish banners.
-6. Verify `git -C <working_dir> status --short` and `git -C <working_dir> diff --stat <base>...HEAD` against the brief's `files:` block.
-7. Check the JSONL trace for `command_execution` evidence matching every `self_verify:` item.
-8. Report `ok`, `partial`, or `failed`; skipped verification, unbriefed files, or unexpected stderr make the result at least `partial`.
-9. On exit 124, run the foreground diagnostic checklist, then retry exactly once with the same `brief_file` and flags.
-10. On any other non-zero exit, stop and report the trace, stderr, and footer exit code for main-thread review.
+4. Run the shared post-verify against the **per-run** footer paths (never `latest.*` — those race across concurrent dispatches), passing the brief so `self_verify:` items are checked:
+
+   ```text
+   Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/dispatch-post-verify.sh <safe working_dir> --last <safe last> --stderr <safe stderr> --brief-file <safe brief_file>", description: "Post-verify <slug>")
+   ```
+
+   It tails the final message, surfaces any stderr beyond the wrapper banners, prints `git diff --stat`/`status --short` for `<working_dir>`, emits a `FOUND`/`MISSING` line per `self_verify:` item, and exits `0` (ok) or `1` (partial/failed). Read its output: a non-zero exit, a `MISSING` line, an unbriefed file in the diff (not in the brief's `files:` block), or unexpected stderr makes the result at least `partial`. The footer `trace:` path remains available for deeper inspection on failure.
+5. On footer `exit: 124`, run the foreground diagnostic checklist, then retry exactly once with the same `brief_file` and flags.
+6. On any other non-zero footer exit, stop and report the trace, stderr, and footer exit code for main-thread review.
 
 Briefs must follow the schema at `docs/dispatch-brief.md` (working_dir / goal / files / acceptance, plus self_verify required for file-writing briefs and optional only for read-only briefs where every files entry is explicitly tagged `read:`). codex-executor rejects briefs missing the required fields.
 

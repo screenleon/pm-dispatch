@@ -66,11 +66,11 @@
 | CC-266 | `adapters/claude/dispatch.sh`（`claude --print` 薄 executor，使 codex-as-PM → claude-executor 可行；含 Phase-1 feasibility 檢查） | ✅ (#195) |
 | CC-233 | `scripts/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ✅ (#197) |
 
-### M4 — Claude 指令 / skill 介面（舊 M3 剩餘）
+### M4 — Claude 指令 / skill 介面（舊 M3 剩餘）— ✅ complete 2026-05-31
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-059 | thin `commands/pm.md` | ⏳ |
+| CC-059 | thin `commands/pm.md`（reshaped → post-verify 複用抽取，approach B；原「runner」前提已被 M0–M3 抽取淘汰） | ✅ (#204) |
 | CC-061 | `skills/` 目錄 + starter SKILL.md | ✅ 2026-05-31 |
 | CC-206 | gate lifecycle hooks（pre/post-gate + `--allow-hooks` opt-in + `--isolation` flag） | ✅ (#175) |
 | CC-271 | `docs/sandbox-limitations.md`（folded into CC-206 PR） | ✅ (#175) |

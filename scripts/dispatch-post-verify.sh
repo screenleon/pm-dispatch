@@ -7,13 +7,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/portable.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--stderr <path>] [--brief-file <path>]\n' "$0" >&2
 }
 
-WORK_DIR="${1:-}"
-BRIEF_FILE="${2:-}"
+# Path resolution is the only thing the flags change: --last/--stderr override
+# the default latest.* symlinks with per-run explicit paths (e.g. parsed from the
+# dispatch footer by the /pm main-thread route, where latest.* would race across
+# concurrent dispatches). Absent flags, behavior is identical to the positional
+# <work_dir> [brief_file] form used by `pmctl dispatch run` and codex-executor.
+BRIEF_FILE=""
+LAST_OVERRIDE=""
+STDERR_OVERRIDE=""
+positional=()
 
-if [[ $# -gt 2 || -z "$WORK_DIR" ]]; then
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --last)       LAST_OVERRIDE="${2:-}";   shift 2 || { usage; exit 2; } ;;
+    --stderr)     STDERR_OVERRIDE="${2:-}"; shift 2 || { usage; exit 2; } ;;
+    --brief-file) BRIEF_FILE="${2:-}";      shift 2 || { usage; exit 2; } ;;
+    --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
+    -*)           usage; exit 2 ;;
+    *)            positional+=("$1"); shift ;;
+  esac
+done
+
+WORK_DIR="${positional[0]:-}"
+# Second positional is brief_file, but only when --brief-file was not supplied
+# (supplying both is ambiguous and rejected).
+if [[ -z "$BRIEF_FILE" ]]; then
+  BRIEF_FILE="${positional[1]:-}"
+  POSITIONAL_MAX=2
+else
+  POSITIONAL_MAX=1
+fi
+
+if [[ ${#positional[@]} -gt $POSITIONAL_MAX || -z "$WORK_DIR" ]]; then
   usage
   exit 2
 fi
@@ -24,8 +52,8 @@ if [[ -n "$BRIEF_FILE" && ! -f "$BRIEF_FILE" ]]; then
 fi
 
 TRACE_DIR="$WORK_DIR/.agent-trace"
-LATEST_LAST="$TRACE_DIR/latest.last"
-LATEST_STDERR="$TRACE_DIR/latest.stderr"
+LATEST_LAST="${LAST_OVERRIDE:-$TRACE_DIR/latest.last}"
+LATEST_STDERR="${STDERR_OVERRIDE:-$TRACE_DIR/latest.stderr}"
 
 if [[ ! -d "$TRACE_DIR" ]]; then
   printf 'FAILED: .agent-trace dir not found: %s\n' "$TRACE_DIR"
@@ -53,10 +81,12 @@ if [[ ! -s "$LATEST_LAST" ]]; then
   exit 1
 fi
 
-if [[ -L "$LATEST_LAST" ]]; then
+# A flag-supplied --last gets the same containment guard as a latest.last
+# symlink: its real path must stay inside this run's .agent-trace.
+if [[ -L "$LATEST_LAST" || -n "$LAST_OVERRIDE" ]]; then
   LAST_RESOLVED="$(realpath_m "$LATEST_LAST" 2>/dev/null || true)"
   if [[ -z "$LAST_RESOLVED" || "${LAST_RESOLVED#"$TRACE_ABS/"}" == "$LAST_RESOLVED" ]]; then
-    printf 'FAILED: latest.last symlink target is outside .agent-trace: %s\n' "$LAST_RESOLVED"
+    printf 'FAILED: latest.last path is outside .agent-trace: %s\n' "$LAST_RESOLVED"
     exit 1
   fi
 fi
@@ -65,10 +95,12 @@ printf '=== Agent trace (latest.last) ===\n'
 tail -50 "$LATEST_LAST"
 printf '\n'
 
-if [[ -L "$LATEST_STDERR" ]]; then
+# Same containment guard for a flag-supplied --stderr (only when it exists;
+# stderr is optional, so a missing one is tolerated below, not rejected here).
+if [[ -L "$LATEST_STDERR" ]] || [[ -n "$STDERR_OVERRIDE" && -e "$LATEST_STDERR" ]]; then
   STDERR_RESOLVED="$(realpath_m "$LATEST_STDERR" 2>/dev/null || true)"
   if [[ -z "$STDERR_RESOLVED" || "${STDERR_RESOLVED#"$TRACE_ABS/"}" == "$STDERR_RESOLVED" ]]; then
-    printf 'FAILED: latest.stderr symlink target is outside .agent-trace: %s\n' "$STDERR_RESOLVED"
+    printf 'FAILED: latest.stderr path is outside .agent-trace: %s\n' "$STDERR_RESOLVED"
     exit 1
   fi
 fi
