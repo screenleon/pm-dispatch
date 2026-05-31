@@ -639,6 +639,44 @@ case_flag_beats_config_default_model() {
   rm -f "$_brief"
 }
 
+# ---- 16g: malformed dispatch.default_model warns and falls back to default ----
+# Behavior: a malformed dispatch.default_model value (bad shape) does not silently
+#   become the omitted---model default; the adapter warns and falls back to the
+#   built-in `default` alias (→ gpt-5.5), so a typo cannot reintroduce a wrong
+#   default-model path.
+# Steps:
+#   1. Write dispatch.default_model=Bad!Model (invalid shape) to an isolated HOME
+#      config, run --print-cmd with no --model, capturing stderr.
+#   2. Assert exit 0, stderr carries the malformed-value warning, and the CMD falls
+#      back to -m gpt-5.5 (not the malformed value).
+case_malformed_config_default_model_falls_back() {
+  local name="default-model/malformed dispatch.default_model warns + falls back to default"
+  local _home _work _brief _stderr _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  mkdir -p "$_home/.pm-dispatch"
+  printf 'dispatch.default_model=Bad!Model\n' > "$_home/.pm-dispatch/config"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: malformed default model test\n' > "$_brief"
+  _stderr="$(mktemp)"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd 2>"$_stderr")"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && grep -q "malformed value for dispatch.default_model" "$_stderr" \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" != *"Bad!Model"* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief" "$_stderr"
+}
+
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
 case_timeout_env_only_precedence() {
   local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
@@ -1004,6 +1042,7 @@ case_explicit_gpt54_resolves_high_effort
 case_config_default_model_override
 case_default_alias_resolves_gpt55
 case_flag_beats_config_default_model
+case_malformed_config_default_model_falls_back
 case_timeout_env_only_precedence
 case_timeout_config_only_precedence
 case_timeout_precedence_brief_field
