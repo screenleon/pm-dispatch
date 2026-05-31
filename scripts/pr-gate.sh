@@ -47,6 +47,10 @@ TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
+# "default" → omit --model → the executor adapter applies its own pinned default
+# (for codex, resolved via share/model-aliases.tsv; decoupled from ~/.codex/config.toml).
+# The gate is analysis-heavy and must run on a full model, never the spark variant;
+# spark is opt-in only.
 DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
 DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)

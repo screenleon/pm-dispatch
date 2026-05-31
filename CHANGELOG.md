@@ -27,6 +27,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **`scripts/pr-gate.sh`** — pre-create gate output file (`touch "$OUTPUT_FILE"`) before emitting the `pr-gate-handover_v1` handover block; fixes silent result loss when a background `claude-executor` subagent cannot `Write` to a new file path (CC-267).
 - **`scripts/pr-gate.sh`** — escape literal `$` in unquoted heredoc templates (`\$)`, `\$'`) in the brief escalation regex and self-verify grep pattern to prevent sporadic bash parse errors (CC-257 residual).
+- **`adapters/codex/dispatch.sh`** — dispatch now pins pm-dispatch's own default model (the `default` alias → `gpt-5.5` via `share/model-aliases.tsv`; `gpt-5.4` fallback) instead of letting omitted `--model` inherit the host's `~/.codex/config.toml` default. Previously, hosts whose interactive codex default was `gpt-5.3-codex-spark` silently ran **pr-gate and `/pm` dispatch on the spark model** (lower context ceiling, separate usage pool) — wrong for analysis-heavy work. The reserved `dispatch.default_model` config key is now wired (precedence: `--model` flag > config > built-in `default` alias). `share/model-aliases.tsv` gains a data-backed `default → gpt-5.5` alias (the adapter references the alias, so the wire id lives in the TSV alone) plus `gpt-5.5`/`gpt-5.4` rows; `scripts/lib/handover-validate.sh` now accepts dotted wire ids so every alias is a valid handover `model:` value. `codex-spark` stays opt-in (CC-292).
 
 ### Changed
 

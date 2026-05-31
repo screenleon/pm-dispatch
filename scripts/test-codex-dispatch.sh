@@ -451,6 +451,194 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
+# ---- 16a: default model (no --model) resolves to gpt-5.5 with high effort ----
+# Behavior: with no --model and no config override, dispatch applies pm-dispatch's
+#   pinned default (the `default` alias → gpt-5.5) instead of inheriting the host
+#   ~/.codex/config.toml model.
+# Steps:
+#   1. Run --print-cmd with an empty HOME (no ~/.pm-dispatch/config) and no --model.
+#   2. Assert the printed CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+case_default_model_resolves_gpt55() {
+  local name="default-model/no --model resolves to gpt-5.5 + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"          # empty home: no ~/.pm-dispatch/config override
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: default model test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16b: explicit --model gpt-5.5 resolves with high effort ----
+# Behavior: explicitly requesting gpt-5.5 resolves through the alias table and
+#   attaches high reasoning effort.
+# Steps:
+#   1. Run --print-cmd with --model gpt-5.5.
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+case_explicit_gpt55_resolves_high_effort() {
+  local name="default-model/--model gpt-5.5 resolves + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: explicit gpt-5.5 test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.5 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with high effort ----
+# Behavior: the documented fallback model gpt-5.4 resolves through the alias table
+#   and attaches high reasoning effort.
+# Steps:
+#   1. Run --print-cmd with --model gpt-5.4.
+#   2. Assert the CMD carries -m gpt-5.4 and model_reasoning_effort="high".
+case_explicit_gpt54_resolves_high_effort() {
+  local name="default-model/--model gpt-5.4 fallback resolves + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: fallback gpt-5.4 test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.4 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.4"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16d: ~/.pm-dispatch/config dispatch.default_model overrides built-in default ----
+# Behavior: a valid dispatch.default_model in ~/.pm-dispatch/config replaces the
+#   built-in default when --model is omitted.
+# Steps:
+#   1. Write dispatch.default_model=gpt-5.4 to an isolated HOME config, run --print-cmd
+#      with no --model.
+#   2. Assert the CMD carries -m gpt-5.4 and not -m gpt-5.5.
+case_config_default_model_override() {
+  local name="default-model/config dispatch.default_model overrides built-in"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  mkdir -p "$_home/.pm-dispatch"
+  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: config default model override test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.4"* ]] \
+    && [[ "$_out" != *"-m gpt-5.5"* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16e: explicit --model default alias resolves to gpt-5.5 + high ----
+# Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
+#   resolves to the gpt-5.5 wire id with high effort.
+# Steps:
+#   1. Run --print-cmd with --model default.
+#   2. Assert the CMD carries -m gpt-5.5 and model_reasoning_effort="high".
+case_default_alias_resolves_gpt55() {
+  local name="default-model/--model default alias resolves to gpt-5.5 + high"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: default alias test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model default --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16f: --model flag takes precedence over dispatch.default_model config ----
+# Behavior: an explicit --model flag wins over a dispatch.default_model config value
+#   (documented precedence: flag > config > built-in default).
+# Steps:
+#   1. Write dispatch.default_model=gpt-5.4 to an isolated HOME config, then run
+#      --print-cmd with --model gpt-5.5.
+#   2. Assert the CMD carries -m gpt-5.5 (flag wins) and not -m gpt-5.4.
+case_flag_beats_config_default_model() {
+  local name="default-model/--model flag beats dispatch.default_model config"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  mkdir -p "$_home/.pm-dispatch"
+  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: flag beats config test\n' > "$_brief"
+
+  set +e
+  # config says gpt-5.4 but the --model flag must win.
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.5 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" != *"-m gpt-5.4"* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
 case_timeout_env_only_precedence() {
   local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
@@ -810,6 +998,12 @@ case_auto_log_log_failure_preserves_dispatch_exit
 case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
+case_default_model_resolves_gpt55
+case_explicit_gpt55_resolves_high_effort
+case_explicit_gpt54_resolves_high_effort
+case_config_default_model_override
+case_default_alias_resolves_gpt55
+case_flag_beats_config_default_model
 case_timeout_env_only_precedence
 case_timeout_config_only_precedence
 case_timeout_precedence_brief_field

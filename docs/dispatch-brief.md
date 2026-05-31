@@ -363,7 +363,12 @@ PM short-form model aliases are resolved from the source-of-truth file
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
+| `default` | `gpt-5.5` | `high` |
+| `gpt-5.5` | `gpt-5.5` | `high` |
+| `gpt-5.4` | `gpt-5.4` | `high` |
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
+
+This table is **codex-adapter-specific** (other executors own their own model namespaces — a claude executor uses sonnet/opus/haiku). `default` is the alias the codex adapter applies when no `--model` is given; its wire id is defined only here in `share/model-aliases.tsv`, so a model bump edits the TSV alone. `gpt-5.4` is the documented fallback (set `dispatch.default_model = gpt-5.4` in `~/.pm-dispatch/config`). `codex-spark` is opt-in only and draws from an independent usage pool — see `agents/project-pm.md` for routing criteria. Every value in this table is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
 Direct Bash dispatch shape:
 
