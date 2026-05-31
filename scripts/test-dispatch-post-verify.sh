@@ -49,6 +49,15 @@ write_latest_last() {
   printf '%s\n' "$content" > "$work_dir/.agent-trace/latest.last"
 }
 
+# Write a per-run (non-latest.*) trace file and echo its absolute path — used to
+# exercise the --last/--stderr override flags the /pm footer route relies on.
+write_named_trace() {
+  local work_dir="$1" fname="$2" content="$3"
+  mkdir -p "$work_dir/.agent-trace"
+  printf '%s\n' "$content" > "$work_dir/.agent-trace/$fname"
+  printf '%s\n' "$work_dir/.agent-trace/$fname"
+}
+
 # A work directory with a non-empty latest.last passes post-dispatch verification.
 # Steps:
 # 1. Create a work directory with .agent-trace/latest.last containing status text.
@@ -521,6 +530,394 @@ EOF
   pass "$name"
 }
 
+# --last overrides latest.last: verification reads the per-run file even when
+# no latest.last symlink exists (the /pm footer route never writes latest.*).
+# Steps:
+# 1. Create a work dir with a per-run codex-99.last (status: ok) and no latest.last.
+# 2. Run dispatch-post-verify.sh with --last pointing at the per-run file.
+# 3. Assert exit 0 and output containing OK.
+case_flag_last_override_ok() {
+  local name="flag-last-override-ok"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "OK" || return 0
+  pass "$name"
+}
+
+# A --last path resolving outside the run's .agent-trace is rejected, same as a
+# latest.last symlink escape — race-safety guard must cover flag-supplied paths.
+# Steps:
+# 1. Create a work dir with .agent-trace and an external .last file outside it.
+# 2. Run dispatch-post-verify.sh with --last pointing at the external file.
+# 3. Assert exit 1 and output containing "outside .agent-trace".
+case_flag_last_override_outside_rejected() {
+  local name="flag-last-override-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  mkdir -p "$work_dir/.agent-trace"
+  printf 'status: ok\n' > "$tmpdir/$name.outside.last"
+
+  run_validator rc out "$work_dir" --last "$tmpdir/$name.outside.last"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# A nonexistent --last path hits the same not-found stop as a missing latest.last.
+# Steps:
+# 1. Create a work dir with an empty .agent-trace (no last file).
+# 2. Run dispatch-post-verify.sh with --last pointing at a nonexistent path inside it.
+# 3. Assert exit 1 and output containing "not found".
+case_flag_last_override_missing() {
+  local name="flag-last-override-missing"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  mkdir -p "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir" --last "$work_dir/.agent-trace/nope.last"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "not found" || return 0
+  pass "$name"
+}
+
+# --stderr overrides latest.stderr: the per-run stderr content is surfaced.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a per-run codex-99.stderr.
+# 2. Run dispatch-post-verify.sh with --stderr pointing at the per-run stderr.
+# 3. Assert exit 0 and output containing the per-run stderr content.
+case_flag_stderr_override_shown() {
+  local name="flag-stderr-override-shown"
+  should_run "$name" || return 0
+  local work_dir err out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "boom-from-override")"
+
+  run_validator rc out "$work_dir" --stderr "$err"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "boom-from-override" || return 0
+  pass "$name"
+}
+
+# A --stderr path resolving outside .agent-trace is rejected when it exists.
+# Steps:
+# 1. Create a work dir with a valid latest.last and an external stderr file outside .agent-trace.
+# 2. Run dispatch-post-verify.sh with --stderr pointing at the external file.
+# 3. Assert exit 1 and output containing "outside .agent-trace".
+case_flag_stderr_override_outside_rejected() {
+  local name="flag-stderr-override-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  printf 'external stderr\n' > "$tmpdir/$name.outside.stderr"
+
+  run_validator rc out "$work_dir" --stderr "$tmpdir/$name.outside.stderr"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# --last given without --stderr falls back to latest.stderr (absent → tolerated).
+# Steps:
+# 1. Create a work dir with a per-run codex-99.last (status: ok) and no stderr file.
+# 2. Run dispatch-post-verify.sh with only --last (no --stderr).
+# 3. Assert exit 0 and that no Stderr block appears (absent stderr is tolerated).
+case_flag_last_only_stderr_fallback() {
+  local name="flag-last-only-stderr-fallback"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  if [[ "$out" == *"=== Stderr"* ]]; then
+    fail "$name" "unexpected stderr block with no stderr present: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+# --brief-file supplies the brief; self_verify runs against the resolved last.
+# Steps:
+# 1. Create a work dir whose latest.last contains a passing self_verify line.
+# 2. Write a brief and run dispatch-post-verify.sh passing it via --brief-file.
+# 3. Assert exit 0 and output containing FOUND.
+case_flag_brief_file() {
+  local name="flag-brief-file"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  pass "$name"
+}
+
+# --brief-file plus a second positional is ambiguous and rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last and a brief file.
+# 2. Run dispatch-post-verify.sh with both a positional brief and --brief-file.
+# 3. Assert exit 2 (usage rejection).
+case_flag_brief_file_and_positional_ambiguous() {
+  local name="flag-brief-file-and-positional-ambiguous"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  printf 'self_verify:\n  - true\n' > "$brief"
+
+  run_validator rc out "$work_dir" "$brief" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
+# An unknown flag is rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last.
+# 2. Run dispatch-post-verify.sh with an unrecognized flag.
+# 3. Assert exit 2 (usage rejection).
+case_flag_unknown_rejected() {
+  local name="flag-unknown-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --bogus
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
+# A value-taking flag at end-of-args (no value) is rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last.
+# 2. Run dispatch-post-verify.sh with --last as the final token (no value).
+# 3. Assert exit 2 and output containing the missing-value error.
+case_flag_missing_value_rejected() {
+  local name="flag-missing-value-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --last
+
+  assert_eq "$name" "$rc" 2 || return 0
+  assert_string_contains "$name" "$out" "--last requires a value" || return 0
+  pass "$name"
+}
+
+# A value-taking flag immediately followed by another flag is rejected (the next
+# flag is not silently consumed as the value).
+# Steps:
+# 1. Create a work dir with a valid latest.last and a per-run stderr file.
+# 2. Run dispatch-post-verify.sh with --last --stderr <path> (no value for --last).
+# 3. Assert exit 2 and output containing the missing-value error for --last.
+case_flag_value_is_flag_rejected() {
+  local name="flag-value-is-flag-rejected"
+  should_run "$name" || return 0
+  local work_dir err out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "noise")"
+
+  run_validator rc out "$work_dir" --last --stderr "$err"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  assert_string_contains "$name" "$out" "--last requires a value" || return 0
+  pass "$name"
+}
+
+# The exact /pm Bash-route invocation shape — --last, --stderr, and --brief-file
+# together — resolves all paths and runs self_verify in one call.
+# Steps:
+# 1. Create a per-run last (passing self_verify line), a per-run stderr, and a brief.
+# 2. Run dispatch-post-verify.sh with --last, --stderr, and --brief-file together.
+# 3. Assert exit 0, a FOUND self_verify line, and the per-run stderr content surfaced.
+case_flag_pm_invocation_shape() {
+  local name="flag-pm-invocation-shape"
+  should_run "$name" || return 0
+  local work_dir last err brief out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "bash scripts/run-all-tests.sh: pass")"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "noise-from-stderr")"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" --last "$last" --stderr "$err" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  assert_string_contains "$name" "$out" "noise-from-stderr" || return 0
+  pass "$name"
+}
+
+# --base makes post-verify diff against the caller-selected integration base
+# (not hard-coded origin/main), preserving /pm base-aware verification.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a git repo whose base branch
+#    predates a committed newfile.txt (so the worktree is clean vs HEAD).
+# 2. Run dispatch-post-verify.sh with --base <branch>.
+# 3. Assert exit 0, the (base: <branch>) label, AND that the diff stat lists
+#    newfile.txt — base-dependent content that only appears when diffing against
+#    the selected base, not HEAD (kills a label-prints-but-diffs-HEAD mutation).
+case_flag_base_override() {
+  local name="flag-base-override"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+  git -C "$work_dir" branch basebranch
+  : > "$work_dir/newfile.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m change
+
+  run_validator rc out "$work_dir" --base basebranch
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "(base: basebranch...HEAD)" || return 0
+  # Worktree == HEAD (clean), so newfile.txt only shows when diffing vs basebranch;
+  # a mutation that diffs HEAD would print an empty stat and fail this assertion.
+  assert_string_contains "$name" "$out" "newfile.txt" || return 0
+  pass "$name"
+}
+
+# A flag-supplied --stderr whose file is missing is fail-closed (broken-footer /
+# lost-artifact signal), unlike the optional positional latest.stderr path.
+# Steps:
+# 1. Create a work dir with a valid per-run last (so --last passes) and no stderr file.
+# 2. Run dispatch-post-verify.sh with --last <ok> --stderr <nonexistent .agent-trace path>.
+# 3. Assert exit 1 and output containing the supplied-stderr-not-found failure.
+case_flag_stderr_override_missing_rejected() {
+  local name="flag-stderr-override-missing-rejected"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last" --stderr "$work_dir/.agent-trace/nope.stderr"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "supplied --stderr not found" || return 0
+  pass "$name"
+}
+
+# The `--` end-of-options sentinel forces remaining args to positionals; work_dir
+# and brief_file still resolve correctly after it.
+# Steps:
+# 1. Create a work dir whose latest.last contains a passing self_verify line, and a brief.
+# 2. Run dispatch-post-verify.sh with `--` before the positional work_dir and brief.
+# 3. Assert exit 0 and a FOUND self_verify line (both positionals resolved past the sentinel).
+case_flag_double_dash_positional() {
+  local name="flag-double-dash-positional"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out -- "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  pass "$name"
+}
+
+# Three-dot base diff excludes commits the integration branch advanced past the
+# fork point, so an advanced base does not surface unrelated upstream changes as
+# spurious diff evidence (regression guard for the `<base>...HEAD` semantics).
+# Steps:
+# 1. Build a git repo: C0; branch intbase@C0; commit dispatch.txt on HEAD (C1);
+#    advance intbase with upstream.txt (C2); restore HEAD to the C1 branch.
+# 2. Run dispatch-post-verify.sh with --base intbase.
+# 3. Assert exit 0, the diff lists dispatch.txt, and does NOT list upstream.txt
+#    (a two-dot `git diff <base>` would leak upstream.txt as a removal).
+case_flag_base_advanced_excludes_upstream() {
+  local name="flag-base-advanced-excludes-upstream"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c0
+  git -C "$work_dir" branch intbase
+  : > "$work_dir/dispatch.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m c1
+  git -C "$work_dir" -c advice.detachedHead=false checkout -q intbase
+  : > "$work_dir/upstream.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m c2
+  git -C "$work_dir" checkout -q -
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --base intbase
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "dispatch.txt" || return 0
+  if [[ "$out" == *"upstream.txt"* ]]; then
+    fail "$name" "advanced-base upstream change leaked into diff evidence: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+# A --base ref that does not exist falls back to HEAD and labels the base as
+# unavailable, instead of erroring out.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a git repo with one commit (HEAD valid; no 'bogusbase' ref).
+# 2. Run dispatch-post-verify.sh with --base bogusbase.
+# 3. Assert exit 0 and output containing the HEAD-fallback label naming the unavailable base.
+case_flag_base_fallback_unavailable() {
+  local name="flag-base-fallback-unavailable"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m only
+
+  run_validator rc out "$work_dir" --base bogusbase
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "(base: HEAD — bogusbase unavailable)" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -542,5 +939,22 @@ case_fail_executor_status_failed
 case_fail_executor_status_partial
 case_fail_executor_status_blocked
 case_fail_selfverify_substring_pass
+case_flag_last_override_ok
+case_flag_last_override_outside_rejected
+case_flag_last_override_missing
+case_flag_stderr_override_shown
+case_flag_stderr_override_outside_rejected
+case_flag_last_only_stderr_fallback
+case_flag_brief_file
+case_flag_brief_file_and_positional_ambiguous
+case_flag_unknown_rejected
+case_flag_missing_value_rejected
+case_flag_value_is_flag_rejected
+case_flag_pm_invocation_shape
+case_flag_base_override
+case_flag_double_dash_positional
+case_flag_base_fallback_unavailable
+case_flag_base_advanced_excludes_upstream
+case_flag_stderr_override_missing_rejected
 
 th_summary
