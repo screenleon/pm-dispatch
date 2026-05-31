@@ -33,6 +33,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`docs/architecture/v0.3.0-synthesis.md` + `MILESTONES.md`** — reconciled the architecture blueprint with the as-built code after a read-only audit (CC-295). Added a **Conformance status (as-built)** section: (A) deliberate divergences now adopted as canonical — `runtime/` realized as `cli/pmctl` + `scripts/lib/*`, symmetric codex+claude adapters in v0.3.0, `pmctl` ships backlog/guard/dispatch (rest → v0.4.0), live numbering M0–M6; (B) known-open divergences documented as pending a scope decision — state single-writer rule unmet, `routing_log.md` still machine-written, `Event`/`Review`/`Decision` schema-only, `pm/` not folded into `core/`, no `mcp/README.md` / `pmctl --json`. Inline `AS-BUILT` notes added to §5.1/§6/§7. No code change.
 - **`agents/claude-executor.md`** — self-verify format hardened: exact whole-line `cmd: pass` / `cmd: fail: <reason>` matching; `status:blocked` check; portable `realpath`; trace-dir symlink guard; `OK-NOBRIEF` mode for briefless runs (CC-264b).
 - **`docs/executor-contract.md`** — updated with filesystem output contract details and executor `latest.last` symlink timestamp format (CC-264b).
 - **`scripts/hook-save-rate-limits.sh`** — added `CLAUDE_STATUSLINE_CHAIN_ACTIVE` / `CAS_STATUSLINE_CHAIN_ACTIVE` guard to prevent infinite loop when a chain script calls back into the same hook.

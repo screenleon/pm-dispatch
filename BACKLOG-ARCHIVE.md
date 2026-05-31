@@ -1785,3 +1785,33 @@ All three acceptance grep checks pass.
 
 **Cross-link**: `[[CC-061]]` (where it surfaced).
 
+## CC-292 — [ops] dispatch default model = gpt-5.5; decouple from host codex config ✅ 2026-05-31
+
+**Closed**: shipped via PR #199 (adapter pins the data-backed `default` alias → gpt-5.5, decoupled from `~/.codex/config.toml`; `dispatch.default_model` config override shape-guarded; handover-validate accepts dotted ids) + PR #200 (shape-guard fallback test). Also reframed executor-agnostic: PM-facing surfaces name the `default` alias, never a wire model (model identity is per-executor). See [[dispatch-default-model]].
+
+**Problem**: When a dispatch omits `--model`, `adapters/codex/dispatch.sh` passed no `-m` to `codex exec`, so codex fell back to the host's `~/.codex/config.toml` `model`. The user sets that to `gpt-5.3-codex-spark` for interactive use — so **pr-gate and `/pm` dispatch silently ran on spark**. `share/model-aliases.tsv` even documented the wrong assumption (`<default> (no --model) — gpt-5.3-codex`), which never held on a spark-defaulted host.
+
+**Why**: The gate is analysis-heavy (it does not know where issues are) and must run on a full model. spark draws from a separate, independent usage pool and has a lower context ceiling — correct for known-small, single-location changes, wrong as the silent system default.
+
+**Fix (shipped)**:
+1. `adapters/codex/dispatch.sh` pins `DEFAULT_DISPATCH_MODEL="default"` (the data-backed `default` alias, which resolves to `gpt-5.5` via `share/model-aliases.tsv` — the wire id lives in the TSV alone); when `--model` is omitted the adapter injects it (precedence: `--model` flag > `~/.pm-dispatch/config` `dispatch.default_model` > built-in `default` alias). Decoupled from `~/.codex/config.toml`.
+2. Wired the previously-reserved `dispatch.default_model` config key (config parse refactored to one direct-call `_load_pm_config` setting globals, preserving timeout precedence).
+3. `share/model-aliases.tsv` + `docs/dispatch-brief.md`: added a data-backed `default → gpt-5.5` alias (the adapter references the alias, so the wire id lives in the TSV alone — single source of truth) plus `gpt-5.5`/`gpt-5.4` rows (effort `high`); corrected the default-model comment; spark documented as an independent usage pool.
+4. `scripts/lib/handover-validate.sh`: model regex now allows `.` so dotted wire ids (gpt-5.5/gpt-5.4) are valid handover `model:` values — invariant: every `model-aliases.tsv` alias is handover-valid.
+5. `agents/project-pm.md` model-selection guidance names the `default` alias (→ gpt-5.5) + spark opt-in criteria.
+6. Tests: 6 new `test-codex-dispatch.sh` cases (default→gpt-5.5+high, explicit 5.5/5.4, `default` alias, config override, flag-beats-config precedence) + 1 `test-dispatch-handover.sh` case (dotted ids accepted). `lint-model-aliases.sh` / layer-boundaries / validate green.
+
+**Fallback policy**: `gpt-5.4` is config-overridable, not runtime auto-retry — model availability is a stable host property, so a per-host config switch suffices and keeps the battle-tested dispatch path simple.
+
+**Cross-link**: `[[CC-060]]` (codex model/config externalization).
+
+## CC-295 — [docs] architecture conformance reconciliation ✅ 2026-05-31
+
+**Closed**: a read-only architecture audit (codex + Claude, 2026-05-31) compared the built code against `docs/architecture/v0.3.0-synthesis.md`. Added a **Conformance status (as-built)** section to the synthesis doc and annotated §5.1 / §6 / §7 + `MILESTONES.md` so the blueprint is an honest north star again.
+
+- **A (deliberate divergences, now canonical in the doc)**: `runtime/` is realized as `cli/pmctl` + `scripts/lib/*` (not a `runtime/` dir); both codex + claude thin adapters ship in v0.3.0 (synthesis had codex deferred); `pmctl` ships backlog/guard/dispatch only (validate/task/decision/trace/safe-bash → v0.4.0); milestone numbering is M0–M6 (MILESTONES.md authoritative; synthesis §6 is M0–M5 design rationale).
+- **B (known-open, documented as pending a scoping decision under [[CC-211]])**: single-writer rule not met (adapters write `runs.jsonl`; `layout.yaml` self-admits "aspirational"); markdown/JSONL rule not met (`routing_log.md` still machine-written alongside `runs.jsonl`); schema-first but not state-first (only `Run` written; `Event`/`Review`/`Decision` schema-only); `pm/` did not fold into `core/` (validator is an executable, forbidden in `core/`); `mcp/README.md` not built + no general `pmctl --json`.
+
+This ticket is the **doc reconciliation (A)** only; the **B** items are deliberately left as documented-open for a separate scope decision (spine release vs. realize state-first).
+
+**Cross-link**: `[[CC-211]]` (v0.3.0 arch epic), `[[CC-233]]` (layer enforcer that codified the adapter-state-logging allowance).

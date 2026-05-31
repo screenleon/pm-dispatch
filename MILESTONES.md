@@ -12,9 +12,9 @@
 
 **主題**：把 pm-dispatch 從「Claude Code 設定 + dispatch 腳本」重構成 schema-first / state-first / adapter-thin 的 **PM runtime**；把 Multica / Memori / Superpowers / AI Night Shift 的概念吸收進單一 state substrate，而非四個獨立功能。
 
-完整架構規劃見 [`docs/architecture/v0.3.0-synthesis.md`](docs/architecture/v0.3.0-synthesis.md)（三方獨立規劃對照與綜合）+ [`docs/architecture/v0.3.0-source-plans.md`](docs/architecture/v0.3.0-source-plans.md)。Epic：CC-211。
+完整架構規劃見 [`docs/architecture/v0.3.0-synthesis.md`](docs/architecture/v0.3.0-synthesis.md)（三方獨立規劃對照與綜合）+ [`docs/architecture/v0.3.0-source-plans.md`](docs/architecture/v0.3.0-source-plans.md)。Epic：CC-211。**as-built 落差見該文件的 [Conformance status](docs/architecture/v0.3.0-synthesis.md) 段**（2026-05-31 對齊；A=已採納的演進、B=待決定的開放落差）。
 
-四層架構：`core/`（資料模型 + 政策）→ `runtime/`（`pmctl` 主幹）→ `adapters/`（交付層）→ `mcp/`（外部橋接，v0.4.0）。
+四層架構：`core/`（資料模型 + 政策）→ runtime（**as-built：`cli/pmctl` + `scripts/lib/*`**，非 `runtime/` 目錄）→ `adapters/`（交付層）→ `mcp/`（外部橋接，v0.4.0；`mcp/README.md` 尚未建）。
 
 ### M0 — 便宜前置抽取（零架構風險）— ✅ complete 2026-05-23
 
@@ -42,7 +42,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ✅ (#159) |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ✅ (#157) |
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
-| CC-262 | `isolation_level` enum 全三段完成 — adapters/claude no-op map（#162）；codex-dispatch 展開（#175）；PM template（#180）；adapters/codex 移 v0.4.0 | ✅ (#162/#175/#180) |
+| CC-262 | `isolation_level` enum 全三段完成 — adapters/claude no-op map（#162）；codex-dispatch 展開（#175）；PM template（#180）。注：`adapters/codex` 的 dispatch.sh 已由 CC-289 實作（#194）；CC-262 planning 文字/狀態與已 ship 實作的對齊另由 [[CC-274]] 追蹤（adapters/codex isolation-map 仍 v0.4.0） | ✅ (#162/#175/#180) |
 
 ### M2 — 由抽取長出 runtime — ✅ complete 2026-05-28
 
@@ -108,8 +108,8 @@
 ### v0.3.0 範圍外 → v0.4.0
 
 - **pmctl 剩餘子命令** — `pmctl validate`（接 CC-202 handover-validate）、`pmctl task / decision / trace`（state-ops，建在 CC-230 state store 上）、`pmctl safe-bash`。v0.3.0 spine 只放 backlog + guard + dispatch 三個 load-bearing 面。
-- CC-216 — `mcp/pm-dispatch-server` 實作（v0.3.0 只放 `mcp/README.md` 工具介面規格作為 `pmctl` 設計約束）
-- `adapters/codex` / `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）
+- CC-216 — `mcp/pm-dispatch-server` 實作（v0.4.0）。**as-built：原規劃 v0.3.0 應放的 `mcp/README.md` 介面規格尚未建**（連帶 `pmctl --json` 設計約束未落實）；整個 `mcp/` 延 v0.4.0。見 synthesis 的 Conformance status §B。
+- `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）。注：**`adapters/codex` 已在 v0.3.0 實作**（與 claude 對稱薄 adapter），原「延 v0.4.0」規劃已 superseded。
 - AI Night Shift autonomy loop — 不做
 - CC-236 `pmctl report` 晨報 — 降為 🟢 someday（2026-05-22；無人值守執行需求低，非 v0.4.0 排程）
 
