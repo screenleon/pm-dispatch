@@ -85,6 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-291 | 🔵 active | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | — | P2 | design |
 | CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
+| CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
 
 ---
 
@@ -1232,3 +1233,17 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic).
 
+
+## CC-296 — [release] v0.3.0 deprecation sunset — remove after 2 official releases 🟡 deferred
+
+**Origin (user, 2026-06-01)**: 「這次 0.3.0 的版本有些需要 deprecate 的部分，請幫我在 2 次正式版本之後開始進行移除。」v0.3.0 引入的 back-compat 面要在經過兩個正式版本（v0.3.0 + v0.4.0）後、於 **v0.5.0** 移除。
+
+**Sunset target**: release ≥ **v0.5.0**. Do NOT remove earlier — the deprecation must stay live through v0.3.0 and v0.4.0 so external callers have two releases to migrate.
+
+**Items to remove**:
+1. **`pmctl guard check --profile <pm|codex|claude>`** alias (`scripts/lib/pmctl-guard.sh`): the deprecated profile→`(role,runtime)` mapping + the stderr deprecation warning + the `--profile`/`--role` mutual-exclusion branch. Migrate any remaining caller to `--role <pm|executor>` + `--runtime <codex|claude>`. Drop the `deprecated-profile-*` / `profile-role-mutex` back-compat cases from `scripts/test-pmctl-guard.sh` (keep the `--role`/`--runtime` cases). Origin [[CC-291]].
+2. **`scripts/codex-dispatch.sh` compatibility symlink shim**: the canonical adapter is `adapters/codex/dispatch.sh` ([[CC-289]]). Internal callers already use the real path (`executor-router` emits it). Remove the shim once external references (agent docs using the `~/github/.../scripts/codex-dispatch.sh` form, `~/.claude/settings.json` allow rules) are migrated to the adapter path — coordinate with agent-doc updates so dispatch keeps working.
+
+**On removal**: re-scan for any other v0.3.0 `### Deprecated` CHANGELOG entries and clear them in the same sweep; move the CHANGELOG `### Deprecated` items to `### Removed` for the v0.5.0 entry.
+
+**Cross-link**: `[[CC-291]]` (`--profile` alias origin), `[[CC-289]]` (codex-dispatch shim origin).
