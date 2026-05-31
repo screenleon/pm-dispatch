@@ -20,11 +20,23 @@ LAST_OVERRIDE=""
 STDERR_OVERRIDE=""
 positional=()
 
+# A value-taking flag must be followed by a real value — not end-of-args and not
+# another flag. Without this, `--last --stderr X` would silently treat `--stderr`
+# as the --last path and fail later as a confusing not-found, instead of usage.
+need_val() {
+  local flag="$1" val="$2"
+  if [[ -z "$val" || "$val" == -* ]]; then
+    printf 'ERROR: %s requires a value\n' "$flag" >&2
+    usage
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --last)       LAST_OVERRIDE="${2:-}";   shift 2 || { usage; exit 2; } ;;
-    --stderr)     STDERR_OVERRIDE="${2:-}"; shift 2 || { usage; exit 2; } ;;
-    --brief-file) BRIEF_FILE="${2:-}";      shift 2 || { usage; exit 2; } ;;
+    --last)       need_val --last "${2:-}";       LAST_OVERRIDE="$2";   shift 2 ;;
+    --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
+    --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
     -*)           usage; exit 2 ;;
     *)            positional+=("$1"); shift ;;

@@ -532,6 +532,10 @@ EOF
 
 # --last overrides latest.last: verification reads the per-run file even when
 # no latest.last symlink exists (the /pm footer route never writes latest.*).
+# Steps:
+# 1. Create a work dir with a per-run codex-99.last (status: ok) and no latest.last.
+# 2. Run dispatch-post-verify.sh with --last pointing at the per-run file.
+# 3. Assert exit 0 and output containing OK.
 case_flag_last_override_ok() {
   local name="flag-last-override-ok"
   should_run "$name" || return 0
@@ -548,6 +552,10 @@ case_flag_last_override_ok() {
 
 # A --last path resolving outside the run's .agent-trace is rejected, same as a
 # latest.last symlink escape — race-safety guard must cover flag-supplied paths.
+# Steps:
+# 1. Create a work dir with .agent-trace and an external .last file outside it.
+# 2. Run dispatch-post-verify.sh with --last pointing at the external file.
+# 3. Assert exit 1 and output containing "outside .agent-trace".
 case_flag_last_override_outside_rejected() {
   local name="flag-last-override-outside-rejected"
   should_run "$name" || return 0
@@ -564,6 +572,10 @@ case_flag_last_override_outside_rejected() {
 }
 
 # A nonexistent --last path hits the same not-found stop as a missing latest.last.
+# Steps:
+# 1. Create a work dir with an empty .agent-trace (no last file).
+# 2. Run dispatch-post-verify.sh with --last pointing at a nonexistent path inside it.
+# 3. Assert exit 1 and output containing "not found".
 case_flag_last_override_missing() {
   local name="flag-last-override-missing"
   should_run "$name" || return 0
@@ -579,6 +591,10 @@ case_flag_last_override_missing() {
 }
 
 # --stderr overrides latest.stderr: the per-run stderr content is surfaced.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a per-run codex-99.stderr.
+# 2. Run dispatch-post-verify.sh with --stderr pointing at the per-run stderr.
+# 3. Assert exit 0 and output containing the per-run stderr content.
 case_flag_stderr_override_shown() {
   local name="flag-stderr-override-shown"
   should_run "$name" || return 0
@@ -595,6 +611,10 @@ case_flag_stderr_override_shown() {
 }
 
 # A --stderr path resolving outside .agent-trace is rejected when it exists.
+# Steps:
+# 1. Create a work dir with a valid latest.last and an external stderr file outside .agent-trace.
+# 2. Run dispatch-post-verify.sh with --stderr pointing at the external file.
+# 3. Assert exit 1 and output containing "outside .agent-trace".
 case_flag_stderr_override_outside_rejected() {
   local name="flag-stderr-override-outside-rejected"
   should_run "$name" || return 0
@@ -611,6 +631,10 @@ case_flag_stderr_override_outside_rejected() {
 }
 
 # --last given without --stderr falls back to latest.stderr (absent → tolerated).
+# Steps:
+# 1. Create a work dir with a per-run codex-99.last (status: ok) and no stderr file.
+# 2. Run dispatch-post-verify.sh with only --last (no --stderr).
+# 3. Assert exit 0 and that no Stderr block appears (absent stderr is tolerated).
 case_flag_last_only_stderr_fallback() {
   local name="flag-last-only-stderr-fallback"
   should_run "$name" || return 0
@@ -629,6 +653,10 @@ case_flag_last_only_stderr_fallback() {
 }
 
 # --brief-file supplies the brief; self_verify runs against the resolved last.
+# Steps:
+# 1. Create a work dir whose latest.last contains a passing self_verify line.
+# 2. Write a brief and run dispatch-post-verify.sh passing it via --brief-file.
+# 3. Assert exit 0 and output containing FOUND.
 case_flag_brief_file() {
   local name="flag-brief-file"
   should_run "$name" || return 0
@@ -649,6 +677,10 @@ EOF
 }
 
 # --brief-file plus a second positional is ambiguous and rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last and a brief file.
+# 2. Run dispatch-post-verify.sh with both a positional brief and --brief-file.
+# 3. Assert exit 2 (usage rejection).
 case_flag_brief_file_and_positional_ambiguous() {
   local name="flag-brief-file-and-positional-ambiguous"
   should_run "$name" || return 0
@@ -665,6 +697,10 @@ case_flag_brief_file_and_positional_ambiguous() {
 }
 
 # An unknown flag is rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last.
+# 2. Run dispatch-post-verify.sh with an unrecognized flag.
+# 3. Assert exit 2 (usage rejection).
 case_flag_unknown_rejected() {
   local name="flag-unknown-rejected"
   should_run "$name" || return 0
@@ -675,6 +711,46 @@ case_flag_unknown_rejected() {
   run_validator rc out "$work_dir" --bogus
 
   assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
+# A value-taking flag at end-of-args (no value) is rejected with usage (2).
+# Steps:
+# 1. Create a work dir with a valid latest.last.
+# 2. Run dispatch-post-verify.sh with --last as the final token (no value).
+# 3. Assert exit 2 and output containing the missing-value error.
+case_flag_missing_value_rejected() {
+  local name="flag-missing-value-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --last
+
+  assert_eq "$name" "$rc" 2 || return 0
+  assert_string_contains "$name" "$out" "--last requires a value" || return 0
+  pass "$name"
+}
+
+# A value-taking flag immediately followed by another flag is rejected (the next
+# flag is not silently consumed as the value).
+# Steps:
+# 1. Create a work dir with a valid latest.last and a per-run stderr file.
+# 2. Run dispatch-post-verify.sh with --last --stderr <path> (no value for --last).
+# 3. Assert exit 2 and output containing the missing-value error for --last.
+case_flag_value_is_flag_rejected() {
+  local name="flag-value-is-flag-rejected"
+  should_run "$name" || return 0
+  local work_dir err out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "noise")"
+
+  run_validator rc out "$work_dir" --last --stderr "$err"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  assert_string_contains "$name" "$out" "--last requires a value" || return 0
   pass "$name"
 }
 
@@ -708,5 +784,7 @@ case_flag_last_only_stderr_fallback
 case_flag_brief_file
 case_flag_brief_file_and_positional_ambiguous
 case_flag_unknown_rejected
+case_flag_missing_value_rejected
+case_flag_value_is_flag_rejected
 
 th_summary
