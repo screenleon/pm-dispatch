@@ -86,6 +86,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-291 | 🔵 active | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | — | P2 | design |
 | CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
 | CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
+| CC-297 | 🟡 deferred | **[arch: register `reviewer` as a guard role]** pr-gate 的 reviewers（critic / qa-tester / architecture-reviewer / security-reviewer / risk-reviewer）+ synthesis 都是會寫檔的 agent（寫 `.gate-results/`、`.codex-briefs/`），但目前**沒有 role-keyed guard 政策**約束落點——CC-291 generalization 的下一個實例（user 2026-06-01：「pr-gate 應該也算一種 role」）。把 `reviewer` 註冊成 role（write policy 限 gate 產物目錄），是 pm/executor 之後第三個 role；CC-291 的 role-keyed registry 讓這變成加一筆。需確認 reviewer 跑在哪些 runtime（codex session / claude subagent）、政策是否 runtime-agnostic、以及 PreToolUse trigger 對 claude-route reviewer 是否需要。關聯 [[CC-291]]、[[CC-288]]。 | arch | 2026-06-01 | — | P2 | design |
 
 ---
 
@@ -1247,3 +1248,19 @@ This makes directory creation the mutex.
 **On removal**: re-scan for any other v0.3.0 `### Deprecated` CHANGELOG entries and clear them in the same sweep; move the CHANGELOG `### Deprecated` items to `### Removed` for the v0.5.0 entry.
 
 **Cross-link**: `[[CC-291]]` (`--profile` alias origin), `[[CC-289]]` (codex-dispatch shim origin).
+
+## CC-297 — [arch] register `reviewer` as a guard role 🟡 deferred
+
+**Origin (user, 2026-06-01, during CC-291 work)**: 「pr-gate 應該也算是一種 role 你覺得呢」。對——pr-gate 的 reviewers + synthesis 是會寫檔、需要 guard 的 agent，正是 CC-291 generalization（「會寫檔的 agent 角色一律註冊成 ROLE」）的下一個具體實例，繼 `pm` / `executor` 之後。
+
+**Gap**: reviewers 目前寫 `.gate-results/`（和 parallel 模式下的 `.codex-briefs/`），但沒有 role-keyed dispatch-guard 約束落點——一個 reviewer agent 原則上可寫出產物目錄之外。
+
+**Target**: 在 [[CC-291]] 的 role-keyed registry 加一個 `reviewer` role：
+- write policy = 限 gate 產物目錄（`.gate-results/`、`.codex-briefs/`），對應一支 `hook-reviewer-write-guard.sh`（沿用 CC-291 的 `hook-<role>-write-guard.sh` 慣例所需的命名調整）。
+- 釐清 runtime 軸：reviewers 在 codex session（parallel 模式）或 claude subagent（claude route）跑——政策是否 runtime-agnostic（多半是；落點與 runtime 無關），決定要不要 `--runtime`。
+- synthesis 步驟的落點（單一 consolidated result）視為 reviewer role 或另立。
+- PreToolUse trigger：claude-route reviewer 是否需要 auto-hook，或僅靠 `pmctl guard check` 顯式呼叫（對照 CC-291 對 claude-executor 的處理）。
+
+**Why deferred**: 非阻塞；CC-291 已讓「加 reviewer」成為加一筆的事，先讓 CC-291 落地穩定再擴。
+
+**Cross-link**: `[[CC-291]]`（role-keyed registry）、`[[CC-288]]`（guard surface）。
