@@ -893,6 +893,17 @@ model_codex_spark_accepts_case() {
   handover_validate_model codex-spark >/dev/null 2>&1
 }
 
+# Behavior: dotted wire/model ids (gpt-5.5, gpt-5.4) are accepted — every value in
+# share/model-aliases.tsv must be a valid handover model: value (CC-292).
+# Steps:
+#   1. Validate model gpt-5.5 and gpt-5.4.
+#   2. Assert both succeed.
+model_dotted_wire_ids_accept_case() {
+  handover_validate_model gpt-5.5 >/dev/null 2>&1 \
+    && handover_validate_model gpt-5.4 >/dev/null 2>&1 \
+    && handover_validate_model default >/dev/null 2>&1
+}
+
 # Behavior: Bad model name shapes are rejected.
 # Steps:
 #   1. Validate a model with uppercase and punctuation.
@@ -1079,6 +1090,7 @@ run_case "brief_file_subdirectory_rejects_case" brief_file_subdirectory_rejects_
 run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case
 run_case "handover/model default accepts" model_default_accepts_case
 run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
+run_case "handover/model dotted wire ids accept" model_dotted_wire_ids_accept_case
 run_case "handover/model bad shape rejects" model_bad_shape_rejects_case
 run_case "handover/fallback_allowed true accepts" fallback_allowed_true_accepts_case
 run_case "handover/fallback_allowed invalid rejects" fallback_allowed_invalid_rejects_case

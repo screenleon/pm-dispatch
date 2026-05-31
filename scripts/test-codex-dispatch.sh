@@ -553,6 +553,59 @@ case_config_default_model_override() {
   rm -f "$_brief"
 }
 
+# ---- 16e: explicit --model default alias resolves to gpt-5.5 + high ----
+case_default_alias_resolves_gpt55() {
+  local name="default-model/--model default alias resolves to gpt-5.5 + high"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: default alias test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model default --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16f: --model flag takes precedence over dispatch.default_model config ----
+case_flag_beats_config_default_model() {
+  local name="default-model/--model flag beats dispatch.default_model config"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  mkdir -p "$_home/.pm-dispatch"
+  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: flag beats config test\n' > "$_brief"
+
+  set +e
+  # config says gpt-5.4 but the --model flag must win.
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.5 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" != *"-m gpt-5.4"* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
 case_timeout_env_only_precedence() {
   local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
@@ -916,6 +969,8 @@ case_default_model_resolves_gpt55
 case_explicit_gpt55_resolves_high_effort
 case_explicit_gpt54_resolves_high_effort
 case_config_default_model_override
+case_default_alias_resolves_gpt55
+case_flag_beats_config_default_model
 case_timeout_env_only_precedence
 case_timeout_config_only_precedence
 case_timeout_precedence_brief_field

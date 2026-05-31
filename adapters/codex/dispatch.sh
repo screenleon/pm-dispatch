@@ -109,8 +109,10 @@ BRIEF_FROM_ARGV=0
 PRINT_CMD=0
 # pm-dispatch's OWN default model, decoupled from the user's interactive
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
-# Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
-DEFAULT_DISPATCH_MODEL="gpt-5.5"
+# This is the `default` ALIAS — its wire id (gpt-5.5) lives only in
+# share/model-aliases.tsv (single source of truth), so a model bump edits the
+# TSV alone. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+DEFAULT_DISPATCH_MODEL="default"
 __PM_CFG_TIMEOUT=""
 __PM_CFG_DEFAULT_MODEL=""
 
@@ -270,10 +272,12 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-# Default model resolution. pm-dispatch pins its OWN default (DEFAULT_DISPATCH_MODEL,
-# gpt-5.5), decoupled from the user's interactive ~/.codex/config.toml — so omitting
-# --model dispatches on gpt-5.5, NOT whatever the local codex config defaults to.
-# Precedence: --model flag > config dispatch.default_model > built-in gpt-5.5.
+# Default model resolution. pm-dispatch pins its OWN default (the `default` alias,
+# which resolves to gpt-5.5 via share/model-aliases.tsv), decoupled from the user's
+# interactive ~/.codex/config.toml — so omitting --model dispatches on gpt-5.5, NOT
+# whatever the local codex config defaults to. Precedence: --model flag > config
+# dispatch.default_model > built-in `default` alias. The chosen value flows through
+# _resolve_model_alias below, attaching reasoning effort.
 # Spark is never the default; opt in explicitly with --model codex-spark.
 if [[ -z "$MODEL" ]]; then
   MODEL="${__PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"

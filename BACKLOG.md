@@ -1315,9 +1315,10 @@ This makes directory creation the mutex.
 **Fix (shipped)**:
 1. `adapters/codex/dispatch.sh` pins `DEFAULT_DISPATCH_MODEL=gpt-5.5`; when `--model` is omitted the adapter injects it (precedence: `--model` flag > `~/.pm-dispatch/config` `dispatch.default_model` > built-in gpt-5.5). Decoupled from `~/.codex/config.toml`.
 2. Wired the previously-reserved `dispatch.default_model` config key (config parse refactored to one direct-call `_load_pm_config` setting globals, preserving timeout precedence).
-3. `share/model-aliases.tsv` + `docs/dispatch-brief.md`: added `gpt-5.5`/`gpt-5.4` rows (effort `high`), corrected the default-model comment; spark documented as an independent usage pool.
-4. `agents/project-pm.md` model-selection guidance names gpt-5.5 default + spark opt-in criteria.
-5. Tests: 4 new `test-codex-dispatch.sh` cases (default→gpt-5.5+high, explicit 5.5/5.4, config override). `lint-model-aliases.sh` green.
+3. `share/model-aliases.tsv` + `docs/dispatch-brief.md`: added a data-backed `default → gpt-5.5` alias (the adapter references the alias, so the wire id lives in the TSV alone — single source of truth) plus `gpt-5.5`/`gpt-5.4` rows (effort `high`); corrected the default-model comment; spark documented as an independent usage pool.
+4. `scripts/lib/handover-validate.sh`: model regex now allows `.` so dotted wire ids (gpt-5.5/gpt-5.4) are valid handover `model:` values — invariant: every `model-aliases.tsv` alias is handover-valid.
+5. `agents/project-pm.md` model-selection guidance names the `default` alias (→ gpt-5.5) + spark opt-in criteria.
+6. Tests: 6 new `test-codex-dispatch.sh` cases (default→gpt-5.5+high, explicit 5.5/5.4, `default` alias, config override, flag-beats-config precedence) + 1 `test-dispatch-handover.sh` case (dotted ids accepted). `lint-model-aliases.sh` / layer-boundaries / validate green.
 
 **Fallback policy**: `gpt-5.4` is config-overridable, not runtime auto-retry — model availability is a stable host property, so a per-host config switch suffices and keeps the battle-tested dispatch path simple.
 
