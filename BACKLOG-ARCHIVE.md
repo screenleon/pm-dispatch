@@ -1,9 +1,10 @@
-<!-- pm-dispatch: backlog-archive 2026-05-30 -->
+<!-- pm-dispatch: backlog-archive 2026-05-31 -->
 # pm-dispatch backlog — archive
 
-Closed ticket detail sections archived from BACKLOG.md (CC-049).
-Index entries with ✅ status and PR refs remain in BACKLOG.md for scanning.
-Last archived: 2026-05-30
+Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
+index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
+BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
+Last archived: 2026-05-31
 
 ---
 
@@ -1694,4 +1695,77 @@ All three acceptance grep checks pass.
 **Resolution** (pr:#192): `--targeted` is now an alias of `--reviewers` (forgiving whether invoked via skill or directly); the unknown-arg path prints the accepted-flags list. Covered by `test_unknown_arg_message` + `test_targeted_alias` in `scripts/test-pr-gate.sh`.
 
 **Cross-link**: surfaced while running gates for `[[CC-288]]`.
+
+## CC-233 — scripts/test-layer-boundaries.sh ✅ 2026-05-31
+
+**Closed**: `scripts/test-layer-boundaries.sh` shipped as the four-layer dependency enforcer (core/ → no CLI names / `~/.claude` / bash; adapters/ → no shared-logic calls), wired into CI. Merged via PR #197.
+
+**Problem**: The four-layer architecture is only a discipline; nothing enforces the dependency direction.
+
+**Why**: One cheap structural test prevents slow architecture drift (the cost the layering exists to avoid).
+
+**Requirement**: Add `scripts/test-layer-boundaries.sh` — grep `core/` for forbidden tokens (CLI product names, `~/.claude`, bash invocations), grep `adapters/` for state-mutation calls. Wire into CI.
+
+**Milestone**: v0.3.0 M3.
+
+**Priority**: P3.
+
+**Cross-link**: CC-211 (epic).
+
+## CC-266 — adapters/claude: claude as host-independent CLI executor ✅ 2026-05-31
+
+**Closed**: `adapters/claude/dispatch.sh` shipped as the thin `claude --print` executor (invocation + `.agent-trace/latest.last` output-contract glue), enabling the codex-as-PM → claude-executor cell and completing the 4-cell PM×executor matrix. Phase-1 feasibility confirmed. Merged via PR #195.
+
+**Principle (2026-05-30)**: the canonical claude-executor path is a `claude --print` **CLI subprocess**, invoked by `pmctl dispatch run --adapter claude` regardless of which tool is the PM/host. `Agent()`-spawn (`agents/claude-executor.md`) is kept only as a same-host optimization when Claude is the PM. This is what makes the codex-as-PM → claude-executor cell work and completes the 4-cell PM×executor matrix. The adapter is **thin** (invocation + `.agent-trace/latest.last` glue); shared flow lives in pmctl ([[CC-289]]).
+
+**Problem**: `agents/claude-executor.md` 描述的是「Claude 作為主線程、自己執行任務」的路徑。當主線程是 Codex（PM 在 Codex 環境執行）並想派發 Claude 作為 executor 時，這條路徑無法被外部呼叫——Codex 沒有 `Agent` tool，無法直接啟動 claude-executor subagent。
+
+**The concrete gap**:
+
+```
+現有：
+  Codex-as-PM → scripts/codex-dispatch.sh → codex CLI（executor）
+  Claude-as-PM → Agent tool → claude-executor（executor）
+
+缺失：
+  Codex-as-PM → ??? → Claude CLI → claude-executor（executor）
+```
+
+**Design target（M3 `adapters/claude/` 補完）**:
+
+`adapters/claude/dispatch.sh`（或等效）定義從 Codex 環境透過 shell 呼叫 Claude CLI 的路徑：
+1. 組合 brief 內容
+2. 呼叫 `claude --print "..."` 或 `claude -f <brief_file>` 等等效 CLI 介面
+3. 捕捉輸出，確保 Claude executor 寫 `.agent-trace/claude-<ts>.last` + `latest.last` symlink（CC-264b output contract）
+4. `scripts/dispatch-post-verify.sh` 讀取結果（executor-agnostic，不需感知呼叫者是 Codex 或 Claude）
+
+**Relation to CC-262**: CC-262 抽象化 isolation（executor 在什麼環境跑）；CC-266 補完 dispatch 側（主線程如何跨工具呼叫另一個 executor）。`adapters/claude/` 目前只有 `isolation-map.yaml`（CC-262 M1 交付物），dispatch 路徑是 M3 缺口。
+
+**Prerequisites**: CC-264b（output contract + dispatch-post-verify.sh），CC-262 M2（codex adapter isolation map）。
+
+**Recommended first step**: spike — 驗證 `claude --print` 或其他 CLI flag 能從 Codex subprocess 環境被呼叫並返回可解析輸出。
+
+**Priority**: P1 — v0.3.0 M3；host-independence 的承重點。**Phase-1 first**: feasibility 檢查（headless `claude -p` 能否吃 brief、在 working-dir 改檔、產出可擷取的 final message + trace、permission mode 設定）再進實作。
+
+**Cross-link**: `[[CC-289]]`（pmctl dispatch run 共用流程）、`[[CC-262]]`（isolation 抽象）、`[[CC-264]]`（output contract）、`[[CC-036]]`（dispatch ergonomics）。
+
+---
+
+## CC-289 — [v0.3.0 M3] `pmctl dispatch run` — approach B (thin adapters) ✅ 2026-05-31
+
+**Closed**: `pmctl dispatch run --adapter <X>` now owns the shared flow (brief construct → guard → route → invoke adapter → read `.agent-trace/latest.last` → post-verify), composing the M2-extracted libs; `codex-dispatch.sh` slimmed into the thin `adapters/codex/dispatch.sh`. Replaces the prior stub. Merged via PR #194.
+
+**Problem**: dispatch shared logic is fused into the 475-line `scripts/codex-dispatch.sh`. If `adapters/claude/` ([[CC-266]]) re-implements it, the two adapters drift — breaking the "only the executor differs" goal.
+
+**Why (approach B)**: pmctl OWNS the shared dispatch flow; adapters become thin. This is the only structure that achieves host-independent, drift-free executor swapping. The shared logic is already extracted into libs (M2: executor-router/handover-validate/brief-validate/dispatch-post-verify), so B is mostly composition.
+
+**Requirement**:
+1. `pmctl dispatch run --adapter <X> [brief args]` owns: brief construct → `pmctl guard check` → route → invoke adapter → read `.agent-trace/latest.last` → `dispatch-post-verify.sh`.
+2. Slim `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + output-contract glue only); preserve crash-safety + the existing regression suite.
+3. Replace the current `dispatch run` stub.
+4. Pairs with [[CC-266]] (claude thin adapter) → 4-cell PM×executor matrix all green.
+
+**Risk**: touches the battle-tested `codex-dispatch.sh`. Mitigation: shared bits already in libs; full regression suite + pr-gate; slim incrementally.
+
+**Cross-link**: `[[CC-200]]` (executor-router), `[[CC-202]]` (handover-validate), `[[CC-266]]` (claude adapter), `[[CC-215]]` (pmctl spine).
 
