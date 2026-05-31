@@ -109,8 +109,9 @@ printf '=== Agent trace (latest.last) ===\n'
 tail -50 "$LATEST_LAST"
 printf '\n'
 
-# Same containment guard for a flag-supplied --stderr (only when it exists;
-# stderr is optional, so a missing one is tolerated below, not rejected here).
+# Same containment guard for a flag-supplied --stderr, applied only when the file
+# exists (a missing supplied --stderr is handled fail-closed further below; the
+# default latest.stderr path stays optional).
 if [[ -L "$LATEST_STDERR" ]] || [[ -n "$STDERR_OVERRIDE" && -e "$LATEST_STDERR" ]]; then
   STDERR_RESOLVED="$(realpath_m "$LATEST_STDERR" 2>/dev/null || true)"
   if [[ -z "$STDERR_RESOLVED" || "${STDERR_RESOLVED#"$TRACE_ABS/"}" == "$STDERR_RESOLVED" ]]; then
@@ -143,6 +144,16 @@ git -C "$WORK_DIR" status --short 2>/dev/null || echo '(no git repo)'
 printf '\n'
 
 FAILED=0
+
+# Fail-closed on a flag-supplied --stderr whose file is absent: the footer claimed
+# this per-run artifact exists, so a missing one signals a broken footer parse or a
+# lost artifact and must not be reported as a clean post-verify. The default
+# (positional) latest.stderr path stays optional — pmctl dispatch run and
+# codex-executor pass no --stderr and rely on that tolerance.
+if [[ -n "$STDERR_OVERRIDE" && ! -e "$LATEST_STDERR" ]]; then
+  printf 'FAILED: supplied --stderr not found: %s\n' "$STDERR_OVERRIDE"
+  FAILED=1
+fi
 
 EXECUTOR_STATUS="$(grep -iE '^status: (failed|partial|blocked)' "$LATEST_LAST" || true)"
 if [[ -n "$EXECUTOR_STATUS" ]]; then

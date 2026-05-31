@@ -784,9 +784,12 @@ EOF
 # --base makes post-verify diff against the caller-selected integration base
 # (not hard-coded origin/main), preserving /pm base-aware verification.
 # Steps:
-# 1. Create a work dir with a valid latest.last and a git repo holding a base branch + a later change.
+# 1. Create a work dir with a valid latest.last and a git repo whose base branch
+#    predates a committed newfile.txt (so the worktree is clean vs HEAD).
 # 2. Run dispatch-post-verify.sh with --base <branch>.
-# 3. Assert exit 0 and output labeling the diff base as the selected branch.
+# 3. Assert exit 0, the (base: <branch>) label, AND that the diff stat lists
+#    newfile.txt — base-dependent content that only appears when diffing against
+#    the selected base, not HEAD (kills a label-prints-but-diffs-HEAD mutation).
 case_flag_base_override() {
   local name="flag-base-override"
   should_run "$name" || return 0
@@ -804,6 +807,29 @@ case_flag_base_override() {
 
   assert_eq "$name" "$rc" 0 || return 0
   assert_string_contains "$name" "$out" "(base: basebranch)" || return 0
+  # Worktree == HEAD (clean), so newfile.txt only shows when diffing vs basebranch;
+  # a mutation that diffs HEAD would print an empty stat and fail this assertion.
+  assert_string_contains "$name" "$out" "newfile.txt" || return 0
+  pass "$name"
+}
+
+# A flag-supplied --stderr whose file is missing is fail-closed (broken-footer /
+# lost-artifact signal), unlike the optional positional latest.stderr path.
+# Steps:
+# 1. Create a work dir with a valid per-run last (so --last passes) and no stderr file.
+# 2. Run dispatch-post-verify.sh with --last <ok> --stderr <nonexistent .agent-trace path>.
+# 3. Assert exit 1 and output containing the supplied-stderr-not-found failure.
+case_flag_stderr_override_missing_rejected() {
+  local name="flag-stderr-override-missing-rejected"
+  should_run "$name" || return 0
+  local work_dir last out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
+
+  run_validator rc out "$work_dir" --last "$last" --stderr "$work_dir/.agent-trace/nope.stderr"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "supplied --stderr not found" || return 0
   pass "$name"
 }
 
@@ -890,5 +916,6 @@ case_flag_pm_invocation_shape
 case_flag_base_override
 case_flag_double_dash_positional
 case_flag_base_fallback_unavailable
+case_flag_stderr_override_missing_rejected
 
 th_summary
