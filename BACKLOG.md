@@ -89,6 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-289 | 🔵 active | **[v0.3.0 M3: `pmctl dispatch run` (approach B — thin adapters)]** pmctl OWNS the shared dispatch flow (brief construct → guard → route → invoke adapter → read output contract → post-verify), composing the M2-extracted libs (executor-router/handover-validate/brief-validate/dispatch-post-verify). Slim the 475-line `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + `.agent-trace/latest.last` glue only). Replaces the current `dispatch run` stub. Pairs with [[CC-266]] (claude thin adapter) for the host-independent executor matrix. | arch/portability | 2026-05-30 | — | P1 | design |
 | CC-291 | 🔵 active | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | — | P2 | design |
+| CC-292 | 🔵 active | **[dispatch default model = gpt-5.5; decouple from host codex config]** 省略 `--model` 時 dispatch 繼承 `~/.codex/config.toml` 的 `model` 預設,而 user 互動用預設是 `gpt-5.3-codex-spark` → pr-gate 與 /pm dispatch 都靜默跑在 spark 上(spark 是獨立用量池 + 較低能力,僅適合已知小改動)。修:adapter 釘 pm-dispatch 自己的 `DEFAULT_DISPATCH_MODEL=gpt-5.5`(fallback `gpt-5.4`),接線 `~/.pm-dispatch/config` `dispatch.default_model` override;spark 維持 opt-in。關聯 [[CC-060]]。 | ops/portability | 2026-05-31 | — | P1 | — |
 
 ---
 
@@ -1304,4 +1305,21 @@ This makes directory creation the mutex.
 **Risk**: 動到 [[CC-288]] battle-tested guard 面 + agent_type 慣例 → 需完整 guard/hook 測試覆蓋,且不可破 fail-closed。非阻塞 spine(P2);適合 spine 收尾後、或與 [[CC-233]](分層強制器,正好一起想 guard 的層界)一起做。
 
 **Cross-link**: `[[CC-288]]` (guard surface), `[[CC-233]]` (layer boundaries), `[[CC-266]]` / `[[CC-289]]` (executor model).
+
+## CC-292 — [ops] dispatch default model = gpt-5.5; decouple from host codex config 🔵 active
+
+**Problem**: When a dispatch omits `--model`, `adapters/codex/dispatch.sh` passed no `-m` to `codex exec`, so codex fell back to the host's `~/.codex/config.toml` `model`. The user sets that to `gpt-5.3-codex-spark` for interactive use — so **pr-gate and `/pm` dispatch silently ran on spark**. `share/model-aliases.tsv` even documented the wrong assumption (`<default> (no --model) — gpt-5.3-codex`), which never held on a spark-defaulted host.
+
+**Why**: The gate is analysis-heavy (it does not know where issues are) and must run on a full model. spark draws from a separate, independent usage pool and has a lower context ceiling — correct for known-small, single-location changes, wrong as the silent system default.
+
+**Fix (shipped)**:
+1. `adapters/codex/dispatch.sh` pins `DEFAULT_DISPATCH_MODEL=gpt-5.5`; when `--model` is omitted the adapter injects it (precedence: `--model` flag > `~/.pm-dispatch/config` `dispatch.default_model` > built-in gpt-5.5). Decoupled from `~/.codex/config.toml`.
+2. Wired the previously-reserved `dispatch.default_model` config key (config parse refactored to one direct-call `_load_pm_config` setting globals, preserving timeout precedence).
+3. `share/model-aliases.tsv` + `docs/dispatch-brief.md`: added `gpt-5.5`/`gpt-5.4` rows (effort `high`), corrected the default-model comment; spark documented as an independent usage pool.
+4. `agents/project-pm.md` model-selection guidance names gpt-5.5 default + spark opt-in criteria.
+5. Tests: 4 new `test-codex-dispatch.sh` cases (default→gpt-5.5+high, explicit 5.5/5.4, config override). `lint-model-aliases.sh` green.
+
+**Fallback policy**: `gpt-5.4` is config-overridable, not runtime auto-retry — model availability is a stable host property, so a per-host config switch suffices and keeps the battle-tested dispatch path simple.
+
+**Cross-link**: `[[CC-060]]` (codex model/config externalization).
 

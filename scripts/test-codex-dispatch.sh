@@ -451,6 +451,108 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
+# ---- 16a: default model (no --model) resolves to gpt-5.5 with high effort ----
+case_default_model_resolves_gpt55() {
+  local name="default-model/no --model resolves to gpt-5.5 + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"          # empty home: no ~/.pm-dispatch/config override
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: default model test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16b: explicit --model gpt-5.5 resolves with high effort ----
+case_explicit_gpt55_resolves_high_effort() {
+  local name="default-model/--model gpt-5.5 resolves + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: explicit gpt-5.5 test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.5 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.5"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16c: explicit --model gpt-5.4 (fallback) resolves with high effort ----
+case_explicit_gpt54_resolves_high_effort() {
+  local name="default-model/--model gpt-5.4 fallback resolves + high effort"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: fallback gpt-5.4 test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.4 --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.4"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
+# ---- 16d: ~/.pm-dispatch/config dispatch.default_model overrides built-in default ----
+case_config_default_model_override() {
+  local name="default-model/config dispatch.default_model overrides built-in"
+  local _home _work _brief _out _exit
+  should_run "$name" || return 0
+
+  _home="$(mktemp -d)"
+  mkdir -p "$_home/.pm-dispatch"
+  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"; printf 'goal: config default model override test\n' > "$_brief"
+
+  set +e
+  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.4"* ]] \
+    && [[ "$_out" != *"-m gpt-5.5"* ]]; then
+    pass "$name"
+  else
+    fail "$name" ""
+  fi
+  rm -rf "$_work" "$_home"
+  rm -f "$_brief"
+}
+
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
 case_timeout_env_only_precedence() {
   local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
@@ -810,6 +912,10 @@ case_auto_log_log_failure_preserves_dispatch_exit
 case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
+case_default_model_resolves_gpt55
+case_explicit_gpt55_resolves_high_effort
+case_explicit_gpt54_resolves_high_effort
+case_config_default_model_override
 case_timeout_env_only_precedence
 case_timeout_config_only_precedence
 case_timeout_precedence_brief_field

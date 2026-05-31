@@ -107,65 +107,60 @@ BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
 PRINT_CMD=0
+# pm-dispatch's OWN default model, decoupled from the user's interactive
+# ~/.codex/config.toml `model` setting (which may be a spark/other variant).
+# Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+DEFAULT_DISPATCH_MODEL="gpt-5.5"
+__PM_CFG_TIMEOUT=""
+__PM_CFG_DEFAULT_MODEL=""
 
 # shellcheck source=scripts/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 
-_load_config_timeout() {
+# Parse ~/.pm-dispatch/config once into globals __PM_CFG_TIMEOUT and
+# __PM_CFG_DEFAULT_MODEL. Called directly (NOT in a subshell) so both values
+# reach the main flow. Timeout/model precedence is resolved by the callers.
+_load_pm_config() {
   local config_path="${PM_DISPATCH_CONFIG_FILE}"
-  local config_timeout=""
-  local config_default_model=""
   local line_no=0
   local line key value
 
-  if [[ -r "$config_path" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      ((line_no += 1))
-      line="${line%$'\r'}"
-      line="${line%%#*}"
-      line="${line#"${line%%[![:space:]]*}"}"
-      line="${line%"${line##*[![:space:]]}"}"
-      [[ -z "$line" ]] && continue
+  __PM_CFG_TIMEOUT=""
+  __PM_CFG_DEFAULT_MODEL=""
 
-      if [[ "$line" != *"="* ]]; then
-        echo "codex-dispatch: warning: malformed config line in ${config_path}:${line_no}" >&2
-        continue
+  [[ -r "$config_path" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    ((line_no += 1))
+    line="${line%$'\r'}"
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+
+    if [[ "$line" != *"="* ]]; then
+      echo "codex-dispatch: warning: malformed config line in ${config_path}:${line_no}" >&2
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ "$key" == "dispatch.default_timeout" ]]; then
+      if [[ "$value" =~ ^[0-9]+$ ]]; then
+        __PM_CFG_TIMEOUT="$value"
+      else
+        echo "codex-dispatch: warning: malformed value for dispatch.default_timeout in ${config_path}:${line_no}" >&2
       fi
-
-      key="${line%%=*}"
-      value="${line#*=}"
-      key="${key#"${key%%[![:space:]]*}"}"
-      key="${key%"${key##*[![:space:]]}"}"
-      value="${value#"${value%%[![:space:]]*}"}"
-      value="${value%"${value##*[![:space:]]}"}"
-
-      if [[ "$key" == "dispatch.default_timeout" ]]; then
-        if [[ "$value" =~ ^[0-9]+$ ]]; then
-          config_timeout="$value"
-        else
-          echo "codex-dispatch: warning: malformed value for dispatch.default_timeout in ${config_path}:${line_no}" >&2
-        fi
-      elif [[ "$key" == "dispatch.default_model" ]]; then
-        config_default_model="$value"
-        # Reserved for future default-model support; intentionally not consumed in axis 2.
-      fi
-      # Unknown keys are intentionally ignored for future axes.
-    done < "$config_path"
-  fi
-
-  if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
-    echo "$CODEX_DISPATCH_TIMEOUT"
-    return 0
-  fi
-
-  : "$config_default_model"
-
-  if [[ -n "$config_timeout" ]]; then
-    echo "$config_timeout"
-    return 0
-  fi
-
-  echo "1200"
+    elif [[ "$key" == "dispatch.default_model" ]]; then
+      __PM_CFG_DEFAULT_MODEL="$value"
+    fi
+    # Unknown keys are intentionally ignored for future axes.
+  done < "$config_path"
 }
 
 _resolve_model_alias() {
@@ -210,7 +205,17 @@ _resolve_model_alias() {
   return 0
 }
 
-TIMEOUT="$(_load_config_timeout)"
+_load_pm_config
+# Timeout precedence: $CODEX_DISPATCH_TIMEOUT env > config dispatch.default_timeout > 1200.
+# (--timeout flag, parsed below, overrides this baseline.) Env value is validated
+# downstream alongside the flag.
+if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
+  TIMEOUT="$CODEX_DISPATCH_TIMEOUT"
+elif [[ -n "$__PM_CFG_TIMEOUT" ]]; then
+  TIMEOUT="$__PM_CFG_TIMEOUT"
+else
+  TIMEOUT="1200"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -263,6 +268,15 @@ fi
 if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
   echo "Error: --timeout must be a non-negative integer (got: $TIMEOUT)" >&2
   exit 2
+fi
+
+# Default model resolution. pm-dispatch pins its OWN default (DEFAULT_DISPATCH_MODEL,
+# gpt-5.5), decoupled from the user's interactive ~/.codex/config.toml — so omitting
+# --model dispatches on gpt-5.5, NOT whatever the local codex config defaults to.
+# Precedence: --model flag > config dispatch.default_model > built-in gpt-5.5.
+# Spark is never the default; opt in explicitly with --model codex-spark.
+if [[ -z "$MODEL" ]]; then
+  MODEL="${__PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"
 fi
 
 MODEL_RESOLVED="$MODEL"

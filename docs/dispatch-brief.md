@@ -363,7 +363,13 @@ PM short-form model aliases are resolved from the source-of-truth file
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
+| `gpt-5.5` | `gpt-5.5` | `high` |
+| `gpt-5.4` | `gpt-5.4` | `high` |
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
+
+`gpt-5.5` is the pm-dispatch default (applied when no `--model` is given); `gpt-5.4`
+is the documented fallback. `codex-spark` is opt-in only and draws from an
+independent usage pool — see `agents/project-pm.md` for routing criteria.
 
 Direct Bash dispatch shape:
 
