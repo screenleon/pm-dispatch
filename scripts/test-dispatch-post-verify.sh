@@ -754,6 +754,59 @@ case_flag_value_is_flag_rejected() {
   pass "$name"
 }
 
+# The exact /pm Bash-route invocation shape — --last, --stderr, and --brief-file
+# together — resolves all paths and runs self_verify in one call.
+# Steps:
+# 1. Create a per-run last (passing self_verify line), a per-run stderr, and a brief.
+# 2. Run dispatch-post-verify.sh with --last, --stderr, and --brief-file together.
+# 3. Assert exit 0, a FOUND self_verify line, and the per-run stderr content surfaced.
+case_flag_pm_invocation_shape() {
+  local name="flag-pm-invocation-shape"
+  should_run "$name" || return 0
+  local work_dir last err brief out rc
+  work_dir="$(make_work_dir "$name")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "bash scripts/run-all-tests.sh: pass")"
+  err="$(write_named_trace "$work_dir" "codex-99.stderr" "noise-from-stderr")"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out "$work_dir" --last "$last" --stderr "$err" --brief-file "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  assert_string_contains "$name" "$out" "noise-from-stderr" || return 0
+  pass "$name"
+}
+
+# --base makes post-verify diff against the caller-selected integration base
+# (not hard-coded origin/main), preserving /pm base-aware verification.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a git repo holding a base branch + a later change.
+# 2. Run dispatch-post-verify.sh with --base <branch>.
+# 3. Assert exit 0 and output labeling the diff base as the selected branch.
+case_flag_base_override() {
+  local name="flag-base-override"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+  git -C "$work_dir" branch basebranch
+  : > "$work_dir/newfile.txt"
+  git -C "$work_dir" add -A
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q -m change
+
+  run_validator rc out "$work_dir" --base basebranch
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "(base: basebranch)" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -786,5 +839,7 @@ case_flag_brief_file_and_positional_ambiguous
 case_flag_unknown_rejected
 case_flag_missing_value_rejected
 case_flag_value_is_flag_rejected
+case_flag_pm_invocation_shape
+case_flag_base_override
 
 th_summary

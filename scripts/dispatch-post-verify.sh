@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/portable.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--stderr <path>] [--brief-file <path>]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>]\n' "$0" >&2
 }
 
 # Path resolution is the only thing the flags change: --last/--stderr override
@@ -18,6 +18,7 @@ usage() {
 BRIEF_FILE=""
 LAST_OVERRIDE=""
 STDERR_OVERRIDE=""
+BASE_OVERRIDE=""
 positional=()
 
 # A value-taking flag must be followed by a real value — not end-of-args and not
@@ -37,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --last)       need_val --last "${2:-}";       LAST_OVERRIDE="$2";   shift 2 ;;
     --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
     --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
+    --base)       need_val --base "${2:-}";       BASE_OVERRIDE="$2";   shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
     -*)           usage; exit 2 ;;
     *)            positional+=("$1"); shift ;;
@@ -124,10 +126,13 @@ if [[ -s "$LATEST_STDERR" ]]; then
 fi
 
 printf '=== Git diff --stat ===\n'
-if git -C "$WORK_DIR" diff --stat origin/main 2>/dev/null; then
-  printf '(base: origin/main)\n'
+# Honor the caller-selected integration base (--base) so /pm dispatches targeting
+# a non-origin/main branch get base-correct diff evidence; default origin/main.
+DIFF_BASE="${BASE_OVERRIDE:-origin/main}"
+if git -C "$WORK_DIR" diff --stat "$DIFF_BASE" 2>/dev/null; then
+  printf '(base: %s)\n' "$DIFF_BASE"
 elif git -C "$WORK_DIR" diff --stat HEAD 2>/dev/null; then
-  printf '(base: HEAD — origin/main unavailable)\n'
+  printf '(base: HEAD — %s unavailable)\n' "$DIFF_BASE"
 else
   printf '(no git repo or no commits)\n'
 fi
