@@ -807,6 +807,53 @@ case_flag_base_override() {
   pass "$name"
 }
 
+# The `--` end-of-options sentinel forces remaining args to positionals; work_dir
+# and brief_file still resolve correctly after it.
+# Steps:
+# 1. Create a work dir whose latest.last contains a passing self_verify line, and a brief.
+# 2. Run dispatch-post-verify.sh with `--` before the positional work_dir and brief.
+# 3. Assert exit 0 and a FOUND self_verify line (both positionals resolved past the sentinel).
+case_flag_double_dash_positional() {
+  local name="flag-double-dash-positional"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/run-all-tests.sh
+EOF
+
+  run_validator rc out -- "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "FOUND" || return 0
+  pass "$name"
+}
+
+# A --base ref that does not exist falls back to HEAD and labels the base as
+# unavailable, instead of erroring out.
+# Steps:
+# 1. Create a work dir with a valid latest.last and a git repo with one commit (HEAD valid; no 'bogusbase' ref).
+# 2. Run dispatch-post-verify.sh with --base bogusbase.
+# 3. Assert exit 0 and output containing the HEAD-fallback label naming the unavailable base.
+case_flag_base_fallback_unavailable() {
+  local name="flag-base-fallback-unavailable"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  git -C "$work_dir" init -q
+  git -C "$work_dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m only
+
+  run_validator rc out "$work_dir" --base bogusbase
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "(base: HEAD — bogusbase unavailable)" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_valid_selfverify_found
@@ -841,5 +888,7 @@ case_flag_missing_value_rejected
 case_flag_value_is_flag_rejected
 case_flag_pm_invocation_shape
 case_flag_base_override
+case_flag_double_dash_positional
+case_flag_base_fallback_unavailable
 
 th_summary
