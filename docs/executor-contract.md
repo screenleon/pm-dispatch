@@ -74,7 +74,7 @@ Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts
 
 ## Guard enforcement
 
-Guard policy (what a profile may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`hook-pm-write-guard.sh`, `hook-codex-write-guard.sh`, `hook-codex-bash-guard.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --profile <pm|codex> --file/--command <val>`. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
+Guard policy (what a role may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`hook-pm-write-guard.sh`, `hook-codex-write-guard.sh`, `hook-codex-bash-guard.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --role <pm|executor> [--runtime <codex|claude>] --file/--command <val>`. Guard keys on the **role** (runtime-agnostic for `pm`; the `--runtime` axis is consulted only where a role's policy differs by runtime, e.g. `executor/pre-bash`); dispatch supplies the runtime via its `--adapter` (CC-291). `--profile <pm|codex|claude>` is a deprecated alias that maps onto `(role, runtime)`. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
 
 The **trigger** is asymmetric by capability, not by policy:
 
