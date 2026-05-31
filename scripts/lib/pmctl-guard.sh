@@ -170,29 +170,29 @@ pmctl_guard_check() {
   esac
 
   if [[ "$role" == "executor" ]]; then
-    case "$runtime" in
-      codex|claude) ;;
-      *)
-        printf 'pmctl guard check: unknown runtime: %s (want codex|claude)\n' "$runtime" >&2
-        return 2
-        ;;
-    esac
+    # runtime is the ADAPTER axis (CC-291). Validate it is a bare identifier —
+    # mirroring `--adapter` in pmctl-dispatch — so a crafted value cannot traverse
+    # out of scripts/ when it is composed into the hook name below. We deliberately
+    # do NOT allowlist specific runtimes here: adding a runtime is an adapter
+    # concern (drop in adapters/<runtime>/ + scripts/hook-<runtime>-write-guard.sh),
+    # and an unregistered-but-valid runtime fails closed at the hook -x check.
+    if ! [[ "$runtime" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+      printf 'pmctl guard check: invalid runtime: %s (want a bare identifier ^[a-z][a-z0-9_-]*$)\n' "$runtime" >&2
+      return 2
+    fi
   fi
 
-  # Reconstruct the agent_type identity the hooks key on from (role, runtime).
+  # Reconstruct the agent_type identity the hooks key on. `pm` is role-based
+  # (runtime-agnostic); `executor` derives it BY CONVENTION from the runtime
+  # (<runtime>-executor), so adding a runtime needs no edit here.
   # CRITICAL (CC-291): each hook self-gates on HK_AGENT_TYPE and no-ops (exit 0 =
-  # ALLOW) for any other identity. The physical hook driven below MUST therefore
-  # stay matched to this agent_type — see the registry note on executor/pre-write.
+  # ALLOW) for any other identity. Because agent_type AND the physical pre-write
+  # hook below are BOTH derived from $runtime, they cannot drift — a fail-OPEN
+  # from an identity/hook mismatch is impossible by construction.
   local agent_type
-  case "$role/$runtime" in
-    pm/)              agent_type="project-pm" ;;
-    executor/codex)   agent_type="codex-executor" ;;
-    executor/claude)  agent_type="claude-executor" ;;
-    *)
-      # Unreachable given the validation above; fail closed rather than guess.
-      printf 'pmctl guard check: no agent identity for role=%s runtime=%s — denying\n' "$role" "$runtime" >&2
-      return 3
-      ;;
+  case "$role" in
+    pm)       agent_type="project-pm" ;;
+    executor) agent_type="${runtime}-executor" ;;
   esac
 
   case "$event" in
@@ -211,44 +211,48 @@ pmctl_guard_check() {
     return 3
   fi
 
-  # Role-keyed guard registry: (role, runtime, event) → hook. Each cell is tagged
-  # by LAYER (CC-291), and the tags are the design contract, not decoration:
+  # Role-keyed guard registry, tagged by LAYER (CC-291) — the tags are the design
+  # contract, not decoration:
   #
-  #   [role-based]      runtime-agnostic dispatch-guard — brief landing. The
-  #                     POLICY is one-per-role; the physical hook still varies by
-  #                     runtime ONLY because each hook self-gates on its own
-  #                     agent_type (driving the codex hook with a claude identity
-  #                     would no-op → fail-OPEN). So pre-write is "role-collapsed"
-  #                     at the policy level while staying runtime-matched at the
-  #                     hook level.
-  #   [runtime-specific] genuinely differs by runtime — codex-executor is a thin
-  #                     dispatcher with a pre-bash policy; claude-executor self-
-  #                     executes under harness perms and has none. This cell may
-  #                     NOT be collapsed to a single role policy.
+  #   [role-based]       runtime-agnostic dispatch-guard — brief landing. The
+  #                      POLICY is one-per-role; the physical pre-write hook is
+  #                      selected by runtime CONVENTION (hook-<runtime>-write-
+  #                      guard.sh) so it stays identity-matched to agent_type (no
+  #                      fail-OPEN) AND a new runtime needs no edit here.
+  #   [runtime-specific] genuinely differs by runtime and may NOT be collapsed —
+  #                      codex-executor (thin dispatcher) has a pre-bash policy;
+  #                      other executor runtimes self-execute under harness perms
+  #                      and register none. Adding a bash policy for a new runtime
+  #                      IS a guard decision (a new role-policy cell), not an
+  #                      adapter concern — so this stays an explicit registry.
   local hook=""
-  case "$role/$runtime/$event" in
-    pm//pre-write)            hook="hook-pm-write-guard.sh" ;;       # [role-based]
-    executor/codex/pre-write) hook="hook-codex-write-guard.sh" ;;    # [role-based] runtime-matched hook
-    executor/claude/pre-write) hook="hook-claude-write-guard.sh" ;;  # [role-based] runtime-matched hook
-    executor/codex/pre-bash)  hook="hook-codex-bash-guard.sh" ;;     # [runtime-specific]
-    pm//pre-bash)
-      # No PM bash guard exists: project-pm is a planner that never runs Bash.
-      # No policy to evaluate → fail closed (deny), never silently allow.
-      printf 'pmctl guard check: no guard policy registered for role=pm event=pre-bash — denying\n' >&2
-      return 3
+  case "$event" in
+    pre-write)
+      if [[ "$role" == "pm" ]]; then
+        hook="hook-pm-write-guard.sh"          # [role-based]
+      else
+        hook="hook-${runtime}-write-guard.sh"  # [role-based] runtime-matched by convention
+      fi
       ;;
-    executor/claude/pre-bash)
-      # [runtime-specific] claude-executor self-executes under harness permission
-      # prompts (and the CLI subprocess under --permission-mode); the dispatch
-      # flow guards only the brief-file pre-write. No pre-bash policy is
-      # registered here → fail closed.
-      printf 'pmctl guard check: no guard policy registered for role=executor runtime=claude event=pre-bash — denying\n' >&2
-      return 3
-      ;;
-    *)
-      # Any recognized-but-unmapped cell fails closed rather than silently allow.
-      printf 'pmctl guard check: no guard policy registered for role=%s runtime=%s event=%s — denying\n' "$role" "$runtime" "$event" >&2
-      return 3
+    pre-bash)
+      case "$role/$runtime" in
+        executor/codex)
+          hook="hook-codex-bash-guard.sh"      # [runtime-specific]
+          ;;
+        pm/)
+          # No PM bash guard exists: project-pm is a planner that never runs Bash.
+          # No policy to evaluate → fail closed (deny), never silently allow.
+          printf 'pmctl guard check: no guard policy registered for role=pm event=pre-bash — denying\n' >&2
+          return 3
+          ;;
+        *)
+          # [runtime-specific] an executor runtime that self-executes under harness
+          # permission prompts (e.g. claude, under --permission-mode) registers no
+          # dispatch-guard pre-bash policy → fail closed.
+          printf 'pmctl guard check: no guard policy registered for role=executor runtime=%s event=pre-bash — denying\n' "$runtime" >&2
+          return 3
+          ;;
+      esac
       ;;
   esac
 

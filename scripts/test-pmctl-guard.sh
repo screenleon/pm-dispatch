@@ -11,7 +11,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # by runtime. --profile is a deprecated alias mapping onto (role, runtime).
 # 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, codex-prebash-allow, claude-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
 # 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
-# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime, executor-missing-runtime, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
+# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
+#    pm-runtime-agnostic (boundary): pm ignores an explicit --runtime (exit 0)
 # 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny, codex-prebash-deny-verb, codex-prebash-deny-metachar
 # 5. State transitions: N/A - guard check is a stateless per-call decision; no persisted state machine in the SUT
 # 6. Concurrency / race conditions: N/A - each invocation is an isolated subprocess synthesizing its own JSON; no shared mutable state
@@ -150,11 +151,53 @@ if should_run "unknown-role"; then
   fi
 fi
 
-if should_run "unknown-runtime"; then
-  name="unknown-runtime"
+if should_run "unknown-runtime-fails-closed"; then
+  # A well-formed but UNREGISTERED runtime is not allowlisted away (adding a
+  # runtime is an adapter concern, CC-291); it fails closed at the hook -x check
+  # because scripts/hook-bogus-write-guard.sh does not exist.
+  name="unknown-runtime-fails-closed"
   run_guard --event pre-write --role executor --runtime bogus --file /tmp/brief-x.md
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "unknown runtime"; then
+    assert_string_contains "$name" "$GUARD_OUT" "guard hook not executable"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "invalid-runtime-traversal"; then
+  # A runtime value is composed into hook-<runtime>-write-guard.sh, so it must be
+  # a bare identifier — a path-traversal value is rejected (exit 2) before any
+  # path is built.
+  name="invalid-runtime-traversal"
+  run_guard --event pre-write --role executor --runtime "../../etc/passwd" --file /tmp/brief-x.md
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "invalid runtime"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-runtime-agnostic"; then
+  # pm is runtime-agnostic: an explicit (even unregistered) --runtime must be
+  # ignored, not consulted. A mutation that stops clearing runtime for pm would
+  # change this verdict.
+  name="pm-runtime-agnostic"
+  run_guard --event pre-write --role pm --runtime codex --file "$MEM_PATH"
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+fi
+
+if should_run "role-missing-value"; then
+  name="role-missing-value"
+  run_guard --event pre-write --role
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "missing value for --role"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "runtime-missing-value"; then
+  name="runtime-missing-value"
+  run_guard --event pre-write --role executor --runtime
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "missing value for --runtime"; then
     pass "$name"
   fi
 fi

@@ -37,7 +37,8 @@
 #   - The ONLY data read back from an adapter is the output contract
 #     (latest.last + exit code) — never the executor-internal trace format.
 #   - No executor-specific invocation tokens live here; the only executor identity
-#     used is the adapter NAME string (path resolution + guard --profile).
+#     used is the adapter NAME string (path resolution + `guard check --role
+#     executor --runtime <adapter>`).
 #
 # Exit-code contract:
 #   0  — adapter succeeded and post-verify passed (or was skipped on dry-run)
