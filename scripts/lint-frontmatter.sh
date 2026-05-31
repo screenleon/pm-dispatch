@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate YAML frontmatter in agent and command markdown files.
+# Validate YAML frontmatter in agent, command, and skill markdown files.
 
 set -euo pipefail
 
@@ -60,6 +60,23 @@ else
       echo "WARN: no markdown files found in $dir" >&2
     fi
   done
+
+  # Skills use the Anthropic Agent Skills layout — nested as skills/<name>/SKILL.md,
+  # not flat like agents/ and commands/ — so collect them with a dedicated glob.
+  skills_dir="$repo_root/skills"
+  if [ ! -d "$skills_dir" ]; then
+    echo "WARN: $skills_dir not found; skipping" >&2
+  else
+    found=0
+    for file in "$skills_dir"/*/SKILL.md; do
+      [ -e "$file" ] || continue
+      files+=("$file")
+      found=1
+    done
+    if [ "$found" -eq 0 ]; then
+      echo "WARN: no SKILL.md files found in $skills_dir" >&2
+    fi
+  fi
 fi
 
 extract_frontmatter() {
