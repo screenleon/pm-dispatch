@@ -159,7 +159,16 @@ _load_pm_config() {
         echo "codex-dispatch: warning: malformed value for dispatch.default_timeout in ${config_path}:${line_no}" >&2
       fi
     elif [[ "$key" == "dispatch.default_model" ]]; then
-      __PM_CFG_DEFAULT_MODEL="$value"
+      # Shape-guard the override so a malformed value can't silently become the
+      # omitted---model default (and bypass the gpt-5.5 default contract). Same
+      # shape as handover model names: an alias or wire id. Invalid → warn + ignore
+      # (fall back to the built-in `default` alias). codex rejects unknown-but-
+      # well-formed ids loudly at dispatch, so this only filters out garbage.
+      if [[ "$value" =~ ^[a-z][a-z0-9.-]{0,30}$ ]]; then
+        __PM_CFG_DEFAULT_MODEL="$value"
+      else
+        echo "codex-dispatch: warning: malformed value for dispatch.default_model in ${config_path}:${line_no}; ignoring (using built-in default)" >&2
+      fi
     fi
     # Unknown keys are intentionally ignored for future axes.
   done < "$config_path"

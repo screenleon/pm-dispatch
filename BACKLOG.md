@@ -90,6 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-289 | 🔵 active | **[v0.3.0 M3: `pmctl dispatch run` (approach B — thin adapters)]** pmctl OWNS the shared dispatch flow (brief construct → guard → route → invoke adapter → read output contract → post-verify), composing the M2-extracted libs (executor-router/handover-validate/brief-validate/dispatch-post-verify). Slim the 475-line `codex-dispatch.sh` into a THIN `adapters/codex/dispatch.sh` (executor invocation + `.agent-trace/latest.last` glue only). Replaces the current `dispatch run` stub. Pairs with [[CC-266]] (claude thin adapter) for the host-independent executor matrix. | arch/portability | 2026-05-30 | — | P1 | design |
 | CC-291 | 🔵 active | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | — | P2 | design |
 | CC-292 | 🔵 active | **[dispatch default model = gpt-5.5; decouple from host codex config]** 省略 `--model` 時 dispatch 繼承 `~/.codex/config.toml` 的 `model` 預設,而 user 互動用預設是 `gpt-5.3-codex-spark` → pr-gate 與 /pm dispatch 都靜默跑在 spark 上(spark 是獨立用量池 + 較低能力,僅適合已知小改動)。修:adapter 釘 pm-dispatch 自己的 `DEFAULT_DISPATCH_MODEL=gpt-5.5`(fallback `gpt-5.4`),接線 `~/.pm-dispatch/config` `dispatch.default_model` override;spark 維持 opt-in。關聯 [[CC-060]]。 | ops/portability | 2026-05-31 | — | P1 | — |
+| CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
 
 ---
 
@@ -1323,4 +1324,14 @@ This makes directory creation the mutex.
 **Fallback policy**: `gpt-5.4` is config-overridable, not runtime auto-retry — model availability is a stable host property, so a per-host config switch suffices and keeps the battle-tested dispatch path simple.
 
 **Cross-link**: `[[CC-060]]` (codex model/config externalization).
+
+## CC-293 — [arch] lift default/config resolution into pmctl runtime 🟡 deferred
+
+**Problem**: `adapters/codex/dispatch.sh` now owns default-model selection and `dispatch.default_model` config precedence (`--model` flag > config > built-in `default` alias). That is policy-like resolution living in a thin adapter — flagged by both critic and architecture-reviewer during the CC-292 gate as a slight re-fattening of the adapter.
+
+**Why (deferred)**: It is correct and localized today (codex is the only adapter with a config axis), and the layer-boundary enforcer ([[CC-233]]) still passes. Extracting prematurely would add indirection with one consumer. Pull it up to `pmctl dispatch run` when a **second** shared dispatch config axis appears (e.g. claude adapter needs the same default/config resolution), so the shared runtime owns precedence and adapters stay thin.
+
+**Requirement (when triggered)**: move config parse + default/precedence resolution into the `pmctl dispatch run` runtime (or a shared lib it composes); adapters receive the already-resolved model. Keep the gpt-5.5 default contract + shape-guard.
+
+**Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic).
 
