@@ -336,25 +336,37 @@ check_dispatch_allowlist() {
     return
   fi
 
-  # Check each dispatch script: settings must contain abs OR tilde form.
-  # Scanning adapters/* makes this adapter-agnostic — no hardcoded executor names.
-  local f rel all_ok=1 any=0
-  f="$REPO_ROOT/scripts/codex-dispatch.sh"
-  if [[ -f "$f" ]]; then
-    any=1
-    rel="${f#"$HOME/"}"
-    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-      "$settings" >/dev/null 2>&1 || all_ok=0
+  # Consume the shared dispatch_allowlist_entries() helper (sourced at top of
+  # file from scripts/lib/allowlist.sh).  Entries arrive in abs+tilde pairs;
+  # at least one form per script must be present in settings.json.
+  # Falls back to inline scan in copy-mode where lib/ is absent.
+  local all_ok=1 any=0
+  if declare -f dispatch_allowlist_entries >/dev/null 2>&1; then
+    local _abs _tilde
+    while IFS= read -r _abs && IFS= read -r _tilde; do
+      any=1
+      jq -e --arg a "$_abs" --arg t "$_tilde" \
+        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+        "$settings" >/dev/null 2>&1 || all_ok=0
+    done < <(dispatch_allowlist_entries)
+  else
+    # copy-mode fallback: lib/ absent, inline scan
+    local f rel
+    f="$REPO_ROOT/scripts/codex-dispatch.sh"
+    if [[ -f "$f" ]]; then
+      any=1; rel="${f#"$HOME/"}"
+      jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+        "$settings" >/dev/null 2>&1 || all_ok=0
+    fi
+    for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+      [[ -f "$f" ]] || continue
+      any=1; rel="${f#"$HOME/"}"
+      jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+        "$settings" >/dev/null 2>&1 || all_ok=0
+    done
   fi
-  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-    [[ -f "$f" ]] || continue
-    any=1
-    rel="${f#"$HOME/"}"
-    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-      "$settings" >/dev/null 2>&1 || all_ok=0
-  done
 
   if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
     emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \

@@ -795,6 +795,44 @@ test_dispatch_allowlist_adapter_absent() {
   fi
 }
 
+test_dispatch_allowlist_claude_adapter_absent() {
+  local name="test_dispatch_allowlist_claude_adapter_absent"
+  should_run "$name" || return 0
+  # Proves doctor derives entries from dispatch_allowlist_entries() and therefore
+  # checks all adapters, not just the codex shim: when settings.json has shim +
+  # codex entries but is missing the claude adapter entries, doctor must report
+  # [FAIL].
+  #
+  # Steps:
+  #   1. write_minimal_settings (populates all entries via add_dispatch_allowlist).
+  #   2. Remove only adapters/claude entries from permissions.allow via jq.
+  #   3. Run doctor --profile minimal.
+  #   4. Assert exit 1 + "[FAIL]" + "dispatch allowlist".
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"; return
+  fi
+  # Skip if adapters/claude/dispatch.sh does not exist in this tree.
+  if [[ ! -f "$REPO_ROOT/adapters/claude/dispatch.sh" ]]; then
+    pass "$name (adapters/claude/dispatch.sh absent - skip)"; return
+  fi
+  local home="$tmp_root/home-claude-adapter-absent" out status=0 path
+  write_minimal_settings "$home"
+  jq 'del(.permissions.allow[] | select(contains("adapters/claude")))' \
+    "$home/.claude/settings.json" > "$home/.claude/settings.json.tmp"
+  mv "$home/.claude/settings.json.tmp" "$home/.claude/settings.json"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-claude-adapter-absent" claude)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"dispatch allowlist"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected [FAIL] for missing claude adapter entries; status=$status out=$out"
+  fi
+}
+
 test_dispatch_allowlist_copymode_no_lib_fail() {
   local name="test_dispatch_allowlist_copymode_no_lib_fail"
   should_run "$name" || return 0
@@ -1316,6 +1354,7 @@ case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing
 test_dispatch_allowlist_adapter_absent
+test_dispatch_allowlist_claude_adapter_absent
 test_dispatch_allowlist_copymode_no_lib_fail
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2

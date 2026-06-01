@@ -595,8 +595,9 @@ test_dispatch_allowlist_lib_parity() {
   local name="test_dispatch_allowlist_lib_parity"
   should_run "$name" || return 0
   # Verifies that scripts/lib/allowlist.sh dispatch_allowlist_entries() produces
-  # the same four entries as the test helper dispatch_allowlist_entries_for_home()
+  # the same entries as the test helper dispatch_allowlist_entries_for_home()
   # for the same home directory, proving they share one source of truth.
+  # Entry count is dynamic (compat shim + one entry per adapters/*/dispatch.sh).
   local parity_home="$tmp_root/parity-home"
   mkdir -p "$parity_home"
 
