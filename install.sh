@@ -89,6 +89,53 @@ remove_legacy_symlink() {
   fi
 }
 
+dispatch_allowlist_entries() {
+  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
+  local rel="${abs_dispatch#"$HOME/"}"
+  local tilde_dispatch="~/$rel"
+  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
+  local rel_adapter="${abs_adapter#"$HOME/"}"
+  local tilde_adapter="~/$rel_adapter"
+
+  printf '%s\n' \
+    "Bash($abs_dispatch:*)" \
+    "Bash($tilde_dispatch:*)" \
+    "Bash($abs_adapter:*)" \
+    "Bash($tilde_adapter:*)"
+}
+
+install_dispatch_allowlist() {
+  local settings="$CLAUDE_HOME/settings.json"
+  local entry
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    while IFS= read -r entry; do
+      if [[ ! -f "$settings" ]] || ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
+        printf '  permissions.allow: would add   %s\n' "$entry"
+      else
+        printf '  permissions.allow: would skip (present) %s\n' "$entry"
+      fi
+    done < <(dispatch_allowlist_entries)
+    return 0
+  fi
+
+  if [[ ! -f "$settings" ]]; then
+    mkdir -p "$(dirname "$settings")"
+    printf '{}\n' > "$settings"
+  fi
+
+  while IFS= read -r entry; do
+    if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
+      jq --arg e "$entry" \
+         '.permissions.allow = ((.permissions.allow // []) + [$e])' \
+         "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+      printf '  permissions.allow: added   %s\n' "$entry"
+    else
+      printf '  permissions.allow: present %s\n' "$entry"
+    fi
+  done < <(dispatch_allowlist_entries)
+}
+
 install_dir_junction() {
   local subdir="$1"
   local src_dir="$REPO_ROOT/$subdir"
@@ -326,6 +373,10 @@ else
     CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh"
   fi
 fi
+echo
+
+echo "==> dispatch allowlist"
+install_dispatch_allowlist
 echo
 
 if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then

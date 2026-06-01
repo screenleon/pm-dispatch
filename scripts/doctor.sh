@@ -324,6 +324,39 @@ check_hooks() {
   fi
 }
 
+check_dispatch_allowlist() {
+  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch allowlist"
+    return
+  fi
+
+  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
+  local rel_dispatch="${abs_dispatch#"$HOME/"}"
+  local tilde_dispatch="~/$rel_dispatch"
+  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
+  local rel_adapter="${abs_adapter#"$HOME/"}"
+  local tilde_adapter="~/$rel_adapter"
+  local abs_dispatch_entry="Bash($abs_dispatch:*)"
+  local tilde_dispatch_entry="Bash($tilde_dispatch:*)"
+  local abs_adapter_entry="Bash($abs_adapter:*)"
+  local tilde_adapter_entry="Bash($tilde_adapter:*)"
+
+  if jq -e --arg sa "$abs_dispatch_entry" --arg st "$tilde_dispatch_entry" \
+    --arg aa "$abs_adapter_entry" --arg at "$tilde_adapter_entry" '
+    (.permissions.allow // []) as $allow |
+    ( (($allow | index($sa)) != null) or (($allow | index($st)) != null) ) and
+    ( (($allow | index($aa)) != null) or (($allow | index($at)) != null) )
+  ' "$settings" >/dev/null 2>&1; then
+    emit_check dispatch-allowlist ok "dispatch allowlist present (shim + adapter)"
+  else
+    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" "bash '${REPO_ROOT}/install.sh'"
+  fi
+}
+
 check_scripts_executable() {
   local -a scripts=(
     hook-pm-write-guard.sh
@@ -482,6 +515,7 @@ main() {
   check_codex
   check_settings_file
   check_hooks
+  check_dispatch_allowlist
   check_scripts_executable
   check_memory_dir
   check_manifest
