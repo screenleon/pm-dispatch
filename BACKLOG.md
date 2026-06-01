@@ -39,9 +39,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/portability | 2026-05-18 | — | — | oss |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
-| CC-208 | ✅ closed 2026-06-01 | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | pr:#206 | P3 | — |
-| CC-300 | ✅ closed 2026-06-01 | citation guard: inject verified file index into gate briefs + codex-dispatch allowlist bootstrap | ops/gate | 2026-06-01 | pr:#206 | P2 | — |
-| CC-301 | ✅ closed 2026-06-01 | cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall-hooks allowlist removal | ops | 2026-06-01 | pr:#207 | P2 | — |
+| CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | pr:#206 | P3 | — |
+| CC-300 | 🔵 active | citation guard: inject verified file index into gate briefs + codex-dispatch allowlist bootstrap | ops/gate | 2026-06-01 | pr:#206 | P2 | — |
+| CC-301 | 🔵 active | cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall-hooks allowlist removal | ops | 2026-06-01 | pr:#207 | P2 | — |
 | CC-302 | 🔵 active | install_dispatch_allowlist 缺乏 settings.json backup path（gate risk [medium] advisory from pr:#207） | ops | 2026-06-01 | pr:#207 | P3 | — |
 | CC-303 | 🔵 active | allowlist entry construction duplicated in install.sh + doctor.sh — centralize（gate arch [medium] advisory from pr:#207） | arch | 2026-06-01 | pr:#207 | P3 | — |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
@@ -371,9 +371,7 @@ Git Bash detection branch that uses junctions instead of silently falling back t
 
 **Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
 
-## CC-208 — Gate reviewer hallucination: document citation without verification ✅ 2026-06-01
-
-**See**: pr:#206
+## CC-208 — Gate reviewer hallucination: document citation without verification 🔵 active
 
 **Problem**: Gate reviewers (primarily qa-tester) cite non-existent documents in
 findings. Observed example: "AGENT.md §3" — this file does not exist in the repo.
@@ -1317,15 +1315,13 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-289]]`（pmctl dispatch run）、`[[CC-266]]`（adapters/claude/dispatch.sh）、`[[CC-291]]`（executor role 定義）。
 
-## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap ✅ 2026-06-01
-
-**See**: pr:#206
+## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap 🔵 active
 
 **Problem**: Implemented as the fix for `[[CC-208]]`. Gate reviewers cited hallucinated
 documents because they had no verified file listing. Each false citation added ~1–2 min
 manual verification overhead per gate run.
 
-**What shipped (pr:#206)**:
+**Implemented in pr:#206**:
 - `scripts/pr-gate.sh`: injects a verified file index (repo `.md` + changed files) into
   every gate brief preamble, giving reviewers a reference list to check citations against.
 - `install.sh` + `scripts/doctor.sh`: adds four `Bash(codex-dispatch.sh:*)` and
@@ -1336,9 +1332,7 @@ manual verification overhead per gate run.
 
 **Cross-link**: `[[CC-208]]`（original problem）、`[[CC-301]]`（chain coexistence fix landed same cycle）、`[[CC-302]]`（allowlist backup path follow-up）、`[[CC-303]]`（allowlist dedup follow-up）.
 
-## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal ✅ 2026-06-01
-
-**See**: pr:#207
+## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal 🔵 active
 
 **Problem**: Re-running `scripts/install-hooks.sh` (pm-dispatch) over an existing
 `statusLine` command from another tool (e.g. claude-account-switcher) clobbered all
@@ -1347,7 +1341,7 @@ both read only the first line of `statusline-chain.conf` via `head -1` / single 
 Additionally, `uninstall-hooks.sh` did not remove the four dispatch `Bash(...:*)` allowlist
 entries added by `install.sh`, leaving persistent permission expansions after uninstall.
 
-**What shipped (pr:#207)**:
+**Implemented in pr:#207**:
 - `scripts/install-hooks.sh`: added `write_statusline_chain()` that preserves all existing
   non-self chain entries when updating the chain conf.
 - `scripts/hook-save-rate-limits.sh`: changed `head -1` to a while-loop so all chain lines
