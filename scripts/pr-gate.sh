@@ -36,6 +36,7 @@ set -euo pipefail
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
 #   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
+#   --allow-dirty        review the working tree as-is instead of failing on a dirty tree atop committed changes
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -47,6 +48,7 @@ TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
+ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in (CC-260)
 # "default" → omit --model → the executor adapter applies its own pinned default
 # (for codex, resolved via share/model-aliases.tsv; decoupled from ~/.codex/config.toml).
 # The gate is analysis-heavy and must run on a full model, never the spark variant;
@@ -71,12 +73,13 @@ while [[ $# -gt 0 ]]; do
     --parallel)   SEQUENTIAL=false;        shift;;
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
+    --allow-dirty) ALLOW_DIRTY=true;       shift;;
     -h|--help)
-      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks (-h for help)\n' >&2
+      printf 'Accepted: --cd --tier --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -253,10 +256,58 @@ if ! git rev-parse --verify "$BASE" > /dev/null 2>&1; then
   exit 1
 fi
 
+_worktree_is_dirty() {
+  # uncommitted tracked changes (staged or unstaged) ...
+  if ! git diff --quiet HEAD 2>/dev/null; then return 0; fi
+  # ... or any non-gitignored untracked file
+  [[ -n "$(git ls-files --others --exclude-standard)" ]]
+}
+
+# ── CC-260: dirty-worktree preflight ────────────────────────────────────────
+# When the branch has committed changes, the brief below is built from
+# "$BASE"...HEAD and silently omits uncommitted tracked + untracked files
+# (CC-229 Gate 12 missed install.sh this exact way). Fail loud so the user
+# commits first for a complete, reproducible review -- unless they explicitly
+# opt into reviewing the working tree as-is. A dirty-only tree with NO
+# committed changes is handled by the working-tree fallback below and is NOT
+# failed here (nothing is omitted in that case).
+if ! git diff "$BASE"...HEAD --quiet 2>/dev/null && _worktree_is_dirty; then
+  if [[ "$ALLOW_DIRTY" != true ]]; then
+    _dt=$(git diff HEAD --name-only 2>/dev/null | { grep -c . || true; })
+    _du=$(git ls-files --others --exclude-standard | { grep -c . || true; })
+    {
+      printf 'Error: working tree is dirty while the branch has committed changes against %s.\n' "$BASE"
+      printf '  The review brief is built from %s...HEAD and would silently omit:\n' "$BASE"
+      printf '    %s uncommitted tracked file(s), %s untracked file(s).\n' "$_dt" "$_du"
+      printf '  Commit them first for a complete, reproducible review,\n'
+      printf '  or pass --allow-dirty to fold the working tree into the review scope.\n'
+    } >&2
+    exit 3
+  fi
+  printf 'pr-gate: --allow-dirty set -- folding uncommitted working-tree changes into review scope\n' >&2
+fi
+
 # ── Collect diff ──────────────────────────────────────────────────────────────
 # Use --name-status so renames expose BOTH old and new paths for sensitive matching.
 # Use --numstat to detect binary files (shown as -\t-\t<file>).
-if ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
+if [[ "$ALLOW_DIRTY" == true ]] && _worktree_is_dirty; then
+  # --allow-dirty: fold the working tree into scope. Two-dot diff vs BASE
+  # captures committed + uncommitted tracked changes; untracked listed separately.
+  DIFF_FILES=$( { git diff "$BASE" --name-status | awk '
+      /^R/ { print $2; print $3; next }
+      /^[AMDCT]/ { print $2 }
+    '; git ls-files --others --exclude-standard; } )
+  DIFF_STAT=$(git diff "$BASE" --stat)
+  BINARY_HIT=$(git diff "$BASE" --numstat | { grep -c $'^-\t-\t' || true; })
+  LINES=$(git diff "$BASE" --numstat | awk '
+    /^-\t-\t/ { next }
+    { s += $1 + $2 }
+    END { print s+0 }
+  ')
+  UNTRACKED_NONDOC=$(git ls-files --others --exclude-standard | \
+    { grep -cvE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true; })
+  BINARY_HIT=$((BINARY_HIT + UNTRACKED_NONDOC))
+elif ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
   # For renames (R* status lines), emit both old and new path so sensitive
   # keywords in the old name (e.g. auth.ts → login.ts) are not lost.
   DIFF_FILES=$(git diff "$BASE"...HEAD --name-status | awk '
