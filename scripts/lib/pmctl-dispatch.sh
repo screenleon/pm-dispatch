@@ -37,7 +37,8 @@
 #   - The ONLY data read back from an adapter is the output contract
 #     (latest.last + exit code) — never the executor-internal trace format.
 #   - No executor-specific invocation tokens live here; the only executor identity
-#     used is the adapter NAME string (path resolution + guard --profile).
+#     used is the adapter NAME string (path resolution + `guard check --role
+#     executor --runtime <adapter>`).
 #
 # Exit-code contract:
 #   0  — adapter succeeded and post-verify passed (or was skipped on dry-run)
@@ -183,13 +184,14 @@ pmctl_dispatch_run() {
   fi
 
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
-  #    Gates the executor's brief-file write for this profile via the same code
-  #    path the PreToolUse hooks enforce.
+  #    Gates the executor's brief-file write for this runtime via the same code
+  #    path the PreToolUse hooks enforce. The dispatch adapter IS the runtime
+  #    axis (CC-291); the role is always `executor` here.
   if ! declare -F pmctl_guard_check >/dev/null; then
     printf 'pmctl dispatch run: guard unavailable (pmctl-guard not sourced) — refusing to dispatch without policy enforcement\n' >&2
     return 2
   fi
-  if ! pmctl_guard_check "$repo_root" --event pre-write --profile "$adapter" --file "$brief_file"; then
+  if ! pmctl_guard_check "$repo_root" --event pre-write --role executor --runtime "$adapter" --file "$brief_file"; then
     printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
     return 2
   fi

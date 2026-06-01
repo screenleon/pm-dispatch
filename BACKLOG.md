@@ -85,6 +85,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-291 | 🔵 active | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | — | P2 | design |
 | CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
+| CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
+| CC-297 | 🟡 deferred | **[arch: register `reviewer` as a guard role — one fixed rule]** pr-gate 的 5 個 reviewers + synthesis 是會寫檔的 agent，但落點目前只靠 prompt 指示（「Only write OUTPUT_FILE」）+ codex `workspace-write` sandbox，**沒有硬 guard**——CC-291 generalization 的下一個實例（user 2026-06-01）。設計定調：**一個 `reviewer` role + 一條固定規則 = 只能寫 `.gate-results/` 目錄**，跨 tier-subset（用幾個 reviewer 是 orchestration 的事，guard 不列舉）與 parallel/sequential（兩模式都寫 `.gate-results/`，故綁**目錄**不綁檔名）統一套用。brief（`.codex-briefs/`）由 gate 腳本寫、**不算 reviewer**，排除在規則外。trigger 因 runtime 異（codex 顯式 `pmctl guard check` / claude-route PreToolUse hook），規則不變（CC-291 模式）。`--output` 覆寫到 repo 外 = operator 信任逃生口，文件化。defense-in-depth（防 diff 內 prompt-injection 誘導 reviewer 亂寫），非阻塞。brief 位置統一見 [[CC-298]]。關聯 [[CC-291]]、[[CC-288]]、[[CC-298]]。 | arch | 2026-06-01 | — | P3 | design |
+| CC-298 | 🟡 deferred | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate 用 `.codex-briefs/`（runtime 命名目錄，`scripts/pr-gate.sh:360`）+ `pr-gate-claude-*.md`（runtime 進檔名，L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | — | P2 | design |
 
 ---
 
@@ -1232,3 +1235,59 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic).
 
+
+## CC-296 — [release] v0.3.0 deprecation sunset — remove after 2 official releases 🟡 deferred
+
+**Origin (user, 2026-06-01)**: 「這次 0.3.0 的版本有些需要 deprecate 的部分，請幫我在 2 次正式版本之後開始進行移除。」v0.3.0 引入的 back-compat 面要在經過兩個正式版本（v0.3.0 + v0.4.0）後、於 **v0.5.0** 移除。
+
+**Sunset target**: release ≥ **v0.5.0**. Do NOT remove earlier — the deprecation must stay live through v0.3.0 and v0.4.0 so external callers have two releases to migrate.
+
+**Items to remove**:
+1. **`pmctl guard check --profile <pm|codex|claude>`** alias (`scripts/lib/pmctl-guard.sh`): the deprecated profile→`(role,runtime)` mapping + the stderr deprecation warning + the `--profile`/`--role` mutual-exclusion branch. Migrate any remaining caller to `--role <pm|executor>` + `--runtime <codex|claude>`. Drop the `deprecated-profile-*` / `profile-role-mutex` back-compat cases from `scripts/test-pmctl-guard.sh` (keep the `--role`/`--runtime` cases). Origin [[CC-291]].
+2. **`scripts/codex-dispatch.sh` compatibility symlink shim**: the canonical adapter is `adapters/codex/dispatch.sh` ([[CC-289]]). Internal callers already use the real path (`executor-router` emits it). Remove the shim once external references (agent docs using the `~/github/.../scripts/codex-dispatch.sh` form, `~/.claude/settings.json` allow rules) are migrated to the adapter path — coordinate with agent-doc updates so dispatch keeps working.
+
+**On removal**: re-scan for any other v0.3.0 `### Deprecated` CHANGELOG entries and clear them in the same sweep; move the CHANGELOG `### Deprecated` items to `### Removed` for the v0.5.0 entry.
+
+**Cross-link**: `[[CC-291]]` (`--profile` alias origin), `[[CC-289]]` (codex-dispatch shim origin).
+
+## CC-297 — [arch] register `reviewer` as a guard role 🟡 deferred
+
+**Origin (user, 2026-06-01, during CC-291 work)**: 「pr-gate 應該也算是一種 role 你覺得呢」+ 隨後的挑論：reviewer 最多 5 個方向、不一定全用；又有 parallel/sequential 差異；user 傾向「**統一套用一條固定防範規則**」。對——pr-gate 的 reviewers + synthesis 是會寫檔、需要 guard 的 agent，正是 CC-291 generalization 的下一個具體實例，繼 `pm` / `executor` 之後。
+
+**Gap（grounded in `scripts/pr-gate.sh`）**: reviewers 跑在 codex `workspace-write` sandbox（L55），落點只靠 prompt 指示「Only write OUTPUT_FILE」（L509/L704）約束——**沒有硬 guard**。威脅：reviewer 吃進 diff 內容，prompt-injection 可誘導它寫到 `.gate-results/` 以外（sandbox 只擋到 workspace=整個 repo）。
+
+**Design（定調 2026-06-01）— 一個 role、一條固定規則、綁目錄**：
+- **一個 `reviewer` guard-role**，對應 5 個 reviewer agent-type + synthesis。漂亮示範 CC-291 的「role ≠ agent-type」：多 agent-type → 一個 guard-role。
+- **固定規則 = 只能 Write 到 `.gate-results/` 目錄**。綁**目錄不綁檔名**是關鍵：parallel 寫 `.gate-results/reviewer-<r>-<ts>.md`（一人一檔，L680）、sequential 寫 `.gate-results/gate-<ts>.md`（單檔，L363），兩者都在 `.gate-results/` 下 → 一條規則覆蓋兩模式。綁特定 OUTPUT_FILE 會破 parallel。
+- **跨 tier-subset 統一**：用幾個 / 哪幾個 reviewer 是 tier/orchestration 的決定（pr-gate.sh 管），guard 不列舉 reviewer。跑 2 個或 5 個都同一條規則；加減 reviewer / 改 tier 永不動 guard（同 CC-291「加 runtime 不動 guard」原理）。
+- **brief 排除**：`.codex-briefs/` 由 pr-gate.sh / orchestrator 寫（L360），**不是 reviewer 寫**——不放進 reviewer 規則。
+- **trigger 因 runtime 異、規則不變（CC-291 模式）**：codex-route reviewer 走 codex sandbox + 顯式 `pmctl guard check`；claude-route reviewer（子代理）走 PreToolUse `hook-reviewer-write-guard.sh`。落點 runtime-agnostic，故 reviewer 是純 role-based cell（像 pm），規則本身不吃 `--runtime`。
+- **`--output` 覆寫例外**：operator 可 `--output <repo 外路徑>`，那是 operator（maintainer）信任的逃生口、非 reviewer 可控——文件化「`--output` 寫到 `.gate-results/` 外 = 自願走出 reviewer guard」（類比 guard 的 bypass env var），維持單一固定規則不破。
+
+**Why deferred / P3**: defense-in-depth（runtime sandbox + prompt 已提供層次；威脅模型是單人 maintainer review 自己的 diff），非阻塞。CC-291 已讓「加 reviewer」成為加一筆的事，先讓 CC-291 落地穩定再擴。
+
+**Cross-link**: `[[CC-291]]`（role-keyed registry）、`[[CC-288]]`（guard surface）。
+
+## CC-298 — [arch] 統一 brief 落點 + 產物檔名去 runtime 化 🟡 deferred
+
+**Origin (user, 2026-06-01, during CC-297 discussion)**: 「目前不應該還有 `.codex-briefs/` 這種——應該統一一個地方放 brief，不管 claude 還是 codex 都讀這裡；生成的檔案也不該自帶 codex/claude 這種特定名稱，頂多檔案裡面記錄是哪個 model 執行的。」這是 CC-291（runtime 是 adapter 的事）/ CC-233（core 不放 CLI-named 檔）同一條界線，延伸到**資料產物**。
+
+**現況（grounded）**:
+- ✓ dispatch brief 已 runtime-agnostic：`adapters/codex/dispatch.sh` 與 `adapters/claude/dispatch.sh` 都收 `--brief-file`，guard 政策對兩者都是 `/tmp/brief-*.md`（讀取端已統一）。
+- ✗ pr-gate：`BRIEF_DIR="$WORK_DIR/.codex-briefs"`（`scripts/pr-gate.sh:360`），且 claude route 的 brief 檔名帶 runtime：`pr-gate-claude-<ts>-combined.md`、`pr-gate-claude-<ts>-<r>.md`（L495/L684）。
+- ✗ trace 檔名帶 runtime：`.agent-trace/codex-<ts>.{jsonl,last,stderr}`、`claude-<ts>.*`（消費端讀 `latest.*` symlink，已 agnostic）。
+
+**Target**:
+1. **brief 落點統一**：pr-gate 的 `.codex-briefs/` 改成 runtime-agnostic 目錄（例如 `.gate-briefs/` 或與 dispatch 共用一個 `.pm-briefs/`）；brief 檔名去掉 `claude`/`codex` token。codex/claude 都從同一處讀。
+2. **產物檔名去 runtime 化**：生成的資料產物（brief、gate result、reviewer output）檔名不帶 runtime；**執行的 model 記在檔案內容**（gate result frontmatter 已有 `reviewers:` / `mode:`，可加 per-artifact `executed_by:`；brief header 加一行）。
+
+**Scope 邊界（別過度延伸）**:
+- `adapters/<runtime>/` 腳本目錄本就 runtime-specific——它們**是** adapter，CC-233 明確允許 adapter 以 runtime 命名。不在此票。
+- `scripts/codex-dispatch.sh` / `scripts/claude-dispatch.sh` 是 adapter 入口（shim 已由 [[CC-296]] 排程移除）——屬 adapter 名，不在此票。
+- executor-internal **trace 格式**本就 runtime-specific（codex JSONL vs claude JSON）；trace **檔名**是否一併中性化待議——消費端已用 `latest.*`，價值較低，可作 forensic 保留 runtime 名或一併改。實作時定。
+
+**防回歸（可選）**: 考慮把 [[CC-233]] 的 layer-boundary enforcer 擴及「`scripts/` 內以 runtime 命名的**資料路徑**」，避免日後又長出 `.codex-*` 資料目錄。
+
+**Why deferred / P2**: 一致性清理，user-flagged；非阻塞當前流程，但會動到 pr-gate + trace 命名的多處 caller，需一次到位 + 測試。先讓 CC-291 落地。
+
+**Cross-link**: `[[CC-291]]`（runtime=adapter concern）、`[[CC-233]]`（no CLI-named files）、`[[CC-289]]`（dispatch orchestrator）、`[[CC-297]]`（reviewer role，brief 排除）。

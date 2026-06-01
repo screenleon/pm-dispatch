@@ -53,6 +53,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`scripts/test-run-all-tests.sh`** — added comment above local `assert_contains()` explaining why it stays local: orchestrator uses `pass_case`/`fail_case`, not the unified harness counters (CC-256).
 - **BACKLOG** — closed CC-254 (harness assert_* no auto-pass; shipped PR #149) and CC-256 (3-file assert_* migration audit; completed).
 
+### Deprecated
+
+> Sunset target: **v0.5.0** — these are kept through v0.3.0 + v0.4.0 (two official releases) then removed. Tracked by **CC-296**.
+
+- **`pmctl guard check --profile <pm|codex|claude>`** — superseded by `--role <pm|executor>` + `--runtime <codex|claude>` (CC-291). Still accepted as a back-compat alias that maps onto `(role, runtime)` and prints a one-line stderr deprecation warning. Migrate callers to `--role`/`--runtime`.
+- **`scripts/codex-dispatch.sh` compatibility symlink shim** — the real adapter is `adapters/codex/dispatch.sh` (CC-289). The shim keeps external callers working; internal callers already use the canonical path. Remove once external references are migrated.
+
 ### Removed
 
 - **`/caveman` slash command (`commands/caveman.md`)** -- token-compression skill removed; text compression causes information loss in design/architecture discussions where omitted constraints lead to misunderstandings (CC-265).
