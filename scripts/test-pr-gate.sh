@@ -62,7 +62,7 @@ done
 printf 'DISPATCH_STUB:%s\n' "${CODEX_GATE_STUB_MODE:-success}"
 
 if [[ -n "${CODEX_GATE_BRIEF_EXISTS_MARKER:-}" ]]; then
-  if [[ -f "$brief_file" && "$brief_file" == */.codex-briefs/pr-gate-*.md ]]; then
+  if [[ -f "$brief_file" && "$brief_file" == */.gate-briefs/pr-gate-*.md ]]; then
     printf 'brief-present\n' > "$CODEX_GATE_BRIEF_EXISTS_MARKER"
   else
     printf 'brief-missing-or-wrong-path: %s\n' "$brief_file" >&2
@@ -227,8 +227,7 @@ case "$effective_mode" in
         fi
       else
         # Sequential result file should include frontmatter blocks and escalation section.
-        if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ || \
-              "$brief_file" =~ ^.*/pr-gate-claude-[0-9]{8}-[0-9]{6}-combined\.md$ ]]; then
+        if [[ "$brief_file" =~ ^.*/pr-gate-[0-9]{8}-[0-9]{6}\.md$ ]]; then
           final_verdict="${CODEX_GATE_STUB_SYNTHESIS_FINAL:-GO}"
           write_frontmatter_stub_gate_result "$output_path" "$final_verdict"
           exit 0
@@ -283,7 +282,7 @@ create_agents() {
 }
 
 write_managed_gitignore() {
-  printf '.agent-trace/\n.codex-briefs/\n.gate-results/\n.agents/\n' > .gitignore
+  printf '.agent-trace/\n.gate-briefs/\n.gate-results/\n.agents/\n' > .gitignore
 }
 
 create_repo() {
@@ -384,6 +383,7 @@ test_tier_detection() {
   fi
   assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "Tier: express" || return
+  assert_file_contains "$name" "$brief" "Executor: codex" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
   pass "$name"
 }
@@ -522,6 +522,7 @@ test_reviewers_override_skips_tier_detection() {
   fi
   # Parallel mode: CAPTURE_BRIEF receives the synthesis brief (last dispatch)
   assert_file_contains "$name" "$brief" "Tier: targeted" || return
+  assert_file_contains "$name" "$brief" "Executor: codex" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic" || return
   # Synthesis brief embeds reviewer findings inline — no read: paths to reviewer output files
   assert_file_contains "$name" "$brief" "--- critic findings ---" || return
@@ -572,7 +573,7 @@ test_brief_cleanup_on_dispatch_failure() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  if compgen -G "$repo/.codex-briefs/pr-gate-*.md" > /dev/null; then
+  if compgen -G "$repo/.gate-briefs/pr-gate-*.md" > /dev/null; then
     fail "$name" "brief file remained after dispatch failure"
     return
   fi
@@ -2720,6 +2721,7 @@ test_parallel_reviewer_brief_ascii_separator() {
     return
   fi
   # Reviewer brief heading format must use ASCII -- not em dash
+  assert_file_contains "$name" "$reviewer_brief" "Executor: codex" || return
   assert_file_contains "$name" "$reviewer_brief" "file:line --" || return
   # No em dash bytes (UTF-8 E2 80 94) must remain in the reviewer brief
   if grep -q $'\xe2\x80\x94' "$reviewer_brief" 2>/dev/null; then

@@ -2,7 +2,7 @@
 *.local.*
 *.log
 .agent-trace/
-.codex-briefs/
+.gate-briefs/
 .gate-results/
 pm/.agent-trace/
 pm/rollup/PORTFOLIO.md

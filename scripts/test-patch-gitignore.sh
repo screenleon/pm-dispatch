@@ -45,15 +45,15 @@ test_adds_entries_and_is_idempotent() {
   local dir="$tmp_root/$name"
   init_git_repo "$dir"
 
-  bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".codex-briefs/" ".gate-results/"
+  bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".gate-briefs/" ".gate-results/"
   assert_file_contains "$name" "$dir/.gitignore" "# Claude agent / codex output" || return
   assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-briefs/" || return
   assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
 
-  bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".codex-briefs/" ".gate-results/"
+  bash "$PATCH_SCRIPT" "$dir" ".agent-trace/" ".gate-briefs/" ".gate-results/"
   local entry count
-  for entry in ".agent-trace/" ".codex-briefs/" ".gate-results/"; do
+  for entry in ".agent-trace/" ".gate-briefs/" ".gate-results/"; do
     count="$(count_entry "$dir/.gitignore" "$entry")"
     if [[ "$count" -ne 1 ]]; then
       fail "$name" "$entry appears $count times (expected 1)"

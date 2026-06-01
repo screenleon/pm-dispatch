@@ -139,7 +139,7 @@ create_repo() {
     git config user.email test@example.com
     git config user.name 'Gate Test'
     printf 'initial\n' > README.md
-    printf '.agent-trace/\n.codex-briefs/\n.gate-results/\n' > .gitignore
+    printf '.agent-trace/\n.gate-briefs/\n.gate-results/\n' > .gitignore
     git add README.md .gitignore
     git commit -q -m initial
 
@@ -227,8 +227,8 @@ test_executor_claude_sequential_emits_single_brief_handover() {
   assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
   assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
   assert_contains "$name" "$out" "reviewer_name: combined" || return
-  assert_contains "$name" "$out" "-claude-" || return
-  assert_contains "$name" "$out" "-combined.md" || return
+  assert_contains "$name" "$out" ".gate-briefs/pr-gate-" || return
+  assert_not_contains "$name" "$out" "-combined.md" || return
 
   handover=$(extract_handover_block "$out")
   reviewers=$(printf '%s' "$handover" | grep -c '^- role: reviewer$')
@@ -284,6 +284,7 @@ test_executor_claude_parallel_emits_multi_brief_handover() {
   fi
   assert_contains "$name" "$out" "reviewer_name: critic" || return
   assert_contains "$name" "$out" "reviewer_name: qa-tester" || return
+  assert_contains "$name" "$out" ".gate-briefs/pr-gate-" || return
   pass "$name"
 }
 
