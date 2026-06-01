@@ -1763,6 +1763,46 @@ CHAINEOF
   rm -rf "$rl_home"
 }
 
+rl_hook_multiline_chain_called() {
+  # Verifies that statusline-chain.conf can hold multiple command lines so
+  # several statusLine tools can share one live hook slot.
+  # Steps:
+  #   1. Write two chain scripts that append markers to one sentinel file
+  #   2. Write both script paths to statusline-chain.conf
+  #   3. Run the hook with a valid rate_limits payload
+  #   4. Assert both scripts ran in order
+  local name="rl-hook/multiline-chain-called" rl_home chain_log first_chain second_chain actual
+  should_run "$name" || return 0
+  rl_home="$(mktemp -d)"
+  chain_log="$rl_home/chain-order"
+  first_chain="$rl_home/first-chain.sh"
+  second_chain="$rl_home/second-chain.sh"
+  cat > "$first_chain" <<CHAINEOF
+#!/usr/bin/env bash
+printf first >> "$chain_log"
+CHAINEOF
+  cat > "$second_chain" <<CHAINEOF
+#!/usr/bin/env bash
+printf ',second' >> "$chain_log"
+CHAINEOF
+  chmod +x "$first_chain" "$second_chain"
+  {
+    printf '%s\n' "$first_chain"
+    printf '%s\n' "$second_chain"
+  } > "$rl_home/statusline-chain.conf"
+  run_rl_hook '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' "$rl_home"
+  actual="$(cat "$chain_log" 2>/dev/null || true)"
+  if [[ -f "$rl_home/rate-limits.json" && "$actual" == "first,second" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — rate-limits.json=%s chain-order=%s\n' "$name" "$(test -f "$rl_home/rate-limits.json" && echo yes || echo no)" "$actual"
+  fi
+  rm -rf "$rl_home"
+}
+
 rl_hook_chain_called_with_args() {
   # Verifies that a statusline-chain.conf entry that is a command string with
   # unquoted arguments is correctly invoked via bash -c and writes rate-limits.json.
@@ -1911,6 +1951,7 @@ rl_hook_missing_rate_limits
 rl_hook_malformed_json
 rl_hook_empty_stdin
 rl_hook_chain_called
+rl_hook_multiline_chain_called
 rl_hook_chain_called_with_args
 rl_hook_chain_called_bash_c
 rl_hook_write_failure_chains

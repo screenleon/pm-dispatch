@@ -1265,6 +1265,38 @@ test_statusline_install_chains_previous() {
   pass "$name"
 }
 
+test_statusline_install_preserves_existing_chain() {
+  # Verifies that installing over another live statusLine hook keeps both that
+  # hook and an already chained display command.
+  # Steps:
+  #   1. Write settings.json with an existing same-basename hook from another tool
+  #   2. Write statusline-chain.conf with an existing display command
+  #   3. Run install
+  #   4. Assert statusline-chain.conf keeps both commands in order
+  local name="statusline-install-preserves-existing-chain"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local other_dir="$tmp_root/$name-other/scripts"
+  local other_hook="$other_dir/hook-save-rate-limits.sh"
+  local display_cmd="bash /home/screenleon/.claude/abtop-statusline.sh"
+  mkdir -p "$home/.claude" "$other_dir"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$other_hook"
+  chmod +x "$other_hook"
+  printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
+    "$other_hook" > "$home/.claude/settings.json"
+  printf '%s\n' "$display_cmd" > "$home/.claude/statusline-chain.conf"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  local got expected
+  got="$(cat "$home/.claude/statusline-chain.conf")"
+  expected="$(printf '%s\n%s' "$other_hook" "$display_cmd")"
+  if [[ "$got" != "$expected" ]]; then
+    fail "$name" "statusline-chain.conf was $got"
+    return
+  fi
+  pass "$name"
+}
+
 test_statusline_install_chains_previous_with_args() {
   # Verifies that a statusLine.command containing arguments (e.g. "/path/cmd --flag")
   # is stored verbatim in statusline-chain.conf so bash -c can invoke it correctly.
@@ -1783,6 +1815,7 @@ test_session_stop_uninstall_removes_hook
 test_session_stop_install_idempotent
 test_session_stop_uninstall_preserves_stop
 test_statusline_install_chains_previous
+test_statusline_install_preserves_existing_chain
 test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched
