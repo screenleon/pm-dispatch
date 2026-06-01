@@ -917,7 +917,7 @@ constraints:
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
     This is pre-computed from the reviewer verdicts and must not be overridden.
-  - Only cite files in the verified reference index or reviewer findings. Do not invent citations (CC-208).
+  - Only cite files in the verified reference index or reviewer findings; do not invent citations (CC-208).
 
 context:
   Tier: ${TIER}

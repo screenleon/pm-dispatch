@@ -2741,6 +2741,10 @@ test_sequential_brief_has_citation_guard() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
+  mkdir -p "$repo/agents"
+  printf '# test-agent\n' > "$repo/agents/test-agent.md"
+  git -C "$repo" add agents/test-agent.md
+  git -C "$repo" commit -q -m "add fixture agent for citation-guard index test"
 
   set +e
   CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
@@ -2752,6 +2756,7 @@ test_sequential_brief_has_citation_guard() {
   fi
   assert_file_contains "$name" "$brief" "Verified reference files" || return
   assert_file_contains "$name" "$brief" "do not invent citations" || return
+  assert_file_contains "$name" "$brief" "agents/test-agent.md" || return
   pass "$name"
 }
 
@@ -2767,6 +2772,10 @@ test_parallel_reviewer_brief_has_citation_guard() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
+  mkdir -p "$repo/agents"
+  printf '# test-agent\n' > "$repo/agents/test-agent.md"
+  git -C "$repo" add agents/test-agent.md
+  git -C "$repo" commit -q -m "add fixture agent for citation-guard index test"
 
   set +e
   CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
@@ -2783,6 +2792,39 @@ test_parallel_reviewer_brief_has_citation_guard() {
   fi
   assert_file_contains "$name" "$reviewer_brief" "Verified reference files" || return
   assert_file_contains "$name" "$reviewer_brief" "do not invent citations" || return
+  assert_file_contains "$name" "$reviewer_brief" "agents/test-agent.md" || return
+  pass "$name"
+}
+
+test_parallel_synthesis_brief_has_citation_guard() {
+  # CC-208 regression: verifies that the parallel synthesis brief contains the citation-guard
+  # preamble ("Verified reference files") and the explicit constraint ("do not invent citations").
+  local name="parallel-synthesis-brief-has-citation-guard"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/agents"
+  printf '# test-agent\n' > "$repo/agents/test-agent.md"
+  git -C "$repo" add agents/test-agent.md
+  git -C "$repo" commit -q -m "add fixture agent for citation-guard index test"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "Verified reference files" || return
+  assert_file_contains "$name" "$brief" "do not invent citations" || return
+  assert_file_contains "$name" "$brief" "agents/test-agent.md" || return
   pass "$name"
 }
 
@@ -2805,5 +2847,6 @@ run_test test_seq_brief_has_schema_version
 run_test test_gate_result_reviewer_verdicts_are_valid
 run_test test_sequential_brief_has_citation_guard
 run_test test_parallel_reviewer_brief_has_citation_guard
+run_test test_parallel_synthesis_brief_has_citation_guard
 
 th_summary

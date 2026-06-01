@@ -706,6 +706,13 @@ case_doctor_minimal_missing_routing_log_fails() {
 test_dispatch_allowlist_ok() {
   local name="test_dispatch_allowlist_ok"
   should_run "$name" || return 0
+  # Verifies that doctor.sh reports pass when all four dispatch allowlist entries
+  # (shim abs/tilde + adapter abs/tilde) are present in settings.json.
+  #
+  # Steps:
+  #   1. Create a home dir with write_minimal_settings (adds all 4 entries via add_dispatch_allowlist).
+  #   2. Run doctor --profile minimal.
+  #   3. Assert exit 0 and "dispatch allowlist present" in output.
   if ! command -v jq >/dev/null 2>&1; then
     pass "$name (jq not available - skip)"
     return
@@ -718,7 +725,7 @@ test_dispatch_allowlist_ok() {
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
-  if [[ "$status" -eq 0 && "$out" == *"codex-dispatch allowlist present"* && "$out" != *"dispatch allowlist missing"* ]]; then
+  if [[ "$status" -eq 0 && "$out" == *"dispatch allowlist present"* && "$out" != *"dispatch allowlist incomplete or missing"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -728,6 +735,12 @@ test_dispatch_allowlist_ok() {
 test_dispatch_allowlist_missing() {
   local name="test_dispatch_allowlist_missing"
   should_run "$name" || return 0
+  # Verifies that doctor.sh reports fail when all dispatch allowlist entries are absent.
+  #
+  # Steps:
+  #   1. Create a home dir with write_minimal_settings then remove permissions.allow entirely.
+  #   2. Run doctor --profile minimal.
+  #   3. Assert exit 1 and "[FAIL]" + "dispatch allowlist incomplete or missing" + install.sh hint.
   if ! command -v jq >/dev/null 2>&1; then
     pass "$name (jq not available - skip)"
     return
@@ -742,7 +755,39 @@ test_dispatch_allowlist_missing() {
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
-  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"codex-dispatch allowlist missing"* && "$out" == *"bash '${REPO_ROOT}/install.sh'"* ]]; then
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"dispatch allowlist incomplete or missing"* && "$out" == *"bash '${REPO_ROOT}/install.sh'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_dispatch_allowlist_adapter_absent() {
+  local name="test_dispatch_allowlist_adapter_absent"
+  should_run "$name" || return 0
+  # Verifies that doctor.sh reports fail when shim entries are present but adapter entries absent.
+  #
+  # Steps:
+  #   1. Create a home dir with write_minimal_settings (all 4 entries), then remove
+  #      only the adapters/codex entries via jq del.
+  #   2. Run doctor --profile minimal.
+  #   3. Assert exit 1 and "[FAIL]" + "dispatch allowlist" in output.
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-dispatch-allowlist-adapter-absent" out status=0 path
+  write_minimal_settings "$home"
+  jq 'del(.permissions.allow[] | select(contains("adapters/codex")))' \
+    "$home/.claude/settings.json" > "$home/.claude/settings.json.tmp"
+  mv "$home/.claude/settings.json.tmp" "$home/.claude/settings.json"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-dispatch-allowlist-adapter-absent" claude)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"dispatch allowlist"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -1115,8 +1160,9 @@ case_doctor_claude_config_dir() {
   printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]},\n      {"matcher": "*",          "hooks": [{"type": "command", "command": "%s/scripts/hook-tool-trace.sh"}]}\n    ],\n    "PostToolUse": [\n      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "%s/scripts/hook-routing-log.sh"}]}\n    ],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
-  jq --arg e "Bash($REPO_ROOT/scripts/codex-dispatch.sh:*)" \
-     '.permissions.allow = [$e]' "$config_dir/settings.json" > "$config_dir/settings.json.tmp"
+  jq --arg dispatch "Bash($REPO_ROOT/scripts/codex-dispatch.sh:*)" \
+     --arg adapter "Bash($REPO_ROOT/adapters/codex/dispatch.sh:*)" \
+     '.permissions.allow = [$dispatch, $adapter]' "$config_dir/settings.json" > "$config_dir/settings.json.tmp"
   mv "$config_dir/settings.json.tmp" "$config_dir/settings.json"
   printf '{"manifest_version":1}\n' > "$config_dir/.pm-dispatch/install-manifest.json"
   local path out status=0
@@ -1217,6 +1263,7 @@ case_doctor_profile_minimal_skip_codex_hooks
 case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing
+test_dispatch_allowlist_adapter_absent
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity

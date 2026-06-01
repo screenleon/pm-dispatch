@@ -493,6 +493,12 @@ test_install_adds_dispatch_allowlist() {
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
   local entry
+  # Verifies that install.sh adds all four dispatch allowlist entries to a fresh settings.json.
+  #
+  # Steps:
+  #   1. Create a temporary home with an empty settings.json (no permissions.allow).
+  #   2. Run install.sh with that HOME.
+  #   3. Assert all four Bash(...) entries appear in permissions.allow.
   mkdir -p "$home/.claude"
   printf '{}\n' > "$settings"
 
@@ -516,6 +522,12 @@ test_install_dispatch_allowlist_idempotent() {
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
   local entry count
+  # Verifies that re-running install.sh does not duplicate dispatch allowlist entries.
+  #
+  # Steps:
+  #   1. Run install.sh once to populate a fresh settings.json.
+  #   2. Run install.sh a second time against the same settings.json.
+  #   3. Assert each of the four entries appears exactly once.
   mkdir -p "$home/.claude"
   printf '{}\n' > "$settings"
 
