@@ -36,9 +36,20 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
+_abs_dispatch="$repo_root/scripts/codex-dispatch.sh"
+_rel_dispatch="${_abs_dispatch#"$HOME/"}"
+_tilde_dispatch="~/$_rel_dispatch"
+_abs_adapter="$repo_root/adapters/codex/dispatch.sh"
+_rel_adapter="${_abs_adapter#"$HOME/"}"
+_tilde_adapter="~/$_rel_adapter"
+
 jq \
   --arg repo_root "$repo_root" \
   --arg chain_target "$_chain_target" \
+  --arg e1 "Bash($_abs_dispatch:*)" \
+  --arg e2 "Bash($_tilde_dispatch:*)" \
+  --arg e3 "Bash($_abs_adapter:*)" \
+  --arg e4 "Bash($_tilde_adapter:*)" \
   '
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
@@ -65,6 +76,10 @@ jq \
     end
   else . end) |
   if (.hooks // {} | length) == 0 then del(.hooks) else . end
+  | if (.permissions.allow // [] | length) > 0 then
+      .permissions.allow |= map(select(. != $e1 and . != $e2 and . != $e3 and . != $e4))
+    else . end
+  | if (.permissions.allow // [] | length) == 0 then del(.permissions.allow) else . end
   ' "$settings" > "$tmp_new"
 
 if cmp -s "$settings" "$tmp_new"; then
