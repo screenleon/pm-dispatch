@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETUP_SCRIPT="$SCRIPT_DIR/setup-project.sh"
-EXPECTED_ENTRIES=(".agent-trace/" ".codex-briefs/" ".gate-results/" ".agents/")
+EXPECTED_ENTRIES=(".agent-trace/" ".gate-briefs/" ".gate-results/" ".agents/")
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
@@ -49,7 +49,7 @@ test_creates_gitignore_entries() {
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-briefs/" || return
   assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   assert_file_contains "$name" "$dir/.gitignore" ".agents/" || return
   assert_expected_entries_once "$name" "$dir/.gitignore" || return
@@ -68,7 +68,7 @@ test_patches_existing_gitignore() {
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_file_contains "$name" "$dir/.gitignore" "*.log" || return
   assert_file_contains "$name" "$dir/.gitignore" ".agent-trace/" || return
-  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-briefs/" || return
   assert_file_contains "$name" "$dir/.gitignore" ".gate-results/" || return
   assert_file_contains "$name" "$dir/.gitignore" ".agents/" || return
   assert_expected_entries_once "$name" "$dir/.gitignore" || return
@@ -133,7 +133,7 @@ test_patches_dockerignore_next_to_dockerfile() {
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_file_contains "$name" "$svcdir/.dockerignore" "node_modules/" || return
   assert_file_contains "$name" "$svcdir/.dockerignore" ".agent-trace/" || return
-  assert_file_contains "$name" "$svcdir/.dockerignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$svcdir/.dockerignore" ".gate-briefs/" || return
   assert_file_contains "$name" "$svcdir/.dockerignore" ".gate-results/" || return
   assert_file_contains "$name" "$svcdir/.dockerignore" ".agents/" || return
   pass "$name"
@@ -146,7 +146,7 @@ test_already_present_entries() {
   local dir="$tmp_root/$name"
   mkdir -p "$dir"
   init_git_repo "$dir"
-  printf '.agent-trace/\n.codex-briefs/\n' > "$dir/.gitignore"
+  printf '.agent-trace/\n.gate-briefs/\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
   assert_expected_entries_once "$name" "$dir/.gitignore" || return
@@ -163,7 +163,7 @@ test_partial_state_no_header_duplicate() {
   printf '.agent-trace/\n' > "$dir/.gitignore"
 
   bash "$SETUP_SCRIPT" "$dir" > /dev/null
-  assert_file_contains "$name" "$dir/.gitignore" ".codex-briefs/" || return
+  assert_file_contains "$name" "$dir/.gitignore" ".gate-briefs/" || return
   local hdr_count
   hdr_count=$(grep -c "Claude agent" "$dir/.gitignore" || echo 0)
   if [[ "$hdr_count" -gt 1 ]]; then

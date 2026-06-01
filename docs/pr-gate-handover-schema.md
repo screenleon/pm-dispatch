@@ -51,7 +51,7 @@ Implementation reference: `commands/pr-gate.md` and `scripts/pr-gate.sh`.
 ```pr-gate-handover_v1
 - role: reviewer
   reviewer_name: combined
-  brief_file: /repo/.codex-briefs/pr-gate-claude-20260517-120000-combined.md
+  brief_file: /repo/.gate-briefs/pr-gate-20260517-120000.md
   output_file: /repo/.gate-results/gate-20260517-120000.md
 ```
 
@@ -60,16 +60,16 @@ Implementation reference: `commands/pr-gate.md` and `scripts/pr-gate.sh`.
 ```pr-gate-handover_v1
 - role: reviewer
   reviewer_name: critic
-  brief_file: /repo/.codex-briefs/pr-gate-claude-20260517-120000-critic.md
+  brief_file: /repo/.gate-briefs/pr-gate-20260517-120000-critic.md
   output_file: /repo/.gate-results/reviewer-critic-20260517-120000.md
 
 - role: reviewer
   reviewer_name: qa-tester
-  brief_file: /repo/.codex-briefs/pr-gate-claude-20260517-120000-qa-tester.md
+  brief_file: /repo/.gate-briefs/pr-gate-20260517-120000-qa-tester.md
   output_file: /repo/.gate-results/reviewer-qa-tester-20260517-120000.md
 
 - role: synthesis
-  brief_file: /repo/.codex-briefs/pr-gate-20260517-120000-synthesis.md
+  brief_file: /repo/.gate-briefs/pr-gate-20260517-120000-synthesis.md
   output_file: /repo/.gate-results/gate-20260517-120000.md
 ```
 

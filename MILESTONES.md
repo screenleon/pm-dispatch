@@ -102,8 +102,8 @@ spine 已 ship，以下為 v0.3.0 release 前必收的殘餘架構縫與 polish�
 | 票號 | 說明 | 狀態 | P |
 |---|---|---|---|
 | CC-299 | `/pm` 改走 `pmctl dispatch run --adapter codex\|claude`；`Agent(executor)` 降為 fallback | ✅ (#213) | P2 |
-| CC-260 | `/pr-gate` dirty worktree fail-loud preflight：only fail when `BASE...HEAD` has committed changes and worktree is dirty; `--allow-dirty` folds working tree into review scope | ⏳ | P2 |
-| CC-298 | `.codex-briefs` + brief filenames → runtime-neutral（改 `.gate-briefs/`；runtime 記錄在 frontmatter） | ⏳ | P2 |
+| CC-260 | `/pr-gate` dirty worktree fail-loud preflight：only fail when `BASE...HEAD` has committed changes and worktree is dirty; `--allow-dirty` folds working tree into review scope | ✅ (#214) | P2 |
+| CC-298 | `.gate-briefs/` + brief filenames runtime-neutral（runtime 記錄在 frontmatter） | ⏳ | P2 |
 | CC-215 | `pmctl task`/`decision`/`trace`/`safe-bash`（spine 已含 backlog+guard+dispatch；剩餘延 v0.4.0） | ⚠️ partial | P2 |
 | CC-293 | config/default 解析從 `adapters/codex/dispatch.sh` 提升至 `pmctl dispatch run` runtime layer | ⏳ | P3 |
 | CC-297 | `reviewer` guard role — 只能寫 `.gate-results/`（防 prompt-injection 誘導 reviewer 亂寫） | ⏳ | P3 |

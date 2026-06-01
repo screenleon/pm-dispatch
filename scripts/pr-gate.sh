@@ -408,7 +408,7 @@ done
 
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BRIEF_DIR="$WORK_DIR/.codex-briefs"
+BRIEF_DIR="$WORK_DIR/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
@@ -554,12 +554,8 @@ if [[ "$SEQUENTIAL" == "true" ]]; then
     AGENT_FILE_ENTRIES="${AGENT_FILE_ENTRIES}  - read: ${AGENT_PATH}"$'\n'
   done
 
-  if [[ "$EXECUTOR" == "codex" ]]; then
-    BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
-    BRIEF_FILES+=("$BRIEF_FILE")
-  else
-    BRIEF_FILE="$BRIEF_DIR/pr-gate-claude-${TIMESTAMP}-combined.md"
-  fi
+  BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
+  [[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$BRIEF_FILE")
 
   cat > "$BRIEF_FILE" << BRIEF_EOF
 schema_version: 1
@@ -578,6 +574,7 @@ constraints:
 
 context:
   Tier: ${TIER}
+  Executor: ${EXECUTOR}
   Reviewers: ${REVIEWER_DISPLAY}
   Not reviewed: ${SKIPPED_DISPLAY}
   Base: ${BASE}
@@ -747,11 +744,7 @@ else
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
-    if [[ "$EXECUTOR" == "codex" ]]; then
-      REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
-    else
-      REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-claude-${TIMESTAMP}-${r}.md"
-    fi
+    REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
     DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
     [[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$REVIEWER_BRIEF")
@@ -776,6 +769,7 @@ constraints:
 
 context:
   Tier: ${TIER}
+  Executor: ${EXECUTOR}
   Reviewer: ${r}
   Base: ${BASE}
   Scope: ${SCOPE:-none}
@@ -972,6 +966,7 @@ constraints:
 
 context:
   Tier: ${TIER}
+  Executor: ${EXECUTOR}
   Reviewers: ${REVIEWER_DISPLAY}
   Not reviewed: ${SKIPPED_DISPLAY}
   Base: ${BASE}
