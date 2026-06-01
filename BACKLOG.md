@@ -71,7 +71,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-255 | 🔵 active | **[Spike infrastructure: rubric + brief template improvements]** PR #151 codegraph Phase 1 surfaced 2 spike-infra gaps that misled codex: (a) verdict rubric must enumerate sandbox-block as a "local env" example alongside peerDep (codex misapplied RED criterion because sandbox isolation wasn't an explicit local-env class in the rubric); (b) spike brief template must specify test target as a separate field from working directory — when target language-aware tools (e.g. codegraph) are evaluated, the brief must commit to a representative target codebase, not let codex pick on its own (Phase 1 brief said "pick a symbol in pm-dispatch" which pre-committed wrong target). Touch points: `/tmp/cc<NNN>-content/verdict-rubric.md` templates, `docs/spikes/README.md` skeleton, `docs/dispatch-brief.md` schema add optional `test_target:` field for spike briefs. | process | 2026-05-24 | pr:TBD | P3 | spike |
 | CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/hook-pm-write-guard.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-hooks.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
-| CC-260 | 🟢 someday | **[pr-gate.sh: include dirty-worktree diff in review scope]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted (dirty) tracked and untracked files, so gate briefs may miss in-progress working-tree changes. Fix: merge `git diff HEAD` (dirty tracked) + untracked listing into the brief stat, or add a clear dirty-tree warning that tells the reviewer the brief is incomplete. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
+| CC-260 | 🔵 active | **[pr-gate.sh: dirty-worktree fail-loud preflight]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted tracked and untracked files. Fix: fail with exit 3 only when committed `BASE...HEAD` changes exist and the worktree is dirty; `--allow-dirty` explicitly folds committed + working-tree changes into review scope. Dirty-only-no-commit trees still use the existing working-tree fallback. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:TBD | P2 | — |
 | CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 | CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | — | P3 | — |
@@ -910,21 +910,24 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 **Priority**: P3 — no active consumer need today; purely technical debt prevention.
 
-## CC-260 — pr-gate.sh: include dirty-worktree diff in review scope（someday）
+## CC-260 — pr-gate.sh: dirty-worktree fail-loud preflight（active）
 
 **Problem**: When a branch has committed changes, `scripts/pr-gate.sh` uses `git diff "$BASE"...HEAD` to build the reviewer brief stat. This silently omits uncommitted tracked changes (`git diff HEAD`) and untracked files. During CC-229 Gate 12, the brief stat did not include `install.sh` and `scripts/test-schema-task-mirrors-backlog.sh` which were in the dirty worktree but not yet committed.
 
 **Why**: Gate reviewers can only assess what's in the brief. Silently omitting working-tree changes means new files and tracked modifications that haven't been committed are invisible to reviewers. This is especially impactful for long-running iterative gate sessions where fixes accumulate in the working tree before a final commit.
 
 **Requirement**:
-- Detect dirty worktree (tracked changes or untracked relevant files) when building gate briefs
-- Either include `git diff HEAD` output alongside `git diff "$BASE"...HEAD`, or emit a visible warning: `# warn: N dirty tracked / M untracked files excluded from brief — commit first for complete review`
-- Prefer the warning approach to avoid inflating brief size; the warning should appear in the brief header section
+- Detect dirty worktree (tracked changes or non-gitignored untracked files) when the branch has committed `BASE...HEAD` changes.
+- Without `--allow-dirty`, fail loud with exit 3 and guidance to commit first or opt into dirty review scope.
+- With `--allow-dirty`, fold the working tree into scope: committed + uncommitted tracked changes via `git diff "$BASE"` and non-gitignored untracked files via `git ls-files --others --exclude-standard`.
+- Preserve the existing dirty-only-no-commit behavior: no preflight failure because the working-tree fallback already reviews those changes.
 
 **Acceptance**:
-1. When working tree has uncommitted tracked changes, gate brief includes either the full diff or a "dirty-tree" warning line
-2. `bash scripts/test-pr-gate.sh` → exit 0 (includes regression for dirty-tree warning)
-3. `bash scripts/run-all-tests.sh` → exit 0
+1. Committed `BASE...HEAD` changes + dirty worktree without `--allow-dirty` → exit 3 with guidance.
+2. `--allow-dirty` folds committed + working-tree changes into review scope.
+3. Dirty-only-no-commit worktrees are still reviewed by the existing fallback.
+4. `bash scripts/test-pr-gate.sh` → exit 0.
+5. `bash scripts/run-all-tests.sh` → exit 0.
 
 **Milestone**: v0.3.x (post-M1); prioritize before the next multi-gate iterative fix session.
 
@@ -1265,4 +1268,3 @@ Discovered 2026-06-01: concurrent codex + claude smoke test; codex exit 0 and co
 ## CC-299 — [arch] 統一 executor dispatch 路徑 ✅ 2026-06-01
 
 **See**: pr:#213
-

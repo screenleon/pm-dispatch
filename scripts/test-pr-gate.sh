@@ -2828,6 +2828,184 @@ test_parallel_synthesis_brief_has_citation_guard() {
   pass "$name"
 }
 
+test_dirty_preflight_fails_on_committed_plus_dirty() {
+  # Verifies that pr-gate.sh fails loud (exit 3) when the branch has committed
+  # BASE...HEAD changes AND the worktree is dirty, without --allow-dirty.
+  #
+  # Steps:
+  #   1. Create a repo with committed feature-branch changes, then dirty a
+  #      tracked file (uncommitted).
+  #   2. Run pr-gate.sh against main without --allow-dirty.
+  #   3. Assert exit code 3 and stderr explains the omitted tracked/untracked files.
+  local name="dirty-preflight-fails-on-committed-plus-dirty"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  (cd "$repo" && printf 'extra\n' >> app.go)
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 3 ]]; then
+    fail "$name" "exit $code, expected 3"
+    return
+  fi
+  assert_file_contains "$name" "$err" "working tree is dirty" || return
+  assert_file_contains "$name" "$err" "uncommitted tracked file(s)" || return
+  pass "$name"
+}
+
+test_dirty_preflight_allow_dirty_includes_worktree() {
+  # Verifies that --allow-dirty proceeds (exit 0) and folds the working tree
+  # (here an untracked file) into the review brief scope.
+  #
+  # Steps:
+  #   1. Create a repo with committed feature-branch changes, then add an
+  #      untracked file (dirtysrc.go).
+  #   2. Run pr-gate.sh against main with --allow-dirty, capturing the brief.
+  #   3. Assert exit 0, dispatch succeeds, the brief lists dirtysrc.go, and
+  #      stderr notes --allow-dirty was set.
+  local name="dirty-preflight-allow-dirty-includes-worktree"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  (cd "$repo" && printf 'x\n' > dirtysrc.go)
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  assert_file_contains "$name" "$brief" "dirtysrc.go" || return
+  assert_file_contains "$name" "$err" "--allow-dirty set" || return
+  pass "$name"
+}
+
+test_allow_dirty_includes_uncommitted_tracked() {
+  # Verifies that --allow-dirty folds an uncommitted *tracked* modification into
+  # review scope. Mutation-proof: reverting the implementation to two-dot
+  # `git diff "$BASE"` -> three-dot `git diff "$BASE"...HEAD` would drop this file
+  # (its committed state is identical between BASE and HEAD), failing this test.
+  #
+  # Steps:
+  #   1. Commit tracked_base.go on main, branch to feature, commit app.go
+  #      (so BASE...HEAD covers app.go but NOT tracked_base.go).
+  #   2. Modify tracked_base.go in the worktree without committing.
+  #   3. Run pr-gate.sh against main with --allow-dirty, capturing the brief.
+  #   4. Assert exit 0 and the brief includes tracked_base.go (only the two-dot
+  #      diff against BASE surfaces it; three-dot would omit it).
+  local name="allow-dirty-includes-uncommitted-tracked"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    write_managed_gitignore
+    printf 'package main\nfunc Base() {}\n' > tracked_base.go
+    git add README.md .gitignore tracked_base.go
+    git commit -q -m initial
+    git checkout -q -b feature
+    for n in $(seq 1 150); do printf 'func Fn%s() {}\n' "$n"; done > app.go
+    git add app.go
+    git commit -q -m "add code"
+    # uncommitted tracked modification to a file unchanged between main and HEAD
+    printf 'func DirtyTracked() {}\n' >> tracked_base.go
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-dirty
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  assert_file_contains "$name" "$brief" "tracked_base.go" || return
+  pass "$name"
+}
+
+test_clean_committed_tree_passes_preflight() {
+  # Verifies that a clean committed tree passes the preflight (exit 0) — the
+  # fail-loud check must not fire when the worktree is clean.
+  #
+  # Steps:
+  #   1. Create a repo with committed feature-branch changes and a clean worktree.
+  #   2. Run pr-gate.sh against main without --allow-dirty.
+  #   3. Assert exit code 0 (preflight does not fire).
+  local name="clean-committed-tree-passes-preflight"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  pass "$name"
+}
+
+test_dirty_only_no_commit_still_reviewed() {
+  # Verifies that a dirty-only tree with NO committed BASE...HEAD changes is
+  # still reviewed (exit 0) via the existing working-tree fallback (OPTION B).
+  #
+  # Steps:
+  #   1. Create a repo with an uncommitted docs change and no committed branch diff.
+  #   2. Run pr-gate.sh against main without --allow-dirty.
+  #   3. Assert exit code 0 (no preflight failure; fallback reviews the tree).
+  local name="dirty-only-no-commit-still-reviewed"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -2848,5 +3026,10 @@ run_test test_gate_result_reviewer_verdicts_are_valid
 run_test test_sequential_brief_has_citation_guard
 run_test test_parallel_reviewer_brief_has_citation_guard
 run_test test_parallel_synthesis_brief_has_citation_guard
+run_test test_dirty_preflight_fails_on_committed_plus_dirty
+run_test test_dirty_preflight_allow_dirty_includes_worktree
+run_test test_allow_dirty_includes_uncommitted_tracked
+run_test test_clean_committed_tree_passes_preflight
+run_test test_dirty_only_no_commit_still_reviewed
 
 th_summary
