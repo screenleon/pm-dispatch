@@ -371,7 +371,9 @@ Git Bash detection branch that uses junctions instead of silently falling back t
 
 **Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
 
-## CC-208 — Gate reviewer hallucination: document citation without verification ✅ closed 2026-06-01 → implemented as CC-300 (pr:#206)
+## CC-208 — Gate reviewer hallucination: document citation without verification ✅ 2026-06-01
+
+**See**: pr:#206
 
 **Problem**: Gate reviewers (primarily qa-tester) cite non-existent documents in
 findings. Observed example: "AGENT.md §3" — this file does not exist in the repo.
@@ -1315,7 +1317,9 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-289]]`（pmctl dispatch run）、`[[CC-266]]`（adapters/claude/dispatch.sh）、`[[CC-291]]`（executor role 定義）。
 
-## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap ✅ closed 2026-06-01 (pr:#206)
+## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap ✅ 2026-06-01
+
+**See**: pr:#206
 
 **Problem**: Implemented as the fix for `[[CC-208]]`. Gate reviewers cited hallucinated
 documents because they had no verified file listing. Each false citation added ~1–2 min
@@ -1332,7 +1336,9 @@ manual verification overhead per gate run.
 
 **Cross-link**: `[[CC-208]]`（original problem）、`[[CC-301]]`（chain coexistence fix landed same cycle）、`[[CC-302]]`（allowlist backup path follow-up）、`[[CC-303]]`（allowlist dedup follow-up）.
 
-## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal ✅ closed 2026-06-01 (pr:#207)
+## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal ✅ 2026-06-01
+
+**See**: pr:#207
 
 **Problem**: Re-running `scripts/install-hooks.sh` (pm-dispatch) over an existing
 `statusLine` command from another tool (e.g. claude-account-switcher) clobbered all
