@@ -39,9 +39,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/portability | 2026-05-18 | — | — | oss |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
-| CC-208 | 🔵 active | **[Gate reviewer hallucination]** Gate reviewers cite non-existent docs in findings — observed: "AGENT.md §3" (does not exist). Reviewers invent plausible-sounding citations because they don't receive the real file list. Fix: (a) inject verified file index into gate brief preamble, or (b) add "do not cite unconfirmed docs" constraint to each reviewer agent definition. Recurs on ~30% of gate runs; each occurrence adds ~1–2 min manual verification overhead. | ops/process | 2026-05-20 | pr:#206 | P3 | — |
-| CC-300 | 🔵 active | citation guard: inject verified file index into gate briefs + codex-dispatch allowlist bootstrap | ops/gate | 2026-06-01 | pr:#206 | P2 | — |
-| CC-301 | 🔵 active | cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall-hooks allowlist removal | ops | 2026-06-01 | pr:#207 | P2 | — |
 | CC-302 | 🔵 active | install_dispatch_allowlist 缺乏 settings.json backup path（gate risk [medium] advisory from pr:#207） | ops | 2026-06-01 | pr:#207 | P3 | — |
 | CC-303 | 🔵 active | allowlist entry construction duplicated in install.sh + doctor.sh — centralize（gate arch [medium] advisory from pr:#207） | arch | 2026-06-01 | pr:#207 | P3 | — |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
@@ -87,7 +84,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 | CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
-| CC-291 | ✅ closed 2026-06-01 | **[arch: guard profile = role × runtime]** `pmctl guard check --profile pm/codex/claude` 把兩個正交軸壓成一條清單:`pm` 是角色(已 runtime-agnostic — codex-as-PM 與 claude-as-PM 共用一個政策),`codex`/`claude` 其實是 runtime 名(代表 codex-executor / claude-executor)。改成 **`--role <pm/executor/…>`**,runtime 由 dispatch 的 `--adapter` 決定:guard 關心角色、dispatch 關心 runtime。一般化(user 2026-05-31):未來會寫檔的 agent 角色(spike / reviewer / doc-writer …)一律註冊成 ROLE,而非 per-(role,runtime) 扁平項;guard registry 改 role-keyed。關聯 [[CC-233]]、[[CC-288]]、[[CC-266]]。 | arch | 2026-05-31 | pr:#205 | P2 | design |
 | CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
 | CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
 | CC-297 | 🟡 deferred | **[arch: register `reviewer` as a guard role — one fixed rule]** pr-gate 的 5 個 reviewers + synthesis 是會寫檔的 agent，但落點目前只靠 prompt 指示（「Only write OUTPUT_FILE」）+ codex `workspace-write` sandbox，**沒有硬 guard**——CC-291 generalization 的下一個實例（user 2026-06-01）。設計定調：**一個 `reviewer` role + 一條固定規則 = 只能寫 `.gate-results/` 目錄**，跨 tier-subset（用幾個 reviewer 是 orchestration 的事，guard 不列舉）與 parallel/sequential（兩模式都寫 `.gate-results/`，故綁**目錄**不綁檔名）統一套用。brief（`.codex-briefs/`）由 gate 腳本寫、**不算 reviewer**，排除在規則外。trigger 因 runtime 異（codex 顯式 `pmctl guard check` / claude-route PreToolUse hook），規則不變（CC-291 模式）。`--output` 覆寫到 repo 外 = operator 信任逃生口，文件化。defense-in-depth（防 diff 內 prompt-injection 誘導 reviewer 亂寫），非阻塞。brief 位置統一見 [[CC-298]]。關聯 [[CC-291]]、[[CC-288]]、[[CC-298]]。 | arch | 2026-06-01 | — | P3 | design |
@@ -370,30 +366,6 @@ Git Bash detection branch that uses junctions instead of silently falling back t
 5. `docs/platform-support.md` updated to reflect auto-sync is restored
 
 **Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
-
-## CC-208 — Gate reviewer hallucination: document citation without verification 🔵 active
-
-**Problem**: Gate reviewers (primarily qa-tester) cite non-existent documents in
-findings. Observed example: "AGENT.md §3" — this file does not exist in the repo.
-The citation is used to justify a block verdict, forcing the main thread to manually
-verify the reference before deciding to override or fix.
-
-**Why**: Reviewer agents receive a diff, their agent definition, and the gate brief.
-They do not receive a file listing or document index, so they infer docs from training
-data and context rather than confirming existence. The constraint in their definition
-does not currently include "only cite documents you can confirm exist."
-
-**Requirement** (any of the following):
-1. Inject a verified file list (e.g., `find . -name "*.md" | sort`) into the gate
-   brief preamble so reviewers can cross-check citations before writing findings.
-2. Add an explicit instruction to each reviewer agent definition: "Do not cite any
-   document, section, or rule file by name unless you can confirm it appears in the
-   diff or in documents read during this session."
-3. Gate synthesis step verifies reviewer document citations against actual repo files
-   and flags unverifiable references as advisory-only rather than blocking.
-
-**Priority**: P3 — non-urgent. Occurs on ~30% of gate runs based on observed pattern.
-Each occurrence adds ~1–2 min of manual verification overhead.
 
 ## CC-209 — codegraph integration: pre-indexed context for Codex briefs（deferred）
 
@@ -1196,42 +1168,6 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-282]]` (pmctl backlog), `[[CC-284]]` (working-set + the CC-only fix this generalizes).
 
-## CC-291 — [arch] guard profile = role × runtime (PM is a role; codex/claude are runtimes) ✅ 2026-06-01
-
-**See**: pr:#205
-
-**Origin (user, 2026-05-31, during CC-266 review)**: 在 `pmctl guard check --profile pm|codex|claude` 裡,`pm` 是「角色」,`codex`/`claude` 是「runtime」——兩個正交的軸被壓成一條扁平清單。User 的直覺:**PM 本身應該是一種 agent(角色),底下由 codex 或 claude 來執行**。這個直覺是對的,而且現況已半實現:`--profile pm` 已是 runtime-agnostic(codex-as-PM 顯式呼叫、claude-as-PM 走 PreToolUse,共用同一個 project-pm 政策)。
-
-**The conflation**:
-
-```
-            codex            claude
-  PM     codex-as-PM      claude-as-PM     ← guard 都用 `pm` 政策(已收斂)
-  exec   codex-executor   claude-executor  ← guard 用 codex/claude(未收斂)
-```
-
-3 個 profile 覆蓋 4 cell,因為 PM 角色跨 runtime 收斂成一個;executor 角色才被 runtime 切成兩個。命名也不一致:`pm` 是角色名,`codex`/`claude` 是 runtime 名。
-
-**Target model**: guard 吃 **`--role <pm | executor | …>`**(runtime-agnostic),runtime 由 dispatch 的 `--adapter` 決定。**guard 關心角色;dispatch 關心 runtime。**
-
-- PM 角色 → 一個政策(memory 目錄),跨 runtime(現況已如此)。
-- executor 角色 → 在 **dispatch-guard 層**,codex 與 claude 的政策其實一模一樣(`/tmp/brief-*.md`),所以本來就能收斂成一個 `executor`。
-
-**Two layers must stay distinct(重要,別合錯)**:
-- **dispatch-guard(pmctl `guard check`)** = role-based:檢查 brief 落點,與 runtime 無關。
-- **PreToolUse hook** = runtime-specific:codex-executor 是薄 dispatcher(只准寫 `/tmp/brief-*.md`)vs claude-executor 自執行(改 work-dir,靠 harness/`--permission-mode`)。這層 key 在 `agent_type` 上,真的因 runtime 而異——**不可**一起收斂掉。
-
-**Generalization(user 明確要求)**: 未來任何「會寫檔、需要 guard」的 agent 角色——spike、reviewer、doc-writer、feature-agent 等——都應**註冊成一個 ROLE**(role-keyed guard registry),而非每加一個 (role,runtime) 組合就在扁平清單塞一項。**新增 runtime 是 adapter 的事;新增角色才動 guard。**
-
-**Scope / touch points**:
-- `scripts/lib/pmctl-guard.sh`:`--profile` → `--role`;role → 政策對應(role-keyed);呼叫端遷移或向後相容別名。
-- `agent_type` 慣例:釐清 (role,runtime) tuple 與 role 的關係;PreToolUse hooks 維持 runtime-specific。
-- 測試:`test-pmctl-guard.sh` / `test-hooks.sh` 全綠;fail-closed 不可破。
-
-**Risk**: 動到 [[CC-288]] battle-tested guard 面 + agent_type 慣例 → 需完整 guard/hook 測試覆蓋,且不可破 fail-closed。非阻塞 spine(P2);適合 spine 收尾後、或與 [[CC-233]](分層強制器,正好一起想 guard 的層界)一起做。
-
-**Cross-link**: `[[CC-288]]` (guard surface), `[[CC-233]]` (layer boundaries), `[[CC-266]]` / `[[CC-289]]` (executor model).
-
 ## CC-293 — [arch] lift default/config resolution into pmctl runtime 🟡 deferred
 
 **Problem**: `adapters/codex/dispatch.sh` now owns default-model selection and `dispatch.default_model` config precedence (`--model` flag > config > built-in `default` alias). That is policy-like resolution living in a thin adapter — flagged by both critic and architecture-reviewer during the CC-292 gate as a slight re-fattening of the adapter.
@@ -1314,44 +1250,6 @@ This makes directory creation the mutex.
 **Why deferred / P2**: 架構對齊，非阻塞當前流程。`adapters/claude/dispatch.sh` 已在 v0.3.0 實作（CC-266），基礎設施已就位；主要工作是更新 agent 定義與呼叫點。
 
 **Cross-link**: `[[CC-289]]`（pmctl dispatch run）、`[[CC-266]]`（adapters/claude/dispatch.sh）、`[[CC-291]]`（executor role 定義）。
-
-## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap 🔵 active
-
-**Problem**: Implemented as the fix for `[[CC-208]]`. Gate reviewers cited hallucinated
-documents because they had no verified file listing. Each false citation added ~1–2 min
-manual verification overhead per gate run.
-
-**Implemented in pr:#206**:
-- `scripts/pr-gate.sh`: injects a verified file index (repo `.md` + changed files) into
-  every gate brief preamble, giving reviewers a reference list to check citations against.
-- `install.sh` + `scripts/doctor.sh`: adds four `Bash(codex-dispatch.sh:*)` and
-  `Bash(adapters/codex/dispatch.sh:*)` permission entries to Claude `settings.json` on
-  install; doctor validates their presence and fails with a remediation hint if absent.
-- `scripts/test-pr-gate.sh`: coverage for citation-guard injection in sequential,
-  per-reviewer parallel, and synthesis paths.
-
-**Cross-link**: `[[CC-208]]`（original problem）、`[[CC-301]]`（chain coexistence fix landed same cycle）、`[[CC-302]]`（allowlist backup path follow-up）、`[[CC-303]]`（allowlist dedup follow-up）.
-
-## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal 🔵 active
-
-**Problem**: Re-running `scripts/install-hooks.sh` (pm-dispatch) over an existing
-`statusLine` command from another tool (e.g. claude-account-switcher) clobbered all
-but the first chained hook. Root cause: `install-hooks.sh` and `hook-save-rate-limits.sh`
-both read only the first line of `statusline-chain.conf` via `head -1` / single `read`.
-Additionally, `uninstall-hooks.sh` did not remove the four dispatch `Bash(...:*)` allowlist
-entries added by `install.sh`, leaving persistent permission expansions after uninstall.
-
-**Implemented in pr:#207**:
-- `scripts/install-hooks.sh`: added `write_statusline_chain()` that preserves all existing
-  non-self chain entries when updating the chain conf.
-- `scripts/hook-save-rate-limits.sh`: changed `head -1` to a while-loop so all chain lines
-  are executed, skipping blank and `#` comment lines.
-- `scripts/uninstall-hooks.sh`: removes the four managed Bash dispatch allowlist entries
-  inside the same atomic jq transform used for hook and statusLine cleanup.
-- Tests: multi-line chain execution order, chain preservation on re-install, allowlist
-  removal and dry-run idempotency.
-
-**Cross-link**: `[[CC-300]]`（same PR cycle）、`[[CC-302]]`（allowlist backup path）、`[[CC-303]]`（allowlist construction dedup）.
 
 ## CC-302 — install_dispatch_allowlist: add backup path before settings.json mutation 🔵 active
 

@@ -1,10 +1,10 @@
-<!-- pm-dispatch: backlog-archive 2026-05-31 -->
+<!-- pm-dispatch: backlog-archive 2026-06-01 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
 index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-05-31
+Last archived: 2026-06-01
 
 ---
 
@@ -1822,4 +1822,108 @@ This ticket is the **doc reconciliation (A)** only; the **B** items are delibera
 **Problem**: `commands/pm.md` 包含 brief file 建立、handover validation、Codex dispatch、background mode、BashOutput tracking、stderr parsing、git diff verify、exit 124 retry 等大量流程邏輯。markdown command 逐漸變成「半程式碼、半 prompt、半 policy」的混合體。
 **Why**: 當 Codex CLI、Claude Code hooks 或 scripts 行為改變時，markdown command 很容易與實際腳本 drift。script 有測試；markdown 沒有。
 **Requirement**: 識別 pm.md 中可搬到 shell script 的 runtime 步驟（特別是 handover extraction + validation + dispatch 命令組裝）；移入 `scripts/pm-dispatch-runner.sh`（或直接加強 `scripts/lib/`）；pm.md 只保留「什麼情境呼叫什麼腳本」的意圖描述與 trigger 條件。依賴 CC-200（executor-router.sh）。
+
+## CC-208 — Gate reviewer hallucination: document citation without verification ✅ 2026-06-01
+
+**See**: pr:#206
+
+**Problem**: Gate reviewers (primarily qa-tester) cite non-existent documents in
+findings. Observed example: "AGENT.md §3" — this file does not exist in the repo.
+The citation is used to justify a block verdict, forcing the main thread to manually
+verify the reference before deciding to override or fix.
+
+**Why**: Reviewer agents receive a diff, their agent definition, and the gate brief.
+They do not receive a file listing or document index, so they infer docs from training
+data and context rather than confirming existence. The constraint in their definition
+does not currently include "only cite documents you can confirm exist."
+
+**Requirement** (any of the following):
+1. Inject a verified file list (e.g., `find . -name "*.md" | sort`) into the gate
+   brief preamble so reviewers can cross-check citations before writing findings.
+2. Add an explicit instruction to each reviewer agent definition: "Do not cite any
+   document, section, or rule file by name unless you can confirm it appears in the
+   diff or in documents read during this session."
+3. Gate synthesis step verifies reviewer document citations against actual repo files
+   and flags unverifiable references as advisory-only rather than blocking.
+
+**Priority**: P3 — non-urgent. Occurs on ~30% of gate runs based on observed pattern.
+Each occurrence adds ~1–2 min of manual verification overhead.
+
+## CC-291 — [arch] guard profile = role × runtime (PM is a role; codex/claude are runtimes) ✅ 2026-06-01
+
+**See**: pr:#205
+
+**Origin (user, 2026-05-31, during CC-266 review)**: 在 `pmctl guard check --profile pm|codex|claude` 裡,`pm` 是「角色」,`codex`/`claude` 是「runtime」——兩個正交的軸被壓成一條扁平清單。User 的直覺:**PM 本身應該是一種 agent(角色),底下由 codex 或 claude 來執行**。這個直覺是對的,而且現況已半實現:`--profile pm` 已是 runtime-agnostic(codex-as-PM 顯式呼叫、claude-as-PM 走 PreToolUse,共用同一個 project-pm 政策)。
+
+**The conflation**:
+
+```
+            codex            claude
+  PM     codex-as-PM      claude-as-PM     ← guard 都用 `pm` 政策(已收斂)
+  exec   codex-executor   claude-executor  ← guard 用 codex/claude(未收斂)
+```
+
+3 個 profile 覆蓋 4 cell,因為 PM 角色跨 runtime 收斂成一個;executor 角色才被 runtime 切成兩個。命名也不一致:`pm` 是角色名,`codex`/`claude` 是 runtime 名。
+
+**Target model**: guard 吃 **`--role <pm | executor | …>`**(runtime-agnostic),runtime 由 dispatch 的 `--adapter` 決定。**guard 關心角色;dispatch 關心 runtime。**
+
+- PM 角色 → 一個政策(memory 目錄),跨 runtime(現況已如此)。
+- executor 角色 → 在 **dispatch-guard 層**,codex 與 claude 的政策其實一模一樣(`/tmp/brief-*.md`),所以本來就能收斂成一個 `executor`。
+
+**Two layers must stay distinct(重要,別合錯)**:
+- **dispatch-guard(pmctl `guard check`)** = role-based:檢查 brief 落點,與 runtime 無關。
+- **PreToolUse hook** = runtime-specific:codex-executor 是薄 dispatcher(只准寫 `/tmp/brief-*.md`)vs claude-executor 自執行(改 work-dir,靠 harness/`--permission-mode`)。這層 key 在 `agent_type` 上,真的因 runtime 而異——**不可**一起收斂掉。
+
+**Generalization(user 明確要求)**: 未來任何「會寫檔、需要 guard」的 agent 角色——spike、reviewer、doc-writer、feature-agent 等——都應**註冊成一個 ROLE**(role-keyed guard registry),而非每加一個 (role,runtime) 組合就在扁平清單塞一項。**新增 runtime 是 adapter 的事;新增角色才動 guard。**
+
+**Scope / touch points**:
+- `scripts/lib/pmctl-guard.sh`:`--profile` → `--role`;role → 政策對應(role-keyed);呼叫端遷移或向後相容別名。
+- `agent_type` 慣例:釐清 (role,runtime) tuple 與 role 的關係;PreToolUse hooks 維持 runtime-specific。
+- 測試:`test-pmctl-guard.sh` / `test-hooks.sh` 全綠;fail-closed 不可破。
+
+**Risk**: 動到 [[CC-288]] battle-tested guard 面 + agent_type 慣例 → 需完整 guard/hook 測試覆蓋,且不可破 fail-closed。非阻塞 spine(P2);適合 spine 收尾後、或與 [[CC-233]](分層強制器,正好一起想 guard 的層界)一起做。
+
+**Cross-link**: `[[CC-288]]` (guard surface), `[[CC-233]]` (layer boundaries), `[[CC-266]]` / `[[CC-289]]` (executor model).
+
+## CC-300 — citation guard: verified file index injection + codex-dispatch allowlist bootstrap ✅ 2026-06-01
+
+**See**: pr:#206
+
+**Problem**: Implemented as the fix for `[[CC-208]]`. Gate reviewers cited hallucinated
+documents because they had no verified file listing. Each false citation added ~1–2 min
+manual verification overhead per gate run.
+
+**Implemented in pr:#206**:
+- `scripts/pr-gate.sh`: injects a verified file index (repo `.md` + changed files) into
+  every gate brief preamble, giving reviewers a reference list to check citations against.
+- `install.sh` + `scripts/doctor.sh`: adds four `Bash(codex-dispatch.sh:*)` and
+  `Bash(adapters/codex/dispatch.sh:*)` permission entries to Claude `settings.json` on
+  install; doctor validates their presence and fails with a remediation hint if absent.
+- `scripts/test-pr-gate.sh`: coverage for citation-guard injection in sequential,
+  per-reviewer parallel, and synthesis paths.
+
+**Cross-link**: `[[CC-208]]`（original problem）、`[[CC-301]]`（chain coexistence fix landed same cycle）、`[[CC-302]]`（allowlist backup path follow-up）、`[[CC-303]]`（allowlist dedup follow-up）.
+
+## CC-301 — cross-repo chain coexistence: multi-line statusline-chain.conf + uninstall allowlist removal ✅ 2026-06-01
+
+**See**: pr:#207
+
+**Problem**: Re-running `scripts/install-hooks.sh` (pm-dispatch) over an existing
+`statusLine` command from another tool (e.g. claude-account-switcher) clobbered all
+but the first chained hook. Root cause: `install-hooks.sh` and `hook-save-rate-limits.sh`
+both read only the first line of `statusline-chain.conf` via `head -1` / single `read`.
+Additionally, `uninstall-hooks.sh` did not remove the four dispatch `Bash(...:*)` allowlist
+entries added by `install.sh`, leaving persistent permission expansions after uninstall.
+
+**Implemented in pr:#207**:
+- `scripts/install-hooks.sh`: added `write_statusline_chain()` that preserves all existing
+  non-self chain entries when updating the chain conf.
+- `scripts/hook-save-rate-limits.sh`: changed `head -1` to a while-loop so all chain lines
+  are executed, skipping blank and `#` comment lines.
+- `scripts/uninstall-hooks.sh`: removes the four managed Bash dispatch allowlist entries
+  inside the same atomic jq transform used for hook and statusLine cleanup.
+- Tests: multi-line chain execution order, chain preservation on re-install, allowlist
+  removal and dry-run idempotency.
+
+**Cross-link**: `[[CC-300]]`（same PR cycle）、`[[CC-302]]`（allowlist backup path）、`[[CC-303]]`（allowlist construction dedup）.
 
