@@ -110,7 +110,14 @@ install_dispatch_allowlist() {
     mkdir -p "$(dirname "$settings")"
     printf '{}\n' > "$settings"
   fi
-  cp "$settings" "${settings}.bak"
+  local _backup_ts
+  _backup_ts="$(date +%Y%m%d-%H%M%S)"
+  while [[ -e "${settings}.bak.${_backup_ts}" ]]; do
+    sleep 1
+    _backup_ts="$(date +%Y%m%d-%H%M%S)"
+  done
+  cp "$settings" "${settings}.bak.${_backup_ts}"
+  printf '  settings.json: backup at %s.bak.%s\n' "$settings" "$_backup_ts"
 
   while IFS= read -r entry; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
@@ -363,7 +370,7 @@ else
 fi
 echo
 
-echo "==> dispatch allowlist"
+echo "==> dispatch permissions.allow"
 install_dispatch_allowlist
 echo
 
@@ -381,4 +388,7 @@ fi
 if ! manifest_flush "$CLAUDE_HOME/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
   echo "install: manifest write failed" >&2
   exit 3
+fi
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "dispatch allowlist dry-run complete"
 fi

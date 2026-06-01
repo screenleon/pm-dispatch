@@ -794,6 +794,44 @@ test_dispatch_allowlist_adapter_absent() {
   fi
 }
 
+test_dispatch_allowlist_copymode_no_lib_fail() {
+  local name="test_dispatch_allowlist_copymode_no_lib_fail"
+  should_run "$name" || return 0
+  # Verifies that in copy-mode (lib/ absent), doctor still reports [FAIL] for
+  # a missing dispatch allowlist — not [WARN]. The inline fallback must keep
+  # the check concrete.
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir with NO lib/ subdirectory.
+  #   2. Create a home with settings.json that has NO permissions.allow.
+  #   3. Run the copied doctor.sh.
+  #   4. Assert exit 1 and "[FAIL]" + "dispatch allowlist" (not "[WARN]").
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local copydir="$tmp_root/copy-scripts-allowlist-fail"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+
+  local home="$tmp_root/home-copymode-allowlist-fail" out status=0 path
+  write_minimal_settings "$home"
+  jq 'del(.permissions.allow)' "$home/.claude/settings.json" > "$home/.claude/settings.json.tmp"
+  mv "$home/.claude/settings.json.tmp" "$home/.claude/settings.json"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-copymode-allowlist-fail" claude)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$copydir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* && "$out" == *"dispatch allowlist"* && "$out" != *"[WARN]"*"dispatch allowlist"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected [FAIL] for dispatch allowlist in copy-mode; status=$status out=$out"
+  fi
+}
+
 case_doctor_profile_missing_arg_exits_2() {
   # Verifies that --profile with no following argument exits 2 with an error message.
   #
@@ -1264,6 +1302,7 @@ case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing
 test_dispatch_allowlist_adapter_absent
+test_dispatch_allowlist_copymode_no_lib_fail
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity

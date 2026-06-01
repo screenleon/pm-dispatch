@@ -337,8 +337,15 @@ check_dispatch_allowlist() {
   fi
 
   if ! declare -F dispatch_allowlist_entries >/dev/null 2>&1; then
-    emit_check dispatch-allowlist warn "dispatch_allowlist_entries unavailable (copy-mode?)"
-    return
+    dispatch_allowlist_entries() {
+      local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
+      local rel="${abs_dispatch#"$HOME/"}"
+      local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
+      local rel_adapter="${abs_adapter#"$HOME/"}"
+      printf '%s\n' \
+        "Bash($abs_dispatch:*)" "Bash(~/$rel:*)" \
+        "Bash($abs_adapter:*)" "Bash(~/$rel_adapter:*)"
+    }
   fi
 
   local shim_ok=0 adapter_ok=0 entry
@@ -352,9 +359,9 @@ check_dispatch_allowlist() {
   done < <(dispatch_allowlist_entries)
 
   if [[ $shim_ok -eq 1 && $adapter_ok -eq 1 ]]; then
-    emit_check dispatch-allowlist ok "dispatch-allowlist present (shim + adapter)"
+    emit_check dispatch-allowlist ok "dispatch allowlist present (shim + adapter)"
   else
-    emit_check dispatch-allowlist fail "dispatch-allowlist incomplete or missing" \
+    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
       "bash '${REPO_ROOT}/install.sh'"
   fi
 }

@@ -550,6 +550,67 @@ test_install_dispatch_allowlist_idempotent() {
   pass "$name"
 }
 
+test_install_dispatch_allowlist_backup_timestamped() {
+  local name="test_install_dispatch_allowlist_backup_timestamped"
+  should_run "$name" || return 0
+  # Verifies that install.sh creates a timestamped backup of settings.json
+  # before mutating it, and that the backup is byte-identical to the original.
+  #
+  # Steps:
+  #   1. Create a fresh settings.json with known content.
+  #   2. Capture its checksum.
+  #   3. Run install.sh.
+  #   4. Assert a settings.json.bak.* file exists (glob pattern).
+  #   5. Assert the backup is byte-identical to the pre-install content.
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$settings"
+  local before
+  before="$(md5sum "$settings" | awk '{print $1}')"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+
+  local bak
+  bak="$(ls "$home/.claude/settings.json.bak."* 2>/dev/null | head -1)"
+  if [[ -z "$bak" ]]; then
+    fail "$name" "no timestamped backup found (settings.json.bak.*)"
+    return
+  fi
+  local after
+  after="$(md5sum "$bak" | awk '{print $1}')"
+  if [[ "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "backup $bak is not byte-identical to pre-install settings (before=$before after=$after)"
+  fi
+}
+
+test_dispatch_allowlist_lib_parity() {
+  local name="test_dispatch_allowlist_lib_parity"
+  should_run "$name" || return 0
+  # Verifies that scripts/lib/allowlist.sh dispatch_allowlist_entries() produces
+  # the same four entries as the test helper dispatch_allowlist_entries_for_home()
+  # for the same home directory, proving they share one source of truth.
+  local parity_home="$tmp_root/parity-home"
+  mkdir -p "$parity_home"
+
+  local from_lib from_helper
+  from_lib="$(REPO_ROOT="$REPO_ROOT" HOME="$parity_home" bash -c \
+    '. "$1/scripts/lib/allowlist.sh"; dispatch_allowlist_entries' \
+    _ "$REPO_ROOT")"
+  from_helper="$(dispatch_allowlist_entries_for_home "$parity_home")"
+
+  if [[ "$from_lib" == "$from_helper" ]]; then
+    pass "$name"
+  else
+    fail "$name" "lib output:\n$from_lib\nhelper output:\n$from_helper"
+  fi
+}
+
 test_dispatch_allowlist_uninstall_removes_entries() {
   # Verifies uninstall-hooks.sh removes all four dispatch Bash allowlist
   # entries while leaving unrelated permissions.allow entries intact.
@@ -1867,6 +1928,8 @@ test_install_hooks_jq_missing_prints_platform_hints
 test_install_sh_wires_hooks_no_settings
 test_install_adds_dispatch_allowlist
 test_install_dispatch_allowlist_idempotent
+test_install_dispatch_allowlist_backup_timestamped
+test_dispatch_allowlist_lib_parity
 test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
 test_hooks_install_uninstall_lifecycle
