@@ -1671,8 +1671,11 @@ _set_mtime_secs_ago() {
   local file="$1" secs="$2"
   if command -v perl >/dev/null 2>&1; then
     perl -e 'utime(time()-$ARGV[0], time()-$ARGV[0], $ARGV[1])' "$secs" "$file"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "import os,time; os.utime('$file', (time.time()-$secs, time.time()-$secs))"
   else
-    touch -d "@$(( $(date +%s) - secs ))" "$file"
+    printf 'SKIP: _set_mtime_secs_ago requires perl or python3\n' >&2
+    return 1
   fi
 }
 
@@ -1893,11 +1896,18 @@ rl_hook_empty_stdin() {
 
 _hook_startup_cleans_stale_rate_tmp() {
   local name="rl-hook/startup-cleans-stale-rate-tmp" rl_home stale_file status
+  # Verifies that the hook's startup sweep deletes a .rate-limits.json.tmp.*
+  # file whose mtime is more than 60 minutes old (7200 s).
+  # Steps:
+  #   1. Create a temp CLAUDE_CONFIG_DIR and a .rate-limits.json.tmp.STALE file
+  #   2. Set the file's mtime to 7200 seconds ago via _set_mtime_secs_ago
+  #   3. Run the hook with empty stdin (no payload)
+  #   4. Assert exit 0 and the stale file is gone
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   stale_file="$rl_home/.rate-limits.json.tmp.STALE"
   touch "$stale_file"
-  _set_mtime_secs_ago "$stale_file" 7200
+  _set_mtime_secs_ago "$stale_file" 7200 || { rm -rf "$rl_home"; return 0; }
   printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
   if [[ "$status" == "0" && ! -e "$stale_file" ]]; then
@@ -1914,6 +1924,13 @@ hook_startup_cleans_stale_rate_tmp() {
 
 _hook_startup_preserves_fresh_rate_tmp() {
   local name="rl-hook/startup-preserves-fresh-rate-tmp" rl_home fresh_tmp status
+  # Verifies that the hook's startup sweep preserves a .rate-limits.json.tmp.*
+  # file whose mtime is under the 60-minute cutoff (just created).
+  # Steps:
+  #   1. Create a temp CLAUDE_CONFIG_DIR and a .rate-limits.json.tmp.FRESH file
+  #   2. Leave the file's mtime at the current time (fresh)
+  #   3. Run the hook with empty stdin (no payload)
+  #   4. Assert exit 0 and the fresh file still exists
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   fresh_tmp="$rl_home/.rate-limits.json.tmp.FRESH"
@@ -1934,11 +1951,18 @@ hook_startup_preserves_fresh_rate_tmp() {
 
 _hook_startup_cleans_61min_rate_tmp() {
   local name="rl-hook/startup-cleans-61min-rate-tmp" rl_home stale_file status
+  # Verifies the just-outside boundary of the +60-minute stale-temp cutoff:
+  # a file that is 61 minutes old (3660 s) must be deleted.
+  # Steps:
+  #   1. Create a temp CLAUDE_CONFIG_DIR and a .rate-limits.json.tmp.TEST61 file
+  #   2. Set the file's mtime to 3660 seconds ago via _set_mtime_secs_ago
+  #   3. Run the hook with empty stdin (no payload)
+  #   4. Assert exit 0 and the file is gone
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   stale_file="$rl_home/.rate-limits.json.tmp.TEST61"
   touch "$stale_file"
-  _set_mtime_secs_ago "$stale_file" 3660
+  _set_mtime_secs_ago "$stale_file" 3660 || { rm -rf "$rl_home"; return 0; }
   printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
   if [[ "$status" == "0" && ! -e "$stale_file" ]]; then
@@ -1955,11 +1979,18 @@ hook_startup_cleans_61min_rate_tmp() {
 
 _hook_startup_preserves_59min_rate_tmp() {
   local name="rl-hook/startup-preserves-59min-rate-tmp" rl_home fresh_file status
+  # Verifies the just-inside boundary of the +60-minute stale-temp cutoff:
+  # a file that is 59 minutes old (3540 s) must be preserved.
+  # Steps:
+  #   1. Create a temp CLAUDE_CONFIG_DIR and a .rate-limits.json.tmp.TEST59 file
+  #   2. Set the file's mtime to 3540 seconds ago via _set_mtime_secs_ago
+  #   3. Run the hook with empty stdin (no payload)
+  #   4. Assert exit 0 and the file still exists
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   fresh_file="$rl_home/.rate-limits.json.tmp.TEST59"
   touch "$fresh_file"
-  _set_mtime_secs_ago "$fresh_file" 3540
+  _set_mtime_secs_ago "$fresh_file" 3540 || { rm -rf "$rl_home"; return 0; }
   printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
   status=$?
   if [[ "$status" == "0" && -e "$fresh_file" ]]; then
@@ -1976,6 +2007,14 @@ hook_startup_preserves_59min_rate_tmp() {
 
 _hook_rate_tmp_exit_trap_cleans_up() {
   local name="rl-hook/rate-tmp-exit-trap-cleans-up" rl_home fake_bin fake_mv leaked
+  # Verifies that the EXIT trap in hook-save-rate-limits.sh removes the
+  # in-flight _rate_tmp file when the hook process is killed by SIGTERM
+  # after mktemp but before the atomic mv completes.
+  # Steps:
+  #   1. Create a temp CLAUDE_CONFIG_DIR and a fake mv that sends SIGTERM to PPID
+  #   2. Run the hook with a valid rate_limits payload and PATH-injected fake mv
+  #   3. After the hook exits, find any .rate-limits.json.tmp.* files in the dir
+  #   4. Assert no leaked temp files remain
   should_run "$name" || return 0
   rl_home="$(mktemp -d)"
   fake_bin="$(mktemp -d)"
