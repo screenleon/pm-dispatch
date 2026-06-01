@@ -41,7 +41,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
 | CC-302 | 🔵 active | install_dispatch_allowlist 缺乏 settings.json backup path（gate risk [medium] advisory from pr:#207） | ops | 2026-06-01 | pr:#207 | P3 | — |
 | CC-303 | 🔵 active | allowlist entry construction duplicated in install.sh + doctor.sh — centralize（gate arch [medium] advisory from pr:#207） | arch | 2026-06-01 | pr:#207 | P3 | — |
-| CC-304 | 🔵 active | hook-save-rate-limits.sh: _rate_tmp not in EXIT trap + no startup cleanup for stale .rate-limits.json.tmp.* files | ops | 2026-06-01 | pr:TBD | P2 | — |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones — live **M0–M6** in MILESTONES.md (synthesis §6 is the original M0–M5 cut); runtime is realized as `cli/pmctl` (not a `runtime/` dir). See docs/architecture/v0.3.0-synthesis.md **Conformance status** for as-built drift (codex+claude adapters shipped; state-first / `mcp/` still open). Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
@@ -1286,23 +1285,3 @@ Raised as arch [medium] advisory in gate-20260601 (pr:#207).
 
 **Cross-link**: `[[CC-300]]`、`[[CC-302]]`.
 
-## CC-304 — hook-save-rate-limits.sh: _rate_tmp trap leak + stale temp startup cleanup 🔵 active
-
-**Problem**: `_rate_tmp` (the atomic-write temp file for `~/.claude/rate-limits.json`) was
-initialized inside a conditional block after the `trap 'rm -f "$_tmp"' EXIT` declaration,
-so the trap never covered it. An interrupted hook invocation (timeout, SIGTERM, SIGKILL)
-left behind `.rate-limits.json.tmp.*` files in `~/.claude/`. Observed: 19 stale files
-spanning 2026-05-26 to 2026-06-01, still accumulating during normal use.
-
-**Root cause (two parts)**:
-1. `_rate_tmp` not in EXIT trap → orphaned on SIGTERM/unexpected exit
-2. SIGKILL bypasses bash traps entirely → residue accumulates even with correct trap
-
-**Fix (pr:TBD)**:
-- Initialize `_rate_tmp=""` before the trap; extend trap to `rm -f "$_tmp" "${_rate_tmp:-}"`
-- Add startup `find "$_config_dir" -maxdepth 1 -name '.rate-limits.json.tmp.*' -mmin +60 -delete` unconditionally (runs before early-return on empty payload), clearing residue from any prior interrupted run
-- Tests: stale file deleted at startup; fresh file preserved
-
-**Priority**: P2 — was actively accumulating, no data loss but adds noise to `doctor.sh` output.
-
-**Cross-link**: `[[CC-301]]`（same hook, chain fix）、`[[CAS-hook]]`（mirror fix in claude-account-switcher）.

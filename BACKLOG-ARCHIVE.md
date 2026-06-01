@@ -1927,3 +1927,23 @@ entries added by `install.sh`, leaving persistent permission expansions after un
 
 **Cross-link**: `[[CC-300]]`（same PR cycle）、`[[CC-302]]`（allowlist backup path）、`[[CC-303]]`（allowlist construction dedup）.
 
+## CC-304 — hook-save-rate-limits.sh: _rate_tmp trap leak + stale temp startup cleanup ✅ closed (PR #209)
+
+**Problem**: `_rate_tmp` (the atomic-write temp file for `~/.claude/rate-limits.json`) was
+initialized inside a conditional block after the `trap 'rm -f "$_tmp"' EXIT` declaration,
+so the trap never covered it. An interrupted hook invocation (timeout, SIGTERM, SIGKILL)
+left behind `.rate-limits.json.tmp.*` files in `~/.claude/`. Observed: 19 stale files
+spanning 2026-05-26 to 2026-06-01, still accumulating during normal use.
+
+**Root cause (two parts)**:
+1. `_rate_tmp` not in EXIT trap → orphaned on SIGTERM/unexpected exit
+2. SIGKILL bypasses bash traps entirely → residue accumulates even with correct trap
+
+**Fix (pr:TBD)**:
+- Initialize `_rate_tmp=""` before the trap; extend trap to `rm -f "$_tmp" "${_rate_tmp:-}"`
+- Add startup `find "$_config_dir" -maxdepth 1 -name '.rate-limits.json.tmp.*' -mmin +60 -delete` unconditionally (runs before early-return on empty payload), clearing residue from any prior interrupted run
+- Tests: stale file deleted at startup; fresh file preserved
+
+**Priority**: P2 — was actively accumulating, no data loss but adds noise to `doctor.sh` output.
+
+**Cross-link**: `[[CC-301]]`（same hook, chain fix）、`[[CAS-hook]]`（mirror fix in claude-account-switcher）.
