@@ -1947,3 +1947,15 @@ spanning 2026-05-26 to 2026-06-01, still accumulating during normal use.
 **Priority**: P2 — was actively accumulating, no data loss but adds noise to `doctor.sh` output.
 
 **Cross-link**: `[[CC-301]]`（same hook, chain fix）、`[[CAS-hook]]`（mirror fix in claude-account-switcher）.
+## CC-302 — install_dispatch_allowlist: add backup path before settings.json mutation ✅ closed 2026-06-01
+
+**See**: pr:#211
+
+**Cross-link**: `[[CC-300]]`、`[[CC-301]]`（context of the allowlist introduction）.
+
+## CC-303 — allowlist entry construction duplicated in install.sh and doctor.sh — centralize ✅ closed 2026-06-01
+
+**See**: pr:#211
+
+**Cross-link**: `[[CC-300]]`、`[[CC-302]]`.
+

@@ -59,6 +59,8 @@ _COPY_FALLBACK_COUNT=0
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/scripts/lib/portable.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/lib/allowlist.sh"
 
 _INSTALL_PLATFORM="$(detect_platform)"
 
@@ -89,21 +91,6 @@ remove_legacy_symlink() {
   fi
 }
 
-dispatch_allowlist_entries() {
-  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-  local rel="${abs_dispatch#"$HOME/"}"
-  local tilde_dispatch="~/$rel"
-  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-  local rel_adapter="${abs_adapter#"$HOME/"}"
-  local tilde_adapter="~/$rel_adapter"
-
-  printf '%s\n' \
-    "Bash($abs_dispatch:*)" \
-    "Bash($tilde_dispatch:*)" \
-    "Bash($abs_adapter:*)" \
-    "Bash($tilde_adapter:*)"
-}
-
 install_dispatch_allowlist() {
   local settings="$CLAUDE_HOME/settings.json"
   local entry
@@ -123,6 +110,14 @@ install_dispatch_allowlist() {
     mkdir -p "$(dirname "$settings")"
     printf '{}\n' > "$settings"
   fi
+  local _backup_ts
+  _backup_ts="$(date +%Y%m%d-%H%M%S)"
+  while [[ -e "${settings}.bak.${_backup_ts}" ]]; do
+    sleep 1
+    _backup_ts="$(date +%Y%m%d-%H%M%S)"
+  done
+  cp "$settings" "${settings}.bak.${_backup_ts}"
+  printf '  settings.json: backup at %s.bak.%s\n' "$settings" "$_backup_ts"
 
   while IFS= read -r entry; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
@@ -375,7 +370,7 @@ else
 fi
 echo
 
-echo "==> dispatch allowlist"
+echo "==> dispatch permissions.allow"
 install_dispatch_allowlist
 echo
 
@@ -393,4 +388,7 @@ fi
 if ! manifest_flush "$CLAUDE_HOME/.pm-dispatch/install-manifest.json" "$REPO_ROOT"; then
   echo "install: manifest write failed" >&2
   exit 3
+fi
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "dispatch allowlist dry-run complete"
 fi

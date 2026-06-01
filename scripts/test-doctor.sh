@@ -10,25 +10,26 @@ DOCTOR="$REPO_ROOT/scripts/doctor.sh"
 th_init "$@"
 
 add_dispatch_allowlist() {
+  # Mirrors dispatch_allowlist_entries() using an explicit home arg for path stripping.
   local home_dir="$1"
   local settings="$home_dir/.claude/settings.json"
-  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-  local rel="${abs_dispatch#"$home_dir/"}"
-  local tilde_dispatch="~/$rel"
-  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-  local rel_adapter="${abs_adapter#"$home_dir/"}"
-  local tilde_adapter="~/$rel_adapter"
-
-  jq --arg dispatch_abs "Bash($abs_dispatch:*)" \
-     --arg dispatch_tilde "Bash($tilde_dispatch:*)" \
-     --arg adapter_abs "Bash($abs_adapter:*)" \
-     --arg adapter_tilde "Bash($tilde_adapter:*)" \
-     '.permissions.allow = [
-       $dispatch_abs,
-       $dispatch_tilde,
-       $adapter_abs,
-       $adapter_tilde
-     ]' "$settings" > "${settings}.tmp"
+  local f rel allow_json
+  allow_json="$(
+    {
+      f="$REPO_ROOT/scripts/codex-dispatch.sh"
+      if [[ -f "$f" ]]; then
+        rel="${f#"$home_dir/"}"
+        printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+      fi
+      for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+        [[ -f "$f" ]] || continue
+        rel="${f#"$home_dir/"}"
+        printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+      done
+    } | jq -Rn '[inputs]'
+  )"
+  jq --argjson allow "$allow_json" '.permissions.allow = $allow' \
+    "$settings" > "${settings}.tmp"
   mv "${settings}.tmp" "$settings"
 }
 
@@ -794,6 +795,47 @@ test_dispatch_allowlist_adapter_absent() {
   fi
 }
 
+test_dispatch_allowlist_copymode_no_lib_fail() {
+  local name="test_dispatch_allowlist_copymode_no_lib_fail"
+  should_run "$name" || return 0
+  # Verifies that in copy-mode (lib/ absent), doctor still reports [FAIL] for
+  # a missing dispatch allowlist — not [WARN]. The inline fallback must keep
+  # the check concrete.
+  #
+  # Steps:
+  #   1. Copy doctor.sh to a temp dir with NO lib/ subdirectory.
+  #   2. Create a home with settings.json that has NO permissions.allow.
+  #   3. Run the copied doctor.sh.
+  #   4. Assert exit 1 and "[FAIL]" + "dispatch allowlist" (not "[WARN]").
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local copydir="$tmp_root/copy-scripts-allowlist-fail"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+
+  local home="$tmp_root/home-copymode-allowlist-fail" out status=0 path
+  write_minimal_settings "$home"
+  jq 'del(.permissions.allow)' "$home/.claude/settings.json" > "$home/.claude/settings.json.tmp"
+  mv "$home/.claude/settings.json.tmp" "$home/.claude/settings.json"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-copymode-allowlist-fail" claude)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$copydir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+
+  # Check that dispatch allowlist produced [FAIL] (not skipped or warned).
+  # Avoid pattern *"[WARN]"*"dispatch allowlist"* because * matches newlines —
+  # other [WARN] lines (e.g. "codex not found") would falsely trigger it.
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"*"dispatch allowlist"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 with [FAIL] dispatch allowlist in copy-mode; status=$status out=$out"
+  fi
+}
+
 case_doctor_profile_missing_arg_exits_2() {
   # Verifies that --profile with no following argument exits 2 with an error message.
   #
@@ -1160,9 +1202,19 @@ case_doctor_claude_config_dir() {
   printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]},\n      {"matcher": "*",          "hooks": [{"type": "command", "command": "%s/scripts/hook-tool-trace.sh"}]}\n    ],\n    "PostToolUse": [\n      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "%s/scripts/hook-routing-log.sh"}]}\n    ],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
-  jq --arg dispatch "Bash($REPO_ROOT/scripts/codex-dispatch.sh:*)" \
-     --arg adapter "Bash($REPO_ROOT/adapters/codex/dispatch.sh:*)" \
-     '.permissions.allow = [$dispatch, $adapter]' "$config_dir/settings.json" > "$config_dir/settings.json.tmp"
+  # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.
+  local _allow_json _f
+  _allow_json="$(
+    {
+      _f="$REPO_ROOT/scripts/codex-dispatch.sh"
+      [[ -f "$_f" ]] && printf 'Bash(%s:*)\n' "$_f"
+      for _f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+        [[ -f "$_f" ]] && printf 'Bash(%s:*)\n' "$_f"
+      done
+    } | jq -Rn '[inputs]'
+  )"
+  jq --argjson allow "$_allow_json" '.permissions.allow = $allow' \
+    "$config_dir/settings.json" > "$config_dir/settings.json.tmp"
   mv "$config_dir/settings.json.tmp" "$config_dir/settings.json"
   printf '{"manifest_version":1}\n' > "$config_dir/.pm-dispatch/install-manifest.json"
   local path out status=0
@@ -1264,6 +1316,7 @@ case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing
 test_dispatch_allowlist_adapter_absent
+test_dispatch_allowlist_copymode_no_lib_fail
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity

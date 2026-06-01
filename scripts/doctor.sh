@@ -14,6 +14,8 @@ fi
 if [[ -f "$SCRIPT_DIR/lib/portable.sh" ]]; then
   # shellcheck source=scripts/lib/portable.sh
   . "$SCRIPT_DIR/lib/portable.sh"
+  # shellcheck source=scripts/lib/allowlist.sh
+  [[ -f "$SCRIPT_DIR/lib/allowlist.sh" ]] && . "$SCRIPT_DIR/lib/allowlist.sh"
   _PORTABLE_AVAILABLE=1
 else
   _PORTABLE_AVAILABLE=0
@@ -330,30 +332,35 @@ check_dispatch_allowlist() {
     return
   fi
   if ! command -v jq >/dev/null 2>&1; then
-    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch allowlist"
+    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch-allowlist"
     return
   fi
 
-  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-  local rel_dispatch="${abs_dispatch#"$HOME/"}"
-  local tilde_dispatch="~/$rel_dispatch"
-  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-  local rel_adapter="${abs_adapter#"$HOME/"}"
-  local tilde_adapter="~/$rel_adapter"
-  local abs_dispatch_entry="Bash($abs_dispatch:*)"
-  local tilde_dispatch_entry="Bash($tilde_dispatch:*)"
-  local abs_adapter_entry="Bash($abs_adapter:*)"
-  local tilde_adapter_entry="Bash($tilde_adapter:*)"
+  # Check each dispatch script: settings must contain abs OR tilde form.
+  # Scanning adapters/* makes this adapter-agnostic — no hardcoded executor names.
+  local f rel all_ok=1 any=0
+  f="$REPO_ROOT/scripts/codex-dispatch.sh"
+  if [[ -f "$f" ]]; then
+    any=1
+    rel="${f#"$HOME/"}"
+    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+      "$settings" >/dev/null 2>&1 || all_ok=0
+  fi
+  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+    [[ -f "$f" ]] || continue
+    any=1
+    rel="${f#"$HOME/"}"
+    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+      "$settings" >/dev/null 2>&1 || all_ok=0
+  done
 
-  if jq -e --arg sa "$abs_dispatch_entry" --arg st "$tilde_dispatch_entry" \
-    --arg aa "$abs_adapter_entry" --arg at "$tilde_adapter_entry" '
-    (.permissions.allow // []) as $allow |
-    ( (($allow | index($sa)) != null) or (($allow | index($st)) != null) ) and
-    ( (($allow | index($aa)) != null) or (($allow | index($at)) != null) )
-  ' "$settings" >/dev/null 2>&1; then
-    emit_check dispatch-allowlist ok "dispatch allowlist present (shim + adapter)"
+  if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
+    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
+      "bash '${REPO_ROOT}/install.sh'"
   else
-    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" "bash '${REPO_ROOT}/install.sh'"
+    emit_check dispatch-allowlist ok "dispatch allowlist present (all adapters)"
   fi
 }
 
