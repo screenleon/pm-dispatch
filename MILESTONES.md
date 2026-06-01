@@ -16,6 +16,8 @@
 
 四層架構：`core/`（資料模型 + 政策）→ runtime（**as-built：`cli/pmctl` + `scripts/lib/*`**，非 `runtime/` 目錄）→ `adapters/`（交付層）→ `mcp/`（外部橋接，v0.4.0；`mcp/README.md` 尚未建）。
 
+> **Release scope（2026-06-01 確認）**：v0.3.0 交付 **PM runtime spine**（core/schema + pmctl spine + adapter boundary）。Full state-first consumption（`task`/`decision`/`trace` state ops、event-derived memory、context enricher）延至 v0.4.0；`mcp/` 亦延至 v0.4.0。M0–M4 完成度定義為 spine-level complete，非 full state-first product complete。
+
 ### M0 — 便宜前置抽取（零架構風險）— ✅ complete 2026-05-23
 
 | 票號 | 說明 | 狀態 |
@@ -84,34 +86,56 @@
 | CC-278 | 將 `validate.sh` 接入 CI `lint.yml`（Phase 1 warn-only；Phase 2 hard-fail after CC-277）（P2） | ✅ (#184) |
 | CC-279 | `scripts/archive-closed-backlog.sh` — idempotent bloat-policy executor（P2） | ✅ (#184) |
 | CC-280 | 執行 archive script，壓縮當前 BACKLOG 膨脹（deferred until CC-279）（P2） | ✅ (#185) |
-| CC-281 | BACKLOG index 分割 Active / Terminal（comment delimiter；deferred until CC-280）（P3） | 🟡 deferred |
-| CC-282 | `pmctl backlog sync` → SQLite derived query layer（deferred until CC-215 M3）（P3） | 🟡 deferred |
+| CC-281 | BACKLOG index 分割 Active / Terminal（comment delimiter；deferred until CC-280）（P3） | 🚫 dropped 2026-05-30 |
+| CC-282 | `pmctl backlog sync` → SQLite derived query layer（deferred until CC-215 M3）（P3） | 🚫 dropped 2026-05-30 |
+| CC-291 | `pmctl guard check` — `--role`/`--runtime` generalization（吸收 CC-288；`--profile` alias deprecated） | ✅ (#205) |
+| CC-300 | dispatch allowlist bootstrap（CC-208 follow-up；gate citation guard 後置修正） | ✅ (#206/#207) |
+| CC-301 | multi-line hook chain + uninstall allowlist cleanup | ✅ (#207) |
+| CC-302 | `install.sh` settings.json timestamped backup | ✅ (#211) |
+| CC-303 | allowlist entry construction 集中化 → `scripts/lib/allowlist.sh`（adapter-agnostic dynamic scan） | ✅ (#211) |
+| CC-304 | hook `_rate_tmp` trap leak + startup stale-temp cleanup | ✅ (#209) |
 
-### M5 — 概念吸收
+### v0.3.0 收尾（M3/M4 after-burn）
+
+spine 已 ship，以下為 v0.3.0 release 前必收的殘餘架構縫與 polish。
+
+| 票號 | 說明 | 狀態 | P |
+|---|---|---|---|
+| CC-299 | `/pm` 改走 `pmctl dispatch run --adapter codex\|claude`；`Agent(executor)` 降為 fallback | ⏳ | P2 |
+| CC-260 | `/pr-gate` dirty worktree fail-loud preflight（conservative：偵測到 dirty tree 即 fail，不默默漏審） | ⏳ | P2 |
+| CC-298 | `.codex-briefs` + brief filenames → runtime-neutral（改 `.gate-briefs/`；runtime 記錄在 frontmatter） | ⏳ | P2 |
+| CC-215 | `pmctl task`/`decision`/`trace`/`safe-bash`（spine 已含 backlog+guard+dispatch；剩餘延 v0.4.0） | ⚠️ partial | P2 |
+| CC-293 | config/default 解析從 `adapters/codex/dispatch.sh` 提升至 `pmctl dispatch run` runtime layer | ⏳ | P3 |
+| CC-297 | `reviewer` guard role — 只能寫 `.gate-results/`（防 prompt-injection 誘導 reviewer 亂寫） | ⏳ | P3 |
+
+### M5 — 概念吸收 → 全部移至 v0.4.0
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-234 | memory v2 — event-derived distillation（Memori） | ⏳ |
-| CC-235 | Task lifecycle gate — spec→design→plan 強制（Superpowers） | ⏳ |
-| CC-237 | context-enricher baseline — rg/git/memory sources | ⏳ |
+| CC-234 | memory v2 — event-derived distillation（Memori） | 🟡 → v0.4.0 |
+| CC-235 | Task lifecycle gate — spec→design→plan 強制（Superpowers） | 🟡 → v0.4.0 |
+| CC-237 | context-enricher baseline — rg/git/memory sources | 🟡 → v0.4.0 |
 
-### M6 — spike workflow + release
+### M6 — release prep（v0.3.0 收尾）
+
+CC-220（spike workflow）、CC-209（codegraph spike）已移至 v0.4.0。
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-220 | `agents/spike.md` + `commands/spike.md`（planner + 主執行緒 fan-out） | ⏳ |
-| CC-209 | context-enrichment spike：codegraph 評估（第一個正式 `/spike`） | ⏳ |
 | CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
 | CC-265 | 移除 `/caveman` 與 `/caveman-commit` | ✅ 2026-05-26 |
-| — | v0.3.0 release prep | ⏳ |
+| — | v0.3.0 release prep（CHANGELOG + tag + GitHub Release） | ⏳ |
 
 ### v0.3.0 範圍外 → v0.4.0
 
-- **pmctl 剩餘子命令** — `pmctl validate`（接 CC-202 handover-validate）、`pmctl task / decision / trace`（state-ops，建在 CC-230 state store 上）、`pmctl safe-bash`。v0.3.0 spine 只放 backlog + guard + dispatch 三個 load-bearing 面。
+- **pmctl 剩餘子命令** — `pmctl validate`（接 CC-202 handover-validate）、`pmctl task / decision / trace`（state-ops，建在 CC-230 state store 上）、`pmctl safe-bash`。v0.3.0 spine 只放 backlog + guard + dispatch 三個 load-bearing 面（CC-215 partial）。
+- **M5 概念吸收全部延 v0.4.0** — CC-234（memory v2 event-derived）、CC-235（Task lifecycle gate）、CC-237（context-enricher baseline）。
+- **M6 spike workflow 延 v0.4.0** — CC-220（`agents/spike.md` + `/spike` command）、CC-209（codegraph context-enrichment spike，降 🟢 someday）。
 - CC-216 — `mcp/pm-dispatch-server` 實作（v0.4.0）。**as-built：原規劃 v0.3.0 應放的 `mcp/README.md` 介面規格尚未建**（連帶 `pmctl --json` 設計約束未落實）；整個 `mcp/` 延 v0.4.0。見 synthesis 的 Conformance status §B。
+- CC-296 — v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim 移除，目標 v0.5.0，待 2 個正式版本後執行）。
 - `adapters/antigravity` / `adapters/opencode` — named slot，不實作（Antigravity CLI 取代 Gemini CLI；原規劃寫的 `gemini` 一律改為 `antigravity`）。注：**`adapters/codex` 已在 v0.3.0 實作**（與 claude 對稱薄 adapter），原「延 v0.4.0」規劃已 superseded。
 - AI Night Shift autonomy loop — 不做
-- CC-236 `pmctl report` 晨報 — 降為 🟢 someday（2026-05-22；無人值守執行需求低，非 v0.4.0 排程）
+- CC-236 `pmctl report` 晨報 — 🟢 someday（2026-05-22；無人值守執行需求低）
 
 ---
 
