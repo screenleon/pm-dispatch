@@ -134,6 +134,24 @@ inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
+write_statusline_chain() {
+  local first_cmd="$1"
+  local chain_tmp chain_entry
+  chain_tmp="$(mktemp)"
+  {
+    printf '%s\n' "$first_cmd"
+    if [[ -f "$statusline_chain_conf" ]]; then
+      while IFS= read -r chain_entry || [[ -n "$chain_entry" ]]; do
+        [[ -n "$chain_entry" ]] || continue
+        [[ "$chain_entry" == "$statusline_cmd" ]] && continue
+        [[ "$chain_entry" == "$first_cmd" ]] && continue
+        printf '%s\n' "$chain_entry"
+      done < "$statusline_chain_conf"
+    fi
+  } > "$chain_tmp"
+  mv "$chain_tmp" "$statusline_chain_conf"
+}
+
 if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$migrate_routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
@@ -157,11 +175,21 @@ trap 'rm -f "$tmp_new"' EXIT
 # Read current statusLine.command to determine if chaining is needed.
 _current_statusline=$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null || true)
 _statusline_already_wired=0
-if [[ "$(basename "${_current_statusline:-}")" == "$(basename "$statusline_cmd")" ]]; then
+if [[ "${_current_statusline:-}" == "$statusline_cmd" ]]; then
     _statusline_already_wired=1
+elif [[ "$(basename "${_current_statusline:-}")" == "$(basename "$statusline_cmd")" ]]; then
+    _current_statusline_path="${_current_statusline%%[[:space:]]*}"
+    if [[ ! -e "$_current_statusline_path" ]]; then
+        _statusline_already_wired=1
+    elif [[ "$DRY_RUN" -eq 0 ]]; then
+        # Existing same-basename hooks from other tools are real chain targets,
+        # not stale managed paths.
+        write_statusline_chain "$_current_statusline"
+    fi
 elif [[ -n "$_current_statusline" && "$DRY_RUN" -eq 0 ]]; then
-    # Save previous command so the hook can chain to it.
-    printf '%s\n' "$_current_statusline" > "$statusline_chain_conf"
+    # Save previous command so the hook can chain to it. Preserve any existing
+    # chain entries because several local tools may share the statusLine slot.
+    write_statusline_chain "$_current_statusline"
 fi
 
 jq \

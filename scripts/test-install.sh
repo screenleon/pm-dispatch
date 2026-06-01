@@ -550,6 +550,74 @@ test_install_dispatch_allowlist_idempotent() {
   pass "$name"
 }
 
+test_dispatch_allowlist_uninstall_removes_entries() {
+  # Verifies uninstall-hooks.sh removes all four dispatch Bash allowlist
+  # entries while leaving unrelated permissions.allow entries intact.
+  #
+  # Steps:
+  #   1. Run install.sh to populate the four allowlist entries.
+  #   2. Manually inject an unrelated allow entry.
+  #   3. Run uninstall-hooks.sh.
+  #   4. Assert the four managed entries are gone; unrelated entry remains.
+  local name="dispatch-allowlist-uninstall-removes-entries"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local unrelated="Bash(/usr/local/bin/safe-tool:*)"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$settings"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  jq --arg u "$unrelated" '.permissions.allow += [$u]' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+
+  local entry
+  while IFS= read -r entry; do
+    if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
+      fail "$name" "allowlist entry should be gone: $entry"
+      return
+    fi
+  done < <(dispatch_allowlist_entries_for_home "$home")
+  assert_file_contains "$name" "$settings" "$unrelated" || return
+  pass "$name"
+}
+
+test_dispatch_allowlist_uninstall_dryrun() {
+  # Verifies that --dry-run does not modify settings.json.
+  #
+  # Steps:
+  #   1. Run install.sh to populate the four allowlist entries.
+  #   2. Capture the settings checksum.
+  #   3. Run uninstall-hooks.sh --dry-run.
+  #   4. Assert settings.json is byte-identical to before.
+  local name="dispatch-allowlist-uninstall-dryrun"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$settings"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local before after
+  before="$(md5sum "$settings" | awk '{print $1}')"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" --dry-run > /dev/null
+
+  after="$(md5sum "$settings" | awk '{print $1}')"
+  if [[ "$before" != "$after" ]]; then
+    fail "$name" "settings.json was modified by --dry-run"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
   # Codex hooks are not wired; base managed hooks still are. The expected warning
@@ -1265,6 +1333,38 @@ test_statusline_install_chains_previous() {
   pass "$name"
 }
 
+test_statusline_install_preserves_existing_chain() {
+  # Verifies that installing over another live statusLine hook keeps both that
+  # hook and an already chained display command.
+  # Steps:
+  #   1. Write settings.json with an existing same-basename hook from another tool
+  #   2. Write statusline-chain.conf with an existing display command
+  #   3. Run install
+  #   4. Assert statusline-chain.conf keeps both commands in order
+  local name="statusline-install-preserves-existing-chain"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local other_dir="$tmp_root/$name-other/scripts"
+  local other_hook="$other_dir/hook-save-rate-limits.sh"
+  local display_cmd="bash /home/screenleon/.claude/abtop-statusline.sh"
+  mkdir -p "$home/.claude" "$other_dir"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$other_hook"
+  chmod +x "$other_hook"
+  printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
+    "$other_hook" > "$home/.claude/settings.json"
+  printf '%s\n' "$display_cmd" > "$home/.claude/statusline-chain.conf"
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  local got expected
+  got="$(cat "$home/.claude/statusline-chain.conf")"
+  expected="$(printf '%s\n%s' "$other_hook" "$display_cmd")"
+  if [[ "$got" != "$expected" ]]; then
+    fail "$name" "statusline-chain.conf was $got"
+    return
+  fi
+  pass "$name"
+}
+
 test_statusline_install_chains_previous_with_args() {
   # Verifies that a statusLine.command containing arguments (e.g. "/path/cmd --flag")
   # is stored verbatim in statusline-chain.conf so bash -c can invoke it correctly.
@@ -1767,6 +1867,8 @@ test_install_hooks_jq_missing_prints_platform_hints
 test_install_sh_wires_hooks_no_settings
 test_install_adds_dispatch_allowlist
 test_install_dispatch_allowlist_idempotent
+test_dispatch_allowlist_uninstall_removes_entries
+test_dispatch_allowlist_uninstall_dryrun
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_updates_stale_paths_after_rename
@@ -1783,6 +1885,7 @@ test_session_stop_uninstall_removes_hook
 test_session_stop_install_idempotent
 test_session_stop_uninstall_preserves_stop
 test_statusline_install_chains_previous
+test_statusline_install_preserves_existing_chain
 test_statusline_install_chains_previous_with_args
 test_statusline_uninstall_restores
 test_legacy_pm_left_untouched

@@ -44,10 +44,12 @@ fi
 # bash -c wrappers, env prefixes, etc.) from the original statusLine.command.
 _chain_conf="${_config_dir}/statusline-chain.conf"
 if [[ "${CLAUDE_STATUSLINE_CHAIN_ACTIVE:-${CAS_STATUSLINE_CHAIN_ACTIVE:-}}" != "1" && -f "$_chain_conf" ]]; then
-    _chain=$(head -1 "$_chain_conf")
-    if [[ -n "$_chain" ]]; then
+    while IFS= read -r _chain || [[ -n "$_chain" ]]; do
+        case "$_chain" in
+            ""|\#*) continue ;;
+        esac
         printf '%s' "$payload" | CLAUDE_STATUSLINE_CHAIN_ACTIVE=1 CAS_STATUSLINE_CHAIN_ACTIVE=1 bash -c "$_chain" || true
-    fi
+    done < "$_chain_conf"
 fi
 
 exit 0
