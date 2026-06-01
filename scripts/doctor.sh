@@ -14,6 +14,8 @@ fi
 if [[ -f "$SCRIPT_DIR/lib/portable.sh" ]]; then
   # shellcheck source=scripts/lib/portable.sh
   . "$SCRIPT_DIR/lib/portable.sh"
+  # shellcheck source=scripts/lib/allowlist.sh
+  [[ -f "$SCRIPT_DIR/lib/allowlist.sh" ]] && . "$SCRIPT_DIR/lib/allowlist.sh"
   _PORTABLE_AVAILABLE=1
 else
   _PORTABLE_AVAILABLE=0
@@ -330,30 +332,30 @@ check_dispatch_allowlist() {
     return
   fi
   if ! command -v jq >/dev/null 2>&1; then
-    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch allowlist"
+    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch-allowlist"
     return
   fi
 
-  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-  local rel_dispatch="${abs_dispatch#"$HOME/"}"
-  local tilde_dispatch="~/$rel_dispatch"
-  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-  local rel_adapter="${abs_adapter#"$HOME/"}"
-  local tilde_adapter="~/$rel_adapter"
-  local abs_dispatch_entry="Bash($abs_dispatch:*)"
-  local tilde_dispatch_entry="Bash($tilde_dispatch:*)"
-  local abs_adapter_entry="Bash($abs_adapter:*)"
-  local tilde_adapter_entry="Bash($tilde_adapter:*)"
+  if ! declare -F dispatch_allowlist_entries >/dev/null 2>&1; then
+    emit_check dispatch-allowlist warn "dispatch_allowlist_entries unavailable (copy-mode?)"
+    return
+  fi
 
-  if jq -e --arg sa "$abs_dispatch_entry" --arg st "$tilde_dispatch_entry" \
-    --arg aa "$abs_adapter_entry" --arg at "$tilde_adapter_entry" '
-    (.permissions.allow // []) as $allow |
-    ( (($allow | index($sa)) != null) or (($allow | index($st)) != null) ) and
-    ( (($allow | index($aa)) != null) or (($allow | index($at)) != null) )
-  ' "$settings" >/dev/null 2>&1; then
-    emit_check dispatch-allowlist ok "dispatch allowlist present (shim + adapter)"
+  local shim_ok=0 adapter_ok=0 entry
+  while IFS= read -r entry; do
+    if jq -e --arg e "$entry" \
+        '(.permissions.allow // [] | index($e)) != null' \
+        "$settings" >/dev/null 2>&1; then
+      [[ "$entry" == *"codex-dispatch.sh"* ]] && shim_ok=1
+      [[ "$entry" == *"adapters/codex/dispatch.sh"* ]] && adapter_ok=1
+    fi
+  done < <(dispatch_allowlist_entries)
+
+  if [[ $shim_ok -eq 1 && $adapter_ok -eq 1 ]]; then
+    emit_check dispatch-allowlist ok "dispatch-allowlist present (shim + adapter)"
   else
-    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" "bash '${REPO_ROOT}/install.sh'"
+    emit_check dispatch-allowlist fail "dispatch-allowlist incomplete or missing" \
+      "bash '${REPO_ROOT}/install.sh'"
   fi
 }
 
