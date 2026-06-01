@@ -6,11 +6,12 @@
 set -euo pipefail
 
 payload=$(cat)
-[[ -z "$payload" ]] && exit 0
 
 _config_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 _tmp=$(mktemp)
-trap 'rm -f "$_tmp"' EXIT
+trap 'rm -f "$_tmp" "${_rate_tmp:-}"' EXIT
+find "$_config_dir" -maxdepth 1 -name '.rate-limits.json.tmp.*' -mmin +60 -delete 2>/dev/null || true
+[[ -z "$payload" ]] && exit 0
 printf '%s' "$payload" > "$_tmp"
 
 if jq -e '.rate_limits | objects | select(length > 0)' "$_tmp" >/dev/null 2>&1; then
@@ -26,6 +27,7 @@ if jq -e '.rate_limits | objects | select(length > 0)' "$_tmp" >/dev/null 2>&1; 
     if [[ -n "$out" ]]; then
         _out_dir="$_config_dir"
         mkdir -p "$_out_dir" 2>/dev/null || true
+        _rate_tmp=""
         _rate_tmp=$(mktemp "${_out_dir}/.rate-limits.json.tmp.XXXXXX" 2>/dev/null) || _rate_tmp=""
         if [[ -n "$_rate_tmp" ]]; then
             printf '%s\n' "$out" > "$_rate_tmp"

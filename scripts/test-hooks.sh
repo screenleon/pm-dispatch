@@ -1882,6 +1882,47 @@ rl_hook_empty_stdin() {
   rm -rf "$rl_home"
 }
 
+_hook_startup_cleans_stale_rate_tmp() {
+  local name="rl-hook/startup-cleans-stale-rate-tmp" rl_home stale_tmp status
+  should_run "$name" || return 0
+  rl_home="$(mktemp -d)"
+  stale_tmp="$rl_home/.rate-limits.json.tmp.STALE"
+  touch "$stale_tmp"
+  touch -d "2 hours ago" "$stale_tmp"
+  printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && ! -e "$stale_tmp" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$(printf '        exit=%s stale_exists=%s' "$status" "$(test -e "$stale_tmp" && echo yes || echo no)")"
+  fi
+  rm -rf "$rl_home"
+}
+
+hook_startup_cleans_stale_rate_tmp() {
+  _hook_startup_cleans_stale_rate_tmp
+}
+
+_hook_startup_preserves_fresh_rate_tmp() {
+  local name="rl-hook/startup-preserves-fresh-rate-tmp" rl_home fresh_tmp status
+  should_run "$name" || return 0
+  rl_home="$(mktemp -d)"
+  fresh_tmp="$rl_home/.rate-limits.json.tmp.FRESH"
+  touch "$fresh_tmp"
+  printf '' | CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK" 2>/dev/null
+  status=$?
+  if [[ "$status" == "0" && -e "$fresh_tmp" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$(printf '        exit=%s fresh_exists=%s' "$status" "$(test -e "$fresh_tmp" && echo yes || echo no)")"
+  fi
+  rm -rf "$rl_home"
+}
+
+hook_startup_preserves_fresh_rate_tmp() {
+  _hook_startup_preserves_fresh_rate_tmp
+}
+
 rl_hook_write_failure_chains() {
   # Verifies that a rate-limits.json write failure (unwritable CLAUDE_CONFIG_DIR)
   # does not prevent the configured chain command from being invoked; the hook
@@ -1950,6 +1991,8 @@ rl_hook_happy_path
 rl_hook_missing_rate_limits
 rl_hook_malformed_json
 rl_hook_empty_stdin
+hook_startup_cleans_stale_rate_tmp
+hook_startup_preserves_fresh_rate_tmp
 rl_hook_chain_called
 rl_hook_multiline_chain_called
 rl_hook_chain_called_with_args
