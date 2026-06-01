@@ -26,26 +26,28 @@ The abstract contract both routes implement is documented in `docs/executor-cont
 ### Route A — `executor: codex`
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-The template above shows the default-safe stable argument order; omit `--model <safe model>` only when `model: default`. When the handover block uses the legacy `sandbox:` field instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`. New briefs must use `isolation_level:`. The bash route never emits `--skip-git-check`: validator hard-rejects `skip_git_check: true`, so callers needing that flag must take the `Agent(codex-executor)` fallback instead. Insert only `handover_safe_argv` output into the Bash command. Keep the command on one physical line and never use `cd <dir> && ...`; that compound shape is part of the stale lifecycle leak described in `[[feedback_codex_dispatch_lifecycle_leak]]`.
+Omit `--model <safe model>` when `model: default`. When the handover block uses the legacy `sandbox:` field instead of `isolation_level:`, pass `--sandbox <safe sandbox> --approval <safe approval>` — pmctl forwards them opaquely to the adapter. New briefs must use `isolation_level:`. Never emit `--skip-git-check`; callers needing that flag must use the `Agent(codex-executor)` fallback. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
 
-Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, preserving existing callers that still depend on executor validation.
+Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback.
 
 ### Route B — `executor: claude`
 
 ```text
-Agent(subagent_type: "claude-executor", prompt: "<safe brief_file abs path>", run_in_background: true, description: "Run claude-executor for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter claude --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch claude for <slug>")
 ```
 
-The `claude-executor` agent self-executes the brief using its own tool surface (`Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep`) and returns one structured report. No external dispatch script is involved. Use `isolation_level: workspace-write` (or appropriate level) in the metadata; the legacy fields (`sandbox`, `approval`, `skip_git_check`) are accepted for backward compatibility but new briefs must use `isolation_level:`. The agent itself ignores isolation metadata. See `agents/claude-executor.md` for the agent's contract and `docs/executor-contract.md` for the profile comparison.
+Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an external CLI subprocess; host-independent (codex-as-PM can drive it). Completion handling is identical to Route A — same Bash footer format, same post-verify flow. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`; legacy `--sandbox`/`--approval` flags are forwarded as no-ops. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` FOUND/MISSING from dispatch-post-verify.sh.
+
+Use `Agent(claude-executor)` only when headless `claude --print` is unavailable (e.g. `claude` CLI not in PATH) — per the fallback allowlist in `docs/dispatch-brief.md` §Fallback. See `agents/claude-executor.md` for the Agent fallback contract and `docs/executor-contract.md` for the profile comparison.
 
 ### Choosing the route
 
-Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) determines the default. PM may override per-brief by setting `executor:` in the handover metadata. If fallback is selected for codex, say why in one sentence, then dispatch `Agent(codex-executor)` with the pre-written brief file path. Otherwise, record the Bash task id (route A) or Agent task id (route B) and parse completion using the footer documented in `docs/dispatch-brief.md`.
+`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same Bash dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. If fallback to an Agent is needed (CLI unavailable), say why in one sentence before dispatching `Agent(codex-executor)` or `Agent(claude-executor)` per `docs/dispatch-brief.md` §Fallback.
 
-Main-thread completion handling for the Bash route (steps 1–3 and 5–7 are tool-call orchestration only the main thread can do; the verification body in step 4 is the shared, tested `scripts/dispatch-post-verify.sh`, not re-implemented prose):
+Main-thread completion handling for both routes — codex and claude now share the same Bash dispatch shape (steps 1–3 and 5–7 are tool-call orchestration only the main thread can do; the verification body in step 4 is the shared, tested `scripts/dispatch-post-verify.sh`, not re-implemented prose):
 
 1. Keep a small conversation-state row for `task_id`, slug, `brief_file`, `working_dir`, expected files, and status.
 2. When the completion notification arrives, read `BashOutput(bash_id: <id>)`; do not infer completion from `.agent-trace/latest.*` symlinks.
