@@ -336,33 +336,31 @@ check_dispatch_allowlist() {
     return
   fi
 
-  if ! declare -F dispatch_allowlist_entries >/dev/null 2>&1; then
-    dispatch_allowlist_entries() {
-      local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-      local rel="${abs_dispatch#"$HOME/"}"
-      local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-      local rel_adapter="${abs_adapter#"$HOME/"}"
-      printf '%s\n' \
-        "Bash($abs_dispatch:*)" "Bash(~/$rel:*)" \
-        "Bash($abs_adapter:*)" "Bash(~/$rel_adapter:*)"
-    }
+  # Check each dispatch script: settings must contain abs OR tilde form.
+  # Scanning adapters/* makes this adapter-agnostic — no hardcoded executor names.
+  local f rel all_ok=1 any=0
+  f="$REPO_ROOT/scripts/codex-dispatch.sh"
+  if [[ -f "$f" ]]; then
+    any=1
+    rel="${f#"$HOME/"}"
+    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+      "$settings" >/dev/null 2>&1 || all_ok=0
   fi
+  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+    [[ -f "$f" ]] || continue
+    any=1
+    rel="${f#"$HOME/"}"
+    jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+      '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+      "$settings" >/dev/null 2>&1 || all_ok=0
+  done
 
-  local shim_ok=0 adapter_ok=0 entry
-  while IFS= read -r entry; do
-    if jq -e --arg e "$entry" \
-        '(.permissions.allow // [] | index($e)) != null' \
-        "$settings" >/dev/null 2>&1; then
-      [[ "$entry" == *"codex-dispatch.sh"* ]] && shim_ok=1
-      [[ "$entry" == *"adapters/codex/dispatch.sh"* ]] && adapter_ok=1
-    fi
-  done < <(dispatch_allowlist_entries)
-
-  if [[ $shim_ok -eq 1 && $adapter_ok -eq 1 ]]; then
-    emit_check dispatch-allowlist ok "dispatch allowlist present (shim + adapter)"
-  else
+  if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
     emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
       "bash '${REPO_ROOT}/install.sh'"
+  else
+    emit_check dispatch-allowlist ok "dispatch allowlist present (all adapters)"
   fi
 }
 

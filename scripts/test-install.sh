@@ -472,19 +472,21 @@ test_install_sh_profile_full_wires_codex_hooks() {
 }
 
 dispatch_allowlist_entries_for_home() {
+  # Mirrors dispatch_allowlist_entries() from scripts/lib/allowlist.sh but accepts
+  # an explicit home arg (tests use a temp dir, not the real $HOME).
   local home="$1"
-  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-  local rel="${abs_dispatch#"$home/"}"
-  local tilde_dispatch="~/$rel"
-  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-  local rel_adapter="${abs_adapter#"$home/"}"
-  local tilde_adapter="~/$rel_adapter"
+  local f rel
 
-  printf '%s\n' \
-    "Bash($abs_dispatch:*)" \
-    "Bash($tilde_dispatch:*)" \
-    "Bash($abs_adapter:*)" \
-    "Bash($tilde_adapter:*)"
+  f="$REPO_ROOT/scripts/codex-dispatch.sh"
+  if [[ -f "$f" ]]; then
+    rel="${f#"$home/"}"
+    printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+  fi
+  for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+    [[ -f "$f" ]] || continue
+    rel="${f#"$home/"}"
+    printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+  done
 }
 
 test_install_adds_dispatch_allowlist() {

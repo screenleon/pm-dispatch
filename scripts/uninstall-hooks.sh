@@ -17,15 +17,19 @@ if [[ -f "$repo_root/scripts/lib/allowlist.sh" ]]; then
   # shellcheck source=scripts/lib/allowlist.sh
   . "$repo_root/scripts/lib/allowlist.sh"
 else
-  # copy-mode fallback: define inline so removal stays concrete
+  # copy-mode fallback: scan adapters dynamically so removal stays concrete
   dispatch_allowlist_entries() {
-    local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
-    local rel="${abs_dispatch#"$HOME/"}"
-    local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
-    local rel_adapter="${abs_adapter#"$HOME/"}"
-    printf '%s\n' \
-      "Bash($abs_dispatch:*)" "Bash(~/$rel:*)" \
-      "Bash($abs_adapter:*)" "Bash(~/$rel_adapter:*)"
+    local f rel
+    f="$REPO_ROOT/scripts/codex-dispatch.sh"
+    if [[ -f "$f" ]]; then
+      rel="${f#"$HOME/"}"
+      printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+    fi
+    for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+      [[ -f "$f" ]] || continue
+      rel="${f#"$HOME/"}"
+      printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
+    done
   }
 fi
 # Honor an explicit CLAUDE_HOME override (passed per-call by uninstall.sh, or set
@@ -52,15 +56,12 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
-mapfile -t _mgd_entries < <(dispatch_allowlist_entries)
+_managed_json="$(dispatch_allowlist_entries | jq -Rn '[inputs]')"
 
 jq \
   --arg repo_root "$repo_root" \
   --arg chain_target "$_chain_target" \
-  --arg e1 "${_mgd_entries[0]}" \
-  --arg e2 "${_mgd_entries[1]}" \
-  --arg e3 "${_mgd_entries[2]}" \
-  --arg e4 "${_mgd_entries[3]}" \
+  --argjson managed_allow "$_managed_json" \
   '
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
@@ -88,7 +89,7 @@ jq \
   else . end) |
   if (.hooks // {} | length) == 0 then del(.hooks) else . end
   | if (.permissions.allow // [] | length) > 0 then
-      .permissions.allow |= map(select(. != $e1 and . != $e2 and . != $e3 and . != $e4))
+      .permissions.allow |= map(select(. as $e | ($managed_allow | index($e)) == null))
     else . end
   | if (.permissions.allow // [] | length) == 0 then del(.permissions.allow) else . end
   ' "$settings" > "$tmp_new"
