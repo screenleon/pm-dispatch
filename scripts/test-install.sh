@@ -471,6 +471,73 @@ test_install_sh_profile_full_wires_codex_hooks() {
   pass "$name"
 }
 
+dispatch_allowlist_entries_for_home() {
+  local home="$1"
+  local abs_dispatch="$REPO_ROOT/scripts/codex-dispatch.sh"
+  local rel="${abs_dispatch#"$home/"}"
+  local tilde_dispatch="~/$rel"
+  local abs_adapter="$REPO_ROOT/adapters/codex/dispatch.sh"
+  local rel_adapter="${abs_adapter#"$home/"}"
+  local tilde_adapter="~/$rel_adapter"
+
+  printf '%s\n' \
+    "Bash($abs_dispatch:*)" \
+    "Bash($tilde_dispatch:*)" \
+    "Bash($abs_adapter:*)" \
+    "Bash($tilde_adapter:*)"
+}
+
+test_install_adds_dispatch_allowlist() {
+  local name="test_install_adds_dispatch_allowlist"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local entry
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$settings"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+
+  while IFS= read -r entry; do
+    if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "missing allowlist entry: $entry"
+      return
+    fi
+  done < <(dispatch_allowlist_entries_for_home "$home")
+  pass "$name"
+}
+
+test_install_dispatch_allowlist_idempotent() {
+  local name="test_install_dispatch_allowlist_idempotent"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local entry count
+  mkdir -p "$home/.claude"
+  printf '{}\n' > "$settings"
+
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+
+  while IFS= read -r entry; do
+    count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
+    if [[ "$count" != "1" ]]; then
+      fail "$name" "entry count for $entry was $count, expected 1"
+      return
+    fi
+  done < <(dispatch_allowlist_entries_for_home "$home")
+  pass "$name"
+}
+
 test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
   # Codex hooks are not wired; base managed hooks still are. The expected warning
@@ -1686,6 +1753,8 @@ test_install_hooks_platform_invalid_value_rejected
 test_install_hooks_profile_invalid_value_rejected
 test_install_hooks_jq_missing_prints_platform_hints
 test_install_sh_wires_hooks_no_settings
+test_install_adds_dispatch_allowlist
+test_install_dispatch_allowlist_idempotent
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_updates_stale_paths_after_rename

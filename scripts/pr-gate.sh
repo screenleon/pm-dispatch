@@ -386,6 +386,20 @@ add_pr_gate_handover_entry() {
   PR_GATE_HANDOVER_ENTRIES+=("  output_file: $output_file")
 }
 
+# Build a compact index of verified reference files (agents/, commands/, docs/, skills/)
+# for injection into gate brief preambles (CC-208). Reviewers may cite docs/sections
+# that don't exist; the index provides ground truth so they can verify before citing.
+_build_repo_ref_index() {
+  local work_dir="$1" out=""
+  for d in agents commands docs skills; do
+    [[ -d "$work_dir/$d" ]] || continue
+    while IFS= read -r f; do
+      out="${out}    ${f#"$work_dir/"}"$'\n'
+    done < <(find "$work_dir/$d" -maxdepth 2 -name "*.md" 2>/dev/null | sort)
+  done
+  printf '%s' "$out"
+}
+
 emit_pr_gate_handover_block() {
   local out
   if [[ "${EXECUTOR:-}" != "claude" || "${#PR_GATE_HANDOVER_ENTRIES[@]}" -eq 0 ]]; then
@@ -455,6 +469,7 @@ while IFS= read -r f; do
 done <<< "$ALL_REVIEW_FILES"
 
 DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
+REPO_REF_INDEX="$(_build_repo_ref_index "$WORK_DIR")"
 ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
 printf 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
@@ -508,6 +523,7 @@ constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
+  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
 
 context:
   Tier: ${TIER}
@@ -517,6 +533,8 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 
+  Verified reference files (exist in working tree -- check before citing):
+${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
 ${DIFF_STAT_INDENTED}
 
@@ -703,6 +721,7 @@ constraints:
   - Do NOT modify any source file.
   - Only write ${REVIEWER_OUTPUT}.
   - Create parent directories if needed (mkdir -p).
+  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
 
 context:
   Tier: ${TIER}
@@ -711,6 +730,8 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 
+  Verified reference files (exist in working tree -- check before citing):
+${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
 ${DIFF_STAT_INDENTED}
 
@@ -896,6 +917,7 @@ constraints:
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
     This is pre-computed from the reviewer verdicts and must not be overridden.
+  - Only cite files in the verified reference index or reviewer findings. Do not invent citations (CC-208).
 
 context:
   Tier: ${TIER}
@@ -905,6 +927,8 @@ context:
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 
+  Verified reference files (exist in working tree -- check before citing):
+${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
 SBRIEF_P1
 
