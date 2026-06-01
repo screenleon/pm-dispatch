@@ -39,8 +39,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/portability | 2026-05-18 | — | — | oss |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
 | CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
-| CC-302 | ✅ done 2026-06-01 | install_dispatch_allowlist 缺乏 settings.json backup path（gate risk [medium] advisory from pr:#207） | ops | 2026-06-01 | pr:#207 | P3 | — |
-| CC-303 | ✅ done 2026-06-01 | allowlist entry construction duplicated in install.sh + doctor.sh — centralize（gate arch [medium] advisory from pr:#207） | arch | 2026-06-01 | pr:#207 | P3 | — |
+| CC-302 | 🔵 active | install_dispatch_allowlist 缺乏 settings.json backup path（gate risk [medium] advisory from pr:#207） | ops | 2026-06-01 | pr:#207 | P3 | — |
+| CC-303 | 🔵 active | allowlist entry construction duplicated in install.sh + doctor.sh — centralize（gate arch [medium] advisory from pr:#207） | arch | 2026-06-01 | pr:#207 | P3 | — |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones — live **M0–M6** in MILESTONES.md (synthesis §6 is the original M0–M5 cut); runtime is realized as `cli/pmctl` (not a `runtime/` dir). See docs/architecture/v0.3.0-synthesis.md **Conformance status** for as-built drift (codex+claude adapters shipped; state-first / `mcp/` still open). Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
@@ -1251,7 +1251,7 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-289]]`（pmctl dispatch run）、`[[CC-266]]`（adapters/claude/dispatch.sh）、`[[CC-291]]`（executor role 定義）。
 
-## CC-302 — install_dispatch_allowlist: add backup path before settings.json mutation ✅ done 2026-06-01
+## CC-302 — install_dispatch_allowlist: add backup path before settings.json mutation 🔵 active
 
 **Problem**: `install_dispatch_allowlist()` in `install.sh` mutates `settings.json` one
 `permissions.allow` entry at a time without first creating the backup that
@@ -1268,7 +1268,7 @@ Raised as risk [medium] advisory in gate-20260601 (pr:#207).
 
 **Cross-link**: `[[CC-300]]`、`[[CC-301]]`（context of the allowlist introduction）.
 
-## CC-303 — allowlist entry construction duplicated in install.sh and doctor.sh — centralize ✅ done 2026-06-01
+## CC-303 — allowlist entry construction duplicated in install.sh and doctor.sh — centralize 🔵 active
 
 **Problem**: `dispatch_allowlist_entries()` in `install.sh` (line 92) and the inline
 entry construction in `scripts/doctor.sh` `check_dispatch_allowlist()` (line 327) compute
