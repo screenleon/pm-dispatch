@@ -1974,6 +1974,35 @@ hook_startup_preserves_59min_rate_tmp() {
   _hook_startup_preserves_59min_rate_tmp
 }
 
+_hook_rate_tmp_exit_trap_cleans_up() {
+  local name="rl-hook/rate-tmp-exit-trap-cleans-up" rl_home fake_bin fake_mv leaked
+  should_run "$name" || return 0
+  rl_home="$(mktemp -d)"
+  fake_bin="$(mktemp -d)"
+  fake_mv="$fake_bin/mv"
+  cat > "$fake_mv" <<'MVEOF'
+#!/bin/bash
+kill -TERM $PPID
+sleep 1
+MVEOF
+  chmod +x "$fake_mv"
+  {
+    printf '%s' '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":9999999999}}}' \
+      | PATH="$fake_bin:$PATH" CLAUDE_CONFIG_DIR="$rl_home" "$RL_HOOK"
+  } 2>/dev/null || true
+  leaked="$(find "$rl_home" -name '.rate-limits.json.tmp.*' -print -quit)"
+  if [[ -z "$leaked" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$(printf '        leaked=%s' "$leaked")"
+  fi
+  rm -rf "$rl_home" "$fake_bin"
+}
+
+hook_rate_tmp_exit_trap_cleans_up() {
+  _hook_rate_tmp_exit_trap_cleans_up
+}
+
 rl_hook_write_failure_chains() {
   # Verifies that a rate-limits.json write failure (unwritable CLAUDE_CONFIG_DIR)
   # does not prevent the configured chain command from being invoked; the hook
@@ -2046,6 +2075,7 @@ hook_startup_cleans_stale_rate_tmp
 hook_startup_preserves_fresh_rate_tmp
 hook_startup_cleans_61min_rate_tmp
 hook_startup_preserves_59min_rate_tmp
+hook_rate_tmp_exit_trap_cleans_up
 rl_hook_chain_called
 rl_hook_multiline_chain_called
 rl_hook_chain_called_with_args
