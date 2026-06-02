@@ -9,6 +9,7 @@
 # Config file: ${PM_DISPATCH_CONFIG_FILE:-~/.pm-dispatch/config}
 # Format: key = value lines; # comments; unknown keys silently ignored.
 
+# shellcheck disable=SC2034  # globals consumed by callers (pmctl-dispatch.sh)
 PM_CFG_TIMEOUT=""
 PM_CFG_DEFAULT_MODEL=""
 
