@@ -31,8 +31,9 @@
 #   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
 #   --isolation empty            (none | read-only | workspace-write | workspace-network | sandboxed)
 #   --approval never             (never | on-failure | on-request | untrusted)
-#   --timeout  precedence: brief field > CODEX_DISPATCH_TIMEOUT env >
-#             ~/.pm-dispatch/config [dispatch.default_timeout] > 1200 fallback
+#   --timeout  precedence (via pmctl): --timeout flag (wins) > CODEX_DISPATCH_TIMEOUT env >
+#              PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
+#              Direct adapter invocations: CODEX_DISPATCH_TIMEOUT env > 1200 default.
 #
 # Outputs:
 #   .agent-trace/codex-<ts>.jsonl   full event stream (codex stdout)
