@@ -5,14 +5,14 @@
 #   - docs/dispatch-brief.md model alias table is byte-equal to the TSV data
 #   - PM template hardcoded model aliases (if any) appear in the TSV
 #   - model alias fixtures mention those aliases in tests
-#   - runtime loader in scripts/codex-dispatch.sh still reads from share/model-aliases.tsv
+#   - runtime loader in adapters/codex/dispatch.sh still reads from share/model-aliases.tsv
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 alias_tsv="$repo_root/share/model-aliases.tsv"
 dispatch_brief="$repo_root/docs/dispatch-brief.md"
 pm_template="$repo_root/agents/project-pm.md"
-dispatch_script="$repo_root/scripts/codex-dispatch.sh"
+dispatch_script="$repo_root/adapters/codex/dispatch.sh"
 test_script="$repo_root/scripts/test-codex-dispatch.sh"
 
 work_dir="$(mktemp -d)"

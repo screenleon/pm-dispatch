@@ -880,6 +880,24 @@ case_print_cmd_no_brief() {
   pass "$name"
 }
 
+case_shim_delegates_to_adapter() {
+  # Verifies that scripts/codex-dispatch.sh (the exec-wrapper shim introduced in
+  # CC-308) correctly delegates to adapters/codex/dispatch.sh by running --help
+  # through the shim and asserting exit 0. No codex binary required.
+  local name="shim/delegates to adapter via exec wrapper"
+  should_run "$name" || return 0
+  local out exit_code
+  set +e
+  out="$(bash "$DISPATCH_SHIM" --help 2>&1)"
+  exit_code=$?
+  set -e
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$exit_code; shim did not delegate: $(head -1 <<<"$out")"
+  fi
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -912,5 +930,6 @@ case_isolation_none
 case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief
+case_shim_delegates_to_adapter
 
 th_summary
