@@ -205,6 +205,57 @@ case_happy_path
 case_is_error
 case_exit_propagated
 case_usage_log
+# ---- 15: CLAUDE_DISPATCH_TIMEOUT env sets adapter timeout (highest priority) ----
+# Config loading moved to pmctl layer (CC-293); adapter uses PM_CFG_TIMEOUT
+# exported by pmctl, or falls back to 1200. CLAUDE_DISPATCH_TIMEOUT env remains
+# adapter-specific and is the highest-priority override for direct invocations.
+case_config_timeout_env_overrides() {
+  local name="config/CLAUDE_DISPATCH_TIMEOUT env sets adapter timeout"; should_run "$name" || return 0
+  local work brief stderr code
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  stderr="$(mktemp)"
+  set +e
+  CLAUDE_DISPATCH_TIMEOUT=900 \
+    "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd >/dev/null 2>"$stderr"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && grep -q 'timeout:.*900s' "$stderr"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" || true)"
+  fi
+  rm -rf "$work"; rm -f "$brief" "$stderr"
+}
+
+# ---- 17: successful claude dispatch writes executor=claude run row ----
+# Verifies that the shared sw_append_dispatch_run helper records a run row with
+# executor:"claude" and the correct task_id for the claude adapter path.
+case_state_store_run_row_claude() {
+  local name="state-store/claude dispatch writes executor=claude run row"; should_run "$name" || return 0
+  local bin home work brief store runs_file code
+  bin="$(mktemp -d)"; _install_fake_claude "$bin"
+  home="$(mktemp -d)"; mkdir -p "$home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$home/.claude/scripts/log-usage.sh"
+  store="$(mktemp -d)"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(mktemp --suffix=.md)"
+  printf 'task_id: CC-305\ngoal: state store claude row test\n' > "$brief"
+  set +e
+  PATH="$bin:$PATH" HOME="$home" PM_DISPATCH_STATE_ROOT="$store" \
+    "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  set -e
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  if [[ -n "$runs_file" && -s "$runs_file" ]] \
+     && jq -e 'select(.executor=="claude")' "$runs_file" >/dev/null 2>&1 \
+     && jq -e 'select(.task_id=="CC-305")' "$runs_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "code=$code runs=${runs_file:-none} content=$(cat "${runs_file:-/dev/null}" 2>/dev/null | head -c 200)"
+  fi
+  rm -rf "$bin" "$home" "$store" "$work"; rm -f "$brief"
+}
+
 case_codex_flags_noop
+case_config_timeout_env_overrides
+case_state_store_run_row_claude
 
 th_summary

@@ -82,13 +82,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 | CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
-| CC-293 | 🟡 deferred | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | — | P3 | design |
+| CC-293 | ✅ closed 2026-06-02 | **[arch: lift default/config resolution into pmctl runtime]** dispatch 的 default-model + `dispatch.default_model` config precedence 目前住在 `adapters/codex/dispatch.sh`(CC-292 gate 上 critic + architecture-reviewer 都提)。當下一個跨 adapter 的 dispatch config 軸出現時,把 config/default 解析從 adapter 抽到 `pmctl dispatch run` runtime,避免 policy-like precedence 在每個 adapter 重複。關聯 [[CC-292]]、[[CC-289]]、[[CC-211]]。 | arch | 2026-05-31 | pr:#216 | P3 | design |
 | CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
 | CC-297 | 🟡 deferred | **[arch: register `reviewer` as a guard role — one fixed rule]** pr-gate 的 5 個 reviewers + synthesis 是會寫檔的 agent，但落點目前只靠 prompt 指示（「Only write OUTPUT_FILE」）+ codex `workspace-write` sandbox，**沒有硬 guard**——CC-291 generalization 的下一個實例（user 2026-06-01）。設計定調：**一個 `reviewer` role + 一條固定規則 = 只能寫 `.gate-results/` 目錄**，跨 tier-subset（用幾個 reviewer 是 orchestration 的事，guard 不列舉）與 parallel/sequential（兩模式都寫 `.gate-results/`，故綁**目錄**不綁檔名）統一套用。brief（`.gate-briefs/`）由 gate 腳本寫、**不算 reviewer**，排除在規則外。trigger 因 runtime 異（codex 顯式 `pmctl guard check` / claude-route PreToolUse hook），規則不變（CC-291 模式）。`--output` 覆寫到 repo 外 = operator 信任逃生口，文件化。defense-in-depth（防 diff 內 prompt-injection 誘導 reviewer 亂寫），非阻塞。brief 位置統一見 [[CC-298]]。關聯 [[CC-291]]、[[CC-288]]、[[CC-298]]。 | arch | 2026-06-01 | — | P3 | design |
 | CC-299 | ✅ closed 2026-06-01 | **[arch: 統一 executor dispatch 路徑 — codex-executor 與 claude-executor 都走外部 CLI dispatch]** 目前 `claude-executor` 走 Agent tool subagent + Claude 內建 Read/Edit/Write（直接操作），而 `codex-executor` 走 `codex-dispatch.sh` → Codex CLI。兩條路徑不一致。正確架構：兩者都走 `pmctl dispatch run --adapter <X> --brief-file /tmp/brief.md`，分別呼叫外部 CLI（codex CLI / `claude --print`）。`Agent(subagent_type="claude-executor")` 是錯誤用法——`claude-executor` 的正確角色是對 `adapters/claude/dispatch.sh` 的外部呼叫，不是 Claude 在自己內部扮演另一個 Claude。改造後：主線程一律用 `bash pmctl dispatch run --adapter codex/claude` 派發，不使用 Agent tool 執行 implementation 任務。影響範圍：`agents/claude-executor.md`（角色定義改寫）、`agents/codex-executor.md`（dispatch 路徑改為 `pmctl dispatch run`）、主線程 dispatch 呼叫點、`memory/feedback_codex_529_fallback.md`（529 fallback 規則更新：permission denied ≠ 529，應診斷根因）。Origin user 2026-06-01。關聯 [[CC-289]]（pmctl dispatch run）、[[CC-266]]（adapters/claude/dispatch.sh）、[[CC-291]]（executor role 定義）。 | arch | 2026-06-01 | — | P2 | design |
-| CC-305 | 🟡 deferred | **[bug: concurrent pmctl dispatch runs race on latest.* symlinks → post-verify reads wrong .last]** 兩個 `pmctl dispatch run` 並行時各 adapter 都執行 `ln -sfn` 覆蓋 `latest.*`；`dispatch-post-verify.sh` 先檢查 `latest.last` 非空，此時可能已指向另一 adapter 剛建的空檔案 → `latest.last is empty` 假失敗。影響 pr-gate parallel fan-out 與所有並行 dispatch 場景。完整修法見 body。關聯 [[CC-289]]。 | ops/gate | 2026-06-01 | — | P2 | — |
+| CC-305 | ✅ closed 2026-06-02 | **[bug: concurrent pmctl dispatch runs race on latest.* symlinks → post-verify reads wrong .last]** 兩個 `pmctl dispatch run` 並行時各 adapter 都執行 `ln -sfn` 覆蓋 `latest.*`；`dispatch-post-verify.sh` 先檢查 `latest.last` 非空，此時可能已指向另一 adapter 剛建的空檔案 → `latest.last is empty` 假失敗。影響 pr-gate parallel fan-out 與所有並行 dispatch 場景。完整修法見 body。關聯 [[CC-289]]。 | ops/gate | 2026-06-01 | pr:#216 | P2 | — |
 | CC-306 | 🟡 deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
-| CC-298 | 🔵 active | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate had a runtime-named brief directory（`scripts/pr-gate.sh:360`）+ runtime-tokenized claude brief filenames（L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | — | P2 | design |
+| CC-298 | ✅ closed 2026-06-02 | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate had a runtime-named brief directory（`scripts/pr-gate.sh:360`）+ runtime-tokenized claude brief filenames（L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | pr:#216 | P2 | design |
 
 ---
 
@@ -1173,15 +1173,17 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-215]]` (pmctl core), `[[CC-282]]` (pmctl backlog), `[[CC-284]]` (working-set + the CC-only fix this generalizes).
 
-## CC-293 — [arch] lift default/config resolution into pmctl runtime 🟡 deferred
+## CC-293 — [arch] lift default/config resolution into pmctl runtime ✅ 2026-06-02
 
-**Problem**: `adapters/codex/dispatch.sh` now owns default-model selection and `dispatch.default_model` config precedence (`--model` flag > config > built-in `default` alias). That is policy-like resolution living in a thin adapter — flagged by both critic and architecture-reviewer during the CC-292 gate as a slight re-fattening of the adapter.
+**See**: pr:#216
 
-**Why (deferred)**: It is correct and localized today (codex is the only adapter with a config axis), and the layer-boundary enforcer ([[CC-233]]) still passes. Extracting prematurely would add indirection with one consumer. Pull it up to `pmctl dispatch run` when a **second** shared dispatch config axis appears (e.g. claude adapter needs the same default/config resolution), so the shared runtime owns precedence and adapters stay thin.
+**Problem**: `adapters/codex/dispatch.sh` owned default-model selection and `dispatch.default_model` config precedence — policy-like resolution in a thin adapter, flagged by critic + architecture-reviewer at CC-292 gate. Deferred until a second adapter needed the same config axis.
 
-**Requirement (when triggered)**: move config parse + default/precedence resolution into the `pmctl dispatch run` runtime (or a shared lib it composes); adapters receive the already-resolved model. Keep the gpt-5.5 default contract + shape-guard.
+**Trigger met**: adding `adapters/claude/dispatch.sh` (CC-305 / pr:#216) created the second shared dispatch config axis, fulfilling the deferral condition.
 
-**Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic).
+**Resolution**: `scripts/lib/pmctl-config.sh` centralizes config parsing. `pmctl-dispatch.sh` calls `pm_config_load` in `pmctl_dispatch_run` and exports `PM_CFG_TIMEOUT` + `PM_CFG_DEFAULT_MODEL` to the adapter subprocess — adapters receive config values via env rather than sourcing the config file themselves. Both adapters dropped all config-loading code; their existing `elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]` / `${PM_CFG_DEFAULT_MODEL:-}` branches now consume the exported values. Precedence maintained: `--timeout`/`--model` flags (parsed last) win over everything; adapter-specific env vars (`CODEX_DISPATCH_TIMEOUT`, `CLAUDE_DISPATCH_TIMEOUT`) are next; pmctl-exported config (`PM_CFG_TIMEOUT`, `PM_CFG_DEFAULT_MODEL`) is third; adapter built-in default (1200 / `default` alias) is fallback for direct invocations without pmctl.
+
+**Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic), `[[CC-305]]` (trigger).
 
 
 ## CC-296 — [release] v0.3.0 deprecation sunset — remove after 2 official releases 🟡 deferred
@@ -1216,11 +1218,11 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-291]]`（role-keyed registry）、`[[CC-288]]`（guard surface）。
 
-## CC-298 — [arch] 統一 brief 落點 + 產物檔名去 runtime 化（active）
+## CC-298 — [arch] 統一 brief 落點 + 產物檔名去 runtime 化 ✅ 2026-06-02
 
-**See**: pr:TBD
+**See**: pr:#216
 
-**Resolution**: pr-gate brief output moved to `.gate-briefs/`, brief filenames dropped runtime tokens, and each brief context now records `Executor:`.
+**Resolution**: pr-gate brief output moved to `.gate-briefs/` (runtime-agnostic shared directory); brief filenames no longer carry runtime tokens (`pr-gate-<ts>.md` rather than `codex-pr-gate-<ts>.md`); `.codex-briefs/` runtime-named historical directory removed. Defense-in-depth enforcer extension (preventing re-introduction of runtime-named data paths under `scripts/`) captured as separate deferred follow-up in [[CC-306]].
 
 **Origin (user, 2026-06-01, during CC-297 discussion)**: User flagged the runtime-named brief directory and runtime-tokenized artifact names; the target was one shared brief location for claude/codex and an in-file record of which model executed. This is CC-291（runtime 是 adapter 的事）/ CC-233（core 不放 CLI-named 檔）同一條界線，延伸到**資料產物**。
 
@@ -1254,7 +1256,9 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-233]]`, `[[CC-298]]`.
 
-## CC-305 — [ops/gate] concurrent pmctl dispatch runs race on latest.* symlinks 🟡 deferred
+## CC-305 — [ops/gate] concurrent pmctl dispatch runs race on latest.* symlinks ✅ 2026-06-02
+
+**See**: pr:#216
 
 **Problem**: When two or more `pmctl dispatch run` calls target the same `<work_dir>/.agent-trace/` (e.g. pr-gate parallel reviewer fan-out), each adapter calls `ln -sfn <adapter>-<ts>.last latest.last` on finish. A second dispatch that finishes between the first adapter's end and its post-verify check silently overwrites `latest.*` → `dispatch-post-verify.sh` sees an empty or wrong `.last` → `latest.last is empty` false failure, or worse, verifies the wrong run's output.
 
@@ -1262,25 +1266,16 @@ Discovered 2026-06-01: concurrent codex + claude smoke test; codex exit 0 and co
 
 **Root cause**: `latest.*` is shared mutable global state per working directory. Any actor that touches it races with every concurrent dispatch.
 
-**Complete fix — three coordinated changes**:
+**Resolution (#216, 2026-06-02)**: Implemented point 2 (pmctl owns the output contract) — the simpler sufficient fix. `pmctl dispatch run` now tees adapter stdout to a temp file, parses the per-run `last:` / `stderr:` footer lines, and passes them to `dispatch-post-verify.sh` via `--last`/`--stderr` flags. Post-verify uses explicit per-run paths; `latest.*` symlinks remain as human-observation convenience only. Per-run isolated subdirectory (point 1) deferred — not needed once pmctl consumes the explicit footer. Regression tests added: stale `latest.last` avoidance + tee `PIPESTATUS` propagation. `docs/executor-contract.md` updated with footer handoff subsection.
 
-1. **Per-run isolated subdirectory** (`adapters/codex/dispatch.sh` + `adapters/claude/dispatch.sh`):
-   Each dispatch gets its own subdirectory: `.agent-trace/<adapter>-<ts>-<pid>/` containing `trace.jsonl`, `last`, `stderr`. The adapter still writes `latest.*` symlinks at the `.agent-trace/` level for human observation, but the per-run artifacts live in the subdirectory and are never at risk of being overwritten by a sibling run.
+Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `sw_append_dispatch_run` shared run-row builder (eliminating ~100 LOC of adapter duplication), `pmctl_validate_adapter_name` regex fix (`^[a-z][a-z0-9_-]*$`), 5 new test cases.
 
-2. **pmctl owns the output contract** (`scripts/lib/pmctl-dispatch.sh`):
-   After the adapter subprocess exits, `pmctl dispatch run` parses the per-run paths from the adapter's stdout footer (`trace:`, `last:`, `stderr:`), then calls `dispatch-post-verify.sh --last <per-run-last> --trace <per-run-trace> --stderr <per-run-stderr>`. Post-verify never reads `latest.*`; all paths are explicit. `latest.*` is updated by the adapter as a convenience for humans only.
+**Acceptance** (all met):
+- Stale `latest.last` no longer causes post-verify false failure (CC-305 regression case passes).
+- Footer exit code propagated correctly through tee pipeline.
+- `scripts/run-all-tests.sh`: 40 passed, 0 failed.
 
-3. **dispatch-post-verify.sh path contract** (`scripts/dispatch-post-verify.sh`):
-   Remove the `latest.last is empty` guard — the script receives explicit `--last` and fails loudly if the path is absent or empty. Add a validation step that the resolved `--last` path is within `.agent-trace/` (symlink-safety check already present; extend to per-run subdirs). Update `docs/executor-contract.md` `Filesystem output contract` to reflect the new per-run subdirectory layout and deprecate the flat `<executor>-<ts>.last` shape.
-
-**Acceptance**:
-- Two concurrent `pmctl dispatch run --adapter codex` and `--adapter claude` calls on the same working directory both post-verify correctly.
-- `latest.last` still updated (human observation); removing it does not affect any test.
-- `scripts/test-dispatch-handover.sh` and `scripts/test-install.sh` pass without modification, or are updated to cover the new layout.
-
-**Why P2**: Parallel fan-out is the intended pattern for pr-gate reviewers and multi-agent dispatch; this bug makes it unreliable at the infrastructure layer. Not a v0.3.0 blocker (sequential dispatch still works) but should be resolved before any parallel-dispatch feature ships.
-
-**Cross-link**: `[[CC-289]]` (pmctl dispatch run), `[[CC-299]]` (unified dispatch routes), `[[CC-264]]` (dispatch-post-verify.sh).
+**Cross-link**: `[[CC-289]]` (pmctl dispatch run), `[[CC-299]]` (unified dispatch routes), `[[CC-264]]` (dispatch-post-verify.sh), `[[CC-293]]` (config dedup).
 
 ## CC-299 — [arch] 統一 executor dispatch 路徑 ✅ 2026-06-01
 

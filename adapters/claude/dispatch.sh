@@ -70,7 +70,6 @@ WORK_DIR=""
 MODEL=""
 ISOLATION=""
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PM_DISPATCH_CONFIG_FILE="${HOME}/.pm-dispatch/config"
 TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
@@ -79,37 +78,6 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # shellcheck source=scripts/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
-
-_load_config_timeout() {
-  local config_path="${PM_DISPATCH_CONFIG_FILE}"
-  local config_timeout=""
-  local line key value
-
-  if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then
-    echo "$CLAUDE_DISPATCH_TIMEOUT"
-    return 0
-  fi
-
-  if [[ -r "$config_path" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      line="${line%$'\r'}"
-      line="${line%%#*}"
-      line="${line#"${line%%[![:space:]]*}"}"
-      line="${line%"${line##*[![:space:]]}"}"
-      [[ -z "$line" ]] && continue
-      [[ "$line" != *"="* ]] && continue
-      key="${line%%=*}"; value="${line#*=}"
-      key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
-      value="${value#"${value%%[![:space:]]*}"}"; value="${value%"${value##*[![:space:]]}"}"
-      if [[ "$key" == "dispatch.default_timeout" && "$value" =~ ^[0-9]+$ ]]; then
-        config_timeout="$value"
-      fi
-    done < "$config_path"
-  fi
-
-  [[ -n "$config_timeout" ]] && { echo "$config_timeout"; return 0; }
-  echo "1200"
-}
 
 # Resolve isolation_level → permission_mode from adapters/claude/isolation-map.yaml.
 # Snapshot executions read the copied adapter file; fall back to repo-source paths.
@@ -144,7 +112,17 @@ _resolve_permission_mode() {
   printf '%s\n' "$_mode"
 }
 
-TIMEOUT="$(_load_config_timeout)"
+# Timeout precedence: --timeout flag (parsed below, wins) > $CLAUDE_DISPATCH_TIMEOUT
+# env > PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
+# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run` (CC-293); direct
+# adapter invocations fall back to 1200 when the var is absent.
+if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then
+  TIMEOUT="$CLAUDE_DISPATCH_TIMEOUT"
+elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then
+  TIMEOUT="$PM_CFG_TIMEOUT"
+else
+  TIMEOUT="1200"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -261,26 +239,7 @@ if [[ -s "$TRACE" ]]; then
 fi
 
 # --- state store: append Run row (best-effort; never fatal) ---
-{
-  _SW_TASK_ID="UNKN-0"
-  if [[ -n "${BRIEF_FILE:-}" && -f "${BRIEF_FILE}" ]]; then
-    _SW_TID=$(grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' "${BRIEF_FILE}" 2>/dev/null | head -1 | sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
-    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
-  fi
-  _SW_STATE="failed"; [[ "$EXIT" -eq 0 ]] && _SW_STATE="ok"
-  _SW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
-  _SW_HEX=$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-  _SW_RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)-${_SW_HEX:0:6}"
-  _SW_RUN_JSON="$(jq -cn \
-    --arg id "$_SW_RUN_ID" --arg task_id "$_SW_TASK_ID" --arg state "$_SW_STATE" \
-    --argjson exit_code "$EXIT" --arg model "${MODEL:-}" --arg brief_file "${BRIEF_FILE:-}" \
-    --arg working_dir "${WORK_DIR:-}" --arg trace_path "${TRACE:-}" --arg created_ts "$_SW_TS" \
-    '{schema_version:1,id:$id,task_id:$task_id,executor:"claude",state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
-    2>/dev/null || true)"
-  if [[ -n "$_SW_RUN_JSON" && "$(type -t runs_append 2>/dev/null)" == function ]]; then
-    runs_append "$_SW_RUN_JSON" 2>/dev/null || true
-  fi
-} 2>/dev/null || true
+sw_append_dispatch_run "claude" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DIR:-}" "${TRACE:-}" 2>/dev/null || true
 
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then

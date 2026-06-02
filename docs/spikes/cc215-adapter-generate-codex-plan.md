@@ -63,7 +63,7 @@ Keep the M3 stub to 8 fields. It must be a deliberately tiny YAML subset: one sc
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | integer | Adapter manifest schema version. Start at `1`. |
-| `adapter_name` | string | Directory-safe adapter name; must match `^[a-z][a-z0-9-]*$`. |
+| `adapter_name` | string | Directory-safe adapter name; must match `^[a-z][a-z0-9_-]*$`. |
 | `executor` | string | Executor enum value from `core/policy/executor-enum.yaml`. |
 | `cli_binary` | string | Native CLI command the adapter expects on `PATH`, e.g. `codex`. |
 | `isolation_map_ref` | string | Relative path to this adapter's isolation map. |
@@ -113,7 +113,7 @@ pmctl_require_jq() {
 
 pmctl_validate_adapter_name() {
   local name="${1:-}"
-  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || pmctl_die "invalid adapter name: $name"
+  [[ "$name" =~ ^[a-z][a-z0-9_-]*$ ]] || pmctl_die "invalid adapter name: $name"
 }
 
 pmctl_policy_values() {

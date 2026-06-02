@@ -542,39 +542,6 @@ case_explicit_gpt54_resolves_high_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16d: ~/.pm-dispatch/config dispatch.default_model overrides built-in default ----
-# Behavior: a valid dispatch.default_model in ~/.pm-dispatch/config replaces the
-#   built-in default when --model is omitted.
-# Steps:
-#   1. Write dispatch.default_model=gpt-5.4 to an isolated HOME config, run --print-cmd
-#      with no --model.
-#   2. Assert the CMD carries -m gpt-5.4 and not -m gpt-5.5.
-case_config_default_model_override() {
-  local name="default-model/config dispatch.default_model overrides built-in"
-  local _home _work _brief _out _exit
-  should_run "$name" || return 0
-
-  _home="$(mktemp -d)"
-  mkdir -p "$_home/.pm-dispatch"
-  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
-  _work="$(mktemp -d)"; git init -q "$_work"
-  _brief="$(mktemp --suffix=.md)"; printf 'goal: config default model override test\n' > "$_brief"
-
-  set +e
-  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd)"
-  _exit=$?
-  set -e
-  if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.4"* ]] \
-    && [[ "$_out" != *"-m gpt-5.5"* ]]; then
-    pass "$name"
-  else
-    fail "$name" ""
-  fi
-  rm -rf "$_work" "$_home"
-  rm -f "$_brief"
-}
-
 # ---- 16e: explicit --model default alias resolves to gpt-5.5 + high ----
 # Behavior: the `default` alias is data-backed in share/model-aliases.tsv and
 #   resolves to the gpt-5.5 wire id with high effort.
@@ -605,78 +572,6 @@ case_default_alias_resolves_gpt55() {
   rm -f "$_brief"
 }
 
-# ---- 16f: --model flag takes precedence over dispatch.default_model config ----
-# Behavior: an explicit --model flag wins over a dispatch.default_model config value
-#   (documented precedence: flag > config > built-in default).
-# Steps:
-#   1. Write dispatch.default_model=gpt-5.4 to an isolated HOME config, then run
-#      --print-cmd with --model gpt-5.5.
-#   2. Assert the CMD carries -m gpt-5.5 (flag wins) and not -m gpt-5.4.
-case_flag_beats_config_default_model() {
-  local name="default-model/--model flag beats dispatch.default_model config"
-  local _home _work _brief _out _exit
-  should_run "$name" || return 0
-
-  _home="$(mktemp -d)"
-  mkdir -p "$_home/.pm-dispatch"
-  printf 'dispatch.default_model=gpt-5.4\n' > "$_home/.pm-dispatch/config"
-  _work="$(mktemp -d)"; git init -q "$_work"
-  _brief="$(mktemp --suffix=.md)"; printf 'goal: flag beats config test\n' > "$_brief"
-
-  set +e
-  # config says gpt-5.4 but the --model flag must win.
-  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --model gpt-5.5 --print-cmd)"
-  _exit=$?
-  set -e
-  if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" != *"-m gpt-5.4"* ]]; then
-    pass "$name"
-  else
-    fail "$name" ""
-  fi
-  rm -rf "$_work" "$_home"
-  rm -f "$_brief"
-}
-
-# ---- 16g: malformed dispatch.default_model warns and falls back to default ----
-# Behavior: a malformed dispatch.default_model value (bad shape) does not silently
-#   become the omitted---model default; the adapter warns and falls back to the
-#   built-in `default` alias (→ gpt-5.5), so a typo cannot reintroduce a wrong
-#   default-model path.
-# Steps:
-#   1. Write dispatch.default_model=Bad!Model (invalid shape) to an isolated HOME
-#      config, run --print-cmd with no --model, capturing stderr.
-#   2. Assert exit 0, stderr carries the malformed-value warning, and the CMD falls
-#      back to -m gpt-5.5 (not the malformed value).
-case_malformed_config_default_model_falls_back() {
-  local name="default-model/malformed dispatch.default_model warns + falls back to default"
-  local _home _work _brief _stderr _out _exit
-  should_run "$name" || return 0
-
-  _home="$(mktemp -d)"
-  mkdir -p "$_home/.pm-dispatch"
-  printf 'dispatch.default_model=Bad!Model\n' > "$_home/.pm-dispatch/config"
-  _work="$(mktemp -d)"; git init -q "$_work"
-  _brief="$(mktemp --suffix=.md)"; printf 'goal: malformed default model test\n' > "$_brief"
-  _stderr="$(mktemp)"
-
-  set +e
-  _out="$(HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" --print-cmd 2>"$_stderr")"
-  _exit=$?
-  set -e
-  if [[ "$_exit" -eq 0 ]] \
-    && grep -q "malformed value for dispatch.default_model" "$_stderr" \
-    && [[ "$_out" == *"-m gpt-5.5"* ]] \
-    && [[ "$_out" != *"Bad!Model"* ]]; then
-    pass "$name"
-  else
-    fail "$name" ""
-  fi
-  rm -rf "$_work" "$_home"
-  rm -f "$_brief" "$_stderr"
-}
-
 # ---- 17: timeout precedence env-only uses CODEX_DISPATCH_TIMEOUT ----
 case_timeout_env_only_precedence() {
   local name="timeout/env-only uses CODEX_DISPATCH_TIMEOUT"
@@ -703,50 +598,21 @@ case_timeout_env_only_precedence() {
   rm -f "$_brief17" "$_stderr17"
 }
 
-# ---- 18: timeout precedence config-only uses dispatch.default_timeout ----
-case_timeout_config_only_precedence() {
-  local name="timeout/config-only uses dispatch.default_timeout"
-  local _home18 _work18 _brief18 _stderr18 _exit18
-  should_run "$name" || return 0
-
-  _home18="$(mktemp -d)"
-  mkdir -p "$_home18/.pm-dispatch"
-  printf 'dispatch.default_timeout=900\n' > "$_home18/.pm-dispatch/config"
-  _work18="$(mktemp -d)"
-  git init -q "$_work18"
-  _brief18="$(mktemp --suffix=.md)"
-  _stderr18="$(mktemp)"
-  printf 'goal: timeout precedence config-only test\n' > "$_brief18"
-  set +e
-  HOME="$_home18" CODEX_DISPATCH_TIMEOUT= \
-    "$DISPATCH" --cd "$_work18" --brief-file "$_brief18" --print-cmd >/dev/null 2>"$_stderr18"
-  _exit18=$?
-  set -e
-  if [[ "$_exit18" -eq 0 ]] && grep -q "timeout:  900s" "$_stderr18"; then
-    pass "$name"
-  else
-    fail "$name" ""
-  fi
-  rm -rf "$_work18" "$_home18"
-  rm -f "$_brief18" "$_stderr18"
-}
-
-# ---- 19: timeout precedence brief-field wins over env and config ----
+# ---- 19: timeout precedence --timeout flag wins over CODEX_DISPATCH_TIMEOUT env ----
+# Config loading has moved to pmctl (CC-293); direct adapter invocations only see
+# CODEX_DISPATCH_TIMEOUT env and the --timeout flag. This case verifies the flag wins.
 case_timeout_precedence_brief_field() {
-  local name="timeout/brief-field beats env and config"
-  local _home19 _work19 _brief19 _stderr19 _exit19
+  local name="timeout/--timeout flag beats CODEX_DISPATCH_TIMEOUT env"
+  local _work19 _brief19 _stderr19 _exit19
   should_run "$name" || return 0
 
-  _home19="$(mktemp -d)"
-  mkdir -p "$_home19/.pm-dispatch"
-  printf 'dispatch.default_timeout=900\n' > "$_home19/.pm-dispatch/config"
   _work19="$(mktemp -d)"
   git init -q "$_work19"
   _brief19="$(mktemp --suffix=.md)"
   _stderr19="$(mktemp)"
-  printf 'goal: timeout precedence brief wins\n' > "$_brief19"
+  printf 'goal: timeout precedence flag wins\n' > "$_brief19"
   set +e
-  HOME="$_home19" CODEX_DISPATCH_TIMEOUT=700 \
+  CODEX_DISPATCH_TIMEOUT=700 \
     "$DISPATCH" --cd "$_work19" --brief-file "$_brief19" --timeout 1200 --print-cmd >/dev/null 2>"$_stderr19"
   _exit19=$?
   set -e
@@ -755,7 +621,7 @@ case_timeout_precedence_brief_field() {
   else
     fail "$name" ""
   fi
-  rm -rf "$_work19" "$_home19"
+  rm -rf "$_work19"
   rm -f "$_brief19" "$_stderr19"
 }
 
@@ -1039,12 +905,8 @@ case_unknown_alias_fallback_keeps_raw_model
 case_default_model_resolves_gpt55
 case_explicit_gpt55_resolves_high_effort
 case_explicit_gpt54_resolves_high_effort
-case_config_default_model_override
 case_default_alias_resolves_gpt55
-case_flag_beats_config_default_model
-case_malformed_config_default_model_falls_back
 case_timeout_env_only_precedence
-case_timeout_config_only_precedence
 case_timeout_precedence_brief_field
 case_alias_source_missing_exits_2
 case_alias_source_malformed_exits_nonzero

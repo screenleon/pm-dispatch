@@ -47,6 +47,15 @@
 #   1  — post-verify failed after a successful adapter run
 #   *  — any other non-zero adapter exit is propagated verbatim
 
+# Source the shared config loader so pmctl_dispatch_run can resolve config
+# defaults and export them to adapter subprocesses (CC-293).
+if ! declare -F pm_config_load >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091  # dynamic path; pmctl-config.sh scanned separately
+  . "$_pmctl_dispatch_lib_dir/pmctl-config.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -196,9 +205,39 @@ pmctl_dispatch_run() {
     return 2
   fi
 
+  # 4a. Resolve config defaults and export to the adapter subprocess (CC-293).
+  #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
+  #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
+  #     lower than an explicit --timeout / --model flag — the existing elif chains
+  #     in each adapter preserve that ordering without any adapter-side change.
+  #     Export is unconditional; adapters that omit the config branch safely ignore
+  #     unknown env vars. pm_config_load is guarded so test environments that did
+  #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
+  if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
+  # shellcheck disable=SC2163
+  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL
+
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
-  local exit_code=0
-  bash "$adapter_path" "${forward[@]}" || exit_code=$?
+  #    Tee stdout to a temp file so per-run artifact paths in the adapter footer
+  #    can be extracted for post-verify without relying on latest.* symlinks.
+  #    latest.* is shared mutable state: two concurrent dispatches on the same
+  #    work dir both call `ln -sfn <adapter>-<ts>.last latest.last`, so the
+  #    second finisher silently overwrites the first's symlink before post-verify
+  #    reads it (CC-305). Explicit per-run paths eliminate the race entirely.
+  local exit_code=0 _footer_tmp=""
+  local -a _pst=(0 0)
+  _footer_tmp="$(mktemp)" || { printf 'pmctl dispatch run: mktemp failed\n' >&2; return 2; }
+  # Capture PIPESTATUS before any subsequent command clobbers it.  The { } group
+  # is the LHS of ||, so set -e is suppressed for a non-zero pipeline exit.
+  { bash "$adapter_path" "${forward[@]}" | tee "$_footer_tmp"; _pst=("${PIPESTATUS[@]}"); } || true
+  exit_code="${_pst[0]}"
+
+  # Parse per-run paths from the adapter stdout footer ("last:   <path>",
+  # "stderr: <path>").  Empty strings → post-verify falls back to latest.*.
+  local _run_last="" _run_stderr=""
+  _run_last="$(grep -m1 '^last:' "$_footer_tmp" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_stderr="$(grep -m1 '^stderr:' "$_footer_tmp" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  rm -f "$_footer_tmp"
 
   # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
   # there is no output contract to read and nothing to post-verify.
@@ -212,9 +251,14 @@ pmctl_dispatch_run() {
     return "$exit_code"
   fi
 
-  # 7. Post-verify (shared) reads the output contract (latest.last) and validates
-  #    the run against the work dir + brief. Only runs after a clean adapter exit.
-  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "$work_dir" "$brief_file"; then
+  # 7. Post-verify (shared): pass explicit per-run paths (parsed from the adapter
+  #    footer) so post-verify never reads latest.*, eliminating the CC-305 race.
+  #    Falls back to latest.* defaults when footer parsing found nothing (e.g.,
+  #    a print-cmd adapter or a future adapter that omits the footer).
+  local -a _pv_args=("$work_dir" "$brief_file")
+  [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
+  [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
+  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     return 1
   fi

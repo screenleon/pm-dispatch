@@ -4,7 +4,7 @@
 pmctl_validate_adapter_name() {
   local name="${1:-}"
 
-  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || {
+  [[ "$name" =~ ^[a-z][a-z0-9_-]*$ ]] || {
     printf 'pmctl: invalid adapter name: %s\n' "$name" >&2
     return 1
   }
