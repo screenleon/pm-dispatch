@@ -112,8 +112,8 @@ _resolve_permission_mode() {
   printf '%s\n' "$_mode"
 }
 
-# Timeout precedence: $CLAUDE_DISPATCH_TIMEOUT env > PM_CFG_TIMEOUT (exported by
-# pmctl from config) > --timeout flag (parsed below) > 1200.
+# Timeout precedence: --timeout flag (parsed below, wins) > $CLAUDE_DISPATCH_TIMEOUT
+# env > PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
 # PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run` (CC-293); direct
 # adapter invocations fall back to 1200 when the var is absent.
 if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then

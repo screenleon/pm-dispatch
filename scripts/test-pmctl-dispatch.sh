@@ -577,6 +577,57 @@ case_config_malformed_model_warns_and_fallback() {
   rm -rf "$home" "$work"; rm -f "$stderr"
 }
 
+# ---- 24: pmctl exports config timeout to claude adapter subprocess (CC-293) ----
+# Symmetric to case_config_timeout_exported_to_adapter (case 20) but through the
+# claude adapter, covering the path removed from test-claude-dispatch.sh.
+case_config_timeout_exported_to_claude_adapter() {
+  local name="config/dispatch.default_timeout exported by pmctl to claude adapter"
+  should_run "$name" || return 0
+  local home work brief stderr code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_timeout = 820\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  stderr="$(mktemp)"
+  set +e
+  HOME="$home" CLAUDE_DISPATCH_TIMEOUT= \
+    "$PMCTL" dispatch run --adapter claude --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && grep -q 'timeout:.*820s' "$stderr"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" 2>/dev/null || true)"
+  fi
+  rm -rf "$home" "$work"; rm -f "$stderr"
+}
+
+# ---- 25: --timeout flag forwarded by pmctl beats config-exported PM_CFG_TIMEOUT ----
+# The flag is parsed last in the adapter, so it wins over env/config.
+# Validates the full precedence chain: flag > env > config > 1200 default.
+case_timeout_flag_beats_config_via_pmctl() {
+  local name="config/--timeout flag forwarded by pmctl beats config-exported timeout"
+  should_run "$name" || return 0
+  local home work brief stderr code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_timeout = 820\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  stderr="$(mktemp)"
+  set +e
+  HOME="$home" CODEX_DISPATCH_TIMEOUT= \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+    --timeout 999 --print-cmd >/dev/null 2>"$stderr"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && grep -q 'timeout:  999s' "$stderr" \
+     && ! grep -q 'timeout:  820s' "$stderr"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" 2>/dev/null || true)"
+  fi
+  rm -rf "$home" "$work"; rm -f "$stderr"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
@@ -600,5 +651,7 @@ case_config_timeout_exported_to_adapter
 case_config_model_exported_to_adapter
 case_caller_model_beats_config
 case_config_malformed_model_warns_and_fallback
+case_config_timeout_exported_to_claude_adapter
+case_timeout_flag_beats_config_via_pmctl
 
 th_summary
