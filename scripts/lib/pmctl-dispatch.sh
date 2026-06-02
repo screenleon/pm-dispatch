@@ -51,7 +51,7 @@
 # defaults and export them to adapter subprocesses (CC-293).
 if ! declare -F pm_config_load >/dev/null 2>&1; then
   _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # shellcheck source=scripts/lib/pmctl-config.sh
+  # shellcheck disable=SC1091  # dynamic path; pmctl-config.sh scanned separately
   . "$_pmctl_dispatch_lib_dir/pmctl-config.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
 fi
@@ -213,7 +213,7 @@ pmctl_dispatch_run() {
   #     Export is unconditional; adapters that omit the config branch safely ignore
   #     unknown env vars. pm_config_load is guarded so test environments that did
   #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
-  type -t pm_config_load >/dev/null 2>&1 && pm_config_load || true
+  if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL
 
