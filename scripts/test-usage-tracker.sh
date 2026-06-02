@@ -763,6 +763,25 @@ case_missing_type_defaults_to_unknown() {
   pass "$name"
 }
 
+case_invalid_ts_skipped_not_counted() {
+  # Regression (CC-104t rewrite): invalid but non-null ts strings were converted
+  # to epoch 0 by fromdateiso8601?//0, causing --all to include them in totals
+  # (cutoff=0, 0>=0 passes). They must be counted as skipped, not in usage.
+  local name="invalid_ts_skipped_not_counted" home out status
+  home="$(new_home "$name")"
+  local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '{"ts":"not-a-date","tokens":999999,"type":"pm_analysis","session":"s"}\n' \
+    >> "$home/.claude/usage-tracker.jsonl"
+  write_log "$home" "$ts" "pm_analysis" 1000 "valid entry"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_not_contains "$name" "$out" "999,999"
+  assert_file_contains "$name" "$out" "1,000"
+  assert_file_contains "$name" "$out.err" "skipped"
+  pass "$name"
+}
+
 case_unknown_pool_counted_as_claude() {
   # Regression (CC-308/CC-104t): token-usage.sh previously dropped rows with
   # unknown pool values from Claude and Total totals while still counting them
@@ -850,6 +869,7 @@ run_case "remaining_manual_n_unchanged" case_remaining_manual_n_unchanged
 run_case "codex_old_log_excluded" case_codex_old_log_excluded
 run_case "one_dispatch_one_count" case_one_dispatch_one_count
 run_case "missing_type_defaults_to_unknown" case_missing_type_defaults_to_unknown
+run_case "invalid_ts_skipped_not_counted" case_invalid_ts_skipped_not_counted
 run_case "unknown_pool_counted_as_claude" case_unknown_pool_counted_as_claude
 
 if ! $LIST; then

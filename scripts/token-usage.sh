@@ -118,11 +118,14 @@ _data=$(jq -Rs --argjson cutoff "$CUTOFF_EPOCH" '
   # Split lines, try to parse each as JSON; drop non-parseable lines
   split("\n") | map(select(length > 0 and ltrimstr(" ") != "")) |
   (map(try fromjson catch null) | map(select(. != null))) as $all |
-  # Count skipped: malformed (failed parse) + missing ts
-  (length - ($all | length)
-   + ($all | map(select(.ts == null)) | length)) as $skipped |
+  # Attach parsed epoch; fromdateiso8601? on an invalid ts string → null
   ($all | map(select(.ts != null)) |
-   map(. + {_ep: (.ts | fromdateiso8601? // 0)}) |
+   map(. + {_ep: (.ts | fromdateiso8601? // null)})) as $with_ep |
+  # Count skipped: malformed JSON + missing ts + invalid ts string
+  (length - ($all | length)
+   + ($all | map(select(.ts == null)) | length)
+   + ($with_ep | map(select(._ep == null)) | length)) as $skipped |
+  ($with_ep | map(select(._ep != null)) |
    map(select(._ep >= $cutoff))) as $e |
 
   ($e | map(select(.pool == "codex")))                                   as $co |
