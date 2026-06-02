@@ -8,10 +8,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
----
-
-## [0.3.0] — 2026-06-02
-
 **Theme**: PM runtime spine — schema-first, state-first, adapter-thin. Restructures pm-dispatch from "Claude Code settings + dispatch scripts" into a layered runtime: `core/` (schema + policy) → `cli/pmctl` + `scripts/lib/` (runtime orchestrator) → `adapters/` (thin executor shims). Ships executor-agnostic dispatch (`pmctl dispatch run`), role×runtime guard keying (`pmctl guard check --role/--runtime`), concurrent-dispatch race-safety, and reviewer prompt-injection defense. M0–M4 + Hygiene Track all complete. CC-215 (`pmctl task`/`decision`/`trace`) deferred to v0.4.0.
 
 ### Added
