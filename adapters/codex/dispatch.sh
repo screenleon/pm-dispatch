@@ -348,9 +348,10 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
 fi
 
 # Refresh latest.* symlinks before launch so observers can attach immediately.
-ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"
-ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"
-ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr"
+# 2>/dev/null || true: ln -sfn fails on Windows MSYS when target doesn't yet exist.
+ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
 
 set +e
 if [[ "$TIMEOUT" -gt 0 ]]; then

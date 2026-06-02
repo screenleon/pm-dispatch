@@ -503,6 +503,7 @@ case_remaining_100_no_calibration() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 100 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_file_contains "$name" "$out" "cannot estimate"
+  assert_file_contains "$name" "$out" "0% used"
   pass "$name"
 }
 

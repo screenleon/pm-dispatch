@@ -303,7 +303,7 @@ if [[ -n "$REMAINING_PCT" ]]; then
       echo ' Estimated time remaining  : cannot estimate (need ≥2 data points for rate)'
     fi
   else
-    printf ' Remaining tokens          : cannot estimate (0%%%% used and no calibration)\n'
+    printf ' Remaining tokens          : cannot estimate (0%% used and no calibration)\n'
     [[ "$_claude" -eq 0 ]] && echo ' Estimated time remaining  : no Claude log data — rate unknown'
   fi
 fi
