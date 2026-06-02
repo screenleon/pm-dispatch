@@ -565,7 +565,9 @@ case_remaining_auto_valid_file() {
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
   rl_file="$rl_dir/rate-limits.json"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':25,'resets_at':9999999999},'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_file','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}' \
+    > "$rl_file"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -585,7 +587,8 @@ case_remaining_auto_stale_warning() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json; json.dump({'updated_at':1000000,'five_hour':{'used_percentage':30,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n '{"updated_at":1000000,"five_hour":{"used_percentage":30,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -632,7 +635,9 @@ case_remaining_auto_out_of_range_percentage() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':150,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"five_hour":{"used_percentage":150,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -656,7 +661,9 @@ case_remaining_auto_no_five_hour_key() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"seven_day":{"used_percentage":10,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0

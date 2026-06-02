@@ -366,18 +366,11 @@ sw_append_dispatch_run "codex" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DI
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
-  _CODEX_TOKENS=$(python3 -c "
-import json, sys
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'turn.completed':
-            u = e.get('usage', {})
-            print(u.get('input_tokens',0) + u.get('output_tokens',0))
-            sys.exit(0)
-    except Exception: pass
-print(0)
-" "$TRACE" 2>/dev/null || echo 0)
+  _CODEX_TOKENS=$(jq -rs '
+    first(.[] | select(.type == "turn.completed")
+              | (.usage.input_tokens // 0) + (.usage.output_tokens // 0)) // 0
+  ' "$TRACE" 2>/dev/null || echo 0)
+  _CODEX_TOKENS="${_CODEX_TOKENS:-0}"
   if [[ "$_CODEX_TOKENS" -gt 0 ]]; then
     _POOL="codex"
     # Pooling uses the user-facing MODEL token (pre-resolution) to preserve

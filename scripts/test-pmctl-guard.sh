@@ -517,8 +517,21 @@ if should_run "cli-symlink-repo-root-relative"; then
   name="cli-symlink-repo-root-relative"
   _sym_dir="$(mktemp -d)"
   _sym_link="$_sym_dir/pmctl-sym-rel"
-  # Compute relative path from the symlink's directory to PMCTL.
-  _rel_target="$(python3 -c "import os.path; print(os.path.relpath('$PMCTL', '$_sym_dir'))")"
+  # Compute relative path from the symlink's directory to PMCTL (pure bash, no python3).
+  _bash_relpath() {
+    local from="${1%/}" to="$2" rel="" i=0
+    local -a fp tp
+    IFS='/' read -ra fp <<< "$from"; IFS='/' read -ra tp <<< "$to"
+    while [[ $i -lt ${#fp[@]} && $i -lt ${#tp[@]} && "${fp[$i]}" == "${tp[$i]}" ]]; do ((i++)) || true; done
+    local j=$i
+    while [[ $j -lt ${#fp[@]} ]]; do [[ -n "${fp[$j]}" ]] && rel="../$rel"; ((j++)) || true; done
+    j=$i
+    while [[ $j -lt ${#tp[@]} ]]; do
+      rel="${rel}${tp[$j]}"; [[ $j -lt $((${#tp[@]}-1)) ]] && rel="${rel}/"; ((j++)) || true
+    done
+    echo "$rel"
+  }
+  _rel_target="$(_bash_relpath "$_sym_dir" "$PMCTL")"
   ln -s "$_rel_target" "$_sym_link"   # relative symlink — exercises the fixed path
   set +e
   # Run from a directory OTHER than the repo root to expose old CWD-relative bug.

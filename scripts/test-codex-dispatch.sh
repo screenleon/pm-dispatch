@@ -18,7 +18,10 @@ unset CODEX_DISPATCH_SNAPSHOT_ACTIVE CODEX_DISPATCH_SNAPSHOT_PATH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DISPATCH="$REPO_ROOT/scripts/codex-dispatch.sh"
+# The real adapter; scripts/codex-dispatch.sh is now a thin exec-wrapper shim
+# (CC-308/CC-104t) — snapshot/alias tests must target the adapter directly.
+DISPATCH="$REPO_ROOT/adapters/codex/dispatch.sh"
+DISPATCH_SHIM="$REPO_ROOT/scripts/codex-dispatch.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -177,19 +180,10 @@ case_auto_log_parser_single_integer() {
     '{"type":"turn.started"}' \
     '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0}}' \
     > "$tmp_trace9"
-  _result9=$(python3 - "$tmp_trace9" << 'PYEOF'
-import json, sys
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'turn.completed':
-            u = e.get('usage', {})
-            print(u.get('input_tokens',0) + u.get('output_tokens',0))
-            sys.exit(0)
-    except Exception: pass
-print(0)
-PYEOF
-)
+  _result9=$(jq -rs '
+    first(.[] | select(.type == "turn.completed")
+              | (.usage.input_tokens // 0) + (.usage.output_tokens // 0)) // 0
+  ' "$tmp_trace9" 2>/dev/null || echo 0)
   rm -f "$tmp_trace9"
   # Must be exactly "105000" — one line, one integer
   if [[ "$_result9" == "105000" ]]; then

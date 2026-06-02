@@ -244,10 +244,14 @@ if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
   install_dir_junction agents
   install_dir_junction skills
   install_dir_junction commands
+  # adapters/ must be installed so codex-dispatch.sh shim can resolve
+  # $SELF_DIR/../adapters/codex/dispatch.sh from the installed location.
+  install_dir_junction adapters
 else
   install_dir agents
   install_dir skills
   install_dir commands
+  install_dir adapters
 fi
 
 # Helper scripts — symlinked into ~/.claude/scripts/ so the user can

@@ -1941,6 +1941,8 @@ test_via_symlink() {
   # Verifies readlink -f fix: gate dispatches correctly when run as a symlink.
   local name="via-symlink"
   should_run "$name" || return 0
+  # Windows Git Bash: ln -s requires Developer Mode; skip rather than fail.
+  [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]] && return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner" symdir="$dir/symdir"
   local out="$dir/out" err="$dir/err"
@@ -2349,6 +2351,8 @@ test_pre_gate_hook_not_executable() {
   # contains "not executable", and hook marker does NOT exist.
   local name="pre-gate-hook-not-executable"
   should_run "$name" || return 0
+  # Windows Git Bash: POSIX execute permission not enforced; chmod -x has no effect.
+  [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]] && return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
@@ -2385,6 +2389,8 @@ test_post_gate_hook_not_executable() {
   # contains "not executable", and hook marker does NOT exist.
   local name="post-gate-hook-not-executable"
   should_run "$name" || return 0
+  # Windows Git Bash: POSIX execute permission not enforced; chmod -x has no effect.
+  [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]] && return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"

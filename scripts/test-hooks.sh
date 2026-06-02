@@ -1780,10 +1780,8 @@ _set_mtime_secs_ago() {
   local file="$1" secs="$2"
   if command -v perl >/dev/null 2>&1; then
     perl -e 'utime(time()-$ARGV[0], time()-$ARGV[0], $ARGV[1])' "$secs" "$file"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "import os,time; os.utime('$file', (time.time()-$secs, time.time()-$secs))"
   else
-    printf 'SKIP: _set_mtime_secs_ago requires perl or python3\n' >&2
+    printf 'SKIP: _set_mtime_secs_ago requires perl\n' >&2
     return 1
   fi
 }
