@@ -51,6 +51,7 @@
 # defaults and export them to adapter subprocesses (CC-293).
 if ! declare -F pm_config_load >/dev/null 2>&1; then
   _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=scripts/lib/pmctl-config.sh
   . "$_pmctl_dispatch_lib_dir/pmctl-config.sh" 2>/dev/null || true
   unset _pmctl_dispatch_lib_dir
 fi
