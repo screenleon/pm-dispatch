@@ -598,22 +598,21 @@ case_timeout_env_only_precedence() {
   rm -f "$_brief17" "$_stderr17"
 }
 
-# ---- 19: timeout precedence brief-field wins over env and config ----
+# ---- 19: timeout precedence --timeout flag wins over CODEX_DISPATCH_TIMEOUT env ----
+# Config loading has moved to pmctl (CC-293); direct adapter invocations only see
+# CODEX_DISPATCH_TIMEOUT env and the --timeout flag. This case verifies the flag wins.
 case_timeout_precedence_brief_field() {
-  local name="timeout/brief-field beats env and config"
-  local _home19 _work19 _brief19 _stderr19 _exit19
+  local name="timeout/--timeout flag beats CODEX_DISPATCH_TIMEOUT env"
+  local _work19 _brief19 _stderr19 _exit19
   should_run "$name" || return 0
 
-  _home19="$(mktemp -d)"
-  mkdir -p "$_home19/.pm-dispatch"
-  printf 'dispatch.default_timeout=900\n' > "$_home19/.pm-dispatch/config"
   _work19="$(mktemp -d)"
   git init -q "$_work19"
   _brief19="$(mktemp --suffix=.md)"
   _stderr19="$(mktemp)"
-  printf 'goal: timeout precedence brief wins\n' > "$_brief19"
+  printf 'goal: timeout precedence flag wins\n' > "$_brief19"
   set +e
-  HOME="$_home19" CODEX_DISPATCH_TIMEOUT=700 \
+  CODEX_DISPATCH_TIMEOUT=700 \
     "$DISPATCH" --cd "$_work19" --brief-file "$_brief19" --timeout 1200 --print-cmd >/dev/null 2>"$_stderr19"
   _exit19=$?
   set -e
@@ -622,7 +621,7 @@ case_timeout_precedence_brief_field() {
   else
     fail "$name" ""
   fi
-  rm -rf "$_work19" "$_home19"
+  rm -rf "$_work19"
   rm -f "$_brief19" "$_stderr19"
 }
 
