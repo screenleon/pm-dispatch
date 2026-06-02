@@ -125,9 +125,9 @@ _data=$(jq -Rs --argjson cutoff "$CUTOFF_EPOCH" '
    map(. + {_ep: (.ts | fromdateiso8601? // 0)}) |
    map(select(._ep >= $cutoff))) as $e |
 
-  ($e | map(select((.pool // "claude") == "claude"))) as $cl |
-  ($e | map(select(.pool == "codex")))                as $co |
-  ($e | map(select(.pool == "spark")))                as $sp |
+  ($e | map(select(.pool == "codex")))                                   as $co |
+  ($e | map(select(.pool == "spark")))                                   as $sp |
+  ($e | map(select(.pool != "codex" and .pool != "spark")))              as $cl |
 
   {
     total:            ($e  | length),
