@@ -37,9 +37,13 @@ Required keys by role:
 
 - The gate script always prints the handover block on stdout when running in
   claude mode.
-- The caller must parse the block and dispatch one `Agent(subagent_type:
-  "claude-executor")` call for every `role: reviewer` entry, passing
-  `brief_file` as the call prompt.
+- The caller must parse the block and dispatch one
+  `Agent(subagent_type: "claude-executor")` call for every `role: reviewer`
+  entry, passing `brief_file` as the call prompt. The reviewer brief already
+  contains an explicit `pmctl guard check --role reviewer --runtime claude
+  --event pre-write` constraint (CC-297) — the executor calls it before
+  writing, enforcing the `.gate-results/`-only rule via the same policy hook
+  (`hook-reviewer-write-guard.sh`) used by the codex route.
 - The caller must then dispatch the `role: synthesis` Agent when present.
 - The caller must continue writing final output to the shared `output_file` path
   that the gate script also prints as `result:`.

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Regression suite for hook-pm-write-guard.sh, hook-codex-bash-guard.sh, and hook-codex-write-guard.sh.
+# Regression suite for hook-pm-write-guard.sh, hook-codex-bash-guard.sh,
+# hook-codex-write-guard.sh, and hook-reviewer-write-guard.sh.
+# Note: hook-reviewer-write-guard.sh is the policy-backing script for
+# `pmctl guard check --role reviewer`; it is NOT a PreToolUse hook.
+# Its pmctl integration is covered by test-pmctl-guard.sh.
 #
 # Runs each hook script with a stdin payload that simulates the PreToolUse JSON
 # Claude Code emits, asserts the exit code, optionally checks for a substring in
@@ -17,6 +21,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
+RWHOOK="$SCRIPT_DIR/hook-reviewer-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
 TRACE_HOOK="$SCRIPT_DIR/hook-tool-trace.sh"
@@ -316,6 +321,110 @@ $LIST || truncate_log
 $LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains bypass line" "decision=bypass"
 assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
+
+# =============================================================================
+# reviewer-write-guard
+# =============================================================================
+
+echo
+$LIST || echo "== hook-reviewer-write-guard =="
+truncate_log
+
+_gate_dir="$(mktemp -d)/repo/.gate-results"
+mkdir -p "$_gate_dir"
+
+# --- happy path: Write/Edit to .gate-results/ ---
+for _rw_agent in critic qa-tester architecture-reviewer security-reviewer risk-reviewer; do
+  run_case "rw: $_rw_agent Write to .gate-results/ → allow" 0 "$RWHOOK" \
+    "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
+  run_case "rw: $_rw_agent Edit to .gate-results/ → allow" 0 "$RWHOOK" \
+    "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
+done
+unset _rw_agent
+
+# --- denied: source tree / home dir ---
+run_case "rw: critic Write source file → deny" 2 "$RWHOOK" \
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/main.go"}}'
+
+run_case "rw: qa-tester Edit source file → deny" 2 "$RWHOOK" \
+  '{"agent_type":"qa-tester","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/pm-dispatch/scripts/pr-gate.sh"}}'
+
+run_case "rw: security-reviewer Write /tmp/oops.md → deny" 2 "$RWHOOK" \
+  '{"agent_type":"security-reviewer","tool_name":"Write","tool_input":{"file_path":"/tmp/oops.md"}}'
+
+run_case "rw: risk-reviewer Write /etc/passwd → deny" 2 "$RWHOOK" \
+  '{"agent_type":"risk-reviewer","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# parent not named .gate-results (file directly in repo root) → deny
+run_case "rw: critic Write file not inside .gate-results/ → deny" 2 "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$(dirname "$_gate_dir")/gate-result.md\"}}"
+
+# path traversal: resolves outside .gate-results → deny
+run_case "rw: critic Write path traversal → deny" 2 "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/../evil.md\"}}"
+
+# --- synthetic identity (pmctl guard check --role reviewer codex route) ---
+run_case "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 0 "$RWHOOK" \
+  "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/pmctl-output.md\"}}"
+
+run_case "rw: reviewer (pmctl synthetic) Write outside .gate-results/ → deny" 2 "$RWHOOK" \
+  '{"agent_type":"reviewer","tool_name":"Write","tool_input":{"file_path":"/tmp/evil.md"}}'
+
+# --- no-op for non-reviewer agents ---
+run_case "rw: claude-executor Write anywhere → no-op" 0 "$RWHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/main.go"}}'
+
+run_case "rw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$RWHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/whatever.md"}}'
+
+run_case "rw: main thread (no agent_type) Write → no-op" 0 "$RWHOOK" \
+  '{"tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+run_case "rw: critic Bash → no-op (matcher would not fire it)" 0 "$RWHOOK" \
+  '{"agent_type":"critic","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
+
+# --- edge cases ---
+run_case "rw: empty file_path → deny" 2 "$RWHOOK" \
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":""}}'
+
+run_case "rw: relative file_path → deny" 2 "$RWHOOK" \
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":".gate-results/output.md"}}'
+
+run_case "rw: malformed JSON → deny" 2 "$RWHOOK" \
+  'not-json'
+
+# --- symlink attack: target in .gate-results/ exists as a symlink to a protected path ---
+_rw_symlink_target="$(mktemp)"
+_rw_symlink_out="$_gate_dir/symlink-out.md"
+ln -s "$_rw_symlink_target" "$_rw_symlink_out"
+run_case "rw: Write to existing symlink in .gate-results/ → deny" 2 "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
+rm -f "$_rw_symlink_out" "$_rw_symlink_target"
+unset _rw_symlink_target _rw_symlink_out
+
+# --- bypass ---
+run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
+  '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# --- audit-log content assertions ---
+$LIST || truncate_log
+$LIST || printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" | "$RWHOOK" >/dev/null 2>&1
+assert_log "rw: audit log contains allow line" "decision=allow"
+assert_log "rw: allow line records agent=critic" "agent=critic"
+assert_log "rw: allow line records tool=Write" "tool=Write"
+
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | "$RWHOOK" >/dev/null 2>&1
+assert_log "rw: audit log contains deny line" "decision=deny"
+assert_log "rw: deny line records agent=critic" "agent=critic"
+
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | env CLAUDE_HOOK_REVIEWER_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1
+assert_log "rw: audit log contains bypass line" "decision=bypass"
+assert_log "rw: bypass line records agent=critic" "agent=critic"
+
+rm -rf "$_gate_dir" "$(dirname "$_gate_dir")"
+unset _gate_dir
 
 # =============================================================================
 # codex-bash-guard

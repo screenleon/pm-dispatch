@@ -12,6 +12,11 @@
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
 #   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
+#
+# Note: hook-reviewer-write-guard.sh is NOT wired as a PreToolUse hook.
+# It is a policy-backing script called exclusively by `pmctl guard check
+# --role reviewer`. Both codex and claude reviewer paths use explicit
+# pmctl guard check (CC-297 uniform explicit-guard design).
 #   - one-shot routing_log.md legacy bullet migrator before settings write
 #
 # Safe to re-run: detects existing entries (matched by command path) and skips

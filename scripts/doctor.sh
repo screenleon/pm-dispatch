@@ -379,6 +379,7 @@ check_dispatch_allowlist() {
 check_scripts_executable() {
   local -a scripts=(
     hook-pm-write-guard.sh
+    hook-reviewer-write-guard.sh
     hook-codex-bash-guard.sh
     hook-codex-write-guard.sh
     hook-tool-trace.sh

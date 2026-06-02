@@ -109,6 +109,7 @@ jobs:
             hook-inject-memory.sh
             hook-log-claude-usage.sh
             hook-pm-write-guard.sh
+            hook-reviewer-write-guard.sh
             hook-routing-log.sh
             hook-save-rate-limits.sh
             hook-session-summary.sh

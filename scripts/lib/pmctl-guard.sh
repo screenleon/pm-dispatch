@@ -132,7 +132,7 @@ pmctl_guard_check() {
   # once. Everything downstream operates on role/runtime only.
   if [[ "$profile_set" -eq 1 ]]; then
     case "$profile" in
-      pm)     role="pm" ;;
+      pm)     role="pm"; runtime="claude"; runtime_set=1 ;;
       codex)  role="executor"; runtime="codex"; runtime_set=1 ;;
       claude) role="executor"; runtime="claude"; runtime_set=1 ;;
       *)
@@ -141,7 +141,7 @@ pmctl_guard_check() {
         ;;
     esac
     role_set=1
-    printf 'pmctl guard check: --profile is deprecated; use --role <pm|executor> [--runtime <codex|claude>]\n' >&2
+    printf 'pmctl guard check: --profile is deprecated; use --role <pm|executor|reviewer> --runtime <codex|claude>\n' >&2
   fi
 
   if [[ -z "$event" ]]; then
@@ -149,53 +149,75 @@ pmctl_guard_check() {
     return 2
   fi
   if [[ "$role_set" -ne 1 ]]; then
-    printf 'pmctl guard check: missing --role (want pm|executor)\n' >&2
+    printf 'pmctl guard check: missing --role (want pm|executor|reviewer) with --runtime\n' >&2
     return 2
   fi
 
-  # Validate role, then resolve the runtime requirement. `pm` is runtime-agnostic
-  # (one policy across runtimes); `executor` REQUIRES a runtime because its
+  # Validate role, then resolve the runtime requirement.
+  # `pm` is runtime-agnostic (project-pm only ever runs on claude; no codex-as-pm).
+  # `executor` REQUIRES a runtime — it runs on both codex AND claude, and its
   # pre-bash policy genuinely differs by runtime (see registry).
+  # `reviewer` REQUIRES a runtime — it runs on both codex (reviewer brief in
+  # codex session) AND claude (reviewer agent subagent). The .gate-results/-only
+  # rule is identical across runtimes (CC-297: one role, one fixed rule). Both
+  # routes enforce the guard via explicit pmctl guard check in the reviewer brief
+  # (not auto PreToolUse); requiring --runtime preserves the role×runtime two-axis
+  # design (CC-291) and keeps reviewer symmetric with executor — not collapsed like pm.
+  # All roles require --runtime for consistent two-axis CLI semantics (CC-291/CC-297).
+  # Even pm (currently claude-only) is explicit — this prevents silent
+  # runtime assumption and keeps the door open for non-Claude pm variants.
   case "$role" in
-    pm)
-      # runtime is irrelevant for pm; ignore any value passed.
-      runtime=""
-      ;;
-    executor)
+    pm|reviewer|executor)
       if [[ "$runtime_set" -ne 1 ]]; then
-        printf 'pmctl guard check: --runtime required for role executor (want codex|claude)\n' >&2
+        printf 'pmctl guard check: --runtime required for role %s (want codex|claude)\n' "$role" >&2
         return 2
       fi
       ;;
     *)
-      printf 'pmctl guard check: unknown role: %s (want pm|executor)\n' "$role" >&2
+      printf 'pmctl guard check: unknown role: %s (want pm|executor|reviewer)\n' "$role" >&2
       return 2
       ;;
   esac
 
-  if [[ "$role" == "executor" ]]; then
-    # runtime is the ADAPTER axis (CC-291). Validate it is a bare identifier —
-    # mirroring `--adapter` in pmctl-dispatch — so a crafted value cannot traverse
-    # out of scripts/ when it is composed into the hook name below. We deliberately
-    # do NOT allowlist specific runtimes here: adding a runtime is an adapter
-    # concern (drop in adapters/<runtime>/ + scripts/hook-<runtime>-write-guard.sh),
-    # and an unregistered-but-valid runtime fails closed at the hook -x check.
-    if ! [[ "$runtime" =~ ^[a-z][a-z0-9_-]*$ ]]; then
-      printf 'pmctl guard check: invalid runtime: %s (want a bare identifier ^[a-z][a-z0-9_-]*$)\n' "$runtime" >&2
-      return 2
-    fi
-  fi
+  # Runtime validation differs by role:
+  #   executor — open-ended bare identifier: adding a runtime is an adapter concern
+  #     (drop in adapters/<runtime>/ + hook-<runtime>-write-guard.sh); an unregistered
+  #     but valid runtime fails closed at the hook -x check, so we don't allowlist here.
+  #   pm / reviewer — fixed hook (runtime does not select a hook); validate against the
+  #     known enum so bogus values are rejected at the CLI boundary rather than silently
+  #     accepted. A future non-codex/claude runtime must be explicitly added here.
+  case "$role" in
+    executor)
+      if ! [[ "$runtime" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+        printf 'pmctl guard check: invalid runtime: %s (want a bare identifier ^[a-z][a-z0-9_-]*$)\n' "$runtime" >&2
+        return 2
+      fi
+      ;;
+    pm|reviewer)
+      case "$runtime" in
+        codex|claude) ;;
+        *) printf 'pmctl guard check: unknown runtime for role %s: %s (want codex|claude)\n' "$role" "$runtime" >&2
+           return 2 ;;
+      esac
+      ;;
+  esac
 
   # Reconstruct the agent_type identity the hooks key on. `pm` is role-based
   # (runtime-agnostic); `executor` derives it BY CONVENTION from the runtime
-  # (<runtime>-executor), so adding a runtime needs no edit here.
+  # (<runtime>-executor), so adding a runtime needs no edit here; `reviewer`
+  # uses the synthetic identity "reviewer" — the hook recognises this alongside
+  # the five named reviewer agent types (CC-297).
   # CRITICAL (CC-291): each hook self-gates on HK_AGENT_TYPE and no-ops (exit 0 =
   # ALLOW) for any other identity. Because agent_type AND the physical pre-write
-  # hook below are BOTH derived from $runtime, they cannot drift — a fail-OPEN
-  # from an identity/hook mismatch is impossible by construction.
+  # hook below are BOTH derived from $role/$runtime, they cannot drift — a
+  # fail-OPEN from an identity/hook mismatch is impossible by construction.
+  # agent_type: the identity the hook self-gates on.
+  # pm and reviewer have fixed agent_type (runtime-independent policy today);
+  # executor derives it from runtime by convention.
   local agent_type
   case "$role" in
     pm)       agent_type="project-pm" ;;
+    reviewer) agent_type="reviewer" ;;
     executor) agent_type="${runtime}-executor" ;;
   esac
 
@@ -232,28 +254,41 @@ pmctl_guard_check() {
   local hook=""
   case "$event" in
     pre-write)
-      if [[ "$role" == "pm" ]]; then
-        hook="hook-pm-write-guard.sh"          # [role-based]
-      else
-        hook="hook-${runtime}-write-guard.sh"  # [role-based] runtime-matched by convention
-      fi
+      case "$role" in
+        pm)
+          # [role-based] pm policy is fixed regardless of runtime (currently claude-only).
+          hook="hook-pm-write-guard.sh"
+          ;;
+        reviewer)
+          # [role-based] CC-297: one fixed rule (.gate-results/) across runtimes.
+          hook="hook-reviewer-write-guard.sh"
+          ;;
+        executor)
+          # [role-based] runtime-matched by convention: adding a runtime only requires
+          # dropping in adapters/<runtime>/ + hook-<runtime>-write-guard.sh.
+          hook="hook-${runtime}-write-guard.sh"
+          ;;
+      esac
       ;;
     pre-bash)
-      case "$role/$runtime" in
-        executor/codex)
-          hook="hook-codex-bash-guard.sh"      # [runtime-specific]
+      case "$role" in
+        executor)
+          case "$runtime" in
+            codex) hook="hook-codex-bash-guard.sh" ;;  # [runtime-specific]
+            *)
+              printf 'pmctl guard check: no guard policy registered for role=executor runtime=%s event=pre-bash — denying\n' "$runtime" >&2
+              return 3
+              ;;
+          esac
           ;;
-        pm/)
-          # No PM bash guard exists: project-pm is a planner that never runs Bash.
-          # No policy to evaluate → fail closed (deny), never silently allow.
+        pm)
+          # project-pm is a planner that never runs Bash → fail closed.
           printf 'pmctl guard check: no guard policy registered for role=pm event=pre-bash — denying\n' >&2
           return 3
           ;;
-        *)
-          # [runtime-specific] an executor runtime that self-executes under harness
-          # permission prompts (e.g. claude, under --permission-mode) registers no
-          # dispatch-guard pre-bash policy → fail closed.
-          printf 'pmctl guard check: no guard policy registered for role=executor runtime=%s event=pre-bash — denying\n' "$runtime" >&2
+        reviewer)
+          # Reviewers read diff and write findings — no arbitrary bash policy.
+          printf 'pmctl guard check: no guard policy registered for role=reviewer event=pre-bash — denying\n' >&2
           return 3
           ;;
       esac
