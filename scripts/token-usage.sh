@@ -136,8 +136,8 @@ _data=$(jq -Rs --argjson cutoff "$CUTOFF_EPOCH" '
     spark_tokens:     ($sp | map(.tokens // 0) | add // 0),
     codex_dispatches: ($co | length),
     claude_first_ep:  (if ($cl | length) > 1 then ($cl | map(._ep) | min) else 0 end),
-    by_type: ($e | group_by(.type) |
-      map({key:.[0].type, value:{count:length, tokens:(map(.tokens//0)|add//0)}}) |
+    by_type: ($e | group_by(.type // "unknown") |
+      map({key:(.[0].type // "unknown"), value:{count:length, tokens:(map(.tokens//0)|add//0)}}) |
       from_entries),
     by_session: ($e | group_by(.session // "?") |
       map({key:(.[0].session//"?"|.[0:10]), value:{count:length, tokens:(map(.tokens//0)|add//0)}}) |
@@ -145,12 +145,13 @@ _data=$(jq -Rs --argjson cutoff "$CUTOFF_EPOCH" '
     skipped: $skipped
   }
 ' "$LOGFILE" 2>/dev/null ||
-  echo '{"total":0,"claude_tokens":0,"codex_tokens":0,"spark_tokens":0,"codex_dispatches":0,"claude_first_ep":0,"by_type":{},"by_session":{}}')
+  echo '{"total":0,"claude_tokens":0,"codex_tokens":0,"spark_tokens":0,"codex_dispatches":0,"claude_first_ep":0,"by_type":{},"by_session":{},"skipped":0}')
 
 _get() { printf '%s' "$_data" | jq -r ".$1"; }
 
 _skipped=$(_get skipped)
-[[ "${_skipped:-0}" -gt 0 ]] && \
+_skipped="${_skipped:-0}"; [[ "$_skipped" == "null" ]] && _skipped=0
+[[ "$_skipped" -gt 0 ]] && \
   printf '  (warning: %d malformed/incomplete line(s) skipped)\n' "$_skipped" >&2
 
 _total=$(_get total)

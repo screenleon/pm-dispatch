@@ -746,6 +746,22 @@ case_one_dispatch_one_count() {
   pass "$name"
 }
 
+case_missing_type_defaults_to_unknown() {
+  # Regression: entry with ts+tokens but no type must not crash with
+  # "null: unbound variable" (set -u); should appear as "unknown" in By type.
+  local name="missing_type_defaults_to_unknown" home out status
+  home="$(new_home "$name")"
+  local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '{"ts":"%s","tokens":7777,"session":"s1"}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
+  printf '{"ts":"%s","type":"pm_analysis","tokens":1000}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_file_contains "$name" "$out" "unknown"
+  assert_file_contains "$name" "$out" "7,777"
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -816,6 +832,7 @@ run_case "remaining_auto_malformed_json" case_remaining_auto_malformed_json
 run_case "remaining_manual_n_unchanged" case_remaining_manual_n_unchanged
 run_case "codex_old_log_excluded" case_codex_old_log_excluded
 run_case "one_dispatch_one_count" case_one_dispatch_one_count
+run_case "missing_type_defaults_to_unknown" case_missing_type_defaults_to_unknown
 
 if ! $LIST; then
   echo

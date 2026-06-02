@@ -203,7 +203,7 @@ test_install_manifest_atomic() {
   fi
 
   shopt -s nullglob
-  for subdir in agents skills commands; do
+  for subdir in agents skills commands adapters; do
     [[ -d "$REPO_ROOT/$subdir" ]] || continue
     for _ in "$REPO_ROOT/$subdir"/*; do
       expected_entries=$((expected_entries + 1))
