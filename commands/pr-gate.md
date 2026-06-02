@@ -124,9 +124,9 @@ This route does **not** invoke `scripts/codex-dispatch.sh` at any point.
 
 - Dispatch shape: `scripts/pr-gate.sh` writes a `pr-gate-handover_v1` fenced block
   listing reviewer briefs and output files.
-- Completion handling: this skill parses that block and fans out `Agent(subagent_type:
-  "claude-executor")` for each `role: reviewer` entry, then one final fan-out
-  for the synthesis entry when present.
+- Completion handling: this skill parses that block and fans out one Agent call
+  per `role: reviewer` entry and one final Agent call for the synthesis entry
+  when present. See fan-out rules below.
 - Failure surface: block parser failure, malformed entry, or a missing `output_file`
   path; treat as partial/fail and stop fan-out.
 
@@ -146,8 +146,10 @@ When the background Bash completion notification arrives:
    - Parse the block entries with the parser used for handover metadata.
    - Fan out every `role: reviewer` entry in a single message — one
      `Agent(subagent_type: "claude-executor", prompt: "<brief_file>", run_in_background: true)`
-     per entry — so reviewers run detached without blocking the main thread
-     (consistent with the codex route and the background-Bash dispatch above).
+     per entry — so reviewers run detached without blocking the main thread.
+     The reviewer brief's constraints already include an explicit
+     `pmctl guard check --role reviewer --runtime claude --event pre-write`
+     call (CC-297): the executor enforces the guard before writing.
    - When every reviewer background agent has reported completion, read each
      entry's `<output_file>`.
    - If a synthesis entry exists, run one final `Agent(subagent_type:

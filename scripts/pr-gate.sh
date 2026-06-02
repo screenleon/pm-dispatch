@@ -569,6 +569,8 @@ ${AGENT_FILE_ENTRIES}${DIFF_FILE_ENTRIES}  - new:  ${OUTPUT_FILE}
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
+  - Before writing ${OUTPUT_FILE}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+    If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
 
@@ -764,6 +766,8 @@ ${DIFF_FILE_ENTRIES}  - new:  ${REVIEWER_OUTPUT}
 constraints:
   - Do NOT modify any source file.
   - Only write ${REVIEWER_OUTPUT}.
+  - Before writing ${REVIEWER_OUTPUT}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
+    If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
 

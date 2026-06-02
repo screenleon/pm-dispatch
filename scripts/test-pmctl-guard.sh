@@ -6,13 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # QA category matrix for scripts/lib/pmctl-guard.sh + cli/pmctl guard dispatch.
-# Keying is role×runtime (CC-291): guard cares about --role (pm|executor); the
-# --runtime axis (codex|claude) is consulted only where a role's policy differs
+# Keying is role×runtime (CC-291): guard cares about --role (pm|executor|reviewer);
+# the --runtime axis (codex|claude) is consulted only where a role's policy differs
 # by runtime. --profile is a deprecated alias mapping onto (role, runtime).
-# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, codex-prebash-allow, claude-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
+# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, codex-prebash-allow, claude-prewrite-allow, reviewer-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
 # 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
-# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
-#    pm-runtime-agnostic (boundary): pm ignores an explicit --runtime (exit 0)
+# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
 # 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny, codex-prebash-deny-verb, codex-prebash-deny-metachar
 # 5. State transitions: N/A - guard check is a stateless per-call decision; no persisted state machine in the SUT
 # 6. Concurrency / race conditions: N/A - each invocation is an isolated subprocess synthesizing its own JSON; no shared mutable state
@@ -63,7 +62,7 @@ fi
 
 if should_run "pm-prewrite-allow"; then
   name="pm-prewrite-allow"
-  run_guard --event pre-write --role pm --file "$MEM_PATH"
+  run_guard --event pre-write --role pm --runtime claude --file "$MEM_PATH"
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
 
@@ -117,6 +116,78 @@ if should_run "post-task-fail-closed"; then
   fi
 fi
 
+# reviewer role (CC-297): runtime-agnostic, only .gate-results/ writes allowed.
+if should_run "reviewer-prewrite-allow-codex"; then
+  _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
+  mkdir -p "$_rw_guard_dir"
+  name="reviewer-prewrite-allow-codex"
+  run_guard --event pre-write --role reviewer --runtime codex --file "$_rw_guard_dir/output.md"
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  rm -rf "$(dirname "$_rw_guard_dir")"
+  unset _rw_guard_dir
+fi
+
+if should_run "reviewer-prewrite-allow-claude"; then
+  _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
+  mkdir -p "$_rw_guard_dir"
+  name="reviewer-prewrite-allow-claude"
+  run_guard --event pre-write --role reviewer --runtime claude --file "$_rw_guard_dir/output.md"
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  rm -rf "$(dirname "$_rw_guard_dir")"
+  unset _rw_guard_dir
+fi
+
+if should_run "reviewer-prewrite-deny-outside-gate-results"; then
+  name="reviewer-prewrite-deny-outside-gate-results"
+  run_guard --event pre-write --role reviewer --runtime codex --file "/tmp/oops.md"
+  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
+fi
+
+if should_run "reviewer-prewrite-deny-source-file"; then
+  name="reviewer-prewrite-deny-source-file"
+  run_guard --event pre-write --role reviewer --runtime codex --file "$REPO_ROOT/scripts/pr-gate.sh"
+  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
+fi
+
+if should_run "reviewer-prebash-fail-closed"; then
+  # reviewer/pre-bash has no policy (reviewers don't run arbitrary bash) → fail closed.
+  name="reviewer-prebash-fail-closed"
+  run_guard --event pre-bash --role reviewer --runtime codex --command "ls"
+  if assert_exit "$name" "$GUARD_EXIT" "3" &&
+    assert_string_contains "$name" "$GUARD_OUT" "no guard policy registered for role=reviewer event=pre-bash"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "reviewer-missing-runtime"; then
+  # reviewer REQUIRES --runtime (symmetric with executor, CC-297/CC-291).
+  name="reviewer-missing-runtime"
+  run_guard --event pre-write --role reviewer --file "/tmp/out.md"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "--runtime required for role reviewer"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "reviewer-invalid-runtime"; then
+  # Fixed-hook roles (reviewer/pm) validate runtime against codex|claude enum.
+  name="reviewer-invalid-runtime"
+  run_guard --event pre-write --role reviewer --runtime bogus --file "/tmp/out.md"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "unknown runtime for role reviewer"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-invalid-runtime"; then
+  name="pm-invalid-runtime"
+  run_guard --event pre-write --role pm --runtime bogus --file "$MEM_PATH"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "unknown runtime for role pm"; then
+    pass "$name"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Boundary values
 # ---------------------------------------------------------------------------
@@ -124,9 +195,19 @@ fi
 if should_run "pm-prebash-fail-closed"; then
   # pm/pre-bash has no policy (project-pm never runs Bash) → fail closed (exit 3).
   name="pm-prebash-fail-closed"
-  run_guard --event pre-bash --role pm --command "ls"
+  run_guard --event pre-bash --role pm --runtime claude --command "ls"
   if assert_exit "$name" "$GUARD_EXIT" "3" &&
     assert_string_contains "$name" "$GUARD_OUT" "no guard policy registered for role=pm event=pre-bash"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-missing-runtime"; then
+  # pm now requires --runtime (uniform two-axis CLI — CC-291/CC-297).
+  name="pm-missing-runtime"
+  run_guard --event pre-write --role pm --file "$MEM_PATH"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "--runtime required for role pm"; then
     pass "$name"
   fi
 fi
@@ -175,11 +256,11 @@ if should_run "invalid-runtime-traversal"; then
   fi
 fi
 
-if should_run "pm-runtime-agnostic"; then
-  # pm is runtime-agnostic: an explicit (even unregistered) --runtime must be
-  # ignored, not consulted. A mutation that stops clearing runtime for pm would
-  # change this verdict.
-  name="pm-runtime-agnostic"
+if should_run "pm-runtime-required-and-valid"; then
+  # pm now requires --runtime (uniform two-axis CLI, CC-291/CC-297).
+  # --runtime codex is accepted — pm policy is runtime-independent but the
+  # CLI mandates explicit declaration.
+  name="pm-runtime-required-and-valid"
   run_guard --event pre-write --role pm --runtime codex --file "$MEM_PATH"
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
@@ -356,7 +437,7 @@ fi
 
 if should_run "pm-prewrite-deny"; then
   name="pm-prewrite-deny"
-  run_guard --event pre-write --role pm --file /tmp/oops.md
+  run_guard --event pre-write --role pm --runtime claude --file /tmp/oops.md
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
     assert_string_contains "$name" "$GUARD_OUT" "hook-pm-write-guard"; then
     pass "$name"
@@ -407,6 +488,47 @@ if should_run "cli-unknown-sub"; then
     assert_string_contains "$name" "$out" "unknown command"; then
     pass "$name"
   fi
+fi
+
+if should_run "cli-symlink-repo-root"; then
+  # pmctl called through an absolute symlink must resolve REPO_ROOT correctly.
+  # Covers the PATH install shape (e.g. ~/.local/bin/pmctl -> /repo/cli/pmctl).
+  name="cli-symlink-repo-root"
+  _sym_dir="$(mktemp -d)"
+  _sym_link="$_sym_dir/pmctl-sym"
+  ln -s "$PMCTL" "$_sym_link"   # absolute symlink
+  set +e
+  out="$(bash "$_sym_link" guard check --role pm --runtime claude \
+    --event pre-write --file "$MEM_PATH" 2>&1)"
+  st=$?
+  set -e
+  rm -rf "$_sym_dir"
+  unset _sym_dir _sym_link
+  assert_exit "$name" "$st" "0" && pass "$name"
+fi
+
+if should_run "cli-symlink-repo-root-relative"; then
+  # pmctl called through a RELATIVE symlink must also resolve REPO_ROOT correctly.
+  # This is the exact failure mode the loop-based resolver in cli/pmctl fixes:
+  # when readlink returns a relative path, the old single dirname+cd approach
+  # resolved the path from the caller's CWD, not from the symlink's directory.
+  # The loop rebases relative targets against dirname($symlink) before iterating,
+  # so REPO_ROOT is always the actual repo root regardless of where the caller runs.
+  name="cli-symlink-repo-root-relative"
+  _sym_dir="$(mktemp -d)"
+  _sym_link="$_sym_dir/pmctl-sym-rel"
+  # Compute relative path from the symlink's directory to PMCTL.
+  _rel_target="$(python3 -c "import os.path; print(os.path.relpath('$PMCTL', '$_sym_dir'))")"
+  ln -s "$_rel_target" "$_sym_link"   # relative symlink — exercises the fixed path
+  set +e
+  # Run from a directory OTHER than the repo root to expose old CWD-relative bug.
+  out="$(cd /tmp && bash "$_sym_link" guard check --role pm --runtime claude \
+    --event pre-write --file "$MEM_PATH" 2>&1)"
+  st=$?
+  set -e
+  rm -rf "$_sym_dir"
+  unset _sym_dir _sym_link _rel_target
+  assert_exit "$name" "$st" "0" && pass "$name"
 fi
 
 # ---------------------------------------------------------------------------
@@ -508,11 +630,11 @@ r2_equiv "r2-equiv-codex-write-deny" "$CXWHOOK" \
 
 r2_equiv "r2-equiv-pm-write-allow" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$MEM_PATH\"}}" \
-  --event pre-write --role pm --file "$MEM_PATH"
+  --event pre-write --role pm --runtime claude --file "$MEM_PATH"
 
 r2_equiv "r2-equiv-pm-write-deny" "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/oops.md"}}' \
-  --event pre-write --role pm --file /tmp/oops.md
+  --event pre-write --role pm --runtime claude --file /tmp/oops.md
 
 r2_equiv "r2-equiv-codex-bash-allow" "$CXBHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' \

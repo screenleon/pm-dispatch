@@ -2,7 +2,19 @@
 # pm-dispatch runtime CLI.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the real script path through symlinks so REPO_ROOT is always the
+# actual repo directory, regardless of whether pmctl is called via a symlink
+# in PATH (e.g. ~/.local/bin/pmctl) or directly.
+# Pattern mirrors scripts/pr-gate.sh: loop + rebase relative targets against
+# the symlink's own directory, no readlink -f needed (POSIX readlink suffices).
+_pmctl_self="${BASH_SOURCE[0]}"
+while [[ -L "$_pmctl_self" ]]; do
+  _pmctl_dir="$(cd "$(dirname "$_pmctl_self")" && pwd)"
+  _pmctl_self="$(readlink "$_pmctl_self")"
+  [[ "$_pmctl_self" == /* ]] || _pmctl_self="$_pmctl_dir/$_pmctl_self"
+done
+REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
+unset _pmctl_self _pmctl_dir
 
 for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch; do
   # shellcheck source=/dev/null

@@ -3008,6 +3008,67 @@ test_dirty_only_no_commit_still_reviewed() {
   pass "$name"
 }
 
+test_seq_brief_has_reviewer_guard_constraint() {
+  # CC-297: verifies that the sequential combined reviewer brief contains the
+  # explicit pmctl guard check constraint that must be called before writing the
+  # output file. The constraint was added to prevent prompt-injection from
+  # inducing a reviewer to write arbitrary files.
+  local name="seq-brief-has-reviewer-guard-constraint"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "pmctl guard check --role reviewer" || return
+  assert_file_contains "$name" "$brief" "--event pre-write" || return
+  pass "$name"
+}
+
+test_parallel_reviewer_brief_has_guard_constraint() {
+  # CC-297: verifies that each per-reviewer parallel brief contains the explicit
+  # pmctl guard check constraint that must be called before writing the reviewer
+  # output file. Uses CODEX_GATE_CAPTURE_REVIEWER_BRIEF which captures the last
+  # non-synthesis brief dispatched during a parallel run.
+  local name="parallel-reviewer-brief-has-guard-constraint"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  if [[ ! -f "$reviewer_brief" ]]; then
+    fail "$name" "reviewer brief not captured -- CODEX_GATE_CAPTURE_REVIEWER_BRIEF not picked up"
+    return
+  fi
+  assert_file_contains "$name" "$reviewer_brief" "pmctl guard check --role reviewer" || return
+  assert_file_contains "$name" "$reviewer_brief" "--event pre-write" || return
+  pass "$name"
+}
+
 run_test test_pre_gate_hook_runs
 run_test test_pre_gate_hook_aborts_gate_on_failure
 run_test test_post_gate_hook_runs
@@ -3033,5 +3094,7 @@ run_test test_dirty_preflight_allow_dirty_includes_worktree
 run_test test_allow_dirty_includes_uncommitted_tracked
 run_test test_clean_committed_tree_passes_preflight
 run_test test_dirty_only_no_commit_still_reviewed
+run_test test_seq_brief_has_reviewer_guard_constraint
+run_test test_parallel_reviewer_brief_has_guard_constraint
 
 th_summary
