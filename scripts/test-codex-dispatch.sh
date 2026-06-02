@@ -898,6 +898,59 @@ case_shim_delegates_to_adapter() {
   fi
 }
 
+# ---- latest.* symlink failure is tolerated (Windows MSYS, CC-308) ----
+# On Windows MSYS, `ln -sfn` fails when refreshing the latest.* convenience
+# symlinks because the target trace file does not yet exist. The adapter guards
+# each `ln` with `2>/dev/null || true`; under `set -e` an unguarded failure would
+# abort the whole dispatch before codex runs. Force `ln` to fail for latest.* and
+# assert dispatch still completes and writes its real trace file.
+case_latest_symlink_failure_tolerated() {
+  local name="dispatch/latest.* symlink failure does not abort dispatch"
+  local _fake _home _work _brief _exit _trace
+  should_run "$name" || return 0
+
+  _fake="$(mktemp -d)"
+  cat > "$_fake/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+FAKEOF
+  chmod +x "$_fake/codex"
+  # Fake ln: fail for latest.* (simulate MSYS), delegate everything else to real ln.
+  cat > "$_fake/ln" << 'FAKELN'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in *latest.*) exit 1 ;; esac
+done
+for real in /usr/bin/ln /bin/ln; do [[ -x "$real" ]] && exec "$real" "$@"; done
+exit 1
+FAKELN
+  chmod +x "$_fake/ln"
+
+  _home="$(mktemp -d)"; mkdir -p "$_home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home/.claude/scripts/log-usage.sh"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'working_dir: %s\ngoal: test ln tolerance\n' "$_work" > "$_brief"
+
+  set +e
+  PATH="$_fake:$PATH" HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" >/dev/null 2>&1
+  _exit=$?
+  set -e
+
+  # Real trace file must exist; latest.jsonl symlink must be absent (ln failed).
+  _trace="$(ls "$_work"/.agent-trace/codex-*.jsonl 2>/dev/null | head -1)"
+  if [[ "$_exit" -eq 0 && -n "$_trace" && -s "$_trace" ]] \
+     && [[ ! -e "$_work/.agent-trace/latest.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit trace=${_trace:-missing} latest_symlink=$([[ -e "$_work/.agent-trace/latest.jsonl" ]] && echo present || echo absent)"
+  fi
+  rm -rf "$_fake" "$_home" "$_work"; rm -f "$_brief"
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -931,5 +984,6 @@ case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief
 case_shim_delegates_to_adapter
+case_latest_symlink_failure_tolerated
 
 th_summary
