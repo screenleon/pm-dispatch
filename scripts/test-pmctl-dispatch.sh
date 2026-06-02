@@ -478,6 +478,105 @@ case_footer_exit_propagated_through_tee() {
   rm -rf "$work" "$bindir"
 }
 
+# ---- 20: pmctl exports config timeout to adapter subprocess (CC-293) ----
+# pmctl calls pm_config_load and exports PM_CFG_TIMEOUT; the codex adapter
+# reads the env var (not the config file) and reflects it in the banner.
+case_config_timeout_exported_to_adapter() {
+  local name="config/dispatch.default_timeout exported by pmctl to adapter"
+  should_run "$name" || return 0
+  local home work brief stderr code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_timeout = 750\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  stderr="$(mktemp)"
+  set +e
+  HOME="$home" CODEX_DISPATCH_TIMEOUT= \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && grep -q 'timeout:  750s' "$stderr"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" 2>/dev/null || true)"
+  fi
+  rm -rf "$home" "$work"; rm -f "$stderr"
+}
+
+# ---- 21: pmctl exports config default_model to adapter subprocess (CC-293) ----
+# PM_CFG_DEFAULT_MODEL is exported by pmctl; codex adapter uses it when --model
+# is not explicitly passed by the caller.
+case_config_model_exported_to_adapter() {
+  local name="config/dispatch.default_model exported by pmctl to adapter"
+  should_run "$name" || return 0
+  local home work brief out code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_model = gpt-5.4\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  set +e
+  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+    --print-cmd 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"-m gpt-5.4"* ]] && [[ "$out" != *"-m gpt-5.5"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(grep -- '-m ' <<<"$out" || true)"
+  fi
+  rm -rf "$home" "$work"
+}
+
+# ---- 22: caller --model flag beats config-exported PM_CFG_DEFAULT_MODEL ----
+# pmctl exports config model but the adapter's --model flag (forwarded from
+# the caller) is parsed later and wins over the env var default.
+case_caller_model_beats_config() {
+  local name="config/caller --model flag beats config-exported default_model"
+  should_run "$name" || return 0
+  local home work brief out code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_model = gpt-5.4\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  set +e
+  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+    --model gpt-5.5 --print-cmd 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"-m gpt-5.5"* ]] && [[ "$out" != *"-m gpt-5.4"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(grep -- '-m ' <<<"$out" || true)"
+  fi
+  rm -rf "$home" "$work"
+}
+
+# ---- 23: malformed config model → pmctl warns + adapter falls back to built-in ----
+# A malformed dispatch.default_model causes pm_config_load (in pmctl) to emit a
+# warning and leave PM_CFG_DEFAULT_MODEL="". The adapter then falls back to its
+# built-in default alias (→ gpt-5.5).
+case_config_malformed_model_warns_and_fallback() {
+  local name="config/malformed dispatch.default_model warns + pmctl falls back to built-in"
+  should_run "$name" || return 0
+  local home work brief out stderr code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.default_model = Bad!Model\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  stderr="$(mktemp)"
+  set +e
+  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+    --print-cmd 2>"$stderr")"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] \
+    && grep -q 'malformed value for dispatch.default_model' "$stderr" \
+    && [[ "$out" == *"-m gpt-5.5"* ]] \
+    && [[ "$out" != *"Bad!Model"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(grep -- '-m ' <<<"$out" || true) stderr=$(grep 'malformed' "$stderr" || true)"
+  fi
+  rm -rf "$home" "$work"; rm -f "$stderr"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
@@ -497,5 +596,9 @@ case_missing_brief_file
 case_symlinked_adapter_rejected
 case_stale_latest_symlink_avoidance
 case_footer_exit_propagated_through_tee
+case_config_timeout_exported_to_adapter
+case_config_model_exported_to_adapter
+case_caller_model_beats_config
+case_config_malformed_model_warns_and_fallback
 
 th_summary

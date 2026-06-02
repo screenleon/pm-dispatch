@@ -81,8 +81,6 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/pmctl-config.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/pmctl-config.sh" "$__codex_dispatch_snapshot_dir/lib/pmctl-config.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -97,7 +95,6 @@ ISOLATION=""   # isolation_level from brief; expanded to --sandbox + -c flags
 APPROVAL="never"
 SKIP_GIT_CHECK=0
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PM_DISPATCH_CONFIG_FILE="${HOME}/.pm-dispatch/config"
 PM_DISPATCH_ALIAS_FILE="${SCRIPT_DIR}/model-aliases.tsv"
 # Fallbacks, in order: snapshot-flat (`../share`, the installed-helper layout)
 # then repo-source layout from adapters/codex/ (`../../share`). The latter keeps
@@ -118,8 +115,6 @@ DEFAULT_DISPATCH_MODEL="default"
 
 # shellcheck source=scripts/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
-# shellcheck source=scripts/lib/pmctl-config.sh
-. "$SCRIPT_DIR/lib/pmctl-config.sh" 2>/dev/null || true
 
 _resolve_model_alias() {
   local query_model="$1"
@@ -163,10 +158,10 @@ _resolve_model_alias() {
   return 0
 }
 
-type -t pm_config_load >/dev/null 2>&1 && pm_config_load || true
-# Timeout precedence: $CODEX_DISPATCH_TIMEOUT env > config dispatch.default_timeout > 1200.
-# (--timeout flag, parsed below, overrides this baseline.) Env value is validated
-# downstream alongside the flag.
+# Timeout precedence: $CODEX_DISPATCH_TIMEOUT env > PM_CFG_TIMEOUT (exported by
+# pmctl from config) > --timeout flag (parsed below) > 1200.
+# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run` (CC-293); direct
+# adapter invocations fall back to 1200 when the var is absent.
 if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
   TIMEOUT="$CODEX_DISPATCH_TIMEOUT"
 elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then

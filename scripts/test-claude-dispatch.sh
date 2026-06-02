@@ -205,37 +205,17 @@ case_happy_path
 case_is_error
 case_exit_propagated
 case_usage_log
-# ---- 15: dispatch.default_timeout from config file sets initial timeout ----
-# Verifies that the shared config loader (pmctl-config.sh) correctly supplies
-# dispatch.default_timeout to the claude adapter, comparable to the codex suite.
-case_config_timeout_precedence() {
-  local name="config/dispatch.default_timeout from config sets claude timeout"; should_run "$name" || return 0
-  local home work brief stderr code
-  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
-  printf 'dispatch.default_timeout = 600\n' > "$home/.pm-dispatch/config"
-  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
-  stderr="$(mktemp)"
-  set +e
-  HOME="$home" "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd >/dev/null 2>"$stderr"; code=$?
-  set -e
-  if [[ "$code" -eq 0 ]] && grep -q 'timeout:.*600s' "$stderr"; then
-    pass "$name"
-  else
-    fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" || true)"
-  fi
-  rm -rf "$home" "$work"; rm -f "$brief" "$stderr"
-}
-
-# ---- 16: CLAUDE_DISPATCH_TIMEOUT env beats config dispatch.default_timeout ----
+# ---- 15: CLAUDE_DISPATCH_TIMEOUT env sets adapter timeout (highest priority) ----
+# Config loading moved to pmctl layer (CC-293); adapter uses PM_CFG_TIMEOUT
+# exported by pmctl, or falls back to 1200. CLAUDE_DISPATCH_TIMEOUT env remains
+# adapter-specific and is the highest-priority override for direct invocations.
 case_config_timeout_env_overrides() {
-  local name="config/CLAUDE_DISPATCH_TIMEOUT env overrides config timeout"; should_run "$name" || return 0
-  local home work brief stderr code
-  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
-  printf 'dispatch.default_timeout = 600\n' > "$home/.pm-dispatch/config"
+  local name="config/CLAUDE_DISPATCH_TIMEOUT env sets adapter timeout"; should_run "$name" || return 0
+  local work brief stderr code
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   stderr="$(mktemp)"
   set +e
-  HOME="$home" CLAUDE_DISPATCH_TIMEOUT=900 \
+  CLAUDE_DISPATCH_TIMEOUT=900 \
     "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd >/dev/null 2>"$stderr"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && grep -q 'timeout:.*900s' "$stderr"; then
@@ -243,7 +223,7 @@ case_config_timeout_env_overrides() {
   else
     fail "$name" "code=$code timeout_line=$(grep 'timeout:' "$stderr" || true)"
   fi
-  rm -rf "$home" "$work"; rm -f "$brief" "$stderr"
+  rm -rf "$work"; rm -f "$brief" "$stderr"
 }
 
 # ---- 17: successful claude dispatch writes executor=claude run row ----
@@ -275,7 +255,6 @@ case_state_store_run_row_claude() {
 }
 
 case_codex_flags_noop
-case_config_timeout_precedence
 case_config_timeout_env_overrides
 case_state_store_run_row_claude
 

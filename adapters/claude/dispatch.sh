@@ -59,8 +59,6 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     cp -- "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" "$__claude_dispatch_snapshot_dir/lib/state-writer.sh" || true
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/portable.sh" "$__claude_dispatch_snapshot_dir/lib/portable.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/pmctl-config.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/pmctl-config.sh" "$__claude_dispatch_snapshot_dir/lib/pmctl-config.sh" || true
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
 fi
@@ -72,7 +70,6 @@ WORK_DIR=""
 MODEL=""
 ISOLATION=""
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PM_DISPATCH_CONFIG_FILE="${HOME}/.pm-dispatch/config"
 TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
@@ -81,8 +78,6 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # shellcheck source=scripts/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
-# shellcheck source=scripts/lib/pmctl-config.sh
-. "$SCRIPT_DIR/lib/pmctl-config.sh" 2>/dev/null || true
 
 # Resolve isolation_level → permission_mode from adapters/claude/isolation-map.yaml.
 # Snapshot executions read the copied adapter file; fall back to repo-source paths.
@@ -117,8 +112,10 @@ _resolve_permission_mode() {
   printf '%s\n' "$_mode"
 }
 
-type -t pm_config_load >/dev/null 2>&1 && pm_config_load || true
-# Timeout precedence: $CLAUDE_DISPATCH_TIMEOUT env > config dispatch.default_timeout > 1200.
+# Timeout precedence: $CLAUDE_DISPATCH_TIMEOUT env > PM_CFG_TIMEOUT (exported by
+# pmctl from config) > --timeout flag (parsed below) > 1200.
+# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run` (CC-293); direct
+# adapter invocations fall back to 1200 when the var is absent.
 if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then
   TIMEOUT="$CLAUDE_DISPATCH_TIMEOUT"
 elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then

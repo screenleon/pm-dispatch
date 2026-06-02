@@ -47,6 +47,14 @@
 #   1  — post-verify failed after a successful adapter run
 #   *  — any other non-zero adapter exit is propagated verbatim
 
+# Source the shared config loader so pmctl_dispatch_run can resolve config
+# defaults and export them to adapter subprocesses (CC-293).
+if ! declare -F pm_config_load >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  . "$_pmctl_dispatch_lib_dir/pmctl-config.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -195,6 +203,18 @@ pmctl_dispatch_run() {
     printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
     return 2
   fi
+
+  # 4a. Resolve config defaults and export to the adapter subprocess (CC-293).
+  #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
+  #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
+  #     lower than an explicit --timeout / --model flag — the existing elif chains
+  #     in each adapter preserve that ordering without any adapter-side change.
+  #     Export is unconditional; adapters that omit the config branch safely ignore
+  #     unknown env vars. pm_config_load is guarded so test environments that did
+  #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
+  type -t pm_config_load >/dev/null 2>&1 && pm_config_load || true
+  # shellcheck disable=SC2163
+  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL
 
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
   #    Tee stdout to a temp file so per-run artifact paths in the adapter footer
