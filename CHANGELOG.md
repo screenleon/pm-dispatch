@@ -76,6 +76,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - `test-dispatch-post-verify.sh` — 38 cases (21 from CC-264 PR B; +17 from CC-059 flag/base coverage); see `scripts/test-dispatch-post-verify.sh`.
 - `test-claude-executor.sh` — 5 cases (CC-264b); see `scripts/test-claude-executor.sh`.
 - `test-state-store.sh case_project_key_no_sha1sum` — stubs both sha1sum and shasum, asserts _sw_project_key returns `global` non-fatally (CC-263).
+- `test-usage-tracker.sh missing_type_defaults_to_unknown` — regression case for entries missing `type` field (CC-104t, PR #220).
+
+### Windows compatibility + Python removal (CC-308/CC-104t, PR #220)
+
+- **`scripts/codex-dispatch.sh`** — converted from Git-stored symlink to real exec wrapper. On Windows, Git stores symlinks as plain-text files containing the target path; copy-mode install then copies that text, causing `No such file or directory` at runtime. The exec wrapper resolves `$SELF_DIR/../adapters/codex/dispatch.sh` and works both in-repo (dev) and from the installed `~/.claude/scripts/` location (CC-308).
+- **`install.sh`** — `adapters/` is now installed as a first-class directory (junction on Windows, per-file symlinks on Linux/macOS). Required so the `codex-dispatch.sh` exec wrapper can resolve `~/.claude/adapters/codex/dispatch.sh` from the installed location (CC-308).
+- **`scripts/test-pr-gate.sh`** — adds Windows Git Bash platform skips for three tests that rely on POSIX features unavailable without Developer Mode: `via-symlink` (ln -s), `pre-gate-hook-not-executable`, `post-gate-hook-not-executable` (chmod -x) (CC-308).
+- **`scripts/token-usage.sh`** — full rewrite in pure bash+jq, eliminating the 246-line embedded Python analytics script. Implements time-window filtering (`--today`/`--all`/`--Nh`) via `fromdateiso8601`, JSONL parsing with malformed-line tolerance (missing-`type` entries default to `unknown`), token aggregation by pool, calibration + rate-limits reading, divergence warning (>10% diff), rate/ETA estimation, and by-type/by-session breakdown. No `python3` dependency (CC-104t).
+- **`adapters/codex/dispatch.sh`** — `python3` JSONL token-count parser replaced with `jq -rs 'first(…)'` (CC-104t).
+- **`scripts/test-codex-dispatch.sh`** — mirrors the jq expression in the token-count regression test (CC-104t).
+- **`scripts/test-pmctl-guard.sh`** — `python3 os.path.relpath` replaced with a pure bash `_bash_relpath` function for the relative-symlink test case (CC-104t).
+- **`scripts/test-check-docs-freshness.sh`** — `python3` JSON-line validation replaced with `jq -rs '.'` (CC-104t).
+- **`scripts/test-usage-tracker.sh`** — four `python3` JSON fixture writes replaced with `jq -n --argjson ts` (CC-104t).
+- **`scripts/test-hooks.sh`** — `python3` mtime fallback removed from `_set_mtime_secs_ago`; `perl` only (CC-104t).
 
 ## [0.2.0] — 2026-05-22
 
