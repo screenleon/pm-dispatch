@@ -410,6 +410,74 @@ case_arg_passthrough() {
   rm -rf "$work"
 }
 
+# Installs a fake codex that writes valid per-run output but then corrupts
+# latest.last by relinking it to a file with "status: failed" — simulating a
+# concurrent-dispatch race (CC-305).  If pmctl reads latest.last post-verify fails;
+# if it uses the explicit per-run path from the footer, it passes.
+_install_fake_codex_stale_symlink() {
+  local bindir="$1"
+  cat > "$bindir/codex" <<'FAKEOF'
+#!/usr/bin/env bash
+_last=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
+done
+[[ -n "$_last" ]] && printf 'dispatch complete (fake codex)\n' > "$_last"
+if [[ -n "$_last" ]]; then
+  _trace="$(dirname "$_last")"
+  printf 'status: failed\n' > "$_trace/wrong.last"
+  ln -sfn "wrong.last" "$_trace/latest.last"
+fi
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
+# ---- 18: CC-305 regression — stale latest.last does not mislead post-verify ----
+# latest.last is repointed to wrong content by a simulated concurrent dispatch;
+# pmctl must pass the explicit per-run path (from the footer) to post-verify.
+case_stale_latest_symlink_avoidance() {
+  local name="dispatch/cc305 — stale latest.last does not mislead post-verify"
+  should_run "$name" || return 0
+  local work brief bindir out code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex_stale_symlink "$bindir"
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  # latest.last → wrong.last contains "status: failed" — if pmctl read it,
+  # post-verify would fail with code 1.  Explicit footer path has the real output.
+  if [[ "$code" -eq 0 ]] && grep -q '^OK' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code tail=$(tail -3 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+# ---- 19: adapter exit code propagated through tee stdout capture (CC-305 path) ----
+# pmctl now runs the adapter via `bash adapter | tee tmpfile` and reads exit code
+# from PIPESTATUS[0].  Verify the non-zero exit still reaches the caller verbatim.
+case_footer_exit_propagated_through_tee() {
+  local name="dispatch/adapter exit propagated through tee stdout capture"
+  should_run "$name" || return 0
+  local work brief bindir code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 13
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  set -e
+  if [[ "$code" -eq 13 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 13 via PIPESTATUS[0], got $code"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
@@ -427,5 +495,7 @@ case_guard_unavailable_fails_closed
 case_missing_cd
 case_missing_brief_file
 case_symlinked_adapter_rejected
+case_stale_latest_symlink_avoidance
+case_footer_exit_propagated_through_tee
 
 th_summary

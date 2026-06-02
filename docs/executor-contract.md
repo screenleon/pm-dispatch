@@ -58,7 +58,22 @@ All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
 
 `<ts>` is a wall-clock timestamp plus PID written at dispatch time by `date +%Y%m%d-%H%M%S`-PID.
 
-Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts/codex-dispatch.sh` compatibility shim, and invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `dispatch-post-verify.sh` reads `latest.last` and `latest.stderr` as the executor-agnostic Phase 3 post-dispatch check, composed by `pmctl dispatch run` after the adapter returns.
+### Adapter stdout footer (explicit path handoff)
+
+Every adapter MUST emit the following lines on **stdout** after the executor exits, in this exact format:
+
+```
+---
+trace:  <absolute-path-to-trace-jsonl>
+last:   <absolute-path-to-per-run-last>
+stderr: <absolute-path-to-per-run-stderr>
+exit:   <integer-exit-code>
+---
+```
+
+`pmctl dispatch run` captures this footer and passes `last:` and `stderr:` as `--last`/`--stderr` flags to `dispatch-post-verify.sh`, so post-verify uses the **per-run** explicit paths rather than the `latest.*` symlinks. This prevents a concurrent-dispatch race where a second adapter run overwrites `latest.*` before the first run's post-verify reads it (CC-305). `latest.*` symlinks are updated by the adapter for human observation only and are not load-bearing for post-verify correctness.
+
+Note: codex profile — `adapters/codex/dispatch.sh` (reachable via the `scripts/codex-dispatch.sh` compatibility shim, and invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `pmctl dispatch run` captures the adapter stdout footer and passes the explicit per-run `last:` and `stderr:` paths to `dispatch-post-verify.sh` via `--last`/`--stderr` flags; those per-run paths are the load-bearing input to Phase 3. `latest.last` and `latest.stderr` are updated by the adapter for human observation only and are not read by post-verify when explicit paths are present.
 
 ## Executor profiles
 

@@ -131,6 +131,67 @@ events_append() {
   return 0
 }
 
+# Extract the task_id field from a brief file (path) and/or inline brief text.
+# Outputs the ID (e.g. CC-123) or the sentinel "UNKN-0" when none is found.
+sw_extract_task_id() {
+  {
+    local _brief_file="${1:-}" _brief_inline="${2:-}"
+    local _task_id="UNKN-0" _tid=""
+    if [[ -n "$_brief_file" && -f "$_brief_file" ]]; then
+      _tid="$(grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+        "$_brief_file" 2>/dev/null | head -1 | \
+        sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)"
+      [[ -n "$_tid" ]] && _task_id="$_tid"
+    fi
+    if [[ "$_task_id" == "UNKN-0" && -n "$_brief_inline" ]]; then
+      _tid="$(printf '%s' "$_brief_inline" | \
+        grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
+        2>/dev/null | head -1 | \
+        sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)"
+      [[ -n "$_tid" ]] && _task_id="$_tid"
+    fi
+    printf '%s\n' "$_task_id"
+  } 2>/dev/null || printf 'UNKN-0\n'
+}
+
+# Append a dispatch Run row to the state store. Best-effort — never fatal.
+# Usage: sw_append_dispatch_run <executor> <exit_code> <model> \
+#            <brief_file> <work_dir> <trace_path> [brief_inline]
+sw_append_dispatch_run() {
+  {
+    local _executor="${1:-}" _exit_code="${2:-1}" _model="${3:-}"
+    local _brief_file="${4:-}" _work_dir="${5:-}" _trace_path="${6:-}"
+    local _brief_inline="${7:-}"
+    local _task_id _state _ts _hex _run_id _run_json
+
+    _task_id="$(sw_extract_task_id "$_brief_file" "$_brief_inline")"
+    _state="failed"; [[ "$_exit_code" -eq 0 ]] && _state="ok"
+    _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+    _hex="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    _run_id="run-$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)-${_hex:0:6}"
+    _SW_REPO_ROOT="$_work_dir"
+    _run_json="$(jq -cn \
+      --arg id "$_run_id" \
+      --arg task_id "$_task_id" \
+      --arg executor "$_executor" \
+      --arg state "$_state" \
+      --argjson exit_code "$_exit_code" \
+      --arg model "$_model" \
+      --arg brief_file "$_brief_file" \
+      --arg working_dir "$_work_dir" \
+      --arg trace_path "$_trace_path" \
+      --arg created_ts "$_ts" \
+      '{schema_version:1,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
+      2>/dev/null || true)"
+    if [[ -z "$_run_json" ]]; then
+      _sw_log_error "sw_append_dispatch_run: jq JSON construction failed (executor=${_executor} task_id=${_task_id} exit=${_exit_code})"
+      return 0
+    fi
+    runs_append "$_run_json"
+  } 2>/dev/null || true
+  return 0
+}
+
 task_upsert() {
   {
     local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""

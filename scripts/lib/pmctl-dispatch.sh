@@ -197,8 +197,26 @@ pmctl_dispatch_run() {
   fi
 
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
-  local exit_code=0
-  bash "$adapter_path" "${forward[@]}" || exit_code=$?
+  #    Tee stdout to a temp file so per-run artifact paths in the adapter footer
+  #    can be extracted for post-verify without relying on latest.* symlinks.
+  #    latest.* is shared mutable state: two concurrent dispatches on the same
+  #    work dir both call `ln -sfn <adapter>-<ts>.last latest.last`, so the
+  #    second finisher silently overwrites the first's symlink before post-verify
+  #    reads it (CC-305). Explicit per-run paths eliminate the race entirely.
+  local exit_code=0 _footer_tmp=""
+  local -a _pst=(0 0)
+  _footer_tmp="$(mktemp)" || { printf 'pmctl dispatch run: mktemp failed\n' >&2; return 2; }
+  # Capture PIPESTATUS before any subsequent command clobbers it.  The { } group
+  # is the LHS of ||, so set -e is suppressed for a non-zero pipeline exit.
+  { bash "$adapter_path" "${forward[@]}" | tee "$_footer_tmp"; _pst=("${PIPESTATUS[@]}"); } || true
+  exit_code="${_pst[0]}"
+
+  # Parse per-run paths from the adapter stdout footer ("last:   <path>",
+  # "stderr: <path>").  Empty strings → post-verify falls back to latest.*.
+  local _run_last="" _run_stderr=""
+  _run_last="$(grep -m1 '^last:' "$_footer_tmp" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_stderr="$(grep -m1 '^stderr:' "$_footer_tmp" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  rm -f "$_footer_tmp"
 
   # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
   # there is no output contract to read and nothing to post-verify.
@@ -212,9 +230,14 @@ pmctl_dispatch_run() {
     return "$exit_code"
   fi
 
-  # 7. Post-verify (shared) reads the output contract (latest.last) and validates
-  #    the run against the work dir + brief. Only runs after a clean adapter exit.
-  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "$work_dir" "$brief_file"; then
+  # 7. Post-verify (shared): pass explicit per-run paths (parsed from the adapter
+  #    footer) so post-verify never reads latest.*, eliminating the CC-305 race.
+  #    Falls back to latest.* defaults when footer parsing found nothing (e.g.,
+  #    a print-cmd adapter or a future adapter that omits the footer).
+  local -a _pv_args=("$work_dir" "$brief_file")
+  [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
+  [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
+  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     return 1
   fi

@@ -81,6 +81,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/pmctl-config.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/pmctl-config.sh" "$__codex_dispatch_snapshot_dir/lib/pmctl-config.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -113,66 +115,11 @@ PRINT_CMD=0
 # share/model-aliases.tsv (single source of truth), so a model bump edits the
 # TSV alone. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
 DEFAULT_DISPATCH_MODEL="default"
-__PM_CFG_TIMEOUT=""
-__PM_CFG_DEFAULT_MODEL=""
 
 # shellcheck source=scripts/lib/state-writer.sh
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
-
-# Parse ~/.pm-dispatch/config once into globals __PM_CFG_TIMEOUT and
-# __PM_CFG_DEFAULT_MODEL. Called directly (NOT in a subshell) so both values
-# reach the main flow. Timeout/model precedence is resolved by the callers.
-_load_pm_config() {
-  local config_path="${PM_DISPATCH_CONFIG_FILE}"
-  local line_no=0
-  local line key value
-
-  __PM_CFG_TIMEOUT=""
-  __PM_CFG_DEFAULT_MODEL=""
-
-  [[ -r "$config_path" ]] || return 0
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    ((line_no += 1))
-    line="${line%$'\r'}"
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" ]] && continue
-
-    if [[ "$line" != *"="* ]]; then
-      echo "codex-dispatch: warning: malformed config line in ${config_path}:${line_no}" >&2
-      continue
-    fi
-
-    key="${line%%=*}"
-    value="${line#*=}"
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-
-    if [[ "$key" == "dispatch.default_timeout" ]]; then
-      if [[ "$value" =~ ^[0-9]+$ ]]; then
-        __PM_CFG_TIMEOUT="$value"
-      else
-        echo "codex-dispatch: warning: malformed value for dispatch.default_timeout in ${config_path}:${line_no}" >&2
-      fi
-    elif [[ "$key" == "dispatch.default_model" ]]; then
-      # Shape-guard the override so a malformed value can't silently become the
-      # omitted---model default (and bypass the gpt-5.5 default contract). Same
-      # shape as handover model names: an alias or wire id. Invalid → warn + ignore
-      # (fall back to the built-in `default` alias). codex rejects unknown-but-
-      # well-formed ids loudly at dispatch, so this only filters out garbage.
-      if [[ "$value" =~ ^[a-z][a-z0-9.-]{0,30}$ ]]; then
-        __PM_CFG_DEFAULT_MODEL="$value"
-      else
-        echo "codex-dispatch: warning: malformed value for dispatch.default_model in ${config_path}:${line_no}; ignoring (using built-in default)" >&2
-      fi
-    fi
-    # Unknown keys are intentionally ignored for future axes.
-  done < "$config_path"
-}
+# shellcheck source=scripts/lib/pmctl-config.sh
+. "$SCRIPT_DIR/lib/pmctl-config.sh" 2>/dev/null || true
 
 _resolve_model_alias() {
   local query_model="$1"
@@ -216,14 +163,14 @@ _resolve_model_alias() {
   return 0
 }
 
-_load_pm_config
+type -t pm_config_load >/dev/null 2>&1 && pm_config_load || true
 # Timeout precedence: $CODEX_DISPATCH_TIMEOUT env > config dispatch.default_timeout > 1200.
 # (--timeout flag, parsed below, overrides this baseline.) Env value is validated
 # downstream alongside the flag.
 if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
   TIMEOUT="$CODEX_DISPATCH_TIMEOUT"
-elif [[ -n "$__PM_CFG_TIMEOUT" ]]; then
-  TIMEOUT="$__PM_CFG_TIMEOUT"
+elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then
+  TIMEOUT="$PM_CFG_TIMEOUT"
 else
   TIMEOUT="1200"
 fi
@@ -289,7 +236,7 @@ fi
 # _resolve_model_alias below, attaching reasoning effort.
 # Spark is never the default; opt in explicitly with --model codex-spark.
 if [[ -z "$MODEL" ]]; then
-  MODEL="${__PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"
+  MODEL="${PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"
 fi
 
 MODEL_RESOLVED="$MODEL"
@@ -419,54 +366,7 @@ EXIT=$?
 set -e
 
 # --- state store: append Run row (best-effort; never fatal) ---
-{
-  # Extract task_id from brief file (first match of ^task_id: <ID>), fallback UNKN-0.
-  _SW_TASK_ID="UNKN-0"
-  if [[ -n "${BRIEF_FILE:-}" && -f "${BRIEF_FILE}" ]]; then
-    _SW_TID=$(grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
-      "${BRIEF_FILE}" 2>/dev/null | head -1 | \
-      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
-    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
-  fi
-  if [[ "$_SW_TASK_ID" == "UNKN-0" && -n "${BRIEF:-}" ]]; then
-    _SW_TID=$(printf '%s' "$BRIEF" | grep -oE '^task_id:[[:space:]]*[A-Z]{1,4}-[0-9]+[a-z]?' \
-      2>/dev/null | head -1 | \
-      sed 's/task_id:[[:space:]]*//' 2>/dev/null || true)
-    [[ -n "$_SW_TID" ]] && _SW_TASK_ID="$_SW_TID"
-  fi
-  _SW_STATE="failed"
-  [[ "$EXIT" -eq 0 ]] && _SW_STATE="ok"
-  _SW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
-  _SW_HEX=$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-  _SW_RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)-${_SW_HEX:0:6}"
-  _SW_TRACE_PATH="${TRACE:-}"
-  _SW_WORK_DIR="${WORK_DIR:-}"
-  _SW_MODEL_VAL="${MODEL:-}"
-  _SW_BRIEF_FILE_VAL="${BRIEF_FILE:-}"
-  # Route run row to target project partition, not the caller's cwd partition.
-  _SW_REPO_ROOT="${WORK_DIR:-}"
-  # Build JSON via jq to safely escape all string field values.
-  _SW_RUN_JSON="$(jq -cn \
-    --arg id "$_SW_RUN_ID" \
-    --arg task_id "$_SW_TASK_ID" \
-    --arg state "$_SW_STATE" \
-    --argjson exit_code "$EXIT" \
-    --arg model "$_SW_MODEL_VAL" \
-    --arg brief_file "$_SW_BRIEF_FILE_VAL" \
-    --arg working_dir "$_SW_WORK_DIR" \
-    --arg trace_path "$_SW_TRACE_PATH" \
-    --arg created_ts "$_SW_TS" \
-    '{schema_version:1,id:$id,task_id:$task_id,executor:"codex",state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}' \
-    2>/dev/null || true)"
-  if [[ -z "$_SW_RUN_JSON" ]]; then
-    { type -t _sw_log_error >/dev/null 2>&1 && \
-      _sw_log_error "codex-dispatch: jq Run JSON construction failed (task_id=${_SW_TASK_ID} exit=${EXIT})"; } \
-      2>/dev/null || true
-  fi
-  if [[ -n "$_SW_RUN_JSON" && "$(type -t runs_append 2>/dev/null)" == function ]]; then
-    runs_append "$_SW_RUN_JSON" 2>/dev/null || true
-  fi
-} 2>/dev/null || true
+sw_append_dispatch_run "codex" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DIR:-}" "${TRACE:-}" "${BRIEF:-}" 2>/dev/null || true
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
