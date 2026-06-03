@@ -38,7 +38,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104r | ⏸ deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh` performance_budget assertion: 27990 ms actual vs 3500 ms budget on Windows native filesystem (WSL UNC path `\\wsl.localhost\...` is ~8× slower than local disk). Not a pm-dispatch bug — physical filesystem characteristic. Fix is two-part: (a) `docs/platform-support.md` warns "install on local disk, avoid cross-WSL/native FS boundaries"; (b) preflight detects UNC path → prints warning and skips budget assertion (10 lines). Polish, not blocker | docs/ops | 2026-05-18 | — | — | oss |
 | CC-104s | 🟡 deferred | **[Windows dogfood r3 finding]** `hook-tool-trace.sh:195` `read_home_path_basename_only` returns `first_arg_or_skill:null` on Windows because case-glob `"$HOME"/*` uses forward slashes (`/c/Users/Lien Chen`) but harness sends `file_path` with backslashes (`C:\Users\Lien Chen\...`); both case branches miss. Fix: normalize input path via `cygpath`/string-replace (`\\` → `/`, `C:\Users\...` → `/c/Users/...`) before case-match. Polish — affects trace JSON observability only, not functionality | ops/portability | 2026-05-18 | — | — | oss |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning: `--executor auto/codex/claude` flag（與 pr-gate 介面對齊）+ `dispatch_handover_v1` 加 `executor` 欄位；加 `--parallel-plan` mode — PM 偵測 arch/multi-subsystem/first-design 特徵時，在 dispatch 前暫停並詢問用戶是否啟用；確認後 codex 與 claude 各自獨立規劃，current model 合成一份 best-of 計劃輸出；`/pm --parallel-plan` flag 可跳過確認步驟直接 parallel dispatch | process | 2026-05-20 | — | P2 | design |
-| CC-207 | 🟡 deferred | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | — | P2 | oss |
+| CC-207 | ✅ closed 2026-06-03 | **[Windows dogfood r3 finding]** `install.sh` on Git Bash (OSTYPE=msys/cygwin) falls back to copying files instead of symlinking (`ln -s` does not work); 83 files copied across agents/, commands/, scripts/, .pm — after pm-dispatch updates users must re-run `bash install.sh` to sync. Fix: detect Git Bash, use PowerShell `mklink /J` (directory junction, no admin required) for each target. | ops/portability | 2026-05-20 | pr:#220 | P2 | oss |
 | CC-209 | 🟢 someday | **[context-enrichment spike: codegraph evaluation]** Evaluate colbymchenry/codegraph (MIT, TypeScript, 18.8k★, active) as a **context-pack** source (CC-232). Phase 1 spike `docs/spikes/cc209-codegraph-phase1.md` (2026-05-24): codex returned RED on misapplied rubric; **main-thread validation amended to AMBER** — install ✓, license MIT ✓, API works ✓, BUT pm-dispatch is not codegraph's intended target (bash/markdown stack not supported). Phase 2 (benchmark) deferred until brief re-specifies target as TS/JS/Python/Go codebase. Process lessons: rubric must enumerate sandbox-block as local-env; spike brief must specify test target separately from working directory; main-thread validation mandatory for verdict-issuing spikes. | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-210 | ⏸ deferred | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. | ops | 2026-05-21 | pr:#110 | P3 | hygiene |
 | CC-211 | ⏸ deferred | **[v0.3.0 architecture epic]** Restructure pm-dispatch into a schema-first / state-first / adapter-thin PM runtime — four layers: `core/` (data + policy) → `runtime/` (`pmctl` spine) → `adapters/` (delivery) → `mcp/` (bridge, v0.4.0). Absorbs Multica / Memori / Superpowers / AI Night Shift concepts into one state substrate. Broken into milestones — live **M0–M6** in MILESTONES.md (synthesis §6 is the original M0–M5 cut); runtime is realized as `cli/pmctl` (not a `runtime/` dir). See docs/architecture/v0.3.0-synthesis.md **Conformance status** for as-built drift (codex+claude adapters shipped; state-first / `mcp/` still open). Umbrella epic for CC-229..CC-237 + existing CC-059/060/061/200-204/215/217-220. | arch/portability | 2026-05-21 | — | P1 | design |
@@ -72,13 +72,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/hook-pm-write-guard.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-hooks.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-260 | ✅ closed 2026-06-01 | **[pr-gate.sh: dirty-worktree fail-loud preflight]** When a branch has committed changes, `git diff "$BASE"...HEAD` silently omits uncommitted tracked and untracked files. Fix: fail with exit 3 only when committed `BASE...HEAD` changes exist and the worktree is dirty; `--allow-dirty` explicitly folds committed + working-tree changes into review scope. Dirty-only-no-commit trees still use the existing working-tree fallback. Flagged by critic [medium] in CC-229 Gate 12. | gate/ops | 2026-05-25 | pr:#214 | P2 | — |
-| CC-262 | ⚠️ partial 2026-05-25 | **[Executor isolation 抽象層]** M1 ✅（PR #162）：`core/policy/isolation-level.yaml` + `adapters/claude/isolation-map.yaml`。M2 ⏳：`codex-dispatch.sh` dispatch 前展開 isolation_level。M3 ⏳：`agents/project-pm.md` PM brief template 改寫 `isolation_level:` 取代三個原生欄位。v0.4.0 ⏳：`adapters/codex/isolation-map.yaml`。 | arch/process | 2026-05-25 | pr:#162 (M1) | P2 | design |
+| CC-262 | ✅ closed 2026-06-03 | **[Executor isolation 抽象層]** `isolation_level` 意圖欄位 + adapter 轉譯契約全段落地：M1 `core/policy/isolation-level.yaml` enum + `adapters/claude/isolation-map.yaml`（#162）；M2 `codex-dispatch.sh` 展開 + `agents/project-pm.md` PM template（#175/#180）；`adapters/codex/isolation-map.yaml`（5 級映射）present。enum = 5 值（含 `workspace-network`）；`sandboxed` = best-effort（Codex→workspace-write，no network）。 | arch/process | 2026-05-25 | pr:#162/#175/#180 | P2 | design |
 | CC-268 | 🟡 deferred | **[docs: run_in_background default async escalation undocumented]** Agent tool 未設 `run_in_background:true` 時，harness 可能靜默升格為 async 並回傳 `Async agent launched successfully`（codex-executor 已觀察到此行為）。需文件化哪些 subagent 類型永遠 async、預設行為保證。| docs/DX | 2026-05-28 | — | P3 | — |
 | CC-269 | 🟡 deferred | **[ops: pm-dispatch hook-save-rate-limits.sh 應寫到自己的 state 路徑]** 目前 `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等其他工具使用同一檔名，造成多工具衝突。應改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 位置），並同步更新所有讀取此路徑的腳本。 | ops/install | 2026-05-28 | — | P3 | — |
 | CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-272 | 🟡 deferred | **[process: brief template — omit commit block; document main-thread commit delegation]** 每個 brief 末尾的 `git add + git commit` 均被 `hook-codex-bash-guard` 擋住，executor 回報 `status: partial`（即使程式碼正確），主線程每次都必須手動 commit。推薦 Option A：從 brief template 移除 commit block，在 `docs/dispatch-brief.md` 明文「commit 永遠委派主線程」。Option B：hook allowlist 加入無破壞性 git add/commit。 | process/DX | 2026-05-28 | — | P2 | — |
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
-| CC-274 | 🟡 deferred | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
+| CC-274 | ✅ closed 2026-06-03 | **[docs: reconcile CC-262 planning text with shipped isolation implementation]** CC-262 entry 有三處過時：(1) enum 只列 4 值，缺 workspace-network；(2) sandboxed 語義仍寫「完整隔離」，實為 best-effort workspace-write；(3) M2/v0.4.0 仍標 deferred，均已在 PR #175 落地。 | docs | 2026-05-29 | pr:#175 | P2 | — |
 | CC-276 | 🟡 deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
 | CC-285 | 🟡 deferred | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | — | P3 | hygiene |
 | CC-286 | 🟡 deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
@@ -344,7 +344,16 @@ script-layer）、CC-202（handover validator framework）
 - [ ] `dispatch_handover_v1` block 含 `executor` 欄位，pr-gate skill 可解析同一格式
 - [ ] 一般 `/pm <task>`（無 arch 特徵）維持背景執行，行為不變
 
-## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh（deferred）
+## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh ✅ 2026-06-03
+
+**See**: pr:#220
+
+**Resolution**: Implemented in PR #220 (the Windows-compatibility branch). `install.sh` now
+installs directory targets (`agents/`, `skills/`, `commands/`, `adapters/`, `.pm`)
+as Windows junctions via `make_junction_windows` / `install_dir_junction` on the
+`windows` platform, with per-file copy as the last-resort fallback — exactly the
+"detect Git Bash, use junctions instead of silently copying" branch this item
+asked for. Junction & copy-aware coverage in `test-install.sh` / `test-uninstall.sh`.
 
 **Problem**: On Git Bash (OSTYPE=msys/cygwin), `ln -s` silently falls back to file
 copy rather than creating real symlinks. After pulling pm-dispatch updates, users
@@ -939,15 +948,25 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 ---
 
-## CC-262 — Executor isolation 抽象層：`isolation_level` 欄位 + adapter 轉譯契約（deferred）
+## CC-262 — Executor isolation 抽象層：`isolation_level` 欄位 + adapter 轉譯契約 ✅ 2026-06-03
+
+**See**: pr:#162/#175/#180
+
+**Resolution (2026-06-03, CC-274 reconcile)**: All segments shipped. `core/policy/isolation-level.yaml`
+defines **5** levels — `none | read-only | workspace-write | workspace-network | sandboxed` (M2/#175 added
+`workspace-network`). `adapters/claude/isolation-map.yaml` (no-op, #162) and `adapters/codex/isolation-map.yaml`
+(5-level native mapping, present) both exist; `scripts/codex-dispatch.sh` expands `isolation_level` before
+dispatch (#175); `agents/project-pm.md` PM template uses `isolation_level:` (#180). `sandboxed` is **best-effort**
+(Codex has no true ephemeral mode → maps to `workspace-write` with no network), not full isolation. The stale
+planning text below is retained for history; the bracketed corrections inline reflect the as-built state.
 
 **Problem**: 現行 brief schema 中 `sandbox`、`approval`、`skip_git_check` 是 Codex 原生欄位，直接出現在 PM 撰寫的 brief 裡。當 executor 為 `claude` 時，PM 必須填入 canonical no-op 值（`workspace-write` / `never` / `false`）——這是 leaky abstraction：brief 層洩漏了底層 executor 的實作細節。
 
 **Why**: 用戶設計目標：「功能與執行環境分離」。Brief 應表達隔離 *意圖*（需要什麼程度的保護），adapter 層負責把意圖翻譯成各 executor 的原生機制。這樣未來加入新 executor（opencode、antigravity）只需新增一個 adapter map，不需改動 brief schema 或 PM 撰寫規則。與 v0.3.0 的 `adapters/` named-slot 架構完全吻合。
 
 **Requirement**:
-- `core/policy/`（CC-231 延伸）：新增 `isolation_level` enum，值為 `none | read-only | workspace-write | sandboxed`，附語意定義（none=無限制；read-only=不寫 FS；workspace-write=僅寫 project dir；sandboxed=完整隔離）
-- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → `{sandbox, approval, skip_git_check}` 原生欄位的對應表（v0.4.0，暫緩）
+- `core/policy/`（CC-231 延伸）：新增 `isolation_level` enum，值為 `none | read-only | workspace-write | workspace-network | sandboxed`〔as-built: 5 值，M2/#175 補入 `workspace-network`〕，附語意定義（none=無限制；read-only=不寫 FS；workspace-write=僅寫 project dir；workspace-network=workspace-write + localhost TCP；sandboxed=〔as-built: best-effort 最強隔離，Codex→workspace-write 無網路〕）
+- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → Codex 原生 `sandbox` + `config_overrides` 對應表〔as-built: ✅ present，5 級映射〕
 - `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）（v0.3.0 M1 殘留，當前範圍）
 - `agents/project-pm.md`：PM brief template 改寫 `isolation_level:` 取代三個原生欄位；說明三個原生欄位為 adapter-generated，PM 不直接填寫
 - `scripts/codex-dispatch.sh`：dispatch 前讀取 `adapters/codex/isolation-map.yaml` 展開 `isolation_level` → 原生欄位；遇未知值 → 立即 exit 1 with error
@@ -957,16 +976,16 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 2. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
 3. `bash scripts/run-all-tests.sh` → exit 0
 
-**Acceptance (M2 scope — deferred)**:
+**Acceptance (M2 scope — ✅ landed #175/#180)**:
 4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
 5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
 
-**Acceptance (v0.4.0 scope — adapters/codex deferred)**:
-6. `cat adapters/codex/isolation-map.yaml` → 包含全部 4 個 isolation_level 的映射
+**Acceptance (adapters/codex scope — ✅ landed)**:
+6. `cat adapters/codex/isolation-map.yaml` → 包含全部 5 個 isolation_level 的映射〔as-built: present〕
 
-**Scope revision 2026-05-25**: adapters/codex 移至 v0.4.0；當前範圍為 M1（core/policy/ enum + adapters/claude/ no-op map）。
+**Scope revision 2026-05-25**: adapters/codex 原移至 v0.4.0。〔Superseded 2026-06-03: 已落地，見上方 Resolution。〕
 
-**M1 shipped (2026-05-25, PR #162)**: `core/policy/isolation-level.yaml` and `adapters/claude/isolation-map.yaml` created. M2 (codex-dispatch.sh expansion) and v0.4.0 (adapters/codex) remain deferred.
+**M1 shipped (2026-05-25, PR #162)**: `core/policy/isolation-level.yaml` and `adapters/claude/isolation-map.yaml` created. **M2 + adapters/codex shipped (PR #175/#180)** — see top Resolution; item closed 2026-06-03 via CC-274 reconcile.
 
 ---
 
@@ -1058,7 +1077,14 @@ This makes directory creation the mutex.
 
 ---
 
-## CC-274 — docs: reconcile CC-262 planning text with shipped isolation implementation
+## CC-274 — docs: reconcile CC-262 planning text with shipped isolation implementation ✅ 2026-06-03
+
+**See**: pr:#175
+
+**Resolution**: Reconciled 2026-06-03. CC-262 body's three stale points corrected inline
+(enum now 5 values incl `workspace-network`; `sandboxed` = best-effort not 完整隔離; M2 +
+adapters/codex acceptance marked landed #175/#180), CC-262 closed to match MILESTONES ✅,
+and the stale "(adapters/codex isolation-map 仍 v0.4.0)" note removed from MILESTONES §M1.
 
 **Problem**: CC-262 in BACKLOG.md has three stale areas flagged by Round 11 gate critic:
 1. Requirement block lists only 4 enum values (`none | read-only | workspace-write | sandboxed`) — `workspace-network` (shipped in M2 / PR #175) is missing.

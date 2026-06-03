@@ -44,7 +44,7 @@
 | CC-230 | `~/.local/share/pm-dispatch/state/` state store + `routing_log.md`→`runs.jsonl` | ✅ (#159) |
 | CC-231 | `core/policy/` 抽取（reviewer-policy / executor-enum / dispatch-states） | ✅ (#157) |
 | CC-232 | context-pack schema + context-enricher 介面 | ✅ (#157) |
-| CC-262 | `isolation_level` enum 全三段完成 — adapters/claude no-op map（#162）；codex-dispatch 展開（#175）；PM template（#180）。注：`adapters/codex` 的 dispatch.sh 已由 CC-289 實作（#194）；CC-262 planning 文字/狀態與已 ship 實作的對齊另由 [[CC-274]] 追蹤（adapters/codex isolation-map 仍 v0.4.0） | ✅ (#162/#175/#180) |
+| CC-262 | `isolation_level` enum 全三段完成 — adapters/claude no-op map（#162）；codex-dispatch 展開（#175）；PM template（#180）。注：`adapters/codex` 的 dispatch.sh 已由 CC-289 實作（#194）；CC-262 planning 文字/狀態與已 ship 實作的對齊由 [[CC-274]] 完成（2026-06-03；`adapters/codex/isolation-map.yaml` 已 present，5 級映射） | ✅ (#162/#175/#180) |
 
 ### M2 — 由抽取長出 runtime — ✅ complete 2026-05-28
 
@@ -125,7 +125,7 @@ CC-220（spike workflow）、CC-209（codegraph spike）已移至 v0.4.0。
 |---|---|---|
 | CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
 | CC-265 | 移除 `/caveman` 與 `/caveman-commit` | ✅ 2026-05-26 |
-| — | v0.3.0 release prep（CHANGELOG + tag + GitHub Release） | ⏳ |
+| — | v0.3.0 release prep（CHANGELOG + tag + GitHub Release） | ✅ 2026-06-03（CHANGELOG #219；tag `v0.3.0`；GitHub Release published） |
 
 ### v0.3.0 範圍外 → v0.4.0
 
