@@ -117,11 +117,16 @@ if should_run "post-task-fail-closed"; then
 fi
 
 # reviewer role (CC-297): runtime-agnostic, only .gate-results/ writes allowed.
+# The reviewer guard binds writes to <repo>/.gate-results. These cases use a
+# sandbox .gate-results, so they declare the sandbox repo root via
+# CLAUDE_HOOK_GATE_REPO_ROOT (propagated through pmctl to the hook).
 if should_run "reviewer-prewrite-allow-codex"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-codex"
+  export CLAUDE_HOOK_GATE_REPO_ROOT="$(dirname "$_rw_guard_dir")"
   run_guard --event pre-write --role reviewer --runtime codex --file "$_rw_guard_dir/output.md"
+  unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
   rm -rf "$(dirname "$_rw_guard_dir")"
   unset _rw_guard_dir
@@ -131,7 +136,9 @@ if should_run "reviewer-prewrite-allow-claude"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-claude"
+  export CLAUDE_HOOK_GATE_REPO_ROOT="$(dirname "$_rw_guard_dir")"
   run_guard --event pre-write --role reviewer --runtime claude --file "$_rw_guard_dir/output.md"
+  unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
   rm -rf "$(dirname "$_rw_guard_dir")"
   unset _rw_guard_dir

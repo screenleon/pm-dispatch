@@ -37,6 +37,13 @@ LOG_FILE="$LOG_DIR/hooks.log"
 HK_BYPASS_ENV="CLAUDE_HOOK_REVIEWER_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
+# Repo root = the grandparent of this script. pmctl invokes the policy-backing
+# hook at <repo>/scripts/hook-reviewer-write-guard.sh (see scripts/lib/pmctl-guard.sh:298),
+# so <repo> is one level up from $_SCRIPT_DIR. Binding the allow-list to THIS
+# repo's .gate-results/ (not merely any directory named .gate-results anywhere)
+# matches the printed allow message and closes the off-repo write gap.
+# CLAUDE_HOOK_GATE_REPO_ROOT overrides it for tests that use a sandbox repo.
+GATE_REPO_ROOT="${CLAUDE_HOOK_GATE_REPO_ROOT:-$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)}"
 unset _SCRIPT_DIR
 
 # ---------- helpers ----------
@@ -89,12 +96,14 @@ hk_check_bypass CLAUDE_HOOK_REVIEWER_GUARD
 hk_validate_path "$file_path"
 abs_path="$HK_ABS_PATH"
 
-# The immediate parent directory must be named .gate-results.
-# realpath_m resolves symlinks in all directory components, so a .gate-results/
-# symlink pointing elsewhere would resolve to a different name — caught here.
+# The immediate parent directory must be THIS repo's .gate-results/ — not merely
+# any directory named .gate-results anywhere on disk. realpath_m resolves symlinks
+# in all directory components on both sides, so a .gate-results/ symlink pointing
+# elsewhere resolves to a path that no longer equals the expected dir — caught here.
 gate_results_dir="$(dirname "$abs_path")"
-if [[ "$(basename "$gate_results_dir")" != ".gate-results" ]]; then
-  hk_deny "immediate parent is not .gate-results (got: $(basename "$gate_results_dir"), resolved: $abs_path)" "$file_path"
+expected_gate_dir="$(realpath_m "$GATE_REPO_ROOT/.gate-results" 2>/dev/null)"
+if [[ -z "$expected_gate_dir" || "$gate_results_dir" != "$expected_gate_dir" ]]; then
+  hk_deny "target is not <repo>/.gate-results (got: $gate_results_dir, expected: ${expected_gate_dir:-<unresolved>}, resolved: $abs_path)" "$file_path"
 fi
 
 # Reject existing symlinks at the target path (symlink swap attack: a symlink

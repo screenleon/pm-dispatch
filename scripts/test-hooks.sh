@@ -339,12 +339,18 @@ truncate_log
 
 _gate_dir="$(mktemp -d)/repo/.gate-results"
 mkdir -p "$_gate_dir"
+# Sandbox repo root for the guard's repo-binding. The hook allows only
+# <repo>/.gate-results, so cases writing into the sandbox .gate-results must
+# declare the sandbox repo root via CLAUDE_HOOK_GATE_REPO_ROOT. Off-repo
+# denials below intentionally omit the override so they exercise the
+# default real-repo binding.
+_gate_repo="$(dirname "$_gate_dir")"
 
 # --- happy path: Write/Edit to .gate-results/ ---
 for _rw_agent in critic qa-tester architecture-reviewer security-reviewer risk-reviewer; do
-  run_case "rw: $_rw_agent Write to .gate-results/ → allow" 0 "$RWHOOK" \
+  run_case_env "rw: $_rw_agent Write to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
     "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
-  run_case "rw: $_rw_agent Edit to .gate-results/ → allow" 0 "$RWHOOK" \
+  run_case_env "rw: $_rw_agent Edit to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
     "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
 done
 unset _rw_agent
@@ -362,20 +368,29 @@ run_case "rw: security-reviewer Write /tmp/oops.md → deny" 2 "$RWHOOK" \
 run_case "rw: risk-reviewer Write /etc/passwd → deny" 2 "$RWHOOK" \
   '{"agent_type":"risk-reviewer","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
-# parent not named .gate-results (file directly in repo root) → deny
-run_case "rw: critic Write file not inside .gate-results/ → deny" 2 "$RWHOOK" \
-  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$(dirname "$_gate_dir")/gate-result.md\"}}"
+# parent is repo root, not .gate-results (sandbox repo) → deny
+run_case_env "rw: critic Write file not inside .gate-results/ → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_repo/gate-result.md\"}}"
 
-# path traversal: resolves outside .gate-results → deny
-run_case "rw: critic Write path traversal → deny" 2 "$RWHOOK" \
+# path traversal: resolves outside .gate-results (sandbox repo) → deny
+run_case_env "rw: critic Write path traversal → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
   "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/../evil.md\"}}"
 
 # --- synthetic identity (pmctl guard check --role reviewer codex route) ---
-run_case "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 0 "$RWHOOK" \
+run_case_env "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
   "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/pmctl-output.md\"}}"
 
 run_case "rw: reviewer (pmctl synthetic) Write outside .gate-results/ → deny" 2 "$RWHOOK" \
   '{"agent_type":"reviewer","tool_name":"Write","tool_input":{"file_path":"/tmp/evil.md"}}'
+
+# repo-binding (CC-297 hardening): a directory named .gate-results that is NOT
+# this repo's .gate-results must be denied — name-only matching is insufficient.
+_rw_other_gate="$(mktemp -d)/other/.gate-results"
+mkdir -p "$_rw_other_gate"
+run_case_env "rw: critic Write to a .gate-results outside the repo → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_other_gate/out.md\"}}"
+rm -rf "$(dirname "$_rw_other_gate")"
+unset _rw_other_gate
 
 # --- no-op for non-reviewer agents ---
 run_case "rw: claude-executor Write anywhere → no-op" 0 "$RWHOOK" \
@@ -406,7 +421,7 @@ _rw_symlink_out="$_gate_dir/symlink-out.md"
 ln -s "$_rw_symlink_target" "$_rw_symlink_out" 2>/dev/null || true
 # See cxw symlink case: skip where real symlinks are unavailable (MSYS copies).
 if [[ -L "$_rw_symlink_out" ]]; then
-  run_case "rw: Write to existing symlink in .gate-results/ → deny" 2 "$RWHOOK" \
+  run_case_env "rw: Write to existing symlink in .gate-results/ → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
     "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
 else
   $LIST || printf '  SKIP  rw: Write to existing symlink in .gate-results/ → deny (no real symlink support)\n'
@@ -420,7 +435,7 @@ run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVI
 
 # --- audit-log content assertions ---
 $LIST || truncate_log
-$LIST || printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" | "$RWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" | env CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_repo" "$RWHOOK" >/dev/null 2>&1
 assert_log "rw: audit log contains allow line" "decision=allow"
 assert_log "rw: allow line records agent=critic" "agent=critic"
 assert_log "rw: allow line records tool=Write" "tool=Write"
