@@ -23,13 +23,16 @@
 | — | adapter Run write（`sw_append_dispatch_run`）上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event | ⏳ |
 | — | `routing_log.md` 機器寫廢棄 + 遷移（`pmctl trace` 為讀路；precedent `migrate-routing-log.sh`） | ⏳ |
 | CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」 | 🟡 → v0.4.0 |
+| — | **寫入驗 schema**（pmctl append 前驗 `core/schema/*`）+ **寫失敗變響**（canonical state 寫失敗 surface，非靜默 best-effort；D8） | ⏳ |
+| — | **rotation 實作**（`runs`/`events` → `archive/*-$YYYYMM.jsonl.gz`，依 `layout.yaml` 門檻；D7） | ⏳ |
 | — | builds on **CC-230 ✅ #159**（state store + 佈局已在；本階段完成其本意） | — |
 
-### Phase 2 — pmctl state ops
+### Phase 2 — pmctl state ops + 讀取/查詢
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、JSON 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
+| CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
+| — | **讀取/查詢契約**（pmctl 查 Run/Task/Event by id/task/kind/time-window；JSONL 為 store、pmctl 為查詢面；D6） | ⏳ |
 | CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
 
 ### Phase 3 — 第一個 state consumer

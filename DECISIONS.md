@@ -30,6 +30,7 @@ v0.3.0 shipped the spine (schema + pmctl runtime + thin adapters) but is only pa
 - Adapters and hooks must NOT write machine state directly; pmctl is the only writer. CC-306 layer-enforcer to be extended to guard re-introduction.
 - Run+Event writes are append-only; the Event is written after the Run with a `run_id` back-reference, so a partial pair (Run without terminal Event) is detectable/recoverable.
 - `routing_log.md` deprecation needs a migration / back-compat path (precedent: `scripts/migrate-routing-log.sh`).
+- **Foundation scope is the full substrate, not just writes** (2026-06-03 follow-up): pmctl validates appends against `core/schema/*` (D-validate); owns the **read/query** path — by id/task/kind/time-window (D6); implements **rotation** to gz archives per `layout.yaml` so the append-only stores stay bounded (D7); and **canonical write failures surface** (non-zero/visible) instead of silent best-effort (D8). Sidecar telemetry (`rate-limits.json`, `usage-tracker.jsonl`) classification — state vs exempt — is deferred (D5).
 
 ---
 
