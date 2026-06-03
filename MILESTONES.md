@@ -125,7 +125,7 @@ CC-220（spike workflow）、CC-209（codegraph spike）已移至 v0.4.0。
 |---|---|---|
 | CC-261 | v0.3.x 前瞻文字更新（`core/README.md` + `agents/project-pm.md`） | ✅ (#162) |
 | CC-265 | 移除 `/caveman` 與 `/caveman-commit` | ✅ 2026-05-26 |
-| — | v0.3.0 release prep（CHANGELOG + tag + GitHub Release） | ⏳ |
+| — | v0.3.0 release prep（CHANGELOG + tag + GitHub Release） | ✅ 2026-06-03（CHANGELOG #219；tag `v0.3.0`；GitHub Release published） |
 
 ### v0.3.0 範圍外 → v0.4.0
 
