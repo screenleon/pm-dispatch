@@ -295,9 +295,16 @@ run_case "cxw: malformed JSON → deny" 2 "$CXWHOOK" \
 # --- symlink attack: /tmp/brief-*.md exists as a symlink to a protected path ---
 _cxw_symlink_target="$(mktemp)"
 _cxw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
-ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief"
-run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
-  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief" 2>/dev/null || true
+# Platforms without real symlink support (e.g. Git-Bash/MSYS without Developer
+# Mode) silently copy on `ln -s`, so the symlink-attack vector cannot be staged
+# here. Skip rather than false-fail — the guard's [[ -L ]] check is unchanged.
+if [[ -L "$_cxw_symlink_brief" ]]; then
+  run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+else
+  $LIST || printf '  SKIP  cxw: Write to existing symlink /tmp/brief-*.md → deny (no real symlink support)\n'
+fi
 rm -f "$_cxw_symlink_brief" "$_cxw_symlink_target"
 unset _cxw_symlink_target _cxw_symlink_brief
 
@@ -396,9 +403,14 @@ run_case "rw: malformed JSON → deny" 2 "$RWHOOK" \
 # --- symlink attack: target in .gate-results/ exists as a symlink to a protected path ---
 _rw_symlink_target="$(mktemp)"
 _rw_symlink_out="$_gate_dir/symlink-out.md"
-ln -s "$_rw_symlink_target" "$_rw_symlink_out"
-run_case "rw: Write to existing symlink in .gate-results/ → deny" 2 "$RWHOOK" \
-  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
+ln -s "$_rw_symlink_target" "$_rw_symlink_out" 2>/dev/null || true
+# See cxw symlink case: skip where real symlinks are unavailable (MSYS copies).
+if [[ -L "$_rw_symlink_out" ]]; then
+  run_case "rw: Write to existing symlink in .gate-results/ → deny" 2 "$RWHOOK" \
+    "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
+else
+  $LIST || printf '  SKIP  rw: Write to existing symlink in .gate-results/ → deny (no real symlink support)\n'
+fi
 rm -f "$_rw_symlink_out" "$_rw_symlink_target"
 unset _rw_symlink_target _rw_symlink_out
 

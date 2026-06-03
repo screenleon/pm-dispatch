@@ -98,6 +98,21 @@ hk_validate_path() {
     hk_deny "tool_input.file_path empty" "$path"
   fi
 
+  # On Windows (MSYS/Cygwin/MinGW), a tool may report a brief path in Windows
+  # drive-letter form (e.g. C:/Users/.../Temp/brief-x.md) because /tmp is a
+  # mount that resolves to %TEMP%. Normalize it back to the POSIX mount form
+  # (cygpath -u maps C:/Users/.../Temp -> /tmp) so the absolute-path check and
+  # every caller's /tmp/brief-*.md contract apply unchanged. No-op on
+  # linux/macos: the platform guard is never entered, so POSIX behavior is
+  # byte-for-byte identical.
+  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]] \
+     && command -v cygpath >/dev/null 2>&1; then
+    local _posix
+    if _posix="$(cygpath -u -- "$path" 2>/dev/null)" && [[ -n "$_posix" ]]; then
+      path="$_posix"
+    fi
+  fi
+
   if [[ "$path" != /* ]]; then
     hk_deny "file_path must be absolute (got: $path)" "$path"
   fi

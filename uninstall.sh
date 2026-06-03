@@ -8,11 +8,27 @@
 
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+uninstall.sh — remove pm-dispatch symlinks/junctions/copies and hooks from ~/.claude/
+
+Usage:
+  ./uninstall.sh            apply (idempotent; manifest-driven, safe to re-run)
+  ./uninstall.sh --dry-run  preview what would be removed, change nothing
+  ./uninstall.sh --help     show this help
+
+Honors $CLAUDE_HOME to target a sandbox install. Reads the install manifest at
+$CLAUDE_HOME/.pm-dispatch/install-manifest.json; entries that were modified since
+install, or that resolve outside the managed root, are skipped for safety.
+EOF
+}
+
 DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    *) echo "uninstall: unknown flag $1" >&2; exit 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "uninstall: unknown flag $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -291,7 +307,7 @@ if [[ "$DRY_RUN" -ne 1 ]]; then
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
-  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts"; do
+  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share"; do
     rmdir "$d" 2>/dev/null || true
   done
 fi

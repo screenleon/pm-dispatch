@@ -4,5 +4,6 @@
 # wrapper instead of the raw Git-stored symlink target path.
 # $SELF_DIR/../ resolves to repo adapters/ (direct run) or ~/.claude/adapters/
 # junction/symlink (installed run).
+set -euo pipefail
 SELF_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$SELF_DIR/../adapters/codex/dispatch.sh" "$@"

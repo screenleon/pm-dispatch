@@ -4,7 +4,10 @@ export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REAL_HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"
+# getent is NSS-only (Linux); absent on macOS and Windows/Git-Bash. Fall back to
+# $HOME there. On Linux getent succeeds, so the resolved value is unchanged.
+REAL_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
+[[ -n "$REAL_HOME" ]] || REAL_HOME="$HOME"
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
