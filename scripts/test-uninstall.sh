@@ -971,7 +971,13 @@ test_pmctl_real_file_preserved() {
     fail "$name" "$dest should not have been removed"
     return
   fi
-  assert_contains "$name" "$out" "not a symlink" || return
+  # The foreign file is preserved on every platform. On Windows uninstall skips
+  # the pmctl CLI entirely (it is never installed there), so the reason differs.
+  if [[ "$(detect_platform)" == "windows" ]]; then
+    assert_contains "$name" "$out" "not installed on Windows" || return
+  else
+    assert_contains "$name" "$out" "not a symlink" || return
+  fi
   pass "$name"
 }
 

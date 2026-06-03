@@ -126,8 +126,11 @@ assert_file_content() {
 link_existing_cmd() {
   local bin="$1" cmd="$2" real
   real="$(command -v "$cmd" 2>/dev/null || true)"
-  [[ -n "$real" ]] || return 0
-  ln -sf "$real" "$bin/$cmd"
+  # Skip shell builtins (command -v returns the bare name, not a path) and
+  # non-files — ln -s to a non-file target fails on MSYS. Builtins remain
+  # available via bash regardless of PATH. Copy where symlinks are unavailable.
+  [[ -n "$real" && -f "$real" ]] || return 0
+  ln -sf "$real" "$bin/$cmd" 2>/dev/null || cp "$real" "$bin/$cmd"
 }
 
 run_install_case() {

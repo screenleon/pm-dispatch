@@ -28,6 +28,24 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/pmctl-guard.sh"
 th_init "$@"
 
+# Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
+# Mode copies on `ln -s`, so a pmctl symlink becomes a copy that cannot resolve
+# its repo root; tests that drive pmctl through a symlink skip there. Probed once.
+_TPG_CAN_SYMLINK=0
+printf 'x' > "$tmp_root/.symlink-probe-target"
+if ln -s "$tmp_root/.symlink-probe-target" "$tmp_root/.symlink-probe" 2>/dev/null \
+   && [[ -L "$tmp_root/.symlink-probe" ]]; then
+  _TPG_CAN_SYMLINK=1
+fi
+rm -f "$tmp_root/.symlink-probe" "$tmp_root/.symlink-probe-target" 2>/dev/null || true
+
+_tpg_needs_symlink() {
+  local name="$1"
+  [[ "$_TPG_CAN_SYMLINK" == "1" ]] && return 0
+  $LIST || printf 'SKIP: %s (no real symlink support on this platform)\n' "$name"
+  return 1
+}
+
 PMCTL="$REPO_ROOT/cli/pmctl"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
@@ -124,7 +142,15 @@ if should_run "reviewer-prewrite-allow-codex"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-codex"
-  export CLAUDE_HOOK_GATE_REPO_ROOT="$(dirname "$_rw_guard_dir")"
+  # Canonicalize the sandbox repo root to the mount form the guard derives for
+  # the file: mktemp lives under %TEMP%, which cygpath maps to /tmp, while a bare
+  # unix path stays /c/... — the two sides must agree or the repo-binding check
+  # mis-fires. No-op off Windows (cygpath absent).
+  _gate_root="$(dirname "$_rw_guard_dir")"
+  if command -v cygpath >/dev/null 2>&1; then
+    _gate_root="$(cygpath -u "$(cygpath -w "$_gate_root" 2>/dev/null)" 2>/dev/null || printf '%s' "$_gate_root")"
+  fi
+  export CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_root"
   run_guard --event pre-write --role reviewer --runtime codex --file "$_rw_guard_dir/output.md"
   unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
@@ -136,7 +162,15 @@ if should_run "reviewer-prewrite-allow-claude"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-claude"
-  export CLAUDE_HOOK_GATE_REPO_ROOT="$(dirname "$_rw_guard_dir")"
+  # Canonicalize the sandbox repo root to the mount form the guard derives for
+  # the file: mktemp lives under %TEMP%, which cygpath maps to /tmp, while a bare
+  # unix path stays /c/... — the two sides must agree or the repo-binding check
+  # mis-fires. No-op off Windows (cygpath absent).
+  _gate_root="$(dirname "$_rw_guard_dir")"
+  if command -v cygpath >/dev/null 2>&1; then
+    _gate_root="$(cygpath -u "$(cygpath -w "$_gate_root" 2>/dev/null)" 2>/dev/null || printf '%s' "$_gate_root")"
+  fi
+  export CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_root"
   run_guard --event pre-write --role reviewer --runtime claude --file "$_rw_guard_dir/output.md"
   unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
@@ -497,7 +531,7 @@ if should_run "cli-unknown-sub"; then
   fi
 fi
 
-if should_run "cli-symlink-repo-root"; then
+if should_run "cli-symlink-repo-root" && _tpg_needs_symlink "cli-symlink-repo-root"; then
   # pmctl called through an absolute symlink must resolve REPO_ROOT correctly.
   # Covers the PATH install shape (e.g. ~/.local/bin/pmctl -> /repo/cli/pmctl).
   name="cli-symlink-repo-root"
@@ -514,7 +548,7 @@ if should_run "cli-symlink-repo-root"; then
   assert_exit "$name" "$st" "0" && pass "$name"
 fi
 
-if should_run "cli-symlink-repo-root-relative"; then
+if should_run "cli-symlink-repo-root-relative" && _tpg_needs_symlink "cli-symlink-repo-root-relative"; then
   # pmctl called through a RELATIVE symlink must also resolve REPO_ROOT correctly.
   # This is the exact failure mode the loop-based resolver in cli/pmctl fixes:
   # when readlink returns a relative path, the old single dirname+cd approach
