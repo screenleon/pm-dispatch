@@ -254,8 +254,45 @@ case_state_store_run_row_claude() {
   rm -rf "$bin" "$home" "$store" "$work"; rm -f "$brief"
 }
 
+# ---- 18: latest.* symlink failure is tolerated (Windows MSYS, CC-308) ----
+# On Windows MSYS, `ln -sfn` fails when refreshing the latest.* convenience
+# symlinks because the target trace file does not yet exist. The adapter guards
+# each `ln` with `2>/dev/null || true`; under `set -e` an unguarded failure would
+# abort the whole dispatch before the executor runs. This forces `ln` to fail for
+# latest.* and asserts dispatch still completes and writes its output contract.
+case_latest_symlink_failure_tolerated() {
+  local name="dispatch/latest.* symlink failure does not abort dispatch"; should_run "$name" || return 0
+  local bin work brief code last
+  bin="$(mktemp -d)"; _install_fake_claude "$bin"
+  # Fake ln: fail for latest.* (simulate MSYS), delegate everything else to real ln.
+  cat > "$bin/ln" <<'FAKELN'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in *latest.*) exit 1 ;; esac
+done
+for real in /usr/bin/ln /bin/ln; do [[ -x "$real" ]] && exec "$real" "$@"; done
+exit 1
+FAKELN
+  chmod +x "$bin/ln"
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e; PATH="$bin:$PATH" "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?; set -e
+  # The load-bearing .last is the real claude-<TS>.last file; latest.last is only
+  # a convenience symlink. Dispatch must still succeed and write the real output
+  # contract even though the latest.* symlinks could not be created.
+  last="$(ls "$work"/.agent-trace/claude-*.last 2>/dev/null | head -1)"
+  if [[ "$code" -eq 0 && -n "$last" && -s "$last" ]] \
+     && grep -q 'test -f x: pass' "$last" \
+     && [[ ! -e "$work/.agent-trace/latest.last" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code real_last=${last:-missing} latest_symlink=$([[ -e "$work/.agent-trace/latest.last" ]] && echo present || echo absent)"
+  fi
+  rm -rf "$bin" "$work"; rm -f "$brief"
+}
+
 case_codex_flags_noop
 case_config_timeout_env_overrides
 case_state_store_run_row_claude
+case_latest_symlink_failure_tolerated
 
 th_summary

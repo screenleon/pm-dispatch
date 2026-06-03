@@ -6,7 +6,9 @@
 > `install.sh` uses directory junctions for managed directories on Git Bash
 > so agents, commands, skills, and the pm schema auto-sync after updates.
 > Individual helper script files are still copied; re-run `bash install.sh`
-> after pulling when scripts change. Tracked as CC-207.
+> after pulling when scripts change. `pmctl` is never copied on Windows; add
+> `<repo>/cli` to PATH manually so it can resolve repo-local libraries.
+> Tracked as CC-207.
 > **WSL2 remains the recommended Windows path** (treated as Linux, first-class).
 
 ## Support matrix
@@ -16,7 +18,7 @@
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
 | WSL2                             | **First-class**      | Treated as Linux |
-| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; directory junctions restore auto-sync for managed directories; re-run `bash install.sh` after script updates |
+| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; directory junctions restore auto-sync for managed directories; add `<repo>/cli` to PATH for `pmctl`; re-run `bash install.sh` after script updates |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
 
 ---
@@ -56,6 +58,9 @@ bash scripts/install-hooks.sh
 `install.sh` symlinks each file individually into `~/.claude/agents/`,
 `~/.claude/commands/`, `~/.claude/scripts/`, and `~/.claude/.pm/` so that
 updates to this repo are automatically reflected without re-running the installer.
+It also symlinks `cli/pmctl` into `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl`;
+if that bin directory is not already on PATH, the installer prints the exact
+`export PATH=...` command to add.
 
 ### Windows Git Bash
 
@@ -72,6 +77,12 @@ bash install.sh
 bash scripts/install-hooks.sh
 ```
 
+Add the repo CLI directory to PATH so `pmctl` can run in place:
+
+```bash
+export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
+```
+
 > **Symlink support (CC-207):** On Git Bash, `ln -s` does not create real
 > symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
 > for `agents/`, `commands/`, `skills/`, and `pm-schema` directories so those
@@ -83,6 +94,8 @@ bash scripts/install-hooks.sh
 > refresh copied files — the installer compares source vs installed sha256 and
 > re-copies only files whose source has changed.
 > `install.sh` prints a summary banner listing how many files were installed or refreshed via copy.
+> `pmctl` is the exception: it is never copied because a copied `pmctl` treats
+> the copy location as its repo root and cannot find `scripts/lib/*.sh`.
 
 ---
 
@@ -94,8 +107,8 @@ Run the built-in health check after installing on any platform:
 bash "${PM_DISPATCH_REPO}/scripts/doctor.sh"
 ```
 
-`doctor.sh` checks that `claude` and `jq` are on PATH, hooks are wired, memory
-directory is present, scripts are executable, and frontmatter passes lint.
+`doctor.sh` checks that `claude`, `jq`, and `pmctl` are on PATH, hooks are wired,
+memory directory is present, scripts are executable, and frontmatter passes lint.
 Each failing check prints a concrete remediation command.
 
 Pass `--profile minimal` when the install used the minimal profile:
@@ -135,6 +148,9 @@ git pull
 bash install.sh        # refreshes changed copies; creates symlinks for new files
 ```
 
+Keep `${PM_DISPATCH_REPO}/cli` on PATH for `pmctl`; do not copy `cli/pmctl` into
+another bin directory.
+
 ---
 
 ## Uninstall
@@ -155,7 +171,9 @@ bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh" --dry-run
 ### Part 2 — remove managed files from ~/.claude
 
 Removes the symlinks, junctions, or copies for agents, commands, scripts, and
-the .pm schema. Run after Part 1.
+the .pm schema. It also removes `~/.local/bin/pmctl` only when that path is a
+symlink to this checkout's `cli/pmctl`; foreign files or symlinks are preserved.
+Run after Part 1.
 
 **Recommended (all platforms):** Use the manifest-driven uninstaller — it handles
 symlinks, Windows directory junctions, and copies safely:
@@ -203,6 +221,11 @@ rm -f ~/.claude/scripts/patch-gitignore.sh
 
 # .pm schema
 rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
+
+# pmctl CLI symlink (Linux/macOS/WSL only)
+if [ "$(readlink ~/.local/bin/pmctl 2>/dev/null)" = "${PM_DISPATCH_REPO}/cli/pmctl" ]; then
+  rm -f ~/.local/bin/pmctl
+fi
 ```
 
 > **Tip:** If pm-dispatch is the **only** source of agents and commands in

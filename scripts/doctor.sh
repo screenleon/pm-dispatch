@@ -172,6 +172,45 @@ check_codex() {
   fi
 }
 
+pmctl_fix() {
+  case "$(detect_platform)" in
+    windows) printf "Add '%s/cli' to PATH; do not copy pmctl because copied files cannot resolve repo libs" "$REPO_ROOT" ;;
+    *) printf "bash '%s/install.sh'  (then add '%s' to PATH if prompted)" "$REPO_ROOT" "${PMCTL_BIN_DIR:-$HOME/.local/bin}" ;;
+  esac
+}
+
+# Canonicalize a path through symlinks so a ~/.local/bin/pmctl symlink and the
+# checkout's cli/pmctl compare equal. Defensive across copy-mode (portable.sh
+# may be absent): realpath_m -> realpath -> readlink -f -> raw.
+_pmctl_canon() {
+  local p="$1"
+  if declare -F realpath_m >/dev/null 2>&1; then
+    realpath_m "$p" 2>/dev/null || printf '%s' "$p"
+  elif command -v realpath >/dev/null 2>&1; then
+    realpath "$p" 2>/dev/null || printf '%s' "$p"
+  else
+    readlink -f "$p" 2>/dev/null || printf '%s' "$p"
+  fi
+}
+
+check_pmctl() {
+  local resolved
+  if ! resolved="$(command -v pmctl 2>/dev/null)"; then
+    emit_check pmctl warn "pmctl not found on PATH" "$(pmctl_fix)"
+    return
+  fi
+  # A bare `command -v pmctl` success is not enough: a foreign pmctl on PATH can
+  # shadow this checkout's CLI, leaving the user running an unrelated tool while
+  # appearing installed. Verify the resolved pmctl belongs to this checkout.
+  local want
+  want="$REPO_ROOT/cli/pmctl"
+  if [[ "$(_pmctl_canon "$resolved")" == "$(_pmctl_canon "$want")" ]]; then
+    emit_check pmctl ok "pmctl available (this checkout)"
+  else
+    emit_check pmctl warn "pmctl on PATH ($resolved) does not belong to this checkout ($want)" "$(pmctl_fix)"
+  fi
+}
+
 check_settings_file() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   _SETTINGS_FILE_FAILED=0
@@ -533,6 +572,7 @@ main() {
   check_jq
   check_claude
   check_codex
+  check_pmctl
   check_settings_file
   check_hooks
   check_dispatch_allowlist

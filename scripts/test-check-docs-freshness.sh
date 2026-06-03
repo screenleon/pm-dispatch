@@ -499,7 +499,7 @@ DOC
 
   run_check "$repo" --json
   assert_exit "$name" "$LAST_EXIT" 1 || return
-  if ! python3 -c 'import sys, json; [json.loads(l) for l in sys.stdin if l.strip()]' <<< "$LAST_OUTPUT"; then
+  if ! printf '%s\n' "$LAST_OUTPUT" | jq -rs '.' > /dev/null 2>&1; then
     fail "$name" "JSON parse failed"
     return
   fi

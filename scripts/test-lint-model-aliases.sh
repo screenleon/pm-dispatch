@@ -15,12 +15,13 @@ VALID_DOC=$'## Model aliases\n\n| PM-facing alias | Wire model id | Reasoning ef
 
 _make_fake_repo() {
   local root="$1" tsv_content="$2" doc_content="$3"
-  mkdir -p "$root/scripts" "$root/share" "$root/docs" "$root/agents"
+  mkdir -p "$root/scripts" "$root/share" "$root/docs" "$root/agents" "$root/adapters/codex"
   cp "$REPO_ROOT/scripts/lint-model-aliases.sh" "$root/scripts/"
   [[ -n "$tsv_content" ]] && printf '%s' "$tsv_content" > "$root/share/model-aliases.tsv"
   printf '%s' "$doc_content" > "$root/docs/dispatch-brief.md"
+  # lint-model-aliases.sh checks adapters/codex/dispatch.sh (CC-308: shim migration)
   printf 'PM_DISPATCH_ALIAS_FILE=x\n_resolve_model_alias() { :; }\n' \
-    > "$root/scripts/codex-dispatch.sh"
+    > "$root/adapters/codex/dispatch.sh"
   printf '# stub\n# --model codex-spark\n' > "$root/scripts/test-codex-dispatch.sh"
   printf '' > "$root/agents/project-pm.md"
 }

@@ -210,9 +210,10 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
 fi
 
 # Refresh latest.* symlinks before launch so observers can attach immediately.
-ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"
-ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"
-ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr"
+# 2>/dev/null || true: ln -sfn fails on Windows MSYS when target doesn't yet exist.
+ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
 
 # Run claude in the work dir; brief is delivered on stdin as the prompt. JSON
 # stdout → TRACE (.jsonl); claude stderr → STDERR_LOG. Bounded by timeout.

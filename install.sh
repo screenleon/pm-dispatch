@@ -214,6 +214,84 @@ install_dir() {
   echo "  ($count linked, $conflicts conflicts)"
 }
 
+_install_symlink_target_resolves_to() {
+  local dst="$1"
+  local want="$2"
+  local link_target
+  local normalized_target
+
+  link_target="$(readlink "$dst")"
+  if [[ "$link_target" == "$want" ]]; then
+    return 0
+  fi
+
+  case "$link_target" in
+    /*|[A-Za-z]:/*)
+      normalized_target="$(_portable_normalize_path "$link_target")"
+      ;;
+    *)
+      normalized_target="$(_portable_normalize_path "$(dirname "$dst")/$link_target")"
+      ;;
+  esac
+
+  [[ "$normalized_target" == "$want" ]]
+}
+
+_install_path_contains_dir() {
+  local dir="$1"
+  case ":${PATH:-}:" in
+    *":$dir:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_pmctl_cli() {
+  local src="$REPO_ROOT/cli/pmctl"
+  local bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
+  local dest="$bin_dir/pmctl"
+
+  echo "==> pmctl CLI"
+
+  if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  would skip installing $dest"
+    else
+      echo "  skip  $dest"
+    fi
+    echo "  add $REPO_ROOT/cli to PATH manually"
+    echo "  note: pmctl must run from the repo checkout; a copied pmctl cannot resolve repo libs"
+    return 0
+  fi
+
+  if [[ ! -d "$bin_dir" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  would mkdir $bin_dir"
+    else
+      mkdir -p "$bin_dir"
+      echo "  mkdir  $bin_dir"
+    fi
+  fi
+
+  if [[ -L "$dest" ]]; then
+    if _install_symlink_target_resolves_to "$dest" "$src"; then
+      echo "  ok    $dest"
+    else
+      printf '  CONFLICT %s -> %s (expected %s)\n' "$dest" "$(readlink "$dest")" "$src" >&2
+    fi
+  elif [[ -e "$dest" ]]; then
+    printf '  CONFLICT %s exists and is not our symlink — skipping\n' "$dest" >&2
+  elif [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would link $dest -> $src"
+  else
+    ln -s "$src" "$dest"
+    echo "  link   $dest -> $src"
+  fi
+
+  if ! _install_path_contains_dir "$bin_dir"; then
+    echo "  note: $bin_dir is not on PATH; add: export PATH=\"$bin_dir:\$PATH\""
+  fi
+}
+
 echo "pm-dispatch installer"
 echo "  repo:        $REPO_ROOT"
 echo "  claude home: $CLAUDE_HOME"
@@ -240,14 +318,21 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo
 fi
 
+install_pmctl_cli
+echo
+
 if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
   install_dir_junction agents
   install_dir_junction skills
   install_dir_junction commands
+  # adapters/ must be installed so codex-dispatch.sh shim can resolve
+  # $SELF_DIR/../adapters/codex/dispatch.sh from the installed location.
+  install_dir_junction adapters
 else
   install_dir agents
   install_dir skills
   install_dir commands
+  install_dir adapters
 fi
 
 # Helper scripts — symlinked into ~/.claude/scripts/ so the user can

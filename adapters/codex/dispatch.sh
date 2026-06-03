@@ -111,7 +111,10 @@ PRINT_CMD=0
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
 # This is the `default` ALIAS — its wire id (gpt-5.5) lives only in
 # share/model-aliases.tsv (single source of truth), so a model bump edits the
-# TSV alone. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+# TSV alone. Override via the PM_CFG_DEFAULT_MODEL env var, which `pmctl dispatch
+# run` exports from ~/.pm-dispatch/config `dispatch.default_model` (see line ~235).
+# The adapter no longer reads that config file directly: direct shim callers must
+# either dispatch through `pmctl dispatch run` or set PM_CFG_DEFAULT_MODEL themselves.
 DEFAULT_DISPATCH_MODEL="default"
 
 # shellcheck source=scripts/lib/state-writer.sh
@@ -348,9 +351,10 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
 fi
 
 # Refresh latest.* symlinks before launch so observers can attach immediately.
-ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"
-ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"
-ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr"
+# 2>/dev/null || true: ln -sfn fails on Windows MSYS when target doesn't yet exist.
+ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
 
 set +e
 if [[ "$TIMEOUT" -gt 0 ]]; then
@@ -366,18 +370,11 @@ sw_append_dispatch_run "codex" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DI
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
-  _CODEX_TOKENS=$(python3 -c "
-import json, sys
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'turn.completed':
-            u = e.get('usage', {})
-            print(u.get('input_tokens',0) + u.get('output_tokens',0))
-            sys.exit(0)
-    except Exception: pass
-print(0)
-" "$TRACE" 2>/dev/null || echo 0)
+  _CODEX_TOKENS=$(jq -rs '
+    first(.[] | select(.type == "turn.completed")
+              | (.usage.input_tokens // 0) + (.usage.output_tokens // 0)) // 0
+  ' "$TRACE" 2>/dev/null || echo 0)
+  _CODEX_TOKENS="${_CODEX_TOKENS:-0}"
   if [[ "$_CODEX_TOKENS" -gt 0 ]]; then
     _POOL="codex"
     # Pooling uses the user-facing MODEL token (pre-resolution) to preserve

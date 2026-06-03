@@ -9,6 +9,42 @@ DOCTOR="$REPO_ROOT/scripts/doctor.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
+# Mode copies on `ln -s`, so a pmctl symlink to cli/pmctl becomes a copy that
+# doctor (correctly) cannot verify — making an all-OK scenario unreachable.
+# Tests that depend on a real pmctl symlink skip there. Probed once.
+_TD_CAN_SYMLINK=0
+printf 'x' > "$tmp_root/.symlink-probe-target"
+if ln -s "$tmp_root/.symlink-probe-target" "$tmp_root/.symlink-probe" 2>/dev/null \
+   && [[ -L "$tmp_root/.symlink-probe" ]]; then
+  _TD_CAN_SYMLINK=1
+fi
+rm -f "$tmp_root/.symlink-probe" "$tmp_root/.symlink-probe-target" 2>/dev/null || true
+
+_td_needs_symlink() {
+  local name="$1"
+  [[ "$_TD_CAN_SYMLINK" == "1" ]] && return 0
+  $LIST || printf 'SKIP: %s (no real symlink support; pmctl symlink unavailable)\n' "$name"
+  return 1
+}
+
+# Whether `chmod -x` actually clears the executable bit. On Windows/MSYS the
+# permission is not enforced, so a "non-executable script" scenario can't be set
+# up and exec-bit checks don't apply. Probed once.
+_TD_CHMOD_X_WORKS=0
+printf '#!/bin/sh\n' > "$tmp_root/.chmodx-probe"
+chmod +x "$tmp_root/.chmodx-probe" 2>/dev/null || true
+chmod -x "$tmp_root/.chmodx-probe" 2>/dev/null || true
+[[ ! -x "$tmp_root/.chmodx-probe" ]] && _TD_CHMOD_X_WORKS=1
+rm -f "$tmp_root/.chmodx-probe" 2>/dev/null || true
+
+_td_needs_chmod_x() {
+  local name="$1"
+  [[ "$_TD_CHMOD_X_WORKS" == "1" ]] && return 0
+  $LIST || printf 'SKIP: %s (chmod -x not enforced on this platform)\n' "$name"
+  return 1
+}
+
 add_dispatch_allowlist() {
   # Mirrors dispatch_allowlist_entries() using an explicit home arg for path stripping.
   local home_dir="$1"
@@ -202,8 +238,11 @@ make_stub_bin() {
 link_cmd() {
   local bin="$1" cmd="$2" real
   real="$(command -v "$cmd" 2>/dev/null || true)"
-  [[ -n "$real" ]] || return 0
-  ln -sf "$real" "$bin/$cmd"
+  # Skip shell builtins (command -v returns the bare name, not a path) and
+  # non-files — ln -s to a non-file target fails on MSYS. Builtins stay available
+  # via bash regardless of PATH. Copy where symlinks are unavailable.
+  [[ -n "$real" && -f "$real" ]] || return 0
+  ln -sf "$real" "$bin/$cmd" 2>/dev/null || cp "$real" "$bin/$cmd"
 }
 
 make_path_without_jq() {
@@ -223,18 +262,54 @@ case_doctor_all_ok_exits_0() {
   #
   # Steps:
   #   1. Write full settings.json (all hooks), memory dir, and manifest.
-  #   2. Run doctor --no-color --repo <repo> with claude+codex stubs in PATH.
+  #   2. Run doctor --no-color --repo <repo> with claude+codex stubs and a
+  #      pmctl symlink resolving to this checkout's cli/pmctl in PATH.
   #   3. Assert exit 0, output contains "0 FAIL" and "0 WARN".
   local name="doctor-all-ok-exits-0"
   should_run "$name" || return 0
+  # Needs a real pmctl symlink so doctor reports 0 WARN; on MSYS the symlink is a
+  # copy doctor flags, so the all-OK state is unreachable.
+  if ! _td_needs_symlink "$name"; then return 0; fi
   local home="$tmp_root/home-all-ok" out status=0 path
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex)"
+  # pmctl must resolve to THIS checkout (check_pmctl rejects a foreign pmctl), so
+  # install it as a symlink to cli/pmctl rather than a generic stub.
+  ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-all-ok/pmctl"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_pmctl_foreign_warns() {
+  # Verifies that a foreign pmctl on PATH (one that does NOT resolve to this
+  # checkout's cli/pmctl) is reported as a WARN with remediation, even when the
+  # rest of the environment is healthy — closing the silent-misconfiguration
+  # gap where an unrelated pmctl shadows the installed CLI.
+  #
+  # Steps:
+  #   1. Write full settings.json, memory dir, and manifest (otherwise healthy).
+  #   2. Stub claude+codex+pmctl, where pmctl is a plain (foreign) stub, NOT a
+  #      symlink to this checkout, and place it FIRST on PATH so it wins.
+  #   3. Run doctor --no-color --repo <repo>.
+  #   4. Assert exit 0 (warn is non-fatal) and output flags pmctl as not
+  #      belonging to this checkout (so the run is not "0 WARN").
+  local name="doctor-pmctl-foreign-warns"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-pmctl-foreign" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-pmctl-foreign" claude codex pmctl)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"does not belong to this checkout"* && "$out" != *"0 WARN"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -379,6 +454,10 @@ case_doctor_warn_only_exits_0() {
   #   3. Assert exit 0 and output contains "0 FAIL".
   local name="doctor-warn-only-exits-0"
   should_run "$name" || return 0
+  # Runs doctor under an isolated PATH of linked coreutils; on MSYS those are
+  # copies and a copied bash/binary can't launch (missing DLLs), so the isolated
+  # invocation can't run. Needs real symlinks.
+  if ! _td_needs_symlink "$name"; then return 0; fi
   local home="$tmp_root/home-warn-only" out status=0 path bin cmd
   write_minimal_settings "$home"
   write_manifest "$home"
@@ -513,6 +592,8 @@ case_doctor_scripts_not_executable_fail() {
   #   3. Assert exit 1 and output contains "[FAIL]" and "non-executable".
   local name="doctor-scripts-not-executable-fail"
   should_run "$name" || return 0
+  # Can't stage a non-executable script where chmod -x is a no-op (Windows/MSYS).
+  if ! _td_needs_chmod_x "$name"; then return 0; fi
   local home="$tmp_root/home-no-exec" out status=0
 
   # Create a writable copy of the repo scripts dir to safely toggle perms.
@@ -1081,6 +1162,9 @@ case_doctor_symlink_invocation() {
   #      confirming symlink was resolved to the real scripts/ dir).
   local name="doctor-symlink-invocation"
   should_run "$name" || return 0
+  # Invokes doctor through a symlink to verify lib/ resolution; ln -s copies on
+  # MSYS so the symlink-resolution path can't be exercised.
+  if ! _td_needs_symlink "$name"; then return 0; fi
   local symdir="$tmp_root/sym-scripts"
   mkdir -p "$symdir"
   ln -sf "$DOCTOR" "$symdir/doctor.sh"
@@ -1333,6 +1417,7 @@ case_doctor_stale_hook_sibling_prefix_warns() {
 }
 
 case_doctor_all_ok_exits_0
+case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1
 case_doctor_json_output_valid

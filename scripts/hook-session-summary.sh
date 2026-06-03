@@ -73,7 +73,7 @@ if [[ -f "$episodes_file" ]]; then
       fi
 
       age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
-        'try (($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600 catch 9999' 2>/dev/null) || age_hours=9999
+        'try ((($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600) catch 9999' 2>/dev/null) || age_hours=9999
       if awk -v h="${age_hours:-9999}" "BEGIN{exit !(h+0 < $SESSION_WINDOW_HOURS)}"; then
         exit 0
       fi
