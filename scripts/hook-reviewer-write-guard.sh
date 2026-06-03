@@ -100,8 +100,16 @@ abs_path="$HK_ABS_PATH"
 # any directory named .gate-results anywhere on disk. realpath_m resolves symlinks
 # in all directory components on both sides, so a .gate-results/ symlink pointing
 # elsewhere resolves to a path that no longer equals the expected dir — caught here.
+#
+# Normalize GATE_REPO_ROOT through the SAME Windows->POSIX mount transform that
+# hk_validate_path applied to file_path (CC-308). Without this, on Windows a repo
+# under a mounted path (e.g. %TEMP% -> /tmp) leaves abs_path in /tmp mount form
+# while the expected dir stays in C:/ form, so the two never compare equal and a
+# legitimate reviewer write is wrongly denied. No-op off Windows.
 gate_results_dir="$(dirname "$abs_path")"
-expected_gate_dir="$(realpath_m "$GATE_REPO_ROOT/.gate-results" 2>/dev/null)"
+gate_root_norm="$(hk_to_posix_path "$GATE_REPO_ROOT")" \
+  || hk_deny "cannot normalize repo root to POSIX form: $GATE_REPO_ROOT" "$file_path"
+expected_gate_dir="$(realpath_m "$gate_root_norm/.gate-results" 2>/dev/null)"
 if [[ -z "$expected_gate_dir" || "$gate_results_dir" != "$expected_gate_dir" ]]; then
   hk_deny "target is not <repo>/.gate-results (got: $gate_results_dir, expected: ${expected_gate_dir:-<unresolved>}, resolved: $abs_path)" "$file_path"
 fi

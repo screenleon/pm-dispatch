@@ -89,6 +89,33 @@ hk_check_bypass() {
   fi
 }
 
+# Normalize a Windows drive-letter path (C:/... or C:\...) to its POSIX mount
+# form via cygpath, so it matches the form realpath_m and the POSIX checks
+# expect (e.g. C:/Users/.../Temp -> /tmp). Shared so that every side of a path
+# comparison normalizes identically — the reviewer guard normalizes its repo
+# root through this too (CC-308), closing the asymmetry where file_path was
+# cygpath-normalized but the compared-against root was not.
+#
+# Echoes the (possibly unchanged) path. Returns:
+#   0  no-op or normalized OK (path written to stdout)
+#   2  drive-letter path but cygpath unavailable
+#   3  drive-letter path but cygpath failed / produced empty output
+# No-op on linux/macos and for non-drive-letter paths: the platform/pattern
+# guard is never entered, so POSIX behavior is byte-for-byte identical.
+hk_to_posix_path() {
+  local path="$1" _posix
+  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]]; then
+    command -v cygpath >/dev/null 2>&1 || return 2
+    if _posix="$(cygpath -u -- "$path" 2>/dev/null)" && [[ -n "$_posix" ]]; then
+      printf '%s' "$_posix"
+      return 0
+    fi
+    return 3
+  fi
+  printf '%s' "$path"
+  return 0
+}
+
 hk_validate_path() {
   local path="${1:-}"
   HK_ABS_PATH=""
@@ -98,28 +125,17 @@ hk_validate_path() {
     hk_deny "tool_input.file_path empty" "$path"
   fi
 
-  # On Windows (MSYS/Cygwin/MinGW), a tool may report a brief path in Windows
-  # drive-letter form (e.g. C:/Users/.../Temp/brief-x.md) because /tmp is a
-  # mount that resolves to %TEMP%. Normalize it back to the POSIX mount form
-  # (cygpath -u maps C:/Users/.../Temp -> /tmp) so the absolute-path check and
-  # every caller's /tmp/brief-*.md contract apply unchanged. No-op on
-  # linux/macos: the platform guard is never entered, so POSIX behavior is
-  # byte-for-byte identical.
-  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]]; then
-    # The path is a Windows drive-letter absolute path that must be normalized
-    # before the POSIX checks below apply. Fail closed (with a message that names
-    # the real cause) if normalization is impossible — falling through would
-    # mis-report a valid-but-unnormalized path as "must be absolute".
-    if ! command -v cygpath >/dev/null 2>&1; then
-      hk_deny "cannot normalize Windows path — cygpath unavailable: $path" "$path"
-    fi
-    local _posix
-    if _posix="$(cygpath -u -- "$path" 2>/dev/null)" && [[ -n "$_posix" ]]; then
-      path="$_posix"
-    else
-      hk_deny "failed to normalize Windows path to POSIX form: $path" "$path"
-    fi
-  fi
+  # Normalize a Windows drive-letter path to POSIX mount form before the
+  # absolute-path check and every caller's /tmp/brief-*.md contract apply. Fail
+  # closed (naming the real cause) if normalization is impossible — falling
+  # through would mis-report a valid-but-unnormalized path as "must be absolute".
+  local _np _rc
+  _np="$(hk_to_posix_path "$path")"; _rc=$?
+  case "$_rc" in
+    0) path="$_np" ;;
+    2) hk_deny "cannot normalize Windows path — cygpath unavailable: $path" "$path" ;;
+    *) hk_deny "failed to normalize Windows path to POSIX form: $path" "$path" ;;
+  esac
 
   if [[ "$path" != /* ]]; then
     hk_deny "file_path must be absolute (got: $path)" "$path"
