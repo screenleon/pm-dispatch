@@ -295,9 +295,16 @@ run_case "cxw: malformed JSON → deny" 2 "$CXWHOOK" \
 # --- symlink attack: /tmp/brief-*.md exists as a symlink to a protected path ---
 _cxw_symlink_target="$(mktemp)"
 _cxw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
-ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief"
-run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
-  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief" 2>/dev/null || true
+# Platforms without real symlink support (e.g. Git-Bash/MSYS without Developer
+# Mode) silently copy on `ln -s`, so the symlink-attack vector cannot be staged
+# here. Skip rather than false-fail — the guard's [[ -L ]] check is unchanged.
+if [[ -L "$_cxw_symlink_brief" ]]; then
+  run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+else
+  $LIST || printf '  SKIP  cxw: Write to existing symlink /tmp/brief-*.md → deny (no real symlink support)\n'
+fi
 rm -f "$_cxw_symlink_brief" "$_cxw_symlink_target"
 unset _cxw_symlink_target _cxw_symlink_brief
 
@@ -332,12 +339,18 @@ truncate_log
 
 _gate_dir="$(mktemp -d)/repo/.gate-results"
 mkdir -p "$_gate_dir"
+# Sandbox repo root for the guard's repo-binding. The hook allows only
+# <repo>/.gate-results, so cases writing into the sandbox .gate-results must
+# declare the sandbox repo root via CLAUDE_HOOK_GATE_REPO_ROOT. Off-repo
+# denials below intentionally omit the override so they exercise the
+# default real-repo binding.
+_gate_repo="$(dirname "$_gate_dir")"
 
 # --- happy path: Write/Edit to .gate-results/ ---
 for _rw_agent in critic qa-tester architecture-reviewer security-reviewer risk-reviewer; do
-  run_case "rw: $_rw_agent Write to .gate-results/ → allow" 0 "$RWHOOK" \
+  run_case_env "rw: $_rw_agent Write to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
     "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
-  run_case "rw: $_rw_agent Edit to .gate-results/ → allow" 0 "$RWHOOK" \
+  run_case_env "rw: $_rw_agent Edit to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
     "{\"agent_type\":\"$_rw_agent\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}"
 done
 unset _rw_agent
@@ -355,20 +368,29 @@ run_case "rw: security-reviewer Write /tmp/oops.md → deny" 2 "$RWHOOK" \
 run_case "rw: risk-reviewer Write /etc/passwd → deny" 2 "$RWHOOK" \
   '{"agent_type":"risk-reviewer","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
-# parent not named .gate-results (file directly in repo root) → deny
-run_case "rw: critic Write file not inside .gate-results/ → deny" 2 "$RWHOOK" \
-  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$(dirname "$_gate_dir")/gate-result.md\"}}"
+# parent is repo root, not .gate-results (sandbox repo) → deny
+run_case_env "rw: critic Write file not inside .gate-results/ → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_repo/gate-result.md\"}}"
 
-# path traversal: resolves outside .gate-results → deny
-run_case "rw: critic Write path traversal → deny" 2 "$RWHOOK" \
+# path traversal: resolves outside .gate-results (sandbox repo) → deny
+run_case_env "rw: critic Write path traversal → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
   "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/../evil.md\"}}"
 
 # --- synthetic identity (pmctl guard check --role reviewer codex route) ---
-run_case "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 0 "$RWHOOK" \
+run_case_env "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 0 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
   "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/pmctl-output.md\"}}"
 
 run_case "rw: reviewer (pmctl synthetic) Write outside .gate-results/ → deny" 2 "$RWHOOK" \
   '{"agent_type":"reviewer","tool_name":"Write","tool_input":{"file_path":"/tmp/evil.md"}}'
+
+# repo-binding (CC-297 hardening): a directory named .gate-results that is NOT
+# this repo's .gate-results must be denied — name-only matching is insufficient.
+_rw_other_gate="$(mktemp -d)/other/.gate-results"
+mkdir -p "$_rw_other_gate"
+run_case_env "rw: critic Write to a .gate-results outside the repo → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_other_gate/out.md\"}}"
+rm -rf "$(dirname "$_rw_other_gate")"
+unset _rw_other_gate
 
 # --- no-op for non-reviewer agents ---
 run_case "rw: claude-executor Write anywhere → no-op" 0 "$RWHOOK" \
@@ -396,11 +418,45 @@ run_case "rw: malformed JSON → deny" 2 "$RWHOOK" \
 # --- symlink attack: target in .gate-results/ exists as a symlink to a protected path ---
 _rw_symlink_target="$(mktemp)"
 _rw_symlink_out="$_gate_dir/symlink-out.md"
-ln -s "$_rw_symlink_target" "$_rw_symlink_out"
-run_case "rw: Write to existing symlink in .gate-results/ → deny" 2 "$RWHOOK" \
-  "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
+ln -s "$_rw_symlink_target" "$_rw_symlink_out" 2>/dev/null || true
+# See cxw symlink case: skip where real symlinks are unavailable (MSYS copies).
+if [[ -L "$_rw_symlink_out" ]]; then
+  run_case_env "rw: Write to existing symlink in .gate-results/ → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+    "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_symlink_out\"}}"
+else
+  $LIST || printf '  SKIP  rw: Write to existing symlink in .gate-results/ → deny (no real symlink support)\n'
+fi
 rm -f "$_rw_symlink_out" "$_rw_symlink_target"
 unset _rw_symlink_target _rw_symlink_out
+
+# --- CC-308: guard normalizes a Windows drive-letter GATE_REPO_ROOT ITSELF ---
+# Black-box proof that hook-reviewer-write-guard.sh runs GATE_REPO_ROOT through
+# the same Windows->POSIX transform as file_path (not relying on the caller to
+# pre-normalize). Forced-windows + a stub cygpath on Linux: the root arrives in
+# drive-letter form and must still match the POSIX-resolved output path.
+_rw_winname="rw: Windows drive-letter GATE_REPO_ROOT normalized by guard → allow"
+if should_run "$_rw_winname"; then
+  _rw_cyg="$(mktemp -d)"
+  # Stub cygpath maps the fake drive-letter root to the real sandbox repo; any
+  # other arg passes through unchanged.
+  cat > "$_rw_cyg/cygpath" <<EOF
+#!/usr/bin/env bash
+case "\${!#}" in
+  "C:/fake/repo") printf '%s' "$_gate_repo" ;;
+  *) printf '%s' "\${!#}" ;;
+esac
+EOF
+  chmod +x "$_rw_cyg/cygpath"
+  _rw_winexit=$(printf '%s' "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" \
+    | env PM_DISPATCH_PLATFORM=windows PATH="$_rw_cyg:$PATH" CLAUDE_HOOK_GATE_REPO_ROOT="C:/fake/repo" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1; echo $?)
+  if [[ "$_rw_winexit" == "0" ]]; then
+    pass "$_rw_winname"
+  else
+    fail "$_rw_winname" "exit=$_rw_winexit (expected 0 — guard should normalize the drive-letter root itself)"
+  fi
+  rm -rf "$_rw_cyg"
+fi
+unset _rw_winname _rw_cyg _rw_winexit
 
 # --- bypass ---
 run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
@@ -408,7 +464,7 @@ run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVI
 
 # --- audit-log content assertions ---
 $LIST || truncate_log
-$LIST || printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" | "$RWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" | env CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_repo" "$RWHOOK" >/dev/null 2>&1
 assert_log "rw: audit log contains allow line" "decision=allow"
 assert_log "rw: allow line records agent=critic" "agent=critic"
 assert_log "rw: allow line records tool=Write" "tool=Write"
@@ -474,6 +530,20 @@ run_case "cx: dispatch (absolute) → allow" 0 "$CXHOOK" \
 
 run_case "cx: dispatch (tilde) → allow" 0 "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp -- brief\"}}"
+
+# CC-308: a dispatch path containing a space (e.g. the Windows user dir
+# "C:\\Users\\Lien Chen\\...") must NOT be split by the whitespace tokenizer.
+# The guard matches the dispatch path as a literal prefix before splitting the
+# remainder, so the verb stays intact and the call is allowed.
+run_case_env "cx: dispatch path with space → allow" 0 \
+  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /tmp -- brief\"}}"
+
+# The literal-prefix match must not bypass arg validation: a --cd outside the
+# read roots is still denied even when the dispatch path contains a space.
+run_case_env "cx: dispatch path with space + out-of-root --cd → deny" 2 \
+  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /etc -- brief\"}}"
 
 run_case "cx: dispatch_brief_file_allowed → allow" 0 "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file /tmp/brief.md --skip-git-check\"}}"
@@ -1780,10 +1850,8 @@ _set_mtime_secs_ago() {
   local file="$1" secs="$2"
   if command -v perl >/dev/null 2>&1; then
     perl -e 'utime(time()-$ARGV[0], time()-$ARGV[0], $ARGV[1])' "$secs" "$file"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "import os,time; os.utime('$file', (time.time()-$secs, time.time()-$secs))"
   else
-    printf 'SKIP: _set_mtime_secs_ago requires perl or python3\n' >&2
+    printf 'SKIP: _set_mtime_secs_ago requires perl\n' >&2
     return 1
   fi
 }

@@ -59,7 +59,20 @@ else
 fi
 
 set +e
-awk -v backlog_file="$backlog" \
+# gawk mangles multibyte glyphs under some UTF-8 locales — notably MSYS/Git-Bash
+# on Windows, where split_md_row()'s char-by-char substr() loop corrupts the
+# status emoji (🔵/🟡/🟢/…) to replacement bytes, so every row fails the status
+# enum check. gawk's -b (byte mode) makes length()/substr() byte-consistent, so
+# the glyphs round-trip and compare byte-for-byte. The status column is the only
+# multibyte content and the comparison is already byte-exact, so -b is
+# behavior-preserving on Linux/macOS; pass it only to gawk (mawk/BSD awk reject
+# the flag).
+awk_bytes=()
+if awk --version 2>/dev/null | grep -qi 'GNU Awk'; then
+  awk_bytes=(-b)
+fi
+awk ${awk_bytes[@]+"${awk_bytes[@]}"} \
+    -v backlog_file="$backlog" \
     -v changelog_file="${changelog:-}" \
     -v schema_ver="$schema_ver" \
     '

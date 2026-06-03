@@ -230,17 +230,19 @@ case_runs_append_read_only_nonfatal() {
 }
 
 case_codex_dispatch_state_store_self_contained() {
-  # Verifies that the state-writer source guard in codex-dispatch.sh uses 2>/dev/null || true
-  # so the script is syntax-valid and functional even when state-writer.sh is absent.
+  # Verifies that the state-writer source guard in the adapter uses 2>/dev/null || true
+  # so dispatch is functional even when state-writer.sh is absent.
+  # scripts/codex-dispatch.sh is now a thin exec shim; the state-store block lives in
+  # adapters/codex/dispatch.sh (CC-308 Windows compat migration).
   #
   # Steps:
-  #   1. Run bash -n on codex-dispatch.sh to verify syntax.
+  #   1. Run bash -n on adapters/codex/dispatch.sh to verify syntax.
   #   2. Grep for the '. ... 2>/dev/null || true' source guard line.
   #   3. Assert both checks pass.
   local name="codex-dispatch.sh: state store block is self-contained"
   should_run "$name" || return 0
-  if bash -n "$REPO_ROOT/scripts/codex-dispatch.sh" &&
-    grep -Fq '. "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true' "$REPO_ROOT/scripts/codex-dispatch.sh"; then
+  if bash -n "$REPO_ROOT/adapters/codex/dispatch.sh" &&
+    grep -Fq '. "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true' "$REPO_ROOT/adapters/codex/dispatch.sh"; then
     pass "$name"
   else
     fail "$name" "syntax check or source guard missing"

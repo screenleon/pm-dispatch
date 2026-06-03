@@ -8,11 +8,27 @@
 
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+uninstall.sh — remove pm-dispatch symlinks/junctions/copies and hooks from ~/.claude/
+
+Usage:
+  ./uninstall.sh            apply (idempotent; manifest-driven, safe to re-run)
+  ./uninstall.sh --dry-run  preview what would be removed, change nothing
+  ./uninstall.sh --help     show this help
+
+Honors $CLAUDE_HOME to target a sandbox install. Reads the install manifest at
+$CLAUDE_HOME/.pm-dispatch/install-manifest.json; entries that were modified since
+install, or that resolve outside the managed root, are skipped for safety.
+EOF
+}
+
 DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    *) echo "uninstall: unknown flag $1" >&2; exit 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "uninstall: unknown flag $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -28,14 +44,23 @@ _UNINSTALL_PLATFORM="$(detect_platform)"
 
 MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
 
-if [[ ! -f "$MANIFEST" ]]; then
-  echo "uninstall: no manifest found at $MANIFEST — nothing to do"
-  exit 0
-fi
-
 removed=0
 skipped=0
 safety_skipped=0
+
+resolve_symlink_target() {
+  local dst="$1"
+  local link_target="$2"
+
+  case "$link_target" in
+    /*|[A-Za-z]:/*)
+      _portable_normalize_path "$link_target"
+      ;;
+    *)
+      _portable_normalize_path "$(dirname "$dst")/$link_target"
+      ;;
+  esac
+}
 
 is_manifest_symlink_target() {
   local src="$1"
@@ -47,16 +72,51 @@ is_manifest_symlink_target() {
     return 0
   fi
 
-  case "$link_target" in
-    /*|[A-Za-z]:/*)
-      normalized_target="$(_portable_normalize_path "$link_target")"
-      ;;
-    *)
-      normalized_target="$(_portable_normalize_path "$(dirname "$dst")/$link_target")"
-      ;;
-  esac
+  normalized_target="$(resolve_symlink_target "$dst" "$link_target")"
 
   [[ "$normalized_target" == "$src" ]]
+}
+
+uninstall_pmctl_cli() {
+  local src="$REPO_ROOT/cli/pmctl"
+  local bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
+  local dest="$bin_dir/pmctl"
+  local link_target
+  local normalized_target
+
+  echo "==> pmctl CLI"
+
+  if [[ "$_UNINSTALL_PLATFORM" == "windows" ]]; then
+    echo "  skip $dest (not installed on Windows)"
+    return 0
+  fi
+
+  if [[ ! -L "$dest" ]]; then
+    if [[ -e "$dest" ]]; then
+      skipped=$((skipped + 1))
+      echo "  skip $dest (not a symlink — skipping)"
+    else
+      skipped=$((skipped + 1))
+      echo "  skip $dest (already gone)"
+    fi
+    return 0
+  fi
+
+  link_target="$(readlink "$dest")"
+  normalized_target="$(resolve_symlink_target "$dest" "$link_target")"
+  if [[ "$normalized_target" != "$src" ]]; then
+    skipped=$((skipped + 1))
+    echo "  skip $dest (not our symlink — skipping)"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would remove $dest"
+  else
+    rm "$dest"
+    echo "  remove $dest"
+  fi
+  removed=$((removed + 1))
 }
 
 remove_item() {
@@ -148,6 +208,14 @@ echo "  repo:     $REPO_ROOT"
 echo "  manifest: $MANIFEST"
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:     DRY RUN"; fi
 echo
+
+uninstall_pmctl_cli
+echo
+
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "uninstall: no manifest found at $MANIFEST — no managed-root manifest entries to remove"
+  exit 0
+fi
 
 echo "==> manifest entries"
 parsed_any=0
@@ -291,7 +359,7 @@ if [[ "$DRY_RUN" -ne 1 ]]; then
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
-  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts"; do
+  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share"; do
     rmdir "$d" 2>/dev/null || true
   done
 fi

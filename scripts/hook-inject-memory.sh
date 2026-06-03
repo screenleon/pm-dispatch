@@ -69,7 +69,7 @@ if [[ -f "$episodes_file" ]]; then
     fi
 
     age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
-      'try (($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600 catch 0' 2>/dev/null) || age_hours=0
+      'try ((($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600) catch 0' 2>/dev/null) || age_hours=0
     if awk -v h="${age_hours:-0}" 'BEGIN{exit !(h+0 > 24)}'; then
       date_short=$(jq -rn --arg d "${_d_base}Z" \
         'try ($d | fromdateiso8601 | strftime("%Y-%m-%d")) catch ""' 2>/dev/null) || date_short="${last_date:0:10}"

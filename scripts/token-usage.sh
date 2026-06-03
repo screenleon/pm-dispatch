@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # token-usage.sh — multi-pool token usage estimator (Claude / Codex / Spark)
+# Pure bash+jq implementation (CC-104t) — no python3 dependency.
 #
 # Usage:
 #   bash ~/.claude/scripts/token-usage.sh               # last 5 hours
@@ -14,23 +15,27 @@ set -euo pipefail
 LOGFILE="$HOME/.claude/usage-tracker.jsonl"
 CALIB_FILE="$HOME/.claude/usage-calibration.json"
 MODE="--5h"
-REMAINING_PCT=""
+REMAINING_PCT_ARG=""
 RATE_LIMITS_FILE="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/rate-limits.json"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --today|--all|--[0-9]*h)
-      MODE="$1"; shift ;;
+    --today|--all|--[0-9]*h) MODE="$1"; shift ;;
     --remaining)
       if [[ $# -ge 2 && "$2" != --* ]]; then
-        REMAINING_PCT="$2"; shift 2
+        REMAINING_PCT_ARG="$2"; shift 2
       else
-        REMAINING_PCT="auto"; shift
+        REMAINING_PCT_ARG="auto"; shift
       fi ;;
-    *)
-      echo "token-usage: unknown argument: $1" >&2; exit 2 ;;
+    *) echo "token-usage: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ "$MODE" != "--today" && "$MODE" != "--all" && ! "$MODE" =~ ^--[0-9]+h$ ]]; then
+  printf 'token-usage: unknown mode: %s\n' "$MODE" >&2
+  printf 'Usage: token-usage.sh [--today|--all|--Nh]  (default: --5h)\n' >&2
+  exit 2
+fi
 
 if [[ ! -f "$LOGFILE" ]]; then
   echo "No usage log at $LOGFILE"
@@ -38,250 +43,303 @@ if [[ ! -f "$LOGFILE" ]]; then
   exit 0
 fi
 
-python3 - "$MODE" "$LOGFILE" "$CALIB_FILE" "$REMAINING_PCT" "$RATE_LIMITS_FILE" << 'PYEOF'
-import sys, json, re
-from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+NOW_EPOCH=$(date +%s)
 
-mode              = sys.argv[1]
-logfile           = sys.argv[2]
-calib_file        = sys.argv[3]
-remaining_pct_raw = sys.argv[4] if len(sys.argv) > 4 else ''
-rate_limits_file  = sys.argv[5] if len(sys.argv) > 5 else ''
+# Compute label and cutoff epoch
+case "$MODE" in
+  --today)
+    LABEL="today (UTC)"
+    # Start of today UTC: strip time portion from UTC date, reparse as epoch
+    _today_date=$(date -u +"%Y-%m-%d")
+    CUTOFF_EPOCH=$(date -u -d "${_today_date}T00:00:00Z" +%s 2>/dev/null || \
+                   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${_today_date}T00:00:00Z" +%s 2>/dev/null || \
+                   echo $((NOW_EPOCH - (NOW_EPOCH % 86400))))
+    ;;
+  --all)
+    LABEL="all time"
+    CUTOFF_EPOCH=0
+    ;;
+  *)
+    _hours="${MODE#--}"; _hours="${_hours%h}"
+    LABEL="last ${_hours}h"
+    CUTOFF_EPOCH=$((NOW_EPOCH - _hours * 3600))
+    ;;
+esac
 
-# Validate mode before doing any work
-if mode not in ('--today', '--all') and not re.fullmatch(r'--\d+h', mode):
-    sys.stderr.write(f'token-usage: unknown mode: {mode!r}\n')
-    sys.stderr.write('Usage: token-usage.sh [--today|--all|--Nh]  (default: --5h)\n')
-    sys.exit(2)
+# Handle --remaining: resolve "auto" from rate-limits.json
+REMAINING_PCT=""
+REMAINING_NOTE=""
+if [[ "$REMAINING_PCT_ARG" == "auto" ]]; then
+  if [[ ! -f "$RATE_LIMITS_FILE" ]]; then
+    REMAINING_NOTE="  (note: $RATE_LIMITS_FILE not found — install StatusLine hook or use --remaining N)"
+  else
+    _rl=$(jq -r --argjson now "$NOW_EPOCH" '
+      (.five_hour.used_percentage) as $used |
+      (($now - (.updated_at // 0)) / 60 | floor) as $age |
+      if $used == null then
+        "no_five_hour|\($age)"
+      elif ($used | type) != "number" then
+        "not_number|\($used)|\($age)"
+      elif $used < 0 or $used > 100 then
+        "out_of_range|\($used)|\($age)"
+      else
+        "ok|\(100 - $used)|\($age)"
+      end
+    ' "$RATE_LIMITS_FILE" 2>/dev/null || echo "error|0|0")
+    IFS='|' read -r _rl_status _rl_val _rl_age <<< "$_rl"
+    case "$_rl_status" in
+      ok)
+        REMAINING_PCT="$_rl_val"
+        [[ "${_rl_age:-0}" -gt 30 ]] && \
+          REMAINING_NOTE="  (note: rate-limits.json is ${_rl_age}min old — may be stale)" ;;
+      no_five_hour)
+        REMAINING_NOTE="  (note: rate-limits.json has no five_hour.used_percentage)" ;;
+      not_number)
+        REMAINING_NOTE="  (note: rate-limits.json five_hour.used_percentage=${_rl_val} is not a number — ignoring)" ;;
+      out_of_range)
+        REMAINING_NOTE="  (note: rate-limits.json five_hour.used_percentage=${_rl_val} is out of range 0–100 — ignoring)" ;;
+      *)
+        REMAINING_NOTE="  (note: could not read rate-limits.json)" ;;
+    esac
+  fi
+elif [[ -n "$REMAINING_PCT_ARG" ]]; then
+  if ! [[ "$REMAINING_PCT_ARG" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+    printf 'token-usage: --remaining must be a number, got: %s\n' "$REMAINING_PCT_ARG" >&2; exit 2
+  fi
+  if ! jq -en --argjson v "$REMAINING_PCT_ARG" '$v >= 0 and $v <= 100' >/dev/null 2>&1; then
+    printf 'token-usage: --remaining must be 0–100, got: %s\n' "$REMAINING_PCT_ARG" >&2; exit 2
+  fi
+  REMAINING_PCT="$REMAINING_PCT_ARG"
+fi
 
-remaining_pct = None
-if remaining_pct_raw == 'auto':
-    import time as _time
-    try:
-        with open(rate_limits_file) as _rf:
-            _rl = json.load(_rf)
-        _upd = _rl.get('updated_at', 0)
-        _age_min = (_time.time() - _upd) / 60
-        _fh = _rl.get('five_hour', {})
-        _used = _fh.get('used_percentage')
-        if _used is not None:
-            try:
-                _used_float = float(_used)
-            except (ValueError, TypeError):
-                sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used!r} is not a number — ignoring)\n')
-            else:
-                if not (0.0 <= _used_float <= 100.0):
-                    sys.stderr.write(f'  (note: rate-limits.json five_hour.used_percentage={_used_float!r} is out of range 0–100 — ignoring)\n')
-                else:
-                    remaining_pct = 100.0 - _used_float
-                    if _age_min > 30:
-                        sys.stderr.write(f'  (note: rate-limits.json is {_age_min:.0f}min old — may be stale)\n')
-        else:
-            sys.stderr.write('  (note: rate-limits.json has no five_hour.used_percentage)\n')
-    except FileNotFoundError:
-        sys.stderr.write(f'  (note: {rate_limits_file} not found — install StatusLine hook or use --remaining N)\n')
-    except Exception as _ex:
-        sys.stderr.write(f'  (note: could not read rate-limits.json: {_ex})\n')
-elif remaining_pct_raw != '':
-    try:
-        remaining_pct = float(remaining_pct_raw)
-    except ValueError:
-        sys.stderr.write(f'token-usage: --remaining must be a number, got: {remaining_pct_raw!r}\n')
-        sys.exit(2)
-    if not (0.0 <= remaining_pct <= 100.0):
-        sys.stderr.write(f'token-usage: --remaining must be 0–100, got: {remaining_pct}\n')
-        sys.exit(2)
+# Parse JSONL, filter by time window, aggregate
+# --raw-input: read each line as a string so malformed JSON doesn't abort
+_data=$(jq -Rs --argjson cutoff "$CUTOFF_EPOCH" '
+  # Split lines, try to parse each as JSON; drop non-parseable lines
+  split("\n") | map(select(length > 0 and ltrimstr(" ") != "")) |
+  (map(try fromjson catch null) | map(select(. != null))) as $all |
+  # Attach parsed epoch; fromdateiso8601? on an invalid ts string → null
+  ($all | map(select(.ts != null)) |
+   map(. + {_ep: (.ts | fromdateiso8601? // null)})) as $with_ep |
+  # Count skipped: malformed JSON + missing ts + invalid ts string
+  (length - ($all | length)
+   + ($all | map(select(.ts == null)) | length)
+   + ($with_ep | map(select(._ep == null)) | length)) as $skipped |
+  ($with_ep | map(select(._ep != null)) |
+   map(select(._ep >= $cutoff))) as $e |
 
-# Load entries — skip malformed lines and entries missing required 'ts' field
-entries = []
-skipped = 0
-with open(logfile) as f:
-    for line in f:
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        try:
-            entry = json.loads(line)
-            if 'ts' not in entry:
-                skipped += 1
-                continue
-            entries.append(entry)
-        except (json.JSONDecodeError, ValueError):
-            skipped += 1
+  ($e | map(select(.pool == "codex")))                                   as $co |
+  ($e | map(select(.pool == "spark")))                                   as $sp |
+  ($e | map(select(.pool != "codex" and .pool != "spark")))              as $cl |
 
-if skipped:
-    sys.stderr.write(f'  (warning: {skipped} malformed/incomplete line(s) skipped)\n')
+  {
+    total:            ($e  | length),
+    claude_tokens:    ($cl | map(.tokens // 0) | add // 0),
+    codex_tokens:     ($co | map(.tokens // 0) | add // 0),
+    spark_tokens:     ($sp | map(.tokens // 0) | add // 0),
+    codex_dispatches: ($co | length),
+    claude_first_ep:  (if ($cl | length) > 1 then ($cl | map(._ep) | min) else 0 end),
+    by_type: ($e | group_by(.type // "unknown") |
+      map({key:(.[0].type // "unknown"), value:{count:length, tokens:(map(.tokens//0)|add//0)}}) |
+      from_entries),
+    by_session: ($e | group_by(.session // "?") |
+      map({key:(.[0].session//"?"|.[0:10]), value:{count:length, tokens:(map(.tokens//0)|add//0)}}) |
+      from_entries),
+    skipped: $skipped
+  }
+' "$LOGFILE" 2>/dev/null ||
+  echo '{"total":0,"claude_tokens":0,"codex_tokens":0,"spark_tokens":0,"codex_dispatches":0,"claude_first_ep":0,"by_type":{},"by_session":{},"skipped":0}')
 
-# Filter by time window
-now = datetime.now(timezone.utc)
-if mode == '--today':
-    label = 'today (UTC)'
-    cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    entries = [e for e in entries if datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) >= cutoff]
-elif mode == '--all':
-    label = 'all time'
-else:
-    hours = int(mode.lstrip('-').rstrip('h'))
-    label = f'last {hours}h'
-    cutoff = now - timedelta(hours=hours)
-    entries = [e for e in entries if datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) >= cutoff]
+_get() { printf '%s' "$_data" | jq -r ".$1"; }
 
-# Load calibration — distinguish missing file (silent) from corrupt file (warn)
-known_limit = None
-rate_limit_events = []
-try:
-    with open(calib_file) as f:
-        calib = json.load(f)
-        known_limit = calib.get('known_limit_tokens')
-        rate_limit_events = calib.get('rate_limit_events', [])
-except FileNotFoundError:
-    pass
-except (json.JSONDecodeError, ValueError) as ex:
-    sys.stderr.write(f'  (warning: calibration file malformed — {ex})\n')
+_skipped=$(_get skipped)
+_skipped="${_skipped:-0}"; [[ "$_skipped" == "null" ]] && _skipped=0
+[[ "$_skipped" -gt 0 ]] && \
+  printf '  (warning: %d malformed/incomplete line(s) skipped)\n' "$_skipped" >&2
 
-def entry_pool(entry):
-    pool = entry.get('pool') or 'claude'
-    return pool if pool in ('claude', 'codex', 'spark') else 'claude'
+_total=$(_get total)
+_claude=$(_get claude_tokens)
+_codex=$(_get codex_tokens)
+_spark=$(_get spark_tokens)
+_codex_dis=$(_get codex_dispatches)
+_claude_first=$(_get claude_first_ep)
+_total_tok=$((_claude + _codex + _spark))
 
-claude_entries = [e for e in entries if entry_pool(e) == 'claude']
-codex_entries  = [e for e in entries if entry_pool(e) == 'codex']
-spark_entries  = [e for e in entries if entry_pool(e) == 'spark']
+# Load calibration
+_known_limit=0
+_rl_event_count=0
+if [[ -f "$CALIB_FILE" ]]; then
+  _calib_result=$(jq -r '{l:(.known_limit_tokens//0),e:(.rate_limit_events//[]|length)}' "$CALIB_FILE" 2>/dev/null || echo "")
+  if [[ -z "$_calib_result" ]]; then
+    printf '  (warning: calibration file malformed)\n' >&2
+  else
+    _known_limit=$(printf '%s' "$_calib_result" | jq -r '.l')
+    _rl_event_count=$(printf '%s' "$_calib_result" | jq -r '.e')
+  fi
+fi
 
-claude_log_tokens = sum(e.get('tokens', 0) for e in claude_entries)
-codex_log_tokens  = sum(e.get('tokens', 0) for e in codex_entries)
-spark_log_tokens  = sum(e.get('tokens', 0) for e in spark_entries)
-codex_tokens      = codex_log_tokens  # from usage-tracker.jsonl pool=codex entries only
-codex_dispatches  = len(codex_entries)
-total_tokens      = claude_log_tokens + codex_tokens + spark_log_tokens
-by_type = defaultdict(lambda: {'count': 0, 'tokens': 0})
-by_session = defaultdict(lambda: {'count': 0, 'tokens': 0})
-for e in entries:
-    t = e.get('type', 'unknown')
-    s = (e.get('session') or '?')[:10]
-    by_type[t]['count'] += 1
-    by_type[t]['tokens'] += e.get('tokens', 0)
-    by_session[s]['count'] += 1
-    by_session[s]['tokens'] += e.get('tokens', 0)
+# Number formatting: insert commas every 3 digits (pure bash, no locale dependency)
+_fmt() {
+  local n="${1:-0}" result="" neg=""
+  [[ "$n" =~ ^-(.*)$ ]] && neg="-" && n="${BASH_REMATCH[1]}"
+  local len=${#n}
+  for (( i=0; i<len; i++ )); do
+    result="${result}${n:$i:1}"
+    local rem=$(( (len - i - 1) % 3 ))
+    [[ $rem -eq 0 && $i -lt $((len - 1)) ]] && result="${result},"
+  done
+  printf '%s' "${neg}${result}"
+}
 
-print('═══════════════════════════════════════════════')
-print(' Claude Code Usage Estimator')
-print('═══════════════════════════════════════════════')
-print(f' Window : {label}')
-print(f' Entries: {len(entries)}')
-print(f' Claude  : {claude_log_tokens:,} tokens  (~{claude_log_tokens/1000:.0f}k)')
-print(f' Codex   : {codex_tokens:,} tokens  ({codex_dispatches} logged)  [separate quota]')
-if spark_log_tokens > 0:
-    print(f' Spark   : {spark_log_tokens:,} tokens  [separate quota]')
-print(f' Total   : {total_tokens:,} tokens  (~{total_tokens/1000:.0f}k)')
+# ── Output ──────────────────────────────────────────────────────────────
+echo '═══════════════════════════════════════════════'
+echo ' Claude Code Usage Estimator'
+echo '═══════════════════════════════════════════════'
+printf ' Window : %s\n' "$LABEL"
+printf ' Entries: %d\n' "$_total"
+printf ' Claude  : %s tokens  (~%sk)\n' "$(_fmt "$_claude")" "$((_claude / 1000))"
+printf ' Codex   : %s tokens  (%d logged)  [separate quota]\n' "$(_fmt "$_codex")" "$_codex_dis"
+[[ "$_spark" -gt 0 ]] && printf ' Spark   : %s tokens  [separate quota]\n' "$(_fmt "$_spark")"
+printf ' Total   : %s tokens  (~%sk)\n' "$(_fmt "$_total_tok")" "$((_total_tok / 1000))"
 
-if known_limit:
-    pct = claude_log_tokens / known_limit * 100
-    remaining = max(0, known_limit - claude_log_tokens)
-    bar_filled = min(20, int(pct / 5))
-    bar = '█' * bar_filled + '░' * (20 - bar_filled)
-    print(f' Limit  : {known_limit:,} tokens (calibrated)')
-    print(f' Used   : [{bar}] {pct:.1f}%')
-    print(f' Remain : ~{remaining:,} tokens')
-    if claude_log_tokens > 0 and len(claude_entries) > 1:
-        # Estimate based on current session rate
-        first_ts = min(datetime.fromisoformat(e['ts'].replace('Z','+00:00')) for e in claude_entries)
-        elapsed_h = max(0.01, (now - first_ts).total_seconds() / 3600)
-        rate_per_h = claude_log_tokens / elapsed_h
-        remaining_h = remaining / rate_per_h if rate_per_h > 0 else 0
-        print(f' Rate   : ~{rate_per_h/1000:.0f}k tokens/hour at current pace')
-        print(f' Est.   : ~{remaining_h*60:.0f} min remaining at this rate')
-else:
-    print(f' Limit  : not yet calibrated')
-    if claude_log_tokens > 0:
-        print(f'  -> Edit ~/.claude/usage-calibration.json and set:')
-        print(f'       "known_limit_tokens": {claude_log_tokens}')
-        print(f'  -> Then re-run to see % used and estimated time remaining')
-    else:
-        print(f'  -> No Claude-pool log data in this window; calibrate after Claude usage is logged')
+if [[ "$_known_limit" -gt 0 ]]; then
+  _pct=$((_claude * 100 / _known_limit))
+  _remaining=$((_known_limit > _claude ? _known_limit - _claude : 0))
+  _bar=""
+  _bar_filled=$((_pct / 5)); [[ $_bar_filled -gt 20 ]] && _bar_filled=20
+  for ((i=0; i<20; i++)); do
+    [[ $i -lt $_bar_filled ]] && _bar="${_bar}█" || _bar="${_bar}░"
+  done
+  printf ' Limit  : %s tokens (calibrated)\n' "$(_fmt "$_known_limit")"
+  printf ' Used   : [%s] %d%%\n' "$_bar" "$_pct"
+  printf ' Remain : ~%s tokens\n' "$(_fmt "$_remaining")"
+  if [[ "$_claude" -gt 0 && "$_claude_first" -gt 0 ]]; then
+    _elapsed_s=$((NOW_EPOCH - _claude_first)); [[ $_elapsed_s -le 0 ]] && _elapsed_s=1
+    _rate_ph=$((_claude * 3600 / _elapsed_s))
+    _rem_min=0
+    [[ $_rate_ph -gt 0 ]] && _rem_min=$((_remaining * 60 / _rate_ph))
+    printf ' Rate   : ~%dk tokens/hour at current pace\n' "$((_rate_ph / 1000))"
+    printf ' Est.   : ~%d min remaining at this rate\n' "$_rem_min"
+  fi
+else
+  printf ' Limit  : not yet calibrated\n'
+  if [[ "$_claude" -gt 0 ]]; then
+    echo '  -> Edit ~/.claude/usage-calibration.json and set:'
+    printf '       "known_limit_tokens": %d\n' "$_claude"
+    echo '  -> Then re-run to see % used and estimated time remaining'
+  else
+    echo '  -> No Claude-pool log data in this window; calibrate after Claude usage is logged'
+  fi
+fi
 
-if remaining_pct is not None:
-    print()
-    print('─' * 47)
-    print(' Remaining Capacity Estimate')
-    print('─' * 47)
-    print(f' Remaining (from dashboard): {remaining_pct:.1f}%')
-    print(f' Tokens used (Claude pool) : {claude_log_tokens:,}')
-    if codex_tokens > 0 or spark_log_tokens > 0:
-        print(f' Separate quota tokens     : Codex {codex_tokens:,}  Spark {spark_log_tokens:,}')
+# ── --remaining section ─────────────────────────────────────────────────
+if [[ -n "$REMAINING_PCT" ]]; then
+  [[ -n "$REMAINING_NOTE" ]] && printf '%s\n' "$REMAINING_NOTE" >&2
+  echo
+  echo '───────────────────────────────────────────────'
+  echo ' Remaining Capacity Estimate'
+  echo '───────────────────────────────────────────────'
+  printf ' Remaining (from dashboard): %.1f%%\n' "$REMAINING_PCT"
+  printf ' Tokens used (Claude pool) : %s\n' "$(_fmt "$_claude")"
+  [[ "$_codex" -gt 0 || "$_spark" -gt 0 ]] && \
+    printf ' Separate quota tokens     : Codex %s  Spark %s\n' "$(_fmt "$_codex")" "$(_fmt "$_spark")"
 
-    used_pct = 100.0 - remaining_pct
+  _used_pct=$(jq -n --argjson r "$REMAINING_PCT" '100 - $r')
+  _inferred_total=0
+  _calib_total=$_known_limit
+  _remaining_tokens=0
+  _remaining_computed=0   # 1 = we have a value (may be 0); 0 = couldn't compute
+  _method=""
 
-    inferred_total    = None
-    calibration_total = None
-    remaining_tokens  = None
-    method_label      = ''
+  if [[ "$_calib_total" -gt 0 ]]; then
+    _remaining_tokens=$(jq -n --argjson l "$_calib_total" --argjson p "$REMAINING_PCT" \
+      '($l * $p / 100) | floor | tostring' | tr -d '"')
+    _method="from calibration"
+    _remaining_computed=1
+  fi
 
-    if known_limit and known_limit > 0:
-        calibration_total = known_limit
-        remaining_tokens  = int(known_limit * remaining_pct / 100)
-        method_label      = 'from calibration'
+  if [[ "$_claude" -gt 0 ]]; then
+    _inferred_total=$(jq -n --argjson tok "$_claude" --argjson used "$_used_pct" \
+      'if $used > 0 then ($tok / ($used / 100)) | floor else 0 end')
+    if [[ "$_calib_total" -eq 0 && "$_inferred_total" -gt 0 ]]; then
+      _remaining_tokens=$(jq -n --argjson tot "$_inferred_total" --argjson p "$REMAINING_PCT" \
+        '($tot * $p / 100) | floor')
+      _method="inferred from log"
+      _remaining_computed=1
+    fi
+  fi
 
-    if used_pct > 0 and claude_log_tokens > 0:
-        inferred_total = int(claude_log_tokens / (used_pct / 100))
-        if remaining_tokens is None:
-            remaining_tokens = int(inferred_total * remaining_pct / 100)
-            method_label     = 'inferred from log'
+  [[ "$_inferred_total" -gt 0 ]] && \
+    printf ' Inferred total limit      : %s tokens\n' "$(_fmt "$_inferred_total")"
+  [[ "$_calib_total" -gt 0 ]] && \
+    printf ' Calibrated limit          : %s tokens\n' "$(_fmt "$_calib_total")"
 
-    if inferred_total is not None:
-        print(f' Inferred total limit      : {inferred_total:,} tokens')
-    if calibration_total is not None:
-        print(f' Calibrated limit          : {calibration_total:,} tokens')
-    if inferred_total is not None and calibration_total is not None:
-        diff_pct = abs(inferred_total - calibration_total) / calibration_total * 100
-        if diff_pct > 10:
-            sys.stderr.write(
-                f'  (note: inferred {inferred_total:,} differs from calibrated '
-                f'{calibration_total:,} by {diff_pct:.0f}% — consider recalibrating)\n'
-            )
+  # Warn when inferred and calibrated totals diverge by >10%
+  if [[ "$_inferred_total" -gt 0 && "$_calib_total" -gt 0 ]]; then
+    _diff_pct=$(jq -n --argjson inf "$_inferred_total" --argjson cal "$_calib_total" \
+      '(($inf - $cal | fabs) / $cal * 100) | floor')
+    if [[ "$_diff_pct" -gt 10 ]]; then
+      printf '  (note: inferred %s differs from calibrated %s by %d%% — consider recalibrating)\n' \
+        "$(_fmt "$_inferred_total")" "$(_fmt "$_calib_total")" "$_diff_pct" >&2
+    fi
+  fi
 
-    if remaining_tokens is None:
-        print(f' Remaining tokens          : cannot estimate (0% used and no calibration)')
-        if claude_log_tokens == 0:
-            print(' Estimated time remaining  : no Claude log data — rate unknown')
-    else:
-        print(f' Remaining tokens          : ~{remaining_tokens:,}  [{method_label}]')
+  if [[ "$_remaining_computed" -eq 1 ]]; then
+    printf ' Remaining tokens          : ~%s  [%s]\n' "$(_fmt "$_remaining_tokens")" "$_method"
+    if [[ "$_remaining_tokens" -gt 0 && "$_claude" -gt 0 && "$_claude_first" -gt 0 ]]; then
+      _elapsed_s=$((NOW_EPOCH - _claude_first)); [[ $_elapsed_s -le 0 ]] && _elapsed_s=1
+      _rate_ph=$((_claude * 3600 / _elapsed_s))
+      if [[ $_rate_ph -gt 0 ]]; then
+        _rem_h_s=$((_remaining_tokens * 3600 / _rate_ph))
+        _eta_epoch=$((NOW_EPOCH + _rem_h_s))
+        _eta_str=$(date -u -d "@$_eta_epoch" +"%H:%M UTC" 2>/dev/null || \
+                   date -u -r "$_eta_epoch" +"%H:%M UTC" 2>/dev/null || \
+                   printf "~%dh" "$((_rem_h_s / 3600))")
+        _rate_k=$(jq -n --argjson r "$_rate_ph" '$r / 1000 * 10 | round / 10')
+        _rem_h_f=$(jq -n --argjson s "$_rem_h_s" '$s / 3600 * 10 | round / 10')
+        printf ' Current rate              : ~%sk tokens/hr  (Claude only)\n' "$_rate_k"
+        printf ' Estimated time remaining  : ~%s hrs  (until ~%s)\n' "$_rem_h_f" "$_eta_str"
+      fi
+    elif [[ "$_claude" -eq 0 ]]; then
+      echo ' Estimated time remaining  : no Claude log data — rate unknown'
+    else
+      echo ' Estimated time remaining  : cannot estimate (need ≥2 data points for rate)'
+    fi
+  else
+    printf ' Remaining tokens          : cannot estimate (0%% used and no calibration)\n'
+    [[ "$_claude" -eq 0 ]] && echo ' Estimated time remaining  : no Claude log data — rate unknown'
+  fi
+fi
 
-        first_ts = None
-        if len(claude_entries) > 1:
-            first_ts = min(datetime.fromisoformat(e['ts'].replace('Z', '+00:00')) for e in claude_entries)
+[[ -n "$REMAINING_NOTE" && -z "$REMAINING_PCT" ]] && printf '%s\n' "$REMAINING_NOTE" >&2
 
-        if remaining_tokens > 0 and claude_log_tokens > 0 and first_ts is not None:
-            elapsed_h  = max(0.01, (now - first_ts).total_seconds() / 3600)
-            rate_per_h = claude_log_tokens / elapsed_h
-            if rate_per_h > 0:
-                remaining_h = remaining_tokens / rate_per_h
-                eta_utc     = now + timedelta(hours=remaining_h)
-                eta_str     = eta_utc.strftime('%H:%M UTC')
-                print(f' Current rate              : ~{rate_per_h/1000:.1f}k tokens/hr  (Claude only)')
-                print(f' Estimated time remaining  : ~{remaining_h:.1f} hrs  (until ~{eta_str})')
-        elif claude_log_tokens == 0:
-            print(' Estimated time remaining  : no Claude log data — rate unknown')
-        elif first_ts is None:
-            print(f' Estimated time remaining  : cannot estimate (need ≥2 data points for rate)')
+# ── By type ─────────────────────────────────────────────────────────────
+_by_type=$(printf '%s' "$_data" | jq -r '
+  .by_type | to_entries | sort_by(-.value.tokens)[] |
+  "\(.key)\t\(.value.tokens)\t\(.value.count)"')
+if [[ -n "$_by_type" ]]; then
+  echo
+  echo ' By operation type:'
+  while IFS=$'\t' read -r _t _tok _cnt; do
+    printf '   %-32s %9s  (%sx)\n' "$_t" "$(_fmt "$_tok")" "$_cnt"
+  done <<< "$_by_type"
+fi
 
-if by_type:
-    print()
-    print(' By operation type:')
-    for t, v in sorted(by_type.items(), key=lambda x: -x[1]['tokens']):
-        print(f'   {t:<32} {v["tokens"]:>9,}  ({v["count"]}x)')
+# ── By session ──────────────────────────────────────────────────────────
+_by_session=$(printf '%s' "$_data" | jq -r '
+  .by_session | to_entries | sort_by(-.value.tokens)[] |
+  "\(.key)\t\(.value.tokens)\t\(.value.count)"')
+if [[ -n "$_by_session" ]]; then
+  echo
+  echo ' By session:'
+  while IFS=$'\t' read -r _s _tok _cnt; do
+    printf '   %-14s %9s  (%s ops)\n' "$_s" "$(_fmt "$_tok")" "$_cnt"
+  done <<< "$_by_session"
+fi
 
-if by_session:
-    print()
-    print(' By session:')
-    for s, v in sorted(by_session.items(), key=lambda x: -x[1]['tokens']):
-        print(f'   {s:<14} {v["tokens"]:>9,}  ({v["count"]} ops)')
+if [[ "$_rl_event_count" -gt 0 ]]; then
+  echo
+  printf ' Rate-limit events: %d\n' "$_rl_event_count"
+fi
 
-if rate_limit_events:
-    print()
-    print(f' Rate-limit events: {len(rate_limit_events)}')
-    last = rate_limit_events[-1]
-    print(f'   Last: {last.get("ts","?")} — {last.get("tokens_before","?"):,} tokens before limit hit')
-
-print('═══════════════════════════════════════════════')
-PYEOF
+echo '═══════════════════════════════════════════════'

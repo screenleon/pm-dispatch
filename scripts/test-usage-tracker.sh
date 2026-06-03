@@ -503,6 +503,7 @@ case_remaining_100_no_calibration() {
   HOME="$home" /bin/bash "$VIEW_SCRIPT" --all --remaining 100 > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
   assert_file_contains "$name" "$out" "cannot estimate"
+  assert_file_contains "$name" "$out" "0% used"
   pass "$name"
 }
 
@@ -565,7 +566,9 @@ case_remaining_auto_valid_file() {
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
   rl_file="$rl_dir/rate-limits.json"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':25,'resets_at':9999999999},'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_file','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"five_hour":{"used_percentage":25,"resets_at":9999999999},"seven_day":{"used_percentage":10,"resets_at":9999999999}}' \
+    > "$rl_file"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -585,7 +588,8 @@ case_remaining_auto_stale_warning() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json; json.dump({'updated_at':1000000,'five_hour':{'used_percentage':30,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n '{"updated_at":1000000,"five_hour":{"used_percentage":30,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -632,7 +636,9 @@ case_remaining_auto_out_of_range_percentage() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'five_hour':{'used_percentage':150,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"five_hour":{"used_percentage":150,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -656,7 +662,9 @@ case_remaining_auto_no_five_hour_key() {
   home="$(new_home "$name")"
   write_log "$home" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "codex_task" 1 ""
   rl_dir="$(mktemp -d)"
-  python3 -c "import json,time; json.dump({'updated_at':int(time.time()),'seven_day':{'used_percentage':10,'resets_at':9999999999}}, open('$rl_dir/rate-limits.json','w'))"
+  jq -n --argjson ts "$(date +%s)" \
+    '{"updated_at":$ts,"seven_day":{"used_percentage":10,"resets_at":9999999999}}' \
+    > "$rl_dir/rate-limits.json"
   out="$TMP_ROOT/$name.out"
   HOME="$home" CLAUDE_CONFIG_DIR="$rl_dir" /bin/bash "$VIEW_SCRIPT" --remaining > "$out" 2> "$out.err"; status=$?
   assert_exit "$name" "$status" 0
@@ -739,6 +747,57 @@ case_one_dispatch_one_count() {
   pass "$name"
 }
 
+case_missing_type_defaults_to_unknown() {
+  # Regression: entry with ts+tokens but no type must not crash with
+  # "null: unbound variable" (set -u); should appear as "unknown" in By type.
+  local name="missing_type_defaults_to_unknown" home out status
+  home="$(new_home "$name")"
+  local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '{"ts":"%s","tokens":7777,"session":"s1"}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
+  printf '{"ts":"%s","type":"pm_analysis","tokens":1000}\n' "$ts" >> "$home/.claude/usage-tracker.jsonl"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_file_contains "$name" "$out" "unknown"
+  assert_file_contains "$name" "$out" "7,777"
+  pass "$name"
+}
+
+case_invalid_ts_skipped_not_counted() {
+  # Regression (CC-104t rewrite): invalid but non-null ts strings were converted
+  # to epoch 0 by fromdateiso8601?//0, causing --all to include them in totals
+  # (cutoff=0, 0>=0 passes). They must be counted as skipped, not in usage.
+  local name="invalid_ts_skipped_not_counted" home out status
+  home="$(new_home "$name")"
+  local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  printf '{"ts":"not-a-date","tokens":999999,"type":"pm_analysis","session":"s"}\n' \
+    >> "$home/.claude/usage-tracker.jsonl"
+  write_log "$home" "$ts" "pm_analysis" 1000 "valid entry"
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_not_contains "$name" "$out" "999,999"
+  assert_file_contains "$name" "$out" "1,000"
+  assert_file_contains "$name" "$out.err" "skipped"
+  pass "$name"
+}
+
+case_unknown_pool_counted_as_claude() {
+  # Regression (CC-308/CC-104t): token-usage.sh previously dropped rows with
+  # unknown pool values from Claude and Total totals while still counting them
+  # in Entries. Rows with pool != "codex"/"spark" must fall back to Claude.
+  local name="unknown_pool_counted_as_claude" home out status
+  home="$(new_home "$name")"
+  local ts; ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  write_log "$home" "$ts" "pm_analysis" 5432 "legacy entry" legacy
+  out="$TMP_ROOT/$name.out"
+  HOME="$home" /bin/bash "$VIEW_SCRIPT" --all > "$out" 2> "$out.err"; status=$?
+  assert_exit "$name" "$status" 0
+  assert_file_contains "$name" "$out" "5,432"
+  assert_file_contains "$name" "$out" "Claude"
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -809,6 +868,9 @@ run_case "remaining_auto_malformed_json" case_remaining_auto_malformed_json
 run_case "remaining_manual_n_unchanged" case_remaining_manual_n_unchanged
 run_case "codex_old_log_excluded" case_codex_old_log_excluded
 run_case "one_dispatch_one_count" case_one_dispatch_one_count
+run_case "missing_type_defaults_to_unknown" case_missing_type_defaults_to_unknown
+run_case "invalid_ts_skipped_not_counted" case_invalid_ts_skipped_not_counted
+run_case "unknown_pool_counted_as_claude" case_unknown_pool_counted_as_claude
 
 if ! $LIST; then
   echo

@@ -84,6 +84,13 @@ Idempotent — re-run safely after adding files. Per-file symlinks so other tool
 
 On platforms without symlink support (Windows Git Bash), the installer falls back to **copy mode**: managed directories are created as directory junctions and helper scripts are copied — re-run `install.sh` after `git pull` to refresh changed copies. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
 
+`install.sh` also makes the `pmctl` CLI discoverable. On Linux, macOS, and WSL2
+it creates a symlink from `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl` to
+`cli/pmctl` and prints an `export PATH=...` note if that bin directory is not
+already on `$PATH`. On Windows Git Bash it does not copy `pmctl`; add
+`<repo>/cli` to `$PATH` manually so `pmctl` runs in place and can resolve its
+repo-local libraries.
+
 **Profile**: `full` wires every hook including the codex-* guards (use when you run the [Codex CLI](https://github.com/openai/codex) for dispatch). `minimal` skips the codex-* guards (use when you only use Claude Code; the `claude` executor handles dispatch). Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
 
 After installing, verify the environment is healthy:
@@ -92,7 +99,7 @@ After installing, verify the environment is healthy:
 bash scripts/doctor.sh
 ```
 
-`doctor.sh` checks that `claude` and `jq` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command.
+`doctor.sh` checks that `claude`, `jq`, and `pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint — each failing check prints a concrete remediation command.
 
 ## Testing
 
@@ -147,7 +154,7 @@ usage.
 
 ### Scripts
 
-- **cli/pmctl** — Runtime CLI spine for adapter generation and future pm-dispatch operations. `pmctl adapter generate <name>` creates an `adapters/<name>/adapter.yaml` authored manifest plus generated support files. `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
+- **cli/pmctl** — Runtime CLI spine for adapter generation and future pm-dispatch operations. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/macOS/WSL; Windows users should add `<repo>/cli` to `$PATH` manually because a copied `pmctl` cannot resolve repo-local libraries. `pmctl adapter generate <name>` creates an `adapters/<name>/adapter.yaml` authored manifest plus generated support files. `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
 - **codex-dispatch.sh** — Invokes `codex exec` with tracing, sandbox/approval flags, timeout (default 1200s, override via `--timeout`, `$CODEX_DISPATCH_TIMEOUT`, or `~/.pm-dispatch/config` key `dispatch.default_timeout`), file-first dispatch via `--brief-file <path>`, and final-message capture. Inline `-- <brief>` is retained only for trivial smoke checks; real briefs should be written to a file to avoid shell quoting, hook-validation, and multiline prompt failures. Writes `.agent-trace/codex-<ts>.{jsonl,last,stderr}` and refreshes `.agent-trace/latest.{jsonl,last,stderr}` symlinks so observers can attach without knowing the timestamp. Exit 124 = hit the timeout (silent codex hang most likely cause). `~/.pm-dispatch/config` is optional and user-managed only; the installer never creates it. Current supported keys are `dispatch.default_timeout` and reserved `dispatch.default_model` (reserved for future default-model support).
 - **pm-prep-snapshot.sh** — Captures branch/PR/backlog/tooling state before PM-agent spawn and writes a typed snapshot for PM consumption.
 - **codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
@@ -166,7 +173,7 @@ usage.
 - **lint-scripts.sh** — Hygiene check for `scripts/*.sh`: executable bit, shebang, `bash -n` parses, has a `set -...` line. Run by `install.sh`.
 - **lint-frontmatter.sh** — Validates YAML frontmatter in `agents/`, `commands/`, and `skills/` against PyYAML flow-collection semantics (dq-escape whitelist, adjacent-quote, tab-indent, and empty-entry detection across all four collection paths). Run by CI and `doctor.sh`.
 - **run-all-tests.sh** — Standalone test aggregator: runs every registered suite and prints one pass/fail summary. `install.sh --verify` runs it as a preflight; `--list` and `--skip <name>` are available.
-- **doctor.sh** — Environment health check: verifies `claude`/`jq` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
+- **doctor.sh** — Environment health check: verifies `claude`/`jq`/`pmctl` are on `$PATH`, hooks are wired into `~/.claude/settings.json`, the memory directory exists, scripts are executable, and frontmatter passes lint. `--profile minimal|full|auto` scopes which hook checks apply. Each failing check prints a concrete remediation command.
 - **token-usage.sh** — Multi-pool token usage estimator (Claude / Codex / Spark). Reads `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/token-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/token-usage.sh [--today|--all]`. `--remaining` (no arg) auto-reads `~/.claude/rate-limits.json` if the StatusLine hook is installed; `--remaining N` accepts manual dashboard value.
 - **log-usage.sh** — Appends one entry to `~/.claude/usage-tracker.jsonl`. Symlinked to `~/.claude/scripts/log-usage.sh` by `install.sh`. Usage: `bash ~/.claude/scripts/log-usage.sh <type> <tokens> [note]`. Call after any significant agent operation; standard types in the script header.
 - **usage-weekly.sh** — Weekly Markdown report from `~/.claude/stats-cache.json` (Claude internal cache) and Codex session JSONL files. Read-only. Run manually or from a cron job.

@@ -313,8 +313,31 @@ if [[ "$command" =~ [\;\&\|\$\`\(\)\<\>\{\}\\] ]]; then
 fi
 
 # ---------- tokenize ----------
+#
+# The canonical dispatch path may itself contain spaces — on Windows the user
+# directory is e.g. `C:\Users\Lien Chen\...` -> `/c/Users/Lien Chen/...`. Our
+# whitespace tokenizer (`read -r -a`) would split that path and truncate the
+# verb to `/c/Users/Lien`, breaking the dispatch allowlist match. The dispatch
+# path is a trusted constant, so detect an invocation by literal prefix (a
+# bare path, or the path followed by a space) and tokenize only the remainder,
+# re-seating the full path as parts[0]. On platforms where the path has no
+# space (Linux/macos) this yields the exact same parts[] as the plain split.
+_dispatch_prefix=""
+if [[ "$command" == "$DISPATCH_ABS" || "$command" == "$DISPATCH_ABS "* ]]; then
+  _dispatch_prefix="$DISPATCH_ABS"
+elif [[ "$command" == "$DISPATCH_REL" || "$command" == "$DISPATCH_REL "* ]]; then
+  _dispatch_prefix="$DISPATCH_REL"
+fi
 
-read -r -a parts <<<"$command"
+if [[ -n "$_dispatch_prefix" ]]; then
+  _dispatch_rest="${command#"$_dispatch_prefix"}"
+  read -r -a parts <<<"$_dispatch_rest"
+  parts=("$_dispatch_prefix" "${parts[@]}")
+  unset _dispatch_rest
+else
+  read -r -a parts <<<"$command"
+fi
+unset _dispatch_prefix
 verb="${parts[0]:-}"
 
 # ---------- allowlist: dispatch script ----------

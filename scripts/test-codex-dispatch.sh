@@ -18,7 +18,10 @@ unset CODEX_DISPATCH_SNAPSHOT_ACTIVE CODEX_DISPATCH_SNAPSHOT_PATH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DISPATCH="$REPO_ROOT/scripts/codex-dispatch.sh"
+# The real adapter; scripts/codex-dispatch.sh is now a thin exec-wrapper shim
+# (CC-308/CC-104t) — snapshot/alias tests must target the adapter directly.
+DISPATCH="$REPO_ROOT/adapters/codex/dispatch.sh"
+DISPATCH_SHIM="$REPO_ROOT/scripts/codex-dispatch.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -177,19 +180,10 @@ case_auto_log_parser_single_integer() {
     '{"type":"turn.started"}' \
     '{"type":"turn.completed","usage":{"input_tokens":100000,"output_tokens":5000,"cached_input_tokens":0}}' \
     > "$tmp_trace9"
-  _result9=$(python3 - "$tmp_trace9" << 'PYEOF'
-import json, sys
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'turn.completed':
-            u = e.get('usage', {})
-            print(u.get('input_tokens',0) + u.get('output_tokens',0))
-            sys.exit(0)
-    except Exception: pass
-print(0)
-PYEOF
-)
+  _result9=$(jq -rs '
+    first(.[] | select(.type == "turn.completed")
+              | (.usage.input_tokens // 0) + (.usage.output_tokens // 0)) // 0
+  ' "$tmp_trace9" 2>/dev/null || echo 0)
   rm -f "$tmp_trace9"
   # Must be exactly "105000" — one line, one integer
   if [[ "$_result9" == "105000" ]]; then
@@ -886,6 +880,77 @@ case_print_cmd_no_brief() {
   pass "$name"
 }
 
+case_shim_delegates_to_adapter() {
+  # Verifies that scripts/codex-dispatch.sh (the exec-wrapper shim introduced in
+  # CC-308) correctly delegates to adapters/codex/dispatch.sh by running --help
+  # through the shim and asserting exit 0. No codex binary required.
+  local name="shim/delegates to adapter via exec wrapper"
+  should_run "$name" || return 0
+  local out exit_code
+  set +e
+  out="$(bash "$DISPATCH_SHIM" --help 2>&1)"
+  exit_code=$?
+  set -e
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$exit_code; shim did not delegate: $(head -1 <<<"$out")"
+  fi
+}
+
+# ---- latest.* symlink failure is tolerated (Windows MSYS, CC-308) ----
+# On Windows MSYS, `ln -sfn` fails when refreshing the latest.* convenience
+# symlinks because the target trace file does not yet exist. The adapter guards
+# each `ln` with `2>/dev/null || true`; under `set -e` an unguarded failure would
+# abort the whole dispatch before codex runs. Force `ln` to fail for latest.* and
+# assert dispatch still completes and writes its real trace file.
+case_latest_symlink_failure_tolerated() {
+  local name="dispatch/latest.* symlink failure does not abort dispatch"
+  local _fake _home _work _brief _exit _trace
+  should_run "$name" || return 0
+
+  _fake="$(mktemp -d)"
+  cat > "$_fake/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+FAKEOF
+  chmod +x "$_fake/codex"
+  # Fake ln: fail for latest.* (simulate MSYS), delegate everything else to real ln.
+  cat > "$_fake/ln" << 'FAKELN'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in *latest.*) exit 1 ;; esac
+done
+for real in /usr/bin/ln /bin/ln; do [[ -x "$real" ]] && exec "$real" "$@"; done
+exit 1
+FAKELN
+  chmod +x "$_fake/ln"
+
+  _home="$(mktemp -d)"; mkdir -p "$_home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home/.claude/scripts/log-usage.sh"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'working_dir: %s\ngoal: test ln tolerance\n' "$_work" > "$_brief"
+
+  set +e
+  PATH="$_fake:$PATH" HOME="$_home" "$DISPATCH" --cd "$_work" --brief-file "$_brief" >/dev/null 2>&1
+  _exit=$?
+  set -e
+
+  # Real trace file must exist; latest.jsonl symlink must be absent (ln failed).
+  _trace="$(ls "$_work"/.agent-trace/codex-*.jsonl 2>/dev/null | head -1)"
+  if [[ "$_exit" -eq 0 && -n "$_trace" && -s "$_trace" ]] \
+     && [[ ! -e "$_work/.agent-trace/latest.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit trace=${_trace:-missing} latest_symlink=$([[ -e "$_work/.agent-trace/latest.jsonl" ]] && echo present || echo absent)"
+  fi
+  rm -rf "$_fake" "$_home" "$_work"; rm -f "$_brief"
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -918,5 +983,7 @@ case_isolation_none
 case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief
+case_shim_delegates_to_adapter
+case_latest_symlink_failure_tolerated
 
 th_summary
