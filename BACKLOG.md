@@ -348,7 +348,7 @@ script-layer）、CC-202（handover validator framework）
 
 **See**: pr:#220
 
-**Resolution**: Implemented in PR #220 (CC-308 Windows compat). `install.sh` now
+**Resolution**: Implemented in PR #220 (the Windows-compatibility branch). `install.sh` now
 installs directory targets (`agents/`, `skills/`, `commands/`, `adapters/`, `.pm`)
 as Windows junctions via `make_junction_windows` / `install_dir_junction` on the
 `windows` platform, with per-file copy as the last-resort fallback — exactly the
