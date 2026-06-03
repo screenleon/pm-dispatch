@@ -90,6 +90,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-306 | 🟡 deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-307 | 🟡 deferred | **[arch: pm role cross-runtime — guard 已 runtime-agnostic，但文件與 alias 仍暗示 pm = claude-only]** CC-291 的兩軸設計（role ⊥ runtime）明確要求 pm guard policy 不能綁 runtime。`hook-pm-write-guard.sh` 確實 runtime-agnostic（任何 runtime 套用同一規則）✓，且 `--role pm --runtime codex` CLI 路徑已可正常呼叫 ✓；但目前三個地方仍暗示 pm=claude-only：(1) deprecated `--profile pm` alias hardcode `runtime="claude"`，(2) `scripts/lib/pmctl-guard.sh` 說明說「currently claude-only」，(3) 無 codex-as-pm dispatch end-to-end 測試。修法：(1) alias 部分接受（deprecated, 將由 CC-296 移除，hardcode 是 convenience 不是設計限制）；(2) 把「currently claude-only」說明改為「guard policy is runtime-agnostic; no deployed codex-as-pm use case yet」以分清設計與現況；(3) 加 integration smoke test：`pmctl dispatch run --adapter codex --role pm` 可成功 dispatch。Origin user 2026-06-02。關聯 [[CC-291]]（two-axis design）、[[CC-296]]（alias sunset）、[[CC-215]]（pmctl dispatch run）。 | arch | 2026-06-02 | — | P3 | design |
 | CC-298 | ✅ closed 2026-06-02 | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate had a runtime-named brief directory（`scripts/pr-gate.sh:360`）+ runtime-tokenized claude brief filenames（L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | pr:#216 | P2 | design |
+| CC-309 | 🔵 active | **[arch: single-writer — route Run/Event writes through pmctl]** pmctl 成唯一 machine-state writer：adapter 的 `sw_append_dispatch_run` 直接寫上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event；writer 邊界拒 newline/NUL + jq-compact + schema-validate；寫失敗變響（非靜默 best-effort）；反轉 `test-layer-boundaries.sh` 禁止 adapter/hook 寫 state（延伸 [[CC-306]]）。v0.4.0 地基 Phase 1。見 `docs/architecture/v0.4.0-state-first-foundation.md` §3/§10.B。 | arch | 2026-06-03 | — | P2 | design |
+| CC-310 | 🔵 active | **[arch: transactional Run+Event write + Run FSM lifecycle]** pmctl-owned record-dispatch：Run+Event 共享 operation-id + 冪等 key；對帳不變量「每個 terminal Run 恰一 terminal Event」；實現 run FSM（pending→dispatched→verifying→ok/partial/failed），每轉移 emit Event（非只寫終態）。見 §10.A2/A3。 | arch | 2026-06-03 | — | P2 | design |
+| CC-311 | 🔵 active | **[arch: state store VERSION gating + migration]** `state_store_init` 只在 VERSION 不存在時建立；存在且不支援版本→fail loud + migration path；**不得寫回降級**（現況 `state-writer.sh:85-90` 會把非 1 寫回 1）。見 §10.A1。 | arch | 2026-06-03 | — | P2 | design |
+| CC-312 | 🔵 active | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code/finished_ts；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | — | P2 | design |
+| CC-313 | 🔵 active | **[arch: project partition identity — repo.json + worktree/aliases + no-global]** 首次使用寫 `repo.json`（git top-level / common-dir / worktree path / normalized+cygpath aliases）；load-bearing project 寫入**拒絕** fallback 到 `global`（除非顯式）。見 §10.A5。 | arch | 2026-06-03 | — | P2 | design |
+| CC-314 | 🔵 active | **[arch: routing_log → events.jsonl migration + deprecate machine-write]** 新增 routing_log→events 遷移 + kind 映射（bash-dispatch/agent-dispatch → run.dispatched 等）+ subject-id 策略；停掉 `hook-routing-log.sh` 機器寫；舊 `migrate-routing-log.sh` 降為 legacy-markdown cleanup。見 §10.A6（D3）。 | arch | 2026-06-03 | — | P2 | design |
+| CC-315 | 🔵 active | **[arch: state read/query contract + pmctl trace]** pmctl 提供 by id/task/kind/time-window 讀取；定義 active+archive 讀取語義（排序 / 壞行容忍 / time-window / 索引 vs 串流）；`pmctl trace` 為第一個 state consumer。見 §3.7（D6）。 | arch | 2026-06-03 | — | P2 | design |
+| CC-316 | 🔵 active | **[arch: state store rotation impl]** 依 `layout.yaml` 把 runs/events rotate 成 `archive/*-$YYYYMM-NNNN.jsonl.gz`（月內加單調 segment 後綴避免碰撞）；reader 合併 active+archive。見 §3.8 / §10.B（D7）。 | arch | 2026-06-03 | — | P2 | design |
+| CC-317 | 🔵 active | **[arch: state store safety & robustness hardening]** store-root 安全（canonicalize / 拒 symlink-component / world-writable / 0700）；mkdir-lock stale-owner 協定（pid/host/trap/bounded reclaim）+ UNC/9P preflight warn；`layout.yaml` 成可執行真相源（writer/reader 消費 或 golden test）。見 §10.B。 | arch | 2026-06-03 | — | P2 | design |
 
 ---
 
@@ -1334,3 +1343,75 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 ## CC-299 — [arch] 統一 executor dispatch 路徑 ✅ 2026-06-01
 
 **See**: pr:#213
+
+## CC-309 — single-writer: route Run/Event writes through pmctl
+
+**Problem**: machine state is written outside `pmctl` — adapters call `sw_append_dispatch_run` directly (`adapters/codex/dispatch.sh:369`, claude equivalent), the append primitives `printf '%s\n'` caller strings without compaction/validation (`state-writer.sh:96-129`), failures are silent (`return 0`), and `test-layer-boundaries.sh:20-23,161-172` *allows* adapter state writes.
+
+**Plan**: move Run/Event writes into `pmctl dispatch run`; guard deny/warn emit Events via `pmctl`; harden the writer boundary (reject newline/NUL, `jq -c` compact, schema-validate); make canonical write failures loud (non-zero/surfaced); invert the layer-boundary test to forbid adapter/hook state writes (extends [[CC-306]]). v0.4.0 foundation Phase 1.
+
+**Detail**: `docs/architecture/v0.4.0-state-first-foundation.md` §3, §10.B. Related: [[CC-310]], [[CC-306]].
+
+## CC-310 — transactional Run+Event write + Run FSM lifecycle
+
+**Problem**: `runs_append`/`events_append` lock different files with no shared operation id, idempotency key, or reconciliation API (`state-writer.sh:104-129`); Run is recorded only at terminal adapter exit, so the `pending→dispatched→verifying→ok/partial/failed` FSM (`core/policy/run-states.yaml:15-28`) is never realized and a crashed `pmctl` leaves no in-flight Run.
+
+**Plan**: a `pmctl`-owned record-dispatch op that writes the Run/Event pair under one operation id with the invariant "every terminal Run has exactly one terminal Event" (checkable/repairable on read); `pmctl` creates `pending`/`dispatched` before invoke, `verifying` after, then the terminal state, emitting an Event per transition.
+
+**Detail**: scoping doc §9 D4, §10.A2/A3. Related: [[CC-309]], [[CC-312]].
+
+## CC-311 — state store VERSION gating + migration
+
+**Problem**: `state_store_init` writes `1` back to `$STORE/VERSION` whenever it is not `1` (`state-writer.sh:85-90`); an older binary touching a future v2 store silently downgrades it.
+
+**Plan**: create `VERSION` only when absent; if present and unsupported, fail loud with a migration command/path; never rewrite it down.
+
+**Detail**: scoping doc §10.A1.
+
+## CC-312 — state schema tightening + per-event payload & FSM-transition validation
+
+**Problem**: `run.schema.json` requires only id/schema_version/task_id/executor/state/created_ts — `trace_path`/`working_dir`/`exit_code`/`finished_ts` are optional (`core/schema/run.schema.json:22-59`), and Event `payload` is entirely loose (`core/schema/event.schema.json:18-47`), so a reader cannot tell `ok` from `partial` or validate a `from→to` transition.
+
+**Plan**: a stricter dispatch-run shape (require the trace fields) + per-`kind` Event payload contracts carrying `from_state`/`to_state`/`run_id` or `task_id`, validated against the run/task FSMs on write. (Enum parity is already tested in `test-core-schemas.sh:171-218`; this adds transition + payload validation.)
+
+**Detail**: scoping doc §10.A4. Related: [[CC-310]].
+
+## CC-313 — project partition identity: repo.json + worktree/aliases + no-global
+
+**Problem**: `repo.json` is promised by `core/state/layout.yaml:36-39` but never written (`state_store_init` only mkdirs + VERSION), and `_sw_project_key` falls back to `global` outside git or on hash failure (`state-writer.sh:45-67`) — mixing unrelated work and making worktree / WSL↔Windows path identity unreconcilable.
+
+**Plan**: write `repo.json` on first use (git top-level, `git common-dir`, worktree path, normalized + cygpath aliases); refuse the `global` partition for load-bearing project writes unless explicitly requested.
+
+**Detail**: scoping doc §10.A5. (sha1 portability itself was fixed — `_portable_sha1`; this is identity semantics.)
+
+## CC-314 — routing_log.md → events.jsonl migration + deprecate machine-write
+
+**Problem**: deprecating the `routing_log.md` machine-write needs a real migration: the hook writes `kind` `bash-dispatch`/`agent-dispatch` (`hook-routing-log.sh:322-325`) which are **not** in the core Event enum (`event.schema.json:18-30`), and the existing `migrate-routing-log.sh` only migrates the old markdown shape.
+
+**Plan**: build a `routing_log → events.jsonl` migration with explicit kind mapping (→ `run.dispatched` etc.) + a subject-id strategy; stop the hook's markdown machine-write; keep `migrate-routing-log.sh` as legacy-markdown cleanup only.
+
+**Detail**: scoping doc §10.A6, §4 (D3 = deprecate).
+
+## CC-315 — state read/query contract + pmctl trace
+
+**Problem**: `state-writer.sh` is write-only and `cli/pmctl` has no read/query/trace subcommand (`cli/pmctl:35-78`); consumers would read state by ad-hoc JSONL grep, and a single-writer with no read contract is half a substrate.
+
+**Plan**: `pmctl` owns read ops over state — by id / `task_id` / event `kind` / time-window — with `pmctl --json` output; define active+archive read semantics (ordering, corrupt-row tolerance, time-window, indexed vs streamed). `pmctl trace` is the first consumer.
+
+**Detail**: scoping doc §3.7, §3.6, §10.B (D6). Related: [[CC-316]].
+
+## CC-316 — state store rotation implementation
+
+**Problem**: `core/state/layout.yaml:46-63` specifies gz rotation (`archive/{runs,events}-$YYYYMM.jsonl.gz`) but no code implements it (`state_store_init` only mkdirs `archive/`), so `runs.jsonl`/`events.jsonl` grow unbounded; and the monthly path collides on >1 rotation/month.
+
+**Plan**: implement rotation per layout with a monotonic segment suffix (`*-$YYYYMM-NNNN.jsonl.gz`); the reader (CC-315) merges active + archived segments.
+
+**Detail**: scoping doc §3.8, §10.B (D7). Related: [[CC-315]].
+
+## CC-317 — state store safety & robustness hardening
+
+**Problem**: `_sw_store_root` trusts `PM_DISPATCH_STATE_ROOT`/`XDG_DATA_HOME` directly with plain `mkdir -p` (`state-writer.sh:32-90`) — no canonicalization, symlink-component rejection, world-writable check, or `0700` mode; `serialize_with_lock`'s mkdir fallback has no stale-owner protocol (`portable.sh:174-180`) — a killed writer on a flock-less FS blocks until timeout; and `layout.yaml` is "definitions only" while writer paths are hardcoded (drift-prone).
+
+**Plan**: canonicalize + permission-check the store root (reject unsafe symlink/world-writable; `0700`); mkdir lock carries pid/host/start-time + cleanup trap + bounded stale reclaim + a UNC/9P preflight warning; make `layout.yaml` an executable source of truth (writer/reader consume it, or golden tests compare paths/locks/subdirs).
+
+**Detail**: scoping doc §10.B.

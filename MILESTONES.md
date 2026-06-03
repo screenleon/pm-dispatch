@@ -19,12 +19,16 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-211 | 承諾 state-first；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event，`routing_log.md` 不再機器寫 | ⏳ |
-| — | adapter Run write（`sw_append_dispatch_run`）上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event | ⏳ |
-| — | `routing_log.md` 機器寫廢棄 + 遷移（`pmctl trace` 為讀路；precedent `migrate-routing-log.sh`） | ⏳ |
-| CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」 | 🟡 → v0.4.0 |
-| — | **寫入驗 schema**（pmctl append 前驗 `core/schema/*`）+ **寫失敗變響**（canonical state 寫失敗 surface，非靜默 best-effort；D8） | ⏳ |
-| — | **rotation 實作**（`runs`/`events` → `archive/*-$YYYYMM.jsonl.gz`，依 `layout.yaml` 門檻；D7） | ⏳ |
+| CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ⏳ |
+| CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | 🔵 active |
+| CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | 🔵 active |
+| CC-311 | state store VERSION gating + migration（不得靜默降級） | 🔵 active |
+| CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | 🔵 active |
+| CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | 🔵 active |
+| CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | 🔵 active |
+| CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | 🔵 active |
+| CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | 🔵 active |
+| CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」（由 CC-309 反轉測試實現） | 🟡 → v0.4.0 |
 | — | builds on **CC-230 ✅ #159**（state store + 佈局已在；本階段完成其本意） | — |
 
 ### Phase 2 — pmctl state ops + 讀取/查詢
@@ -32,14 +36,14 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
-| — | **讀取/查詢契約**（pmctl 查 Run/Task/Event by id/task/kind/time-window；JSONL 為 store、pmctl 為查詢面；D6） | ⏳ |
+| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | 🔵 active |
 | CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
 
 ### Phase 3 — 第一個 state consumer
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| — | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | ⏳ |
+| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | 🔵 active |
 | CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
 
 ### 地基之後 / 延後（不在地基範圍）
