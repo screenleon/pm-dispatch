@@ -111,7 +111,10 @@ PRINT_CMD=0
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
 # This is the `default` ALIAS — its wire id (gpt-5.5) lives only in
 # share/model-aliases.tsv (single source of truth), so a model bump edits the
-# TSV alone. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+# TSV alone. Override via the PM_CFG_DEFAULT_MODEL env var, which `pmctl dispatch
+# run` exports from ~/.pm-dispatch/config `dispatch.default_model` (see line ~235).
+# The adapter no longer reads that config file directly: direct shim callers must
+# either dispatch through `pmctl dispatch run` or set PM_CFG_DEFAULT_MODEL themselves.
 DEFAULT_DISPATCH_MODEL="default"
 
 # shellcheck source=scripts/lib/state-writer.sh
