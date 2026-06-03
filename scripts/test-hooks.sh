@@ -429,6 +429,35 @@ fi
 rm -f "$_rw_symlink_out" "$_rw_symlink_target"
 unset _rw_symlink_target _rw_symlink_out
 
+# --- CC-308: guard normalizes a Windows drive-letter GATE_REPO_ROOT ITSELF ---
+# Black-box proof that hook-reviewer-write-guard.sh runs GATE_REPO_ROOT through
+# the same Windows->POSIX transform as file_path (not relying on the caller to
+# pre-normalize). Forced-windows + a stub cygpath on Linux: the root arrives in
+# drive-letter form and must still match the POSIX-resolved output path.
+_rw_winname="rw: Windows drive-letter GATE_REPO_ROOT normalized by guard → allow"
+if should_run "$_rw_winname"; then
+  _rw_cyg="$(mktemp -d)"
+  # Stub cygpath maps the fake drive-letter root to the real sandbox repo; any
+  # other arg passes through unchanged.
+  cat > "$_rw_cyg/cygpath" <<EOF
+#!/usr/bin/env bash
+case "\${!#}" in
+  "C:/fake/repo") printf '%s' "$_gate_repo" ;;
+  *) printf '%s' "\${!#}" ;;
+esac
+EOF
+  chmod +x "$_rw_cyg/cygpath"
+  _rw_winexit=$(printf '%s' "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" \
+    | env PM_DISPATCH_PLATFORM=windows PATH="$_rw_cyg:$PATH" CLAUDE_HOOK_GATE_REPO_ROOT="C:/fake/repo" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1; echo $?)
+  if [[ "$_rw_winexit" == "0" ]]; then
+    pass "$_rw_winname"
+  else
+    fail "$_rw_winname" "exit=$_rw_winexit (expected 0 — guard should normalize the drive-letter root itself)"
+  fi
+  rm -rf "$_rw_cyg"
+fi
+unset _rw_winname _rw_cyg _rw_winexit
+
 # --- bypass ---
 run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
   '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
