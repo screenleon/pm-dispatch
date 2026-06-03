@@ -19,6 +19,29 @@ run_case() {
   "$fn"
 }
 
+# Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
+# Mode silently copies on `ln -s`, so symlink-mode fixtures (and the symlink
+# removal / symlink-parent-traversal code paths they exercise) cannot be
+# represented; such tests are skipped there. Probed once.
+_TU_CAN_SYMLINK=0
+printf 'x' > "$tmp_root/.symlink-probe-target"
+# Probe with a real regular-file target: MSYS special-cases /dev/null into a
+# real symlink even when ordinary `ln -s` silently copies, so /dev/null would
+# misreport support.
+if ln -s "$tmp_root/.symlink-probe-target" "$tmp_root/.symlink-probe" 2>/dev/null \
+   && [[ -L "$tmp_root/.symlink-probe" ]]; then
+  _TU_CAN_SYMLINK=1
+fi
+rm -f "$tmp_root/.symlink-probe" "$tmp_root/.symlink-probe-target" 2>/dev/null || true
+
+# Usage at the top of a symlink-fixture test: `_tu_needs_symlink "$name" || return 0`
+_tu_needs_symlink() {
+  local name="$1"
+  [[ "$_TU_CAN_SYMLINK" == "1" ]] && return 0
+  $LIST || printf 'SKIP: %s (no real symlink support on this platform)\n' "$name"
+  return 1
+}
+
 assert_contains() {
   local name="$1" file="$2" needle="$3"
   if ! grep -Fq -- "$needle" "$file"; then
@@ -115,6 +138,7 @@ test_no_manifest() {
 #   3. Run uninstall.sh and assert the symlink is gone.
 test_symlink_removed() {
   local name="TC-02 symlink-removed"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-symlink-removed"
   local src="$tmp_root/symlink-removed-src"
   local dst="$home/.claude/agents/example.md"
@@ -144,6 +168,7 @@ test_symlink_removed() {
 #   3. Run uninstall.sh and assert the symlink still exists.
 test_symlink_foreign() {
   local name="TC-03 symlink-foreign"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-symlink-foreign"
   local src="$tmp_root/symlink-foreign-src"
   local foreign="$tmp_root/symlink-foreign-target"
@@ -237,6 +262,7 @@ test_copy_sha_mismatch() {
 #   3. Assert the symlink still exists and output contains "would remove".
 test_dry_run() {
   local name="TC-06 dry-run"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-dry-run"
   local src="$tmp_root/dry-run-src"
   local dst="$home/.claude/agents/example.md"
@@ -267,6 +293,7 @@ test_dry_run() {
 #   3. Assert $HOME/.claude/agents/ no longer exists.
 test_empty_dir_removed() {
   local name="TC-07 empty-dir-removed"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-empty-dir-removed"
   local src="$tmp_root/empty-dir-src"
   local dst="$home/.claude/agents/example.md"
@@ -297,6 +324,7 @@ test_empty_dir_removed() {
 #      hook-pm-write-guard.sh is no longer referenced in settings.json.
 test_hooks_called() {
   local name="TC-08 hooks-called"
+  _tu_needs_symlink "$name" || return 0
   if ! command -v jq >/dev/null 2>&1; then
     printf 'SKIP: %s (jq not found)\n' "$name"
     return
@@ -464,6 +492,7 @@ test_unknown_flag() {
 #   3. Assert output contains "unknown mode" and "invalid manifest entry".
 test_manifest_edge_branches() {
   local name="TC-13 manifest-edge-branches"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-manifest-edge-branches"
   local src="$tmp_root/manifest-edge-src"
   local copy_dst="$home/.claude/scripts/already-gone.sh"
@@ -504,6 +533,7 @@ test_manifest_edge_branches() {
 #   3. Rerun uninstall.sh; assert output still contains "not our symlink".
 test_skip_preserves_manifest() {
   local name="TC-14 skip-preserves-manifest"
+  _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-skip-preserves-manifest"
   local src="$tmp_root/skip-preserves-manifest-src"
   local dst="$home/.claude/agents/foreign14.md"
@@ -660,6 +690,7 @@ test_dot_dot_traversal_rejected() {
 #   3. Fix mock hooks to exit 0; rerun; assert manifest is deleted (clean state).
 test_hooks_failure_preserves_manifest() {
   local name="TC-19 hooks-failure-preserves-manifest"
+  _tu_needs_symlink "$name" || return 0
   local fake_home="$tmp_root/home19"
   local mock_repo="$tmp_root/mock-repo19"
   local src19 dst19 manifest19 rc
@@ -738,6 +769,7 @@ test_multi_line_manifest_preserved() {
 #   3. Run uninstall.sh and assert the outside file still exists.
 test_symlink_parent_traversal_rejected() {
   local name="TC-21 symlink-parent-traversal-rejected"
+  _tu_needs_symlink "$name" || return 0
   local fake_home="$tmp_root/home21"
   local outside_dir outside_file dst21 sha21 manifest21
   mkdir -p "$fake_home/.claude/agents" "$fake_home/.claude/.pm-dispatch"
@@ -782,6 +814,7 @@ test_symlink_parent_traversal_rejected() {
 #   3. Run uninstall.sh via a mock repo and assert the outside file is not deleted.
 test_symlink_parent_no_realpath_rejected() {
   local name="TC-22 symlink-parent-no-realpath-rejected"
+  _tu_needs_symlink "$name" || return 0
   local fake_home="$tmp_root/home22"
   local mock_repo="$tmp_root/mock-repo22"
   local outside_dir outside_file dst22 sha22 manifest22
@@ -831,6 +864,7 @@ test_symlink_parent_no_realpath_rejected() {
 #   3. Run uninstall.sh and assert the symlink is removed (managed-root resolved OK).
 test_claude_home_symlink() {
   local name="TC-23 claude-home-symlink"
+  _tu_needs_symlink "$name" || return 0
   local fake_home="$tmp_root/home23"
   local real_claude="$tmp_root/real_claude_home23"
   local src23 manifest23

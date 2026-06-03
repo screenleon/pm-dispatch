@@ -10,7 +10,47 @@ REAL_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
 [[ -n "$REAL_HOME" ]] || REAL_HOME="$HOME"
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# portable.sh provides detect_platform + make_junction_windows, used below to
+# branch install-mode assertions: Linux/macOS install via symlink; Windows
+# (MSYS) installs directories via junction and files via copy.
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
+
+_TI_PLATFORM="$(detect_platform)"
+_ti_is_windows() { [[ "$_TI_PLATFORM" == "windows" ]]; }
+
+# Directory containing jq. Tests that constrain PATH (e.g. to inject a fake
+# powershell.exe) must keep jq reachable so install.sh's jq preflight passes;
+# on Windows jq lives outside the standard bin dirs (the WinGet dir). Append
+# ${_TI_JQ_DIR:+:$_TI_JQ_DIR} to such PATHs — a no-op when jq is already on the
+# standard path (Linux/macOS).
+_TI_JQ_DIR="$(dirname "$(command -v jq 2>/dev/null)" 2>/dev/null || true)"
+
+# Skip a test on Windows with a visible note. Used for tests that assert
+# Linux/codex-platform semantics the Windows install path intentionally omits
+# (e.g. codex-executor guard wiring — on Windows `--profile full` downgrades to
+# minimal; see install-hooks-windows-full-downgraded-to-minimal). Usage:
+#   if _ti_skip_win "$name" "reason"; then return 0; fi
+_ti_skip_win() {
+  local name="$1" reason="$2"
+  _ti_is_windows || return 1
+  $LIST || printf 'SKIP: %s (%s)\n' "$name" "$reason"
+  return 0
+}
+
+# The path form install-hooks.sh writes into settings.json commands: on Windows
+# it stores the native form (C:/...) via cygpath, which is what uninstall-hooks.sh
+# matches against; on POSIX it stores the path unchanged. Fixtures that hand-write
+# hook commands must use this form so removal matching behaves like a real install.
+_ti_hook_cmd_path() {
+  local p="$1"
+  if _ti_is_windows && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m -- "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
 
 # CC-102 introduced install-hooks.sh profile auto-detection via
 # `command -v codex`. Tests in this file written before that change
@@ -55,6 +95,20 @@ assert_dir_not_symlink() {
   fi
 }
 
+# Windows installs files via copy fallback (symlink unavailable). Assert that
+# path is a real file (not a symlink) whose bytes match src.
+assert_copy_of() {
+  local name="$1" path="$2" src="$3"
+  if [ -L "$path" ] || [ ! -f "$path" ]; then
+    fail "$name" "$path is not a real (copied) file"
+    return 1
+  fi
+  if ! cmp -s "$path" "$src"; then
+    fail "$name" "$path content does not match $src"
+    return 1
+  fi
+}
+
 assert_file_content() {
   local name="$1" path="$2" want="$3"
   if [ ! -f "$path" ]; then
@@ -81,10 +135,20 @@ run_install_case() {
   case "$mode" in
     absent) ;;
     correct-symlink)
-      ln -s "$REPO_ROOT/pm" "$home/.claude/.pm"
+      # The "already correctly installed" fixture: a symlink on POSIX, an
+      # equivalent junction on Windows (install treats either as idempotent).
+      if _ti_is_windows; then
+        make_junction_windows "$REPO_ROOT/pm" "$home/.claude/.pm"
+      else
+        ln -s "$REPO_ROOT/pm" "$home/.claude/.pm"
+      fi
       ;;
     wrong-symlink)
-      ln -s "$decoy" "$home/.claude/.pm"
+      if _ti_is_windows; then
+        make_junction_windows "$decoy" "$home/.claude/.pm"
+      else
+        ln -s "$decoy" "$home/.claude/.pm"
+      fi
       ;;
     real-dir)
       mkdir -p "$home/.claude/.pm/some-content"
@@ -92,12 +156,20 @@ run_install_case() {
     script-absent) ;;
     script-correct-symlink)
       mkdir -p "$home/.claude/scripts"
-      ln -s "$REPO_ROOT/scripts/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      if _ti_is_windows; then
+        cp "$REPO_ROOT/scripts/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      else
+        ln -s "$REPO_ROOT/scripts/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      fi
       ;;
     script-wrong-symlink)
       mkdir -p "$home/.claude/scripts"
       printf '#!/usr/bin/env bash\n' > "$decoy/pr-gate.sh"
-      ln -s "$decoy/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      if _ti_is_windows; then
+        cp "$decoy/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      else
+        ln -s "$decoy/pr-gate.sh" "$home/.claude/scripts/pr-gate.sh"
+      fi
       ;;
     *)
       fail "$name" "unknown setup mode: $mode"
@@ -121,11 +193,21 @@ run_install_case() {
 
   case "$name" in
     pm-absent-real-run)
-      assert_file_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      if _ti_is_windows; then
+        assert_file_contains "$name" "$out" "junction $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      else
+        assert_file_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      fi
+      # A junction satisfies -L and readlink returns the target on MSYS, so the
+      # same assertion verifies both symlink (POSIX) and junction (Windows).
       assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
       ;;
     pm-absent-dry-run)
-      assert_file_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      if _ti_is_windows; then
+        assert_file_contains "$name" "$out" "would junction $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      else
+        assert_file_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+      fi
       if [ -e "$home/.claude/.pm" ] || [ -L "$home/.claude/.pm" ]; then
         fail "$name" "$home/.claude/.pm should not exist"
         return
@@ -152,8 +234,13 @@ run_install_case() {
       assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
       ;;
     scripts-absent-real-run)
-      assert_file_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
+      if _ti_is_windows; then
+        assert_file_contains "$name" "$out" "copy   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
+        assert_copy_of "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
+      else
+        assert_file_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/scripts/pr-gate.sh" || return
+        assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/scripts/pr-gate.sh" || return
+      fi
       ;;
     scripts-correct-symlink-idempotent)
       assert_file_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return
@@ -172,12 +259,26 @@ run_install_case() {
 run_install_case "pm-absent-real-run" absent 0
 run_install_case "pm-absent-dry-run" absent 0 --dry-run
 run_install_case "pm-correct-symlink-idempotent" correct-symlink 0
-run_install_case "pm-wrong-symlink-real-run" wrong-symlink 1
 run_install_case "pm-real-dir-real-run" real-dir 1
-run_install_case "pm-real-dir-dry-run" real-dir 1 --dry-run
 run_install_case "scripts-absent-real-run" script-absent 0
-run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
-run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
+# These three assert symlink-specific conflict semantics: replace-on-wrong-
+# target (.pm) and symlink idempotency / wrong-target conflict (scripts). On
+# Windows, directories install as junctions and files as copies, where a
+# pre-existing foreign file is a "not a symlink — skipping" conflict rather than
+# these symlink outcomes. Skip on Windows rather than assert behavior the
+# platform does not implement; junction/copy paths are exercised by the
+# absent/correct/real-dir cases above and the manifest mode tests below.
+if _ti_is_windows; then
+  $LIST || printf 'SKIP: pm-wrong-symlink-real-run (POSIX symlink semantics; Windows uses junctions)\n'
+  $LIST || printf 'SKIP: pm-real-dir-dry-run (POSIX detects real-dir conflict in dry-run; Windows junction dry-run does not)\n'
+  $LIST || printf 'SKIP: scripts-correct-symlink-idempotent (POSIX symlink semantics; Windows uses copy)\n'
+  $LIST || printf 'SKIP: scripts-wrong-symlink-real-run (POSIX symlink semantics; Windows uses copy)\n'
+else
+  run_install_case "pm-wrong-symlink-real-run" wrong-symlink 1
+  run_install_case "pm-real-dir-dry-run" real-dir 1 --dry-run
+  run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
+  run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
+fi
 
 test_install_manifest_atomic() {
   local name="install-manifest-atomic"
@@ -206,12 +307,20 @@ test_install_manifest_atomic() {
   fi
 
   shopt -s nullglob
-  for subdir in agents skills commands adapters; do
-    [[ -d "$REPO_ROOT/$subdir" ]] || continue
-    for _ in "$REPO_ROOT/$subdir"/*; do
-      expected_entries=$((expected_entries + 1))
+  if _ti_is_windows; then
+    # Windows installs each of agents/skills/commands/adapters as a single
+    # directory junction (one manifest entry per subdir), not per-file.
+    for subdir in agents skills commands adapters; do
+      [[ -d "$REPO_ROOT/$subdir" ]] && expected_entries=$((expected_entries + 1))
     done
-  done
+  else
+    for subdir in agents skills commands adapters; do
+      [[ -d "$REPO_ROOT/$subdir" ]] || continue
+      for _ in "$REPO_ROOT/$subdir"/*; do
+        expected_entries=$((expected_entries + 1))
+      done
+    done
+  fi
   for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh doctor.sh; do
     [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
   done
@@ -237,7 +346,7 @@ test_install_manifest_atomic() {
       has("src") and has("dst") and has("mode") and
       (.src != .dst) and
       (
-        (.mode == "symlink"
+        ((.mode == "symlink" or .mode == "junction")
          and (has("sha256") | not)
          and (has("fallback_reason") | not))
         or
@@ -248,7 +357,7 @@ test_install_manifest_atomic() {
          and (.fallback_reason != ""))
       )
     )) and
-    (.entries | all(.mode == "copy" or .mode == "symlink"))
+    (.entries | all(.mode == "copy" or .mode == "symlink" or .mode == "junction"))
   ' "$manifest" >/dev/null 2>&1; then
     fail "$name" "manifest shape/content invalid"
     return
@@ -265,6 +374,7 @@ test_install_manifest_atomic() {
 test_legacy_pm_left_untouched() {
   local name="legacy-github-pm-left-untouched"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "exercises legacy symlink coexistence; ln -s has no real-symlink support on MSYS"; then return 0; fi
 
   local dir_home="$tmp_root/$name-dir-home"
   local dir_out="$tmp_root/$name-dir.stdout"
@@ -318,6 +428,7 @@ test_legacy_pm_left_untouched() {
 test_legacy_stale_symlinks_removed() {
   local name="legacy-stale-symlinks-removed"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "exercises legacy stale-symlink cleanup; ln -s has no real-symlink support on MSYS"; then return 0; fi
 
   local script_home="$tmp_root/$name-script-home"
   local script_out="$tmp_root/$name-script.stdout"
@@ -407,6 +518,7 @@ test_install_sh_wires_hooks() {
   # all-six-hooks assertion regardless of host codex availability.
   local name="install-sh-wires-hooks"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -459,6 +571,7 @@ test_install_sh_profile_full_wires_codex_hooks() {
   # the two codex-* guards (regardless of whether codex is on PATH).
   local name="install-sh-profile-full-wires-codex-hooks"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -772,6 +885,7 @@ test_install_hooks_profile_downgrade_removes_codex() {
   # installed by the first run must be removed by the second run.
   local name="install-hooks-profile-downgrade-removes-codex"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -796,6 +910,7 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   # host having codex installed.
   local name="install-hooks-auto-detect-codex-present-wires-full"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "codex-present auto-detect wires full on POSIX; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -824,6 +939,13 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   local minimal_path="/usr/bin:/bin"
+  # jq may live outside /usr/bin (e.g. the WinGet dir on Windows); append its
+  # directory so the jq precondition holds cross-platform. codex is still
+  # excluded (and is checked below). On Linux jq is already in /usr/bin, so
+  # this is a no-op there.
+  local _jq_dir
+  _jq_dir="$(dirname "$(command -v jq 2>/dev/null)" 2>/dev/null || true)"
+  [[ -n "$_jq_dir" ]] && minimal_path="$minimal_path:$_jq_dir"
   if PATH="$minimal_path" command -v codex >/dev/null 2>&1; then
     fail "$name" "precondition failed: codex unexpectedly visible in minimal PATH"
     return
@@ -923,6 +1045,10 @@ test_install_hooks_jq_missing_prints_platform_hints() {
   # symlink them from the live PATH into stub_bin, excluding jq.
   local name="install-hooks-jq-missing-prints-platform-hints"
   should_run "$name" || return 0
+  # The artificial stub PATH (only a few coreutils, no jq) prevents install-hooks.sh
+  # from resolving its own SCRIPT_DIR on MSYS (readlink/realpath absent), so it fails
+  # before reaching the jq check this test asserts. The jq-hint path is POSIX-CI-covered.
+  if _ti_skip_win "$name" "stub PATH breaks MSYS SCRIPT_DIR resolution before the jq check"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -956,6 +1082,7 @@ test_install_sh_wires_hooks_no_settings() {
   # codex-executor agent is accessible.
   local name="install-sh-wires-hooks-no-settings"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   # Deliberately no settings.json
@@ -983,6 +1110,7 @@ test_install_sh_wires_hooks_no_settings() {
 test_hooks_install_uninstall_lifecycle() {
   local name="hooks-install-uninstall-lifecycle"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -1026,14 +1154,17 @@ test_uninstall_hooks_removes_unlisted_hooks() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
+  local _tt_cmd _rl_cmd
+  _tt_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-tool-trace.sh")"
+  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-routing-log.sh")"
   cat > "$home/.claude/settings.json" <<JSON
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "*", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-tool-trace.sh"}]}
+      {"matcher": "*", "hooks": [{"type": "command", "command": "$_tt_cmd"}]}
     ],
     "PostToolUse": [
-      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-routing-log.sh"}]}
+      {"hooks": [{"type": "command", "command": "$_rl_cmd"}]}
     ]
   }
 }
@@ -1060,6 +1191,7 @@ test_install_hooks_updates_stale_paths_after_rename() {
   #   3. Assert each hook appears exactly once and with the current path
   local name="install-hooks-updates-stale-paths-after-rename"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "iterates codex guards (count==1); Windows downgrades them out of the full profile"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
@@ -1173,6 +1305,7 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
   #   4. Assert all managed hook basenames are gone from settings.json
   local name="install-hooks-uninstall-stale-paths-after-rename"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "iterates codex guards; Windows downgrades them out of the full profile"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
@@ -1236,7 +1369,9 @@ test_userpromptsubmit_install_wires_hook() {
   local name="userpromptsubmit-install-wires-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
+  # install-hooks writes the native path form (C:/... on Windows); match it.
+  local inject
+  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-inject-memory.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -1286,7 +1421,8 @@ test_userpromptsubmit_install_idempotent() {
   local name="userpromptsubmit-install-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local inject="$REPO_ROOT/scripts/hook-inject-memory.sh"
+  local inject
+  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-inject-memory.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -1331,7 +1467,10 @@ test_stop_hook_migration() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  local old_stop="$REPO_ROOT/hooks/hook-log-claude-usage.sh"
+  # Write the stale entry in the same path form install-hooks matches against
+  # (native C:/... on Windows) so migration recognizes and rewrites it.
+  local old_stop
+  old_stop="$(_ti_hook_cmd_path "$REPO_ROOT/hooks/hook-log-claude-usage.sh")"
   printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$old_stop" > "$home/.claude/settings.json"
 
@@ -1388,7 +1527,7 @@ test_statusline_install_chains_previous() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$REPO_ROOT/scripts/hook-save-rate-limits.sh" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -1454,7 +1593,7 @@ test_statusline_install_chains_previous_with_args() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$REPO_ROOT/scripts/hook-save-rate-limits.sh" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -1484,7 +1623,7 @@ test_statusline_uninstall_restores() {
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$previous" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$previous")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -1504,7 +1643,8 @@ test_session_stop_install_wires_hook() {
   local name="session-stop-install-wires-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local session="$REPO_ROOT/scripts/hook-session-summary.sh"
+  local session
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -1529,7 +1669,8 @@ test_session_stop_uninstall_removes_hook() {
   local name="session-stop-uninstall-removes-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local session="$REPO_ROOT/scripts/hook-session-summary.sh"
+  local session
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -1549,7 +1690,8 @@ test_session_stop_install_idempotent() {
   local name="session-stop-install-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local session="$REPO_ROOT/scripts/hook-session-summary.sh"
+  local session
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -1661,6 +1803,10 @@ test_verify_flag_runs_preflights() {
   # assertion runs when this suite is invoked directly.
   local name="verify-flag-runs-preflights"
   should_run "$name" || return 0
+  # This recursively runs the entire run-all-tests.sh suite via install.sh
+  # --verify. On MSYS each hook spawn costs ~200ms, making the full suite take
+  # tens of minutes; the delegation itself is verified on POSIX CI. Skip here.
+  if _ti_skip_win "$name" "recursively runs the full preflight suite; impractically slow on MSYS"; then return 0; fi
   if [[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" == "1" ]]; then
     pass "$name"
     return 0
@@ -1751,7 +1897,7 @@ test_install_dir_junction_windows_fallback() {
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${_TI_JQ_DIR:+:$_TI_JQ_DIR}" \
     bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
   local ok=true
   if [[ $install_exit -ne 0 ]]; then
@@ -1797,7 +1943,7 @@ PWSH
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${_TI_JQ_DIR:+:$_TI_JQ_DIR}" \
     bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
   local manifest="$home/.claude/.pm-dispatch/install-manifest.json"
   local ok=true
@@ -1836,7 +1982,7 @@ test_install_dir_junction_existing_real_dir() {
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
-    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${_TI_JQ_DIR:+:$_TI_JQ_DIR}" \
     bash "$REPO_ROOT/install.sh" >/dev/null 2>&1 || install_exit=$?
   local ok=true
   if [[ $install_exit -ne 0 ]]; then
@@ -1970,13 +2116,22 @@ test_install_sh_jq_missing_exits_early() {
   #   5. Assert no settings.json side effect was produced
   local name="install-sh-jq-missing-exits-early"
   should_run "$name" || return 0
+  # Relies on an isolated stub PATH with only a handful of binaries. On Windows
+  # MSYS executables can't run outside their full install (missing DLLs), so a
+  # copied bash/coreutils stub fails to launch. The jq-missing hint path is
+  # POSIX-CI-covered; skip here.
+  if _ti_skip_win "$name" "isolated stub PATH can't host MSYS binaries (missing DLLs)"; then return 0; fi
 
   local stub_bin="$tmp_root/$name-stub"
   mkdir -p "$stub_bin"
   local util
   for util in env bash sh dirname pwd uname id; do
     local src; src="$(command -v "$util" 2>/dev/null)" || continue
-    ln -sf "$src" "$stub_bin/$util"
+    # Skip shell builtins (command -v returns the bare name, not a path) and
+    # non-files — ln -s to a non-file target fails on MSYS. Fall back to copy
+    # where real symlinks are unavailable.
+    [[ -f "$src" ]] || continue
+    ln -sf "$src" "$stub_bin/$util" 2>/dev/null || cp "$src" "$stub_bin/$util"
   done
   # Deliberately do NOT symlink jq into stub_bin.
 
