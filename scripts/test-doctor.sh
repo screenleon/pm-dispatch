@@ -223,7 +223,7 @@ case_doctor_all_ok_exits_0() {
   #
   # Steps:
   #   1. Write full settings.json (all hooks), memory dir, and manifest.
-  #   2. Run doctor --no-color --repo <repo> with claude+codex stubs in PATH.
+  #   2. Run doctor --no-color --repo <repo> with claude+codex+pmctl stubs in PATH.
   #   3. Assert exit 0, output contains "0 FAIL" and "0 WARN".
   local name="doctor-all-ok-exits-0"
   should_run "$name" || return 0
@@ -231,7 +231,7 @@ case_doctor_all_ok_exits_0() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex)"
+  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex pmctl)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then

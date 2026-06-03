@@ -44,14 +44,23 @@ _UNINSTALL_PLATFORM="$(detect_platform)"
 
 MANIFEST="$CLAUDE_HOME/.pm-dispatch/install-manifest.json"
 
-if [[ ! -f "$MANIFEST" ]]; then
-  echo "uninstall: no manifest found at $MANIFEST — nothing to do"
-  exit 0
-fi
-
 removed=0
 skipped=0
 safety_skipped=0
+
+resolve_symlink_target() {
+  local dst="$1"
+  local link_target="$2"
+
+  case "$link_target" in
+    /*|[A-Za-z]:/*)
+      _portable_normalize_path "$link_target"
+      ;;
+    *)
+      _portable_normalize_path "$(dirname "$dst")/$link_target"
+      ;;
+  esac
+}
 
 is_manifest_symlink_target() {
   local src="$1"
@@ -63,16 +72,51 @@ is_manifest_symlink_target() {
     return 0
   fi
 
-  case "$link_target" in
-    /*|[A-Za-z]:/*)
-      normalized_target="$(_portable_normalize_path "$link_target")"
-      ;;
-    *)
-      normalized_target="$(_portable_normalize_path "$(dirname "$dst")/$link_target")"
-      ;;
-  esac
+  normalized_target="$(resolve_symlink_target "$dst" "$link_target")"
 
   [[ "$normalized_target" == "$src" ]]
+}
+
+uninstall_pmctl_cli() {
+  local src="$REPO_ROOT/cli/pmctl"
+  local bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
+  local dest="$bin_dir/pmctl"
+  local link_target
+  local normalized_target
+
+  echo "==> pmctl CLI"
+
+  if [[ "$_UNINSTALL_PLATFORM" == "windows" ]]; then
+    echo "  skip $dest (not installed on Windows)"
+    return 0
+  fi
+
+  if [[ ! -L "$dest" ]]; then
+    if [[ -e "$dest" ]]; then
+      skipped=$((skipped + 1))
+      echo "  skip $dest (not a symlink — skipping)"
+    else
+      skipped=$((skipped + 1))
+      echo "  skip $dest (already gone)"
+    fi
+    return 0
+  fi
+
+  link_target="$(readlink "$dest")"
+  normalized_target="$(resolve_symlink_target "$dest" "$link_target")"
+  if [[ "$normalized_target" != "$src" ]]; then
+    skipped=$((skipped + 1))
+    echo "  skip $dest (not our symlink — skipping)"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  would remove $dest"
+  else
+    rm "$dest"
+    echo "  remove $dest"
+  fi
+  removed=$((removed + 1))
 }
 
 remove_item() {
@@ -164,6 +208,14 @@ echo "  repo:     $REPO_ROOT"
 echo "  manifest: $MANIFEST"
 if [[ "$DRY_RUN" -eq 1 ]]; then echo "  mode:     DRY RUN"; fi
 echo
+
+uninstall_pmctl_cli
+echo
+
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "uninstall: no manifest found at $MANIFEST — no managed-root manifest entries to remove"
+  exit 0
+fi
 
 echo "==> manifest entries"
 parsed_any=0

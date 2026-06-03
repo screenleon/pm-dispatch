@@ -891,6 +891,70 @@ test_claude_home_symlink() {
   fi
 }
 
+test_pmctl_symlink_removed() {
+  local name="TC-24 pmctl-symlink-removed"
+  _tu_needs_symlink "$name" || return 0
+  local home="$tmp_root/home-pmctl-removed"
+  local dest="$home/.local/bin/pmctl"
+  local out="$tmp_root/pmctl-removed.out"
+  mkdir -p "$(dirname "$dest")"
+  ln -s "$REPO_ROOT/cli/pmctl" "$dest"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    fail "$name" "$dest should have been removed"
+    return
+  fi
+  assert_contains "$name" "$out" "remove $dest" || return
+  pass "$name"
+}
+
+test_pmctl_foreign_symlink_preserved() {
+  local name="TC-25 pmctl-foreign-symlink-preserved"
+  _tu_needs_symlink "$name" || return 0
+  local home="$tmp_root/home-pmctl-foreign"
+  local foreign="$tmp_root/foreign-pmctl"
+  local dest="$home/.local/bin/pmctl"
+  local out="$tmp_root/pmctl-foreign.out"
+  mkdir -p "$(dirname "$dest")"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$foreign"
+  ln -s "$foreign" "$dest"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -L "$dest" ]]; then
+    fail "$name" "$dest should not have been removed"
+    return
+  fi
+  assert_contains "$name" "$out" "not our symlink" || return
+  pass "$name"
+}
+
+test_pmctl_real_file_preserved() {
+  local name="TC-26 pmctl-real-file-preserved"
+  local home="$tmp_root/home-pmctl-real-file"
+  local dest="$home/.local/bin/pmctl"
+  local out="$tmp_root/pmctl-real-file.out"
+  mkdir -p "$(dirname "$dest")"
+  printf 'foreign pmctl\n' > "$dest"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero"
+    return
+  fi
+  if [[ ! -f "$dest" ]]; then
+    fail "$name" "$dest should not have been removed"
+    return
+  fi
+  assert_contains "$name" "$out" "not a symlink" || return
+  pass "$name"
+}
+
 run_case "TC-01 no-manifest" test_no_manifest
 run_case "TC-02 symlink-removed" test_symlink_removed
 run_case "TC-03 symlink-foreign" test_symlink_foreign
@@ -914,5 +978,8 @@ run_case "TC-20 multi-line-manifest-preserved" test_multi_line_manifest_preserve
 run_case "TC-21 symlink-parent-traversal-rejected" test_symlink_parent_traversal_rejected
 run_case "TC-22 symlink-parent-no-realpath-rejected" test_symlink_parent_no_realpath_rejected
 run_case "TC-23 claude-home-symlink" test_claude_home_symlink
+run_case "TC-24 pmctl-symlink-removed" test_pmctl_symlink_removed
+run_case "TC-25 pmctl-foreign-symlink-preserved" test_pmctl_foreign_symlink_preserved
+run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
 
 th_summary

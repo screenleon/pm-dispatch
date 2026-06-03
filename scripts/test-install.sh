@@ -123,6 +123,13 @@ assert_file_content() {
   fi
 }
 
+link_existing_cmd() {
+  local bin="$1" cmd="$2" real
+  real="$(command -v "$cmd" 2>/dev/null || true)"
+  [[ -n "$real" ]] || return 0
+  ln -sf "$real" "$bin/$cmd"
+}
+
 run_install_case() {
   local name="$1" mode="$2" want_code="$3"
   should_run "$name" || return 0
@@ -279,6 +286,135 @@ else
   run_install_case "scripts-correct-symlink-idempotent" script-correct-symlink 0
   run_install_case "scripts-wrong-symlink-real-run" script-wrong-symlink 0
 fi
+
+test_pmctl_symlink_install_idempotent() {
+  local name="pmctl-symlink-install-idempotent"
+  should_run "$name" || return 0
+  if _ti_skip_win "$name" "Windows uses manual PATH for pmctl, never copy/symlink"; then return 0; fi
+
+  local home="$tmp_root/$name"
+  local out1="$tmp_root/$name-1.out"
+  local out2="$tmp_root/$name-2.out"
+  local err1="$tmp_root/$name-1.err"
+  local err2="$tmp_root/$name-2.err"
+  local dest="$home/.local/bin/pmctl"
+  mkdir -p "$home/.claude"
+
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$out1" 2>"$err1"
+  local code1=$?
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$out2" 2>"$err2"
+  local code2=$?
+  set -e
+
+  if [[ "$code1" -ne 0 || "$code2" -ne 0 ]]; then
+    fail "$name" "install exits were $code1 and $code2, expected 0"
+    return
+  fi
+  assert_symlink_target "$name" "$dest" "$REPO_ROOT/cli/pmctl" || return
+  assert_file_contains "$name" "$out1" "link   $dest -> $REPO_ROOT/cli/pmctl" || return
+  assert_file_contains "$name" "$out1" "export PATH=\"$home/.local/bin:\$PATH\"" || return
+  assert_file_contains "$name" "$out2" "ok    $dest" || return
+  pass "$name"
+}
+
+test_pmctl_install_preserves_foreign_file() {
+  local name="pmctl-install-preserves-foreign-file"
+  should_run "$name" || return 0
+  if _ti_skip_win "$name" "Windows uses manual PATH for pmctl, never copy/symlink"; then return 0; fi
+
+  local home="$tmp_root/$name"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
+  local dest="$home/.local/bin/pmctl"
+  mkdir -p "$home/.claude" "$(dirname "$dest")"
+  printf 'foreign pmctl\n' > "$dest"
+
+  set +e
+  HOME="$home" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$out" 2>"$err"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_content "$name" "$dest" "foreign pmctl" || return
+  assert_file_contains "$name" "$err" "CONFLICT $dest exists and is not our symlink" || return
+  pass "$name"
+}
+
+test_pmctl_windows_manual_path_no_copy() {
+  local name="pmctl-windows-manual-path-no-copy"
+  should_run "$name" || return 0
+
+  local home="$tmp_root/$name"
+  local out="$tmp_root/$name.out"
+  local err="$tmp_root/$name.err"
+  local dest="$home/.local/bin/pmctl"
+  mkdir -p "$home/.claude"
+
+  set +e
+  HOME="$home" \
+    PM_DISPATCH_PLATFORM=windows \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >"$out" 2>"$err"
+  local code=$?
+  set -e
+
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$out" "add $REPO_ROOT/cli to PATH manually" || return
+  assert_file_contains "$name" "$out" "a copied pmctl cannot resolve repo libs" || return
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    fail "$name" "$dest should not be created on Windows"
+    return
+  fi
+  pass "$name"
+}
+
+test_doctor_pmctl_missing_reports_remediation() {
+  local name="doctor-pmctl-missing-reports-remediation"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+
+  local home="$tmp_root/$name"
+  local bin="$tmp_root/$name-bin"
+  local out status=0 bash_real
+  mkdir -p "$home/.claude" "$bin"
+  printf '{}\n' > "$home/.claude/settings.json"
+  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr basename; do
+    link_existing_cmd "$bin" "$cmd"
+  done
+  bash_real="$(command -v bash)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$bin" "$bash_real" "$REPO_ROOT/scripts/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"[WARN] pmctl not found on PATH"* && "$out" == *"bash '$REPO_ROOT/install.sh'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+test_pmctl_symlink_install_idempotent
+test_pmctl_install_preserves_foreign_file
+test_pmctl_windows_manual_path_no_copy
+test_doctor_pmctl_missing_reports_remediation
 
 test_install_manifest_atomic() {
   local name="install-manifest-atomic"

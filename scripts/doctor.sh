@@ -172,6 +172,21 @@ check_codex() {
   fi
 }
 
+pmctl_fix() {
+  case "$(detect_platform)" in
+    windows) printf "Add '%s/cli' to PATH; do not copy pmctl because copied files cannot resolve repo libs" "$REPO_ROOT" ;;
+    *) printf "bash '%s/install.sh'  (then add '%s' to PATH if prompted)" "$REPO_ROOT" "${PMCTL_BIN_DIR:-$HOME/.local/bin}" ;;
+  esac
+}
+
+check_pmctl() {
+  if command -v pmctl >/dev/null 2>&1; then
+    emit_check pmctl ok "pmctl available"
+  else
+    emit_check pmctl warn "pmctl not found on PATH" "$(pmctl_fix)"
+  fi
+}
+
 check_settings_file() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   _SETTINGS_FILE_FAILED=0
@@ -533,6 +548,7 @@ main() {
   check_jq
   check_claude
   check_codex
+  check_pmctl
   check_settings_file
   check_hooks
   check_dispatch_allowlist
