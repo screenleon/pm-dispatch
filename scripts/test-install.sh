@@ -940,12 +940,10 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
 
   local minimal_path="/usr/bin:/bin"
   # jq may live outside /usr/bin (e.g. the WinGet dir on Windows); append its
-  # directory so the jq precondition holds cross-platform. codex is still
-  # excluded (and is checked below). On Linux jq is already in /usr/bin, so
-  # this is a no-op there.
-  local _jq_dir
-  _jq_dir="$(dirname "$(command -v jq 2>/dev/null)" 2>/dev/null || true)"
-  [[ -n "$_jq_dir" ]] && minimal_path="$minimal_path:$_jq_dir"
+  # directory (computed once as $_TI_JQ_DIR) so the jq precondition holds
+  # cross-platform. codex is still excluded (and is checked below). On Linux jq
+  # is already in /usr/bin, so this is a no-op there.
+  [[ -n "$_TI_JQ_DIR" ]] && minimal_path="$minimal_path:$_TI_JQ_DIR"
   if PATH="$minimal_path" command -v codex >/dev/null 2>&1; then
     fail "$name" "precondition failed: codex unexpectedly visible in minimal PATH"
     return

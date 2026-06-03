@@ -487,6 +487,20 @@ run_case "cx: dispatch (absolute) → allow" 0 "$CXHOOK" \
 run_case "cx: dispatch (tilde) → allow" 0 "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp -- brief\"}}"
 
+# CC-308: a dispatch path containing a space (e.g. the Windows user dir
+# "C:\\Users\\Lien Chen\\...") must NOT be split by the whitespace tokenizer.
+# The guard matches the dispatch path as a literal prefix before splitting the
+# remainder, so the verb stays intact and the call is allowed.
+run_case_env "cx: dispatch path with space → allow" 0 \
+  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /tmp -- brief\"}}"
+
+# The literal-prefix match must not bypass arg validation: a --cd outside the
+# read roots is still denied even when the dispatch path contains a space.
+run_case_env "cx: dispatch path with space + out-of-root --cd → deny" 2 \
+  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /etc -- brief\"}}"
+
 run_case "cx: dispatch_brief_file_allowed → allow" 0 "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_tilde --cd /tmp/x --brief-file /tmp/brief.md --skip-git-check\"}}"
 

@@ -105,11 +105,19 @@ hk_validate_path() {
   # every caller's /tmp/brief-*.md contract apply unchanged. No-op on
   # linux/macos: the platform guard is never entered, so POSIX behavior is
   # byte-for-byte identical.
-  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]] \
-     && command -v cygpath >/dev/null 2>&1; then
+  if [[ "$(detect_platform)" == "windows" && "$path" == [A-Za-z]:[/\\]* ]]; then
+    # The path is a Windows drive-letter absolute path that must be normalized
+    # before the POSIX checks below apply. Fail closed (with a message that names
+    # the real cause) if normalization is impossible — falling through would
+    # mis-report a valid-but-unnormalized path as "must be absolute".
+    if ! command -v cygpath >/dev/null 2>&1; then
+      hk_deny "cannot normalize Windows path — cygpath unavailable: $path" "$path"
+    fi
     local _posix
     if _posix="$(cygpath -u -- "$path" 2>/dev/null)" && [[ -n "$_posix" ]]; then
       path="$_posix"
+    else
+      hk_deny "failed to normalize Windows path to POSIX form: $path" "$path"
     fi
   fi
 
