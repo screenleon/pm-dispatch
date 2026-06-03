@@ -223,7 +223,8 @@ case_doctor_all_ok_exits_0() {
   #
   # Steps:
   #   1. Write full settings.json (all hooks), memory dir, and manifest.
-  #   2. Run doctor --no-color --repo <repo> with claude+codex+pmctl stubs in PATH.
+  #   2. Run doctor --no-color --repo <repo> with claude+codex stubs and a
+  #      pmctl symlink resolving to this checkout's cli/pmctl in PATH.
   #   3. Assert exit 0, output contains "0 FAIL" and "0 WARN".
   local name="doctor-all-ok-exits-0"
   should_run "$name" || return 0
@@ -231,10 +232,42 @@ case_doctor_all_ok_exits_0() {
   write_full_settings "$home"
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
-  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex pmctl)"
+  path="$(make_stub_bin "$tmp_root/bin-all-ok" claude codex)"
+  # pmctl must resolve to THIS checkout (check_pmctl rejects a foreign pmctl), so
+  # install it as a symlink to cli/pmctl rather than a generic stub.
+  ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-all-ok/pmctl"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_pmctl_foreign_warns() {
+  # Verifies that a foreign pmctl on PATH (one that does NOT resolve to this
+  # checkout's cli/pmctl) is reported as a WARN with remediation, even when the
+  # rest of the environment is healthy — closing the silent-misconfiguration
+  # gap where an unrelated pmctl shadows the installed CLI.
+  #
+  # Steps:
+  #   1. Write full settings.json, memory dir, and manifest (otherwise healthy).
+  #   2. Stub claude+codex+pmctl, where pmctl is a plain (foreign) stub, NOT a
+  #      symlink to this checkout, and place it FIRST on PATH so it wins.
+  #   3. Run doctor --no-color --repo <repo>.
+  #   4. Assert exit 0 (warn is non-fatal) and output flags pmctl as not
+  #      belonging to this checkout (so the run is not "0 WARN").
+  local name="doctor-pmctl-foreign-warns"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-pmctl-foreign" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-pmctl-foreign" claude codex pmctl)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"does not belong to this checkout"* && "$out" != *"0 WARN"* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out"
@@ -1333,6 +1366,7 @@ case_doctor_stale_hook_sibling_prefix_warns() {
 }
 
 case_doctor_all_ok_exits_0
+case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1
 case_doctor_json_output_valid

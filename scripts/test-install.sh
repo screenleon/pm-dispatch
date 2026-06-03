@@ -288,6 +288,13 @@ else
 fi
 
 test_pmctl_symlink_install_idempotent() {
+  # Verifies install symlinks cli/pmctl into ~/.local/bin and is idempotent.
+  #
+  # Steps:
+  #   1. Run install.sh twice with a sandbox HOME.
+  #   2. Assert both runs exit 0.
+  #   3. Assert ~/.local/bin/pmctl -> <repo>/cli/pmctl, first run prints "link"
+  #      + the PATH-remediation note, second run prints "ok" (no clobber).
   local name="pmctl-symlink-install-idempotent"
   should_run "$name" || return 0
   if _ti_skip_win "$name" "Windows uses manual PATH for pmctl, never copy/symlink"; then return 0; fi
@@ -325,6 +332,13 @@ test_pmctl_symlink_install_idempotent() {
 }
 
 test_pmctl_install_preserves_foreign_file() {
+  # Verifies install never clobbers a pre-existing foreign ~/.local/bin/pmctl.
+  #
+  # Steps:
+  #   1. Pre-create a plain (non-ours) ~/.local/bin/pmctl file.
+  #   2. Run install.sh with a sandbox HOME.
+  #   3. Assert the foreign file is preserved (not overwritten) and a conflict
+  #      is reported (install remains non-fatal).
   local name="pmctl-install-preserves-foreign-file"
   should_run "$name" || return 0
   if _ti_skip_win "$name" "Windows uses manual PATH for pmctl, never copy/symlink"; then return 0; fi
@@ -354,6 +368,13 @@ test_pmctl_install_preserves_foreign_file() {
 }
 
 test_pmctl_windows_manual_path_no_copy() {
+  # Verifies that on Windows install prints manual-PATH guidance and does NOT
+  # copy or symlink pmctl (a copied pmctl cannot resolve its repo libs).
+  #
+  # Steps:
+  #   1. Run install.sh with PM_DISPATCH_PLATFORM=windows and a sandbox HOME.
+  #   2. Assert exit 0 and the "add <repo>/cli to PATH manually" + no-copy note.
+  #   3. Assert ~/.local/bin/pmctl is NOT created.
   local name="pmctl-windows-manual-path-no-copy"
   should_run "$name" || return 0
 
@@ -386,6 +407,13 @@ test_pmctl_windows_manual_path_no_copy() {
 }
 
 test_doctor_pmctl_missing_reports_remediation() {
+  # Verifies doctor.sh reports a WARN with remediation when pmctl is absent.
+  #
+  # Steps:
+  #   1. Build a PATH with only basic utilities (no pmctl).
+  #   2. Run doctor.sh --repo <repo>.
+  #   3. Assert output contains "[WARN] pmctl not found on PATH" and the
+  #      install.sh remediation hint.
   local name="doctor-pmctl-missing-reports-remediation"
   should_run "$name" || return 0
   if ! command -v jq >/dev/null 2>&1; then

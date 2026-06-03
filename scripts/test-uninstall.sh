@@ -892,6 +892,12 @@ test_claude_home_symlink() {
 }
 
 test_pmctl_symlink_removed() {
+  # Verifies uninstall removes ~/.local/bin/pmctl when it is our symlink.
+  #
+  # Steps:
+  #   1. Create ~/.local/bin/pmctl -> <repo>/cli/pmctl.
+  #   2. Run uninstall.
+  #   3. Assert the symlink is gone and output contains "remove <dest>".
   local name="TC-24 pmctl-symlink-removed"
   _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-pmctl-removed"
@@ -913,6 +919,13 @@ test_pmctl_symlink_removed() {
 }
 
 test_pmctl_foreign_symlink_preserved() {
+  # Verifies uninstall preserves a ~/.local/bin/pmctl symlink that points
+  # somewhere other than this checkout's cli/pmctl (ownership check).
+  #
+  # Steps:
+  #   1. Create ~/.local/bin/pmctl -> an unrelated (foreign) target.
+  #   2. Run uninstall.
+  #   3. Assert the symlink survives and output contains "not our symlink".
   local name="TC-25 pmctl-foreign-symlink-preserved"
   _tu_needs_symlink "$name" || return 0
   local home="$tmp_root/home-pmctl-foreign"
@@ -936,6 +949,13 @@ test_pmctl_foreign_symlink_preserved() {
 }
 
 test_pmctl_real_file_preserved() {
+  # Verifies uninstall preserves a ~/.local/bin/pmctl that is a real file
+  # (not a symlink) — only our symlink is ever removed.
+  #
+  # Steps:
+  #   1. Create ~/.local/bin/pmctl as a plain file.
+  #   2. Run uninstall.
+  #   3. Assert the file survives and output contains "not a symlink".
   local name="TC-26 pmctl-real-file-preserved"
   local home="$tmp_root/home-pmctl-real-file"
   local dest="$home/.local/bin/pmctl"
