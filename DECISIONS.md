@@ -7,6 +7,33 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-03: v0.4.0-state-first-foundation-commit
+
+Relates: CC-211, CC-215, CC-230, CC-306
+
+### Context
+
+v0.3.0 shipped the spine (schema + pmctl runtime + thin adapters) but is only partially state-first. Of the 5 entities only `Run` is written, and it is written **by the adapters** (`sw_append_dispatch_run`, `adapters/codex/dispatch.sh:369`) rather than by pmctl; `events_append`/`task_upsert` exist in `scripts/lib/state-writer.sh` but have **no production caller**; `routing_log.md` is still machine-written by `hook-routing-log.sh` as a parallel markdown surface. The single-writer rule (`docs/architecture/v0.3.0-synthesis.md` Conformance §B) is unmet. Two independent brainstorms (Claude main-thread + a read-only codex pass) both recommended completing state-first next. Full scoping: `docs/architecture/v0.4.0-state-first-foundation.md`.
+
+### Decision
+
+**v0.4.0 headline = the state-first single-writer foundation** (CC-211 committed). pmctl becomes the sole machine-state writer; the dispatch path emits Run + Event through pmctl; `routing_log.md` machine-writes are **deprecated** in favour of `pmctl trace`. First state consumer = **`pmctl trace`** — cheap observability over `events.jsonl` to prove the stream — with the CC-235 task-lifecycle gate next. De-risked by a timeboxed **thin vertical slice** (one `pmctl dispatch run` writes Run+Event via pmctl, `routing_log.md` no longer machine-written); if it cannot land cleanly without broad rewrites, fall back to incremental DX. MCP (CC-216) and the capability layer (CC-234/237) are explicitly deferred until the foundation lands. The maintainer accepts the low short-term user-visible payoff — the current user base is small, so substrate correctness outranks shipping features.
+
+### Alternatives considered
+
+- **B — incremental DX first, defer state-first**: faster visible wins, but leaves the single-writer drift festering and keeps memory/task-gate/context-enricher blocked. Rejected — with few users, substrate correctness outranks visible features.
+- **First consumer = CC-235 task gate**: more product-meaningful (codex's lean), but heavier and surfaces substrate problems late/expensively. Deferred to second.
+- **routing_log render-on-demand projection**: backward-compatible, but keeps a second representation to maintain and risks drift vs. the event stream. Rejected for the cleaner single-source end state.
+
+### Constraints introduced
+
+- Adapters and hooks must NOT write machine state directly; pmctl is the only writer. CC-306 layer-enforcer to be extended to guard re-introduction.
+- Run+Event writes are append-only; the Event is written after the Run with a `run_id` back-reference, so a partial pair (Run without terminal Event) is detectable/recoverable.
+- `routing_log.md` deprecation needs a migration / back-compat path (precedent: `scripts/migrate-routing-log.sh`).
+- **Foundation scope is the full substrate, not just writes** (2026-06-03 follow-up): pmctl validates appends against `core/schema/*` (D-validate); owns the **read/query** path — by id/task/kind/time-window (D6); implements **rotation** to gz archives per `layout.yaml` so the append-only stores stay bounded (D7); and **canonical write failures surface** (non-zero/visible) instead of silent best-effort (D8). Sidecar telemetry (`rate-limits.json`, `usage-tracker.jsonl`) classification — state vs exempt — is deferred (D5).
+
+---
+
 ## 2026-05-30: pmctl-spine-scope-and-host-independent-executor
 
 ### Context

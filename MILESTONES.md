@@ -1,10 +1,58 @@
 # Milestones
 
-<!-- Scope change policy:
+<!-- Ordering: newest version section always FIRST (descending). New milestone → add at the top, above the previous one.
+     Scope change policy:
      - Blocking bug discovered mid-milestone → add to current milestone, fix immediately
      - Non-blocking bug → BACKLOG new ticket, evaluate in next milestone
      - New feature → default defer; may add if matches theme AND ≤1 PR scope
 -->
+
+---
+
+## v0.4.0 — state-first foundation（規劃中）
+
+**主題**：把 v0.3.0 的 spine 補成**真正 state-first**——`pmctl` 成為機器狀態的**唯一 writer**，dispatch 路徑經 `pmctl` 寫出 Run + Event，`routing_log.md` 機器寫入廢棄改用 `pmctl trace`。決策見 `DECISIONS.md` 2026-06-03（CC-211 committed）；完整 scoping 見 [`docs/architecture/v0.4.0-state-first-foundation.md`](docs/architecture/v0.4.0-state-first-foundation.md)。
+
+> **Scope 取捨（2026-06-03 拍板）**：維護者接受 v0.4.0 短期**無使用者可見賣點**——目前使用者少，基建正確性優先於推新功能。以 timeboxed thin vertical slice 降風險；撐不起（需跨 adapters/hooks/gate 大改）才退回增量。MCP（CC-216）與能力層（CC-234/237）延到地基落地之後。
+
+### Phase 1 — single-writer 地基（先做）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ⏳ |
+| CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | 🔵 active |
+| CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | 🔵 active |
+| CC-311 | state store VERSION gating + migration（不得靜默降級） | 🔵 active |
+| CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | 🔵 active |
+| CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | 🔵 active |
+| CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | 🔵 active |
+| CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | 🔵 active |
+| CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | 🔵 active |
+| CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」（由 CC-309 反轉測試實現） | 🟡 → v0.4.0 |
+| — | builds on **CC-230 ✅ #159**（state store + 佈局已在；本階段完成其本意） | — |
+
+### Phase 2 — pmctl state ops + 讀取/查詢
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
+| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | 🔵 active |
+| CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
+
+### Phase 3 — 第一個 state consumer
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | 🔵 active |
+| CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
+
+### 地基之後 / 延後（不在地基範圍）
+
+- CC-234（memory v2 event-derived）、CC-237（context-enricher baseline）— 能力層，建在 event stream 上，地基落地後才做。
+- CC-216 — `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；MCP 必須包**穩定的** pmctl，故在 state ops 之後。
+- CC-220（`/spike` workflow）、CC-209（codegraph spike，🟢 someday）。
+- CC-296 — v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim），目標 **v0.5.0**（待 2 個正式版本）。
+- `adapters/antigravity` / `adapters/opencode` — named slot，不實作。
 
 ---
 
