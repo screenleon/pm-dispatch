@@ -99,6 +99,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-315 | 🔵 active | **[arch: state read/query contract + pmctl trace]** pmctl 提供 by id/task/kind/time-window 讀取；定義 active+archive 讀取語義（排序 / 壞行容忍 / time-window / 索引 vs 串流）；`pmctl trace` 為第一個 state consumer。見 §3.7（D6）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-316 | 🔵 active | **[arch: state store rotation impl]** 依 `layout.yaml` 把 runs/events rotate 成 `archive/*-$YYYYMM-NNNN.jsonl.gz`（月內加單調 segment 後綴避免碰撞）；reader 合併 active+archive。見 §3.8 / §10.B（D7）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-317 | 🔵 active | **[arch: state store safety & robustness hardening]** store-root 安全（canonicalize / 拒 symlink-component / world-writable / 0700）；mkdir-lock stale-owner 協定（pid/host/trap/bounded reclaim）+ UNC/9P preflight warn；`layout.yaml` 成可執行真相源（writer/reader 消費 或 golden test）。見 §10.B。 | arch | 2026-06-03 | — | P2 | design |
+| CC-318 | 🔵 active | **[fix: dispatch-post-verify — execute self_verify bash lines directly]** `dispatch-post-verify.sh` 對 `self_verify:` 的驗證是在 executor 的 `latest.last` 輸出中做子字串搜尋；executor 用 plain text 回應而非逐條引用，導致全部 MISSING。結構性修正：把 `self_verify:` 每條當 bash 指令執行（`eval` 或 `bash -c`），exit 0 = pass，而非在 executor 輸出中搜尋。待 CC-309 合併後處理。 | ops/DX | 2026-06-04 | — | P3 | hygiene |
+| CC-319 | 🔵 active | **[fix: reviewer guard — derive allowed dir from file path, not install location]** `hook-reviewer-write-guard.sh` 原本把 `GATE_REPO_ROOT` 綁定到 `$_SCRIPT_DIR/..`（pm-dispatch 安裝位置），在非 pm-dispatch repo 執行 pr-gate 時 guard 拒絕 reviewer 寫入 `.gate-results/`，sequential/parallel 兩種模式均受影響。修正：改為檢查 `basename(dirname(file)) == ".gate-results"`，移除 `CLAUDE_HOOK_GATE_REPO_ROOT` 綁定。pr:#224。 | ops/security | 2026-06-04 | pr:#224 | P1 | oss |
+| CC-320 | 🔵 active | **[fix: codex adapter auto-export work_dir git root to read roots]** `hook-codex-bash-guard.sh` 的讀取允許路徑預設 `$HOME/github:/tmp`；若 target repo 不在 `~/github/`，guard 拒絕 codex 讀取目標 repo 的檔案。修正：`adapters/codex/dispatch.sh` 在呼叫 codex 前自動把 `$WORK_DIR` git root prepend 到 `CLAUDE_HOOK_CODEX_READ_ROOTS`。pr:#224。 | ops | 2026-06-04 | pr:#224 | P1 | oss |
+| CC-321 | 🔵 active | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
 
 ---
 
@@ -1415,3 +1419,54 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 **Plan**: canonicalize + permission-check the store root (reject unsafe symlink/world-writable; `0700`); mkdir lock carries pid/host/start-time + cleanup trap + bounded stale reclaim + a UNC/9P preflight warning; make `layout.yaml` an executable source of truth (writer/reader consume it, or golden tests compare paths/locks/subdirs).
 
 **Detail**: scoping doc §10.B.
+
+## CC-318 — dispatch-post-verify: execute self_verify bash lines directly
+
+**Problem**: `scripts/dispatch-post-verify.sh` validates `self_verify:` items by searching for them as literal substrings in the executor's `latest.last` output (`grep -F "$item"`). This is a format contract between post-verify and the executor: the executor must reproduce the exact `self_verify:` text in its response, otherwise items are all reported MISSING. Codex writes `"Verification passed: ..."` instead of quoting each item verbatim, causing all self_verify checks to fail even when the executor actually ran the commands correctly. Tracked by `[[feedback_self_verify_format]]`.
+
+**Plan**: change each `self_verify:` line from a search target to a **bash command** — strip any `cmd: ` prefix and execute via `bash -c "$item"`. Exit 0 = FOUND; non-zero = MISSING. This eliminates the executor output format dependency and makes self_verify truly verifiable regardless of the executor's prose style.
+
+**Acceptance**:
+- A `self_verify: bash scripts/run-all-tests.sh | grep -q "0 failed"` item passes if and only if the command exits 0.
+- Prose `self_verify:` items that are not valid bash fail clearly with an error message.
+- Existing `cmd: pass` sentinel still works (resolved in upstream executor before this hook sees it).
+- `dispatch-post-verify.sh` test coverage for execute-mode pass/fail cases.
+
+**Depends on**: [[CC-309]] merged (establishes executor boundary; self_verify format is a dispatch-level concern).
+
+## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path
+
+**Problem**: `scripts/hook-reviewer-write-guard.sh` bound the allowed write path to `$_SCRIPT_DIR/..` (the pm-dispatch install location). Running `pr-gate` on any project other than pm-dispatch caused the guard to deny the reviewer's output write with `"target is not <repo>/.gate-results"`, blocking both sequential and parallel gate modes.
+
+**Plan**: replace the install-path binding with a directory-name check: `basename(dirname(file)) == ".gate-results"`. Remove `CLAUDE_HOOK_GATE_REPO_ROOT` entirely — no env var required in the brief constraint. Update all tests to remove `CLAUDE_HOOK_GATE_REPO_ROOT` usage.
+
+**Status**: shipped in pr:#224. Index tracks to confirm merge.
+
+**Cross-link**: [[CC-320]], [[CC-321]].
+
+## CC-320 — fix: codex adapter auto-export work_dir git root to read roots
+
+**Problem**: `hook-codex-bash-guard.sh` defaults `CLAUDE_HOOK_CODEX_READ_ROOTS` to `$HOME/github:/tmp`. Codex dispatched to a repo outside `~/github/` cannot read source files — the guard blocks the read attempt. The default path is a historical convention, not a project-agnostic setting.
+
+**Plan**: `adapters/codex/dispatch.sh` derives the git root of `$WORK_DIR` and prepends it to `CLAUDE_HOOK_CODEX_READ_ROOTS` before invoking codex. Any existing user-set value is preserved as trailing fallback. Non-pmctl codex invocations continue to use the `$HOME/github:/tmp` default.
+
+**Status**: shipped in pr:#224. Index tracks to confirm merge.
+
+**Cross-link**: [[CC-319]], [[CC-321]].
+
+## CC-321 — refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_*
+
+**Problem**: pm-dispatch hook configuration env vars use a `CLAUDE_HOOK_` prefix (`CLAUDE_HOOK_CODEX_READ_ROOTS`, `CLAUDE_HOOK_CODEX_GUARD`, `CLAUDE_HOOK_PM_GUARD`, `CLAUDE_HOOK_REVIEWER_GUARD`, `CLAUDE_HOOK_GATE_REPO_ROOT` (deleted), `CLAUDE_HOOK_DISPATCH_ABS`, `CLAUDE_HOOK_LOG_DIR`). The prefix creates a false coupling to the Claude Code agent system — these are pm-dispatch's own config knobs and should be in the `PM_HOOK_` or `PM_DISPATCH_` namespace.
+
+**Plan**:
+1. Rename each env var to `PM_HOOK_*` equivalent across all hooks, tests, and docs.
+2. Add a shim period: if the old `CLAUDE_HOOK_*` name is set, emit a deprecation warning to stderr and honour it. Remove the shim after one release cycle.
+3. Update `scripts/install-hooks.sh`, all `test-hooks.sh` / `test-pmctl-guard.sh` references, and `docs/`.
+
+**Acceptance**: `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only the shim/deprecation-warning lines.
+
+**Scope limit**: does NOT rename `CLAUDE_HOOK_LOG_DIR` if that conflicts with Claude Code's own log dir convention — verify first.
+
+**Priority note**: breaking change; hold until CC-319/CC-320 are merged and no active PRs depend on the old names.
+
+**Cross-link**: [[CC-319]], [[CC-320]].
