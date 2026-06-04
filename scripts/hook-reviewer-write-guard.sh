@@ -5,11 +5,12 @@
 # embedded in a diff can instruct a reviewer to write arbitrary files.
 # Only writes to .gate-results/ are legitimate reviewer output.
 #
-# One fixed rule: reviewer Write/Edit must resolve to a path whose immediate
-# parent directory is named .gate-results. This covers both sequential
+# Rule: reviewer Write/Edit must resolve to a path whose immediate parent
+# directory is named exactly ".gate-results". This covers both sequential
 # (gate-<ts>.md) and parallel (reviewer-<r>-<ts>.md) modes without enumerating
-# filenames. Binding the directory, not the filename, is intentional — adding
-# or removing reviewers / changing tier never touches this guard.
+# filenames. Binding the directory name, not the filename or the repo root, is
+# intentional — any project can use this guard without coupling the check to the
+# pm-dispatch install location (CC-319).
 #
 # Role → agent-type mapping (CC-297: role ≠ agent-type):
 #   reviewer role → critic | qa-tester | architecture-reviewer
@@ -37,13 +38,6 @@ LOG_FILE="$LOG_DIR/hooks.log"
 HK_BYPASS_ENV="CLAUDE_HOOK_REVIEWER_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
-# Repo root = the grandparent of this script. pmctl invokes the policy-backing
-# hook at <repo>/scripts/hook-reviewer-write-guard.sh (see scripts/lib/pmctl-guard.sh:298),
-# so <repo> is one level up from $_SCRIPT_DIR. Binding the allow-list to THIS
-# repo's .gate-results/ (not merely any directory named .gate-results anywhere)
-# matches the printed allow message and closes the off-repo write gap.
-# CLAUDE_HOOK_GATE_REPO_ROOT overrides it for tests that use a sandbox repo.
-GATE_REPO_ROOT="${CLAUDE_HOOK_GATE_REPO_ROOT:-$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)}"
 unset _SCRIPT_DIR
 
 # ---------- helpers ----------
@@ -54,7 +48,7 @@ hk_deny_message() {
 reviewer: blocked by $HOOK_NAME — $reason
 
   attempted: $HK_TOOL_NAME on ${file_path:-(empty)}
-  allowed:   <repo>/.gate-results/<filename>
+  allowed:   <any-project>/.gate-results/<filename>
 
 Reviewer Write/Edit is restricted to the .gate-results/ directory.
 This guard prevents prompt-injection payloads in diff content from
@@ -96,22 +90,13 @@ hk_check_bypass CLAUDE_HOOK_REVIEWER_GUARD
 hk_validate_path "$file_path"
 abs_path="$HK_ABS_PATH"
 
-# The immediate parent directory must be THIS repo's .gate-results/ — not merely
-# any directory named .gate-results anywhere on disk. realpath_m resolves symlinks
-# in all directory components on both sides, so a .gate-results/ symlink pointing
-# elsewhere resolves to a path that no longer equals the expected dir — caught here.
-#
-# Normalize GATE_REPO_ROOT through the SAME Windows->POSIX mount transform that
-# hk_validate_path applied to file_path (CC-308). Without this, on Windows a repo
-# under a mounted path (e.g. %TEMP% -> /tmp) leaves abs_path in /tmp mount form
-# while the expected dir stays in C:/ form, so the two never compare equal and a
-# legitimate reviewer write is wrongly denied. No-op off Windows.
+# The file's immediate parent directory must be named exactly ".gate-results".
+# Binding the directory name (not the repo root) lets any project use this guard
+# without coupling the check to the pm-dispatch install path (CC-319).
+# realpath_m resolves symlinks so a .gate-results/ symlink is caught.
 gate_results_dir="$(dirname "$abs_path")"
-gate_root_norm="$(hk_to_posix_path "$GATE_REPO_ROOT")" \
-  || hk_deny "cannot normalize repo root to POSIX form: $GATE_REPO_ROOT" "$file_path"
-expected_gate_dir="$(realpath_m "$gate_root_norm/.gate-results" 2>/dev/null)"
-if [[ -z "$expected_gate_dir" || "$gate_results_dir" != "$expected_gate_dir" ]]; then
-  hk_deny "target is not <repo>/.gate-results (got: $gate_results_dir, expected: ${expected_gate_dir:-<unresolved>}, resolved: $abs_path)" "$file_path"
+if [[ "$(basename "$gate_results_dir")" != ".gate-results" ]]; then
+  hk_deny "target is not directly inside a .gate-results directory (got: $gate_results_dir, resolved: $abs_path)" "$file_path"
 fi
 
 # Reject existing symlinks at the target path (symlink swap attack: a symlink

@@ -311,6 +311,20 @@ if [[ -n "$ISOLATION" ]]; then
   SANDBOX="$_ISO_SANDBOX"
 fi
 
+# Expose the dispatch target's git root to the bash guard so codex can read
+# from the target repo regardless of where it lives (CC-320). Composition is
+# `<git_root>:/tmp[:<inherited>]`:
+#   - git_root  — the dispatch target, prepended so codex reads its sources.
+#   - /tmp      — the guard's documented default baseline (`$HOME/github:/tmp`).
+#                 Setting this env var REPLACES the guard default entirely, so we
+#                 must re-add /tmp here or codex loses scratch/brief access under
+#                 /tmp. This is required for correctness, not a policy widening.
+#   - inherited — any caller-set CLAUDE_HOOK_CODEX_READ_ROOTS is preserved as a
+#                 trailing fallback.
+_CODEX_GIT_ROOT="$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$WORK_DIR")"
+export CLAUDE_HOOK_CODEX_READ_ROOTS="$_CODEX_GIT_ROOT:/tmp${CLAUDE_HOOK_CODEX_READ_ROOTS:+:$CLAUDE_HOOK_CODEX_READ_ROOTS}"
+unset _CODEX_GIT_ROOT
+
 CMD=(codex exec
   --cd "$WORK_DIR"
   --sandbox "$SANDBOX"
