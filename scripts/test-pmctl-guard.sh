@@ -134,25 +134,13 @@ if should_run "post-task-fail-closed"; then
   fi
 fi
 
-# reviewer role (CC-297): runtime-agnostic, only .gate-results/ writes allowed.
-# The reviewer guard binds writes to <repo>/.gate-results. These cases use a
-# sandbox .gate-results, so they declare the sandbox repo root via
-# CLAUDE_HOOK_GATE_REPO_ROOT (propagated through pmctl to the hook).
+# reviewer role (CC-297/CC-319): runtime-agnostic, only .gate-results/ writes
+# allowed. Guard checks directory name only — no install-path binding needed.
 if should_run "reviewer-prewrite-allow-codex"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-codex"
-  # Canonicalize the sandbox repo root to the mount form the guard derives for
-  # the file: mktemp lives under %TEMP%, which cygpath maps to /tmp, while a bare
-  # unix path stays /c/... — the two sides must agree or the repo-binding check
-  # mis-fires. No-op off Windows (cygpath absent).
-  _gate_root="$(dirname "$_rw_guard_dir")"
-  if command -v cygpath >/dev/null 2>&1; then
-    _gate_root="$(cygpath -u "$(cygpath -w "$_gate_root" 2>/dev/null)" 2>/dev/null || printf '%s' "$_gate_root")"
-  fi
-  export CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_root"
   run_guard --event pre-write --role reviewer --runtime codex --file "$_rw_guard_dir/output.md"
-  unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
   rm -rf "$(dirname "$_rw_guard_dir")"
   unset _rw_guard_dir
@@ -162,17 +150,7 @@ if should_run "reviewer-prewrite-allow-claude"; then
   _rw_guard_dir="$(mktemp -d)/repo/.gate-results"
   mkdir -p "$_rw_guard_dir"
   name="reviewer-prewrite-allow-claude"
-  # Canonicalize the sandbox repo root to the mount form the guard derives for
-  # the file: mktemp lives under %TEMP%, which cygpath maps to /tmp, while a bare
-  # unix path stays /c/... — the two sides must agree or the repo-binding check
-  # mis-fires. No-op off Windows (cygpath absent).
-  _gate_root="$(dirname "$_rw_guard_dir")"
-  if command -v cygpath >/dev/null 2>&1; then
-    _gate_root="$(cygpath -u "$(cygpath -w "$_gate_root" 2>/dev/null)" 2>/dev/null || printf '%s' "$_gate_root")"
-  fi
-  export CLAUDE_HOOK_GATE_REPO_ROOT="$_gate_root"
   run_guard --event pre-write --role reviewer --runtime claude --file "$_rw_guard_dir/output.md"
-  unset CLAUDE_HOOK_GATE_REPO_ROOT
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
   rm -rf "$(dirname "$_rw_guard_dir")"
   unset _rw_guard_dir

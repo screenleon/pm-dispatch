@@ -12,10 +12,6 @@
 # intentional — any project can use this guard without coupling the check to the
 # pm-dispatch install location (CC-319).
 #
-# Optional strict binding: when CLAUDE_HOOK_GATE_REPO_ROOT is explicitly set,
-# the guard additionally checks that the .gate-results/ belongs to that specific
-# repo. Used in tests and explicit overrides; not required in production.
-#
 # Role → agent-type mapping (CC-297: role ≠ agent-type):
 #   reviewer role → critic | qa-tester | architecture-reviewer
 #                   security-reviewer | risk-reviewer
@@ -52,7 +48,7 @@ hk_deny_message() {
 reviewer: blocked by $HOOK_NAME — $reason
 
   attempted: $HK_TOOL_NAME on ${file_path:-(empty)}
-  allowed:   <repo>/.gate-results/<filename>
+  allowed:   <any-project>/.gate-results/<filename>
 
 Reviewer Write/Edit is restricted to the .gate-results/ directory.
 This guard prevents prompt-injection payloads in diff content from
@@ -101,19 +97,6 @@ abs_path="$HK_ABS_PATH"
 gate_results_dir="$(dirname "$abs_path")"
 if [[ "$(basename "$gate_results_dir")" != ".gate-results" ]]; then
   hk_deny "target is not directly inside a .gate-results directory (got: $gate_results_dir, resolved: $abs_path)" "$file_path"
-fi
-
-# Optional strict binding (CC-297): when CLAUDE_HOOK_GATE_REPO_ROOT is explicitly
-# set, additionally verify the .gate-results belongs to that specific repo.
-# Normalize through the SAME Windows->POSIX mount transform that hk_validate_path
-# applied to file_path (CC-308) so both sides agree on WSL/Cygwin paths.
-if [[ -n "${CLAUDE_HOOK_GATE_REPO_ROOT:-}" ]]; then
-  gate_root_norm="$(hk_to_posix_path "$CLAUDE_HOOK_GATE_REPO_ROOT")" \
-    || hk_deny "cannot normalize CLAUDE_HOOK_GATE_REPO_ROOT to POSIX form: $CLAUDE_HOOK_GATE_REPO_ROOT" "$file_path"
-  expected_gate_dir="$(realpath_m "$gate_root_norm/.gate-results" 2>/dev/null)"
-  if [[ -z "$expected_gate_dir" || "$gate_results_dir" != "$expected_gate_dir" ]]; then
-    hk_deny "target is not the declared repo's .gate-results (got: $gate_results_dir, expected: ${expected_gate_dir:-<unresolved>})" "$file_path"
-  fi
 fi
 
 # Reject existing symlinks at the target path (symlink swap attack: a symlink
