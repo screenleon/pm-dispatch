@@ -1,7 +1,15 @@
 # pm-facing_alias	wire_model_id	reasoning_effort
 # Schema: PM-facing alias, wire-format model id, reasoning effort.
+# This file is the codex-executor alias table. The claude-executor alias table
+# lives at share/claude-model-aliases.tsv (same 3-column format).
 #
 # Columns must be tab-separated.
+#
+# Executor-agnostic alias — use in briefs, PM routing, and dispatch policy docs:
+#   `light`  — lightweight/fast model for targeted changes (< 50 lines, ≤ 2 files,
+#              no new behavioral units). Mapped per executor:
+#                codex  → codex-spark (gpt-5.3-codex-spark, independent pool, ~64K ctx)
+#                claude → haiku       (claude-haiku-4-5, see claude-model-aliases.tsv)
 #
 # Default model: pm-dispatch pins its OWN default model (gpt-5.5, see
 # DEFAULT_DISPATCH_MODEL in adapters/codex/dispatch.sh), decoupled from the
@@ -10,20 +18,15 @@
 # defaults to. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
 #   gpt-5.5  — primary default
 #   gpt-5.4  — fallback (set dispatch.default_model = gpt-5.4 if gpt-5.5 is unavailable)
-# `codex-spark` (gpt-5.3-codex-spark) draws from an INDEPENDENT usage pool and
-# is opt-in only (PM routes here for known-small, single-location changes —
-# see agents/project-pm.md); it is never the default.
+# `codex-spark` / `light` draw from an INDEPENDENT usage pool and are opt-in only
+# (PM routes here for known-small changes — see agents/project-pm.md); never default.
 #
-# Context window reference (brief authors: estimate against this when sizing
-# `files:` blocks and embedded `context:` content):
-#   codex-spark  — gpt-5.3-codex-spark  ~64K tokens
-#   gpt-5.5      — ~122K+ tokens (default)
-# Survey-style briefs that read large files (BACKLOG.md ~1800 lines,
-# v0.3.0-synthesis.md, agents/project-pm.md) MUST use lazy-read
-# instructions in `context:` (see docs/dispatch-brief.md §`files:` block
-# semantics). CC-229 substrate spike v1/v2 hit context_length_exceeded
-# with eager-load briefs; v3 succeeded with lazy reading.
+# Context window reference:
+#   light / codex-spark  — gpt-5.3-codex-spark  ~64K tokens
+#   gpt-5.5              — ~122K+ tokens (default)
+# Survey-style briefs that read large files MUST use lazy-read instructions.
 default	gpt-5.5	high
 gpt-5.5	gpt-5.5	high
 gpt-5.4	gpt-5.4	high
 codex-spark	gpt-5.3-codex-spark	high
+light	gpt-5.3-codex-spark	high

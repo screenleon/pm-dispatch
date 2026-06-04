@@ -9,6 +9,24 @@ Never silently upgrade to Opus.
 
 ---
 
+## Executor-agnostic `light` alias
+
+The `light` alias selects the lightweight model for a given executor. Use it in
+briefs and dispatch policy docs — never hard-code executor-specific model IDs.
+
+| Executor | `light` resolves to | Context | Use case |
+|---|---|---|---|
+| codex | `gpt-5.3-codex-spark` | ~64K | Small codex dispatches |
+| claude | `claude-haiku-4-5-20251001` | ~200K | Small claude dispatches |
+
+Alias tables: `share/model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude).
+
+**When to use `light`**: all three criteria must hold — (a) expected diff < 50 lines,
+(b) changes confined to ≤ 2 adjacent files with no cross-module dependencies,
+(c) no new interfaces, abstractions, or hooks introduced.
+
+---
+
 ## Default: Sonnet
 
 For reviewer and implementation-adjacent agent spawns, use `model: "sonnet"`

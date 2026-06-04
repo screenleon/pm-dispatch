@@ -1,0 +1,25 @@
+# pm-facing_alias	wire_model_id	reasoning_effort
+# Schema: PM-facing alias, wire-format model id, reasoning effort.
+# This file is the claude-executor alias table. The codex-executor alias table
+# lives at share/model-aliases.tsv (same 3-column format).
+#
+# Columns must be tab-separated.
+#
+# Executor-agnostic alias — use in briefs, PM routing, and dispatch policy docs:
+#   `light`  — lightweight/fast model for targeted changes (< 50 lines, ≤ 2 files,
+#              no new behavioral units). Mapped per executor:
+#                claude → haiku       (claude-haiku-4-5-20251001)
+#                codex  → codex-spark (gpt-5.3-codex-spark, see model-aliases.tsv)
+#
+# Default model: omitting --model uses claude-sonnet-4-6 (the adapter built-in
+# default). Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
+#
+# Context window reference:
+#   light / haiku   — claude-haiku-4-5   ~200K tokens, faster + cheaper
+#   default / sonnet — claude-sonnet-4-6  ~200K tokens, balanced
+#   opus             — claude-opus-4-8    ~200K tokens, most capable (ask user first)
+default	claude-sonnet-4-6	normal
+sonnet	claude-sonnet-4-6	normal
+light	claude-haiku-4-5-20251001	normal
+haiku	claude-haiku-4-5-20251001	normal
+opus	claude-opus-4-8	high

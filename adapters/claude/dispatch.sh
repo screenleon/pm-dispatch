@@ -49,11 +49,13 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
   done
   __claude_dispatch_source_repo="$(cd -P -- "$(dirname "$__claude_dispatch_real")/../.." && pwd)"
   __claude_dispatch_isolation_source="$__claude_dispatch_source_repo/adapters/claude/isolation-map.yaml"
+  __claude_dispatch_alias_source="$__claude_dispatch_source_repo/share/claude-model-aliases.tsv"
   cp -- "${BASH_SOURCE[0]}" "$__claude_dispatch_snapshot"
   if [[ -r "$__claude_dispatch_isolation_source" ]]; then
     mkdir -p -- "$__claude_dispatch_snapshot_dir/adapters/claude"
     cp -- "$__claude_dispatch_isolation_source" "$__claude_dispatch_snapshot_dir/adapters/claude/isolation-map.yaml"
   fi
+  [[ -r "$__claude_dispatch_alias_source" ]] && cp -- "$__claude_dispatch_alias_source" "$__claude_dispatch_snapshot_dir/claude-model-aliases.tsv" || true
   mkdir -p -- "$__claude_dispatch_snapshot_dir/lib"
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" "$__claude_dispatch_snapshot_dir/lib/state-writer.sh" || true
@@ -78,6 +80,31 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
+
+# Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
+# Snapshot copies the tsv alongside this script; fall back to repo-source paths.
+PM_CLAUDE_ALIAS_FILE="$SCRIPT_DIR/claude-model-aliases.tsv"
+[[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || PM_CLAUDE_ALIAS_FILE="$SCRIPT_DIR/../../share/claude-model-aliases.tsv"
+
+_resolve_claude_model_alias() {
+  local query_model="$1"
+  [[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || return 0   # no alias file → pass through unchanged
+  local line alias_value model_id effort rest
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+    IFS=$'\t' read -r alias_value model_id effort rest <<< "$line"
+    if [[ -z "$alias_value" || -z "$model_id" || -z "$effort" || -n "$rest" ]]; then
+      printf 'claude-dispatch: warning: malformed entry in %s, skipping\n' "$PM_CLAUDE_ALIAS_FILE" >&2
+      continue
+    fi
+    if [[ "$alias_value" == "$query_model" ]]; then
+      MODEL="$model_id"
+      return 0
+    fi
+  done < "$PM_CLAUDE_ALIAS_FILE"
+  return 0   # no match → pass through unchanged
+}
 
 # Resolve isolation_level → permission_mode from adapters/claude/isolation-map.yaml.
 # Snapshot executions read the copied adapter file; fall back to repo-source paths.
@@ -170,6 +197,10 @@ fi
 if [[ -n "$ISOLATION" ]]; then
   PERMISSION_MODE="$(_resolve_permission_mode "$ISOLATION")" || exit 2
 fi
+
+# Resolve PM-facing alias (e.g. "light" → "claude-haiku-4-5-20251001") before
+# passing to the claude CLI. Unknown values are passed through unchanged.
+[[ -n "$MODEL" ]] && _resolve_claude_model_alias "$MODEL"
 
 MODEL_DISPLAY="$MODEL"; [[ -z "$MODEL_DISPLAY" ]] && MODEL_DISPLAY="<default>"
 

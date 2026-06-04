@@ -5,6 +5,30 @@ The canonical structure for any brief dispatched to an executor (`codex-executor
 Both executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
 
+## When to dispatch vs. handle inline
+
+Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120s and
+~50–100K tokens in a subprocess. Only dispatch when that cost is justified:
+
+| Dispatch (write a brief + run executor) | Handle inline on main thread (Edit tool) |
+|---|---|
+| ≥ 3 behavioral units (new functions / hooks / schema) | Targeted fix: 1–3 files, change already specified |
+| ≥ 3 files to edit | diff < ~50 lines |
+| Expected diff > 50 lines | No new behavioral units |
+| Context protection: session already deep in a long exchange | Gate finding with explicit line references |
+| Parallelizable reviewer pattern (pr-gate) | Change is obviously correct, post-verify adds no signal |
+
+**Model routing for dispatched tasks** (use `model: light` for small dispatches — see §Model aliases):
+
+| Task size | model | Pre-impl? | PM brief? |
+|---|---|---|---|
+| Tiny (< 30 lines, 1–2 files, no new behavior) | — | No | No — inline Edit |
+| Small (30–100 lines, 2–3 files, 1–2 new functions) | `light` | Optional | Optional — write brief inline |
+| Medium (100–300 lines, 3–5 files, 3+ behavioral units) | `default` | Recommended | /pm or inline |
+| Large (> 300 lines, 5+ files, new modules/schemas) | `default` | Required | /pm |
+
+**Rule of thumb**: if you can write the Edit calls in less time than it takes to write the `self_verify` block, do it inline.
+
 ## Selecting an executor
 
 The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
@@ -371,14 +395,34 @@ PM short-form model aliases are resolved from the source-of-truth file
 `share/model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
 `scripts/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
 
+**Executor-agnostic alias** (use in briefs — never hard-code wire-format IDs):
+
+| PM-facing alias | codex wire ID | claude wire ID | When to use |
+|---|---|---|---|
+| `default` | `gpt-5.5` | `claude-sonnet-4-6` | All medium/large tasks (omit `--model`) |
+| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | Small tasks only (see routing table above) |
+
+**Codex-specific aliases** (`share/model-aliases.tsv`):
+
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
 | `default` | `gpt-5.5` | `high` |
 | `gpt-5.5` | `gpt-5.5` | `high` |
 | `gpt-5.4` | `gpt-5.4` | `high` |
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
+| `light` | `gpt-5.3-codex-spark` | `high` |
 
-This table is **codex-adapter-specific** (other executors own their own model namespaces — a claude executor uses sonnet/opus/haiku). `default` is the alias the codex adapter applies when no `--model` is given; its wire id is defined only here in `share/model-aliases.tsv`, so a model bump edits the TSV alone. `gpt-5.4` is the documented fallback (set `dispatch.default_model = gpt-5.4` in `~/.pm-dispatch/config`). `codex-spark` is opt-in only and draws from an independent usage pool — see `agents/project-pm.md` for routing criteria. Every value in this table is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
+**Claude-specific aliases** (`share/claude-model-aliases.tsv`):
+
+| PM-facing alias | Wire-format model ID | reasoning effort |
+|---|---|---|
+| `default` | `claude-sonnet-4-6` | `normal` |
+| `sonnet` | `claude-sonnet-4-6` | `normal` |
+| `light` | `claude-haiku-4-5-20251001` | `normal` |
+| `haiku` | `claude-haiku-4-5-20251001` | `normal` |
+| `opus` | `claude-opus-4-8` | `high` |
+
+`default` is resolved when no `--model` is given. `light` is opt-in only — see §When to dispatch and `agents/project-pm.md` for routing criteria. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
 Direct Bash dispatch shape:
 
