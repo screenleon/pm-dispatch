@@ -167,13 +167,29 @@ if [[ -n "$EXECUTOR_STATUS" ]]; then
   FAILED=1
 fi
 
+# CC-318: execute each self_verify item as a bash command rather than searching
+# for "<item>: pass" as a substring of the executor's latest.last. The executor's
+# prose style no longer matters — a check PASSES iff its command exits 0. Items
+# come from the PM-authored, brief-validated BRIEF_FILE (a trusted input); an
+# optional leading "cmd: " sentinel prefix is stripped and the remainder runs in
+# $WORK_DIR under a timeout so a hung check cannot block the gate. The literal
+# "cmd: pass" sentinel is resolved upstream in the executor handover and is not
+# this hook's concern.
+SELF_VERIFY_TIMEOUT="${DISPATCH_SELF_VERIFY_TIMEOUT:-300}"
+
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'
-  while IFS= read -r cmd; do
-    if grep -qxF "${cmd}: pass" "$LATEST_LAST"; then
-      printf '  FOUND: %s\n' "$cmd"
+  while IFS= read -r item; do
+    cmd="${item#cmd: }"
+    if ( cd "$WORK_DIR" && timeout --kill-after=15 "$SELF_VERIFY_TIMEOUT" bash -c "$cmd" ) >/dev/null 2>&1; then
+      printf '  PASS: %s\n' "$item"
     else
-      printf '  MISSING: %s\n' "$cmd"
+      rc=$?
+      if [[ "$rc" -eq 124 ]]; then
+        printf '  FAIL (timeout %ss): %s\n' "$SELF_VERIFY_TIMEOUT" "$item"
+      else
+        printf '  FAIL (exit %s): %s\n' "$rc" "$item"
+      fi
       FAILED=1
     fi
   done < <(
@@ -191,5 +207,5 @@ if [[ "$FAILED" -eq 0 ]]; then
   exit 0
 fi
 
-printf 'FAILED: one or more self_verify commands not found in latest.last\n'
+printf 'FAILED: one or more self_verify checks failed\n'
 exit 1

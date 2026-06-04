@@ -195,7 +195,7 @@ Invoke in background from the main thread. Wait for completion notification.
 bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
-Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and checks that `self_verify` commands appear in the executor's final message. Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed.
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and **executes** each `self_verify` item as a bash command in `<work_dir>` — a check passes iff its command exits 0 (CC-318). This does not depend on the executor's prose style: an item is run, not searched for in the executor's final message. An optional leading `cmd: ` prefix is stripped before execution; each run is bounded by a timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed.
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 

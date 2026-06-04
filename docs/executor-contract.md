@@ -54,7 +54,7 @@ All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
 - `latest.last` and `latest.stderr` MUST be symlinks or files whose resolved path stays within `<work_dir>/.agent-trace/`. A symlink pointing outside that directory causes `dispatch-post-verify.sh` to exit 1.
 - The `<executor>-<ts>.last` basename format is: executor name (alphanumeric, hyphens allowed; no path separators) + `-` + wall-clock timestamp plus PID (`date +%Y%m%d-%H%M%S`-PID) + `.last`. Example: `codex-20260526-143048-3455197.last`, `claude-20260526-143048-3455197.last`.
 - `dispatch-post-verify.sh` validates symlink targets for both `latest.last` and `latest.stderr` before reading their contents. Executors that write trace files outside `.agent-trace/` violate this contract and will fail Phase 3.
-- Self-verify result format: when an executor runs self_verify commands and writes the report to `latest.last`, each command MUST appear in one of these formats: (a) success: `cmd: pass`, (b) failure: `cmd: fail: <reason>`. `dispatch-post-verify.sh` rejects any matched self_verify command line that contains `": fail"` after the command text.
+- Self-verify execution (CC-318): `dispatch-post-verify.sh` **executes** each `self_verify:` item from the brief as a bash command in `<work_dir>` and treats exit 0 as PASS, any non-zero (including timeout) as FAIL. It does **not** parse self_verify results out of `latest.last`, so the executor's prose style is irrelevant — an executor may still echo its own self_verify results for human review, but that text is informational and not part of this contract.
 
 `<ts>` is a wall-clock timestamp plus PID written at dispatch time by `date +%Y%m%d-%H%M%S`-PID.
 
