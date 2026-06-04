@@ -226,11 +226,9 @@ case_config_timeout_env_overrides() {
   rm -rf "$work"; rm -f "$brief" "$stderr"
 }
 
-# ---- 17: successful claude dispatch writes executor=claude run row ----
-# Verifies that the shared sw_append_dispatch_run helper records a run row with
-# executor:"claude" and the correct task_id for the claude adapter path.
-case_state_store_run_row_claude() {
-  local name="state-store/claude dispatch writes executor=claude run row"; should_run "$name" || return 0
+# ---- 17: direct claude adapter does not write Run rows (pmctl owns state) ----
+case_state_store_no_direct_run_row_claude() {
+  local name="state-store/claude adapter direct invocation does not write Run row"; should_run "$name" || return 0
   local bin home work brief store runs_file code
   bin="$(mktemp -d)"; _install_fake_claude "$bin"
   home="$(mktemp -d)"; mkdir -p "$home/.claude/scripts"
@@ -244,12 +242,10 @@ case_state_store_run_row_claude() {
     "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
   set -e
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  if [[ -n "$runs_file" && -s "$runs_file" ]] \
-     && jq -e 'select(.executor=="claude")' "$runs_file" >/dev/null 2>&1 \
-     && jq -e 'select(.task_id=="CC-305")' "$runs_file" >/dev/null 2>&1; then
+  if [[ "$code" -eq 0 && -z "$runs_file" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code runs=${runs_file:-none} content=$(cat "${runs_file:-/dev/null}" 2>/dev/null | head -c 200)"
+    fail "$name" "code=$code unexpected runs=${runs_file:-none} content=$(cat "${runs_file:-/dev/null}" 2>/dev/null | head -c 200)"
   fi
   rm -rf "$bin" "$home" "$store" "$work"; rm -f "$brief"
 }
@@ -292,7 +288,7 @@ FAKELN
 
 case_codex_flags_noop
 case_config_timeout_env_overrides
-case_state_store_run_row_claude
+case_state_store_no_direct_run_row_claude
 case_latest_symlink_failure_tolerated
 
 th_summary

@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -14,6 +15,44 @@ th_init "$@"
 
 reset_state_env() {
   unset PM_DISPATCH_STATE_ROOT XDG_DATA_HOME
+}
+
+mk_pmctl_brief() {
+  local work="$1" brief
+  brief="/tmp/brief-state-store-$$-$(date +%s%N).md"
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $work
+goal: exercise pmctl-owned state writes
+files:
+  - read: $work/README
+acceptance:
+  - dispatch exits with expected state rows
+EOF
+  printf '%s\n' "$brief"
+}
+
+install_fake_codex() {
+  local bindir="$1" code="${2:-0}" probe_file="${3:-}"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2;;
+    *) shift;;
+  esac
+done
+if [[ -n "$probe_file" && -n "\${PM_DISPATCH_STATE_ROOT:-}" ]]; then
+  if find "\$PM_DISPATCH_STATE_ROOT" -name events.jsonl -type f -exec grep -q '"kind":"run.dispatched"' {} \\; -print -quit 2>/dev/null | grep -q .; then
+    printf 'seen\n' > "$probe_file"
+  fi
+fi
+[[ -n "\$_last" ]] && printf 'dispatch complete (fake codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
 }
 
 case_store_root_override() {
@@ -163,6 +202,104 @@ case_events_append() {
   fi
 }
 
+case_runs_append_rejects_newline() {
+  local name="state-store: runs_append rejects json_line with embedded newline"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/runs-newline"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append $'{"schema_version":1,\n"id":"run-20260101T000000Z-abcdef"}' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero and no runs.jsonl, rc=$rc"
+  fi
+}
+
+case_runs_append_rejects_nul() {
+  local name="state-store: runs_append rejects json_line with embedded NUL"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/runs-nul"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append $'{"schema_version":1\0' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero and no runs.jsonl, rc=$rc"
+  fi
+}
+
+case_events_append_rejects_newline() {
+  local name="state-store: events_append rejects json_line with embedded newline"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/events-newline"
+  PM_DISPATCH_STATE_ROOT="$store" events_append $'{"schema_version":1,\n"id":"evt-20260101T000000Z-abcdef"}' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name events.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero and no events.jsonl, rc=$rc"
+  fi
+}
+
+case_events_append_rejects_nul() {
+  local name="state-store: events_append rejects json_line with embedded NUL"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/events-nul"
+  PM_DISPATCH_STATE_ROOT="$store" events_append $'{"schema_version":1\0' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name events.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero and no events.jsonl, rc=$rc"
+  fi
+}
+
+case_runs_append_compacts_json() {
+  local name="state-store: runs_append compacts JSON through jq -c"
+  should_run "$name" || return 0
+  local store proj_dir line expected
+  store="$tmp_root/runs-compact"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{ "schema_version" : 1, "id" : "run-20260101T000000Z-abcdef", "task_id" : "CC-230", "executor" : "codex", "state" : "ok", "exit_code" : 0, "created_ts" : "2026-01-01T00:00:00Z" }'
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  line="$(cat "$proj_dir/runs.jsonl" 2>/dev/null || true)"
+  expected='{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  if [[ "$line" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got: $line"
+  fi
+}
+
+case_runs_append_rejects_malformed_json() {
+  local name="state-store: runs_append rejects malformed JSON (jq -c fails)"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/runs-malformed"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero and no runs.jsonl, rc=$rc"
+  fi
+}
+
+case_runs_append_rejects_schema_invalid() {
+  local name="state-store: runs_append rejects schema-invalid Run JSON"
+  should_run "$name" || return 0
+  if ! command -v jsonschema >/dev/null 2>&1; then
+    pass "$name (skip: jsonschema not available)"
+    return 0
+  fi
+  local store rc=0
+  store="$tmp_root/runs-schema-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"not-a-run"}' >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name runs.jsonl -type f 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero schema failure, rc=$rc"
+  fi
+}
+
 case_task_upsert() {
   # Verifies that task_upsert atomically writes the task file using write-temp-then-rename.
   #
@@ -207,22 +344,22 @@ case_task_upsert_invalid_id() {
   fi
 }
 
-case_runs_append_read_only_nonfatal() {
-  # Verifies that runs_append returns exit 0 even when the store root is read-only (best-effort).
+case_runs_append_read_only_fails_loudly() {
+  # Verifies that runs_append returns non-zero when the canonical write path fails.
   #
   # Steps:
   #   1. Create a tmpdir and chmod it to 500 (read+execute, no write).
   #   2. Call runs_append against that store; capture its exit code.
-  #   3. Restore permissions; assert exit code is 0.
-  local name="runs_append: non-fatal on read-only store dir"
+  #   3. Restore permissions; assert exit code is non-zero.
+  local name="state-store: runs_append propagates non-zero when inner append fails"
   should_run "$name" || return 0
   local store rc=0
   store="$tmp_root/read-only-store"
   mkdir -p "$store"
   chmod 500 "$store"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' >/dev/null 2>&1 || rc=$?
   chmod 700 "$store"
-  if [[ "$rc" -eq 0 ]]; then
+  if [[ "$rc" -ne 0 ]]; then
     pass "$name"
   else
     fail "$name" "exit=$rc"
@@ -249,30 +386,20 @@ case_codex_dispatch_state_store_self_contained() {
   fi
 }
 
-case_dispatch_creates_run_row() {
-  # Verifies that invoking codex-dispatch.sh with a fake codex binary writes
-  # exactly one row to runs.jsonl under the state store, confirming the end-to-end
-  # dispatch-to-state-store path works.
-  #
-  # Steps:
-  #   1. Create a fake `codex` script that exits 0 and emit no output.
-  #   2. Write a brief file containing a task_id field.
-  #   3. Run codex-dispatch.sh --cd <workdir> --brief-file <brief> with the fake
-  #      codex on PATH and PM_DISPATCH_STATE_ROOT pointing to a fresh tmpdir.
-  #   4. Assert runs.jsonl exists anywhere under the store root.
-  local name="codex-dispatch.sh: creates runs.jsonl row after dispatch"
+case_pmctl_dispatch_creates_run_row() {
+  # Verifies that pmctl dispatch owns the dispatch-to-state-store Run write.
+  local name="pmctl-dispatch: creates runs.jsonl row after dispatch"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir
   store="$tmp_root/dispatch-run"
   fake_bin_dir="$tmp_root/dispatch-bin"
   work_dir="$tmp_root/dispatch-workdir"
   mkdir -p "$fake_bin_dir" "$work_dir"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  brief_file="$tmp_root/dispatch-brief.md"
-  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   local runs_file
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
@@ -283,8 +410,8 @@ case_dispatch_creates_run_row() {
   fi
 }
 
-case_dispatch_correct_partition() {
-  # Verifies that codex-dispatch.sh writes the run row into the target repo's
+case_pmctl_dispatch_correct_partition() {
+  # Verifies that pmctl writes the run row into the target repo's
   # project partition (derived from WORK_DIR's git root), not the caller's cwd.
   #
   # Steps:
@@ -292,7 +419,7 @@ case_dispatch_correct_partition() {
   #   2. Compute the expected sha1 partition key for work_dir.
   #   3. Run codex-dispatch.sh --cd <work_dir>.
   #   4. Assert runs.jsonl appears under projects/<expected_key>/, not elsewhere.
-  local name="codex-dispatch.sh: run written to target project partition"
+  local name="pmctl-dispatch: run written to target project partition"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir work_dir_key expected_partition
   store="$tmp_root/partition-store"
@@ -301,12 +428,10 @@ case_dispatch_correct_partition() {
   mkdir -p "$fake_bin_dir" "$work_dir"
   ( cd "$work_dir" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
   work_dir_key="$(printf '%s\n' "$work_dir" | _portable_sha1 2>/dev/null || true)"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  brief_file="$tmp_root/partition-brief.md"
-  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   expected_partition="$store/projects/$work_dir_key"
   if [[ -f "$expected_partition/runs.jsonl" ]]; then
@@ -318,28 +443,27 @@ case_dispatch_correct_partition() {
   fi
 }
 
-case_dispatch_run_json_valid() {
-  # Verifies that runs.jsonl row produced by codex-dispatch.sh is valid JSON
+case_pmctl_dispatch_run_json_valid() {
+  # Verifies that runs.jsonl row produced by pmctl dispatch is valid JSON
   # even when MODEL contains characters that would corrupt raw printf interpolation.
   #
   # Steps:
   #   1. Create a fake codex that exits 0.
   #   2. Run codex-dispatch.sh with --model set to a value with quotes/backslashes.
   #   3. Assert the runs.jsonl row parses with jq (exit 0).
-  local name="codex-dispatch.sh: run row is valid JSON with special chars in model"
+  local name="pmctl-dispatch: run row is valid JSON with special chars in model"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir runs_file
   store="$tmp_root/json-valid"
   fake_bin_dir="$tmp_root/json-valid-bin"
   work_dir="$tmp_root/json-valid-workdir"
   mkdir -p "$fake_bin_dir" "$work_dir"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  brief_file="$tmp_root/json-valid-brief.md"
-  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
   # Use a model name with characters that would corrupt printf-based JSON
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --model 'model-with-"quotes"' \
     --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
@@ -350,7 +474,7 @@ case_dispatch_run_json_valid() {
   fi
 }
 
-case_dispatch_subdir_partition_key() {
+case_pmctl_dispatch_subdir_partition_key() {
   # Verifies that dispatching with --cd pointing to a repo subdirectory writes
   # the run row under the repo root's partition key, not the subdirectory's key.
   #
@@ -359,7 +483,7 @@ case_dispatch_subdir_partition_key() {
   #   2. Compute the expected partition key for the repo root.
   #   3. Run codex-dispatch.sh --cd <repo_root>/subdir.
   #   4. Assert runs.jsonl appears under projects/<root_key>/, not subdir key.
-  local name="codex-dispatch.sh: subdirectory --cd resolves to repo root partition"
+  local name="pmctl-dispatch: subdirectory --cd resolves to repo root partition"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition git_top
   store="$tmp_root/subdir-store"
@@ -370,12 +494,10 @@ case_dispatch_subdir_partition_key() {
   ( cd "$repo_root" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
   git_top="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
   root_key="$(printf '%s\n' "$git_top" | _portable_sha1 2>/dev/null || true)"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  brief_file="$tmp_root/subdir-brief.md"
-  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_subdir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    "$PMCTL" dispatch run --adapter codex \
     --cd "$work_subdir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   expected_partition="$store/projects/$root_key"
   if [[ -f "$expected_partition/runs.jsonl" ]]; then
@@ -387,7 +509,7 @@ case_dispatch_subdir_partition_key() {
   fi
 }
 
-case_dispatch_task_id_anchor() {
+case_sw_build_run_json_task_id_anchor() {
   # Verifies that prefixed keys like `parent_task_id:` are not mistaken for the
   # real `task_id:` line when extracting the task attribution for the run row.
   #
@@ -395,65 +517,41 @@ case_dispatch_task_id_anchor() {
   #   1. Write a brief with parent_task_id: CC-999 before task_id: CC-230.
   #   2. Run fake-codex dispatch.
   #   3. Assert that runs.jsonl has task_id == "CC-230", not "CC-999" or "UNKN-0".
-  local name="codex-dispatch.sh: task_id extraction is anchored (ignores parent_task_id)"
+  local name="sw_build_run_json: task_id extraction is anchored (ignores parent_task_id)"
   should_run "$name" || return 0
-  local store fake_bin_dir brief_file work_dir runs_file task_id_found
-  store="$tmp_root/anchor-store"
-  fake_bin_dir="$tmp_root/anchor-bin"
+  local brief_file work_dir run_json task_id_found
   work_dir="$tmp_root/anchor-workdir"
-  mkdir -p "$fake_bin_dir" "$work_dir"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
+  mkdir -p "$work_dir"
   brief_file="$tmp_root/anchor-brief.md"
   # parent_task_id: appears BEFORE task_id: - unanchored grep would pick CC-999
   printf 'parent_task_id: CC-999\ntask_id: CC-230\nDo nothing.\n' > "$brief_file"
-  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
-    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
-  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  task_id_found=""
-  [[ -n "$runs_file" ]] && task_id_found="$(jq -r '.task_id' "$runs_file" 2>/dev/null | head -1 || true)"
+  run_json="$(sw_build_run_json codex 0 model "$brief_file" "$work_dir" "")"
+  task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
   if [[ "$task_id_found" == "CC-230" ]]; then
     pass "$name"
   else
-    fail "$name" "expected task_id=CC-230 but got task_id=${task_id_found:-none} (file=${runs_file:-none})"
+    fail "$name" "expected task_id=CC-230 but got task_id=${task_id_found:-none}"
   fi
 }
 
-case_dispatch_inline_brief_task_id() {
-  # Verifies that task_id is correctly extracted when the brief is passed as an inline
-  # argument (-- <brief>) rather than a --brief-file, exercising the inline-BRIEF extraction
-  # branch of codex-dispatch.sh.
-  #
-  # Steps:
-  #   1. Create a fake codex that exits 0.
-  #   2. Run codex-dispatch.sh --cd <workdir> -- "task_id: CC-230\nDo nothing."
-  #      (inline brief form, no --brief-file).
-  #   3. Assert runs.jsonl row has task_id == "CC-230".
-  local name="codex-dispatch.sh: inline brief task_id extraction"
+case_sw_build_run_json_inline_brief_task_id() {
+  # Verifies the backward-compatible builder still extracts task_id from inline brief text.
+  local name="sw_build_run_json: inline brief task_id extraction"
   should_run "$name" || return 0
-  local store fake_bin_dir work_dir runs_file task_id_found
-  store="$tmp_root/inline-brief-store"
-  fake_bin_dir="$tmp_root/inline-brief-bin"
+  local work_dir run_json task_id_found
   work_dir="$tmp_root/inline-brief-workdir"
-  mkdir -p "$fake_bin_dir" "$work_dir"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
-    --cd "$work_dir" -- "task_id: CC-230
-Do nothing." >/dev/null 2>&1 || true
-  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  task_id_found=""
-  [[ -n "$runs_file" ]] && task_id_found="$(jq -r '.task_id' "$runs_file" 2>/dev/null | head -1 || true)"
+  mkdir -p "$work_dir"
+  run_json="$(sw_build_run_json codex 0 model "" "$work_dir" "" "task_id: CC-230
+Do nothing.")"
+  task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
   if [[ "$task_id_found" == "CC-230" ]]; then
     pass "$name"
   else
-    fail "$name" "expected task_id=CC-230 but got '${task_id_found:-none}' (file=${runs_file:-none})"
+    fail "$name" "expected task_id=CC-230 but got '${task_id_found:-none}'"
   fi
 }
 
-case_dispatch_failed_records_state() {
+case_pmctl_dispatch_failed_records_state() {
   # Verifies that when the dispatched codex process exits non-zero, the run row
   # records state:"failed" and the actual exit code, not "ok".
   #
@@ -462,19 +560,18 @@ case_dispatch_failed_records_state() {
   #   2. Write a brief file with task_id: CC-230.
   #   3. Run codex-dispatch.sh (it exits non-zero but the wrapper may still exit 0).
   #   4. Assert runs.jsonl row has state == "failed" and exit_code == 42.
-  local name="codex-dispatch.sh: failed dispatch records state:failed and exit code"
+  local name="pmctl-dispatch: failed dispatch records state:failed and exit code"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir runs_file state_found exit_found
   store="$tmp_root/failed-dispatch-store"
   fake_bin_dir="$tmp_root/failed-dispatch-bin"
   work_dir="$tmp_root/failed-dispatch-workdir"
   mkdir -p "$fake_bin_dir" "$work_dir"
-  printf '#!/usr/bin/env bash\nexit 42\n' > "$fake_bin_dir/codex"
-  chmod +x "$fake_bin_dir/codex"
-  brief_file="$tmp_root/failed-dispatch-brief.md"
-  printf 'task_id: CC-230\nDo nothing.\n' > "$brief_file"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 42
+  brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    bash "$REPO_ROOT/scripts/codex-dispatch.sh" \
+    "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   state_found=""
@@ -487,6 +584,83 @@ case_dispatch_failed_records_state() {
     pass "$name"
   else
     fail "$name" "expected state=failed exit_code=42 but got state=${state_found:-none} exit_code=${exit_found:-none} (file=${runs_file:-none})"
+  fi
+}
+
+case_pmctl_dispatch_pre_event_before_adapter() {
+  local name="pmctl-dispatch: run.dispatched Event emitted before adapter invocation"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir probe_file events_file first_kind
+  store="$tmp_root/pre-event-store"
+  fake_bin_dir="$tmp_root/pre-event-bin"
+  work_dir="$tmp_root/pre-event-workdir"
+  probe_file="$tmp_root/pre-event-seen"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0 "$probe_file"
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  first_kind=""
+  [[ -n "$events_file" ]] && first_kind="$(head -1 "$events_file" | jq -r '.kind' 2>/dev/null || true)"
+  if [[ -s "$probe_file" && "$first_kind" == "run.dispatched" ]]; then
+    pass "$name"
+  else
+    fail "$name" "probe=$([[ -s "$probe_file" ]] && echo seen || echo missing) first_kind=${first_kind:-none}"
+  fi
+}
+
+case_pmctl_dispatch_completed_event() {
+  local name="pmctl-dispatch: run.completed Event in events.jsonl after successful dispatch"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir events_file kinds run_ids
+  store="$tmp_root/completed-event-store"
+  fake_bin_dir="$tmp_root/completed-event-bin"
+  work_dir="$tmp_root/completed-event-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  kinds=""
+  run_ids=""
+  if [[ -n "$events_file" ]]; then
+    kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
+    run_ids="$(jq -r '.payload.run_id' "$events_file" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+  fi
+  if [[ "$kinds" == "run.dispatched,run.completed" && "$run_ids" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "kinds=${kinds:-none} unique_run_ids=${run_ids:-none}"
+  fi
+}
+
+case_pmctl_dispatch_failed_event() {
+  local name="pmctl-dispatch: run.failed Event in events.jsonl after failed adapter exit"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir events_file failed_exit
+  store="$tmp_root/failed-event-store"
+  fake_bin_dir="$tmp_root/failed-event-bin"
+  work_dir="$tmp_root/failed-event-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 42
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  failed_exit=""
+  [[ -n "$events_file" ]] && failed_exit="$(jq -r 'select(.kind=="run.failed") | .payload.exit_code' "$events_file" 2>/dev/null || true)"
+  if [[ "$failed_exit" == "42" ]]; then
+    pass "$name"
+  else
+    fail "$name" "failed_exit=${failed_exit:-none}"
   fi
 }
 
@@ -548,17 +722,27 @@ case_state_store_init_structure
 case_runs_append_valid_jsonl
 case_runs_append_appends
 case_events_append
+case_runs_append_rejects_newline
+case_runs_append_rejects_nul
+case_events_append_rejects_newline
+case_events_append_rejects_nul
+case_runs_append_compacts_json
+case_runs_append_rejects_malformed_json
+case_runs_append_rejects_schema_invalid
 case_task_upsert
 case_task_upsert_invalid_id
-case_runs_append_read_only_nonfatal
+case_runs_append_read_only_fails_loudly
 case_codex_dispatch_state_store_self_contained
-case_dispatch_creates_run_row
-case_dispatch_correct_partition
-case_dispatch_run_json_valid
-case_dispatch_subdir_partition_key
-case_dispatch_task_id_anchor
-case_dispatch_inline_brief_task_id
-case_dispatch_failed_records_state
+case_pmctl_dispatch_creates_run_row
+case_pmctl_dispatch_correct_partition
+case_pmctl_dispatch_run_json_valid
+case_pmctl_dispatch_subdir_partition_key
+case_sw_build_run_json_task_id_anchor
+case_sw_build_run_json_inline_brief_task_id
+case_pmctl_dispatch_failed_records_state
+case_pmctl_dispatch_pre_event_before_adapter
+case_pmctl_dispatch_completed_event
+case_pmctl_dispatch_failed_event
 case_project_key_shasum_fallback
 case_project_key_no_sha1sum
 

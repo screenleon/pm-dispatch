@@ -117,7 +117,7 @@ PRINT_CMD=0
 # either dispatch through `pmctl dispatch run` or set PM_CFG_DEFAULT_MODEL themselves.
 DEFAULT_DISPATCH_MODEL="default"
 
-# shellcheck source=scripts/lib/state-writer.sh
+# shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 
 _resolve_model_alias() {
@@ -378,9 +378,6 @@ else
 fi
 EXIT=$?
 set -e
-
-# --- state store: append Run row (best-effort; never fatal) ---
-sw_append_dispatch_run "codex" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DIR:-}" "${TRACE:-}" "${BRIEF:-}" 2>/dev/null || true
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then

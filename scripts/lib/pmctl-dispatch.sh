@@ -56,6 +56,99 @@ if ! declare -F pm_config_load >/dev/null 2>&1; then
   unset _pmctl_dispatch_lib_dir
 fi
 
+pmctl_dispatch_extract_model() {
+  local model=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model)
+        if [[ $# -ge 2 ]]; then
+          model="$2"
+          shift 2
+        else
+          shift
+        fi
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  printf '%s\n' "$model"
+}
+
+pmctl_dispatch_utc_ts() {
+  date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ
+}
+
+pmctl_dispatch_stamp() {
+  date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ
+}
+
+pmctl_dispatch_hex6() {
+  local hex
+  hex="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  printf '%s\n' "${hex:0:6}"
+}
+
+pmctl_dispatch_ensure_state_writer() {
+  local repo_root="${1:-}"
+  if declare -F sw_build_run_json >/dev/null 2>&1 \
+    && declare -F runs_append >/dev/null 2>&1 \
+    && declare -F events_append >/dev/null 2>&1; then
+    return 0
+  fi
+  # shellcheck disable=SC1091  # dynamic repo root path.
+  . "$repo_root/scripts/lib/state-writer.sh"
+}
+
+pmctl_dispatch_write_event() {
+  local repo_root="${1:-}" work_dir="${2:-}" kind="${3:-}" run_id="${4:-}"
+  local exit_code="${5:-0}" adapter="${6:-}"
+  local ts evt_id event_json rc=0
+
+  pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
+  [[ "$exit_code" =~ ^-?[0-9]+$ ]] || return 1
+  ts="$(pmctl_dispatch_utc_ts)"
+  evt_id="evt-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  event_json="$(jq -cn \
+    --arg id "$evt_id" \
+    --arg ts "$ts" \
+    --arg kind "$kind" \
+    --arg subject_id "$run_id" \
+    --arg actor "pmctl" \
+    --arg run_id "$run_id" \
+    --arg adapter "$adapter" \
+    --argjson exit_code "$exit_code" \
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:{run_id:$run_id,exit_code:$exit_code,adapter:$adapter}}'
+  )" || return $?
+  _SW_REPO_ROOT="$work_dir" events_append "$event_json" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'pmctl dispatch run: failed to append %s event for %s\n' "$kind" "$run_id" >&2
+    return "$rc"
+  fi
+  return 0
+}
+
+pmctl_dispatch_write_run() {
+  local repo_root="${1:-}" adapter="${2:-}" exit_code="${3:-1}" model="${4:-}"
+  local brief_file="${5:-}" work_dir="${6:-}" trace_path="${7:-}" run_id="${8:-}"
+  local created_ts="${9:-}" event_kind="${10:-}"
+  local run_json rc=0
+
+  pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
+  if ! run_json="$(_SW_RUN_ID_OVERRIDE="$run_id" _SW_CREATED_TS_OVERRIDE="$created_ts" \
+    sw_build_run_json "$adapter" "$exit_code" "$model" "$brief_file" "$work_dir" "$trace_path")"; then
+    printf 'pmctl dispatch run: failed to build Run state for %s\n' "$run_id" >&2
+    return 1
+  fi
+  _SW_REPO_ROOT="$work_dir" runs_append "$run_json" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'pmctl dispatch run: failed to append Run state for %s\n' "$run_id" >&2
+    return "$rc"
+  fi
+  pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" "$exit_code" "$adapter"
+}
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -217,6 +310,17 @@ pmctl_dispatch_run() {
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL
 
+  local _dispatch_model _dispatch_created_ts _dispatch_run_id
+  _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
+  _dispatch_created_ts="$(pmctl_dispatch_utc_ts)"
+  _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+
+  if [[ "$print_cmd" -eq 0 ]]; then
+    if ! pmctl_dispatch_write_event "$repo_root" "$work_dir" "run.dispatched" "$_dispatch_run_id" 0 "$adapter"; then
+      return $?
+    fi
+  fi
+
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
   #    Tee stdout to a temp file so per-run artifact paths in the adapter footer
   #    can be extracted for post-verify without relying on latest.* symlinks.
@@ -248,6 +352,10 @@ pmctl_dispatch_run() {
   # 6. A failed adapter run short-circuits: propagate its exit verbatim. The
   #    adapter already wrote forensic trace/stderr for post-mortem.
   if [[ "$exit_code" -ne 0 ]]; then
+    if ! pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
+      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed"; then
+      return $?
+    fi
     return "$exit_code"
   fi
 
@@ -260,7 +368,16 @@ pmctl_dispatch_run() {
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
   if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
+    if ! pmctl_dispatch_write_run "$repo_root" "$adapter" 1 "$_dispatch_model" \
+      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed"; then
+      return $?
+    fi
     return 1
+  fi
+
+  if ! pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
+    "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.completed"; then
+    return $?
   fi
 
   return "$exit_code"
