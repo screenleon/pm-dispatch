@@ -73,6 +73,12 @@ pmctl_dispatch_extract_model() {
         ;;
     esac
   done
+  # Fall back to config default so Run rows record the effective model, not "".
+  # Adapter built-in defaults (below PM_CFG_DEFAULT_MODEL) are not captured here;
+  # that would require the adapter to expose its resolved model via the footer.
+  if [[ -z "$model" && -n "${PM_CFG_DEFAULT_MODEL:-}" ]]; then
+    model="$PM_CFG_DEFAULT_MODEL"
+  fi
   printf '%s\n' "$model"
 }
 

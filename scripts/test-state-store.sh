@@ -474,6 +474,87 @@ case_pmctl_dispatch_run_json_valid() {
   fi
 }
 
+case_pmctl_dispatch_model_explicit() {
+  # Verifies that an explicit --model flag is recorded in the Run row.
+  local name="pmctl-dispatch: explicit --model stored in run row"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file model_found
+  store="$tmp_root/model-explicit-store"
+  fake_bin_dir="$tmp_root/model-explicit-bin"
+  work_dir="$tmp_root/model-explicit-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --model "explicit-model-x" \
+    --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  if [[ "$model_found" == "explicit-model-x" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected model=explicit-model-x got '${model_found:-none}' (runs_file=${runs_file:-none})"
+  fi
+}
+
+case_pmctl_dispatch_model_config_default() {
+  # Verifies that dispatch.default_model from the config file is stored in the
+  # Run row when no explicit --model flag is given (uses PM_DISPATCH_CONFIG_FILE
+  # to inject a fake config without touching ~/.pm-dispatch/config).
+  local name="pmctl-dispatch: config dispatch.default_model stored in run row when no explicit --model"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file model_found cfg_file
+  store="$tmp_root/model-config-store"
+  fake_bin_dir="$tmp_root/model-config-bin"
+  work_dir="$tmp_root/model-config-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  cfg_file="$tmp_root/model-config.cfg"
+  printf 'dispatch.default_model = config-default-model\n' > "$cfg_file"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_CONFIG_FILE="$cfg_file" \
+    PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  if [[ "$model_found" == "config-default-model" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected model=config-default-model got '${model_found:-none}' (runs_file=${runs_file:-none})"
+  fi
+}
+
+case_pmctl_dispatch_model_builtin_default() {
+  # Verifies that when neither --model nor PM_CFG_DEFAULT_MODEL is set, the Run
+  # row stores an empty string (adapter built-in default not captured at pmctl level).
+  local name="pmctl-dispatch: no --model and no PM_CFG_DEFAULT_MODEL stores empty model"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file model_found
+  store="$tmp_root/model-builtin-store"
+  fake_bin_dir="$tmp_root/model-builtin-bin"
+  work_dir="$tmp_root/model-builtin-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    unset PM_CFG_DEFAULT_MODEL 2>/dev/null; \
+    PM_DISPATCH_STATE_ROOT="$store" PM_CFG_DEFAULT_MODEL="" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  if [[ "$model_found" == "" || "$model_found" == "null" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected empty model but got '${model_found}' (runs_file=${runs_file:-none})"
+  fi
+}
+
 case_pmctl_dispatch_subdir_partition_key() {
   # Verifies that dispatching with --cd pointing to a repo subdirectory writes
   # the run row under the repo root's partition key, not the subdirectory's key.
@@ -736,6 +817,9 @@ case_codex_dispatch_state_store_self_contained
 case_pmctl_dispatch_creates_run_row
 case_pmctl_dispatch_correct_partition
 case_pmctl_dispatch_run_json_valid
+case_pmctl_dispatch_model_explicit
+case_pmctl_dispatch_model_config_default
+case_pmctl_dispatch_model_builtin_default
 case_pmctl_dispatch_subdir_partition_key
 case_sw_build_run_json_task_id_anchor
 case_sw_build_run_json_inline_brief_task_id

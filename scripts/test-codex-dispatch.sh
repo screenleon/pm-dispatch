@@ -880,6 +880,42 @@ case_print_cmd_no_brief() {
   pass "$name"
 }
 
+case_state_store_no_direct_run_row_codex() {
+  # Verifies that direct invocation of adapters/codex/dispatch.sh (bypassing
+  # pmctl) does NOT write a Run row to the state store. pmctl owns state writes;
+  # the adapter is state-ignorant after CC-309.
+  local name="state-store/codex adapter direct invocation does not write Run row"
+  should_run "$name" || return 0
+  local _fake _home _work _brief _store _runs_file _code
+  _fake="$(mktemp -d)"
+  cat > "$_fake/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+FAKEOF
+  chmod +x "$_fake/codex"
+  _home="$(mktemp -d)"; mkdir -p "$_home/.claude/scripts"
+  ln -s "$REPO_ROOT/scripts/log-usage.sh" "$_home/.claude/scripts/log-usage.sh"
+  _store="$(mktemp -d)"
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'task_id: CC-309\ngoal: state store codex row test\n' > "$_brief"
+  set +e
+  PATH="$_fake:$PATH" HOME="$_home" PM_DISPATCH_STATE_ROOT="$_store" \
+    "$DISPATCH" --cd "$_work" --brief-file "$_brief" >/dev/null 2>&1
+  _code=$?
+  set -e
+  _runs_file="$(find "$_store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  if [[ "$_code" -eq 0 && -z "$_runs_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$_code unexpected runs=${_runs_file:-none} content=$(cat "${_runs_file:-/dev/null}" 2>/dev/null | head -c 200)"
+  fi
+  rm -rf "$_fake" "$_home" "$_store" "$_work"; rm -f "$_brief"
+}
+
 case_shim_delegates_to_adapter() {
   # Verifies that scripts/codex-dispatch.sh (the exec-wrapper shim introduced in
   # CC-308) correctly delegates to adapters/codex/dispatch.sh by running --help
@@ -1087,5 +1123,6 @@ case_shim_delegates_to_adapter
 case_latest_symlink_failure_tolerated
 case_codex_read_roots_includes_work_dir
 case_codex_read_roots_preserves_inherited
+case_state_store_no_direct_run_row_codex
 
 th_summary
