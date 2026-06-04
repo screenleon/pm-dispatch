@@ -190,6 +190,19 @@ case_claude_adapter_missing_reference_fails() {
   rm -rf "$root"
 }
 
+case_claude_adapter_missing_resolver_fails() {
+  local name="lint-model-aliases/claude adapter missing _resolve_claude_model_alias fails"
+  local root
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
+  # Keep PM_CLAUDE_ALIAS_FILE but remove the resolver function reference
+  printf 'PM_CLAUDE_ALIAS_FILE=x\n# resolver function deliberately absent\n' \
+    > "$root/adapters/claude/dispatch.sh"
+  _run_linter_expect "$name" "$root" "nonzero" "_resolve_claude_model_alias"
+  rm -rf "$root"
+}
+
 case_claude_fixture_alias_missing_fails() {
   local name="lint-model-aliases/claude alias not covered by test fixture fails"
   local root
@@ -213,6 +226,7 @@ case_claude_malformed_row_fails
 case_claude_empty_tsv_fails
 case_claude_doc_drift_fails
 case_claude_adapter_missing_reference_fails
+case_claude_adapter_missing_resolver_fails
 case_claude_fixture_alias_missing_fails
 
 th_summary
