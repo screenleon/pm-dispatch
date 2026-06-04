@@ -90,7 +90,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-306 | 🟡 deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-307 | 🟡 deferred | **[arch: pm role cross-runtime — guard 已 runtime-agnostic，但文件與 alias 仍暗示 pm = claude-only]** CC-291 的兩軸設計（role ⊥ runtime）明確要求 pm guard policy 不能綁 runtime。`hook-pm-write-guard.sh` 確實 runtime-agnostic（任何 runtime 套用同一規則）✓，且 `--role pm --runtime codex` CLI 路徑已可正常呼叫 ✓；但目前三個地方仍暗示 pm=claude-only：(1) deprecated `--profile pm` alias hardcode `runtime="claude"`，(2) `scripts/lib/pmctl-guard.sh` 說明說「currently claude-only」，(3) 無 codex-as-pm dispatch end-to-end 測試。修法：(1) alias 部分接受（deprecated, 將由 CC-296 移除，hardcode 是 convenience 不是設計限制）；(2) 把「currently claude-only」說明改為「guard policy is runtime-agnostic; no deployed codex-as-pm use case yet」以分清設計與現況；(3) 加 integration smoke test：`pmctl dispatch run --adapter codex --role pm` 可成功 dispatch。Origin user 2026-06-02。關聯 [[CC-291]]（two-axis design）、[[CC-296]]（alias sunset）、[[CC-215]]（pmctl dispatch run）。 | arch | 2026-06-02 | — | P3 | design |
 | CC-298 | ✅ closed 2026-06-02 | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate had a runtime-named brief directory（`scripts/pr-gate.sh:360`）+ runtime-tokenized claude brief filenames（L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | pr:#216 | P2 | design |
-| CC-309 | 🔵 active | **[arch: single-writer — route Run/Event writes through pmctl]** pmctl 成唯一 machine-state writer：adapter 的 `sw_append_dispatch_run` 直接寫上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event；writer 邊界拒 newline/NUL + jq-compact + schema-validate；寫失敗變響（非靜默 best-effort）；反轉 `test-layer-boundaries.sh` 禁止 adapter/hook 寫 state（延伸 [[CC-306]]）。v0.4.0 地基 Phase 1。見 `docs/architecture/v0.4.0-state-first-foundation.md` §3/§10.B。 | arch | 2026-06-03 | — | P2 | design |
+| CC-309 | ✅ closed 2026-06-04 | **[arch: single-writer — route Run/Event writes through pmctl]** pmctl 成唯一 machine-state writer：adapter 的 `sw_append_dispatch_run` 直接寫上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event；writer 邊界拒 newline/NUL + jq-compact + schema-validate；寫失敗變響（非靜默 best-effort）；反轉 `test-layer-boundaries.sh` 禁止 adapter/hook 寫 state（延伸 [[CC-306]]）。v0.4.0 地基 Phase 1。見 `docs/architecture/v0.4.0-state-first-foundation.md` §3/§10.B。 | arch | 2026-06-03 | pr:#223 | P2 | design |
 | CC-310 | 🔵 active | **[arch: transactional Run+Event write + Run FSM lifecycle]** pmctl-owned record-dispatch：Run+Event 共享 operation-id + 冪等 key；對帳不變量「每個 terminal Run 恰一 terminal Event」；實現 run FSM（pending→dispatched→verifying→ok/partial/failed），每轉移 emit Event（非只寫終態）。見 §10.A2/A3。 | arch | 2026-06-03 | — | P2 | design |
 | CC-311 | 🔵 active | **[arch: state store VERSION gating + migration]** `state_store_init` 只在 VERSION 不存在時建立；存在且不支援版本→fail loud + migration path；**不得寫回降級**（現況 `state-writer.sh:85-90` 會把非 1 寫回 1）。見 §10.A1。 | arch | 2026-06-03 | — | P2 | design |
 | CC-312 | 🔵 active | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code/finished_ts；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | — | P2 | design |
@@ -100,8 +100,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-316 | 🔵 active | **[arch: state store rotation impl]** 依 `layout.yaml` 把 runs/events rotate 成 `archive/*-$YYYYMM-NNNN.jsonl.gz`（月內加單調 segment 後綴避免碰撞）；reader 合併 active+archive。見 §3.8 / §10.B（D7）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-317 | 🔵 active | **[arch: state store safety & robustness hardening]** store-root 安全（canonicalize / 拒 symlink-component / world-writable / 0700）；mkdir-lock stale-owner 協定（pid/host/trap/bounded reclaim）+ UNC/9P preflight warn；`layout.yaml` 成可執行真相源（writer/reader 消費 或 golden test）。見 §10.B。 | arch | 2026-06-03 | — | P2 | design |
 | CC-318 | 🔵 active | **[fix: dispatch-post-verify — execute self_verify bash lines directly]** `dispatch-post-verify.sh` 對 `self_verify:` 的驗證是在 executor 的 `latest.last` 輸出中做子字串搜尋；executor 用 plain text 回應而非逐條引用，導致全部 MISSING。結構性修正：把 `self_verify:` 每條當 bash 指令執行（`eval` 或 `bash -c`），exit 0 = pass，而非在 executor 輸出中搜尋。待 CC-309 合併後處理。 | ops/DX | 2026-06-04 | — | P3 | hygiene |
-| CC-319 | 🔵 active | **[fix: reviewer guard — derive allowed dir from file path, not install location]** `hook-reviewer-write-guard.sh` 原本把 `GATE_REPO_ROOT` 綁定到 `$_SCRIPT_DIR/..`（pm-dispatch 安裝位置），在非 pm-dispatch repo 執行 pr-gate 時 guard 拒絕 reviewer 寫入 `.gate-results/`，sequential/parallel 兩種模式均受影響。修正：改為檢查 `basename(dirname(file)) == ".gate-results"`，移除 `CLAUDE_HOOK_GATE_REPO_ROOT` 綁定。pr:#224。 | ops/security | 2026-06-04 | pr:#224 | P1 | oss |
-| CC-320 | 🔵 active | **[fix: codex adapter auto-export work_dir git root to read roots]** `hook-codex-bash-guard.sh` 的讀取允許路徑預設 `$HOME/github:/tmp`；若 target repo 不在 `~/github/`，guard 拒絕 codex 讀取目標 repo 的檔案。修正：`adapters/codex/dispatch.sh` 在呼叫 codex 前自動把 `$WORK_DIR` git root prepend 到 `CLAUDE_HOOK_CODEX_READ_ROOTS`。pr:#224。 | ops | 2026-06-04 | pr:#224 | P1 | oss |
+| CC-319 | ✅ closed 2026-06-04 | **[fix: reviewer guard — derive allowed dir from file path, not install location]** `hook-reviewer-write-guard.sh` 原本把 `GATE_REPO_ROOT` 綁定到 `$_SCRIPT_DIR/..`（pm-dispatch 安裝位置），在非 pm-dispatch repo 執行 pr-gate 時 guard 拒絕 reviewer 寫入 `.gate-results/`，sequential/parallel 兩種模式均受影響。修正：改為檢查 `basename(dirname(file)) == ".gate-results"`，移除 `CLAUDE_HOOK_GATE_REPO_ROOT` 綁定。pr:#224。 | ops/security | 2026-06-04 | pr:#224 | P1 | oss |
+| CC-320 | ✅ closed 2026-06-04 | **[fix: codex adapter auto-export work_dir git root to read roots]** `hook-codex-bash-guard.sh` 的讀取允許路徑預設 `$HOME/github:/tmp`；若 target repo 不在 `~/github/`，guard 拒絕 codex 讀取目標 repo 的檔案。修正：`adapters/codex/dispatch.sh` 在呼叫 codex 前自動把 `$WORK_DIR` git root prepend 到 `CLAUDE_HOOK_CODEX_READ_ROOTS`。pr:#224。 | ops | 2026-06-04 | pr:#224 | P1 | oss |
 | CC-321 | 🔵 active | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
 
 ---
@@ -1353,7 +1353,9 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **See**: pr:#213
 
-## CC-309 — single-writer: route Run/Event writes through pmctl
+## CC-309 — single-writer: route Run/Event writes through pmctl ✅ 2026-06-04
+
+**See**: pr:#223
 
 **Problem**: machine state is written outside `pmctl` — adapters call `sw_append_dispatch_run` directly (`adapters/codex/dispatch.sh:369`, claude equivalent), the append primitives `printf '%s\n'` caller strings without compaction/validation (`state-writer.sh:96-129`), failures are silent (`return 0`), and `test-layer-boundaries.sh:20-23,161-172` *allows* adapter state writes.
 
@@ -1439,7 +1441,9 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Depends on**: [[CC-309]] merged (establishes executor boundary; self_verify format is a dispatch-level concern).
 
-## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path
+## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path ✅ 2026-06-04
+
+**See**: pr:#224
 
 **Problem**: `scripts/hook-reviewer-write-guard.sh` bound the allowed write path to `$_SCRIPT_DIR/..` (the pm-dispatch install location). Running `pr-gate` on any project other than pm-dispatch caused the guard to deny the reviewer's output write with `"target is not <repo>/.gate-results"`, blocking both sequential and parallel gate modes.
 
@@ -1449,7 +1453,9 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Cross-link**: [[CC-320]], [[CC-321]].
 
-## CC-320 — fix: codex adapter auto-export work_dir git root to read roots
+## CC-320 — fix: codex adapter auto-export work_dir git root to read roots ✅ 2026-06-04
+
+**See**: pr:#224
 
 **Problem**: `hook-codex-bash-guard.sh` defaults `CLAUDE_HOOK_CODEX_READ_ROOTS` to `$HOME/github:/tmp`. Codex dispatched to a repo outside `~/github/` cannot read source files — the guard blocks the read attempt. The default path is a historical convention, not a project-agnostic setting.
 
