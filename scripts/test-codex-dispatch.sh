@@ -952,9 +952,15 @@ FAKELN
 }
 
 case_codex_read_roots_includes_work_dir() {
-  # CC-320: adapter exports CLAUDE_HOOK_CODEX_READ_ROOTS that includes the
-  # dispatch target's git root so hook-codex-bash-guard allows reads from any
-  # project, not just repos under $HOME/github.
+  # CC-320: the adapter exports CLAUDE_HOOK_CODEX_READ_ROOTS containing the
+  # dispatch target's git root, so hook-codex-bash-guard allows reads from any
+  # project rather than only repos under $HOME/github.
+  #
+  # Steps:
+  #   1. git init a temp work dir and capture its git root.
+  #   2. Dispatch with a fake codex that echoes CLAUDE_HOOK_CODEX_READ_ROOTS
+  #      into --output-last-message (surfaced in "=== final message ===").
+  #   3. Assert the exported value contains the work dir's git root.
   local name="codex-dispatch: CLAUDE_HOOK_CODEX_READ_ROOTS includes work_dir git root"
   should_run "$name" || return 0
   local _fake _work _brief _output _git_root
@@ -994,11 +1000,18 @@ FAKEOF
 
 case_codex_read_roots_preserves_inherited() {
   # CC-320: when the caller already exports CLAUDE_HOOK_CODEX_READ_ROOTS, the
-  # adapter prepends the target git root and the /tmp baseline (which mirrors
-  # the guard's documented default `$HOME/github:/tmp` that the explicit export
-  # would otherwise clobber), then preserves the inherited value as trailing
-  # fallback. The exported value must be EXACTLY `<git_root>:/tmp:<inherited>`
-  # with no unintended extra roots.
+  # adapter prepends the target git root plus the /tmp baseline, then preserves
+  # the inherited value as trailing fallback — the export must be EXACTLY
+  # `<git_root>:/tmp:<inherited>` with no unintended extra roots. The /tmp
+  # baseline mirrors the guard default ($HOME/github:/tmp) that the explicit
+  # export would otherwise clobber, so it must be re-added for correctness.
+  #
+  # Steps:
+  #   1. git init a temp work dir and capture its git root; pick an inherited
+  #      read root (/opt/custom-read-root) distinct from git_root and /tmp.
+  #   2. Dispatch with CLAUDE_HOOK_CODEX_READ_ROOTS pre-set to the inherited
+  #      value and a fake codex that echoes the var into --output-last-message.
+  #   3. Assert the exported value equals EXACTLY <git_root>:/tmp:<inherited>.
   local name="codex-dispatch: CLAUDE_HOOK_CODEX_READ_ROOTS preserves inherited value"
   should_run "$name" || return 0
   local _fake _work _brief _output _git_root _inherited _expected _got
