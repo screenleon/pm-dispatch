@@ -99,7 +99,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-315 | 🔵 active | **[arch: state read/query contract + pmctl trace]** pmctl 提供 by id/task/kind/time-window 讀取；定義 active+archive 讀取語義（排序 / 壞行容忍 / time-window / 索引 vs 串流）；`pmctl trace` 為第一個 state consumer。見 §3.7（D6）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-316 | 🔵 active | **[arch: state store rotation impl]** 依 `layout.yaml` 把 runs/events rotate 成 `archive/*-$YYYYMM-NNNN.jsonl.gz`（月內加單調 segment 後綴避免碰撞）；reader 合併 active+archive。見 §3.8 / §10.B（D7）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-317 | 🔵 active | **[arch: state store safety & robustness hardening]** store-root 安全（canonicalize / 拒 symlink-component / world-writable / 0700）；mkdir-lock stale-owner 協定（pid/host/trap/bounded reclaim）+ UNC/9P preflight warn；`layout.yaml` 成可執行真相源（writer/reader 消費 或 golden test）。見 §10.B。 | arch | 2026-06-03 | — | P2 | design |
-| CC-318 | 🔵 active | **[fix: dispatch-post-verify — execute self_verify bash lines directly]** `dispatch-post-verify.sh` 對 `self_verify:` 的驗證是在 executor 的 `latest.last` 輸出中做子字串搜尋；executor 用 plain text 回應而非逐條引用，導致全部 MISSING。結構性修正：把 `self_verify:` 每條當 bash 指令執行（`eval` 或 `bash -c`），exit 0 = pass，而非在 executor 輸出中搜尋。待 CC-309 合併後處理。 | ops/DX | 2026-06-04 | — | P3 | hygiene |
+| CC-318 | ✅ closed 2026-06-04 | **[fix: dispatch-post-verify — execute self_verify bash lines directly]** `dispatch-post-verify.sh` 對 `self_verify:` 的驗證原本是在 executor 的 `latest.last` 輸出中做子字串搜尋；executor 用 plain text 回應而非逐條引用，導致全部 MISSING。結構性修正：結構化 `- cmd: "<bash>"` 項由 post-verify 在 `$WORK_DIR` 執行（PASS=exit 0／FAIL=非零或 timeout）；macros/prose/bare-scalar 為 executor 語意評估，標 `SKIP (executor-evaluated)` 不誤殺。 | ops/DX | 2026-06-04 | pr:#227 | P3 | hygiene |
 | CC-319 | ✅ closed 2026-06-04 | **[fix: reviewer guard — derive allowed dir from file path, not install location]** `hook-reviewer-write-guard.sh` 原本把 `GATE_REPO_ROOT` 綁定到 `$_SCRIPT_DIR/..`（pm-dispatch 安裝位置），在非 pm-dispatch repo 執行 pr-gate 時 guard 拒絕 reviewer 寫入 `.gate-results/`，sequential/parallel 兩種模式均受影響。修正：改為檢查 `basename(dirname(file)) == ".gate-results"`，移除 `CLAUDE_HOOK_GATE_REPO_ROOT` 綁定。pr:#224。 | ops/security | 2026-06-04 | pr:#224 | P1 | oss |
 | CC-320 | ✅ closed 2026-06-04 | **[fix: codex adapter auto-export work_dir git root to read roots]** `hook-codex-bash-guard.sh` 的讀取允許路徑預設 `$HOME/github:/tmp`；若 target repo 不在 `~/github/`，guard 拒絕 codex 讀取目標 repo 的檔案。修正：`adapters/codex/dispatch.sh` 在呼叫 codex 前自動把 `$WORK_DIR` git root prepend 到 `CLAUDE_HOOK_CODEX_READ_ROOTS`。pr:#224。 | ops | 2026-06-04 | pr:#224 | P1 | oss |
 | CC-321 | 🔵 active | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
@@ -1427,19 +1427,24 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Detail**: scoping doc §10.B.
 
-## CC-318 — dispatch-post-verify: execute self_verify bash lines directly
+## CC-318 — dispatch-post-verify: execute self_verify bash lines directly ✅ 2026-06-04
+
+**See**: pr:#227
 
 **Problem**: `scripts/dispatch-post-verify.sh` validates `self_verify:` items by searching for them as literal substrings in the executor's `latest.last` output (`grep -F "$item"`). This is a format contract between post-verify and the executor: the executor must reproduce the exact `self_verify:` text in its response, otherwise items are all reported MISSING. Codex writes `"Verification passed: ..."` instead of quoting each item verbatim, causing all self_verify checks to fail even when the executor actually ran the commands correctly. Tracked by `[[feedback_self_verify_format]]`.
 
-**Plan**: change each `self_verify:` line from a search target to a **bash command** — strip any `cmd: ` prefix and execute via `bash -c "$item"`. Exit 0 = FOUND; non-zero = MISSING. This eliminates the executor output format dependency and makes self_verify truly verifiable regardless of the executor's prose style.
+**Plan**: split self_verify into two kinds instead of searching `latest.last`. The structured `- cmd: "<bash>"` form is the **machine-executable** check — post-verify runs it via `bash -c` in `$WORK_DIR` under a timeout (PASS=exit 0, FAIL=non-zero/timeout). Every other shape (named macros, prose, bare scalars) is a **semantic check the executor evaluates** — post-verify marks it `SKIP (executor-evaluated)` and never fails it. This removes the executor-output-format dependency for the verifiable checks while staying honest that judgment checks (UI, accuracy) need executor/PM review, not a shell. (Round-1 attempt executed *every* item as bash; pr-gate flagged that it broke valid macro/structured briefs — hence the two-kind split.)
 
 **Acceptance**:
-- A `self_verify: bash scripts/run-all-tests.sh | grep -q "0 failed"` item passes if and only if the command exits 0.
-- Prose `self_verify:` items that are not valid bash fail clearly with an error message.
-- Existing `cmd: pass` sentinel still works (resolved in upstream executor before this hook sees it).
-- `dispatch-post-verify.sh` test coverage for execute-mode pass/fail cases.
+- A `- cmd: "<bash>"` item PASSes iff the command exits 0 (with quote-stripping for single/double-quoted and unquoted values); the documented `cmd:`+`expect:` structured form executes the cmd value.
+- A non-`cmd:` item (macro/prose/bare scalar) is reported `SKIP (executor-evaluated)` and does not fail the gate.
+- A timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s) reports FAIL.
+- Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`, `agents/{codex,claude}-executor.md`) describe the cmd:/SKIP split.
+- `dispatch-post-verify.sh` test coverage for cmd PASS/FAIL, quote forms, structured `expect:`, macro/bare-scalar SKIP, all-skipped OK, cwd, timeout, multi-check.
 
 **Depends on**: [[CC-309]] merged (establishes executor boundary; self_verify format is a dispatch-level concern).
+
+**Status**: implemented. Canonical self_verify shape (decided after pr-gate round 1 flagged a contract mismatch): the structured `- cmd: "<bash>"` form is the **machine-executable** check — post-verify runs it in `$WORK_DIR` under `DISPATCH_SELF_VERIFY_TIMEOUT` (default 300s); PASS=exit 0, FAIL=non-zero/timeout. Every other shape (named macros, prose, bare scalars) is a **semantic check the executor evaluates** — post-verify marks it `SKIP (executor-evaluated)`, never failing valid judgment-only briefs (e.g. UI/accuracy checks a shell cannot confirm). Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`) aligned; `test-dispatch-post-verify.sh` rewritten to cmd-exec PASS/FAIL + SKIP coverage (44/0). Index tracks to confirm merge.
 
 ## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path ✅ 2026-06-04
 

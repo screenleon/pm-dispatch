@@ -167,13 +167,45 @@ if [[ -n "$EXECUTOR_STATUS" ]]; then
   FAILED=1
 fi
 
+# CC-318: a self_verify item is one of two kinds.
+#   - Machine-executable check: the structured `- cmd: "<bash>"` form. post-verify
+#     RUNS the command in $WORK_DIR under a timeout — exit 0 = PASS, non-zero or
+#     timeout = FAIL. This replaces the old substring search of latest.last, so the
+#     executor's prose style no longer matters. The command comes from the
+#     PM-authored, brief-validated BRIEF_FILE (a trusted input).
+#   - Semantic check: every other shape (macros like `git-status no-collateral-
+#     damage: ...`, prose, bare scalars). These are judgment checks only the
+#     executor (an LLM) — not a shell — can evaluate (e.g. "UI renders correctly",
+#     "cross-checked against sources"). post-verify marks them SKIP rather than
+#     forcing them through bash, which would fail valid judgment-only briefs.
+# The optional `expect:` mapping key that may follow a `cmd:` item is informational
+# (the only documented value is "exits 0", which is exactly the exit-0 PASS rule);
+# the awk extractor only yields `- ` list items, so `expect:` lines are ignored.
+SELF_VERIFY_TIMEOUT="${DISPATCH_SELF_VERIFY_TIMEOUT:-300}"
+
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'
-  while IFS= read -r cmd; do
-    if grep -qxF "${cmd}: pass" "$LATEST_LAST"; then
-      printf '  FOUND: %s\n' "$cmd"
+  while IFS= read -r item; do
+    if [[ "$item" != cmd:* ]]; then
+      printf '  SKIP (executor-evaluated): %s\n' "$item"
+      continue
+    fi
+    # Extract the command value from `cmd: <value>`, trimming leading space and a
+    # single layer of matching surrounding quotes.
+    cmd="${item#cmd:}"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    if   [[ "$cmd" == \"*\" ]]; then cmd="${cmd#\"}"; cmd="${cmd%\"}"
+    elif [[ "$cmd" == \'*\' ]]; then cmd="${cmd#\'}"; cmd="${cmd%\'}"
+    fi
+    if ( cd "$WORK_DIR" && timeout --kill-after=15 "$SELF_VERIFY_TIMEOUT" bash -c "$cmd" ) >/dev/null 2>&1; then
+      printf '  PASS: %s\n' "$item"
     else
-      printf '  MISSING: %s\n' "$cmd"
+      rc=$?
+      if [[ "$rc" -eq 124 ]]; then
+        printf '  FAIL (timeout %ss): %s\n' "$SELF_VERIFY_TIMEOUT" "$item"
+      else
+        printf '  FAIL (exit %s): %s\n' "$rc" "$item"
+      fi
       FAILED=1
     fi
   done < <(
@@ -191,5 +223,5 @@ if [[ "$FAILED" -eq 0 ]]; then
   exit 0
 fi
 
-printf 'FAILED: one or more self_verify commands not found in latest.last\n'
+printf 'FAILED: one or more self_verify checks failed\n'
 exit 1

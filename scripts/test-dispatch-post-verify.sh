@@ -99,27 +99,27 @@ case_valid_no_brief_arg() {
   pass "$name"
 }
 
-# A self_verify command present in latest.last is reported as FOUND.
+# CC-318: a structured `cmd:` self_verify check that exits 0 is reported as PASS.
 # Steps:
-# 1. Create a trace whose latest.last includes the self_verify command and write a matching brief.
+# 1. Create a valid trace and a brief whose self_verify item is `- cmd: "<exit-0>"`.
 # 2. Run dispatch-post-verify.sh with the work directory and brief file.
-# 3. Assert exit 0 and output containing the FOUND line.
-case_valid_selfverify_found() {
-  local name="valid-selfverify-found"
+# 3. Assert exit 0 and output containing the PASS line.
+case_selfverify_pass() {
+  local name="selfverify-pass"
   should_run "$name" || return 0
   local work_dir brief out rc
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "test 1 = 1"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
 
   assert_eq "$name" "$rc" 0 || return 0
-  assert_string_contains "$name" "$out" "FOUND: bash scripts/run-all-tests.sh" || return 0
+  assert_string_contains "$name" "$out" 'PASS: cmd: "test 1 = 1"' || return 0
   pass "$name"
 }
 
@@ -180,13 +180,13 @@ case_fail_empty_latest_last() {
   pass "$name"
 }
 
-# A self_verify command missing from latest.last is reported as MISSING and fails.
+# CC-318: a structured `cmd:` self_verify check that exits non-zero is reported as FAIL.
 # Steps:
-# 1. Create a valid trace and a brief whose self_verify command is absent from latest.last.
+# 1. Create a valid trace and a brief whose self_verify item is `- cmd: "<exit-1>"`.
 # 2. Run dispatch-post-verify.sh with the work directory and brief file.
-# 3. Assert exit 1 and output containing the MISSING line.
-case_fail_selfverify_missing() {
-  local name="fail-selfverify-missing"
+# 3. Assert exit 1 and output containing the FAIL line with the exit code.
+case_selfverify_fail() {
+  local name="selfverify-fail"
   should_run "$name" || return 0
   local work_dir brief out rc
   work_dir="$(make_work_dir "$name")"
@@ -194,88 +194,262 @@ case_fail_selfverify_missing() {
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/missing-cmd.sh
+  - cmd: "test 1 = 2"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
 
   assert_eq "$name" "$rc" 1 || return 0
-  assert_string_contains "$name" "$out" "MISSING: bash scripts/missing-cmd.sh" || return 0
+  assert_string_contains "$name" "$out" 'FAIL (exit 1): cmd: "test 1 = 2"' || return 0
   pass "$name"
 }
 
-# A self_verify command on only a failure-prefixed trace line is reported as MISSING.
+# CC-318: a `cmd:` value with spaces/`=` survives quote-stripping and executes whole.
 # Steps:
-# 1. Create a trace whose latest.last contains only a fail-prefixed self_verify command line.
-# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
-# 3. Assert exit 1 and output containing the MISSING line.
-case_fail_selfverify_failed_prefix() {
-  local name="fail-selfverify-failed-prefix"
+# 1. Create a valid trace and a brief with a quoted `cmd:` containing spaces and `=`.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 — the entire quoted command runs, not just the first word.
+case_selfverify_cmd_quoted_spaces() {
+  local name="selfverify-cmd-quoted-spaces"
   should_run "$name" || return 0
   local work_dir brief out rc
-
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "fail: bash scripts/run-all-tests.sh exited 1"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "VAR=1 test 1 = 1"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
 
-  assert_eq "$name" "$rc" 1 || return 0
-  assert_string_contains "$name" "$out" "MISSING: bash scripts/run-all-tests.sh" || return 0
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" 'PASS: cmd: "VAR=1 test 1 = 1"' || return 0
   pass "$name"
 }
 
-# A self_verify command on only a colon-fail trace line is reported as MISSING.
+# CC-318: a single-quoted `cmd:` value is unwrapped and executed.
 # Steps:
-# 1. Create a trace whose latest.last contains the self_verify command as cmd: fail: reason.
-# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
-# 3. Assert exit 1 and output containing the MISSING line.
-case_fail_selfverify_colon_fail() {
-  local name="fail-selfverify-colon-fail"
+# 1. Create a valid trace and a brief with a single-quoted passing `cmd:`.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 and a PASS line.
+case_selfverify_cmd_single_quotes() {
+  local name="selfverify-cmd-single-quotes"
   should_run "$name" || return 0
   local work_dir brief out rc
-
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: fail: exited 1"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: 'test 1 = 1'
 EOF
 
   run_validator rc out "$work_dir" "$brief"
 
-  assert_eq "$name" "$rc" 1 || return 0
-  assert_string_contains "$name" "$out" "MISSING: bash scripts/run-all-tests.sh" || return 0
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: cmd: 'test 1 = 1'" || return 0
   pass "$name"
 }
 
-# A self_verify command with a skipped status is reported as MISSING and fails.
+# CC-318: an unquoted `cmd:` value is executed as-is.
 # Steps:
-# 1. Create a trace whose latest.last contains the self_verify command as cmd: skipped.
-# 2. Run dispatch-post-verify.sh with the work directory and matching brief file.
-# 3. Assert exit 1 and output containing the MISSING line.
-case_fail_selfverify_skipped() {
-  local name="fail-selfverify-skipped"
+# 1. Create a valid trace and a brief with an unquoted passing `cmd:`.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 and a PASS line.
+case_selfverify_cmd_unquoted() {
+  local name="selfverify-cmd-unquoted"
   should_run "$name" || return 0
   local work_dir brief out rc
-
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: skipped"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: test 1 = 1
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: cmd: test 1 = 1" || return 0
+  pass "$name"
+}
+
+# CC-318: the documented structured form (`cmd:` + `expect:`) executes the cmd value.
+# Steps:
+# 1. Create a valid trace and a brief with a `- cmd: "..."` item plus an `expect:` line.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 — the cmd runs and the informational `expect:` line is ignored.
+case_selfverify_structured_expect() {
+  local name="selfverify-structured-expect"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - cmd: "test 1 = 1"
+    expect: "exits 0"
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" 'PASS: cmd: "test 1 = 1"' || return 0
+  pass "$name"
+}
+
+# CC-318: a named-macro self_verify item is executor-evaluated, so post-verify SKIPs it.
+# Steps:
+# 1. Create a valid trace and a brief whose self_verify item is a prose macro.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 and a SKIP (executor-evaluated) line — not a FAIL.
+case_selfverify_macro_skipped() {
+  local name="selfverify-macro-skipped"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - git-status no-collateral-damage: only the audit file as new
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "SKIP (executor-evaluated): git-status no-collateral-damage" || return 0
+  pass "$name"
+}
+
+# CC-318: a bare scalar (no `cmd:`) is treated as a semantic check and SKIPped,
+# never blindly executed.
+# Steps:
+# 1. Create a valid trace and a brief whose self_verify item is a bare command string.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 and a SKIP line — the bare scalar is not run.
+case_selfverify_bare_scalar_skipped() {
+  local name="selfverify-bare-scalar-skipped"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - bash scripts/definitely-missing.sh
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "SKIP (executor-evaluated): bash scripts/definitely-missing.sh" || return 0
+  pass "$name"
+}
+
+# CC-318: a brief whose self_verify items are all executor-evaluated passes overall.
+# Steps:
+# 1. Create a valid trace and a brief with only macro/prose self_verify items.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 0 (nothing machine-checkable failed) with OK and SKIP lines.
+case_selfverify_all_skipped_ok() {
+  local name="selfverify-all-skipped-ok"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - cross-source: each row checked against >=2 authoritative sources
+  - schema-match: every new entry matches the reference shape
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "SKIP (executor-evaluated): cross-source" || return 0
+  assert_string_contains "$name" "$out" "OK" || return 0
+  pass "$name"
+}
+
+# CC-318: a `cmd:` check runs in $WORK_DIR (relative paths resolve there).
+# Steps:
+# 1. Create a valid trace and place a marker file inside the work directory.
+# 2. Write a brief whose `cmd:` item tests for that marker via a relative path.
+# 3. Assert exit 0 — the command only passes if cwd is the work directory.
+case_selfverify_runs_in_work_dir() {
+  local name="selfverify-runs-in-work-dir"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  printf 'marker\n' > "$work_dir/marker.txt"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - cmd: "test -f marker.txt"
+EOF
+
+  run_validator rc out "$work_dir" "$brief"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" 'PASS: cmd: "test -f marker.txt"' || return 0
+  pass "$name"
+}
+
+# CC-318: a `cmd:` check that exceeds the timeout is reported as FAIL (timeout).
+# Steps:
+# 1. Create a valid trace and a brief whose `cmd:` item sleeps past the timeout.
+# 2. Run dispatch-post-verify.sh with DISPATCH_SELF_VERIFY_TIMEOUT=1.
+# 3. Assert exit 1 and output containing the timeout FAIL line.
+case_selfverify_timeout() {
+  local name="selfverify-timeout"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - cmd: "sleep 10"
+EOF
+
+  export DISPATCH_SELF_VERIFY_TIMEOUT=1
+  run_validator rc out "$work_dir" "$brief"
+  unset DISPATCH_SELF_VERIFY_TIMEOUT
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" 'FAIL (timeout 1s): cmd: "sleep 10"' || return 0
+  pass "$name"
+}
+
+# CC-318: when multiple `cmd:` checks run and one fails, overall result is FAIL.
+# Steps:
+# 1. Create a valid trace and a brief with one passing and one failing `cmd:` item.
+# 2. Run dispatch-post-verify.sh with the work directory and brief file.
+# 3. Assert exit 1, a PASS line for the good item, and a FAIL line for the bad one.
+case_selfverify_multiple_one_fails() {
+  local name="selfverify-multiple-one-fails"
+  should_run "$name" || return 0
+  local work_dir brief out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  brief="$tmpdir/$name.md"
+  cat > "$brief" <<'EOF'
+self_verify:
+  - cmd: "test 1 = 1"
+  - cmd: "test 1 = 2"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
 
   assert_eq "$name" "$rc" 1 || return 0
-  assert_string_contains "$name" "$out" "MISSING: bash scripts/run-all-tests.sh" || return 0
+  assert_string_contains "$name" "$out" 'PASS: cmd: "test 1 = 1"' || return 0
+  assert_string_contains "$name" "$out" 'FAIL (exit 1): cmd: "test 1 = 2"' || return 0
   pass "$name"
 }
 
@@ -435,12 +609,11 @@ case_fail_executor_status_failed() {
   local work_dir brief out rc
 
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "status: failed
-bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: failed"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
@@ -462,12 +635,11 @@ case_fail_executor_status_partial() {
   local work_dir brief out rc
 
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "status: partial
-bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: partial"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
@@ -489,12 +661,11 @@ case_fail_executor_status_blocked() {
   local work_dir brief out rc
 
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "status: blocked
-bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: blocked"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out "$work_dir" "$brief"
@@ -502,31 +673,6 @@ EOF
   assert_eq "$name" "$rc" 1 || return 0
   assert_string_contains "$name" "$out" "FAILED" || return 0
   assert_string_contains "$name" "$out" "executor reported non-success" || return 0
-  pass "$name"
-}
-
-# A latest.last containing a misleading substring is not accepted as a self_verify pass.
-# Steps:
-# 1. Create a trace whose latest.last contains a line that embeds "<cmd>: pass" as a substring.
-# 2. Run dispatch-post-verify.sh with a brief requiring that command.
-# 3. Assert exit 1 and output containing "MISSING".
-case_fail_selfverify_substring_pass() {
-  local name="fail-selfverify-substring-pass"
-  should_run "$name" || return 0
-  local work_dir brief out rc
-
-  work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "MISSING: bash scripts/run-all-tests.sh: pass not found"
-  brief="$tmpdir/$name.md"
-  cat > "$brief" <<'EOF'
-self_verify:
-  - bash scripts/run-all-tests.sh
-EOF
-
-  run_validator rc out "$work_dir" "$brief"
-
-  assert_eq "$name" "$rc" 1 || return 0
-  assert_string_contains "$name" "$out" "MISSING" || return 0
   pass "$name"
 }
 
@@ -652,27 +798,27 @@ case_flag_last_only_stderr_fallback() {
   pass "$name"
 }
 
-# --brief-file supplies the brief; self_verify runs against the resolved last.
+# --brief-file supplies the brief; its self_verify items are executed.
 # Steps:
-# 1. Create a work dir whose latest.last contains a passing self_verify line.
+# 1. Create a work dir with a valid latest.last.
 # 2. Write a brief and run dispatch-post-verify.sh passing it via --brief-file.
-# 3. Assert exit 0 and output containing FOUND.
+# 3. Assert exit 0 and output containing PASS.
 case_flag_brief_file() {
   local name="flag-brief-file"
   should_run "$name" || return 0
   local work_dir brief out rc
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out "$work_dir" --brief-file "$brief"
 
   assert_eq "$name" "$rc" 0 || return 0
-  assert_string_contains "$name" "$out" "FOUND" || return 0
+  assert_string_contains "$name" "$out" "PASS" || return 0
   pass "$name"
 }
 
@@ -757,26 +903,26 @@ case_flag_value_is_flag_rejected() {
 # The exact /pm Bash-route invocation shape — --last, --stderr, and --brief-file
 # together — resolves all paths and runs self_verify in one call.
 # Steps:
-# 1. Create a per-run last (passing self_verify line), a per-run stderr, and a brief.
+# 1. Create a per-run last (status line), a per-run stderr, and a brief.
 # 2. Run dispatch-post-verify.sh with --last, --stderr, and --brief-file together.
-# 3. Assert exit 0, a FOUND self_verify line, and the per-run stderr content surfaced.
+# 3. Assert exit 0, a PASS self_verify line, and the per-run stderr content surfaced.
 case_flag_pm_invocation_shape() {
   local name="flag-pm-invocation-shape"
   should_run "$name" || return 0
   local work_dir last err brief out rc
   work_dir="$(make_work_dir "$name")"
-  last="$(write_named_trace "$work_dir" "codex-99.last" "bash scripts/run-all-tests.sh: pass")"
+  last="$(write_named_trace "$work_dir" "codex-99.last" "status: ok")"
   err="$(write_named_trace "$work_dir" "codex-99.stderr" "noise-from-stderr")"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out "$work_dir" --last "$last" --stderr "$err" --brief-file "$brief"
 
   assert_eq "$name" "$rc" 0 || return 0
-  assert_string_contains "$name" "$out" "FOUND" || return 0
+  assert_string_contains "$name" "$out" "PASS" || return 0
   assert_string_contains "$name" "$out" "noise-from-stderr" || return 0
   pass "$name"
 }
@@ -836,25 +982,25 @@ case_flag_stderr_override_missing_rejected() {
 # The `--` end-of-options sentinel forces remaining args to positionals; work_dir
 # and brief_file still resolve correctly after it.
 # Steps:
-# 1. Create a work dir whose latest.last contains a passing self_verify line, and a brief.
+# 1. Create a work dir with a valid latest.last, and a brief with a passing self_verify item.
 # 2. Run dispatch-post-verify.sh with `--` before the positional work_dir and brief.
-# 3. Assert exit 0 and a FOUND self_verify line (both positionals resolved past the sentinel).
+# 3. Assert exit 0 and a PASS self_verify line (both positionals resolved past the sentinel).
 case_flag_double_dash_positional() {
   local name="flag-double-dash-positional"
   should_run "$name" || return 0
   local work_dir brief out rc
   work_dir="$(make_work_dir "$name")"
-  write_latest_last "$work_dir" "bash scripts/run-all-tests.sh: pass"
+  write_latest_last "$work_dir" "status: ok"
   brief="$tmpdir/$name.md"
   cat > "$brief" <<'EOF'
 self_verify:
-  - bash scripts/run-all-tests.sh
+  - cmd: "true"
 EOF
 
   run_validator rc out -- "$work_dir" "$brief"
 
   assert_eq "$name" "$rc" 0 || return 0
-  assert_string_contains "$name" "$out" "FOUND" || return 0
+  assert_string_contains "$name" "$out" "PASS" || return 0
   pass "$name"
 }
 
@@ -920,14 +1066,21 @@ case_flag_base_fallback_unavailable() {
 
 case_valid_latest_last_exists
 case_valid_no_brief_arg
-case_valid_selfverify_found
+case_selfverify_pass
 case_fail_no_trace_dir
 case_fail_no_latest_last
 case_fail_empty_latest_last
-case_fail_selfverify_missing
-case_fail_selfverify_failed_prefix
-case_fail_selfverify_colon_fail
-case_fail_selfverify_skipped
+case_selfverify_fail
+case_selfverify_cmd_quoted_spaces
+case_selfverify_cmd_single_quotes
+case_selfverify_cmd_unquoted
+case_selfverify_structured_expect
+case_selfverify_macro_skipped
+case_selfverify_bare_scalar_skipped
+case_selfverify_all_skipped_ok
+case_selfverify_runs_in_work_dir
+case_selfverify_timeout
+case_selfverify_multiple_one_fails
 case_symlink_indir_valid
 case_symlink_outofdir_rejected
 case_symlink_stderr_outofdir_rejected
@@ -938,7 +1091,6 @@ case_brief_not_found
 case_fail_executor_status_failed
 case_fail_executor_status_partial
 case_fail_executor_status_blocked
-case_fail_selfverify_substring_pass
 case_flag_last_override_ok
 case_flag_last_override_outside_rejected
 case_flag_last_override_missing
