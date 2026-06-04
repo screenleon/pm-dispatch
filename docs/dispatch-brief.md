@@ -85,7 +85,7 @@ constraints:
   - Preserve existing formatting / indentation in each file.
 # qa_checklist: add if introducing ≥ 3 behavioral units (see Optional sections)
 self_verify:
-  - <grep / wc / file-exists check that the edits landed>
+  - cmd: "<grep / wc / file-exists check that the edits landed>"
   - git-status no-collateral-damage
 acceptance:
   - <textual delta description, file by file>
@@ -134,7 +134,7 @@ constraints:
 self_verify:
   - schema-match against <reference>
   - dedup-across-N for <key> across <files>
-  - <count check, e.g. wc -l == N for each file>
+  - cmd: "<count check, e.g. test \"$(wc -l < <file>)\" -eq N>"
   - git-status no-collateral-damage
 acceptance:
   - <count> entries per new file
@@ -157,8 +157,8 @@ constraints:
   - Do not change semantics, only naming/structure.
   - Keep public API stable unless the goal explicitly says otherwise.
 self_verify:
-  - grep -rn '<X>' <scope> returns no matches
-  - <existing test suite>: <command> exit 0
+  - cmd: "! grep -rn '<X>' <scope>"          # passes when no matches remain
+  - cmd: "<existing test suite command, e.g. bash scripts/test.sh>"
   - git-status no-collateral-damage
 acceptance:
   - all references updated, no callers broken
