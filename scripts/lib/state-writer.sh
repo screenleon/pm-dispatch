@@ -202,17 +202,17 @@ sw_extract_task_id() {
 }
 
 # Build a dispatch Run row. Does not append.
-# Usage: sw_build_run_json <executor> <exit_code> <model> \
-#            <brief_file> <work_dir> <trace_path> [brief_inline]
+# Usage: sw_build_run_json <executor> <exit_code> <state> <model> \
+#            <brief_file> <work_dir> <trace_path> [brief_inline] [operation_id]
 sw_build_run_json() {
-  local _executor="${1:-}" _exit_code="${2:-1}" _model="${3:-}"
-  local _brief_file="${4:-}" _work_dir="${5:-}" _trace_path="${6:-}"
-  local _brief_inline="${7:-}"
-  local _task_id _state _ts _hex _run_id
+  local _executor="${1:-}" _exit_code="${2:-1}" _state="${3:-}"
+  local _model="${4:-}" _brief_file="${5:-}" _work_dir="${6:-}" _trace_path="${7:-}"
+  local _brief_inline="${8:-}" _operation_id="${9:-}"
+  local _task_id _ts _hex _run_id
 
   [[ "$_exit_code" =~ ^-?[0-9]+$ ]] || return 1
+  [[ -n "$_state" ]] || return 1
   _task_id="$(sw_extract_task_id "$_brief_file" "$_brief_inline")"
-  _state="failed"; [[ "$_exit_code" -eq 0 ]] && _state="ok"
   _ts="${_SW_CREATED_TS_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)}"
   if [[ -n "${_SW_RUN_ID_OVERRIDE:-}" ]]; then
     _run_id="$_SW_RUN_ID_OVERRIDE"
@@ -230,21 +230,9 @@ sw_build_run_json() {
     --arg brief_file "$_brief_file" \
     --arg working_dir "$_work_dir" \
     --arg trace_path "$_trace_path" \
+    --arg operation_id "$_operation_id" \
     --arg created_ts "$_ts" \
-    '{schema_version:1,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}'
-}
-
-# Append a dispatch Run row to the state store. Backward-compatible best effort.
-sw_append_dispatch_run() {
-  {
-    local _work_dir="${5:-}" _run_json
-    if ! _run_json="$(sw_build_run_json "$@")"; then
-      _sw_log_error "sw_append_dispatch_run: jq JSON construction failed (executor=${1:-} exit=${2:-})"
-      return 0
-    fi
-    _SW_REPO_ROOT="$_work_dir" runs_append "$_run_json" || true
-  } 2>/dev/null || true
-  return 0
+    '{schema_version:1,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
 }
 
 task_upsert() {
