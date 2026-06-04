@@ -22,6 +22,7 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=scripts/lib/pmctl-dispatch.sh
 . "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
 th_init "$@"
+export PM_DISPATCH_STATE_ROOT="$tmp_root/pmctl-dispatch-state"
 
 # A guard-allowed brief path is /tmp/brief-<...>.md (codex pre-write allow-list).
 # Track created brief files so we always clean /tmp.

@@ -76,7 +76,7 @@ BRIEF_FILE=""
 PRINT_CMD=0
 PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
-# shellcheck source=scripts/lib/state-writer.sh
+# shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 
 # Resolve isolation_level → permission_mode from adapters/claude/isolation-map.yaml.
@@ -239,9 +239,6 @@ if [[ -s "$TRACE" ]]; then
   fi
 fi
 
-# --- state store: append Run row (best-effort; never fatal) ---
-sw_append_dispatch_run "claude" "$EXIT" "${MODEL:-}" "${BRIEF_FILE:-}" "${WORK_DIR:-}" "${TRACE:-}" 2>/dev/null || true
-
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
   _CLAUDE_TOKENS=$(jq -r '((.usage.input_tokens // 0) + (.usage.output_tokens // 0))' "$TRACE" 2>/dev/null || echo 0)
@@ -265,6 +262,7 @@ echo "trace:  $TRACE"
 echo "last:   $LAST"
 echo "stderr: $STDERR_LOG"
 echo "exit:   $EXIT"
+echo "model:  $MODEL"
 echo "---"
 if [[ -s "$LAST" ]]; then
   echo "=== final message ==="

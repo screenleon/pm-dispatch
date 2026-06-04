@@ -81,12 +81,25 @@ check_adapters_no_shared_flow() {
   done < <(find "$root/adapters" -type f -name '*.sh' 2>/dev/null)
 }
 
+# A2: adapters/**/*.sh must not write machine state directly (non-comment lines).
+check_adapters_no_state_writes() {
+  local root="$1" f line
+  [[ -d "$root/adapters" ]] || return 0
+  local pattern='sw_append_dispatch_run|runs_append|events_append|PM_DISPATCH_STATE_ROOT'
+  while IFS= read -r f; do
+    if line="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE "$pattern")"; then
+      printf '%s: %s\n' "${f#"$root"/}" "$line"
+    fi
+  done < <(find "$root/adapters" -type f -name '*.sh' 2>/dev/null)
+}
+
 ALL_CHECKS=(
   check_core_no_executables
   check_core_no_cli_named_paths
   check_core_only_declarative
   check_core_no_cli_field_keys
   check_adapters_no_shared_flow
+  check_adapters_no_state_writes
 )
 
 # ── Real-repo enforcement: every rule must be clean ───────────────────────────
@@ -158,18 +171,33 @@ if should_run "selftest/adapters_no_shared_flow fires on a guard call"; then
   rm -rf "$FIX"
 fi
 
-if should_run "selftest/adapters_no_shared_flow ignores comments + allows state logging"; then
+if should_run "selftest/adapters_no_shared_flow ignores comments + allows usage logging"; then
   # The doc-header DESCRIBES the shared flow (comment) and the adapter logs usage
   # (allowed) — neither should trip the rule.
-  name="selftest/adapters_no_shared_flow ignores comments + allows state logging"
+  name="selftest/adapters_no_shared_flow ignores comments + allows usage logging"
   _fixture
   {
     printf '#!/usr/bin/env bash\n'
     printf '# Driven by pmctl dispatch run; pmctl owns brief-validate / guard / route / post-verify.\n'
-    printf 'runs_append "$json"\n'
     printf 'bash "$HOME/.claude/scripts/log-usage.sh" claude_dispatch 100\n'
   } > "$FIX/adapters/demo/dispatch.sh"
   _expect_clean "$name" "$(check_adapters_no_shared_flow "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/adapters_no_state_writes fires on planted runs_append"; then
+  name="selftest/adapters_no_state_writes fires on planted runs_append"
+  _fixture
+  printf '#!/usr/bin/env bash\nruns_append "$json"\n' > "$FIX/adapters/demo/dispatch.sh"
+  _expect_fires "$name" "$(check_adapters_no_state_writes "$FIX")"
+  rm -rf "$FIX"
+fi
+
+if should_run "selftest/adapters_no_state_writes does NOT fire on usage logging"; then
+  name="selftest/adapters_no_state_writes does NOT fire on usage logging"
+  _fixture
+  printf '#!/usr/bin/env bash\nbash "$HOME/.claude/scripts/log-usage.sh" claude_dispatch 100\n' > "$FIX/adapters/demo/dispatch.sh"
+  _expect_clean "$name" "$(check_adapters_no_state_writes "$FIX")"
   rm -rf "$FIX"
 fi
 
