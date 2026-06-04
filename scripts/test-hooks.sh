@@ -383,11 +383,22 @@ run_case_env "rw: reviewer (pmctl synthetic) Write to .gate-results/ → allow" 
 run_case "rw: reviewer (pmctl synthetic) Write outside .gate-results/ → deny" 2 "$RWHOOK" \
   '{"agent_type":"reviewer","tool_name":"Write","tool_input":{"file_path":"/tmp/evil.md"}}'
 
-# repo-binding (CC-297 hardening): a directory named .gate-results that is NOT
-# this repo's .gate-results must be denied — name-only matching is insufficient.
+# CC-319: without CLAUDE_HOOK_GATE_REPO_ROOT, any directory named .gate-results is
+# allowed — this lets pr-gate work on projects other than pm-dispatch without needing
+# a project-specific env var prefix in the brief constraint.
+_rw_cross_gate="$(mktemp -d)/.gate-results"
+mkdir -p "$_rw_cross_gate"
+run_case "rw: reviewer Write to non-pm-dispatch .gate-results → allow (CC-319)" 0 "$RWHOOK" \
+  "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_cross_gate/output.md\"}}"
+rm -rf "$(dirname "$_rw_cross_gate")"
+unset _rw_cross_gate
+
+# Strict binding (CC-297): when CLAUDE_HOOK_GATE_REPO_ROOT is explicitly set,
+# a .gate-results in a different project must be denied even though its parent
+# directory name is correct — the optional strict binding applies.
 _rw_other_gate="$(mktemp -d)/other/.gate-results"
 mkdir -p "$_rw_other_gate"
-run_case_env "rw: critic Write to a .gate-results outside the repo → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
+run_case_env "rw: critic Write to a .gate-results outside declared repo → deny" 2 "CLAUDE_HOOK_GATE_REPO_ROOT=$_gate_repo" "$RWHOOK" \
   "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_other_gate/out.md\"}}"
 rm -rf "$(dirname "$_rw_other_gate")"
 unset _rw_other_gate

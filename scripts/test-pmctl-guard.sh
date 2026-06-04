@@ -184,6 +184,18 @@ if should_run "reviewer-prewrite-deny-outside-gate-results"; then
   assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
 fi
 
+if should_run "reviewer-prewrite-allow-any-gate-results"; then
+  # CC-319: without CLAUDE_HOOK_GATE_REPO_ROOT, guard allows writes to any
+  # .gate-results/ directory — pr-gate runs on any project, not just pm-dispatch.
+  _rw_guard_dir="$(mktemp -d)/.gate-results"
+  mkdir -p "$_rw_guard_dir"
+  name="reviewer-prewrite-allow-any-gate-results"
+  run_guard --event pre-write --role reviewer --runtime codex --file "$_rw_guard_dir/output.md"
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  rm -rf "$(dirname "$_rw_guard_dir")"
+  unset _rw_guard_dir
+fi
+
 if should_run "reviewer-prewrite-deny-source-file"; then
   name="reviewer-prewrite-deny-source-file"
   run_guard --event pre-write --role reviewer --runtime codex --file "$REPO_ROOT/scripts/pr-gate.sh"
