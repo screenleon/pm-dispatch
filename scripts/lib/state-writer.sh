@@ -203,11 +203,11 @@ sw_extract_task_id() {
 
 # Build a dispatch Run row. Does not append.
 # Usage: sw_build_run_json <executor> <exit_code> <state> <model> \
-#            <brief_file> <work_dir> <trace_path> [brief_inline]
+#            <brief_file> <work_dir> <trace_path> [brief_inline] [operation_id]
 sw_build_run_json() {
   local _executor="${1:-}" _exit_code="${2:-1}" _state="${3:-}"
   local _model="${4:-}" _brief_file="${5:-}" _work_dir="${6:-}" _trace_path="${7:-}"
-  local _brief_inline="${8:-}"
+  local _brief_inline="${8:-}" _operation_id="${9:-}"
   local _task_id _ts _hex _run_id
 
   [[ "$_exit_code" =~ ^-?[0-9]+$ ]] || return 1
@@ -230,8 +230,9 @@ sw_build_run_json() {
     --arg brief_file "$_brief_file" \
     --arg working_dir "$_work_dir" \
     --arg trace_path "$_trace_path" \
+    --arg operation_id "$_operation_id" \
     --arg created_ts "$_ts" \
-    '{schema_version:1,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts}'
+    '{schema_version:1,id:$id,task_id:$task_id,executor:$executor,state:$state,exit_code:$exit_code,model:$model,brief_file:$brief_file,working_dir:$working_dir,trace_path:$trace_path,created_ts:$created_ts} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
 }
 
 task_upsert() {

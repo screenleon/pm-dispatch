@@ -806,6 +806,49 @@ case_pmctl_dispatch_full_fsm_sequence() {
   fi
 }
 
+case_pmctl_dispatch_terminal_run_event_invariant() {
+  local name="pmctl-dispatch: every terminal Run has exactly one matching terminal Event"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file events_file terminal_count violations
+  store="$tmp_root/terminal-invariant-store"
+  fake_bin_dir="$tmp_root/terminal-invariant-bin"
+  work_dir="$tmp_root/terminal-invariant-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  terminal_count="0"
+  violations=""
+  if [[ -n "$runs_file" && -n "$events_file" ]]; then
+    terminal_count="$(jq -s '[.[] | select(.state == "ok" or .state == "partial" or .state == "failed")] | length' "$runs_file" 2>/dev/null || true)"
+    violations="$(jq -nr --slurpfile runs "$runs_file" --slurpfile events "$events_file" '
+      def terminal_run: .state == "ok" or .state == "partial" or .state == "failed";
+      def terminal_event: .kind == "run.completed" or .kind == "run.failed";
+      [
+        $runs[] | select(terminal_run) as $run |
+        {
+          run_id: $run.id,
+          run_op: ($run.operation_id // ""),
+          events: [$events[] | select(terminal_event and .subject_id == $run.id)]
+        } |
+        select((.events | length) != 1 or .run_op == "" or (.events[0].operation_id // "") != .run_op)
+      ] |
+      map("\(.run_id):events=\(.events | length):run_op=\(.run_op):event_op=\(.events[0].operation_id // "")") |
+      join(";")
+    ' 2>/dev/null || true)"
+  fi
+  if [[ "$terminal_count" == "1" && -z "$violations" ]]; then
+    pass "$name"
+  else
+    fail "$name" "terminal_count=${terminal_count:-none} violations=${violations:-missing-files}"
+  fi
+}
+
 case_pmctl_dispatch_failed_event() {
   local name="pmctl-dispatch: run.failed Event in events.jsonl after failed adapter exit"
   should_run "$name" || return 0
@@ -975,6 +1018,7 @@ case_pmctl_dispatch_failed_records_state
 case_pmctl_dispatch_pre_event_before_adapter
 case_pmctl_dispatch_completed_event
 case_pmctl_dispatch_full_fsm_sequence
+case_pmctl_dispatch_terminal_run_event_invariant
 case_pmctl_dispatch_failed_event
 case_pmctl_dispatch_pre_event_fail_blocks_adapter
 case_pmctl_dispatch_terminal_event_append_fail

@@ -39,6 +39,11 @@
       "enum": ["pending", "dispatched", "verifying", "ok", "partial", "failed"],
       "description": "Editing source-of-truth: core/policy/run-states.yaml. Keep in sync."
     },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^op-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$",
+      "description": "Shared key linking this Run row to its paired Event row for the same transition."
+    },
     "trace_path": {
       "type": "string",
       "description": "Absolute path to the executor trace file. Run row does NOT include trace contents."

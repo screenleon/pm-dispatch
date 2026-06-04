@@ -110,6 +110,7 @@ pmctl_dispatch_ensure_state_writer() {
 pmctl_dispatch_write_event() {
   local repo_root="${1:-}" work_dir="${2:-}" kind="${3:-}" run_id="${4:-}"
   local state="${5:-}" exit_code="${6:-0}" adapter="${7:-}" note="${8:-}"
+  local operation_id="${9:-}"
   local ts evt_id event_json rc=0
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
@@ -126,8 +127,9 @@ pmctl_dispatch_write_event() {
     --arg state "$state" \
     --arg adapter "$adapter" \
     --arg note "$note" \
+    --arg operation_id "$operation_id" \
     --argjson exit_code "$exit_code" \
-    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end))}'
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end))} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
   )" || return $?
   _SW_REPO_ROOT="$work_dir" events_append "$event_json" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -141,11 +143,12 @@ pmctl_dispatch_write_run() {
   local repo_root="${1:-}" adapter="${2:-}" state="${3:-}" exit_code="${4:-1}" model="${5:-}"
   local brief_file="${6:-}" work_dir="${7:-}" trace_path="${8:-}" run_id="${9:-}"
   local created_ts="${10:-}"
+  local operation_id="${11:-}"
   local run_json rc=0
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
   if ! run_json="$(_SW_RUN_ID_OVERRIDE="$run_id" _SW_CREATED_TS_OVERRIDE="$created_ts" \
-    sw_build_run_json "$adapter" "$exit_code" "$state" "$model" "$brief_file" "$work_dir" "$trace_path")"; then
+    sw_build_run_json "$adapter" "$exit_code" "$state" "$model" "$brief_file" "$work_dir" "$trace_path" "" "$operation_id")"; then
     printf 'pmctl dispatch run: failed to build Run state for %s\n' "$run_id" >&2
     return 1
   fi
@@ -161,7 +164,7 @@ pmctl_dispatch_write_transition() {
   local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}" run_id="${4:-}"
   local state="${5:-}" exit_code="${6:-0}" model="${7:-}" brief_file="${8:-}"
   local trace_path="${9:-}" created_ts="${10:-}"
-  local event_kind note=""
+  local event_kind note="" op_id
 
   case "$state" in
     pending) event_kind="run.pending" ;;
@@ -178,11 +181,12 @@ pmctl_dispatch_write_transition() {
       return 1
       ;;
   esac
+  op_id="op-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
 
   pmctl_dispatch_write_run "$repo_root" "$adapter" "$state" "$exit_code" "$model" \
-    "$brief_file" "$work_dir" "$trace_path" "$run_id" "$created_ts" || return $?
+    "$brief_file" "$work_dir" "$trace_path" "$run_id" "$created_ts" "$op_id" || return $?
   pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" \
-    "$state" "$exit_code" "$adapter" "$note" || return $?
+    "$state" "$exit_code" "$adapter" "$note" "$op_id" || return $?
 }
 
 pmctl_dispatch_run() {
