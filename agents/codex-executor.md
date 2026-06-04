@@ -159,7 +159,7 @@ After the (possibly retried) dispatch:
 1. Non-zero exit → report `failed` with trace path.
 2. Read `<trace_dir>/codex-<ts>.last` (or fall back to the last `agent_message` item in `<trace_dir>/codex-<ts>.jsonl` if `.last` is empty — a known codex 0.128.0 quirk).
 3. `git -C <work_dir> status --short` and `git -C <work_dir> diff --stat`.
-4. Confirm every line of the brief's `self_verify` block was actually run (look for matching `command_execution` events in the JSONL trace) and reported green. If a self_verify check was skipped or failed, report `partial` regardless of what the agent message claims.
+4. For each structured `- cmd: "<bash>"` self_verify item, confirm it was actually run (look for a matching `command_execution` event in the JSONL trace) and exited 0; for macro/prose items (judgment checks), confirm Codex evaluated it and the finding holds. If any `cmd:` check was skipped or non-zero, or a semantic check does not hold, report `partial` regardless of what the agent message claims. (Note: `dispatch-post-verify.sh` independently re-executes the `cmd:` items and `SKIP`s the macro/prose ones — CC-318.)
 5. If `git diff` is unrelated or much larger than briefed, flag — do not claim success.
 6. **Always read `<trace_dir>/codex-<ts>.stderr`** regardless of exit code. If it contains any non-empty content (warnings, script errors, unexpected output), capture a brief summary and populate `dispatch_errors:` in the report. A `status: ok` run that produced stderr is still an `ok` run — but the errors must surface, never be silently swallowed. The caller needs this information to improve the pipeline.
 
@@ -169,7 +169,7 @@ After the (possibly retried) dispatch:
 status: ok | partial | failed
 brief: <one-line restatement>
 files_changed: <git diff --stat>
-self_verify: <pass | partial — list which checks ran and their result>
+self_verify: <list each item + result — cmd: items as exit-code outcome, macro/prose items as judgment finding (informational; post-verify re-runs cmd: items itself)>
 summary: <2-4 lines, what Codex actually did>
 trace: <path to .jsonl>   (latest.jsonl symlink also points here)
 stderr: <path to .stderr>

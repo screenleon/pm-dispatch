@@ -45,7 +45,7 @@ If the path is present but the file does not exist, STOP:
 1. Validate the brief file (above).
 2. Read every file in the `files: read:` block to load context.
 3. Execute the brief's intent using Edit / Write / Bash. Honor the `constraints:` block strictly — every line is a hard rule.
-4. Run every command in the `self_verify:` block via Bash and capture exit codes + relevant output.
+4. Work through the `self_verify:` block: run each structured `- cmd: "<bash>"` item via Bash and capture its exit code + relevant output; for macro/prose items (judgment checks like `cross-source`, `git-status no-collateral-damage`, UI/accuracy), perform the check and record your finding. (Post-verify independently re-executes the `cmd:` items; the macro/prose items rely on your judgment.)
 5. Verify acceptance criteria one by one. Use `Bash` for `grep` / `test` / `git status` style assertions.
 6. Write trace (see # Write trace below) — MUST complete before final output. Then report back in the shape in # Report.
 
@@ -65,7 +65,7 @@ After completing the brief's `goal`:
 
 1. `git -C <working_dir> status --short` → confirm only the briefed files appear; flag any spurious change.
 2. `git -C <working_dir> diff --stat` against the base branch (typically `origin/main`) → confirm scope matches the `files:` block.
-3. Walk every `self_verify:` line; for each, record the command + exit code + a 1-line summary of output. Any non-zero exit on a verify command must downgrade the status to `partial`, even if the agent feels the work is done.
+3. Walk every `self_verify:` item. For a `- cmd: "<bash>"` item, record the command + exit code + a 1-line summary; any non-zero exit must downgrade the status to `partial`, even if the agent feels the work is done. For a macro/prose item, record your judgment finding and whether it holds; an unmet semantic check also downgrades to `partial`.
 4. Walk every `acceptance:` line; for each, state explicitly whether it is satisfied and what evidence shows that (file existence, grep result, test output).
 5. If `git status` is dirty beyond the briefed scope, flag it — do not claim success.
 
@@ -76,18 +76,21 @@ status: ok | partial | failed
 brief: <one-line restatement of goal>
 files_changed: <git diff --stat output, abbreviated to file list + ± counts>
 self_verify:
-  bash scripts/test-foo.sh: pass
-  bash scripts/test-bar.sh: fail: exit 1, expected all tests to pass
+  cmd "test 1 = 1": pass
+  cmd "bash scripts/test-bar.sh": fail: exit 1, expected all tests to pass
+  cross-source: pass — every flagged row cites >=2 sources
 acceptance: <per-line status: each acceptance bullet + evidence>
 summary: <2-4 lines, what you actually did>
 tool_calls_summary: <count or short list of major tool ops: e.g. "12 Edit, 3 Bash (tests), 4 Read">
 notes: <surprises, scope expansion, deferred follow-ups, anything the main thread should know>
 ```
 
-**Self-verify format requirement**: each command MUST appear as its own line in the
-exact format `<cmd>: pass` (success) or `<cmd>: fail: <reason>` (failure). No prefix,
-no extra text. `dispatch-post-verify.sh` uses whole-line matching (`grep -qxF`) and
-will report MISSING if the line is not an exact match.
+**Self-verify report (informational)**: list each `self_verify:` item with its
+result — `cmd:` items as their exit-code outcome, macro/prose items as your
+judgment finding. This block is for the main thread's human review. It is **not**
+parsed by `dispatch-post-verify.sh`, which independently *executes* each `cmd:`
+item itself (CC-318) and marks macro/prose items `SKIP (executor-evaluated)`, so
+your prose style here does not affect the machine gate.
 
 Differences from codex-executor's report shape:
 
