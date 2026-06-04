@@ -23,8 +23,8 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 | Task size | model | Pre-impl? | PM brief? |
 |---|---|---|---|
 | Tiny (< 30 lines, 1–2 files, no new behavior) | — | No | No — inline Edit |
-| Small (30–100 lines, 2–3 files, 1–2 new functions) | `light` | Optional | Optional — write brief inline |
-| Medium (100–300 lines, 3–5 files, 3+ behavioral units) | `default` | Recommended | /pm or inline |
+| Small (< 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks) | `light` | No | Optional — write brief inline |
+| Medium (50–300 lines, 3–5 files, 3+ behavioral units) | `default` | Recommended | /pm or inline |
 | Large (> 300 lines, 5+ files, new modules/schemas) | `default` | Required | /pm |
 
 **Rule of thumb**: if you can write the Edit calls in less time than it takes to write the `self_verify` block, do it inline.

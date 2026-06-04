@@ -10,19 +10,28 @@ LINTER="$REPO_ROOT/scripts/lint-model-aliases.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-VALID_TSV=$'codex-spark\tgpt-5.3-codex-spark\thigh\n'
-VALID_DOC=$'## Model aliases\n\n| PM-facing alias | Wire model id | Reasoning effort |\n|---|---|---|\n| `codex-spark` | `gpt-5.3-codex-spark` | high |\n'
+VALID_CODEX_TSV=$'codex-spark\tgpt-5.3-codex-spark\thigh\n'
+VALID_CLAUDE_TSV=$'light\tclaude-haiku\tnormal\n'
+VALID_TSV="$VALID_CODEX_TSV"
+VALID_DOC=$'## Model aliases\n\n| PM-facing alias | Wire model id | Reasoning effort |\n|---|---|---|\n| `codex-spark` | `gpt-5.3-codex-spark` | high |\n\n## Claude model aliases\n\n| PM-facing alias | Wire-format model ID | reasoning effort |\n|---|---|---|\n| `light` | `claude-haiku` | normal |\n'
 
 _make_fake_repo() {
   local root="$1" tsv_content="$2" doc_content="$3"
-  mkdir -p "$root/scripts" "$root/share" "$root/docs" "$root/agents" "$root/adapters/codex"
+  local claude_tsv_content="${4:-$VALID_CLAUDE_TSV}"
+  mkdir -p "$root/scripts" "$root/share" "$root/docs" "$root/agents" \
+           "$root/adapters/codex" "$root/adapters/claude"
   cp "$REPO_ROOT/scripts/lint-model-aliases.sh" "$root/scripts/"
   [[ -n "$tsv_content" ]] && printf '%s' "$tsv_content" > "$root/share/model-aliases.tsv"
+  printf '%s' "$claude_tsv_content" > "$root/share/claude-model-aliases.tsv"
   printf '%s' "$doc_content" > "$root/docs/dispatch-brief.md"
-  # lint-model-aliases.sh checks adapters/codex/dispatch.sh (CC-308: shim migration)
+  # codex adapter stub
   printf 'PM_DISPATCH_ALIAS_FILE=x\n_resolve_model_alias() { :; }\n' \
     > "$root/adapters/codex/dispatch.sh"
   printf '# stub\n# --model codex-spark\n' > "$root/scripts/test-codex-dispatch.sh"
+  # claude adapter stub
+  printf 'PM_CLAUDE_ALIAS_FILE=x\n_resolve_claude_model_alias() { :; }\n' \
+    > "$root/adapters/claude/dispatch.sh"
+  printf '# stub\n# --model light\n' > "$root/scripts/test-claude-dispatch.sh"
   printf '' > "$root/agents/project-pm.md"
 }
 
@@ -121,11 +130,89 @@ case_template_alias_missing_from_tsv_fails() {
   rm -rf "$root"
 }
 
+# --- claude alias lint failure cases ---
+
+case_claude_missing_tsv_fails() {
+  local name="lint-model-aliases/claude missing TSV fails"
+  local root
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
+  rm -f "$root/share/claude-model-aliases.tsv"
+  _run_linter_expect "$name" "$root" "nonzero" "missing claude model alias source file"
+  rm -rf "$root"
+}
+
+case_claude_malformed_row_fails() {
+  local name="lint-model-aliases/claude malformed TSV row fails"
+  local root
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC" $'bad\tonly-two\n'
+  _run_linter_expect "$name" "$root" "nonzero" "malformed model-alias line"
+  rm -rf "$root"
+}
+
+case_claude_empty_tsv_fails() {
+  local name="lint-model-aliases/claude empty TSV fails"
+  local root doc_no_claude_rows
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  # Doc has Claude section but no data rows; TSV is also empty → "no aliases defined"
+  doc_no_claude_rows=$'## Model aliases\n\n| PM-facing alias | Wire model id | Reasoning effort |\n|---|---|---|\n| `codex-spark` | `gpt-5.3-codex-spark` | high |\n\n## Claude model aliases\n\n(none)\n'
+  _make_fake_repo "$root" "$VALID_TSV" "$doc_no_claude_rows" ""
+  : > "$root/share/claude-model-aliases.tsv"
+  _run_linter_expect "$name" "$root" "nonzero" "no aliases defined"
+  rm -rf "$root"
+}
+
+case_claude_doc_drift_fails() {
+  local name="lint-model-aliases/claude doc drift fails"
+  local root doc
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  # TSV has 'light', doc has 'different-alias' — drift
+  doc=$'## Model aliases\n\n| PM-facing alias | Wire model id | Reasoning effort |\n|---|---|---|\n| `codex-spark` | `gpt-5.3-codex-spark` | high |\n\n## Claude model aliases\n\n| PM-facing alias | Wire-format model ID | reasoning effort |\n|---|---|---|\n| `different-alias` | `claude-haiku` | normal |\n'
+  _make_fake_repo "$root" "$VALID_TSV" "$doc"
+  _run_linter_expect "$name" "$root" "nonzero" "out of sync"
+  rm -rf "$root"
+}
+
+case_claude_adapter_missing_reference_fails() {
+  local name="lint-model-aliases/claude adapter missing PM_CLAUDE_ALIAS_FILE fails"
+  local root
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
+  printf '# stub without alias file reference\n_resolve_claude_model_alias() { :; }\n' \
+    > "$root/adapters/claude/dispatch.sh"
+  _run_linter_expect "$name" "$root" "nonzero" "PM_CLAUDE_ALIAS_FILE"
+  rm -rf "$root"
+}
+
+case_claude_fixture_alias_missing_fails() {
+  local name="lint-model-aliases/claude alias not covered by test fixture fails"
+  local root
+  should_run "$name" || return 0
+  root="$(mktemp -d)"
+  _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
+  # test-claude-dispatch.sh stub has no --model light fixture
+  printf '# stub — no model alias fixtures\n' > "$root/scripts/test-claude-dispatch.sh"
+  _run_linter_expect "$name" "$root" "nonzero" "not covered by test fixtures"
+  rm -rf "$root"
+}
+
 case_happy_path_repo_passes
 case_missing_tsv_fails
 case_malformed_row_fails
 case_doc_drift_fails
 case_empty_tsv_fails
 case_template_alias_missing_from_tsv_fails
+case_claude_missing_tsv_fails
+case_claude_malformed_row_fails
+case_claude_empty_tsv_fails
+case_claude_doc_drift_fails
+case_claude_adapter_missing_reference_fails
+case_claude_fixture_alias_missing_fails
 
 th_summary
