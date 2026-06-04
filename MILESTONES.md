@@ -56,7 +56,7 @@
 
 ---
 
-## v0.3.0 — PM runtime restructure（規劃中）
+## v0.3.0 — PM runtime restructure（released 2026-06-03）
 
 **主題**：把 pm-dispatch 從「Claude Code 設定 + dispatch 腳本」重構成 schema-first / state-first / adapter-thin 的 **PM runtime**；把 Multica / Memori / Superpowers / AI Night Shift 的概念吸收進單一 state substrate，而非四個獨立功能。
 

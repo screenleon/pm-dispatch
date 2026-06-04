@@ -8,6 +8,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`scripts/hook-reviewer-write-guard.sh`** — reviewer write-guard now derives the allowed `.gate-results/` directory from the **target file path**, not pm-dispatch's own install location, so `/pr-gate` works when pm-dispatch is installed in one repo but used to gate a *different* project (cross-project). The v0.3.0 guard resolved the repo root from `<install-repo>/scripts/` and bound writes to that checkout's `.gate-results`, which blocked reviewer writes whenever the gated project differed from the install checkout; the `CLAUDE_HOOK_GATE_REPO_ROOT` strict-binding override is removed entirely. Regression coverage in `test-hooks.sh` / `test-pmctl-guard.sh` (CC-319).
+- **`adapters/codex/dispatch.sh`** — the codex adapter now derives `$WORK_DIR`'s git root and exports `CLAUDE_HOOK_CODEX_READ_ROOTS=<git_root>:/tmp[:<inherited>]` before `codex exec`, so codex can read the dispatch target's sources regardless of where the repo lives. Previously the guard defaulted to `$HOME/github:/tmp`, so codex dispatched to a repo outside `~/github` was blocked from reading its own source files. Any caller-set `CLAUDE_HOOK_CODEX_READ_ROOTS` is preserved as a trailing fallback; the `/tmp` baseline is re-added because the explicit export replaces the guard default (correctness, not policy widening). New coverage in `test-codex-dispatch.sh` (CC-320).
+
 ---
 
 ## [0.3.0] — 2026-06-03
