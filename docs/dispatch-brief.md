@@ -18,7 +18,7 @@ The handover metadata's `executor:` field selects which executor receives the br
 | `goal` | One sentence. What changes after this runs. | "Backfill 40 N4 / 40 N3 / 40 N2 kanji entries to fill the empty middle-tier overlay." |
 | `files` | Concrete paths or a search hint. Both create-new and edit-existing must be enumerated. | `server/data/corpus/kanji/{N4,N3,N2}.jsonl` (new); read `N1.jsonl` and `N5.jsonl` for schema |
 | `acceptance` | Testable post-conditions Codex itself can verify before declaring done. | Lint passes (`bash scripts/lint-agents.sh` exit 0); new file exists at the declared path; `git status --short` shows only allowlisted files. |
-| `self_verify` | **Required for any file-writing brief.** A brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit this field — do not inline checks into `acceptance` as a substitute for `self_verify` in file-writing briefs. | `git-status no-collateral-damage`; `schema-match` against the reference file. |
+| `self_verify` | **Required for any file-writing brief.** A brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit this field — do not inline checks into `acceptance` as a substitute for `self_verify` in file-writing briefs. Machine-verifiable items use `- cmd: "<bash>"` (post-verify executes them); macros/prose are executor-evaluated (post-verify skips them). | `- cmd: "bash scripts/test.sh"`; `git-status no-collateral-damage` (executor-evaluated). |
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
 
@@ -195,7 +195,12 @@ Invoke in background from the main thread. Wait for completion notification.
 bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
-Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and **executes** each `self_verify` item as a bash command in `<work_dir>` — a check passes iff its command exits 0 (CC-318). This does not depend on the executor's prose style: an item is run, not searched for in the executor's final message. An optional leading `cmd: ` prefix is stripped before execution; each run is bounded by a timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). Works for any executor (codex or claude). Exits 0 = ok; exits 1 = partial/failed.
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processes each `self_verify` item by kind (CC-318):
+
+- A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
+- Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.
+
+Works for any executor (codex or claude). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 
@@ -219,7 +224,12 @@ capability boundary and additional patterns (Docker, external DBs).
 
 ## Self-verify macros
 
-Reusable phrases. Drop into `self_verify` block of any brief.
+Reusable phrases. Drop into the `self_verify` block of any brief. These are
+**semantic checks the executor evaluates** (judgment an LLM applies, not a shell
+command) — `dispatch-post-verify.sh` marks them `SKIP (executor-evaluated)` and
+relies on the executor's report. For anything you want machine-verified, use the
+structured `- cmd: "<bash>"` form instead (e.g. express
+`git-status no-collateral-damage` as a concrete `cmd:` when it is shell-checkable).
 
 ### `cross-source` — N independent sources per item
 

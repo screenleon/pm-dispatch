@@ -167,20 +167,36 @@ if [[ -n "$EXECUTOR_STATUS" ]]; then
   FAILED=1
 fi
 
-# CC-318: execute each self_verify item as a bash command rather than searching
-# for "<item>: pass" as a substring of the executor's latest.last. The executor's
-# prose style no longer matters — a check PASSES iff its command exits 0. Items
-# come from the PM-authored, brief-validated BRIEF_FILE (a trusted input); an
-# optional leading "cmd: " sentinel prefix is stripped and the remainder runs in
-# $WORK_DIR under a timeout so a hung check cannot block the gate. The literal
-# "cmd: pass" sentinel is resolved upstream in the executor handover and is not
-# this hook's concern.
+# CC-318: a self_verify item is one of two kinds.
+#   - Machine-executable check: the structured `- cmd: "<bash>"` form. post-verify
+#     RUNS the command in $WORK_DIR under a timeout — exit 0 = PASS, non-zero or
+#     timeout = FAIL. This replaces the old substring search of latest.last, so the
+#     executor's prose style no longer matters. The command comes from the
+#     PM-authored, brief-validated BRIEF_FILE (a trusted input).
+#   - Semantic check: every other shape (macros like `git-status no-collateral-
+#     damage: ...`, prose, bare scalars). These are judgment checks only the
+#     executor (an LLM) — not a shell — can evaluate (e.g. "UI renders correctly",
+#     "cross-checked against sources"). post-verify marks them SKIP rather than
+#     forcing them through bash, which would fail valid judgment-only briefs.
+# The optional `expect:` mapping key that may follow a `cmd:` item is informational
+# (the only documented value is "exits 0", which is exactly the exit-0 PASS rule);
+# the awk extractor only yields `- ` list items, so `expect:` lines are ignored.
 SELF_VERIFY_TIMEOUT="${DISPATCH_SELF_VERIFY_TIMEOUT:-300}"
 
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'
   while IFS= read -r item; do
-    cmd="${item#cmd: }"
+    if [[ "$item" != cmd:* ]]; then
+      printf '  SKIP (executor-evaluated): %s\n' "$item"
+      continue
+    fi
+    # Extract the command value from `cmd: <value>`, trimming leading space and a
+    # single layer of matching surrounding quotes.
+    cmd="${item#cmd:}"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    if   [[ "$cmd" == \"*\" ]]; then cmd="${cmd#\"}"; cmd="${cmd%\"}"
+    elif [[ "$cmd" == \'*\' ]]; then cmd="${cmd#\'}"; cmd="${cmd%\'}"
+    fi
     if ( cd "$WORK_DIR" && timeout --kill-after=15 "$SELF_VERIFY_TIMEOUT" bash -c "$cmd" ) >/dev/null 2>&1; then
       printf '  PASS: %s\n' "$item"
     else

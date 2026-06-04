@@ -1441,7 +1441,7 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Depends on**: [[CC-309]] merged (establishes executor boundary; self_verify format is a dispatch-level concern).
 
-**Status**: implemented — execute-mode (`bash -c` in `$WORK_DIR` under `DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s; PASS=exit 0, FAIL=non-zero/timeout). Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`) + `test-dispatch-post-verify.sh` rewritten from substring-search FOUND/MISSING to execute-mode PASS/FAIL. Index tracks to confirm merge.
+**Status**: implemented. Canonical self_verify shape (decided after pr-gate round 1 flagged a contract mismatch): the structured `- cmd: "<bash>"` form is the **machine-executable** check — post-verify runs it in `$WORK_DIR` under `DISPATCH_SELF_VERIFY_TIMEOUT` (default 300s); PASS=exit 0, FAIL=non-zero/timeout. Every other shape (named macros, prose, bare scalars) is a **semantic check the executor evaluates** — post-verify marks it `SKIP (executor-evaluated)`, never failing valid judgment-only briefs (e.g. UI/accuracy checks a shell cannot confirm). Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`) aligned; `test-dispatch-post-verify.sh` rewritten to cmd-exec PASS/FAIL + SKIP coverage (44/0). Index tracks to confirm merge.
 
 ## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path ✅ 2026-06-04
 
