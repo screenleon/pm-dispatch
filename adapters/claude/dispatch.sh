@@ -198,6 +198,12 @@ if [[ -n "$ISOLATION" ]]; then
   PERMISSION_MODE="$(_resolve_permission_mode "$ISOLATION")" || exit 2
 fi
 
+# Apply PM_CFG_DEFAULT_MODEL when --model was omitted (mirrors codex adapter behaviour).
+# pmctl exports this from ~/.pm-dispatch/config dispatch.default_model.
+if [[ -z "$MODEL" && -n "${PM_CFG_DEFAULT_MODEL:-}" ]]; then
+  MODEL="$PM_CFG_DEFAULT_MODEL"
+fi
+
 # Resolve PM-facing alias (e.g. "light" → "claude-haiku-4-5-20251001") before
 # passing to the claude CLI. Unknown values are passed through unchanged.
 [[ -n "$MODEL" ]] && _resolve_claude_model_alias "$MODEL"

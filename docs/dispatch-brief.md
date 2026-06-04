@@ -389,20 +389,23 @@ dispatch.default_timeout=900
 
 Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnings and ignored. Unknown keys are ignored for forward compatibility.
 
+## Executor-agnostic model aliases
+
+Use these aliases in briefs and PM routing — never hard-code executor wire-format IDs.
+Each adapter resolves the alias to its own wire format at dispatch time.
+
+| PM-facing alias | codex wire ID | claude wire ID | When to use |
+|---|---|---|---|
+| `default` | `gpt-5.5` | `claude-sonnet-4-6` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | Small tasks only (see §When to dispatch) |
+
+See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
+
 ## Model aliases
 
 PM short-form model aliases are resolved from the source-of-truth file
 `share/model-aliases.tsv`, then passed as wire-format model IDs to `codex exec`.
 `scripts/lint-model-aliases.sh` asserts that this table stays in sync with the PM-facing table below and any template hardcoded references.
-
-**Executor-agnostic alias** (use in briefs — never hard-code wire-format IDs):
-
-| PM-facing alias | codex wire ID | claude wire ID | When to use |
-|---|---|---|---|
-| `default` | `gpt-5.5` | `claude-sonnet-4-6` | All medium/large tasks (omit `--model`) |
-| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | Small tasks only (see routing table above) |
-
-**Codex-specific aliases** (`share/model-aliases.tsv`):
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
@@ -412,7 +415,12 @@ PM short-form model aliases are resolved from the source-of-truth file
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
 | `light` | `gpt-5.3-codex-spark` | `high` |
 
-**Claude-specific aliases** (`share/claude-model-aliases.tsv`):
+`light` is opt-in only and draws from an independent usage pool — see §Executor-agnostic model aliases above.
+
+## Claude model aliases
+
+PM short-form model aliases for the claude executor, resolved from `share/claude-model-aliases.tsv`.
+`scripts/lint-model-aliases.sh` asserts that this table stays in sync with the source TSV.
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
@@ -422,7 +430,7 @@ PM short-form model aliases are resolved from the source-of-truth file
 | `haiku` | `claude-haiku-4-5-20251001` | `normal` |
 | `opus` | `claude-opus-4-8` | `high` |
 
-`default` is resolved when no `--model` is given. `light` is opt-in only — see §When to dispatch and `agents/project-pm.md` for routing criteria. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
+`default` is applied when `PM_CFG_DEFAULT_MODEL` is set or when `--model default` is given explicitly; omitting `--model` with no config default delegates to the claude CLI built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
 Direct Bash dispatch shape:
 

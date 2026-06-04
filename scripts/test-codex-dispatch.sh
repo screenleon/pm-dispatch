@@ -1125,4 +1125,28 @@ case_codex_read_roots_includes_work_dir
 case_codex_read_roots_preserves_inherited
 case_state_store_no_direct_run_row_codex
 
+# ---- light alias resolves to gpt-5.3-codex-spark ----
+case_model_alias_light() {
+  local name="model-alias/--model light resolves to gpt-5.3-codex-spark"
+  local _work _brief _out _exit
+  should_run "$name" || return 0
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'goal: light alias resolution test\n' > "$_brief"
+  set +e
+  _out="$("$DISPATCH" --cd "$_work" --brief-file "$_brief" --model light --print-cmd 2>/dev/null)"
+  _exit=$?
+  set -e
+  if [[ "$_exit" -eq 0 ]] \
+    && [[ "$_out" == *"-m gpt-5.3-codex-spark"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "exit=$_exit out=$(printf '%s' "$_out" | tail -1)"
+  fi
+  rm -rf "$_work"; rm -f "$_brief"
+}
+
+case_model_alias_light
+
 th_summary
