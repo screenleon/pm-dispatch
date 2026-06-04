@@ -992,6 +992,52 @@ FAKEOF
   fi
 }
 
+case_codex_read_roots_preserves_inherited() {
+  # CC-320: when the caller already exports CLAUDE_HOOK_CODEX_READ_ROOTS, the
+  # adapter prepends the target git root and the /tmp baseline (which mirrors
+  # the guard's documented default `$HOME/github:/tmp` that the explicit export
+  # would otherwise clobber), then preserves the inherited value as trailing
+  # fallback. The exported value must be EXACTLY `<git_root>:/tmp:<inherited>`
+  # with no unintended extra roots.
+  local name="codex-dispatch: CLAUDE_HOOK_CODEX_READ_ROOTS preserves inherited value"
+  should_run "$name" || return 0
+  local _fake _work _brief _output _git_root _inherited _expected _got
+
+  _fake="$(mktemp -d)"
+  _work="$(mktemp -d)"
+  git init -q "$_work"
+  _git_root="$(git -C "$_work" rev-parse --show-toplevel 2>/dev/null)"
+  _inherited="/opt/custom-read-root"
+  _expected="READ_ROOTS=$_git_root:/tmp:$_inherited"
+
+  cat > "$_fake/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+_last=""
+shift 2>/dev/null || true  # skip 'exec' subcommand
+while [[ $# -gt 0 ]]; do
+  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
+done
+[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${CLAUDE_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+FAKEOF
+  chmod +x "$_fake/codex"
+
+  _brief="$(mktemp --suffix=.md)"
+  printf 'working_dir: %s\ngoal: test read roots preservation\n' "$_work" > "$_brief"
+
+  _output="$(CLAUDE_HOOK_CODEX_READ_ROOTS="$_inherited" PATH="$_fake:$PATH" \
+    "$DISPATCH" --cd "$_work" --brief-file "$_brief" 2>/dev/null || true)"
+  _got="$(printf '%s\n' "$_output" | grep '^READ_ROOTS=' || echo none)"
+
+  rm -rf "$_fake" "$_work"; rm -f "$_brief"
+
+  if [[ "$_got" == "$_expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected '$_expected' (got: '$_got')"
+  fi
+}
+
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -1027,5 +1073,6 @@ case_print_cmd_no_brief
 case_shim_delegates_to_adapter
 case_latest_symlink_failure_tolerated
 case_codex_read_roots_includes_work_dir
+case_codex_read_roots_preserves_inherited
 
 th_summary

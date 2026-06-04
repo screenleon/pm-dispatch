@@ -1448,7 +1448,7 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Problem**: `hook-codex-bash-guard.sh` defaults `CLAUDE_HOOK_CODEX_READ_ROOTS` to `$HOME/github:/tmp`. Codex dispatched to a repo outside `~/github/` cannot read source files — the guard blocks the read attempt. The default path is a historical convention, not a project-agnostic setting.
 
-**Plan**: `adapters/codex/dispatch.sh` derives the git root of `$WORK_DIR` and prepends it to `CLAUDE_HOOK_CODEX_READ_ROOTS` before invoking codex. Any existing user-set value is preserved as trailing fallback. Non-pmctl codex invocations continue to use the `$HOME/github:/tmp` default.
+**Plan**: `adapters/codex/dispatch.sh` derives the git root of `$WORK_DIR` and prepends it to `CLAUDE_HOOK_CODEX_READ_ROOTS` before invoking codex. Exported composition is `<git_root>:/tmp[:<inherited>]`. The `/tmp` segment is intentional: setting the env var REPLACES the guard's default (`$HOME/github:/tmp`), so `/tmp` must be re-added or codex loses scratch/brief access under `/tmp` — this is a correctness baseline, not a policy widening. Any existing user-set value is preserved as trailing fallback. Non-pmctl codex invocations continue to use the `$HOME/github:/tmp` default.
 
 **Status**: shipped in pr:#224. Index tracks to confirm merge.
 
