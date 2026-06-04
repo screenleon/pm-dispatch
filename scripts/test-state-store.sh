@@ -78,8 +78,8 @@ FAKEOF
 }
 
 # Poison codex: makes events.jsonl unwritable (chmod 000) after the adapter
-# runs — after run.dispatched has been written — so the terminal events_append
-# call (run.completed / run.failed) fails while runs_append still succeeds.
+# runs so a post-adapter transition Event append fails while the paired Run
+# append still succeeds.
 install_poison_codex() {
   local bindir="$1" code="${2:-0}"
   cat > "$bindir/codex" <<FAKEOF
@@ -452,14 +452,14 @@ case_pmctl_dispatch_creates_run_row() {
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   local runs_file schema_v executor state exit_code events_file event_kinds
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  schema_v="$(jq -r '.schema_version' "$runs_file" 2>/dev/null || true)"
-  executor="$(jq -r '.executor' "$runs_file" 2>/dev/null || true)"
-  state="$(jq -r '.state' "$runs_file" 2>/dev/null || true)"
-  exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null || true)"
+  schema_v="$(jq -r '.schema_version' "$runs_file" 2>/dev/null | tail -1 || true)"
+  executor="$(jq -r '.executor' "$runs_file" 2>/dev/null | tail -1 || true)"
+  state="$(jq -r '.state' "$runs_file" 2>/dev/null | tail -1 || true)"
+  exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
   events_file="$(find "$store" -name "events.jsonl" -type f 2>/dev/null | head -1 || true)"
   event_kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
   if [[ "$schema_v" == "1" && "$executor" == "codex" && "$state" == "ok" && \
-        "$exit_code" == "0" && "$event_kinds" == "run.dispatched,run.completed" ]]; then
+        "$exit_code" == "0" && "$event_kinds" == "run.pending,run.dispatched,run.verifying,run.completed" ]]; then
     pass "$name"
   else
     fail "$name" "schema=$schema_v executor=$executor state=$state exit=$exit_code events=${event_kinds:-none}"
@@ -547,7 +547,7 @@ case_pmctl_dispatch_model_explicit() {
     --cd "$work_dir" --model "explicit-model-x" \
     --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null | tail -1 || true)"
   if [[ "$model_found" == "explicit-model-x" ]]; then
     pass "$name"
   else
@@ -576,7 +576,7 @@ case_pmctl_dispatch_model_config_default() {
     "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null | tail -1 || true)"
   if [[ "$model_found" == "config-default-model" ]]; then
     pass "$name"
   else
@@ -604,7 +604,7 @@ case_pmctl_dispatch_model_builtin_default() {
     "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
+  model_found="$(jq -r '.model' "$runs_file" 2>/dev/null | tail -1 || true)"
   if [[ "$model_found" == "default" ]]; then
     pass "$name"
   else
@@ -663,7 +663,7 @@ case_sw_build_run_json_task_id_anchor() {
   brief_file="$tmp_root/anchor-brief.md"
   # parent_task_id: appears BEFORE task_id: - unanchored grep would pick CC-999
   printf 'parent_task_id: CC-999\ntask_id: CC-230\nDo nothing.\n' > "$brief_file"
-  run_json="$(sw_build_run_json codex 0 model "$brief_file" "$work_dir" "")"
+  run_json="$(sw_build_run_json codex 0 ok model "$brief_file" "$work_dir" "")"
   task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
   if [[ "$task_id_found" == "CC-230" ]]; then
     pass "$name"
@@ -679,7 +679,7 @@ case_sw_build_run_json_inline_brief_task_id() {
   local work_dir run_json task_id_found
   work_dir="$tmp_root/inline-brief-workdir"
   mkdir -p "$work_dir"
-  run_json="$(sw_build_run_json codex 0 model "" "$work_dir" "" "task_id: CC-230
+  run_json="$(sw_build_run_json codex 0 ok model "" "$work_dir" "" "task_id: CC-230
 Do nothing.")"
   task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
   if [[ "$task_id_found" == "CC-230" ]]; then
@@ -715,8 +715,8 @@ case_pmctl_dispatch_failed_records_state() {
   state_found=""
   exit_found=""
   if [[ -n "$runs_file" ]]; then
-    state_found="$(jq -r '.state' "$runs_file" 2>/dev/null | head -1 || true)"
-    exit_found="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | head -1 || true)"
+    state_found="$(jq -r '.state' "$runs_file" 2>/dev/null | tail -1 || true)"
+    exit_found="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
   fi
   if [[ "$state_found" == "failed" && "$exit_found" == "42" ]]; then
     pass "$name"
@@ -726,9 +726,9 @@ case_pmctl_dispatch_failed_records_state() {
 }
 
 case_pmctl_dispatch_pre_event_before_adapter() {
-  local name="pmctl-dispatch: run.dispatched Event emitted before adapter invocation"
+  local name="pmctl-dispatch: run.pending/run.dispatched Events emitted before adapter invocation"
   should_run "$name" || return 0
-  local store fake_bin_dir brief_file work_dir probe_file events_file first_kind
+  local store fake_bin_dir brief_file work_dir probe_file events_file first_two_kinds
   store="$tmp_root/pre-event-store"
   fake_bin_dir="$tmp_root/pre-event-bin"
   work_dir="$tmp_root/pre-event-workdir"
@@ -741,12 +741,12 @@ case_pmctl_dispatch_pre_event_before_adapter() {
     "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
-  first_kind=""
-  [[ -n "$events_file" ]] && first_kind="$(head -1 "$events_file" | jq -r '.kind' 2>/dev/null || true)"
-  if [[ -s "$probe_file" && "$first_kind" == "run.dispatched" ]]; then
+  first_two_kinds=""
+  [[ -n "$events_file" ]] && first_two_kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | head -2 | paste -sd, - || true)"
+  if [[ -s "$probe_file" && "$first_two_kinds" == "run.pending,run.dispatched" ]]; then
     pass "$name"
   else
-    fail "$name" "probe=$([[ -s "$probe_file" ]] && echo seen || echo missing) first_kind=${first_kind:-none}"
+    fail "$name" "probe=$([[ -s "$probe_file" ]] && echo seen || echo missing) first_two_kinds=${first_two_kinds:-none}"
   fi
 }
 
@@ -771,10 +771,38 @@ case_pmctl_dispatch_completed_event() {
     kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
     run_ids="$(jq -r '.payload.run_id' "$events_file" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
   fi
-  if [[ "$kinds" == "run.dispatched,run.completed" && "$run_ids" == "1" ]]; then
+  if [[ "$kinds" == "run.pending,run.dispatched,run.verifying,run.completed" && "$run_ids" == "1" ]]; then
     pass "$name"
   else
     fail "$name" "kinds=${kinds:-none} unique_run_ids=${run_ids:-none}"
+  fi
+}
+
+case_pmctl_dispatch_full_fsm_sequence() {
+  local name="pmctl-dispatch: full Run FSM event sequence after successful dispatch"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir events_file runs_file kinds states
+  store="$tmp_root/full-fsm-store"
+  fake_bin_dir="$tmp_root/full-fsm-bin"
+  work_dir="$tmp_root/full-fsm-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_fake_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
+  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
+  kinds=""
+  states=""
+  [[ -n "$events_file" ]] && kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
+  [[ -n "$runs_file" ]] && states="$(jq -r '.state' "$runs_file" 2>/dev/null | paste -sd, - || true)"
+  if [[ "$kinds" == "run.pending,run.dispatched,run.verifying,run.completed" && \
+        "$states" == "pending,dispatched,verifying,ok" ]]; then
+    pass "$name"
+  else
+    fail "$name" "kinds=${kinds:-none} states=${states:-none}"
   fi
 }
 
@@ -803,14 +831,14 @@ case_pmctl_dispatch_failed_event() {
 }
 
 case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
-  # Verifies that a run.dispatched Event write failure causes pmctl to return
+  # Verifies that a run.pending Event write failure causes pmctl to return
   # non-zero and NOT invoke the adapter (adapter binary not called).
   #
   # Strategy: use a read-only store root so partition dir creation fails →
-  # events_append for run.dispatched returns non-zero → pmctl returns early.
+  # events_append for run.pending returns non-zero → pmctl returns early.
   # A probing codex writes a probe file on any invocation; its absence proves
   # the adapter was not called.
-  local name="pmctl-dispatch: run.dispatched Event write failure blocks adapter invocation"
+  local name="pmctl-dispatch: run.pending Event write failure blocks adapter invocation"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir probe_file rc=0
   store="$tmp_root/pre-event-fail-store"
@@ -835,14 +863,13 @@ case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
 }
 
 case_pmctl_dispatch_terminal_event_append_fail() {
-  # Verifies that when events_append fails for the terminal event (run.completed)
-  # after runs_append succeeds, pmctl_dispatch_write_run propagates non-zero.
+  # Verifies that when events_append fails for a transition after runs_append
+  # succeeds, pmctl_dispatch_write_transition propagates non-zero.
   #
-  # Strategy: use a poison codex that chmod 000s events.jsonl after run.dispatched
-  # has been written, so runs_append still succeeds (separate file) but the
-  # subsequent events_append fails. Asserts: pmctl exits non-zero AND runs.jsonl
-  # has a row (runs_append succeeded before the event write).
-  local name="pmctl-dispatch: write_run returns non-zero when terminal events_append fails after runs_append succeeds"
+  # Strategy: use a poison codex that chmod 000s events.jsonl after the pre-adapter
+  # transitions have been written, so the post-adapter Run append still succeeds
+  # but the subsequent Event append fails.
+  local name="pmctl-dispatch: write_transition returns non-zero when events_append fails after runs_append succeeds"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir runs_file events_files rc=0
   store="$tmp_root/terminal-event-fail-store"
@@ -947,6 +974,7 @@ case_sw_build_run_json_inline_brief_task_id
 case_pmctl_dispatch_failed_records_state
 case_pmctl_dispatch_pre_event_before_adapter
 case_pmctl_dispatch_completed_event
+case_pmctl_dispatch_full_fsm_sequence
 case_pmctl_dispatch_failed_event
 case_pmctl_dispatch_pre_event_fail_blocks_adapter
 case_pmctl_dispatch_terminal_event_append_fail
