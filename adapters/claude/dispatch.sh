@@ -262,6 +262,7 @@ echo "trace:  $TRACE"
 echo "last:   $LAST"
 echo "stderr: $STDERR_LOG"
 echo "exit:   $EXIT"
+echo "model:  $MODEL"
 echo "---"
 if [[ -s "$LAST" ]]; then
   echo "=== final message ==="

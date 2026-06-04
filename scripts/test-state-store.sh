@@ -55,6 +55,54 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
+# Probing codex: unconditionally writes to probe_file on invocation.
+# Used to verify whether the adapter (and therefore the underlying codex binary)
+# was actually called by pmctl.
+install_probing_codex() {
+  local bindir="$1" code="${2:-0}" probe_file="$3"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2;;
+    *) shift;;
+  esac
+done
+printf 'invoked\n' > "$probe_file"
+[[ -n "\$_last" ]] && printf 'dispatch complete (probing codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
+# Poison codex: makes events.jsonl unwritable (chmod 000) after the adapter
+# runs — after run.dispatched has been written — so the terminal events_append
+# call (run.completed / run.failed) fails while runs_append still succeeds.
+install_poison_codex() {
+  local bindir="$1" code="${2:-0}"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2;;
+    *) shift;;
+  esac
+done
+if [[ -n "\${PM_DISPATCH_STATE_ROOT:-}" ]]; then
+  while IFS= read -r -d '' _ef; do
+    chmod 000 "\$_ef"
+  done < <(find "\${PM_DISPATCH_STATE_ROOT}" -name events.jsonl -type f -print0 2>/dev/null)
+fi
+[[ -n "\$_last" ]] && printf 'dispatch complete (poison codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
 case_store_root_override() {
   # Verifies that PM_DISPATCH_STATE_ROOT env var overrides the default state store root path.
   #
@@ -387,8 +435,9 @@ case_codex_dispatch_state_store_self_contained() {
 }
 
 case_pmctl_dispatch_creates_run_row() {
-  # Verifies that pmctl dispatch owns the dispatch-to-state-store Run write.
-  local name="pmctl-dispatch: creates runs.jsonl row after dispatch"
+  # Verifies that pmctl dispatch owns the dispatch-to-state-store Run write and
+  # that the row contains the expected load-bearing fields.
+  local name="pmctl-dispatch: creates runs.jsonl row with correct schema/executor/state/exit fields"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir
   store="$tmp_root/dispatch-run"
@@ -401,12 +450,19 @@ case_pmctl_dispatch_creates_run_row() {
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
     "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
-  local runs_file
+  local runs_file schema_v executor state exit_code events_file event_kinds
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
-  if [[ -n "$runs_file" && -s "$runs_file" ]]; then
+  schema_v="$(jq -r '.schema_version' "$runs_file" 2>/dev/null || true)"
+  executor="$(jq -r '.executor' "$runs_file" 2>/dev/null || true)"
+  state="$(jq -r '.state' "$runs_file" 2>/dev/null || true)"
+  exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null || true)"
+  events_file="$(find "$store" -name "events.jsonl" -type f 2>/dev/null | head -1 || true)"
+  event_kinds="$(jq -r '.kind' "$events_file" 2>/dev/null | paste -sd, - || true)"
+  if [[ "$schema_v" == "1" && "$executor" == "codex" && "$state" == "ok" && \
+        "$exit_code" == "0" && "$event_kinds" == "run.dispatched,run.completed" ]]; then
     pass "$name"
   else
-    fail "$name" "runs.jsonl not created or empty in $store"
+    fail "$name" "schema=$schema_v executor=$executor state=$state exit=$exit_code events=${event_kinds:-none}"
   fi
 }
 
@@ -530,8 +586,9 @@ case_pmctl_dispatch_model_config_default() {
 
 case_pmctl_dispatch_model_builtin_default() {
   # Verifies that when neither --model nor PM_CFG_DEFAULT_MODEL is set, the Run
-  # row stores an empty string (adapter built-in default not captured at pmctl level).
-  local name="pmctl-dispatch: no --model and no PM_CFG_DEFAULT_MODEL stores empty model"
+  # row records the adapter's built-in default alias ("default" for codex),
+  # extracted from the adapter footer's "model:" line.
+  local name="pmctl-dispatch: no --model and no PM_CFG_DEFAULT_MODEL stores adapter built-in default"
   should_run "$name" || return 0
   local store fake_bin_dir brief_file work_dir runs_file model_found
   store="$tmp_root/model-builtin-store"
@@ -548,10 +605,10 @@ case_pmctl_dispatch_model_builtin_default() {
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   model_found="$(jq -r '.model' "$runs_file" 2>/dev/null || true)"
-  if [[ "$model_found" == "" || "$model_found" == "null" ]]; then
+  if [[ "$model_found" == "default" ]]; then
     pass "$name"
   else
-    fail "$name" "expected empty model but got '${model_found}' (runs_file=${runs_file:-none})"
+    fail "$name" "expected 'default' (adapter built-in via footer) but got '${model_found}' (runs_file=${runs_file:-none})"
   fi
 }
 
@@ -745,6 +802,70 @@ case_pmctl_dispatch_failed_event() {
   fi
 }
 
+case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
+  # Verifies that a run.dispatched Event write failure causes pmctl to return
+  # non-zero and NOT invoke the adapter (adapter binary not called).
+  #
+  # Strategy: use a read-only store root so partition dir creation fails →
+  # events_append for run.dispatched returns non-zero → pmctl returns early.
+  # A probing codex writes a probe file on any invocation; its absence proves
+  # the adapter was not called.
+  local name="pmctl-dispatch: run.dispatched Event write failure blocks adapter invocation"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir probe_file rc=0
+  store="$tmp_root/pre-event-fail-store"
+  fake_bin_dir="$tmp_root/pre-event-fail-bin"
+  work_dir="$tmp_root/pre-event-fail-workdir"
+  probe_file="$tmp_root/pre-event-fail-probe"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_probing_codex "$fake_bin_dir" 0 "$probe_file"
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  mkdir -p "$store"
+  chmod 500 "$store"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
+  chmod 700 "$store"
+  if [[ "$rc" -ne 0 && ! -f "$probe_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc probe=$([[ -f "$probe_file" ]] && echo invoked || echo not-invoked)"
+  fi
+}
+
+case_pmctl_dispatch_terminal_event_append_fail() {
+  # Verifies that when events_append fails for the terminal event (run.completed)
+  # after runs_append succeeds, pmctl_dispatch_write_run propagates non-zero.
+  #
+  # Strategy: use a poison codex that chmod 000s events.jsonl after run.dispatched
+  # has been written, so runs_append still succeeds (separate file) but the
+  # subsequent events_append fails. Asserts: pmctl exits non-zero AND runs.jsonl
+  # has a row (runs_append succeeded before the event write).
+  local name="pmctl-dispatch: write_run returns non-zero when terminal events_append fails after runs_append succeeds"
+  should_run "$name" || return 0
+  local store fake_bin_dir brief_file work_dir runs_file events_files rc=0
+  store="$tmp_root/terminal-event-fail-store"
+  fake_bin_dir="$tmp_root/terminal-event-fail-bin"
+  work_dir="$tmp_root/terminal-event-fail-workdir"
+  mkdir -p "$fake_bin_dir" "$work_dir"
+  git -C "$work_dir" init -q
+  install_poison_codex "$fake_bin_dir" 0
+  brief_file="$(mk_pmctl_brief "$work_dir")"
+  rc=0
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
+    "$PMCTL" dispatch run --adapter codex \
+    --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
+  # Restore events.jsonl permissions so the temp dir can be cleaned up.
+  find "$store" -name events.jsonl | xargs chmod 600 2>/dev/null || true
+  runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
+  if [[ "$rc" -ne 0 && -s "$runs_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc runs_file=${runs_file:-none}"
+  fi
+}
+
 case_project_key_shasum_fallback() {
   local name="project_key: sha1sum missing but shasum available produces hash (not global)"
   should_run "$name" || return 0
@@ -827,6 +948,8 @@ case_pmctl_dispatch_failed_records_state
 case_pmctl_dispatch_pre_event_before_adapter
 case_pmctl_dispatch_completed_event
 case_pmctl_dispatch_failed_event
+case_pmctl_dispatch_pre_event_fail_blocks_adapter
+case_pmctl_dispatch_terminal_event_append_fail
 case_project_key_shasum_fallback
 case_project_key_no_sha1sum
 

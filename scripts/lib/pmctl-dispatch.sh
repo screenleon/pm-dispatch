@@ -152,6 +152,9 @@ pmctl_dispatch_write_run() {
     printf 'pmctl dispatch run: failed to append Run state for %s\n' "$run_id" >&2
     return "$rc"
   fi
+  # If events_append fails after runs_append succeeds, the state store has an
+  # orphaned Run row with no terminal event.  Repair: delete the last line of
+  # runs.jsonl for the affected run_id, then retry the dispatch.
   pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" "$exit_code" "$adapter"
 }
 
@@ -322,9 +325,7 @@ pmctl_dispatch_run() {
   _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
 
   if [[ "$print_cmd" -eq 0 ]]; then
-    if ! pmctl_dispatch_write_event "$repo_root" "$work_dir" "run.dispatched" "$_dispatch_run_id" 0 "$adapter"; then
-      return $?
-    fi
+    pmctl_dispatch_write_event "$repo_root" "$work_dir" "run.dispatched" "$_dispatch_run_id" 0 "$adapter" || return $?
   fi
 
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
@@ -344,9 +345,14 @@ pmctl_dispatch_run() {
 
   # Parse per-run paths from the adapter stdout footer ("last:   <path>",
   # "stderr: <path>").  Empty strings → post-verify falls back to latest.*.
-  local _run_last="" _run_stderr=""
+  # "model:  <value>" overrides the pmctl-extracted model with the adapter's
+  # effective model (e.g. codex always resolves its built-in "default" alias
+  # even when no --model or config default is supplied).
+  local _run_last="" _run_stderr="" _run_model=""
   _run_last="$(grep -m1 '^last:' "$_footer_tmp" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_stderr="$(grep -m1 '^stderr:' "$_footer_tmp" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_model="$(grep -m1 '^model:' "$_footer_tmp" | sed 's/^model:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  [[ -n "$_run_model" ]] && _dispatch_model="$_run_model"
   rm -f "$_footer_tmp"
 
   # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
@@ -358,10 +364,8 @@ pmctl_dispatch_run() {
   # 6. A failed adapter run short-circuits: propagate its exit verbatim. The
   #    adapter already wrote forensic trace/stderr for post-mortem.
   if [[ "$exit_code" -ne 0 ]]; then
-    if ! pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
-      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed"; then
-      return $?
-    fi
+    pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
+      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed" || return $?
     return "$exit_code"
   fi
 
@@ -374,17 +378,13 @@ pmctl_dispatch_run() {
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
   if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
-    if ! pmctl_dispatch_write_run "$repo_root" "$adapter" 1 "$_dispatch_model" \
-      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed"; then
-      return $?
-    fi
+    pmctl_dispatch_write_run "$repo_root" "$adapter" 1 "$_dispatch_model" \
+      "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.failed" || return $?
     return 1
   fi
 
-  if ! pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
-    "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.completed"; then
-    return $?
-  fi
+  pmctl_dispatch_write_run "$repo_root" "$adapter" "$exit_code" "$_dispatch_model" \
+    "$brief_file" "$work_dir" "${_run_last:-}" "$_dispatch_run_id" "$_dispatch_created_ts" "run.completed" || return $?
 
   return "$exit_code"
 }
