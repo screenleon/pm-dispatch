@@ -1,10 +1,10 @@
-<!-- pm-dispatch: backlog-archive 2026-06-01 -->
+<!-- pm-dispatch: backlog-archive 2026-06-05 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
 index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-01
+Last archived: 2026-06-05
 
 ---
 
@@ -1959,3 +1959,382 @@ spanning 2026-05-26 to 2026-06-01, still accumulating during normal use.
 
 **Cross-link**: `[[CC-300]]`、`[[CC-302]]`.
 
+## CC-207 — Windows Git Bash symlink fallback: use mklink /J in install.sh ✅ 2026-06-03
+
+**See**: pr:#220
+
+**Resolution**: Implemented in PR #220 (the Windows-compatibility branch). `install.sh` now
+installs directory targets (`agents/`, `skills/`, `commands/`, `adapters/`, `.pm`)
+as Windows junctions via `make_junction_windows` / `install_dir_junction` on the
+`windows` platform, with per-file copy as the last-resort fallback — exactly the
+"detect Git Bash, use junctions instead of silently copying" branch this item
+asked for. Junction & copy-aware coverage in `test-install.sh` / `test-uninstall.sh`.
+
+**Problem**: On Git Bash (OSTYPE=msys/cygwin), `ln -s` silently falls back to file
+copy rather than creating real symlinks. After pulling pm-dispatch updates, users
+must re-run `bash install.sh` to sync the copies (83 files across agents/, commands/,
+scripts/, .pm). This breaks the "pull = auto-sync" expectation that Linux/macOS/WSL2
+users have.
+
+**Why**: NTFS symlinks require Windows Developer Mode or `MSYS=winsymlinks:nativestrict`
+which cannot be assumed for all users. Directory junctions (`mklink /J`) are available
+without elevated privileges but require calling PowerShell from bash.
+The current copy fallback is correct as a safety net; the missing piece is an explicit
+Git Bash detection branch that uses junctions instead of silently falling back to copy.
+
+**Requirement**:
+1. `install.sh` detects Git Bash via `$OSTYPE == msys*` or `cygwin*`
+2. Uses `powershell.exe -Command "cmd /c mklink /J ..."` for each per-file link target
+   (`mklink /J` = directory junction; no admin or developer mode required)
+3. Verified: junction survives PATH resolution and Claude Code session startup on Windows
+4. `test-install.sh` gains a smoke test for the junction path (skip on non-Windows CI)
+5. `docs/platform-support.md` updated to reflect auto-sync is restored
+
+**Workaround**: after pulling updates, re-run `bash install.sh` to re-copy files.
+
+## CC-260 — pr-gate.sh: dirty-worktree fail-loud preflight ✅ 2026-06-01
+
+**See**: pr:#214
+
+**Problem**: When a branch has committed changes, `scripts/pr-gate.sh` uses `git diff "$BASE"...HEAD` to build the reviewer brief stat. This silently omits uncommitted tracked changes (`git diff HEAD`) and untracked files. During CC-229 Gate 12, the brief stat did not include `install.sh` and `scripts/test-schema-task-mirrors-backlog.sh` which were in the dirty worktree but not yet committed.
+
+**Why**: Gate reviewers can only assess what's in the brief. Silently omitting working-tree changes means new files and tracked modifications that haven't been committed are invisible to reviewers. This is especially impactful for long-running iterative gate sessions where fixes accumulate in the working tree before a final commit.
+
+**Requirement**:
+- Detect dirty worktree (tracked changes or non-gitignored untracked files) when the branch has committed `BASE...HEAD` changes.
+- Without `--allow-dirty`, fail loud with exit 3 and guidance to commit first or opt into dirty review scope.
+- With `--allow-dirty`, fold the working tree into scope: committed + uncommitted tracked changes via `git diff "$BASE"` and non-gitignored untracked files via `git ls-files --others --exclude-standard`.
+- Preserve the existing dirty-only-no-commit behavior: no preflight failure because the working-tree fallback already reviews those changes.
+
+**Acceptance**:
+1. Committed `BASE...HEAD` changes + dirty worktree without `--allow-dirty` → exit 3 with guidance.
+2. `--allow-dirty` folds committed + working-tree changes into review scope.
+3. Dirty-only-no-commit worktrees are still reviewed by the existing fallback.
+4. `bash scripts/test-pr-gate.sh` → exit 0.
+5. `bash scripts/run-all-tests.sh` → exit 0.
+
+**Milestone**: v0.3.x (post-M1); prioritize before the next multi-gate iterative fix session.
+
+**Priority**: P2 — operational correctness for gate reviews; detected as real drift in CC-229 gate cycle.
+
+---
+
+## CC-262 — Executor isolation 抽象層：`isolation_level` 欄位 + adapter 轉譯契約 ✅ 2026-06-03
+
+**See**: pr:#162/#175/#180
+
+**Resolution (2026-06-03, CC-274 reconcile)**: All segments shipped. `core/policy/isolation-level.yaml`
+defines **5** levels — `none | read-only | workspace-write | workspace-network | sandboxed` (M2/#175 added
+`workspace-network`). `adapters/claude/isolation-map.yaml` (no-op, #162) and `adapters/codex/isolation-map.yaml`
+(5-level native mapping, present) both exist; `scripts/codex-dispatch.sh` expands `isolation_level` before
+dispatch (#175); `agents/project-pm.md` PM template uses `isolation_level:` (#180). `sandboxed` is **best-effort**
+(Codex has no true ephemeral mode → maps to `workspace-write` with no network), not full isolation. The stale
+planning text below is retained for history; the bracketed corrections inline reflect the as-built state.
+
+**Problem**: 現行 brief schema 中 `sandbox`、`approval`、`skip_git_check` 是 Codex 原生欄位，直接出現在 PM 撰寫的 brief 裡。當 executor 為 `claude` 時，PM 必須填入 canonical no-op 值（`workspace-write` / `never` / `false`）——這是 leaky abstraction：brief 層洩漏了底層 executor 的實作細節。
+
+**Why**: 用戶設計目標：「功能與執行環境分離」。Brief 應表達隔離 *意圖*（需要什麼程度的保護），adapter 層負責把意圖翻譯成各 executor 的原生機制。這樣未來加入新 executor（opencode、antigravity）只需新增一個 adapter map，不需改動 brief schema 或 PM 撰寫規則。與 v0.3.0 的 `adapters/` named-slot 架構完全吻合。
+
+**Requirement**:
+- `core/policy/`（CC-231 延伸）：新增 `isolation_level` enum，值為 `none | read-only | workspace-write | workspace-network | sandboxed`〔as-built: 5 值，M2/#175 補入 `workspace-network`〕，附語意定義（none=無限制；read-only=不寫 FS；workspace-write=僅寫 project dir；workspace-network=workspace-write + localhost TCP；sandboxed=〔as-built: best-effort 最強隔離，Codex→workspace-write 無網路〕）
+- `adapters/codex/isolation-map.yaml`：每個 `isolation_level` 值 → Codex 原生 `sandbox` + `config_overrides` 對應表〔as-built: ✅ present，5 級映射〕
+- `adapters/claude/isolation-map.yaml`：每個 `isolation_level` 值 → no-op（claude-executor 無 sandbox flags）（v0.3.0 M1 殘留，當前範圍）
+- `agents/project-pm.md`：PM brief template 改寫 `isolation_level:` 取代三個原生欄位；說明三個原生欄位為 adapter-generated，PM 不直接填寫
+- `scripts/codex-dispatch.sh`：dispatch 前讀取 `adapters/codex/isolation-map.yaml` 展開 `isolation_level` → 原生欄位；遇未知值 → 立即 exit 1 with error
+
+**Acceptance (M1 scope — adapters/claude only)**:
+1. `grep -q "isolation_level" core/policy/executor-enum.yaml` → match（或對應 policy 檔案）
+2. `cat adapters/claude/isolation-map.yaml` → 檔案存在，包含 4 個 no-op 映射
+3. `bash scripts/run-all-tests.sh` → exit 0
+
+**Acceptance (M2 scope — ✅ landed #175/#180)**:
+4. `grep "isolation_level" agents/project-pm.md` → 至少一個 match；`grep 'sandbox.*workspace-write' agents/project-pm.md` → PM brief template 區段無此行
+5. `bash scripts/test-codex-dispatch.sh` → exit 0（含 isolation_level 展開測試）
+
+**Acceptance (adapters/codex scope — ✅ landed)**:
+6. `cat adapters/codex/isolation-map.yaml` → 包含全部 5 個 isolation_level 的映射〔as-built: present〕
+
+**Scope revision 2026-05-25**: adapters/codex 原移至 v0.4.0。〔Superseded 2026-06-03: 已落地，見上方 Resolution。〕
+
+**M1 shipped (2026-05-25, PR #162)**: `core/policy/isolation-level.yaml` and `adapters/claude/isolation-map.yaml` created. **M2 + adapters/codex shipped (PR #175/#180)** — see top Resolution; item closed 2026-06-03 via CC-274 reconcile.
+
+---
+
+## CC-274 — docs: reconcile CC-262 planning text with shipped isolation implementation ✅ 2026-06-03
+
+**See**: pr:#175
+
+**Resolution**: Reconciled 2026-06-03. CC-262 body's three stale points corrected inline
+(enum now 5 values incl `workspace-network`; `sandboxed` = best-effort not 完整隔離; M2 +
+adapters/codex acceptance marked landed #175/#180), CC-262 closed to match MILESTONES ✅,
+and the stale "(adapters/codex isolation-map 仍 v0.4.0)" note removed from MILESTONES §M1.
+
+**Problem**: CC-262 in BACKLOG.md has three stale areas flagged by Round 11 gate critic:
+1. Requirement block lists only 4 enum values (`none | read-only | workspace-write | sandboxed`) — `workspace-network` (shipped in M2 / PR #175) is missing.
+2. Sandboxed semantic still says "完整隔離" but the Codex adapter maps it to `workspace-write` (best-effort, no true ephemeral mode); `core/policy/isolation-level.yaml` and adapter comments now reflect this.
+3. Acceptance (M2) and Acceptance (v0.4.0) still mark `codex-dispatch.sh` expansion and `adapters/codex/isolation-map.yaml` as "deferred" — both shipped in PR #175.
+
+**Fix**:
+- Update CC-262 Requirement block to list all 5 enum values including `workspace-network`.
+- Correct sandboxed semantic to "best-effort strongest isolation; Codex maps to workspace-write".
+- Mark M2 and v0.4.0 acceptance criteria as landed (PR #175).
+
+**area**: docs
+**Priority**: P2 — stale planning text causes confusion when reading the BACKLOG for future isolation work.
+
+**Raised by**: critic [medium] × 3, Round 11 gate (feat/cc206-gate-hooks).
+
+---
+
+## CC-293 — [arch] lift default/config resolution into pmctl runtime ✅ 2026-06-02
+
+**See**: pr:#216
+
+**Problem**: `adapters/codex/dispatch.sh` owned default-model selection and `dispatch.default_model` config precedence — policy-like resolution in a thin adapter, flagged by critic + architecture-reviewer at CC-292 gate. Deferred until a second adapter needed the same config axis.
+
+**Trigger met**: adding `adapters/claude/dispatch.sh` (CC-305 / pr:#216) created the second shared dispatch config axis, fulfilling the deferral condition.
+
+**Resolution**: `scripts/lib/pmctl-config.sh` centralizes config parsing. `pmctl-dispatch.sh` calls `pm_config_load` in `pmctl_dispatch_run` and exports `PM_CFG_TIMEOUT` + `PM_CFG_DEFAULT_MODEL` to the adapter subprocess — adapters receive config values via env rather than sourcing the config file themselves. Both adapters dropped all config-loading code; their existing `elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]` / `${PM_CFG_DEFAULT_MODEL:-}` branches now consume the exported values. Precedence maintained: `--timeout`/`--model` flags (parsed last) win over everything; adapter-specific env vars (`CODEX_DISPATCH_TIMEOUT`, `CLAUDE_DISPATCH_TIMEOUT`) are next; pmctl-exported config (`PM_CFG_TIMEOUT`, `PM_CFG_DEFAULT_MODEL`) is third; adapter built-in default (1200 / `default` alias) is fallback for direct invocations without pmctl.
+
+**Cross-link**: `[[CC-292]]` (origin), `[[CC-289]]` (`pmctl dispatch run`), `[[CC-211]]` (v0.3.0 arch epic), `[[CC-305]]` (trigger).
+
+
+## CC-297 — [arch] register `reviewer` as a guard role ✅ 2026-06-02
+
+**See**: pr:#218 (open, gate GO 2026-06-02)
+
+**Origin (user, 2026-06-01, during CC-291 work)**: 「pr-gate 應該也算是一種 role 你覺得呢」+ 隨後的挑論：reviewer 最多 5 個方向、不一定全用；又有 parallel/sequential 差異；user 傾向「**統一套用一條固定防範規則**」。對——pr-gate 的 reviewers + synthesis 是會寫檔、需要 guard 的 agent，正是 CC-291 generalization 的下一個具體實例，繼 `pm` / `executor` 之後。
+
+**Design（定調 2026-06-01）— 一個 role、一條固定規則、綁目錄**：
+- **一個 `reviewer` guard-role**，對應 5 個 reviewer agent-type + synthesis。漂亮示範 CC-291 的「role ≠ agent-type」：多 agent-type → 一個 guard-role。
+- **固定規則 = 只能 Write 到 `.gate-results/` 目錄**。綁**目錄不綁檔名**：parallel 寫 `.gate-results/reviewer-<r>-<ts>.md`、sequential 寫 `.gate-results/gate-<ts>.md`，兩模式一條規則。
+- **跨 tier-subset 統一**：用幾個 / 哪幾個 reviewer 是 tier/orchestration 的決定，guard 不列舉 reviewer。
+- **brief 排除**：`.gate-briefs/` 由 pr-gate.sh / orchestrator 寫，不是 reviewer 寫，不放進 reviewer 規則。
+- **兩條 dispatch 路徑均用顯式 `pmctl guard check`**（設計演進 2026-06-02）：codex-route 和 claude-route reviewer brief 都內嵌 `pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}` 約束；**不走 auto PreToolUse hook**（CC-291 uniform explicit design）。
+- **`--output` 覆寫例外**：operator 信任逃生口，文件化。
+
+**Resolution（pr:#218）**:
+- `scripts/hook-reviewer-write-guard.sh` — policy backing script，reviewer Write/Edit 必須落在 `.gate-results/`；`CLAUDE_HOOK_REVIEWER_GUARD=off` bypass；audit log
+- `pmctl guard check` 新增 `--role reviewer`；所有 role（含 pm）現在都需要 `--runtime`；pm/reviewer runtime 驗 `codex|claude` enum
+- Sequential + parallel reviewer brief 均內嵌顯式 `pmctl guard check` 約束
+- `cli/pmctl` 修正 symlink REPO_ROOT 解析（loop-based resolver，覆蓋相對 symlink 路徑）
+- `docs/spikes/fanout-dispatch-spike.md` — fan-out 架構 spike（推薦 v0.4.0 Approach B: `pmctl gate run`）
+- Tests: test-hooks.sh 346/0, test-pmctl-guard.sh 57/0, test-pr-gate.sh 78/0; gate GO (standard tier)
+
+**Cross-link**: `[[CC-291]]`（role-keyed registry）、`[[CC-288]]`（guard surface）、`[[CC-298]]`（brief 位置統一）。
+
+## CC-298 — [arch] 統一 brief 落點 + 產物檔名去 runtime 化 ✅ 2026-06-02
+
+**See**: pr:#216
+
+**Resolution**: pr-gate brief output moved to `.gate-briefs/` (runtime-agnostic shared directory); brief filenames no longer carry runtime tokens (`pr-gate-<ts>.md` rather than `codex-pr-gate-<ts>.md`); `.codex-briefs/` runtime-named historical directory removed. Defense-in-depth enforcer extension (preventing re-introduction of runtime-named data paths under `scripts/`) captured as separate deferred follow-up in [[CC-306]].
+
+**Origin (user, 2026-06-01, during CC-297 discussion)**: User flagged the runtime-named brief directory and runtime-tokenized artifact names; the target was one shared brief location for claude/codex and an in-file record of which model executed. This is CC-291（runtime 是 adapter 的事）/ CC-233（core 不放 CLI-named 檔）同一條界線，延伸到**資料產物**。
+
+**現況（grounded）**:
+- ✓ dispatch brief 已 runtime-agnostic：`adapters/codex/dispatch.sh` 與 `adapters/claude/dispatch.sh` 都收 `--brief-file`，guard 政策對兩者都是 `/tmp/brief-*.md`（讀取端已統一）。
+- ✗ pr-gate：the old `BRIEF_DIR` used a runtime-named brief directory（`scripts/pr-gate.sh:360`），且 claude route 的 brief 檔名帶 runtime（combined/reviewer variants，L495/L684）。
+- ✗ trace 檔名帶 runtime：`.agent-trace/codex-<ts>.{jsonl,last,stderr}`、`claude-<ts>.*`（消費端讀 `latest.*` symlink，已 agnostic）。
+
+**Target**:
+1. **brief 落點統一**：pr-gate 的 brief 目錄改成 runtime-agnostic 目錄（例如 `.gate-briefs/` 或與 dispatch 共用一個 `.pm-briefs/`）；brief 檔名去掉 `claude`/`codex` token。codex/claude 都從同一處讀。
+2. **產物檔名去 runtime 化**：生成的資料產物（brief、gate result、reviewer output）檔名不帶 runtime；**執行的 model 記在檔案內容**（gate result frontmatter 已有 `reviewers:` / `mode:`，可加 per-artifact `executed_by:`；brief header 加一行）。
+
+**Scope 邊界（別過度延伸）**:
+- `adapters/<runtime>/` 腳本目錄本就 runtime-specific——它們**是** adapter，CC-233 明確允許 adapter 以 runtime 命名。不在此票。
+- `scripts/codex-dispatch.sh` / `scripts/claude-dispatch.sh` 是 adapter 入口（shim 已由 [[CC-296]] 排程移除）——屬 adapter 名，不在此票。
+- executor-internal **trace 格式**本就 runtime-specific（codex JSONL vs claude JSON）；trace **檔名**是否一併中性化待議——消費端已用 `latest.*`，價值較低，可作 forensic 保留 runtime 名或一併改。實作時定。
+
+**防回歸（可選）**: 考慮把 [[CC-233]] 的 layer-boundary enforcer 擴及「`scripts/` 內以 runtime 命名的**資料路徑**」，避免日後又長出 `.codex-*` 資料目錄。
+
+**Why deferred / P2**: 一致性清理，user-flagged；非阻塞當前流程，但會動到 pr-gate + trace 命名的多處 caller，需一次到位 + 測試。先讓 CC-291 落地。
+
+**Cross-link**: `[[CC-291]]`（runtime=adapter concern）、`[[CC-233]]`（no CLI-named files）、`[[CC-289]]`（dispatch orchestrator）、`[[CC-297]]`（reviewer role，brief 排除）。
+
+## CC-305 — [ops/gate] concurrent pmctl dispatch runs race on latest.* symlinks ✅ 2026-06-02
+
+**See**: pr:#216
+
+**Problem**: When two or more `pmctl dispatch run` calls target the same `<work_dir>/.agent-trace/` (e.g. pr-gate parallel reviewer fan-out), each adapter calls `ln -sfn <adapter>-<ts>.last latest.last` on finish. A second dispatch that finishes between the first adapter's end and its post-verify check silently overwrites `latest.*` → `dispatch-post-verify.sh` sees an empty or wrong `.last` → `latest.last is empty` false failure, or worse, verifies the wrong run's output.
+
+Discovered 2026-06-01: concurrent codex + claude smoke test; codex exit 0 and correct output, but post-verify failed because the claude adapter had already overwritten `latest.last` with an empty file.
+
+**Root cause**: `latest.*` is shared mutable global state per working directory. Any actor that touches it races with every concurrent dispatch.
+
+**Resolution (#216, 2026-06-02)**: Implemented point 2 (pmctl owns the output contract) — the simpler sufficient fix. `pmctl dispatch run` now tees adapter stdout to a temp file, parses the per-run `last:` / `stderr:` footer lines, and passes them to `dispatch-post-verify.sh` via `--last`/`--stderr` flags. Post-verify uses explicit per-run paths; `latest.*` symlinks remain as human-observation convenience only. Per-run isolated subdirectory (point 1) deferred — not needed once pmctl consumes the explicit footer. Regression tests added: stale `latest.last` avoidance + tee `PIPESTATUS` propagation. `docs/executor-contract.md` updated with footer handoff subsection.
+
+Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `sw_append_dispatch_run` shared run-row builder (eliminating ~100 LOC of adapter duplication), `pmctl_validate_adapter_name` regex fix (`^[a-z][a-z0-9_-]*$`), 5 new test cases.
+
+**Acceptance** (all met):
+- Stale `latest.last` no longer causes post-verify false failure (CC-305 regression case passes).
+- Footer exit code propagated correctly through tee pipeline.
+- `scripts/run-all-tests.sh`: 40 passed, 0 failed.
+
+**Cross-link**: `[[CC-289]]` (pmctl dispatch run), `[[CC-299]]` (unified dispatch routes), `[[CC-264]]` (dispatch-post-verify.sh), `[[CC-293]]` (config dedup).
+
+## CC-299 — [arch] 統一 executor dispatch 路徑 ✅ 2026-06-01
+
+**See**: pr:#213
+
+## CC-309 — single-writer: route Run/Event writes through pmctl ✅ 2026-06-04
+
+**See**: pr:#223
+
+**Problem**: machine state is written outside `pmctl` — adapters call `sw_append_dispatch_run` directly (`adapters/codex/dispatch.sh:369`, claude equivalent), the append primitives `printf '%s\n'` caller strings without compaction/validation (`state-writer.sh:96-129`), failures are silent (`return 0`), and `test-layer-boundaries.sh:20-23,161-172` *allows* adapter state writes.
+
+**Plan**: move Run/Event writes into `pmctl dispatch run`; guard deny/warn emit Events via `pmctl`; harden the writer boundary (reject newline/NUL, `jq -c` compact, schema-validate); make canonical write failures loud (non-zero/surfaced); invert the layer-boundary test to forbid adapter/hook state writes (extends [[CC-306]]). v0.4.0 foundation Phase 1.
+
+**Detail**: `docs/architecture/v0.4.0-state-first-foundation.md` §3, §10.B. Related: [[CC-310]], [[CC-306]].
+
+## CC-310 — transactional Run+Event write + Run FSM lifecycle ✅ 2026-06-04
+
+**See**: pr:#228
+
+**Problem**: `runs_append`/`events_append` lock different files with no shared operation id, idempotency key, or reconciliation API (`state-writer.sh:104-129`); Run is recorded only at terminal adapter exit, so the `pending→dispatched→verifying→ok/partial/failed` FSM (`core/policy/run-states.yaml:15-28`) is never realized and a crashed `pmctl` leaves no in-flight Run.
+
+**Plan**: a `pmctl`-owned record-dispatch op that writes the Run/Event pair under one operation id with the invariant "every terminal Run has exactly one terminal Event" (checkable/repairable on read); `pmctl` creates `pending`/`dispatched` before invoke, `verifying` after, then the terminal state, emitting an Event per transition.
+
+**Detail**: scoping doc §9 D4, §10.A2/A3. Related: [[CC-309]], [[CC-312]].
+
+## CC-311 — state store VERSION gating + migration ✅ 2026-06-05
+
+**See**: pr:#230
+
+**Problem**: `state_store_init` writes `1` back to `$STORE/VERSION` whenever it is not `1` (`state-writer.sh:85-90`); an older binary touching a future v2 store silently downgrades it.
+
+**Plan**: create `VERSION` only when absent; if present and unsupported, fail loud with a migration command/path; never rewrite it down.
+
+**Detail**: scoping doc §10.A1.
+
+## CC-312 — state schema tightening + per-event payload & FSM-transition validation ✅ 2026-06-05
+
+**See**: pr:#230
+
+**Problem**: `run.schema.json` requires only id/schema_version/task_id/executor/state/created_ts — `trace_path`/`working_dir`/`exit_code`/`finished_ts` are optional (`core/schema/run.schema.json:22-59`), and Event `payload` is entirely loose (`core/schema/event.schema.json:18-47`), so a reader cannot tell `ok` from `partial` or validate a `from→to` transition.
+
+**Scope note**: `finished_ts` was descoped from this ticket — `sw_build_run_json` does not write it. Requiring it in the schema would break all existing Run rows. Deferred to a future schema ticket.
+
+**Plan**: a stricter dispatch-run shape (require the trace fields) + per-`kind` Event payload contracts carrying `from_state`/`to_state`/`run_id` or `task_id`, validated against the run/task FSMs on write. (Enum parity is already tested in `test-core-schemas.sh:171-218`; this adds transition + payload validation.)
+
+**Detail**: scoping doc §10.A4. Related: [[CC-310]].
+
+## CC-313 — project partition identity: repo.json + worktree/aliases + no-global ✅ 2026-06-05
+
+**See**: pr:#232
+
+**Problem**: `repo.json` is promised by `core/state/layout.yaml:36-39` but never written (`state_store_init` only mkdirs + VERSION), and `_sw_project_key` falls back to `global` outside git or on hash failure (`state-writer.sh:45-67`) — mixing unrelated work and making worktree / WSL↔Windows path identity unreconcilable.
+
+**Plan**: write `repo.json` on first use (git top-level, `git common-dir`, worktree path, normalized + cygpath aliases); refuse the `global` partition for load-bearing project writes unless explicitly requested.
+
+**Detail**: scoping doc §10.A5. (sha1 portability itself was fixed — `_portable_sha1`; this is identity semantics.)
+
+**Implemented**: `_sw_write_repo_json` writes `repo.json` on first use (write-temp-then-rename, best-effort) with `repo_path`, `repo_name`, `git_common_dir`, `first_seen_ts`, optional `cygpath_alias`. `state_store_init` refuses the `global` partition (stderr + return 1) unless `_SW_ALLOW_GLOBAL_PARTITION=1`. Combined with CC-330 (fail-loud mkdir) in pr:#232.
+
+## CC-318 — dispatch-post-verify: execute self_verify bash lines directly ✅ 2026-06-04
+
+**See**: pr:#227
+
+**Problem**: `scripts/dispatch-post-verify.sh` validates `self_verify:` items by searching for them as literal substrings in the executor's `latest.last` output (`grep -F "$item"`). This is a format contract between post-verify and the executor: the executor must reproduce the exact `self_verify:` text in its response, otherwise items are all reported MISSING. Codex writes `"Verification passed: ..."` instead of quoting each item verbatim, causing all self_verify checks to fail even when the executor actually ran the commands correctly. Tracked by `[[feedback_self_verify_format]]`.
+
+**Plan**: split self_verify into two kinds instead of searching `latest.last`. The structured `- cmd: "<bash>"` form is the **machine-executable** check — post-verify runs it via `bash -c` in `$WORK_DIR` under a timeout (PASS=exit 0, FAIL=non-zero/timeout). Every other shape (named macros, prose, bare scalars) is a **semantic check the executor evaluates** — post-verify marks it `SKIP (executor-evaluated)` and never fails it. This removes the executor-output-format dependency for the verifiable checks while staying honest that judgment checks (UI, accuracy) need executor/PM review, not a shell. (Round-1 attempt executed *every* item as bash; pr-gate flagged that it broke valid macro/structured briefs — hence the two-kind split.)
+
+**Acceptance**:
+- A `- cmd: "<bash>"` item PASSes iff the command exits 0 (with quote-stripping for single/double-quoted and unquoted values); the documented `cmd:`+`expect:` structured form executes the cmd value.
+- A non-`cmd:` item (macro/prose/bare scalar) is reported `SKIP (executor-evaluated)` and does not fail the gate.
+- A timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s) reports FAIL.
+- Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`, `agents/{codex,claude}-executor.md`) describe the cmd:/SKIP split.
+- `dispatch-post-verify.sh` test coverage for cmd PASS/FAIL, quote forms, structured `expect:`, macro/bare-scalar SKIP, all-skipped OK, cwd, timeout, multi-check.
+
+**Depends on**: [[CC-309]] merged (establishes executor boundary; self_verify format is a dispatch-level concern).
+
+**Status**: implemented. Canonical self_verify shape (decided after pr-gate round 1 flagged a contract mismatch): the structured `- cmd: "<bash>"` form is the **machine-executable** check — post-verify runs it in `$WORK_DIR` under `DISPATCH_SELF_VERIFY_TIMEOUT` (default 300s); PASS=exit 0, FAIL=non-zero/timeout. Every other shape (named macros, prose, bare scalars) is a **semantic check the executor evaluates** — post-verify marks it `SKIP (executor-evaluated)`, never failing valid judgment-only briefs (e.g. UI/accuracy checks a shell cannot confirm). Contract docs (`docs/executor-contract.md`, `docs/dispatch-brief.md`, `commands/pm.md`) aligned; `test-dispatch-post-verify.sh` rewritten to cmd-exec PASS/FAIL + SKIP coverage (44/0). Index tracks to confirm merge.
+
+## CC-319 — fix: reviewer guard cross-project — derive allowed dir from file path ✅ 2026-06-04
+
+**See**: pr:#224
+
+**Problem**: `scripts/hook-reviewer-write-guard.sh` bound the allowed write path to `$_SCRIPT_DIR/..` (the pm-dispatch install location). Running `pr-gate` on any project other than pm-dispatch caused the guard to deny the reviewer's output write with `"target is not <repo>/.gate-results"`, blocking both sequential and parallel gate modes.
+
+**Plan**: replace the install-path binding with a directory-name check: `basename(dirname(file)) == ".gate-results"`. Remove `CLAUDE_HOOK_GATE_REPO_ROOT` entirely — no env var required in the brief constraint. Update all tests to remove `CLAUDE_HOOK_GATE_REPO_ROOT` usage.
+
+**Status**: shipped in pr:#224. Index tracks to confirm merge.
+
+**Cross-link**: [[CC-320]], [[CC-321]].
+
+## CC-320 — fix: codex adapter auto-export work_dir git root to read roots ✅ 2026-06-04
+
+**See**: pr:#224
+
+**Problem**: `hook-codex-bash-guard.sh` defaults `CLAUDE_HOOK_CODEX_READ_ROOTS` to `$HOME/github:/tmp`. Codex dispatched to a repo outside `~/github/` cannot read source files — the guard blocks the read attempt. The default path is a historical convention, not a project-agnostic setting.
+
+**Plan**: `adapters/codex/dispatch.sh` derives the git root of `$WORK_DIR` and prepends it to `CLAUDE_HOOK_CODEX_READ_ROOTS` before invoking codex. Exported composition is `<git_root>:/tmp[:<inherited>]`. The `/tmp` segment is intentional: setting the env var REPLACES the guard's default (`$HOME/github:/tmp`), so `/tmp` must be re-added or codex loses scratch/brief access under `/tmp` — this is a correctness baseline, not a policy widening. Any existing user-set value is preserved as trailing fallback. Non-pmctl codex invocations continue to use the `$HOME/github:/tmp` default.
+
+**Status**: shipped in pr:#224. Index tracks to confirm merge.
+
+**Cross-link**: [[CC-319]], [[CC-321]].
+
+## CC-328 — docs+fix: executor-agnostic `light` model alias + claude default model contract ✅ 2026-06-05
+
+**See**: pr:#229
+
+**Problem**: `light` 是為 codex 設計的輕量 model alias（`codex-spark`），但缺乏 claude 端的對應定義與文件；claude adapter 也沒有 dispatch-vs-inline routing guide。同時，claude adapter 在 omit `--model` 時不走 alias table 而委給 claude CLI built-in default，與 codex adapter 行為不一致，形成文件與實際行為的合約落差。
+
+**Resolution**:
+1. 新增 `docs/model-tier-policy.md` — 文件化 `light` 為跨 executor 統一 alias：
+   - codex → `gpt-5.3-codex-spark`（independent usage pool）
+   - claude → `claude-haiku-4-5-20251001`
+   - 附 routing 準則：`< 50 lines, ≤ 2 files, no new behavioral units`
+2. `docs/dispatch-brief.md` 加入 dispatch-vs-inline routing guide
+3. `share/claude-model-aliases.tsv` 補齊 alias 定義；`scripts/lint-model-aliases.sh` 擴充 claude 端 drift 偵測
+4. `scripts/test-claude-dispatch.sh` 加入完整 alias coverage（light / default / haiku / sonnet / opus / unknown passthrough / malformed TSV / resolver-absent）及 lint failure cases
+5. **修正 default model contract**：`adapters/claude/dispatch.sh` 加 `DEFAULT_DISPATCH_MODEL="default"` + 路由邏輯對齊 codex adapter，omit `--model` 現在一律走 alias table → `claude-sonnet-4-6`，不委給 CLI built-in；補 test `case_model_no_flag_resolves_default`
+
+**PR-Gate**: full tier GO（advisory 於最終 commit 37ce2f6 修清；qa / security / risk 全 pass）
+
+**Cross-link**: [[CC-293]]（config/default 解析），[[CC-321]]（PM_HOOK_* 重命名同脈絡）.
+
+## CC-329 — arch: FSM transition table — extract to runtime-accessible policy helper ✅ 2026-06-05
+
+**See**: pr:#232
+
+**Status**: ✅ closed 2026-06-05
+
+**Source**: CC-311/312 PR #230 gate advisory — critic + architecture-reviewer（medium）
+
+**Implemented**: Added `run_transition_valid(from_state, to_state)` to `state-writer.sh` as the canonical policy source. `pmctl_dispatch_write_transition` now calls `run_transition_valid` instead of maintaining an inline transition table. `pmctl_dispatch_ensure_state_writer` is called at the top of `pmctl_dispatch_write_transition` to ensure the helper is loaded before use.
+
+**Cross-link**: [[CC-311]], [[CC-312]], [[CC-313]], [[CC-330]].
+
+## CC-330 — fix: state_store_init — propagate layout mkdir failure loud ✅ 2026-06-05
+
+**See**: pr:#232
+
+**Status**: ✅ closed 2026-06-05
+
+**Source**: CC-311/312 PR #230 gate advisory — critic + architecture-reviewer（low）
+
+**Problem**: `state_store_init` 在 VERSION check 通過後建立 project layout（`mkdir -p tasks/ reviews/ …`）仍用 `2>/dev/null || true` 靜默吞掉失敗。這與 VERSION 不支援時的 fail-loud 語意不一致：`state_store_init` 在 VERSION=1 但 `proj_dir` 目錄建立失敗時仍回 0，而後續的 `runs_append`/`events_append` 會因目錄不存在而失敗，且 error 難以追溯至 `state_store_init`。
+
+**Plan**: 把 layout `mkdir -p` 的失敗從 `|| true` 改為 fail loud（stderr + return 1），與 VERSION 驗證 branch 的失敗語意對齊。
+
+**Cross-link**: [[CC-311]], [[CC-312]].
+
+---
+
+## CC-331 — perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構 ✅ 2026-06-05
+
+**See**: pr:#231
+
+**Source**: PR #230 合入後 CI test-install 需花 ~4 min，用戶 2026-06-05 要求優化。
+
+**Problem**: CI test-install 單一 sequential job 慢（~4 min），原因三：(1) 73 tests 全部串行；(2) `install_dispatch_allowlist` 每個 allowlist entry 跑 2 次 jq（check + write），6 entries × 42 invocations = 504 jq processes；(3) `test_verify_flag_runs_preflights` 以 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1` escape hatch bypass 真實斷言（CI 從未真正驗證委派行為）。
+
+**Solution**:
+
+1. **CI 並行化**（`.github/workflows/lint.yml`）：`test-install.sh` 加 `--group <core|hooks>`，CI 拆成 `test-install-core`（34 tests）+ `test-install-hooks`（39 tests）並行；移除無用的 `git fetch --depth=1 origin main`。
+
+2. **jq call batch**（`install.sh: install_dispatch_allowlist`）：一次讀取全部已有 entries（1 jq read），再計算 missing entries，最後一次寫入（1 conditional jq write）。
+
+3. **Stub-based verify 架構**（`install.sh` + `scripts/test-install.sh`）：`install.sh --verify` 加 `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫（`bash "${_PM_DISPATCH_PREFLIGHT_RUNNER:-$REPO_ROOT/scripts/run-all-tests.sh}"`）；`test_verify_flag_runs_preflights` 改為動態從 `run-all-tests.sh --list` 產生 stub，注入後呼叫 `install.sh --verify --dry-run`；同時顯式設 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0` 防 run-all-tests.sh 帶入的 env 觸發 install.sh 自身 escape hatch；CI 移除 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1`。Suite 清單自動同步，無需手動維護。
+
+**Files**: `install.sh`, `scripts/test-install.sh`, `.github/workflows/lint.yml`
