@@ -122,8 +122,45 @@ _sw_validate_compacted_json_line() {
   return "$rc"
 }
 
+_sw_write_repo_json() {
+  local proj_dir="$1" repo_path repo_name git_common_dir cygpath_alias tmp ts
+  if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
+    repo_path="$(git -C "${_SW_REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null \
+      || printf '%s' "${_SW_REPO_ROOT}")"
+  else
+    repo_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+  [[ -z "$repo_path" ]] && return 0
+  repo_name="$(basename "$repo_path")"
+  git_common_dir="$(git -C "$repo_path" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ -n "$git_common_dir" && "$git_common_dir" != /* ]]; then
+    git_common_dir="$repo_path/$git_common_dir"
+  fi
+  cygpath_alias=""
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath_alias="$(cygpath -m "$repo_path" 2>/dev/null || true)"
+  fi
+  ts="${_SW_CREATED_TS_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)}"
+  tmp="$(mktemp "$proj_dir/.repo-XXXXXX.json")" || return 0
+  if jq -cn \
+    --arg repo_path "$repo_path" \
+    --arg repo_name "$repo_name" \
+    --arg git_common_dir "$git_common_dir" \
+    --arg cygpath_alias "$cygpath_alias" \
+    --arg first_seen_ts "$ts" \
+    '{repo_path:$repo_path,repo_name:$repo_name,git_common_dir:$git_common_dir,first_seen_ts:$first_seen_ts}
+     | if $git_common_dir == "" then del(.git_common_dir) else . end
+     | if $cygpath_alias != "" then . + {cygpath_alias:$cygpath_alias} else . end' \
+    > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$proj_dir/repo.json" 2>/dev/null || rm -f "$tmp"
+  else
+    rm -f "$tmp"
+  fi
+  return 0
+}
+
 state_store_init() {
-  local store_root proj_dir version_file version_value
+  local store_root proj_dir version_file version_value proj_key
   store_root="$(_sw_store_root)"
   version_file="$store_root/VERSION"
   # Version compatibility check before any layout creation — unsupported stores
@@ -136,9 +173,23 @@ state_store_init() {
     fi
   fi
   # Only reach here on first-time init (VERSION absent) or VERSION == "1".
-  proj_dir="$(_sw_project_dir)"
-  { mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
-      "$proj_dir/context-packs" "$proj_dir/archive"; } 2>/dev/null || true
+  # CC-313: refuse the global partition for load-bearing writes unless explicitly allowed.
+  proj_key="$(_sw_project_key)"
+  if [[ "$proj_key" == "global" && -z "${_SW_ALLOW_GLOBAL_PARTITION:-}" ]]; then
+    printf 'state-writer: cannot determine project partition (not in a git repo or hash unavailable)\n' >&2
+    return 1
+  fi
+  proj_dir="$store_root/projects/$proj_key/"
+  # CC-330: fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics.
+  if ! mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
+      "$proj_dir/context-packs" "$proj_dir/archive" 2>/dev/null; then
+    printf 'state-writer: layout mkdir failed: %s\n' "$proj_dir" >&2
+    return 1
+  fi
+  # CC-313: write repo.json on first use for partition identity (best-effort).
+  if [[ ! -f "$proj_dir/repo.json" ]]; then
+    _sw_write_repo_json "$proj_dir"
+  fi
   if [[ ! -f "$version_file" ]]; then
     mkdir -p "$store_root" || { printf 'state-writer: mkdir failed: %s\n' "$store_root" >&2; return 1; }
     printf '1\n' > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
