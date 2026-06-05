@@ -18,6 +18,7 @@ SUITE_NAMES=(
   test-hooks
   test-hook-framework
   test-migrate
+  test-migrate-to-events
   test-install
   test-uninstall
   test-usage-weekly
@@ -84,6 +85,7 @@ suite_path() {
     test-hooks) printf 'scripts/test-hooks.sh\n' ;;
     test-hook-framework) printf 'scripts/test-hook-framework.sh\n' ;;
     test-migrate) printf 'scripts/test-migrate-routing-log.sh\n' ;;
+    test-migrate-to-events) printf 'scripts/test-migrate-routing-to-events.sh\n' ;;
     test-install) printf 'scripts/test-install.sh\n' ;;
     test-uninstall) printf 'scripts/test-uninstall.sh\n' ;;
     test-usage-weekly) printf 'scripts/test-usage-weekly.sh\n' ;;
@@ -189,8 +191,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 40.
-  local out status=0 actual_count expected_count=40
+  # Steps: invoke --list; count output lines; assert the count is 41.
+  local out status=0 actual_count expected_count=41
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then

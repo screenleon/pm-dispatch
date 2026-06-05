@@ -14,6 +14,9 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/memory.sh
 . "$_SCRIPT_DIR/lib/memory.sh"
 
+printf '%s\n' 'hook-routing-log: deprecated; routing_log.md writes disabled' >&2
+exit 0
+
 HOOK_NAME="hook-routing-log"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/routing-log.err"

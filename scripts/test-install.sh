@@ -726,11 +726,11 @@ test_legacy_stale_symlinks_removed() {
 }
 
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires all six managed hooks and that
+# Proves that install-hooks.sh wires managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
-  # Proves that the primary install.sh path wires all six managed hooks
+  # Proves that the primary install.sh path wires managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   # Pre-CC-102 this test relied on the host having codex on PATH to pick
   # "full" profile auto-detection; on CI runners codex is absent, so the
@@ -753,7 +753,7 @@ test_install_sh_wires_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
@@ -1051,7 +1051,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1091,7 +1091,7 @@ test_install_hooks_windows_profile_minimal_silent() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1319,7 +1319,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
@@ -1339,7 +1339,7 @@ test_hooks_install_uninstall_lifecycle() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 

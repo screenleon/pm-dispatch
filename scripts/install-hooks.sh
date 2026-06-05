@@ -7,7 +7,7 @@
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #   - matcher "*"          → scripts/hook-tool-trace.sh
-#   - matcher "Bash|Agent" → scripts/hook-routing-log.sh
+#   - matcher "Bash|Agent" → scripts/hook-routing-log.sh (deprecated; disabled by default)
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
@@ -33,7 +33,7 @@
 #   otherwise                     → profile=minimal
 # Minimal profile skips registering hook-codex-bash-guard.sh and
 # hook-codex-write-guard.sh in settings.json. Other hooks (pm-write-guard,
-# tool-trace, routing-log, session-summary, inject-memory, save-rate-limits)
+# tool-trace, session-summary, inject-memory, save-rate-limits)
 # stay wired in both profiles.
 
 set -euo pipefail
@@ -51,7 +51,7 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 DRY_RUN=0
 PROFILE=""
 PLATFORM="auto"
-ROUTE_LOG_ENABLED=1
+ROUTE_LOG_ENABLED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;

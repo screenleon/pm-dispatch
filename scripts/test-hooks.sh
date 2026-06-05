@@ -3465,7 +3465,7 @@ routing_count() {
 assert_routing_schema() {
   local name="$1" dir="$2"
   should_run "$name" || return 0
-  if routing_rows "$dir" | jq -e 'keys == ["brief_file","goal_excerpt","kind","q_hit","second_thoughts","session_id","subagent_type","ts"] and (.kind | IN("bash-dispatch","agent-dispatch")) and has("subagent_type") and has("brief_file") and has("goal_excerpt") and has("q_hit") and has("second_thoughts")' >/dev/null; then
+  if [[ "$(routing_count "$dir")" == "0" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3478,38 +3478,41 @@ assert_routing_schema() {
 routing_hook_case() {
   local name="$1" payload="$2" expect_count="$3" jq_expr="$4"
   should_run "$name" || return 0
-  local root mem before after
+  local root mem before after status
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing.XXXXXX")"
   mem="$root/proj-routing-log/-home-screenleon-github-pm-dispatch/memory"
   make_routing_log "$mem"
   before="$(routing_count "$mem")"
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  status=$?
   after="$(routing_count "$mem")"
-  if [[ "$((after - before))" == "$expect_count" ]] && { [[ -z "$jq_expr" ]] || routing_rows "$mem" | tail -n 1 | jq -e "$jq_expr" >/dev/null; }; then
+  if [[ "$status" == "0" ]] && [[ "$((after - before))" == "$expect_count" ]] && [[ "$expect_count" == "0" ]] && [[ -z "$jq_expr" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s (before=%s after=%s expected_delta=%s)\n' "$name" "$before" "$after" "$expect_count"
+    printf '  FAIL  %s (status=%s before=%s after=%s expected_delta=%s)\n' "$name" "$status" "$before" "$after" "$expect_count"
   fi
 }
 
-# Behavior: Routing hook creates a minimal routing_log.md when the file is missing.
+# Deprecated: hook-routing-log exits before routing_log.md discovery or writes.
+# Behavior: Routing hook exits zero and does not create routing_log.md when the file is missing.
 # Steps:
 #   1. Prepare an empty memory directory and a valid Agent routing payload.
 #   2. Trigger the routing hook with the payload.
-#   3. Verify routing_log.md is created and contains one routing row.
+#   3. Verify routing_log.md is still absent.
 routing_missing_file_case() {
-  local name="routing: missing routing_log.md creates minimal file and appends"
+  local name="routing: deprecated missing routing_log.md exits without write"
   should_run "$name" || return 0
-  local root mem payload
+  local root mem payload status
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-missing.XXXXXX")"
   mem="$root/memory"
   mkdir -p "$mem"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s7","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
-  if [[ -f "$mem/routing_log.md" ]] && [[ "$(routing_count "$mem")" == "1" ]]; then
+  status=$?
+  if [[ "$status" == "0" ]] && [[ ! -e "$mem/routing_log.md" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3519,15 +3522,16 @@ routing_missing_file_case() {
   fi
 }
 
-# Behavior: Routing hook audits an existing routing_log.md without an auto-block and leaves it unchanged.
+# Deprecated: hook-routing-log exits before marker checks or writes.
+# Behavior: Routing hook exits zero and leaves an existing routing_log.md without an auto-block unchanged.
 # Steps:
 #   1. Prepare a legacy routing_log.md without the auto-block marker.
 #   2. Trigger the routing hook with a valid Agent routing payload.
-#   3. Verify the file is byte-identical and the audit log reports the missing marker.
+#   3. Verify the file is byte-identical and no marker audit is required.
 routing_missing_marker_case() {
-  local name="routing: existing log without auto-block audits and leaves file unmodified"
+  local name="routing: deprecated existing log without auto-block leaves file unmodified"
   should_run "$name" || return 0
-  local root mem before payload
+  local root mem before payload status
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-nomarker.XXXXXX")"
   mem="$root/memory"
   mkdir -p "$mem"
@@ -3535,7 +3539,8 @@ routing_missing_marker_case() {
   cp "$mem/routing_log.md" "$mem/routing_log.md.before"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s8","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
-  if cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && grep -Eq 'auto-block.*missing' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+  status=$?
+  if [[ "$status" == "0" ]] && cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3545,22 +3550,26 @@ routing_missing_marker_case() {
   fi
 }
 
-# Behavior: Routing hook rotates an over-cap routing_log.md while preserving header content and a fresh auto-block.
+# Deprecated: hook-routing-log exits before rotation checks or writes.
+# Behavior: Routing hook exits zero and leaves an over-cap routing_log.md unchanged.
 # Steps:
 #   1. Prepare a routing_log.md larger than 1 MiB with an existing auto-block.
 #   2. Trigger the routing hook with a valid Agent routing payload.
-#   3. Verify the archive is created, the fresh log has one row, and the header remains.
+#   3. Verify no archive is created and row count is unchanged.
 routing_rotation_case() {
-  local name="routing: rotates over 1MiB preserving header and fresh block"
+  local name="routing: deprecated over 1MiB log exits without rotation"
   should_run "$name" || return 0
-  local root mem payload
+  local root mem payload before after status
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate.XXXXXX")"
   mem="$root/memory"
   make_routing_log "$mem"
   perl -0pi -e 's/<!-- routing-log:auto-block:start -->/"x" x 1049000 . "\n<!-- routing-log:auto-block:start -->"/e' "$mem/routing_log.md"
+  before="$(routing_count "$mem")"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r1","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
-  if [[ -f "$mem/routing_log.md.1" ]] && [[ "$(routing_count "$mem")" == "1" ]] && grep -q '^| 2026-05-15 | fixture |' "$mem/routing_log.md"; then
+  status=$?
+  after="$(routing_count "$mem")"
+  if [[ "$status" == "0" ]] && [[ ! -e "$mem/routing_log.md.1" ]] && [[ "$before" == "$after" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3570,15 +3579,16 @@ routing_rotation_case() {
   fi
 }
 
-# Behavior: Routing hook audits rotation failures and skips appending.
+# Deprecated: hook-routing-log exits before rotation checks or writes.
+# Behavior: Routing hook exits zero and leaves an over-cap non-writable routing_log.md unchanged.
 # Steps:
 #   1. Prepare an over-cap routing_log.md in a non-writable memory directory.
 #   2. Trigger the routing hook with a valid Agent routing payload.
-#   3. Verify the row count is unchanged and the audit log reports rotation failure.
+#   3. Verify the row count is unchanged.
 routing_rotation_fail_case() {
-  local name="routing: rotation failure audits and skips append"
+  local name="routing: deprecated rotation failure path exits without write"
   should_run "$name" || return 0
-  local root mem payload before after
+  local root mem payload before after status
   root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate-fail.XXXXXX")"
   mem="$root/memory"
   make_routing_log "$mem"
@@ -3587,9 +3597,10 @@ routing_rotation_fail_case() {
   chmod 500 "$mem"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r2","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
   printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  status=$?
   chmod 700 "$mem"
   after="$(routing_count "$mem")"
-  if [[ "$before" == "$after" ]] && grep -q 'rotation' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+  if [[ "$status" == "0" ]] && [[ "$before" == "$after" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3599,13 +3610,14 @@ routing_rotation_fail_case() {
   fi
 }
 
-# Behavior: Routing hook serializes concurrent appends through the routing log lock.
+# Deprecated: hook-routing-log exits before lock acquisition or writes.
+# Behavior: Concurrent routing hook invocations all exit zero and append no rows.
 # Steps:
 #   1. Fire 50 parallel Agent routing payloads at one routing_log.md.
-#   2. Verify exactly 50 JSON rows were appended and the auto-block markers remain intact.
-#   3. Hold the sibling lockfile and verify lock timeout audits while the hook still exits zero.
+#   2. Verify no JSON rows were appended and the auto-block markers remain intact.
+#   3. Hold the former sibling lockfile and verify the hook still exits zero without appending.
 routing_concurrent_append_case() {
-  local name="routing: concurrent appends keep every row"
+  local name="routing: deprecated concurrent invocations append no rows"
   should_run "$name" || return 0
   local root mem n payload status pid count unique start_count end_count json_ok lockbase lockfile lockdir ready lock_release holder timeout_status before_timeout after_timeout
   local pids=()
@@ -3667,14 +3679,13 @@ routing_concurrent_append_case() {
   wait "$holder" 2>/dev/null || true
 
   if [[ "$status" == "0" ]] &&
-     [[ "$count" == "$n" ]] &&
-     [[ "$unique" == "$n" ]] &&
+     [[ "$count" == "0" ]] &&
+     [[ "$unique" == "0" ]] &&
      [[ "$json_ok" == "1" ]] &&
      [[ "$start_count" == "1" ]] &&
      [[ "$end_count" == "1" ]] &&
      [[ "$timeout_status" == "0" ]] &&
-     [[ "$before_timeout" == "$after_timeout" ]] &&
-     grep -q -F 'lock or append failed' "$CLAUDE_HOOK_LOG_DIR/routing-log.err"; then
+     [[ "$before_timeout" == "$after_timeout" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3685,14 +3696,15 @@ routing_concurrent_append_case() {
   fi
 }
 
-# Behavior: routing hook appends first row when LOG_DIR does not exist yet (fresh HOME).
+# Deprecated: hook-routing-log exits before log-dir setup or writes.
+# Behavior: routing hook exits zero without appending when LOG_DIR does not exist yet.
 # Steps:
 #   1. Create a temp HOME dir with no .claude/logs subdirectory.
 #   2. Create a memory dir with a valid routing_log.md.
 #   3. Run hook with CLAUDE_HOOK_LOG_DIR unset (hook defaults to $HOME/.claude/logs).
-#   4. Assert routing_log.md contains exactly one JSON row.
+#   4. Assert routing_log.md still contains no JSON rows.
 routing_fresh_home_no_log_dir_case() {
-  local name="routing: first row appended when LOG_DIR absent (fresh HOME)"
+  local name="routing: deprecated fresh HOME exits without write"
   should_run "$name" || return 0
   local tmp_home tmp_mem
   tmp_home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/fresh-home.XXXXXX")"
@@ -3704,7 +3716,7 @@ routing_fresh_home_no_log_dir_case() {
         "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   local count
   count="$(routing_count "$tmp_mem")"
-  if [[ "$count" -eq 1 ]]; then
+  if [[ "$count" -eq 0 ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3715,20 +3727,21 @@ routing_fresh_home_no_log_dir_case() {
   rm -rf "$tmp_home" "$tmp_mem"
 }
 
-# Behavior: install-hooks dry-run shows PostToolUse Bash|Agent routing hook wiring.
+# Deprecated: route logging is disabled for new installs.
+# Behavior: install-hooks dry-run omits PostToolUse Bash|Agent routing hook wiring.
 # Steps:
 #   1. Prepare an isolated HOME with empty Claude settings.
 #   2. Trigger install-hooks with --dry-run.
-#   3. Verify the diff contains PostToolUse Bash|Agent wiring for hook-routing-log.sh.
+#   3. Verify the diff does not contain hook-routing-log.sh.
 install_routing_dry_run_case() {
-  local name="routing: install-hooks dry-run wires PostToolUse Bash|Agent"
+  local name="routing: install-hooks dry-run omits deprecated PostToolUse hook"
   should_run "$name" || return 0
   local home out
   home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run 2>&1)"
-  if [[ "$out" == *'"PostToolUse"'* && "$out" == *'"matcher": "Bash|Agent"'* && "$out" == *'hook-routing-log.sh'* ]]; then
+  if [[ "$out" != *'hook-routing-log.sh'* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3738,21 +3751,23 @@ install_routing_dry_run_case() {
   fi
 }
 
-# Behavior: install-hooks exits cleanly when routing hook wiring is already present.
+# Deprecated: route logging is disabled for new installs.
+# Behavior: install-hooks remains idempotent without adding routing hook wiring.
 # Steps:
 #   1. Prepare an isolated HOME and run install-hooks once.
 #   2. Trigger install-hooks a second time.
-#   3. Verify the second run reports already wired.
+#   3. Verify the second run reports already wired and settings contain no routing hook.
 install_routing_idempotent_case() {
-  local name="routing: install-hooks already-wired exits cleanly"
+  local name="routing: install-hooks idempotent with deprecated hook omitted"
   should_run "$name" || return 0
-  local home out
+  local home out count
   home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-idem.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" >/dev/null 2>&1
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
-  if [[ "$out" == *"install-hooks: already wired, nothing to do"* ]]; then
+  count="$(jq '[.hooks.PostToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
+  if [[ "$out" == *"install-hooks: already wired, nothing to do"* ]] && [[ "$count" == "0" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3795,13 +3810,14 @@ Append one row per Brief or Dispatch decision.
 EOF
 }
 
-# Behavior: install-hooks migrates an unmarked routing_log.md before wiring routing hooks.
+# Deprecated: route logging is disabled for new installs, including legacy migrator wiring.
+# Behavior: install-hooks does not migrate an unmarked routing_log.md and does not wire routing hooks.
 # Steps:
 #   1. Prepare isolated Claude settings and a discoverable legacy routing_log.md.
 #   2. Trigger install-hooks normally.
-#   3. Verify settings wiring, auto-block migration, and routing_log.md backup creation.
+#   3. Verify no routing hook wiring, no auto-block migration, and no routing_log.md backup creation.
 install_routing_migrates_unmarked_case() {
-  local name="install-routing: unmarked routing_log triggers migrator end-to-end" home mem out count
+  local name="install-routing: deprecated unmarked routing_log is not migrated" home mem out count
   should_run "$name" || return 0
   home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-migrate.XXXXXX")"
   mkdir -p "$home/.claude"
@@ -3810,10 +3826,10 @@ install_routing_migrates_unmarked_case() {
   write_install_routing_legacy_fixture "$mem/routing_log.md"
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
   count="$(jq '[.hooks.PostToolUse[]? | select(.matcher == "Bash|Agent") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
-  if [[ "$count" == "1" ]] &&
-     grep -q -F '<!-- routing-log:auto-block:start -->' "$mem/routing_log.md" &&
-     [[ -f "$mem/routing_log.md.bak" ]] &&
-     [[ "$out" == *"migrate-routing-log: migrated"* ]]; then
+  if [[ "$count" == "0" ]] &&
+     ! grep -q -F '<!-- routing-log:auto-block:start -->' "$mem/routing_log.md" &&
+     [[ ! -f "$mem/routing_log.md.bak" ]] &&
+     [[ "$out" != *"migrate-routing-log:"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3823,13 +3839,14 @@ install_routing_migrates_unmarked_case() {
   fi
 }
 
-# Behavior: install-hooks skips migrator when routing_log.md already contains the auto-block marker.
+# Deprecated: route logging is disabled for new installs, including legacy migrator checks.
+# Behavior: install-hooks leaves an already migrated routing_log.md unchanged and does not wire routing hooks.
 # Steps:
 #   1. Prepare isolated Claude settings and an already migrated routing_log.md.
 #   2. Trigger install-hooks normally.
-#   3. Verify settings wiring, unchanged routing_log.md bytes, no new backup, and skip output.
+#   3. Verify no routing hook wiring, unchanged routing_log.md bytes, no new backup, and no skip output.
 install_routing_skips_already_migrated_case() {
-  local name="install-routing: already-migrated routing_log skips migrator" home mem out count
+  local name="install-routing: deprecated already-migrated routing_log leaves hook omitted" home mem out count
   should_run "$name" || return 0
   home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-skip.XXXXXX")"
   mkdir -p "$home/.claude"
@@ -3840,10 +3857,10 @@ install_routing_skips_already_migrated_case() {
   cp "$mem/routing_log.md" "$mem/routing_log.md.before"
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)"
   count="$(jq '[.hooks.PostToolUse[]? | select(.matcher == "Bash|Agent") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
-  if [[ "$count" == "1" ]] &&
+  if [[ "$count" == "0" ]] &&
      cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" &&
      [[ ! -e "$mem/routing_log.md.bak" ]] &&
-     [[ "$out" == *"install-hooks: routing-log already migrated, skipping migrator"* ]]; then
+     [[ "$out" != *"routing-log already migrated"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -3853,13 +3870,14 @@ install_routing_skips_already_migrated_case() {
   fi
 }
 
-# Behavior: install-hooks leaves settings.json untouched when routing-log migration fails.
+# Deprecated: route logging is disabled for new installs, so legacy migrator failures are no longer consulted.
+# Behavior: install-hooks writes settings normally even when a legacy routing_log.md backup conflict exists.
 # Steps:
 #   1. Prepare isolated Claude settings, a legacy routing_log.md, and a conflicting .bak file.
 #   2. Trigger install-hooks normally.
-#   3. Verify non-zero exit, unchanged settings and routing log, no settings backup, and migrator failure output.
+#   3. Verify exit zero, settings are updated, routing log is unchanged, and no migrator failure output appears.
 install_routing_migrator_failure_preserves_settings_case() {
-  local name="install-routing: migrator failure leaves settings.json untouched" home mem out status backups
+  local name="install-routing: deprecated migrator conflict does not block install" home mem out status backups count
   should_run "$name" || return 0
   home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-fail.XXXXXX")"
   mkdir -p "$home/.claude"
@@ -3871,18 +3889,20 @@ install_routing_migrator_failure_preserves_settings_case() {
   printf 'existing backup\n' > "$mem/routing_log.md.bak"
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" 2>&1)" && status=$? || status=$?
   backups="$(find "$home/.claude" -maxdepth 1 -name 'settings.json.bak.*' | wc -l)"
-  if [[ "$status" -ne 0 ]] &&
-     cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" &&
+  count="$(jq '[.hooks.PostToolUse[]? | select(.matcher == "Bash|Agent") | (.hooks // [])[]? | select((.command | split("/") | last) == "hook-routing-log.sh")] | length' "$home/.claude/settings.json")"
+  if [[ "$status" == "0" ]] &&
+     ! cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" &&
      cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" &&
-     [[ "$backups" == "0" ]] &&
-     [[ "$out" == *"migrate-routing-log:"* ]] &&
-     [[ "$out" == *"install-hooks: routing-log migrator failed"* ]]; then
+     [[ "$backups" -ge 1 ]] &&
+     [[ "$count" == "0" ]] &&
+     [[ "$out" != *"migrate-routing-log:"* ]] &&
+     [[ "$out" != *"routing-log migrator failed"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — status=%s backups=%s out=%q settings-unchanged=%s log-unchanged=%s\n' "$name" "$status" "$backups" "$out" "$(cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" && echo yes || echo no)" "$(cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && echo yes || echo no)"
+    printf '  FAIL  %s — status=%s backups=%s count=%s out=%q settings-changed=%s log-unchanged=%s\n' "$name" "$status" "$backups" "$count" "$out" "$(cmp -s "$home/.claude/settings.json" "$home/.claude/settings.json.before" && echo no || echo yes)" "$(cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before" && echo yes || echo no)"
   fi
 }
 
@@ -3891,23 +3911,29 @@ ROUTING_BRIEF1="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief1.XXXXXX.md")"
 ROUTING_BRIEF2="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief2.XXXXXX.md")"
 printf 'goal:\n  first routing goal from brief\n' > "$ROUTING_BRIEF1"
 printf 'goal: second routing goal from brief\n' > "$ROUTING_BRIEF2"
-routing_hook_case "routing: Bash relative scripts/codex-dispatch with absolute brief" \
+# Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+routing_hook_case "routing: deprecated Bash relative scripts/codex-dispatch exits without write" \
   "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s1\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"scripts/codex-dispatch.sh --brief-file $ROUTING_BRIEF1\"}}" \
-  1 ".kind == \"bash-dispatch\" and .subagent_type == null and .brief_file == \"$ROUTING_BRIEF1\" and .goal_excerpt == \"first routing goal from brief\""
-routing_hook_case "routing: Bash absolute scripts/codex-dispatch with absolute brief" \
+  0 ""
+# Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+routing_hook_case "routing: deprecated Bash absolute scripts/codex-dispatch exits without write" \
   "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/home/screenleon/github/pm-dispatch/scripts/codex-dispatch.sh --brief-file $ROUTING_BRIEF2\"}}" \
-  1 ".kind == \"bash-dispatch\" and .brief_file == \"$ROUTING_BRIEF2\" and .goal_excerpt == \"second routing goal from brief\""
-routing_hook_case "routing: Bash dispatch with relative brief writes null brief fields" \
+  0 ""
+# Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+routing_hook_case "routing: deprecated Bash dispatch with relative brief exits without write" \
   '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s3","tool_name":"Bash","tool_input":{"command":"scripts/codex-dispatch.sh --brief-file briefs/foo.md"}}' \
-  1 '.kind == "bash-dispatch" and .brief_file == null and .goal_excerpt == null'
-routing_hook_case "routing: Bash non-dispatch skips" \
+  0 ""
+# Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+routing_hook_case "routing: deprecated Bash non-dispatch exits without write" \
   '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s4","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}' \
   0 ""
-routing_hook_case "routing: Agent codex-executor writes row" \
+# Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+routing_hook_case "routing: deprecated Agent codex-executor exits without write" \
   '{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s5","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}' \
-  1 '.kind == "agent-dispatch" and .subagent_type == "codex-executor" and .brief_file == null and .goal_excerpt == null'
+  0 ""
 for reviewer in critic qa-tester security-reviewer risk-reviewer architecture-reviewer; do
-  routing_hook_case "routing: Agent reviewer $reviewer skips" \
+  # Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.
+  routing_hook_case "routing: deprecated Agent reviewer $reviewer exits without write" \
     "{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"s6\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"$reviewer\"}}" \
     0 ""
 done

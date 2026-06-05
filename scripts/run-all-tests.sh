@@ -15,6 +15,7 @@ SUITE_NAMES=(
   test-hooks
   test-hook-framework
   test-migrate
+  test-migrate-to-events
   test-install
   test-uninstall
   test-usage-weekly
@@ -58,6 +59,7 @@ declare -A SUITE_PATHS=(
   [test-hooks]="scripts/test-hooks.sh"
   [test-hook-framework]="scripts/test-hook-framework.sh"
   [test-migrate]="scripts/test-migrate-routing-log.sh"
+  [test-migrate-to-events]="scripts/test-migrate-routing-to-events.sh"
   [test-install]="scripts/test-install.sh"
   [test-uninstall]="scripts/test-uninstall.sh"
   [test-usage-weekly]="scripts/test-usage-weekly.sh"
