@@ -109,6 +109,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-325 | 🔵 active | **[infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查]** 新增品質規則：acceptance 含空泛語則 FAIL；file-writing task 無 `cmd:` self_verify 則 FAIL；`behavioral_units ≥ 3` 無 qa_checklist 則 WARN；`architecture_impact: major` 無 conceptual_map 則 FAIL；sensitive path sequential gate → WARN 建議 `--parallel`。 | infra | 2026-06-05 | — | P2 | design |
 | CC-326 | 🔵 active | **[agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff]** reviewer 策略改為：(1) 優先讀 conceptual_map；(2) 確認 bounded context / layer boundary；(3) 只在 map 與 diff 不一致或 risk surface 需抽查時才看 source files。對應「Architect / Editor，非 inspector」定位。 | agent | 2026-06-05 | — | P3 | — |
 | CC-327 | 🔵 active | **[pr-gate: tier 定義改為 rigor level]** 重新定義 express / standard / full 語意：express = hotfix/docs（machine verify + combined session）；standard = feature（conceptual map 必要 + critic + qa + architecture）；full = arch 變動（parallel cross-context + security + risk hard gates + synthesis）；tier 可基於 brief `architecture_impact` 自動建議。 | gate | 2026-06-05 | — | P3 | — |
+| CC-328 | ✅ closed 2026-06-05 | **[docs+fix: executor-agnostic `light` model alias + claude default model contract]** 文件化 `light` 為跨 executor 統一 alias（codex→codex-spark, claude→haiku）；新增 dispatch-vs-inline routing guide；補齊 claude adapter alias lint / edge-case test coverage；修正 claude adapter omit `--model` 時 default 不走 alias table 的合約不一致（改為 `DEFAULT_DISPATCH_MODEL="default"` 對齊 codex adapter）。pr:#229。 | docs/ops | 2026-06-05 | pr:#229 | P2 | hygiene |
 
 ---
 
@@ -1631,3 +1632,25 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 - 帶 `architecture_impact: major` 的 brief → gate 建議 `full` tier（emit warning，不強制）
 
 **Cross-link**: [[CC-322]], [[CC-324]], [[CC-323]].
+
+---
+
+## CC-328 — docs+fix: executor-agnostic `light` model alias + claude default model contract ✅ 2026-06-05
+
+**See**: pr:#229
+
+**Problem**: `light` 是為 codex 設計的輕量 model alias（`codex-spark`），但缺乏 claude 端的對應定義與文件；claude adapter 也沒有 dispatch-vs-inline routing guide。同時，claude adapter 在 omit `--model` 時不走 alias table 而委給 claude CLI built-in default，與 codex adapter 行為不一致，形成文件與實際行為的合約落差。
+
+**Resolution**:
+1. 新增 `docs/model-tier-policy.md` — 文件化 `light` 為跨 executor 統一 alias：
+   - codex → `gpt-5.3-codex-spark`（independent usage pool）
+   - claude → `claude-haiku-4-5-20251001`
+   - 附 routing 準則：`< 50 lines, ≤ 2 files, no new behavioral units`
+2. `docs/dispatch-brief.md` 加入 dispatch-vs-inline routing guide
+3. `share/claude-model-aliases.tsv` 補齊 alias 定義；`scripts/lint-model-aliases.sh` 擴充 claude 端 drift 偵測
+4. `scripts/test-claude-dispatch.sh` 加入完整 alias coverage（light / default / haiku / sonnet / opus / unknown passthrough / malformed TSV / resolver-absent）及 lint failure cases
+5. **修正 default model contract**：`adapters/claude/dispatch.sh` 加 `DEFAULT_DISPATCH_MODEL="default"` + 路由邏輯對齊 codex adapter，omit `--model` 現在一律走 alias table → `claude-sonnet-4-6`，不委給 CLI built-in；補 test `case_model_no_flag_resolves_default`
+
+**PR-Gate**: full tier GO（advisory 於最終 commit 37ce2f6 修清；qa / security / risk 全 pass）
+
+**Cross-link**: [[CC-293]]（config/default 解析），[[CC-321]]（PM_HOOK_* 重命名同脈絡）.

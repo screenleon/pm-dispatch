@@ -46,6 +46,12 @@
 | CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | 🔵 active |
 | CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
 
+### 旁支修正（已合入 main，不在 Phase 1–3 主路徑）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter） | ✅ (#229) |
+
 ### Review Model Track（並行；不阻塞 Phase 1–3）
 
 文章「Relocating Rigor」的理念合入：把「嚴謹」從中間的逐行 review 搬到上游 intention/spec review 與下游 machine verification，中間層交給 cross-context isolated reviewer。此 track 與 state-first Phase 1–3 相互獨立，可在空檔時穿插實作。
