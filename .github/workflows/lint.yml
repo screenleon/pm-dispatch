@@ -214,13 +214,19 @@ jobs:
       - name: setup-project regression suite
         run: ./scripts/test-setup-project.sh
 
-  test-install:
+  test-install-core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: git fetch --depth=1 origin main
-      - name: install/uninstall regression suite
-        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh
+      - name: install/uninstall core regression suite
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group core
+
+  test-install-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install/uninstall hooks regression suite
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group hooks
 
   test-usage-weekly:
     runs-on: ubuntu-latest
