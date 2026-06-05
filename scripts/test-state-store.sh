@@ -185,6 +185,12 @@ case_state_store_init_structure() {
 }
 
 case_state_store_init_version1_noop() {
+  # Verifies that state_store_init is idempotent when VERSION=1 already exists.
+  #
+  # Steps:
+  #   1. Create a store root with a pre-existing VERSION=1 file.
+  #   2. Call state_store_init; assert it returns 0.
+  #   3. Assert VERSION content is still "1" (file not rewritten).
   local name="state_store_init: VERSION=1 existing -> noop (file unchanged)"
   should_run "$name" || return 0
   local store before after
@@ -228,6 +234,12 @@ case_state_store_init_version2_fails() {
 }
 
 case_runs_append_fails_on_version2() {
+  # Verifies that runs_append propagates state_store_init failure when VERSION=2.
+  #
+  # Steps:
+  #   1. Create a store root with VERSION=2.
+  #   2. Call runs_append with a valid Run JSON.
+  #   3. Assert runs_append returns non-zero (VERSION gate propagated).
   local name="state_store_init: runs_append returns non-zero when VERSION=2"
   should_run "$name" || return 0
   local store rc=0
@@ -362,6 +374,57 @@ case_events_append_rejects_nul() {
   fi
 }
 
+case_events_append_rejects_run_event_without_payload() {
+  # Verifies that events_append rejects a run.* event that is missing the
+  # required payload field enforced by core/schema/event.schema.json if/then.
+  #
+  # Steps:
+  #   1. Call events_append with a run.completed event that has no payload field.
+  #   2. Assert events_append returns non-zero (schema rejects missing payload).
+  local name="state-store: events_append rejects run.completed event missing payload"
+  should_run "$name" || return 0
+  if ! command -v jsonschema >/dev/null 2>&1; then
+    pass "$name (skip: jsonschema not available)"
+    return 0
+  fi
+  local store rc=0
+  store="$tmp_root/events-no-payload"
+  PM_DISPATCH_STATE_ROOT="$store" events_append \
+    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero for run.completed event without payload, got rc=$rc"
+  fi
+}
+
+case_events_append_rejects_run_event_wrong_payload_type() {
+  # Verifies that events_append rejects a run.* event whose payload fields have
+  # wrong types (numeric run_id instead of string), per the type constraints in
+  # core/schema/event.schema.json if/then.
+  #
+  # Steps:
+  #   1. Call events_append with a run.completed event where run_id is an integer.
+  #   2. Assert events_append returns non-zero (schema rejects numeric run_id).
+  local name="state-store: events_append rejects run.completed event with wrong-typed payload"
+  should_run "$name" || return 0
+  if ! command -v jsonschema >/dev/null 2>&1; then
+    pass "$name (skip: jsonschema not available)"
+    return 0
+  fi
+  local store rc=0
+  store="$tmp_root/events-wrong-type-payload"
+  PM_DISPATCH_STATE_ROOT="$store" events_append \
+    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","payload":{"run_id":123,"state":"ok","from_state":"verifying","to_state":"ok"}}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero for run.completed event with numeric run_id, got rc=$rc"
+  fi
+}
+
 case_runs_append_compacts_json() {
   local name="state-store: runs_append compacts JSON through jq -c"
   should_run "$name" || return 0
@@ -449,6 +512,30 @@ case_task_upsert_invalid_id() {
     pass "$name"
   else
     fail "$name" "rc=$rc or unexpected file exists under $store"
+  fi
+}
+
+case_task_upsert_version2_blocked() {
+  # Verifies that task_upsert does not write a task file when the state store has
+  # an unsupported VERSION=2, even when the tasks/ directory already exists.
+  #
+  # Steps:
+  #   1. Create a store root with VERSION=2 and a pre-existing tasks/ directory.
+  #   2. Call task_upsert with a valid task_id and JSON body.
+  #   3. Assert no task file was written inside tasks/.
+  local name="task_upsert: VERSION=2 store blocks write (no task file created)"
+  should_run "$name" || return 0
+  local store proj_dir written rc=0
+  store="$tmp_root/task-v2-block"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  mkdir -p "$proj_dir/tasks"
+  printf '2\n' > "$store/VERSION"
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "CC-999" '{"id":"CC-999"}' >/dev/null 2>&1 || rc=$?
+  written="$(find "$proj_dir/tasks" -name 'CC-999.json' 2>/dev/null | wc -l)"
+  if [[ "$written" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "task file was written despite VERSION=2 (rc=$rc written=$written)"
   fi
 }
 
@@ -1002,6 +1089,12 @@ if ! type -t pmctl_dispatch_write_transition >/dev/null 2>&1; then
 fi
 
 case_fsm_valid_pending_to_dispatched() {
+  # Verifies that pmctl_dispatch_write_transition accepts a valid FSM edge.
+  #
+  # Steps:
+  #   1. Write a pending transition (from_state="").
+  #   2. Write a dispatched transition (from_state=pending).
+  #   3. Assert both calls return 0.
   local name="FSM: valid transition pending->dispatched succeeds"
   should_run "$name" || return 0
   local store work rc=0
@@ -1020,7 +1113,100 @@ case_fsm_valid_pending_to_dispatched() {
   if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "dispatched rc=$rc"; fi
 }
 
+case_fsm_valid_verifying_to_ok() {
+  # Verifies that the terminal ok edge (verifying->ok) is accepted by the FSM guard.
+  #
+  # Steps:
+  #   1. Write pending, dispatched, verifying transitions to establish FSM state.
+  #   2. Write ok transition (from_state=verifying).
+  #   3. Assert all calls return 0.
+  local name="FSM: valid transition verifying->ok succeeds"
+  should_run "$name" || return 0
+  local store work rc=0
+  store="$tmp_root/fsm-ok-store"
+  work="$tmp_root/fsm-ok-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  for _t in "pending::" "dispatched::pending" "verifying::dispatched" "ok::verifying"; do
+    _state="${_t%%::*}"; _from="${_t##*::}"
+    PM_DISPATCH_STATE_ROOT="$store" \
+      pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+      "run-20260101T000000Z-dddddd" "$_state" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "$_from" \
+      >/dev/null 2>&1 || rc=$?
+    [[ "$rc" -ne 0 ]] && { fail "$name" "transition $_from->$_state rc=$rc"; return; }
+  done
+  pass "$name"
+}
+
+case_fsm_valid_verifying_to_partial() {
+  # Verifies that the partial terminal edge (verifying->partial) is accepted.
+  #
+  # Steps:
+  #   1. Write pending, dispatched, verifying transitions.
+  #   2. Write partial transition (from_state=verifying).
+  #   3. Assert all calls return 0.
+  local name="FSM: valid transition verifying->partial succeeds"
+  should_run "$name" || return 0
+  local store work rc=0
+  store="$tmp_root/fsm-partial-store"
+  work="$tmp_root/fsm-partial-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-eeeeee" "pending" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-eeeeee" "dispatched" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "pending" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-eeeeee" "verifying" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "dispatched" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-eeeeee" "partial" 1 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "verifying" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+}
+
+case_fsm_valid_verifying_to_failed() {
+  # Verifies that the failed terminal edge (verifying->failed) is accepted.
+  #
+  # Steps:
+  #   1. Write pending, dispatched, verifying transitions.
+  #   2. Write failed transition (from_state=verifying).
+  #   3. Assert all calls return 0.
+  local name="FSM: valid transition verifying->failed succeeds"
+  should_run "$name" || return 0
+  local store work rc=0
+  store="$tmp_root/fsm-failed-store"
+  work="$tmp_root/fsm-failed-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-ffffff" "pending" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-ffffff" "dispatched" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "pending" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-ffffff" "verifying" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "dispatched" \
+    >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-ffffff" "failed" 1 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "verifying" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+}
+
 case_fsm_invalid_ok_to_dispatched() {
+  # Verifies that pmctl_dispatch_write_transition rejects a backward FSM edge.
+  #
+  # Steps:
+  #   1. Attempt dispatched transition from_state=ok (terminal state has no outgoing edges).
+  #   2. Assert non-zero exit and stderr contains "invalid transition".
   local name="FSM: invalid transition ok->dispatched returns non-zero"
   should_run "$name" || return 0
   local store work rc=0 stderr_out
@@ -1039,6 +1225,11 @@ case_fsm_invalid_ok_to_dispatched() {
 }
 
 case_fsm_invalid_verifying_to_pending() {
+  # Verifies that pmctl_dispatch_write_transition rejects a backward FSM edge.
+  #
+  # Steps:
+  #   1. Attempt pending transition from_state=verifying (backward jump).
+  #   2. Assert non-zero exit and stderr contains "invalid transition".
   local name="FSM: invalid transition verifying->pending returns non-zero"
   should_run "$name" || return 0
   local store work rc=0 stderr_out
@@ -1121,48 +1312,6 @@ case_runs_append_rejects_newline
 case_runs_append_rejects_nul
 case_events_append_rejects_newline
 case_events_append_rejects_nul
-case_events_append_rejects_run_event_without_payload() {
-  local name="state-store: events_append rejects run.completed event missing payload"
-  should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return 0
-  fi
-  local store rc=0
-  store="$tmp_root/events-no-payload"
-  PM_DISPATCH_STATE_ROOT="$store" events_append \
-    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef"}' \
-    >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected non-zero for run.completed event without payload, got rc=$rc"
-  fi
-}
-case_events_append_rejects_run_event_wrong_payload_type() {
-  # Verifies that events_append rejects a run.completed event whose payload
-  # fields have wrong types (numeric run_id instead of string).
-  #
-  # Steps:
-  #   1. Call events_append with a run.completed event where run_id is an integer.
-  #   2. Assert events_append returns non-zero (schema rejects numeric run_id).
-  local name="state-store: events_append rejects run.completed event with wrong-typed payload"
-  should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return 0
-  fi
-  local store rc=0
-  store="$tmp_root/events-wrong-type-payload"
-  PM_DISPATCH_STATE_ROOT="$store" events_append \
-    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","payload":{"run_id":123,"state":"ok","from_state":"verifying","to_state":"ok"}}' \
-    >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected non-zero for run.completed event with numeric run_id, got rc=$rc"
-  fi
-}
 case_events_append_rejects_run_event_without_payload
 case_events_append_rejects_run_event_wrong_payload_type
 case_runs_append_compacts_json
@@ -1170,6 +1319,7 @@ case_runs_append_rejects_malformed_json
 case_runs_append_rejects_schema_invalid
 case_task_upsert
 case_task_upsert_invalid_id
+case_task_upsert_version2_blocked
 case_runs_append_read_only_fails_loudly
 case_codex_dispatch_state_store_self_contained
 case_pmctl_dispatch_creates_run_row
@@ -1190,6 +1340,9 @@ case_pmctl_dispatch_failed_event
 case_pmctl_dispatch_pre_event_fail_blocks_adapter
 case_pmctl_dispatch_terminal_event_append_fail
 case_fsm_valid_pending_to_dispatched
+case_fsm_valid_verifying_to_ok
+case_fsm_valid_verifying_to_partial
+case_fsm_valid_verifying_to_failed
 case_fsm_invalid_ok_to_dispatched
 case_fsm_invalid_verifying_to_pending
 case_project_key_shasum_fallback

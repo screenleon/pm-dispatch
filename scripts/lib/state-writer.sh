@@ -248,7 +248,7 @@ task_upsert() {
       _sw_log_error "task_upsert: invalid task_id='${task_id}'"
       return 0
     fi
-    state_store_init
+    state_store_init || return 1
     proj_dir="$(_sw_project_dir)"
     tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX")" || {
       _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"
