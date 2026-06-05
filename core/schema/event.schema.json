@@ -72,7 +72,13 @@
     "required": ["payload"],
     "properties": {
       "payload": {
-        "required": ["run_id", "state", "from_state", "to_state"]
+        "required": ["run_id", "state", "from_state", "to_state"],
+        "properties": {
+          "run_id": {"type": "string"},
+          "state": {"type": "string"},
+          "from_state": {"type": "string"},
+          "to_state": {"type": "string"}
+        }
       }
     }
   }
