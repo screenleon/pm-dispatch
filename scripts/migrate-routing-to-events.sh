@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/state-writer.sh"
 # shellcheck source=scripts/lib/memory.sh
 . "$SCRIPT_DIR/lib/memory.sh"
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
 
 CWD="$PWD"
 if [[ "${1:-}" == "--cwd" ]]; then
@@ -45,6 +47,11 @@ fi
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'migrate-routing-to-events: jq is required\n' >&2
+  exit 2
+fi
+
+if ! printf '' | _portable_sha256_stream >/dev/null 2>&1; then
+  printf 'migrate-routing-to-events: sha256sum or shasum is required for row hashing\n' >&2
   exit 2
 fi
 
@@ -147,7 +154,7 @@ EOF
     continue
   fi
 
-  row_hash="$(printf '%s' "$row" | sha256sum | cut -c1-8)"
+  row_hash="$(printf '%s' "$row" | _portable_sha256_stream | cut -c1-8)"
   event_id="evt-${ts_compact}-${session_6}-${row_hash}"
   subject_id="run-${ts_compact}-${session_6}-${row_hash}"
   if event_seen "$event_id"; then

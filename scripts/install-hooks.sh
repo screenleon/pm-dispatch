@@ -131,7 +131,6 @@ cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
 trace_cmd="$repo_root/scripts/hook-tool-trace.sh"
 routing_cmd="$repo_root/scripts/hook-routing-log.sh"
-migrate_routing_cmd="$repo_root/scripts/migrate-routing-log.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
@@ -157,14 +156,13 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$migrate_routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
   echo "  $trace_cmd" >&2
   echo "  $routing_cmd" >&2
-  echo "  $migrate_routing_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -366,24 +364,8 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-routing_log=""
-if routing_memory_dir="$(find_memory_dir "$repo_root")"; then
-  routing_log="$routing_memory_dir/routing_log.md"
-fi
-
-if [[ "$ROUTE_LOG_ENABLED" == "1" && -n "$routing_log" && -f "$routing_log" ]]; then
-  if grep -q -F '<!-- routing-log:auto-block:start -->' "$routing_log" 2>/dev/null; then
-    echo "install-hooks: routing-log already migrated, skipping migrator"
-  else
-    if "$migrate_routing_cmd" --cwd "$repo_root"; then
-      :
-    else
-      status=$?
-      echo "install-hooks: routing-log migrator failed; settings.json not modified" >&2
-      exit "$status"
-    fi
-  fi
-fi
+# Routing-log migration is manual (CC-314): run scripts/migrate-routing-to-events.sh
+# to move legacy routing_log.md records into state-store events.jsonl.
 
 backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
 cp "$settings" "$backup"

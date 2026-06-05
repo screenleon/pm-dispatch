@@ -391,6 +391,33 @@ test_default_memory_dir_discovery() {
   fi
 }
 
+
+# Behavior: When the sha256 hash tool is unavailable, the migrator exits 2
+# with an error message before writing any events.
+test_sha256_missing_exits_error() {
+  local name="migrate-to-events: missing sha256 tool exits 2 before writing"
+  should_run "$name" || return 0
+  local dir path store out status
+  dir="$tmp_root/sha256-missing"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" "$(fixture_two_rows)"
+  # Simulate missing sha256 by shadowing both sha256sum and shasum with false.
+  local stub_bin="$dir/stubs"
+  mkdir -p "$stub_bin"
+  printf '#!/bin/sh\nexit 1\n' > "$stub_bin/sha256sum"
+  printf '#!/bin/sh\nexit 1\n' > "$stub_bin/shasum"
+  chmod +x "$stub_bin/sha256sum" "$stub_bin/shasum"
+  out="$(CLAUDE_ROUTING_LOG_PATH="$path" PM_DISPATCH_STATE_ROOT="$store" \
+         PATH="$stub_bin:$PATH" "$MIGRATOR" --cwd "$REPO_ROOT" 2>&1)" \
+    && status=$? || status=$?
+  if [[ "$status" == "2" ]] && [[ "$(event_count "$store")" == "0" ]] && [[ "$out" == *"sha256"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status count=$(event_count "$store") out=$out"
+  fi
+}
+
 test_happy_path
 test_idempotent
 test_unknown_kind_skips
@@ -407,5 +434,6 @@ test_cwd_missing_value_exits_error
 test_unknown_flag_exits_error
 test_routing_log_dir_env
 test_default_memory_dir_discovery
+test_sha256_missing_exits_error
 
 th_summary
