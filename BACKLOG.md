@@ -92,6 +92,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-325 | 🔵 active | **[infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查]** 新增品質規則：acceptance 含空泛語則 FAIL；file-writing task 無 `cmd:` self_verify 則 FAIL；`behavioral_units ≥ 3` 無 qa_checklist 則 WARN；`architecture_impact: major` 無 conceptual_map 則 FAIL；sensitive path sequential gate → WARN 建議 `--parallel`。 | ops | 2026-06-05 | — | P2 | design |
 | CC-326 | 🔵 active | **[agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff]** reviewer 策略改為：(1) 優先讀 conceptual_map；(2) 確認 bounded context / layer boundary；(3) 只在 map 與 diff 不一致或 risk surface 需抽查時才看 source files。對應「Architect / Editor，非 inspector」定位。 | docs | 2026-06-05 | — | P3 | — |
 | CC-327 | 🔵 active | **[pr-gate: tier 定義改為 rigor level]** 重新定義 express / standard / full 語意：express = hotfix/docs（machine verify + combined session）；standard = feature（conceptual map 必要 + critic + qa + architecture）；full = arch 變動（parallel cross-context + security + risk hard gates + synthesis）；tier 可基於 brief `architecture_impact` 自動建議。 | gate | 2026-06-05 | — | P3 | — |
+| CC-328 | 🟢 someday | **[spike: lightweight built-in symbol index for context-pack（standard Unix toolchain only）]** 在 v0.4.0 state-first 地基落地後，以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 symbol index，讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary。External backend（ctags / ffts-grep / tree-sitter）作為 optional 加速層，不列入 MVP scope。 | ops/token | 2026-06-05 | — | P3 | design |
+| CC-329 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
+| CC-330 | 🟢 someday | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。 | process/DX | 2026-06-05 | — | P3 | design |
 
 ---
 
@@ -1314,6 +1317,108 @@ This makes directory creation the mutex.
 - 帶 `architecture_impact: major` 的 brief → gate 建議 `full` tier（emit warning，不強制）
 
 **Cross-link**: [[CC-322]], [[CC-324]], [[CC-323]].
+
+---
+
+## CC-328 — spike: lightweight built-in symbol index for context-pack（Bash+SQLite，無外部依賴）🟢 someday
+
+**Problem**: pm-dispatch subagent 在 dispatch 前缺乏結構化的 repo context，只能透過重複 grep/read 探索相關檔案與 symbol，造成 token 浪費與 dispatch brief context 不穩定。現有方案不足：CC-237（context-enricher interface）需要外部 rg；CC-209（codegraph evaluation）評估的是 TypeScript external tool，已獲 AMBER——pm-dispatch 的 bash/markdown stack 不在其支援範圍內。
+
+**Why**: 需要一個**內建**的 context layer，僅依賴 standard Unix toolchain（`bash / find / grep / awk / sed / sqlite3`），不引入任何需要另行安裝的 binary（如 ctags、rg、Node.js、Rust binary），在 dispatch 前產生 compact context pack（相關檔案 + approximate symbols + test hints），直接注入 dispatch brief，減少 subagent 盲目探索成本。此能力應建在 v0.4.0 state-first 地基上（消費 Run/Event/trace 提供的 recently touched files、task history 等動態排序資料），因此等地基落地後再實作。
+
+**Requirement**:
+
+*Phase 1 — Spike（MVP，Bash+SQLite only）*
+1. `pm context init`：掃描 repo 建立 SQLite index（`files` + `symbols` 兩張表）
+2. `pm context update [path]`：增量更新（依 mtime/sha1 偵測變更）
+3. symbol 提取策略：Bash + awk/sed/grep 的 regex-based approximation，支援 Shell（function）、Go（func/type/struct/interface）、Python（def/class）、TypeScript/JavaScript（function/class/const arrow）
+4. `pm context pack "<query>"`：以關鍵字查詢，輸出 context pack（relevant files + symbols + search hints），格式可直接嵌入 dispatch brief
+5. 以 pm-dispatch 自身 repo 作為第一個 fixture，比較 3 個真實任務的 before/after dispatch brief
+
+*SQLite schema（最小可行）*:
+```sql
+files(id, path, language, size_bytes, mtime, sha1, indexed_at)
+symbols(id, file_id, name, kind, language, line_start, line_end, signature, backend, confidence)
+```
+
+*MVP 內建依賴*: `bash`, `find`, `grep`, `awk`, `sed`, `sqlite3`（不新增任何其他依賴）
+
+*Optional backend（Phase 2 以後）*: ctags、ffts-grep、tree-sitter — 只作為加速層，MVP 無此需求
+
+**Non-goals**:
+- 精準 AST parsing / call graph
+- LSP references / semantic embeddings
+- MCP server / daemon / web UI
+- 取代 CC-209 codegraph spike（兩者定位不同：CC-209 評估外部工具；CC-328 建內建 layer）
+- 取代 CC-237 context-enricher（CC-237 是 interface；CC-328 是其中一個 source）
+
+**Dependencies**:
+- 建議等 v0.4.0 Run/Event/trace state 穩定後實作（CC-315 / CC-316）
+- context pack 格式應對齊 CC-232 context-pack schema 介面
+- 實作後作為 CC-237 context-enricher 的 `--source builtin-index` backend
+
+**Milestone**: `🟢 someday` — v0.5.0 candidate，待 v0.4.0 state-first 地基落地後排入規劃。
+
+**Cross-link**: [[CC-237]], [[CC-209]], [[CC-232]], [[CC-239]], [[CC-315]].
+
+---
+
+## CC-329 — agent: debt-auditor — proactive tech-debt health scan on living code 🟢 someday
+
+**Problem**: 所有現有 reviewer（critic / architecture-reviewer / qa-tester）均以 PR diff 為觸發點，無法主動掃描 codebase 區域的技術債。結果是：重複程式、慣例分歧、過早抽象這類問題只有在 PR gate 中偶然被提及（以 `advise` 方式），沒有系統性的優先排序與追蹤。
+
+**Why**: 技術債的最佳偵測時機是「任務之間」，而非「PR 審查中」。獨立的健康掃描 agent 在隔離 context 下讀取目標區域，不受正在進行的任務錨定，能給出客觀、可排序的債務清單，作為 milestone 規劃的輸入。
+
+**Requirement**:
+- `agents/debt-auditor.md` — agent 定義：
+  - 輸入：目標路徑（目錄 / 模組 / glob），可選「關注面向」（duplication / conventions / tests / abstractions / all）
+  - 流程：廣讀目標區域（Grep/Glob/Read）→ 識別 debt 項目 → 按 severity 與 fix-cost 排序 → 產出結構化報告
+  - 輸出 YAML block（`debt_findings: [{severity, location, kind, issue, suggest, estimated_size}]`）
+  - 不做任何修改，純讀取模式（tools: Read, Bash, Glob, Grep）
+- `commands/audit.md` 或 `/audit` skill：呼叫 debt-auditor agent，結果由主線程摘要
+- 定位為**新認知模式**（health assessment），有別於 PR-focused reviewer：
+  - critic → diff 正確性（有 PR）
+  - architecture-reviewer → diff 結構 fit（有 PR）
+  - debt-auditor → 存活 codebase 的主動健康掃描（**無需 PR**）
+
+**Non-goals**:
+- 不執行修改（執行仍走 brief → executor → gate 路徑）
+- 不取代 architecture-reviewer（PR gate 仍是 arch-reviewer 的地盤）
+- 不做全 repo 掃描（target path 必須明確，避免輸出過大）
+
+**Milestone**: `🟢 someday` — v0.5.0 candidate，與 CC-220 spike agent 同批考慮。
+
+**Cross-link**: [[CC-220]], [[CC-239]], [[CC-328]], [[CC-237]].
+
+---
+
+## CC-330 — skill: /discover — milestone seeder + opportunity scanner 🟢 someday
+
+**Problem**: project-pm 是**收斂模式**（reactive：收到任務 → 分解 → 派工），沒有內建的**發散模式**（proactive：讀 backlog + 近況 → 生成機會清單）。每次 milestone 規劃都靠對話即興，缺少系統性的「現在最值得做什麼」掃描。
+
+**Why**: Brainstorm / ideation 的正確形狀是利用 PM 的既有 context（memory、DECISIONS、MILESTONES），而非隔離的新 agent。隔離反而要重新推導所有設計決策。正確形狀是：一個 **skill** 切換 PM 到發散模式，結構化地生成機會清單。
+
+**Requirement**:
+- `commands/discover.md` — `/discover [theme]` skill 定義：
+  - 以指定 theme（可選）或預設「當前 repo 最高槓桿改善點」為提示
+  - 讀取：backlog（`🟢 someday` + `⏸ deferred` 項目）+ DECISIONS + MILESTONES（next milestone 範圍）+ `git log --oneline -30`
+  - 輸出：5–10 個機會項目，每項含 `{title, problem_in_one_line, why_now, estimated_size: XS/S/M/L}`，按槓桿高低排序
+  - 不產出 dispatch brief，不承諾任何實作——純探索輸出
+- 典型用法：`/discover v0.5.0 themes`、`/discover dispatch pipeline improvements`、`/discover`（全域）
+- 結果由使用者決定是否轉為正式 ticket 或 milestone
+
+**Non-goals**:
+- 不取代 `/pm`（project-pm 收斂模式仍是主路徑）
+- 不自動建立 ticket（由使用者判斷後手動開）
+- 不是 standalone agent（PM 已有所需 context，不需要隔離）
+
+**Relationship**:
+- 使用 PM 發散模式消費 backlog + MILESTONES
+- 未來可以接 CC-328 context index 強化 codebase 相關機會的偵測精度
+
+**Milestone**: `🟢 someday` — 實作成本 XS（只需一個 commands/discover.md），可提前於其他 someday 項目。
+
+**Cross-link**: [[CC-220]], [[CC-239]], [[CC-237]], [[CC-328]].
 
 ---
 
