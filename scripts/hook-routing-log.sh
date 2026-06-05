@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# PostToolUse routing decision log hook.
+# PostToolUse routing decision log hook — DEPRECATED (CC-314).
 #
-# Appends one JSONL record per Brief/Dispatch routing decision to the active
-# project's memory/routing_log.md auto-block. This hook is deliberately
-# best-effort: it never writes to stdout and never blocks the underlying tool
-# result.
+# Previously appended JSONL routing records to routing_log.md. Now exits 0
+# immediately. Use migrate-routing-to-events.sh to move legacy records into
+# events.jsonl. New installs do not wire this hook (ROUTE_LOG_ENABLED=0).
 
 set -uo pipefail
 
@@ -13,6 +12,9 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 . "$_SCRIPT_DIR/lib/portable.sh"
 # shellcheck source=scripts/lib/memory.sh
 . "$_SCRIPT_DIR/lib/memory.sh"
+
+printf '%s\n' 'hook-routing-log: deprecated; routing_log.md writes disabled' >&2
+exit 0
 
 HOOK_NAME="hook-routing-log"
 LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"

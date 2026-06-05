@@ -171,6 +171,8 @@ jobs:
             test-dispatch-post-verify.sh
             archive-closed-backlog.sh
             test-archive-closed-backlog.sh
+            migrate-routing-to-events.sh
+            test-migrate-routing-to-events.sh
 
   test-doctor:
     runs-on: ubuntu-latest

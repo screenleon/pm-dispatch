@@ -726,11 +726,11 @@ test_legacy_stale_symlinks_removed() {
 }
 
 # ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires all six managed hooks and that
+# Proves that install-hooks.sh wires managed hooks and that
 # uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
-  # Proves that the primary install.sh path wires all six managed hooks
+  # Proves that the primary install.sh path wires managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
   # Pre-CC-102 this test relied on the host having codex on PATH to pick
   # "full" profile auto-detection; on CI runners codex is absent, so the
@@ -753,7 +753,7 @@ test_install_sh_wires_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
@@ -1051,7 +1051,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1091,7 +1091,7 @@ test_install_hooks_windows_profile_minimal_silent() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1319,7 +1319,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
@@ -1339,7 +1339,7 @@ test_hooks_install_uninstall_lifecycle() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
@@ -1396,6 +1396,37 @@ JSON
     fail "$name" "hooks block should be absent after full removal"
     return
   fi
+  pass "$name"
+}
+
+test_install_hooks_removes_stale_routing_hook() {
+  # Verifies that re-running install-hooks.sh on an existing install that has
+  # the deprecated hook-routing-log.sh wired removes it from PostToolUse.
+  # (ROUTE_LOG_ENABLED=0 is the default since CC-314.)
+  #
+  # Steps:
+  #   1. Write settings.json with routing hook already wired in PostToolUse.
+  #   2. Run install-hooks.sh (default ROUTE_LOG_ENABLED=0).
+  #   3. Assert hook-routing-log.sh is absent; other hooks are present.
+  local name="install-hooks-removes-stale-routing-hook"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local _rl_cmd
+  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-routing-log.sh")"
+  cat > "$home/.claude/settings.json" <<JSON
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "$_rl_cmd"}]}
+    ]
+  }
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
   pass "$name"
 }
 
@@ -2315,6 +2346,7 @@ test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
+test_install_hooks_removes_stale_routing_hook
 test_install_hooks_updates_stale_paths_after_rename
 test_install_hooks_preserves_unrelated_same_basename_hook
 test_install_hooks_uninstall_stale_paths_after_rename
