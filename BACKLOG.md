@@ -103,6 +103,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-319 | ✅ closed 2026-06-04 | **[fix: reviewer guard — derive allowed dir from file path, not install location]** `hook-reviewer-write-guard.sh` 原本把 `GATE_REPO_ROOT` 綁定到 `$_SCRIPT_DIR/..`（pm-dispatch 安裝位置），在非 pm-dispatch repo 執行 pr-gate 時 guard 拒絕 reviewer 寫入 `.gate-results/`，sequential/parallel 兩種模式均受影響。修正：改為檢查 `basename(dirname(file)) == ".gate-results"`，移除 `CLAUDE_HOOK_GATE_REPO_ROOT` 綁定。pr:#224。 | ops/security | 2026-06-04 | pr:#224 | P1 | oss |
 | CC-320 | ✅ closed 2026-06-04 | **[fix: codex adapter auto-export work_dir git root to read roots]** `hook-codex-bash-guard.sh` 的讀取允許路徑預設 `$HOME/github:/tmp`；若 target repo 不在 `~/github/`，guard 拒絕 codex 讀取目標 repo 的檔案。修正：`adapters/codex/dispatch.sh` 在呼叫 codex 前自動把 `$WORK_DIR` git root prepend 到 `CLAUDE_HOOK_CODEX_READ_ROOTS`。pr:#224。 | ops | 2026-06-04 | pr:#224 | P1 | oss |
 | CC-321 | 🔵 active | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
+| CC-322 | 🔵 active | **[docs: review-model.md — Relocating Rigor 哲學文件]** 把「嚴謹搬家」正式定名為 pm-dispatch Review Model：四層 = 上游 intention review → cross-context isolation → 下游 conceptual map → machine verification。連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md。不改任何腳本或 skill。 | docs | 2026-06-05 | — | P2 | design |
+| CC-323 | 🔵 active | **[skill: 強化 /pre-impl 輸出 contract — Intention + Conceptual Map 必填]** 升級 `/pre-impl` 為架構影響任務的強制上游關卡：固定輸出 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑。 | process | 2026-06-05 | — | P2 | design |
+| CC-324 | 🔵 active | **[schema: dispatch brief 新增 conceptual_map + architecture_impact 欄位]** brief schema 加 `architecture_impact: none\|minor\|major` + `conceptual_map`（`major` 時必填）；conceptual_map 優先給 architecture-reviewer 用，而非直接掃 source diff。連結 CC-323 / CC-325 / CC-326。 | docs | 2026-06-05 | — | P2 | design |
+| CC-325 | 🔵 active | **[infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查]** 新增品質規則：acceptance 含空泛語則 FAIL；file-writing task 無 `cmd:` self_verify 則 FAIL；`behavioral_units ≥ 3` 無 qa_checklist 則 WARN；`architecture_impact: major` 無 conceptual_map 則 FAIL；sensitive path sequential gate → WARN 建議 `--parallel`。 | ops | 2026-06-05 | — | P2 | design |
+| CC-326 | 🔵 active | **[agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff]** reviewer 策略改為：(1) 優先讀 conceptual_map；(2) 確認 bounded context / layer boundary；(3) 只在 map 與 diff 不一致或 risk surface 需抽查時才看 source files。對應「Architect / Editor，非 inspector」定位。 | docs | 2026-06-05 | — | P3 | — |
+| CC-327 | 🔵 active | **[pr-gate: tier 定義改為 rigor level]** 重新定義 express / standard / full 語意：express = hotfix/docs（machine verify + combined session）；standard = feature（conceptual map 必要 + critic + qa + architecture）；full = arch 變動（parallel cross-context + security + risk hard gates + synthesis）；tier 可基於 brief `architecture_impact` 自動建議。 | gate | 2026-06-05 | — | P3 | — |
+| CC-328 | ✅ closed 2026-06-05 | **[docs+fix: executor-agnostic `light` model alias + claude default model contract]** 文件化 `light` 為跨 executor 統一 alias（codex→codex-spark, claude→haiku）；新增 dispatch-vs-inline routing guide；補齊 claude adapter alias lint / edge-case test coverage；修正 claude adapter omit `--model` 時 default 不走 alias table 的合約不一致（改為 `DEFAULT_DISPATCH_MODEL="default"` 對齊 codex adapter）。pr:#229。 | docs/ops | 2026-06-05 | pr:#229 | P2 | hygiene |
 
 ---
 
@@ -1488,3 +1495,162 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 **Priority note**: breaking change; hold until CC-319/CC-320 are merged and no active PRs depend on the old names.
 
 **Cross-link**: [[CC-319]], [[CC-320]].
+
+---
+
+## CC-322 — docs: review-model.md — Relocating Rigor 哲學文件
+
+**Problem**: pm-dispatch 已有 cross-context isolated reviewers（pr-gate sub-agents）、machine verification（`self_verify cmd:`）、上游 spec review（`/pre-impl`），但沒有文件把這些機制命名成一套完整的 Review Model，讓新接觸的維護者看不出設計意圖。
+
+**Why**: 「Relocating Rigor」—— 嚴謹從中間逐行 review 搬到兩頭（上游 intention / 下游 verification）—— 是 pm-dispatch workflow 的核心哲學，值得正式成文。文件也是後續 CC-323–CC-327 實作的理念錨點。
+
+**Requirement**:
+1. 新增 `docs/review-model.md`，定義四層：
+   - Layer 1（上游）：Intention & Spec review，在 agent 動手前確認方向
+   - Layer 2（中層）：Cross-Context Isolation，reviewer 用乾淨 session 讀最終產物
+   - Layer 3（下游）：Conceptual Map review，看架構不看每行 code
+   - Layer 4（驗收）：Machine Verification，`self_verify cmd:` 強制執行
+2. 說明 pm-dispatch 哪些現有機制對應哪一層
+3. 說明逐行 code review 降級為 exception（agent 卡住 / 方向明確錯才人工介入）
+4. 新增 cross-link：`docs/CONCEPTS.md`、`docs/dispatch-brief.md`、`docs/pr-gate-handover-schema.md`
+
+**Non-goals**: 不改任何 script / skill / agent。
+
+**Cross-link**: [[CC-323]], [[CC-324]], [[CC-326]], [[CC-327]].
+
+---
+
+## CC-323 — skill: 強化 /pre-impl 輸出 contract — Intention + Conceptual Map 必填
+
+**Problem**: `/pre-impl` 目前是輔助命令，輸出格式鬆散；`/pm` 不會自動要求先跑。架構影響型任務缺乏強制的上游 intention / boundary review 關卡，導致 agent 實作方向可能在沒有人明確點頭的情況下就開始。
+
+**Why**: 文章「Relocating Rigor」最核心的一點：在 agent 動手前，先把架構原型在腦袋裡（或文件裡）看過一遍再放它去做。這比事後逐行修正便宜得多。
+
+**Requirement**:
+1. 更新 `commands/pre-impl.md`，定義固定輸出 sections：
+   - `## Intention` — 這次真正解決什麼問題
+   - `## Non-goals` — 明確不做什麼
+   - `## Bounded Context` — 可碰 / 不可碰的 module / script / command
+   - `## Conceptual Map` — 純文字流程圖或結構圖（必填）
+   - `## Acceptance Metrics` — 可驗收條件（非「works as expected」）
+   - `## Verification Plan` — machine-check vs. semantic-check 分類
+2. `agents/project-pm.md` 路由規則新增：`behavioral_units ≥ 3` 或 `architecture_impact ≠ none` → 自動要求先跑 `/pre-impl`，PM approve 後才進 dispatch brief
+3. 輸出格式可直接銜接 dispatch brief schema（CC-324 的 `conceptual_map` 欄位）
+
+**Acceptance**:
+- `/pre-impl "<task>"` 輸出包含上述六個 sections
+- PM 收到 architecture 影響任務時，在 brief 前先呼叫 `/pre-impl` 並等待確認
+
+**Dependencies**: [[CC-322]]（文件錨點）；銜接 [[CC-324]]（brief schema）。
+
+---
+
+## CC-324 — schema: dispatch brief 新增 conceptual_map + architecture_impact 欄位
+
+**Problem**: dispatch brief schema 目前沒有方式表達「這次改動的架構影響程度」或「架構概念圖」，導致 architecture-reviewer 只能掃 source diff，而非先看概念圖。
+
+**Why**: 讓 brief 攜帶 `architecture_impact` 與 `conceptual_map`，架構影響輕重就有明確的機器可讀欄位，後續 brief-validate（CC-325）與 tier 自動建議（CC-327）才有資料來源。
+
+**Requirement**:
+1. `docs/dispatch-brief.md` 加入新欄位說明：
+   ```yaml
+   architecture_impact: none | minor | major
+   conceptual_map: |
+     [純文字圖，architecture_impact != none 時必填]
+   ```
+2. `scripts/brief-validate.sh` 對新欄位做結構驗證（`architecture_impact` 必須是合法 enum 值）
+3. `docs/dispatch-brief.md` 說明 `conceptual_map` 優先給 `architecture-reviewer` 用，非強制掃 source diff 的替代品
+
+**Acceptance**:
+- `brief-validate.sh` 對合法 `architecture_impact` 值 PASS、非法值 FAIL
+- 文件有範例 brief 含 `conceptual_map`
+
+**Dependencies**: [[CC-323]]（pre-impl 產出可填入此欄位）；銜接 [[CC-325]], [[CC-326]], [[CC-327]].
+
+---
+
+## CC-325 — infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查
+
+**Problem**: `brief-validate.sh` 目前只做結構檢查（欄位存在性、enum 合法性），不檢查「品質」。Acceptance Metrics 可以是空泛語（"works as expected"）、file-writing task 可以沒有任何 machine-checkable self_verify，這兩種情況都會讓 agent 有模糊空間偷懶或幻覺。
+
+**Why**: 文章「Relocating Rigor」：Acceptance Metrics 一定要先寫清楚，指標含糊就會用最省力的方式交差。機器檢查可以把這條規則變成強制 policy，不靠人工審查。
+
+**Requirement**:
+- `brief-validate.sh` 新增品質規則：
+
+| 條件 | 行為 |
+|---|---|
+| `acceptance` 含 "works as expected" / "passes tests" / "no errors" 等空泛語 | FAIL + 提示重寫 |
+| file-writing task 無任何 `- cmd:"…"` self_verify | FAIL |
+| `behavioral_units ≥ 3` 無 `qa_checklist` | WARN |
+| `architecture_impact: major` 無 `conceptual_map` | FAIL |
+| sensitive path + sequential pr-gate | WARN → 建議 `--parallel` |
+
+- 加入對應測試 cases
+
+**Non-goals**: 不改 brief 執行流程，只在驗證層加規則。
+
+**Dependencies**: [[CC-324]]（`architecture_impact` 欄位需先定義）；[[CC-323]]（acceptance metrics 格式由 pre-impl contract 奠定）.
+
+---
+
+## CC-326 — agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff
+
+**Problem**: `agents/architecture-reviewer.md` 目前直接讀 source diff / file list，沒有指示「先看 conceptual_map」。即使 brief 有 conceptual_map，reviewer 也不保證會用它。
+
+**Why**: 文章「Relocating Rigor」：「Architect / Editor，不是逐行 inspector」—— reviewer 看的是整個架構對不對，不是某行寫得漂不漂亮。只有在 conceptual_map 與 diff 不一致、或 risk surface 需要抽查時，才需要進入 source files。
+
+**Requirement**:
+1. `agents/architecture-reviewer.md` 在 review 指示開頭加入：
+   - 若 brief 有 `conceptual_map`：優先讀 map，確認 bounded context / layer boundary，只在 map 與 diff 不一致或 risk surface 需抽查時才看 source files
+   - 若 brief 無 `conceptual_map`：維持現行 source diff review，但在 finding 中 note「建議提供 conceptual_map」
+2. 改動僅限 `agents/architecture-reviewer.md`，不影響其他 reviewer
+
+**Acceptance**:
+- `architecture-reviewer` prompt 包含 conceptual_map 優先讀取指示
+
+**Cross-link**: [[CC-322]], [[CC-324]].
+
+---
+
+## CC-327 — pr-gate: tier 定義改為 rigor level（而非 reviewer 數量）
+
+**Problem**: `express / standard / full` 三個 tier 目前的語意是「reviewer 數量多寡」，沒有對應到「review 嚴謹程度」的概念，也沒有與 brief 的 `architecture_impact` 掛鉤。
+
+**Why**: 文章「Relocating Rigor」：tier 應該反映「需要多嚴謹的 review」而不只是「幾個 reviewer」。與 brief 的 `architecture_impact` 掛鉤後，tier 選擇可以自動建議，減少人工判斷。
+
+**Requirement**:
+1. 更新 `scripts/pr-gate.sh` + 相關文件，重新定義 tier 語意：
+   - `express`：hotfix / docs-only / `architecture_impact: none` → machine verification + combined session reviewer
+   - `standard`：一般 feature / `architecture_impact: minor` → conceptual map 必要 + critic + qa + architecture
+   - `full`：架構變動 / `architecture_impact: major` / sensitive path → parallel cross-context + security + risk hard gates + synthesis
+2. `scripts/pr-gate.sh` 加入 tier 自動建議邏輯：若 brief 有 `architecture_impact`，啟動前 emit 建議 tier（user 仍可 override）
+3. 更新 `docs/review-model.md`（CC-322）tier 說明段落
+
+**Acceptance**:
+- 文件中三個 tier 的語意對應到 rigor level，不只是 reviewer 數量
+- 帶 `architecture_impact: major` 的 brief → gate 建議 `full` tier（emit warning，不強制）
+
+**Cross-link**: [[CC-322]], [[CC-324]], [[CC-323]].
+
+---
+
+## CC-328 — docs+fix: executor-agnostic `light` model alias + claude default model contract ✅ 2026-06-05
+
+**See**: pr:#229
+
+**Problem**: `light` 是為 codex 設計的輕量 model alias（`codex-spark`），但缺乏 claude 端的對應定義與文件；claude adapter 也沒有 dispatch-vs-inline routing guide。同時，claude adapter 在 omit `--model` 時不走 alias table 而委給 claude CLI built-in default，與 codex adapter 行為不一致，形成文件與實際行為的合約落差。
+
+**Resolution**:
+1. 新增 `docs/model-tier-policy.md` — 文件化 `light` 為跨 executor 統一 alias：
+   - codex → `gpt-5.3-codex-spark`（independent usage pool）
+   - claude → `claude-haiku-4-5-20251001`
+   - 附 routing 準則：`< 50 lines, ≤ 2 files, no new behavioral units`
+2. `docs/dispatch-brief.md` 加入 dispatch-vs-inline routing guide
+3. `share/claude-model-aliases.tsv` 補齊 alias 定義；`scripts/lint-model-aliases.sh` 擴充 claude 端 drift 偵測
+4. `scripts/test-claude-dispatch.sh` 加入完整 alias coverage（light / default / haiku / sonnet / opus / unknown passthrough / malformed TSV / resolver-absent）及 lint failure cases
+5. **修正 default model contract**：`adapters/claude/dispatch.sh` 加 `DEFAULT_DISPATCH_MODEL="default"` + 路由邏輯對齊 codex adapter，omit `--model` 現在一律走 alias table → `claude-sonnet-4-6`，不委給 CLI built-in；補 test `case_model_no_flag_resolves_default`
+
+**PR-Gate**: full tier GO（advisory 於最終 commit 37ce2f6 修清；qa / security / risk 全 pass）
+
+**Cross-link**: [[CC-293]]（config/default 解析），[[CC-321]]（PM_HOOK_* 重命名同脈絡）.

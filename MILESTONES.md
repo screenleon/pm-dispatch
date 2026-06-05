@@ -20,8 +20,8 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ⏳ |
-| CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | 🔵 active |
-| CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | 🔵 active |
+| CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | ✅ (#223) |
+| CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | ✅ (#228) |
 | CC-311 | state store VERSION gating + migration（不得靜默降級） | 🔵 active |
 | CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | 🔵 active |
 | CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | 🔵 active |
@@ -45,6 +45,27 @@
 |---|---|---|
 | CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | 🔵 active |
 | CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
+
+### 旁支修正（已合入 main，不在 Phase 1–3 主路徑）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter） | ✅ (#229) |
+
+### Review Model Track（並行；不阻塞 Phase 1–3）
+
+文章「Relocating Rigor」的理念合入：把「嚴謹」從中間的逐行 review 搬到上游 intention/spec review 與下游 machine verification，中間層交給 cross-context isolated reviewer。此 track 與 state-first Phase 1–3 相互獨立，可在空檔時穿插實作。
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-322 | `docs/review-model.md` — Relocating Rigor 哲學正式文件；連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md | 🔵 active |
+| CC-323 | 強化 `/pre-impl` 輸出 contract：Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan 必填；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑 | 🔵 active |
+| CC-324 | dispatch brief schema 新增 `conceptual_map` + `architecture_impact` 欄位；`architecture_impact: major` 時 `conceptual_map` 必填 | 🔵 active |
+| CC-325 | brief-validate 強化：Acceptance Metrics 品質機器檢查（禁空泛語）、file-writing task 無 `cmd:` 則 FAIL、`architecture_impact: major` 無 `conceptual_map` 則 FAIL | 🔵 active |
+| CC-326 | 更新 `architecture-reviewer` prompt：優先讀 conceptual_map，只在 map 與 diff 不一致時才抽查 source files（「Architect / Editor，非 inspector」） | 🔵 active |
+| CC-327 | `/pr-gate` tier 定義改為 rigor level：express（hotfix/docs）/ standard（feature，含 conceptual map）/ full（arch 變動 + parallel cross-context + hard gates） | 🔵 active |
+
+**Phase 建議**：CC-322 / CC-326 / CC-327 可即插即做（XS–S）；CC-323 → CC-324 → CC-325 有依賴順序，預估 v0.4.0 末段或 v0.5.0 初段。
 
 ### 地基之後 / 延後（不在地基範圍）
 

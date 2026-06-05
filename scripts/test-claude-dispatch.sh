@@ -286,9 +286,151 @@ FAKELN
   rm -rf "$bin" "$work"; rm -f "$brief"
 }
 
+# ---- model alias resolution tests ----
+case_model_alias_light() {
+  local name="dispatch/--model light resolves to claude-haiku wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model light --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-haiku-4-5-20251001'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-haiku-4-5-20251001 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_default() {
+  local name="dispatch/--model default resolves to claude-sonnet wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model default --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-sonnet-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_haiku() {
+  local name="dispatch/--model haiku resolves to claude-haiku wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model haiku --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-haiku-4-5-20251001'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-haiku-4-5-20251001 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_sonnet() {
+  local name="dispatch/--model sonnet resolves to claude-sonnet wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model sonnet --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-sonnet-4-6 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_opus() {
+  local name="dispatch/--model opus resolves to claude-opus wire id"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model opus --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-opus-4-8'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-opus-4-8 in CMD, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_unknown_passthrough() {
+  local name="dispatch/--model unknown-alias passes through unchanged"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --model gpt-99-unknown --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'gpt-99-unknown'; then
+    pass "$name"
+  else
+    fail "$name" "expected gpt-99-unknown passed through, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_no_flag_resolves_default() {
+  local name="dispatch/omit --model resolves to claude-sonnet-4-6 via alias table (not CLI built-in)"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$(unset PM_CFG_DEFAULT_MODEL; "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q -- '--model claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected --model claude-sonnet-4-6 in CMD (default alias resolved), got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_pm_cfg_default_model() {
+  local name="dispatch/PM_CFG_DEFAULT_MODEL applied when --model omitted"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$(PM_CFG_DEFAULT_MODEL=sonnet "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q 'claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected claude-sonnet-4-6 from PM_CFG_DEFAULT_MODEL=sonnet, got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_model_alias_malformed_tsv_warns() {
+  local name="dispatch/malformed alias TSV entry emits warning and passes model through"; should_run "$name" || return 0
+  local bad_tsv out
+  bad_tsv="$(mktemp --suffix=.tsv)"
+  printf 'bad\tonly-two-columns\n' > "$bad_tsv"
+  # Test _resolve_claude_model_alias in isolation: extract the function from the
+  # adapter via awk and run it in a subshell with PM_CLAUDE_ALIAS_FILE set to the
+  # malformed TSV. Verifies the malformed-entry warning branch in dispatch.sh.
+  set +e
+  out="$(bash -s -- "$bad_tsv" "$DISPATCH" 2>&1 <<'RESOLVER_TEST'
+set -euo pipefail
+bad_tsv="$1"; dispatch_sh="$2"
+PM_CLAUDE_ALIAS_FILE="$bad_tsv"
+MODEL="light"
+eval "$(awk '/^_resolve_claude_model_alias\(\)/,/^}$/' "$dispatch_sh")"
+_resolve_claude_model_alias "light" 2>&1
+printf 'MODEL_AFTER=%s\n' "$MODEL"
+RESOLVER_TEST
+  )"
+  set -e
+  rm -f "$bad_tsv"
+  if printf '%s' "$out" | grep -q 'malformed entry'; then
+    pass "$name"
+  else
+    fail "$name" "expected malformed entry warning, got: $out"
+  fi
+}
+
 case_codex_flags_noop
 case_config_timeout_env_overrides
 case_state_store_no_direct_run_row_claude
 case_latest_symlink_failure_tolerated
+case_model_alias_light
+case_model_alias_default
+case_model_alias_haiku
+case_model_alias_sonnet
+case_model_alias_opus
+case_model_alias_unknown_passthrough
+case_model_no_flag_resolves_default
+case_model_pm_cfg_default_model
+case_model_alias_malformed_tsv_warns
 
 th_summary
