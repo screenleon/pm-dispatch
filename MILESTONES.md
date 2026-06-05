@@ -24,7 +24,7 @@
 | CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | ✅ (#228) |
 | CC-311 | state store VERSION gating + migration（不得靜默降級） | ✅ (#230) |
 | CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | ✅ (#230) |
-| CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | 🔵 active |
+| CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | ✅ (#232) |
 | CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | 🔵 active |
 | CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | 🔵 active |
 | CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | 🔵 active |
