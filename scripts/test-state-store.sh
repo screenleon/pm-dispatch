@@ -1298,6 +1298,136 @@ case_project_key_no_sha1sum() {
   fi
 }
 
+case_state_store_init_mkdir_fail_loud() {
+  # CC-330: layout mkdir failure must propagate as non-zero (not silently swallowed).
+  #
+  # Steps:
+  #   1. Create store root with a pre-existing projects/ dir; chmod it to 500 (no write).
+  #   2. Call state_store_init; assert non-zero exit and stderr contains "mkdir failed".
+  local name="state_store_init: layout mkdir failure propagates loud (CC-330)"
+  should_run "$name" || return 0
+  local store projects_dir rc=0 stderr_out
+  store="$tmp_root/mkdir-fail-loud"
+  projects_dir="$store/projects"
+  mkdir -p "$projects_dir"
+  chmod 500 "$projects_dir"
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" state_store_init 2>&1 >/dev/null)" || rc=$?
+  chmod 700 "$projects_dir"
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "mkdir failed"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_global_key_refused() {
+  # CC-313: state_store_init must refuse the global partition for load-bearing writes.
+  # _sw_project_key returns "global" when run from a non-git CWD with no _SW_REPO_ROOT.
+  #
+  # Steps:
+  #   1. Create a non-git tmpdir; run state_store_init from that CWD (subshell).
+  #   2. Assert non-zero exit and stderr mentions partition.
+  local name="state_store_init: global partition refused without _SW_ALLOW_GLOBAL_PARTITION (CC-313)"
+  should_run "$name" || return 0
+  local store non_git rc=0 stderr_out
+  store="$tmp_root/global-refused"
+  non_git="$tmp_root/not-a-git-repo"
+  mkdir -p "$non_git"
+  # Run from non-git CWD without _SW_REPO_ROOT so _sw_project_key returns "global".
+  stderr_out="$( (
+    cd "$non_git"
+    unset _SW_REPO_ROOT 2>/dev/null || true
+    PM_DISPATCH_STATE_ROOT="$store" state_store_init 2>&1 >/dev/null
+  ) )" || rc=$?
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "partition"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_global_key_allowed_explicit() {
+  # CC-313: _SW_ALLOW_GLOBAL_PARTITION=1 must bypass the global-partition guard.
+  #
+  # Steps:
+  #   1. Create a non-git tmpdir; run state_store_init from that CWD with the override.
+  #   2. Assert exit 0 and the global partition dir was created.
+  local name="state_store_init: _SW_ALLOW_GLOBAL_PARTITION=1 allows global partition (CC-313)"
+  should_run "$name" || return 0
+  local store non_git rc=0
+  store="$tmp_root/global-allowed"
+  non_git="$tmp_root/not-a-git-repo-allowed"
+  mkdir -p "$non_git"
+  (
+    cd "$non_git"
+    unset _SW_REPO_ROOT 2>/dev/null || true
+    export _SW_ALLOW_GLOBAL_PARTITION=1
+    PM_DISPATCH_STATE_ROOT="$store" state_store_init >/dev/null 2>&1
+  ) || rc=$?
+  if [[ "$rc" -eq 0 && -d "$store/projects/global/tasks" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc global_tasks_exists=$([[ -d "$store/projects/global/tasks" ]] && echo yes || echo no)"
+  fi
+}
+
+case_state_store_init_writes_repo_json() {
+  # CC-313: state_store_init must write repo.json on first use with required fields.
+  #
+  # Steps:
+  #   1. git init a fresh tmpdir; call state_store_init with _SW_REPO_ROOT set.
+  #   2. Find repo.json under the project partition.
+  #   3. Assert it contains repo_path, repo_name, and first_seen_ts.
+  local name="state_store_init: writes repo.json on first use (CC-313)"
+  should_run "$name" || return 0
+  local store git_repo rc=0 repo_json repo_path repo_name first_seen_ts
+  store="$tmp_root/repo-json-write"
+  git_repo="$tmp_root/repo-json-repo"
+  mkdir -p "$git_repo"
+  git -C "$git_repo" init -q
+  PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$git_repo" state_store_init >/dev/null 2>&1 || rc=$?
+  repo_json="$(find "$store" -name "repo.json" -type f 2>/dev/null | head -1 || true)"
+  repo_path="$(jq -r '.repo_path' "$repo_json" 2>/dev/null || true)"
+  repo_name="$(jq -r '.repo_name' "$repo_json" 2>/dev/null || true)"
+  first_seen_ts="$(jq -r '.first_seen_ts' "$repo_json" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 && -n "$repo_json" && -n "$repo_path" && \
+        "$repo_name" == "$(basename "$git_repo")" && -n "$first_seen_ts" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc repo_json=${repo_json:-none} repo_name=${repo_name:-empty} first_seen_ts=${first_seen_ts:-empty}"
+  fi
+}
+
+case_state_store_init_repo_json_idempotent() {
+  # CC-313: a second call to state_store_init must NOT overwrite an existing repo.json.
+  #
+  # Steps:
+  #   1. Call state_store_init once; record the first_seen_ts from repo.json.
+  #   2. Call state_store_init a second time.
+  #   3. Assert first_seen_ts is unchanged (file not overwritten).
+  local name="state_store_init: repo.json not overwritten on subsequent calls (CC-313)"
+  should_run "$name" || return 0
+  local store git_repo ts_first ts_second repo_json
+  store="$tmp_root/repo-json-idem"
+  git_repo="$tmp_root/repo-json-idem-repo"
+  mkdir -p "$git_repo"
+  git -C "$git_repo" init -q
+  _SW_CREATED_TS_OVERRIDE="2026-01-01T00:00:00Z" \
+    PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$git_repo" \
+    state_store_init >/dev/null 2>&1 || true
+  repo_json="$(find "$store" -name "repo.json" -type f 2>/dev/null | head -1 || true)"
+  ts_first="$(jq -r '.first_seen_ts' "$repo_json" 2>/dev/null || true)"
+  _SW_CREATED_TS_OVERRIDE="2026-06-01T00:00:00Z" \
+    PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$git_repo" \
+    state_store_init >/dev/null 2>&1 || true
+  ts_second="$(jq -r '.first_seen_ts' "$repo_json" 2>/dev/null || true)"
+  if [[ "$ts_first" == "2026-01-01T00:00:00Z" && "$ts_second" == "2026-01-01T00:00:00Z" ]]; then
+    pass "$name"
+  else
+    fail "$name" "ts_first=$ts_first ts_second=$ts_second"
+  fi
+}
+
 case_store_root_override
 case_store_root_xdg
 case_store_root_default
@@ -1347,5 +1477,10 @@ case_fsm_invalid_ok_to_dispatched
 case_fsm_invalid_verifying_to_pending
 case_project_key_shasum_fallback
 case_project_key_no_sha1sum
+case_state_store_init_mkdir_fail_loud
+case_state_store_init_global_key_refused
+case_state_store_init_global_key_allowed_explicit
+case_state_store_init_writes_repo_json
+case_state_store_init_repo_json_idempotent
 
 th_summary
