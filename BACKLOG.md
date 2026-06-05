@@ -96,7 +96,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-312 | ✅ closed 2026-06-05 | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code；finished_ts 延後處理；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | pr:#230 | P2 | design |
 | CC-329 | 🔵 active | **[arch: FSM transition table — extract to runtime-accessible policy helper]** `pmctl_dispatch_write_transition` 的 from→to 驗證邏輯內嵌於 runtime helper，caller 可繞過；未來新增 state consumer 前應將 transition table 抽成 policy helper（讀 `core/policy/run-states.yaml` 或同結構 bash array），所有驗證點指向唯一真相源。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer）。 | arch | 2026-06-05 | — | P3 | design |
 | CC-330 | 🔵 active | **[fix: state_store_init — propagate layout mkdir failure loud]** `state_store_init` 的 project layout 建立（`mkdir -p tasks/ reviews/ …`）仍靜默吞掉失敗；與 VERSION 驗證的 fail-loud 語意不一致，存在 VERSION=1 但 `proj_dir` 目錄建立失敗時 `state_store_init` 仍回 0 的缺口。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer low）。 | arch | 2026-06-05 | — | P3 | hygiene |
-| CC-331 | 🔵 active | **[perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構]** `test-install.sh` 加 `--group core/hooks`，CI 拆成兩個並行 job（core 34 + hooks 39 tests）；`install_dispatch_allowlist` 從每 entry 2 jq call 降至 1 read+1 write batch；`install.sh --verify` 加 `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫；`test_verify_flag_runs_preflights` 改為動態 stub（衍生自 `run-all-tests.sh --list`，自動同步 suite 清單）取代 escape-hatch bypass，同時重設 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0`；CI 移除 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1`。 | ops/test | 2026-06-05 | — | P2 | hygiene |
+| CC-331 | ✅ closed 2026-06-05 | **[perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構]** `test-install.sh` 加 `--group core/hooks`，CI 拆成兩個並行 job（core 34 + hooks 39 tests）；`install_dispatch_allowlist` 從每 entry 2 jq call 降至 1 read+1 write batch；`install.sh --verify` 加 `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫；`test_verify_flag_runs_preflights` 改為動態 stub（衍生自 `run-all-tests.sh --list`，自動同步 suite 清單）取代 escape-hatch bypass，同時重設 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0`；CI 移除 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1`。 | ops/test | 2026-06-05 | pr:#231 | P2 | hygiene |
 | CC-313 | 🔵 active | **[arch: project partition identity — repo.json + worktree/aliases + no-global]** 首次使用寫 `repo.json`（git top-level / common-dir / worktree path / normalized+cygpath aliases）；load-bearing project 寫入**拒絕** fallback 到 `global`（除非顯式）。見 §10.A5。 | arch | 2026-06-03 | — | P2 | design |
 | CC-314 | 🔵 active | **[arch: routing_log → events.jsonl migration + deprecate machine-write]** 新增 routing_log→events 遷移 + kind 映射（bash-dispatch/agent-dispatch → run.dispatched 等）+ subject-id 策略；停掉 `hook-routing-log.sh` 機器寫；舊 `migrate-routing-log.sh` 降為 legacy-markdown cleanup。見 §10.A6（D3）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-315 | 🔵 active | **[arch: state read/query contract + pmctl trace]** pmctl 提供 by id/task/kind/time-window 讀取；定義 active+archive 讀取語義（排序 / 壞行容忍 / time-window / 索引 vs 串流）；`pmctl trace` 為第一個 state consumer。見 §3.7（D6）。 | arch | 2026-06-03 | — | P2 | design |
@@ -1692,9 +1692,9 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 ---
 
-## CC-331 — perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構
+## CC-331 — perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構 ✅ 2026-06-05
 
-**Status**: 🔵 active
+**See**: pr:#231
 
 **Source**: PR #230 合入後 CI test-install 需花 ~4 min，用戶 2026-06-05 要求優化。
 
