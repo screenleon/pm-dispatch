@@ -59,7 +59,8 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-322 | `docs/review-model.md` — Relocating Rigor 哲學正式文件；連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md | 🔵 active |
+| CC-322 | `docs/review-model.md` — Relocating Rigor 哲學正式文件；連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md | ✅ closed |
+| CC-332 | PM size-first dispatch routing：Tiny→inline / Small→`model: light` / Medium-Large→Codex default；更新 `docs/model-tier-policy.md` + `agents/project-pm.md` | ✅ closed |
 | CC-323 | 強化 `/pre-impl` 輸出 contract：Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan 必填；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑 | 🔵 active |
 | CC-324 | dispatch brief schema 新增 `conceptual_map` + `architecture_impact` 欄位；`architecture_impact: major` 時 `conceptual_map` 必填 | 🔵 active |
 | CC-325 | brief-validate 強化：Acceptance Metrics 品質機器檢查（禁空泛語）、file-writing task 無 `cmd:` 則 FAIL、`architecture_impact: major` 無 `conceptual_map` 則 FAIL | 🔵 active |

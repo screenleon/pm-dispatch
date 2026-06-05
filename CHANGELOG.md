@@ -8,6 +8,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/review-model.md`** — formalises the pm-dispatch Review Model ("Relocating Rigor"): four layers — (1) Intention & Spec review upstream via `/pre-impl`, (2) Cross-Context Isolation via pr-gate subagents, (3) Conceptual Map review by the architecture-reviewer, (4) Machine Verification via `self_verify cmd:`. Explains when line-by-line diff inspection is appropriate (exception, not default) and cross-links to `docs/CONCEPTS.md`, `docs/dispatch-brief.md`, and `docs/pr-gate-handover-schema.md`. No script or skill changes (CC-322).
+- **`docs/model-tier-policy.md` / `agents/project-pm.md`** — PM dispatch routing is now size-first: Tiny tasks (< 30 lines, 1–2 files, no new behavior) → main-thread inline; Small tasks (< 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks) → `model: light` (codex-spark / haiku); Medium/Large → Codex `default`. PM prompt updated to match: Tiny triggers an inline recommendation (no brief), Small triggers a `model: light` brief (CC-332).
+
 ### Fixed
 
 - **`scripts/hook-reviewer-write-guard.sh`** — reviewer write-guard now derives the allowed `.gate-results/` directory from the **target file path**, not pm-dispatch's own install location, so `/pr-gate` works when pm-dispatch is installed in one repo but used to gate a *different* project (cross-project). The v0.3.0 guard resolved the repo root from `<install-repo>/scripts/` and bound writes to that checkout's `.gate-results`, which blocked reviewer writes whenever the gated project differed from the install checkout; the `CLAUDE_HOOK_GATE_REPO_ROOT` strict-binding override is removed entirely. Regression coverage in `test-hooks.sh` / `test-pmctl-guard.sh` (CC-319).
