@@ -365,6 +365,19 @@ case_model_alias_unknown_passthrough() {
   rm -rf "$work"; rm -f "$brief"
 }
 
+case_model_no_flag_resolves_default() {
+  local name="dispatch/omit --model resolves to claude-sonnet-4-6 via alias table (not CLI built-in)"; should_run "$name" || return 0
+  local work brief out
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  out="$(unset PM_CFG_DEFAULT_MODEL; "$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if printf '%s' "$out" | grep -q -- '--model claude-sonnet-4-6'; then
+    pass "$name"
+  else
+    fail "$name" "expected --model claude-sonnet-4-6 in CMD (default alias resolved), got: $(printf '%s' "$out" | tail -1)"
+  fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
 case_model_pm_cfg_default_model() {
   local name="dispatch/PM_CFG_DEFAULT_MODEL applied when --model omitted"; should_run "$name" || return 0
   local work brief out
@@ -416,6 +429,7 @@ case_model_alias_haiku
 case_model_alias_sonnet
 case_model_alias_opus
 case_model_alias_unknown_passthrough
+case_model_no_flag_resolves_default
 case_model_pm_cfg_default_model
 case_model_alias_malformed_tsv_warns
 

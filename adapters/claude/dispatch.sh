@@ -70,6 +70,7 @@ trap 'rm -rf -- "$__claude_dispatch_snapshot_dir"' EXIT
 
 WORK_DIR=""
 MODEL=""
+DEFAULT_DISPATCH_MODEL="default"   # resolved via share/claude-model-aliases.tsv → claude-sonnet-4-6
 ISOLATION=""
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT=""
@@ -198,10 +199,13 @@ if [[ -n "$ISOLATION" ]]; then
   PERMISSION_MODE="$(_resolve_permission_mode "$ISOLATION")" || exit 2
 fi
 
-# Apply PM_CFG_DEFAULT_MODEL when --model was omitted (mirrors codex adapter behaviour).
-# pmctl exports this from ~/.pm-dispatch/config dispatch.default_model.
-if [[ -z "$MODEL" && -n "${PM_CFG_DEFAULT_MODEL:-}" ]]; then
-  MODEL="$PM_CFG_DEFAULT_MODEL"
+# Default model resolution — mirrors codex adapter: pin pm-dispatch's own default
+# through the alias table so omitting --model always resolves to claude-sonnet-4-6,
+# decoupled from the claude CLI built-in default. Precedence: --model flag >
+# PM_CFG_DEFAULT_MODEL (from ~/.pm-dispatch/config dispatch.default_model) >
+# built-in `default` alias (→ claude-sonnet-4-6 via share/claude-model-aliases.tsv).
+if [[ -z "$MODEL" ]]; then
+  MODEL="${PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"
 fi
 
 # Resolve PM-facing alias (e.g. "light" → "claude-haiku-4-5-20251001") before
