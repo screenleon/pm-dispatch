@@ -532,10 +532,12 @@ case_task_upsert_version2_blocked() {
   printf '2\n' > "$store/VERSION"
   PM_DISPATCH_STATE_ROOT="$store" task_upsert "CC-999" '{"id":"CC-999"}' >/dev/null 2>&1 || rc=$?
   written="$(find "$proj_dir/tasks" -name 'CC-999.json' 2>/dev/null | wc -l)"
-  if [[ "$written" -eq 0 ]]; then
-    pass "$name"
-  else
+  if [[ "$written" -ne 0 ]]; then
     fail "$name" "task file was written despite VERSION=2 (rc=$rc written=$written)"
+  elif [[ "$rc" -eq 0 ]]; then
+    fail "$name" "task_upsert returned rc=0 but expected non-zero for VERSION=2 rejection"
+  else
+    pass "$name"
   fi
 }
 

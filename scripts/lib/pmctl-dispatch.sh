@@ -169,6 +169,7 @@ pmctl_dispatch_write_transition() {
   local from_state="${11:-}"
   local event_kind note="" op_id
 
+  pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
   case "$state" in
     pending) event_kind="run.pending" ;;
     dispatched) event_kind="run.dispatched" ;;
@@ -184,20 +185,7 @@ pmctl_dispatch_write_transition() {
       return 1
       ;;
   esac
-  local _fsm_valid=0
-  case "$from_state" in
-    ""|none)
-      [[ "$state" == "pending" ]] && _fsm_valid=1 ;;
-    pending)
-      [[ "$state" == "dispatched" || "$state" == "failed" ]] && _fsm_valid=1 ;;
-    dispatched)
-      [[ "$state" == "verifying" || "$state" == "failed" ]] && _fsm_valid=1 ;;
-    verifying)
-      [[ "$state" == "ok" || "$state" == "partial" || "$state" == "failed" ]] && _fsm_valid=1 ;;
-    ok|partial|failed)
-      _fsm_valid=0 ;;
-  esac
-  if [[ "$_fsm_valid" -eq 0 ]]; then
+  if ! run_transition_valid "$from_state" "$state"; then
     printf 'pmctl dispatch run: invalid transition %s->%s\n' "$from_state" "$state" >&2
     return 1
   fi
