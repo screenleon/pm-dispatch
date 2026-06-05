@@ -17,8 +17,10 @@
 # It is a policy-backing script called exclusively by `pmctl guard check
 # --role reviewer`. Both codex and claude reviewer paths use explicit
 # pmctl guard check (CC-297 uniform explicit-guard design).
-#   - one-shot routing_log.md legacy bullet migrator before settings write
 #
+# Note: routing_log.md migration is NOT run automatically (CC-314).
+# Run scripts/migrate-routing-to-events.sh manually to move legacy routing
+# records into state-store events.jsonl.
 # Safe to re-run: detects existing entries (matched by command path) and skips
 # them. Backs up settings.json once per run if any change is staged.
 #
