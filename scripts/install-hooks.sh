@@ -253,7 +253,14 @@ jq \
           else . end
         )
       )
-    else . end
+    else
+      .hooks.PostToolUse |= map(
+        .hooks |= map(select(
+          ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") | not
+        ))
+      ) |
+      .hooks.PostToolUse |= map(select((.hooks | length) > 0))
+    end
   ) |
   .hooks.Stop |= map(
     .hooks |= map(

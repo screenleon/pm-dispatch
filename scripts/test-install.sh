@@ -1399,6 +1399,37 @@ JSON
   pass "$name"
 }
 
+test_install_hooks_removes_stale_routing_hook() {
+  # Verifies that re-running install-hooks.sh on an existing install that has
+  # the deprecated hook-routing-log.sh wired removes it from PostToolUse.
+  # (ROUTE_LOG_ENABLED=0 is the default since CC-314.)
+  #
+  # Steps:
+  #   1. Write settings.json with routing hook already wired in PostToolUse.
+  #   2. Run install-hooks.sh (default ROUTE_LOG_ENABLED=0).
+  #   3. Assert hook-routing-log.sh is absent; other hooks are present.
+  local name="install-hooks-removes-stale-routing-hook"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local _rl_cmd
+  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-routing-log.sh")"
+  cat > "$home/.claude/settings.json" <<JSON
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "$_rl_cmd"}]}
+    ]
+  }
+}
+JSON
+
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  pass "$name"
+}
+
 test_install_hooks_updates_stale_paths_after_rename() {
   # Verifies that install-hooks.sh updates stale full-paths (e.g. from a repo
   # rename claude-config -> pm-dispatch) without creating duplicate entries.
@@ -2315,6 +2346,7 @@ test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
+test_install_hooks_removes_stale_routing_hook
 test_install_hooks_updates_stale_paths_after_rename
 test_install_hooks_preserves_unrelated_same_basename_hook
 test_install_hooks_uninstall_stale_paths_after_rename
