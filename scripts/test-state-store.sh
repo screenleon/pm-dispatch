@@ -202,17 +202,28 @@ case_state_store_init_version1_noop() {
 }
 
 case_state_store_init_version2_fails() {
+  # Verifies that state_store_init rejects VERSION=2 with a non-zero exit and an
+  # "unsupported" stderr message, and does NOT create any new layout entries.
+  #
+  # Steps:
+  #   1. Create a store root containing only a VERSION=2 file.
+  #   2. Call state_store_init; assert it returns non-zero.
+  #   3. Assert stderr contains "unsupported".
+  #   4. Assert no new entries were created beyond VERSION (no tasks/, no project dirs).
   local name="state_store_init: VERSION=2 -> fail loud (unsupported)"
   should_run "$name" || return 0
-  local store rc=0 stderr_out
+  local store rc=0 stderr_out new_entries
   store="$tmp_root/init-v2-fail"
   mkdir -p "$store"
   printf '2\n' > "$store/VERSION"
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" state_store_init 2>&1 >/dev/null)" || rc=$?
-  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "unsupported"; then
+  # Count everything in the store except the VERSION file itself.
+  new_entries="$(find "$store" -mindepth 1 ! -name VERSION 2>/dev/null | wc -l)"
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "unsupported" \
+      && [[ "$new_entries" -eq 0 ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc stderr=$stderr_out"
+    fail "$name" "rc=$rc stderr=$stderr_out new_entries=$new_entries"
   fi
 }
 

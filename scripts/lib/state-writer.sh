@@ -125,19 +125,23 @@ _sw_validate_compacted_json_line() {
 state_store_init() {
   local store_root proj_dir version_file version_value
   store_root="$(_sw_store_root)"
-  proj_dir="$(_sw_project_dir)"
-  { mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
-      "$proj_dir/context-packs" "$proj_dir/archive"; } 2>/dev/null || true
   version_file="$store_root/VERSION"
-  if [[ ! -f "$version_file" ]]; then
-    mkdir -p "$store_root" || { printf 'state-writer: mkdir failed: %s\n' "$store_root" >&2; return 1; }
-    printf '1\n' > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
-  else
+  # Version compatibility check before any layout creation — unsupported stores
+  # must be observed but not mutated.
+  if [[ -f "$version_file" ]]; then
     version_value="$(<"$version_file")"
     if [[ "$version_value" != "1" ]]; then
       printf 'state-writer: unsupported store version %s (expected 1); run '\''pmctl state migrate'\''\n' "$version_value" >&2
       return 1
     fi
+  fi
+  # Only reach here on first-time init (VERSION absent) or VERSION == "1".
+  proj_dir="$(_sw_project_dir)"
+  { mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
+      "$proj_dir/context-packs" "$proj_dir/archive"; } 2>/dev/null || true
+  if [[ ! -f "$version_file" ]]; then
+    mkdir -p "$store_root" || { printf 'state-writer: mkdir failed: %s\n' "$store_root" >&2; return 1; }
+    printf '1\n' > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
   fi
   return 0
 }
