@@ -147,8 +147,9 @@ EOF
     continue
   fi
 
-  event_id="evt-${ts_compact}-${session_6}"
-  subject_id="run-${ts_compact}-${session_6}"
+  row_hash="$(printf '%s' "$row" | sha256sum | cut -c1-8)"
+  event_id="evt-${ts_compact}-${session_6}-${row_hash}"
+  subject_id="run-${ts_compact}-${session_6}-${row_hash}"
   if event_seen "$event_id"; then
     skipped=$((skipped + 1))
     continue

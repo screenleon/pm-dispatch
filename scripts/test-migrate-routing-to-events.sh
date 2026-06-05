@@ -187,7 +187,7 @@ test_event_id_format() {
   store="$dir/state"
   write_routing_log "$path" '{"ts":"2026-06-05T01:02:03Z","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch"}'
   run_migrator "$path" "$store" >/dev/null 2>&1
-  if events_jq "$store" '.id == "evt-20260605T010203Z-abcdef" and (.id | test("^evt-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$")) and .subject_id == "run-20260605T010203Z-abcdef"'; then
+  if events_jq "$store" '(.id | test("^evt-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}-[a-f0-9]{8}$")) and (.subject_id | test("^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}-[a-f0-9]{8}$"))'; then
     pass "$name"
   else
     fail "$name"
@@ -215,6 +215,114 @@ test_payload_contract() {
   fi
 }
 
+
+# Behavior: Two distinct routing rows with the same session and same second each
+# produce a unique event, because the ID includes a content hash component.
+# Steps:
+#   1. Prepare routing_log.md with two rows sharing session and timestamp-second
+#      but differing in kind/fields.
+#   2. Run the migrator.
+#   3. Verify both rows become distinct events in events.jsonl.
+test_same_second_distinct_rows() {
+  local name="migrate-to-events: same-second distinct rows both migrate"
+  should_run "$name" || return 0
+  local dir path store
+  dir="$tmp_root/same-second"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" "$(cat <<'ROWS'
+{"ts":"2026-06-05T01:02:03Z","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch","goal_excerpt":"task A"}
+{"ts":"2026-06-05T01:02:03Z","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch","goal_excerpt":"task B"}
+ROWS
+)"
+  run_migrator "$path" "$store" >/dev/null 2>&1
+  local count
+  count="$(event_count "$store")"
+  if [[ "$count" == "2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 2 events, got $count"
+  fi
+}
+
+# Behavior: Re-running after same-second distinct rows are already migrated stays idempotent.
+# Steps:
+#   1. Run the migrator twice on the same same-second fixture.
+#   2. Verify still exactly 2 events after second run.
+test_same_second_idempotent() {
+  local name="migrate-to-events: same-second rows stay idempotent on rerun"
+  should_run "$name" || return 0
+  local dir path store
+  dir="$tmp_root/same-second-idempotent"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" "$(cat <<'ROWS'
+{"ts":"2026-06-05T01:02:03Z","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch","goal_excerpt":"task A"}
+{"ts":"2026-06-05T01:02:03Z","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch","goal_excerpt":"task B"}
+ROWS
+)"
+  run_migrator "$path" "$store" >/dev/null 2>&1
+  run_migrator "$path" "$store" >/dev/null 2>&1
+  local count
+  count="$(event_count "$store")"
+  if [[ "$count" == "2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 2 events after rerun, got $count"
+  fi
+}
+
+# Behavior: Malformed JSON rows are skipped with a warning and the migrator exits zero.
+test_malformed_json_skips() {
+  local name="migrate-to-events: malformed JSON row skips with warning"
+  should_run "$name" || return 0
+  local dir path store out status
+  dir="$tmp_root/malformed"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" '{"broken json'
+  out="$(run_migrator "$path" "$store" 2>&1)" && status=$? || status=$?
+  if [[ "$status" == "0" ]] && [[ "$(event_count "$store")" == "0" ]] && [[ "$out" == *"skipping malformed JSON row"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out count=$(event_count "$store")"
+  fi
+}
+
+# Behavior: A row with an invalid timestamp is skipped with a warning and the migrator exits zero.
+test_invalid_timestamp_skips() {
+  local name="migrate-to-events: invalid timestamp row skips with warning"
+  should_run "$name" || return 0
+  local dir path store out status
+  dir="$tmp_root/bad-ts"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" '{"ts":"not-a-timestamp","session_id":"abcdef12-3456-7890-abcd-ef1234567890","kind":"bash-dispatch"}'
+  out="$(run_migrator "$path" "$store" 2>&1)" && status=$? || status=$?
+  if [[ "$status" == "0" ]] && [[ "$(event_count "$store")" == "0" ]] && [[ "$out" == *"skipping row with invalid ts"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out count=$(event_count "$store")"
+  fi
+}
+
+# Behavior: A row with a non-hex session_id prefix is skipped with a warning and the migrator exits zero.
+test_invalid_session_prefix_skips() {
+  local name="migrate-to-events: invalid session_id prefix row skips with warning"
+  should_run "$name" || return 0
+  local dir path store out status
+  dir="$tmp_root/bad-session"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" '{"ts":"2026-06-05T01:02:03Z","session_id":"XXXXXX-invalid-session","kind":"bash-dispatch"}'
+  out="$(run_migrator "$path" "$store" 2>&1)" && status=$? || status=$?
+  if [[ "$status" == "0" ]] && [[ "$(event_count "$store")" == "0" ]] && [[ "$out" == *"skipping row with invalid session_id prefix"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out count=$(event_count "$store")"
+  fi
+}
+
 test_happy_path
 test_idempotent
 test_unknown_kind_skips
@@ -222,5 +330,10 @@ test_no_rows
 test_missing_file
 test_event_id_format
 test_payload_contract
+test_same_second_distinct_rows
+test_same_second_idempotent
+test_malformed_json_skips
+test_invalid_timestamp_skips
+test_invalid_session_prefix_skips
 
 th_summary
