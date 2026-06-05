@@ -125,7 +125,16 @@ The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Bri
 
 For briefs that touch > 8 files OR embed > 200 lines verbatim, also consider **splitting** the dispatch into 2–3 smaller ones (each 2–4 files). Discipline first, split second — split alone without the 3 patterns above doesn't fully prevent the hang pattern.
 
-**Dispatch model selection**: prefer the `default` alias — omit `--model` (or write `model: default`) and let the executor adapter resolve its own pinned default. Model identity is **executor-specific** and not the PM's to assume: each adapter owns its model namespace (e.g. the codex adapter maps aliases via `share/model-aliases.tsv`; a claude executor would use sonnet/opus/haiku). Do NOT bake a particular executor or wire-format model id into a brief by default. If a task genuinely needs a specific model, the requester names it explicitly — that choice belongs to the user, not the PM default. The only model routing the PM owns is the lightweight opt-in: use `model: light` when all three criteria are met — (a) expected diff < 50 lines, (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies, (c) no new interfaces, abstractions, or hooks introduced. The `light` alias is executor-agnostic: codex resolves it to `codex-spark` (independent usage pool, ~64K ctx); claude resolves it to `haiku`. Misrouting a large task to `light` degrades output quality without a loud failure signal — reserve it for known-small, single-location changes. Alias-to-wire-format mapping is in `share/model-aliases.tsv` (codex) and `share/claude-model-aliases.tsv` (claude); see also `docs/model-tier-policy.md` §`light` alias.
+**Dispatch model selection — size first**:
+
+| Size | Criteria | PM action |
+|---|---|---|
+| Tiny | < 30 lines, 1–2 files, no new behavior | Tell main thread to handle inline (no brief) |
+| Small | < 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks | Brief with `model: light` |
+| Medium | 50–300 lines, 3–5 files, 3+ behavioral units | Brief with `model: default` |
+| Large | > 300 lines, 5+ files, new modules/schemas | Brief with `model: default`; require `/pre-impl` first |
+
+For Tiny tasks, return a plain text recommendation to the main thread (not a `dispatch_handover_v1` block) — main thread handles with Edit tool directly. For Small through Large, write a brief. Use `model: light` only when all three Small criteria hold — misrouting a Medium task to `light` degrades output quality without a loud failure signal. The `light` alias is executor-agnostic: codex resolves it to `codex-spark` (independent usage pool, ~64K ctx); claude resolves it to `haiku`. Model identity is **executor-specific** and not PM's to assume — do NOT bake a wire-format model id into a brief. Alias-to-wire-format mapping is in `share/model-aliases.tsv` (codex) and `share/claude-model-aliases.tsv` (claude); see also `docs/model-tier-policy.md` §Implementation tasks.
 
 Return exactly one fenced `dispatch_handover_v1` block. The metadata header is for the main thread; the content after the standalone `---` line is the brief body the main thread writes to `brief_file`.
 
