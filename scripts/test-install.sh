@@ -17,6 +17,23 @@ REAL_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
 . "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
 
+# --group core|hooks — run only one subset so CI can fan out two parallel jobs
+# while run-all-tests.sh (no --group) still runs the full suite unchanged.
+# th_init silently ignores unknown flags, so --group passes through without error.
+GROUP=""
+_ti_prev=""
+for _ti_a in "$@"; do
+  if [[ "$_ti_prev" == "--group" ]]; then GROUP="$_ti_a"
+  elif [[ "$_ti_a" == "--group="* ]]; then GROUP="${_ti_a#--group=}"
+  fi
+  _ti_prev="$_ti_a"
+done
+unset _ti_a _ti_prev
+case "$GROUP" in
+  ""|core|hooks) ;;
+  *) printf 'test-install: --group must be core or hooks (got: %s)\n' "$GROUP" >&2; exit 2 ;;
+esac
+
 _TI_PLATFORM="$(detect_platform)"
 _ti_is_windows() { [[ "$_TI_PLATFORM" == "windows" ]]; }
 
@@ -64,6 +81,36 @@ mkdir -p "$_codex_stub_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$_codex_stub_bin/codex"
 chmod +x "$_codex_stub_bin/codex"
 export PATH="$_codex_stub_bin:$PATH"
+
+# Group-aware should_run: when --group is set, skip tests that belong to the
+# other group. Hooks-group tests are identified by well-known name prefixes;
+# everything else is considered core. Without --group all tests run normally.
+_ti_should_run_base() {
+  if $LIST; then
+    ALL_CASES+=("$1")
+    return 1
+  fi
+  [[ -z "$FILTER" || "$1" == *"$FILTER"* ]]
+}
+
+should_run() {
+  local _ti_name="$1"
+  if [[ -n "$GROUP" ]]; then
+    case "$_ti_name" in
+      install-sh-wires-hooks*|install-sh-profile-*|\
+      install-hooks-*|hooks-*|uninstall-hooks-*|\
+      dispatch-allowlist-*|\
+      test_install_adds_dispatch_allowlist|\
+      test_install_dispatch_allowlist_*|\
+      test_dispatch_allowlist_*|\
+      userpromptsubmit-*|session-stop-*|statusline-*)
+        [[ "$GROUP" == "hooks" ]] || return 1 ;;
+      *)
+        [[ "$GROUP" == "core" ]] || return 1 ;;
+    esac
+  fi
+  _ti_should_run_base "$@"
+}
 
 assert_not_contains() {
   local name="$1" file="$2" needle="$3"
@@ -1961,50 +2008,61 @@ test_default_install_skips_preflights() {
 }
 
 test_verify_flag_runs_preflights() {
-  # Verifies that ./install.sh --verify delegates to scripts/run-all-tests.sh (21 suites).
-  # When this test runs inside install.sh's own preflight suite
-  # (CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1), invoking install.sh --verify would
-  # recurse infinitely. Guard by passing immediately in that context; the real
-  # assertion runs when this suite is invoked directly.
+  # Verifies that ./install.sh --verify delegates to the preflight runner.
+  # A lightweight stub is generated from run-all-tests.sh --list and injected
+  # via _PM_DISPATCH_PREFLIGHT_RUNNER so the real suites never execute — the
+  # test stays fast and free of recursive suite invocation regardless of how
+  # it is called (directly, from run-all-tests.sh, or within CI).
   local name="verify-flag-runs-preflights"
   should_run "$name" || return 0
-  # This recursively runs the entire run-all-tests.sh suite via install.sh
-  # --verify. On MSYS each hook spawn costs ~200ms, making the full suite take
-  # tens of minutes; the delegation itself is verified on POSIX CI. Skip here.
-  if _ti_skip_win "$name" "recursively runs the full preflight suite; impractically slow on MSYS"; then return 0; fi
-  if [[ "${CLAUDE_CONFIG_TEST_INSTALL_RUNNING:-0}" == "1" ]]; then
-    pass "$name"
-    return 0
-  fi
-  local home out exit_code=0
+  if _ti_skip_win "$name" "stub subprocess overhead is impractically slow on MSYS"; then return 0; fi
+
+  local home stub suite_list suite_count out exit_code=0
   home="$tmp_root/$name"
+  stub="$tmp_root/${name}-stub.sh"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  # Use || exit_code=$? so set -euo pipefail does not abort on nonzero exit;
-  # exit_code captures the actual status for the explicit failure assertion.
+  # Generate a stub that echoes "PASS <suite>" for every suite in the canonical
+  # list. When suites are added or removed from run-all-tests.sh the stub (and
+  # the assertions below) update automatically with no manual maintenance.
+  suite_list="$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>/dev/null)"
+  suite_count="$(printf '%s\n' "$suite_list" | grep -c . || true)"
+  {
+    printf '#!/usr/bin/env bash\n'
+    while IFS= read -r _suite; do
+      [[ -n "$_suite" ]] || continue
+      printf 'echo "PASS %s"\n' "$_suite"
+    done <<< "$suite_list"
+    printf 'echo "%d passed, 0 failed, 0 skipped"\n' "$suite_count"
+  } > "$stub"
+  chmod +x "$stub"
+
+  # Reset CLAUDE_CONFIG_TEST_INSTALL_RUNNING so install.sh does not hit its
+  # own escape hatch — run-all-tests.sh sets it to 1 when invoking test-install,
+  # which would suppress the --verify block we are trying to exercise.
   out=$(HOME="$home" CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0 \
+    _PM_DISPATCH_PREFLIGHT_RUNNER="$stub" \
     bash "$REPO_ROOT/install.sh" --verify --dry-run 2>&1) || exit_code=$?
 
   local ok=true
   if [[ $exit_code -ne 0 ]]; then
     ok=false
-    printf '  FAIL  %s — install.sh --verify exited %d; failing preflight shown above\n' "$name" "$exit_code" >&2
+    printf '  FAIL  %s — install.sh --verify exited %d\n' "$name" "$exit_code" >&2
   fi
   if [[ "$out" != *"==> preflight tests"* ]]; then
     ok=false
     printf '  FAIL  %s — expected "==> preflight tests" header not found\n' "$name" >&2
   fi
-  for suite in lint-agents lint-scripts test-hooks test-migrate test-install \
-               test-usage-weekly test-usage-tracker test-pm-scripts \
-               test-codex-dispatch test-pr-gate test-setup-project \
-               test-doctor \
-               test-patch-gitignore test-run-all-tests; do
-    if [[ "$out" != *"$suite"* ]]; then
+  # Verify every suite name from --list flowed through install.sh's output.
+  while IFS= read -r _suite; do
+    [[ -n "$_suite" ]] || continue
+    if [[ "$out" != *"$_suite"* ]]; then
       ok=false
-      printf '  FAIL  %s — expected suite "%s" not found in preflight output\n' "$name" "$suite" >&2
+      printf '  FAIL  %s — expected suite "%s" not found in preflight output\n' "$name" "$_suite" >&2
     fi
-  done
+  done <<< "$suite_list"
   if [[ "$out" == *"preflight tests skipped"* ]]; then
     ok=false
     printf '  FAIL  %s — skip message should not appear when --verify is passed\n' "$name" >&2

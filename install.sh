@@ -93,22 +93,37 @@ remove_legacy_symlink() {
 
 install_dispatch_allowlist() {
   local settings="$CLAUDE_HOME/settings.json"
-  local entry
+
+  # Collect all managed dispatch entries once (avoids re-running the generator
+  # per iteration and lets us batch jq calls below).
+  local -a _all_entries=()
+  local _entry
+  while IFS= read -r _entry; do
+    _all_entries+=("$_entry")
+  done < <(dispatch_allowlist_entries)
+  [[ "${#_all_entries[@]}" -gt 0 ]] || return 0
+
+  # One jq read to learn which entries are already present.
+  local _present=""
+  if [[ -f "$settings" ]]; then
+    _present="$(jq -r '.permissions.allow // [] | .[]' "$settings" 2>/dev/null || true)"
+  fi
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    while IFS= read -r entry; do
-      if [[ ! -f "$settings" ]] || ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
-        printf '  permissions.allow: would add   %s\n' "$entry"
+    for _entry in "${_all_entries[@]}"; do
+      if printf '%s\n' "$_present" | grep -qxF -- "$_entry" 2>/dev/null; then
+        printf '  permissions.allow: would skip (present) %s\n' "$_entry"
       else
-        printf '  permissions.allow: would skip (present) %s\n' "$entry"
+        printf '  permissions.allow: would add   %s\n' "$_entry"
       fi
-    done < <(dispatch_allowlist_entries)
+    done
     return 0
   fi
 
   if [[ ! -f "$settings" ]]; then
     mkdir -p "$(dirname "$settings")"
     printf '{}\n' > "$settings"
+    _present=""
   fi
   local _backup_ts
   _backup_ts="$(date +%Y%m%d-%H%M%S)"
@@ -119,16 +134,24 @@ install_dispatch_allowlist() {
   cp "$settings" "${settings}.bak.${_backup_ts}"
   printf '  settings.json: backup at %s.bak.%s\n' "$settings" "$_backup_ts"
 
-  while IFS= read -r entry; do
-    if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null 2>&1; then
-      jq --arg e "$entry" \
-         '.permissions.allow = ((.permissions.allow // []) + [$e])' \
-         "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
-      printf '  permissions.allow: added   %s\n' "$entry"
+  # Identify missing entries and print status; then add all at once (one write).
+  local -a _missing=()
+  for _entry in "${_all_entries[@]}"; do
+    if printf '%s\n' "$_present" | grep -qxF -- "$_entry" 2>/dev/null; then
+      printf '  permissions.allow: present %s\n' "$_entry"
     else
-      printf '  permissions.allow: present %s\n' "$entry"
+      _missing+=("$_entry")
+      printf '  permissions.allow: added   %s\n' "$_entry"
     fi
-  done < <(dispatch_allowlist_entries)
+  done
+
+  if [[ "${#_missing[@]}" -gt 0 ]]; then
+    local _missing_json
+    _missing_json="$(printf '%s\n' "${_missing[@]}" | jq -R . | jq -s .)"
+    jq --argjson new "$_missing_json" \
+       '.permissions.allow = ((.permissions.allow // []) + $new)' \
+       "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
+  fi
 }
 
 install_dir_junction() {
@@ -314,7 +337,9 @@ fi
 
 if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo "==> preflight tests"
-  bash "$REPO_ROOT/scripts/run-all-tests.sh"
+  # _PM_DISPATCH_PREFLIGHT_RUNNER lets tests inject a stub without touching
+  # the real run-all-tests.sh (default). Never set this in production use.
+  bash "${_PM_DISPATCH_PREFLIGHT_RUNNER:-$REPO_ROOT/scripts/run-all-tests.sh}"
   echo
 fi
 
