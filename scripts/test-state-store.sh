@@ -1110,6 +1110,25 @@ case_runs_append_rejects_newline
 case_runs_append_rejects_nul
 case_events_append_rejects_newline
 case_events_append_rejects_nul
+case_events_append_rejects_run_event_without_payload() {
+  local name="state-store: events_append rejects run.completed event missing payload"
+  should_run "$name" || return 0
+  if ! command -v jsonschema >/dev/null 2>&1; then
+    pass "$name (skip: jsonschema not available)"
+    return 0
+  fi
+  local store rc=0
+  store="$tmp_root/events-no-payload"
+  PM_DISPATCH_STATE_ROOT="$store" events_append \
+    '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero for run.completed event without payload, got rc=$rc"
+  fi
+}
+case_events_append_rejects_run_event_without_payload
 case_runs_append_compacts_json
 case_runs_append_rejects_malformed_json
 case_runs_append_rejects_schema_invalid
