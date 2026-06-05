@@ -22,8 +22,8 @@
 | CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ⏳ |
 | CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | ✅ (#223) |
 | CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | ✅ (#228) |
-| CC-311 | state store VERSION gating + migration（不得靜默降級） | 🔵 active |
-| CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | 🔵 active |
+| CC-311 | state store VERSION gating + migration（不得靜默降級） | ✅ (pr:TBD) |
+| CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | ✅ (pr:TBD) |
 | CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | 🔵 active |
 | CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | 🔵 active |
 | CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | 🔵 active |

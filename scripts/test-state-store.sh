@@ -184,6 +184,55 @@ case_state_store_init_structure() {
   fi
 }
 
+case_state_store_init_version1_noop() {
+  local name="state_store_init: VERSION=1 existing -> noop (file unchanged)"
+  should_run "$name" || return 0
+  local store before after
+  store="$tmp_root/init-v1-noop"
+  mkdir -p "$store"
+  printf '1\n' > "$store/VERSION"
+  before="$(cat "$store/VERSION")"
+  PM_DISPATCH_STATE_ROOT="$store" state_store_init
+  after="$(cat "$store/VERSION")"
+  if [[ "$before" == "$after" && "$after" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "VERSION changed: before=$before after=$after"
+  fi
+}
+
+case_state_store_init_version2_fails() {
+  local name="state_store_init: VERSION=2 -> fail loud (unsupported)"
+  should_run "$name" || return 0
+  local store rc=0 stderr_out
+  store="$tmp_root/init-v2-fail"
+  mkdir -p "$store"
+  printf '2\n' > "$store/VERSION"
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" state_store_init 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "unsupported"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=$stderr_out"
+  fi
+}
+
+case_runs_append_fails_on_version2() {
+  local name="state_store_init: runs_append returns non-zero when VERSION=2"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/runs-v2-fail"
+  mkdir -p "$store"
+  printf '2\n' > "$store/VERSION"
+  PM_DISPATCH_STATE_ROOT="$store" runs_append \
+    '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero, got rc=$rc"
+  fi
+}
+
 case_runs_append_valid_jsonl() {
   # Verifies that runs_append creates runs.jsonl with exactly one valid JSON line.
   #
@@ -196,7 +245,7 @@ case_runs_append_valid_jsonl() {
   should_run "$name" || return 0
   local store proj_dir line
   store="$tmp_root/runs-one"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   line="$(cat "$proj_dir/runs.jsonl" 2>/dev/null || true)"
   if [[ -f "$proj_dir/runs.jsonl" && "$(wc -l < "$proj_dir/runs.jsonl")" == "1" ]] &&
@@ -217,8 +266,8 @@ case_runs_append_appends() {
   should_run "$name" || return 0
   local store proj_dir
   store="$tmp_root/runs-two"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000001Z-123456","task_id":"CC-230","executor":"codex","state":"failed","exit_code":1,"created_ts":"2026-01-01T00:00:01Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000001Z-123456","task_id":"CC-230","executor":"codex","state":"failed","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":1,"created_ts":"2026-01-01T00:00:01Z"}'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   if [[ -f "$proj_dir/runs.jsonl" && "$(wc -l < "$proj_dir/runs.jsonl")" == "2" ]]; then
     pass "$name"
@@ -307,10 +356,10 @@ case_runs_append_compacts_json() {
   should_run "$name" || return 0
   local store proj_dir line expected
   store="$tmp_root/runs-compact"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{ "schema_version" : 1, "id" : "run-20260101T000000Z-abcdef", "task_id" : "CC-230", "executor" : "codex", "state" : "ok", "exit_code" : 0, "created_ts" : "2026-01-01T00:00:00Z" }'
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{ "schema_version" : 1, "id" : "run-20260101T000000Z-abcdef", "task_id" : "CC-230", "executor" : "codex", "state" : "ok", "working_dir" : "/tmp/test", "trace_path" : "/tmp/test.jsonl", "exit_code" : 0, "created_ts" : "2026-01-01T00:00:00Z" }'
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
   line="$(cat "$proj_dir/runs.jsonl" 2>/dev/null || true)"
-  expected='{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+  expected='{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   if [[ "$line" == "$expected" ]]; then
     pass "$name"
   else
@@ -405,7 +454,7 @@ case_runs_append_read_only_fails_loudly() {
   store="$tmp_root/read-only-store"
   mkdir -p "$store"
   chmod 500 "$store"
-  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' >/dev/null 2>&1 || rc=$?
+  PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' >/dev/null 2>&1 || rc=$?
   chmod 700 "$store"
   if [[ "$rc" -ne 0 ]]; then
     pass "$name"
@@ -936,6 +985,66 @@ case_pmctl_dispatch_terminal_event_append_fail() {
   fi
 }
 
+if ! type -t pmctl_dispatch_write_transition >/dev/null 2>&1; then
+  # shellcheck source=scripts/lib/pmctl-dispatch.sh
+  . "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
+fi
+
+case_fsm_valid_pending_to_dispatched() {
+  local name="FSM: valid transition pending->dispatched succeeds"
+  should_run "$name" || return 0
+  local store work rc=0
+  store="$tmp_root/fsm-valid-store"
+  work="$tmp_root/fsm-valid-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-aaaaaa" "pending" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "" \
+    >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] && { fail "$name" "pending write rc=$rc"; return; }
+  PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-aaaaaa" "dispatched" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "pending" \
+    >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 ]]; then pass "$name"; else fail "$name" "dispatched rc=$rc"; fi
+}
+
+case_fsm_invalid_ok_to_dispatched() {
+  local name="FSM: invalid transition ok->dispatched returns non-zero"
+  should_run "$name" || return 0
+  local store work rc=0 stderr_out
+  store="$tmp_root/fsm-ok-dispatched-store"
+  work="$tmp_root/fsm-ok-dispatched-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-bbbbbb" "dispatched" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "ok" \
+    2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "invalid transition"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=$stderr_out"
+  fi
+}
+
+case_fsm_invalid_verifying_to_pending() {
+  local name="FSM: invalid transition verifying->pending returns non-zero"
+  should_run "$name" || return 0
+  local store work rc=0 stderr_out
+  store="$tmp_root/fsm-vp-store"
+  work="$tmp_root/fsm-vp-work"
+  mkdir -p "$work"; git -C "$work" init -q
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" \
+    pmctl_dispatch_write_transition "$REPO_ROOT" "$work" "codex" \
+    "run-20260101T000000Z-cccccc" "pending" 0 "default" "/tmp/brief.md" "" "2026-01-01T00:00:00Z" "verifying" \
+    2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]] && printf '%s' "$stderr_out" | grep -q "invalid transition"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=$stderr_out"
+  fi
+}
+
 case_project_key_shasum_fallback() {
   local name="project_key: sha1sum missing but shasum available produces hash (not global)"
   should_run "$name" || return 0
@@ -991,6 +1100,9 @@ case_store_root_override
 case_store_root_xdg
 case_store_root_default
 case_state_store_init_structure
+case_state_store_init_version1_noop
+case_state_store_init_version2_fails
+case_runs_append_fails_on_version2
 case_runs_append_valid_jsonl
 case_runs_append_appends
 case_events_append
@@ -1022,6 +1134,9 @@ case_pmctl_dispatch_terminal_run_event_invariant
 case_pmctl_dispatch_failed_event
 case_pmctl_dispatch_pre_event_fail_blocks_adapter
 case_pmctl_dispatch_terminal_event_append_fail
+case_fsm_valid_pending_to_dispatched
+case_fsm_invalid_ok_to_dispatched
+case_fsm_invalid_verifying_to_pending
 case_project_key_shasum_fallback
 case_project_key_no_sha1sum
 

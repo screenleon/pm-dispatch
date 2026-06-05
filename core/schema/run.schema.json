@@ -2,7 +2,7 @@
   "title": "Run",
   "description": "One executor dispatch (one brief invocation against an executor). Records the dispatch parameters and trace pointers; does NOT duplicate trace contents (which live in the adapter-managed trace directory).",
   "type": "object",
-  "required": ["id", "schema_version", "task_id", "executor", "state", "created_ts"],
+  "required": ["id", "schema_version", "task_id", "executor", "state", "created_ts", "working_dir", "trace_path", "exit_code"],
   "properties": {
     "id": {
       "type": "string",

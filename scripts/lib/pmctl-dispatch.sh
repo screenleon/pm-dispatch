@@ -111,6 +111,7 @@ pmctl_dispatch_write_event() {
   local repo_root="${1:-}" work_dir="${2:-}" kind="${3:-}" run_id="${4:-}"
   local state="${5:-}" exit_code="${6:-0}" adapter="${7:-}" note="${8:-}"
   local operation_id="${9:-}"
+  local from_state="${10:-}"
   local ts evt_id event_json rc=0
 
   pmctl_dispatch_ensure_state_writer "$repo_root" || return $?
@@ -125,11 +126,12 @@ pmctl_dispatch_write_event() {
     --arg actor "pmctl" \
     --arg run_id "$run_id" \
     --arg state "$state" \
+    --arg from_state "$from_state" \
     --arg adapter "$adapter" \
     --arg note "$note" \
     --arg operation_id "$operation_id" \
     --argjson exit_code "$exit_code" \
-    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end))} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"run",subject_id:$subject_id,actor:$actor,payload:({run_id:$run_id,state:$state,from_state:$from_state,to_state:$state,exit_code:$exit_code,adapter:$adapter} + (if $note == "" then {} else {note:$note} end))} + (if $operation_id == "" then {} else {operation_id:$operation_id} end)'
   )" || return $?
   _SW_REPO_ROOT="$work_dir" events_append "$event_json" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -164,6 +166,7 @@ pmctl_dispatch_write_transition() {
   local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}" run_id="${4:-}"
   local state="${5:-}" exit_code="${6:-0}" model="${7:-}" brief_file="${8:-}"
   local trace_path="${9:-}" created_ts="${10:-}"
+  local from_state="${11:-}"
   local event_kind note="" op_id
 
   case "$state" in
@@ -181,12 +184,29 @@ pmctl_dispatch_write_transition() {
       return 1
       ;;
   esac
+  local _fsm_valid=0
+  case "$from_state" in
+    ""|none)
+      [[ "$state" == "pending" ]] && _fsm_valid=1 ;;
+    pending)
+      [[ "$state" == "dispatched" || "$state" == "failed" ]] && _fsm_valid=1 ;;
+    dispatched)
+      [[ "$state" == "verifying" || "$state" == "failed" ]] && _fsm_valid=1 ;;
+    verifying)
+      [[ "$state" == "ok" || "$state" == "partial" || "$state" == "failed" ]] && _fsm_valid=1 ;;
+    ok|partial|failed)
+      _fsm_valid=0 ;;
+  esac
+  if [[ "$_fsm_valid" -eq 0 ]]; then
+    printf 'pmctl dispatch run: invalid transition %s->%s\n' "$from_state" "$state" >&2
+    return 1
+  fi
   op_id="op-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
 
   pmctl_dispatch_write_run "$repo_root" "$adapter" "$state" "$exit_code" "$model" \
     "$brief_file" "$work_dir" "$trace_path" "$run_id" "$created_ts" "$op_id" || return $?
   pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" \
-    "$state" "$exit_code" "$adapter" "$note" "$op_id" || return $?
+    "$state" "$exit_code" "$adapter" "$note" "$op_id" "$from_state" || return $?
 }
 
 pmctl_dispatch_run() {
@@ -357,9 +377,9 @@ pmctl_dispatch_run() {
 
   if [[ "$print_cmd" -eq 0 ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" || return $?
+      "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "" || return $?
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "dispatched" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" || return $?
+      "dispatched" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "pending" || return $?
   fi
 
   # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
@@ -396,13 +416,13 @@ pmctl_dispatch_run() {
   fi
 
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" || return $?
+    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "dispatched" || return $?
 
   # 6. A failed adapter run short-circuits: propagate its exit verbatim. The
   #    adapter already wrote forensic trace/stderr for post-mortem.
   if [[ "$exit_code" -ne 0 ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" || return $?
+      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
     return "$exit_code"
   fi
 
@@ -416,12 +436,12 @@ pmctl_dispatch_run() {
   if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" || return $?
+      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
     return 1
   fi
 
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" || return $?
+    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
 
   return "$exit_code"
 }

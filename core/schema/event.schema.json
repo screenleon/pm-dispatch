@@ -53,5 +53,26 @@
       "additionalProperties": true
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "kind": {
+        "enum": [
+          "run.pending",
+          "run.dispatched",
+          "run.verifying",
+          "run.completed",
+          "run.failed"
+        ]
+      }
+    },
+    "required": ["kind"]
+  },
+  "then": {
+    "properties": {
+      "payload": {
+        "required": ["run_id", "state"]
+      }
+    }
+  }
 }
