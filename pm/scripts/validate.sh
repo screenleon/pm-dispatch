@@ -122,7 +122,7 @@ function norm_area(s) {
 
 function valid_area_token(s) {
   s = norm_area(s)
-  return (s == "arch" || s == "backend" || s == "frontend" || s == "content" || s == "ops" || s == "connector" || s == "DX" || s == "product" || s == "ux" || s == "process" || s == "memory" || s == "token" || s == "test" || s == "gate" || s == "portability" || s == "docs" || s == "install" || s == "release" || s == "reuse" || s == "security")
+  return (s == "arch" || s == "backend" || s == "frontend" || s == "content" || s == "ops" || s == "connector" || s == "DX" || s == "product" || s == "ux" || s == "process" || s == "memory" || s == "token" || s == "test" || s == "gate" || s == "portability" || s == "docs" || s == "install" || s == "release" || s == "reuse" || s == "security" || s == "schema" || s == "hook")
 }
 
 function emit(code, ctx) {

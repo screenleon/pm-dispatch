@@ -101,6 +101,7 @@ run_validate_case "validate bad-dup-id" 1 "E-DUP-ID" "$fixtures/bad-dup-id/BACKL
 run_validate_case "validate bad-status-enum" 1 "E-STATUS-ENUM" "$fixtures/bad-status-enum/BACKLOG.md"
 run_validate_case "validate bad-area-enum" 1 "E-AREA-ENUM" "$fixtures/bad-area-enum/BACKLOG.md"
 run_validate_case "validate good-area-alias-documentation" 0 "" "$fixtures/good-area-alias-documentation/BACKLOG.md"
+run_validate_case "validate good-area-schema-hook" 0 "" "$fixtures/good-area-schema-hook/BACKLOG.md"
 run_validate_case "validate bad-date-format" 1 "E-DATE-FORMAT" "$fixtures/bad-date-format/BACKLOG.md"
 run_validate_case "validate bad-refs-prefix" 1 "E-REFS-PREFIX" "$fixtures/bad-refs-prefix/BACKLOG.md"
 run_validate_case "validate bad-tags-format" 1 "E-TAGS-FORMAT" "$fixtures/bad-tags-format/BACKLOG.md"
