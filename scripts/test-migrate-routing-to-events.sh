@@ -323,6 +323,74 @@ test_invalid_session_prefix_skips() {
   fi
 }
 
+
+# Behavior: --cwd without a following path argument exits 2 with usage message.
+test_cwd_missing_value_exits_error() {
+  local name="migrate-to-events: --cwd missing value exits 2"
+  should_run "$name" || return 0
+  local out status
+  out="$("$MIGRATOR" --cwd 2>&1)" && status=$? || status=$?
+  if [[ "$status" == "2" ]] && [[ "$out" == *"--cwd requires a path"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+# Behavior: An unknown flag exits 2 with an error message naming the flag.
+test_unknown_flag_exits_error() {
+  local name="migrate-to-events: unknown flag exits 2"
+  should_run "$name" || return 0
+  local out status
+  out="$("$MIGRATOR" --totally-unknown-flag 2>&1)" && status=$? || status=$?
+  if [[ "$status" == "2" ]] && [[ "$out" == *"unknown flag"* ]] && [[ "$out" == *"--totally-unknown-flag"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+# Behavior: When CLAUDE_ROUTING_LOG_DIR is set (and CLAUDE_ROUTING_LOG_PATH is not),
+# the migrator reads routing_log.md from that directory.
+test_routing_log_dir_env() {
+  local name="migrate-to-events: CLAUDE_ROUTING_LOG_DIR selects routing_log.md"
+  should_run "$name" || return 0
+  local dir path store out
+  dir="$tmp_root/log-dir-env"
+  path="$dir/routing_log.md"
+  store="$dir/state"
+  write_routing_log "$path" "$(fixture_two_rows)"
+  out="$(CLAUDE_ROUTING_LOG_DIR="$dir" PM_DISPATCH_STATE_ROOT="$store" "$MIGRATOR" --cwd "$REPO_ROOT" 2>&1)"
+  if [[ "$(event_count "$store")" == "2" ]] && [[ "$out" == *"migrated 2 event(s)"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "count=$(event_count "$store") out=$out"
+  fi
+}
+
+# Behavior: When neither CLAUDE_ROUTING_LOG_PATH nor CLAUDE_ROUTING_LOG_DIR is set,
+# the migrator discovers routing_log.md via find_memory_dir relative to --cwd.
+test_default_memory_dir_discovery() {
+  local name="migrate-to-events: default find_memory_dir discovery"
+  should_run "$name" || return 0
+  local dir cwd store out config_dir memory_dir encoded_cwd
+  dir="$tmp_root/memory-discovery"
+  cwd="$dir/myproject"
+  store="$dir/state"
+  config_dir="$dir/claude-config"
+  # encode_path: replace leading / with - and all / with -
+  encoded_cwd="-$(printf '%s' "${cwd#/}" | tr '/' '-')"
+  memory_dir="$config_dir/projects/$encoded_cwd/memory"
+  mkdir -p "$cwd" "$memory_dir"
+  write_routing_log "$memory_dir/routing_log.md" "$(fixture_two_rows)"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" CLAUDE_CONFIG_DIR="$config_dir" "$MIGRATOR" --cwd "$cwd" 2>&1)"
+  if [[ "$(event_count "$store")" == "2" ]] && [[ "$out" == *"migrated 2 event(s)"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "count=$(event_count "$store") out=$out"
+  fi
+}
+
 test_happy_path
 test_idempotent
 test_unknown_kind_skips
@@ -335,5 +403,9 @@ test_same_second_idempotent
 test_malformed_json_skips
 test_invalid_timestamp_skips
 test_invalid_session_prefix_skips
+test_cwd_missing_value_exits_error
+test_unknown_flag_exits_error
+test_routing_log_dir_env
+test_default_memory_dir_discovery
 
 th_summary
