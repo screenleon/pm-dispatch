@@ -22,13 +22,19 @@ th_init "$@"
 # th_init silently ignores unknown flags, so --group passes through without error.
 GROUP=""
 _ti_prev=""
+_ti_group_seen=0
 for _ti_a in "$@"; do
-  if [[ "$_ti_prev" == "--group" ]]; then GROUP="$_ti_a"
-  elif [[ "$_ti_a" == "--group="* ]]; then GROUP="${_ti_a#--group=}"
+  if [[ "$_ti_prev" == "--group" ]]; then GROUP="$_ti_a"; _ti_group_seen=1
+  elif [[ "$_ti_a" == "--group="* ]]; then GROUP="${_ti_a#--group=}"; _ti_group_seen=1
+  elif [[ "$_ti_a" == "--group" ]]; then _ti_group_seen=1
   fi
   _ti_prev="$_ti_a"
 done
-unset _ti_a _ti_prev
+if [[ "$_ti_group_seen" -eq 1 && -z "$GROUP" ]]; then
+  printf 'test-install: --group requires a value (core or hooks)\n' >&2
+  exit 2
+fi
+unset _ti_a _ti_prev _ti_group_seen
 case "$GROUP" in
   ""|core|hooks) ;;
   *) printf 'test-install: --group must be core or hooks (got: %s)\n' "$GROUP" >&2; exit 2 ;;

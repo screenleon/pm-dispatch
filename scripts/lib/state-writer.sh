@@ -122,6 +122,24 @@ _sw_validate_compacted_json_line() {
   return "$rc"
 }
 
+# run_transition_valid from_state to_state
+# Returns 0 if the transition is allowed by the Run FSM, 1 otherwise.
+# This is the canonical policy source; pmctl-dispatch.sh delegates here.
+run_transition_valid() {
+  local from_state="${1:-}" to_state="${2:-}"
+  case "$from_state" in
+    ""|none)
+      [[ "$to_state" == "pending" ]] && return 0 ;;
+    pending)
+      [[ "$to_state" == "dispatched" || "$to_state" == "failed" ]] && return 0 ;;
+    dispatched)
+      [[ "$to_state" == "verifying" || "$to_state" == "failed" ]] && return 0 ;;
+    verifying)
+      [[ "$to_state" == "ok" || "$to_state" == "partial" || "$to_state" == "failed" ]] && return 0 ;;
+  esac
+  return 1
+}
+
 _sw_write_repo_json() {
   local proj_dir="$1" repo_path repo_name git_common_dir cygpath_alias tmp ts
   if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
@@ -141,7 +159,10 @@ _sw_write_repo_json() {
     cygpath_alias="$(cygpath -m "$repo_path" 2>/dev/null || true)"
   fi
   ts="${_SW_CREATED_TS_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)}"
-  tmp="$(mktemp "$proj_dir/.repo-XXXXXX.json")" || return 0
+  tmp="$(mktemp "$proj_dir/.repo-XXXXXX.json")" || {
+    _sw_log_error "_sw_write_repo_json: mktemp failed: $proj_dir"
+    return 0
+  }
   if jq -cn \
     --arg repo_path "$repo_path" \
     --arg repo_name "$repo_name" \
@@ -152,10 +173,26 @@ _sw_write_repo_json() {
      | if $git_common_dir == "" then del(.git_common_dir) else . end
      | if $cygpath_alias != "" then . + {cygpath_alias:$cygpath_alias} else . end' \
     > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$proj_dir/repo.json" 2>/dev/null || rm -f "$tmp"
+    mv -f "$tmp" "$proj_dir/repo.json" 2>/dev/null || {
+      _sw_log_error "_sw_write_repo_json: mv failed: $proj_dir/repo.json"
+      rm -f "$tmp"
+    }
   else
+    _sw_log_error "_sw_write_repo_json: jq failed for $proj_dir"
     rm -f "$tmp"
   fi
+  return 0
+}
+
+# state_project_identity_write
+# Public entry point: write (or refresh) repo.json for the current project partition.
+# Best-effort — always returns 0. Callers that need to inspect or refresh the
+# partition identity (e.g. after a worktree move) can call this directly without
+# going through state_store_init.
+state_project_identity_write() {
+  local proj_dir
+  proj_dir="$(_sw_project_dir)" || return 0
+  _sw_write_repo_json "$proj_dir"
   return 0
 }
 
@@ -293,13 +330,13 @@ sw_build_run_json() {
 }
 
 task_upsert() {
+  local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
+  if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
+    _sw_log_error "task_upsert: invalid task_id='${task_id}'"
+    return 0
+  fi
+  state_store_init || return 1
   {
-    local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
-    if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
-      _sw_log_error "task_upsert: invalid task_id='${task_id}'"
-      return 0
-    fi
-    state_store_init || return 1
     proj_dir="$(_sw_project_dir)"
     tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX")" || {
       _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"

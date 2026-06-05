@@ -94,7 +94,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-310 | ✅ closed 2026-06-04 | **[arch: transactional Run+Event write + Run FSM lifecycle]** pmctl-owned record-dispatch：Run+Event 共享 operation-id + 冪等 key；對帳不變量「每個 terminal Run 恰一 terminal Event」；實現 run FSM（pending→dispatched→verifying→ok/partial/failed），每轉移 emit Event（非只寫終態）。見 §10.A2/A3。 | arch | 2026-06-03 | pr:#228 | P2 | design |
 | CC-311 | ✅ closed 2026-06-05 | **[arch: state store VERSION gating + migration]** `state_store_init` 只在 VERSION 不存在時建立；存在且不支援版本→fail loud + migration path；**不得寫回降級**（現況 `state-writer.sh:85-90` 會把非 1 寫回 1）。見 §10.A1。 | arch | 2026-06-03 | pr:#230 | P2 | design |
 | CC-312 | ✅ closed 2026-06-05 | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code；finished_ts 延後處理；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | pr:#230 | P2 | design |
-| CC-329 | 🔵 active | **[arch: FSM transition table — extract to runtime-accessible policy helper]** `pmctl_dispatch_write_transition` 的 from→to 驗證邏輯內嵌於 runtime helper，caller 可繞過；未來新增 state consumer 前應將 transition table 抽成 policy helper（讀 `core/policy/run-states.yaml` 或同結構 bash array），所有驗證點指向唯一真相源。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer）。 | arch | 2026-06-05 | — | P3 | design |
+| CC-329 | ✅ closed 2026-06-05 | **[arch: FSM transition table — extract to runtime-accessible policy helper]** `pmctl_dispatch_write_transition` 的 from→to 驗證邏輯內嵌於 runtime helper，caller 可繞過；未來新增 state consumer 前應將 transition table 抽成 policy helper（讀 `core/policy/run-states.yaml` 或同結構 bash array），所有驗證點指向唯一真相源。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer）。 | arch | 2026-06-05 | pr:#232 | P3 | design |
 | CC-330 | ✅ closed 2026-06-05 | **[fix: state_store_init — propagate layout mkdir failure loud]** `state_store_init` 的 project layout 建立（`mkdir -p tasks/ reviews/ …`）仍靜默吞掉失敗；與 VERSION 驗證的 fail-loud 語意不一致，存在 VERSION=1 但 `proj_dir` 目錄建立失敗時 `state_store_init` 仍回 0 的缺口。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer low）。 | arch | 2026-06-05 | pr:#232 | P3 | hygiene |
 | CC-331 | ✅ closed 2026-06-05 | **[perf/ci: test-install CI 並行化 + jq batch + stub-based verify 架構]** `test-install.sh` 加 `--group core/hooks`，CI 拆成兩個並行 job（core 34 + hooks 39 tests）；`install_dispatch_allowlist` 從每 entry 2 jq call 降至 1 read+1 write batch；`install.sh --verify` 加 `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫；`test_verify_flag_runs_preflights` 改為動態 stub（衍生自 `run-all-tests.sh --list`，自動同步 suite 清單）取代 escape-hatch bypass，同時重設 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0`；CI 移除 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1`。 | ops/test | 2026-06-05 | pr:#231 | P2 | hygiene |
 | CC-313 | ✅ closed 2026-06-05 | **[arch: project partition identity — repo.json + worktree/aliases + no-global]** 首次使用寫 `repo.json`（git top-level / common-dir / worktree path / normalized+cygpath aliases）；load-bearing project 寫入**拒絕** fallback 到 `global`（除非顯式）。見 §10.A5。 | arch | 2026-06-03 | pr:#232 | P2 | design |
@@ -1668,19 +1668,17 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Cross-link**: [[CC-293]]（config/default 解析），[[CC-321]]（PM_HOOK_* 重命名同脈絡）.
 
-## CC-329 — arch: FSM transition table — extract to runtime-accessible policy helper
+## CC-329 — arch: FSM transition table — extract to runtime-accessible policy helper ✅ 2026-06-05
 
-**Status**: 🔵 active
+**See**: pr:#232
+
+**Status**: ✅ closed 2026-06-05
 
 **Source**: CC-311/312 PR #230 gate advisory — critic + architecture-reviewer（medium）
 
-**Problem**: `pmctl_dispatch_write_transition` 的 from→to FSM 驗證內嵌於 runtime helper（`scripts/lib/pmctl-dispatch.sh`）。任何直接呼叫 helper 的 caller 可以繞過驗證，而且 policy 與 execution 混合在同一 function 中，未來新增 state consumer 時缺乏明確的 single source of truth。
+**Implemented**: Added `run_transition_valid(from_state, to_state)` to `state-writer.sh` as the canonical policy source. `pmctl_dispatch_write_transition` now calls `run_transition_valid` instead of maintaining an inline transition table. `pmctl_dispatch_ensure_state_writer` is called at the top of `pmctl_dispatch_write_transition` to ensure the helper is loaded before use.
 
-**Plan**: 把 FSM transition table 抽成一個 runtime-accessible policy helper（讀 `core/policy/run-states.yaml` 或對等 bash 宣告）；`pmctl_dispatch_write_transition` 和未來的 consumer 都指向該 helper 做驗證，而非各自維護一份 inline case statement。
-
-**Constraint**: 在新增下一個 state consumer 之前完成（避免擴散 inline table）。
-
-**Cross-link**: [[CC-311]], [[CC-312]], [[CC-313]].
+**Cross-link**: [[CC-311]], [[CC-312]], [[CC-313]], [[CC-330]].
 
 ## CC-330 — fix: state_store_init — propagate layout mkdir failure loud ✅ 2026-06-05
 
