@@ -53,5 +53,33 @@
       "additionalProperties": true
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "kind": {
+        "enum": [
+          "run.pending",
+          "run.dispatched",
+          "run.verifying",
+          "run.completed",
+          "run.failed"
+        ]
+      }
+    },
+    "required": ["kind"]
+  },
+  "then": {
+    "required": ["payload"],
+    "properties": {
+      "payload": {
+        "required": ["run_id", "state", "from_state", "to_state"],
+        "properties": {
+          "run_id": {"type": "string"},
+          "state": {"type": "string"},
+          "from_state": {"type": "string"},
+          "to_state": {"type": "string"}
+        }
+      }
+    }
+  }
 }

@@ -123,20 +123,26 @@ _sw_validate_compacted_json_line() {
 }
 
 state_store_init() {
-  {
-    local store_root proj_dir version_file version_value
-    store_root="$(_sw_store_root)"
-    proj_dir="$(_sw_project_dir)"
-    mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
-      "$proj_dir/context-packs" "$proj_dir/archive" || _sw_log_error "mkdir failed: $proj_dir"
-    version_file="$store_root/VERSION"
-    version_value=""
-    [[ -f "$version_file" ]] && version_value="$(<"$version_file")"
+  local store_root proj_dir version_file version_value
+  store_root="$(_sw_store_root)"
+  version_file="$store_root/VERSION"
+  # Version compatibility check before any layout creation — unsupported stores
+  # must be observed but not mutated.
+  if [[ -f "$version_file" ]]; then
+    version_value="$(<"$version_file")"
     if [[ "$version_value" != "1" ]]; then
-      mkdir -p "$store_root" || _sw_log_error "mkdir failed: $store_root"
-      printf '1\n' > "$version_file" || _sw_log_error "VERSION write failed: $version_file"
+      printf 'state-writer: unsupported store version %s (expected 1); run '\''pmctl state migrate'\''\n' "$version_value" >&2
+      return 1
     fi
-  } 2>/dev/null || true
+  fi
+  # Only reach here on first-time init (VERSION absent) or VERSION == "1".
+  proj_dir="$(_sw_project_dir)"
+  { mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
+      "$proj_dir/context-packs" "$proj_dir/archive"; } 2>/dev/null || true
+  if [[ ! -f "$version_file" ]]; then
+    mkdir -p "$store_root" || { printf 'state-writer: mkdir failed: %s\n' "$store_root" >&2; return 1; }
+    printf '1\n' > "$version_file" || { printf 'state-writer: VERSION write failed: %s\n' "$version_file" >&2; return 1; }
+  fi
   return 0
 }
 
@@ -149,7 +155,7 @@ _runs_append_inner() {
 
 runs_append() {
   local json_line="${1:-}" proj_dir rc=0
-  state_store_init
+  state_store_init || return $?
   proj_dir="$(_sw_project_dir)"
   ( cd "$proj_dir" && serialize_with_lock "$proj_dir/runs" _runs_append_inner "$json_line" ) || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -168,7 +174,7 @@ _events_append_inner() {
 
 events_append() {
   local json_line="${1:-}" proj_dir rc=0
-  state_store_init
+  state_store_init || return $?
   proj_dir="$(_sw_project_dir)"
   ( cd "$proj_dir" && serialize_with_lock "$proj_dir/events" _events_append_inner "$json_line" ) || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -242,7 +248,7 @@ task_upsert() {
       _sw_log_error "task_upsert: invalid task_id='${task_id}'"
       return 0
     fi
-    state_store_init
+    state_store_init || return 1
     proj_dir="$(_sw_project_dir)"
     tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX")" || {
       _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"

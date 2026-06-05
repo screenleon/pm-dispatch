@@ -92,8 +92,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-298 | ✅ closed 2026-06-02 | **[arch: 統一 brief 落點 + 產物檔名去 runtime 化]** runtime 是 adapter 的事（CC-291/CC-233 同一界線），**資料產物不該綁 runtime 名**。現況半一致：dispatch brief 已 runtime-agnostic（兩 adapter 都吃 `--brief-file`，實際 `/tmp/brief-*.md`）✓；但 pr-gate had a runtime-named brief directory（`scripts/pr-gate.sh:360`）+ runtime-tokenized claude brief filenames（L495/L684）✗；`.agent-trace/codex-<ts>.jsonl`/`claude-<ts>` trace 檔名也帶 runtime（消費端 `latest.*` 已 agnostic）✗。目標：(1) brief 統一到**一個 runtime-agnostic 落點**，codex/claude 都讀同一處；(2) 生成的資料產物（brief / gate result / reviewer output）檔名去掉 runtime token，**改在檔案內容**（frontmatter/header）記錄哪個 model 執行。Scope 邊界：`adapters/codex/`、`adapters/claude/` 腳本目錄本就 runtime-specific（它們**是** adapter，CC-233 允許）——不在此列；executor-internal trace **格式**本就 runtime-specific（codex JSONL vs claude JSON），trace 檔名是否一併中性化待議（消費端已用 `latest.*`）。可考慮把 CC-233 layer enforcer 擴及「scripts/ 內 runtime-named 資料路徑」做防回歸。Origin user 2026-06-01。關聯 [[CC-291]]、[[CC-233]]、[[CC-289]]、[[CC-297]]。 | arch | 2026-06-01 | pr:#216 | P2 | design |
 | CC-309 | ✅ closed 2026-06-04 | **[arch: single-writer — route Run/Event writes through pmctl]** pmctl 成唯一 machine-state writer：adapter 的 `sw_append_dispatch_run` 直接寫上收到 `pmctl dispatch run`；guard deny/warn 經 pmctl emit Event；writer 邊界拒 newline/NUL + jq-compact + schema-validate；寫失敗變響（非靜默 best-effort）；反轉 `test-layer-boundaries.sh` 禁止 adapter/hook 寫 state（延伸 [[CC-306]]）。v0.4.0 地基 Phase 1。見 `docs/architecture/v0.4.0-state-first-foundation.md` §3/§10.B。 | arch | 2026-06-03 | pr:#223 | P2 | design |
 | CC-310 | ✅ closed 2026-06-04 | **[arch: transactional Run+Event write + Run FSM lifecycle]** pmctl-owned record-dispatch：Run+Event 共享 operation-id + 冪等 key；對帳不變量「每個 terminal Run 恰一 terminal Event」；實現 run FSM（pending→dispatched→verifying→ok/partial/failed），每轉移 emit Event（非只寫終態）。見 §10.A2/A3。 | arch | 2026-06-03 | pr:#228 | P2 | design |
-| CC-311 | 🔵 active | **[arch: state store VERSION gating + migration]** `state_store_init` 只在 VERSION 不存在時建立；存在且不支援版本→fail loud + migration path；**不得寫回降級**（現況 `state-writer.sh:85-90` 會把非 1 寫回 1）。見 §10.A1。 | arch | 2026-06-03 | — | P2 | design |
-| CC-312 | 🔵 active | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code/finished_ts；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | — | P2 | design |
+| CC-311 | ✅ closed 2026-06-05 | **[arch: state store VERSION gating + migration]** `state_store_init` 只在 VERSION 不存在時建立；存在且不支援版本→fail loud + migration path；**不得寫回降級**（現況 `state-writer.sh:85-90` 會把非 1 寫回 1）。見 §10.A1。 | arch | 2026-06-03 | pr:#230 | P2 | design |
+| CC-312 | ✅ closed 2026-06-05 | **[arch: state schema tightening + FSM-transition validation]** dispatch-run Run 需 require trace_path/working_dir/exit_code；finished_ts 延後處理；Event per-kind payload 契約（from_state/to_state/run_id 或 task_id）；寫入時對 run/task FSM 驗 from→to 轉移。見 §10.A4。 | arch | 2026-06-03 | pr:#230 | P2 | design |
+| CC-329 | 🔵 active | **[arch: FSM transition table — extract to runtime-accessible policy helper]** `pmctl_dispatch_write_transition` 的 from→to 驗證邏輯內嵌於 runtime helper，caller 可繞過；未來新增 state consumer 前應將 transition table 抽成 policy helper（讀 `core/policy/run-states.yaml` 或同結構 bash array），所有驗證點指向唯一真相源。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer）。 | arch | 2026-06-05 | — | P3 | design |
+| CC-330 | 🔵 active | **[fix: state_store_init — propagate layout mkdir failure loud]** `state_store_init` 的 project layout 建立（`mkdir -p tasks/ reviews/ …`）仍靜默吞掉失敗；與 VERSION 驗證的 fail-loud 語意不一致，存在 VERSION=1 但 `proj_dir` 目錄建立失敗時 `state_store_init` 仍回 0 的缺口。見 CC-311/312 PR #230 gate advisory（critic + arch-reviewer low）。 | arch | 2026-06-05 | — | P3 | hygiene |
 | CC-313 | 🔵 active | **[arch: project partition identity — repo.json + worktree/aliases + no-global]** 首次使用寫 `repo.json`（git top-level / common-dir / worktree path / normalized+cygpath aliases）；load-bearing project 寫入**拒絕** fallback 到 `global`（除非顯式）。見 §10.A5。 | arch | 2026-06-03 | — | P2 | design |
 | CC-314 | 🔵 active | **[arch: routing_log → events.jsonl migration + deprecate machine-write]** 新增 routing_log→events 遷移 + kind 映射（bash-dispatch/agent-dispatch → run.dispatched 等）+ subject-id 策略；停掉 `hook-routing-log.sh` 機器寫；舊 `migrate-routing-log.sh` 降為 legacy-markdown cleanup。見 §10.A6（D3）。 | arch | 2026-06-03 | — | P2 | design |
 | CC-315 | 🔵 active | **[arch: state read/query contract + pmctl trace]** pmctl 提供 by id/task/kind/time-window 讀取；定義 active+archive 讀取語義（排序 / 壞行容忍 / time-window / 索引 vs 串流）；`pmctl trace` 為第一個 state consumer。見 §3.7（D6）。 | arch | 2026-06-03 | — | P2 | design |
@@ -1380,7 +1382,9 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Detail**: scoping doc §9 D4, §10.A2/A3. Related: [[CC-309]], [[CC-312]].
 
-## CC-311 — state store VERSION gating + migration
+## CC-311 — state store VERSION gating + migration ✅ 2026-06-05
+
+**See**: pr:#230
 
 **Problem**: `state_store_init` writes `1` back to `$STORE/VERSION` whenever it is not `1` (`state-writer.sh:85-90`); an older binary touching a future v2 store silently downgrades it.
 
@@ -1388,9 +1392,13 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 
 **Detail**: scoping doc §10.A1.
 
-## CC-312 — state schema tightening + per-event payload & FSM-transition validation
+## CC-312 — state schema tightening + per-event payload & FSM-transition validation ✅ 2026-06-05
+
+**See**: pr:#230
 
 **Problem**: `run.schema.json` requires only id/schema_version/task_id/executor/state/created_ts — `trace_path`/`working_dir`/`exit_code`/`finished_ts` are optional (`core/schema/run.schema.json:22-59`), and Event `payload` is entirely loose (`core/schema/event.schema.json:18-47`), so a reader cannot tell `ok` from `partial` or validate a `from→to` transition.
+
+**Scope note**: `finished_ts` was descoped from this ticket — `sw_build_run_json` does not write it. Requiring it in the schema would break all existing Run rows. Deferred to a future schema ticket.
 
 **Plan**: a stricter dispatch-run shape (require the trace fields) + per-`kind` Event payload contracts carrying `from_state`/`to_state`/`run_id` or `task_id`, validated against the run/task FSMs on write. (Enum parity is already tested in `test-core-schemas.sh:171-218`; this adds transition + payload validation.)
 
@@ -1654,3 +1662,29 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 **PR-Gate**: full tier GO（advisory 於最終 commit 37ce2f6 修清；qa / security / risk 全 pass）
 
 **Cross-link**: [[CC-293]]（config/default 解析），[[CC-321]]（PM_HOOK_* 重命名同脈絡）.
+
+## CC-329 — arch: FSM transition table — extract to runtime-accessible policy helper
+
+**Status**: 🔵 active
+
+**Source**: CC-311/312 PR #230 gate advisory — critic + architecture-reviewer（medium）
+
+**Problem**: `pmctl_dispatch_write_transition` 的 from→to FSM 驗證內嵌於 runtime helper（`scripts/lib/pmctl-dispatch.sh`）。任何直接呼叫 helper 的 caller 可以繞過驗證，而且 policy 與 execution 混合在同一 function 中，未來新增 state consumer 時缺乏明確的 single source of truth。
+
+**Plan**: 把 FSM transition table 抽成一個 runtime-accessible policy helper（讀 `core/policy/run-states.yaml` 或對等 bash 宣告）；`pmctl_dispatch_write_transition` 和未來的 consumer 都指向該 helper 做驗證，而非各自維護一份 inline case statement。
+
+**Constraint**: 在新增下一個 state consumer 之前完成（避免擴散 inline table）。
+
+**Cross-link**: [[CC-311]], [[CC-312]], [[CC-313]].
+
+## CC-330 — fix: state_store_init — propagate layout mkdir failure loud
+
+**Status**: 🔵 active
+
+**Source**: CC-311/312 PR #230 gate advisory — critic + architecture-reviewer（low）
+
+**Problem**: `state_store_init` 在 VERSION check 通過後建立 project layout（`mkdir -p tasks/ reviews/ …`）仍用 `2>/dev/null || true` 靜默吞掉失敗。這與 VERSION 不支援時的 fail-loud 語意不一致：`state_store_init` 在 VERSION=1 但 `proj_dir` 目錄建立失敗時仍回 0，而後續的 `runs_append`/`events_append` 會因目錄不存在而失敗，且 error 難以追溯至 `state_store_init`。
+
+**Plan**: 把 layout `mkdir -p` 的失敗從 `|| true` 改為 fail loud（stderr + return 1），與 VERSION 驗證 branch 的失敗語意對齊。
+
+**Cross-link**: [[CC-311]], [[CC-312]].
