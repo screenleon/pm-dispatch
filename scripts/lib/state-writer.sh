@@ -78,10 +78,9 @@ _sw_project_dir() {
 # Rotation is best-effort maintenance, not a canonical state write: it must
 # never fail the Run/Event append (a missing `gzip` binary must not break the
 # substrate). So when rotation cannot proceed we keep the write succeeding, but
-# the degradation is surfaced LOUDLY (stderr + state-writer.err), never silent —
-# operators see that bounded growth has stopped. (D8 loud-fail applies to the
-# canonical append; rotation is an explicitly best-effort op, like the D5
-# telemetry sidecars.)
+# the degradation is surfaced LOUDLY (stderr + state-writer.err), never silent,
+# so operators see that bounded growth has stopped. The canonical append still
+# fails loudly on its own errors; only rotation is best-effort.
 _sw_rotate_warn() {
   printf 'state-writer: %s\n' "${1:-}" >&2
   _sw_log_error "${1:-}"

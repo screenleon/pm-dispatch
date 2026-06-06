@@ -46,8 +46,8 @@ project_partition:
       lock: runs.lock
       rotation:
         threshold_bytes: 52428800   # 50 MB (overridable via PM_DISPATCH_ROTATE_MAX_BYTES)
-        threshold_days: 90          # CC-316: deferred (byte threshold ships first); see scoping §10.B
-        # CC-316: monotonic per-month segment suffix avoids same-month collision.
+        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
+        # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
         archive_path: archive/runs-$YYYYMM-$NNNN.jsonl.gz
 
     - path: "runs.lock"
@@ -61,8 +61,8 @@ project_partition:
       lock: events.lock
       rotation:
         threshold_bytes: 52428800   # overridable via PM_DISPATCH_ROTATE_MAX_BYTES
-        threshold_days: 90          # CC-316: deferred (byte threshold ships first); see scoping §10.B
-        # CC-316: monotonic per-month segment suffix avoids same-month collision.
+        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
+        # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
         archive_path: archive/events-$YYYYMM-$NNNN.jsonl.gz
 
     - path: "events.lock"
@@ -95,7 +95,7 @@ project_partition:
       retention: "keep-last-5-per-task"
 
     - path: "archive/"
-      description: "Rotated JSONL segments from runs.jsonl / events.jsonl. Gzipped. CC-317 owns a golden parity test binding these patterns to the writer (scoping §10.B 'layout.yaml as source of truth')."
+      description: "Rotated JSONL segments from runs.jsonl / events.jsonl. Gzipped."
       file_patterns:
         - "runs-$YYYYMM-$NNNN.jsonl.gz"
         - "events-$YYYYMM-$NNNN.jsonl.gz"

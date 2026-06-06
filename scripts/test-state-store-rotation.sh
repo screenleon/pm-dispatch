@@ -39,7 +39,7 @@ run_json() {
   jq -cn \
     --arg id "$id" \
     --arg created_ts "2026-06-06T00:00:${sec}Z" \
-    '{schema_version:1,id:$id,task_id:"CC-316",executor:"codex",state:"ok",working_dir:"/tmp/test",trace_path:"/tmp/test.jsonl",exit_code:0,created_ts:$created_ts}'
+    '{schema_version:1,id:$id,task_id:"TASK-1",executor:"codex",state:"ok",working_dir:"/tmp/test",trace_path:"/tmp/test.jsonl",exit_code:0,created_ts:$created_ts}'
 }
 
 append_event_n() {
@@ -178,7 +178,7 @@ case_rotation_gzip_integrity() {
 }
 
 case_rotation_reader_integration() {
-  # Behavior: pmctl trace tail merges archived segments with the active file (CC-315 ↔ CC-316).
+  # Behavior: pmctl trace tail merges archived segments with the active file.
   # Steps:
   #   1. Append two events with a tiny threshold so row 1 is archived and row 2 stays active.
   #   2. Run `pmctl trace tail --all --json` and assert both rows are returned in ts order.
