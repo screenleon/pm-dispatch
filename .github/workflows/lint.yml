@@ -152,6 +152,7 @@ jobs:
             test-setup-project.sh
             test-skill-refine.sh
             test-state-store.sh
+            test-state-store-rotation.sh
             test-uninstall.sh
             test-usage-tracker.sh
             test-usage-weekly.sh
@@ -315,6 +316,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: state store regression suite
         run: bash scripts/test-state-store.sh
+
+  test-state-store-rotation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: state store rotation regression suite
+        run: bash scripts/test-state-store-rotation.sh
 
   test-archive-closed-backlog:
     runs-on: ubuntu-latest

@@ -3,7 +3,7 @@
 
 SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/portable.sh
-if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function ]]; then
+if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t file_size_bytes 2>/dev/null)" != function ]]; then
   _SW_SHELL_FLAGS="$-"
   _SW_PIPEFAIL=0
   set -o | grep -qE '^pipefail[[:space:]]+on$' && _SW_PIPEFAIL=1
@@ -72,6 +72,122 @@ _sw_project_dir() {
   {
     printf '%s/projects/%s/\n' "$(_sw_store_root)" "$(_sw_project_key)"
   } 2>/dev/null || true
+  return 0
+}
+
+_sw_rotate_max_bytes() {
+  local raw="${PM_DISPATCH_ROTATE_MAX_BYTES:-}" default=52428800
+  if [[ "$raw" =~ ^[0-9]+$ ]] && (( 10#$raw > 0 )); then
+    printf '%s\n' "$((10#$raw))"
+  else
+    printf '%s\n' "$default"
+  fi
+}
+
+_sw_next_archive_path() {
+  local entity="$1" period max=0 path base segment n
+  period="$(date -u +%Y%m 2>/dev/null || date +%Y%m)"
+  for path in "archive/${entity}-${period}-"*.jsonl.gz; do
+    [[ -e "$path" ]] || continue
+    base="${path##*/}"
+    segment="${base#"${entity}-${period}-"}"
+    segment="${segment%.jsonl.gz}"
+    if [[ "$segment" =~ ^[0-9]{4}$ ]]; then
+      n=$((10#$segment))
+      (( n > max )) && max="$n"
+    fi
+  done
+  printf 'archive/%s-%s-%04d.jsonl.gz\n' "$entity" "$period" "$((max + 1))"
+}
+
+_sw_clean_stale_archive_tmp() {
+  local entity="$1" tmp
+  for tmp in "archive/${entity}-"*.jsonl.gz.tmp; do
+    [[ -e "$tmp" ]] || continue
+    rm -f -- "$tmp" 2>/dev/null || _sw_log_error "state rotation: failed to remove stale tmp: $tmp"
+  done
+  return 0
+}
+
+_sw_archive_rotating_file() {
+  local entity="$1" rotating archive_path tmp_path
+  rotating="${entity}.jsonl.rotating"
+  [[ -f "$rotating" ]] || return 0
+  archive_path="$(_sw_next_archive_path "$entity")"
+  tmp_path="${archive_path}.tmp"
+  rm -f -- "$tmp_path" 2>/dev/null || true
+  if ! gzip -c "$rotating" > "$tmp_path" 2>/dev/null; then
+    _sw_log_error "state rotation: gzip failed for $rotating"
+    rm -f -- "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f -- "$tmp_path" "$archive_path" 2>/dev/null; then
+    _sw_log_error "state rotation: archive publish failed: $archive_path"
+    rm -f -- "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+  if ! rm -f -- "$rotating" 2>/dev/null; then
+    _sw_log_error "state rotation: failed to remove rotating file: $rotating"
+    return 1
+  fi
+  return 0
+}
+
+_sw_restore_rotating_active() {
+  local entity="$1" active rotating
+  active="${entity}.jsonl"
+  rotating="${entity}.jsonl.rotating"
+  [[ -f "$rotating" ]] || return 1
+  if [[ -e "$active" && -s "$active" ]]; then
+    return 1
+  fi
+  rm -f -- "$active" 2>/dev/null || true
+  mv -f -- "$rotating" "$active" 2>/dev/null
+}
+
+_sw_rotate_entity_if_needed() {
+  local entity="$1" active rotating
+  local threshold size
+  active="${entity}.jsonl"
+  rotating="${entity}.jsonl.rotating"
+
+  threshold="$(_sw_rotate_max_bytes)"
+  if [[ -f "$rotating" || -f "$active" ]]; then
+    if ! command -v gzip >/dev/null 2>&1; then
+      if [[ -f "$rotating" ]]; then
+        _sw_log_error "state rotation: gzip unavailable; cannot recover $rotating"
+      elif size="$(file_size_bytes "$active" 2>/dev/null)" && [[ "$size" =~ ^[0-9]+$ ]] && (( size >= threshold )); then
+        _sw_log_error "state rotation: gzip unavailable; skipping $active rotation"
+      fi
+      return 0
+    fi
+  fi
+
+  _sw_clean_stale_archive_tmp "$entity"
+  if [[ -f "$rotating" ]]; then
+    _sw_archive_rotating_file "$entity" || return 0
+  fi
+
+  [[ -f "$active" ]] || return 0
+  size="$(file_size_bytes "$active" 2>/dev/null)" || {
+    _sw_log_error "state rotation: failed to read size for $active"
+    return 0
+  }
+  [[ "$size" =~ ^[0-9]+$ ]] || return 0
+  (( size >= threshold )) || return 0
+
+  if ! mv -f -- "$active" "$rotating" 2>/dev/null; then
+    _sw_log_error "state rotation: failed to stage $active"
+    return 0
+  fi
+  if ! : > "$active"; then
+    _sw_log_error "state rotation: failed to recreate $active"
+    _sw_restore_rotating_active "$entity" || true
+    return 0
+  fi
+  if ! _sw_archive_rotating_file "$entity"; then
+    _sw_restore_rotating_active "$entity" || true
+  fi
   return 0
 }
 
@@ -236,6 +352,7 @@ state_store_init() {
 
 _runs_append_inner() {
   local json_line="$1" compact
+  _sw_rotate_entity_if_needed runs
   compact="$(_sw_compact_json_line "$json_line")" || return $?
   _sw_validate_compacted_json_line run "$compact" || return $?
   printf '%s\n' "$compact" >> runs.jsonl
@@ -255,6 +372,7 @@ runs_append() {
 
 _events_append_inner() {
   local json_line="$1" compact
+  _sw_rotate_entity_if_needed events
   compact="$(_sw_compact_json_line "$json_line")" || return $?
   _sw_validate_compacted_json_line event "$compact" || return $?
   printf '%s\n' "$compact" >> events.jsonl
