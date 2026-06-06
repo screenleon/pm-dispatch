@@ -473,6 +473,33 @@ case_state_store_init_version2_fails() {
   fi
 }
 
+case_state_store_init_version2_does_not_mutate_mode() {
+  # Verifies that rejecting an unsupported VERSION=2 store does NOT mutate the
+  # store root — the mutating safety preflight (chmod 0700) must run only after
+  # the version gate passes, so a future store's mode is preserved.
+  #
+  # Steps:
+  #   1. Create a 0755 store root containing only a VERSION=2 file.
+  #   2. Capture the pre-call mode; call state_store_init (expect non-zero).
+  #   3. Assert the mode is unchanged and was not reset to 0700.
+  local name="state_store_init: VERSION=2 store mode is not mutated"
+  should_run "$name" || return 0
+  local store rc=0 before after
+  store="$tmp_root/init-v2-immutable"
+  mkdir -p "$store"
+  chmod 0755 "$store"
+  printf '2\n' > "$store/VERSION"
+  before="$(_sw_path_mode_octal "$store")"
+  PM_DISPATCH_STATE_ROOT="$store" state_store_init >/dev/null 2>&1 || rc=$?
+  after="$(_sw_path_mode_octal "$store")"
+  command chmod 0700 "$store" 2>/dev/null || true
+  if [[ "$rc" -ne 0 && "$before" == "$after" && "$before" != "700" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc before=$before after=$after"
+  fi
+}
+
 case_runs_append_fails_on_version2() {
   # Verifies that runs_append propagates state_store_init failure when VERSION=2.
   #
@@ -1683,6 +1710,7 @@ case_state_store_init_world_only_writable_rejected
 case_state_store_init_non_owner_rejected_when_simulatable
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
+case_state_store_init_version2_does_not_mutate_mode
 case_runs_append_fails_on_version2
 case_runs_append_valid_jsonl
 case_runs_append_appends

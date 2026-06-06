@@ -433,10 +433,9 @@ state_project_identity_write() {
 state_store_init() {
   local store_root proj_dir version_file version_value proj_key
   store_root="$(_sw_store_root)"
-  _sw_ensure_store_root_safe "$store_root" || return 1
   version_file="$store_root/VERSION"
-  # Version compatibility check before any layout creation — unsupported stores
-  # must be observed but not mutated.
+  # Version compatibility check BEFORE any mutating safety repair — unsupported
+  # stores must be observed but not mutated (no chmod/mkdir on a future store).
   if [[ -f "$version_file" ]]; then
     version_value="$(<"$version_file")"
     if [[ "$version_value" != "1" ]]; then
@@ -444,6 +443,9 @@ state_store_init() {
       return 1
     fi
   fi
+  # Compatible (VERSION == "1") or first-time (VERSION absent): now it is safe to
+  # canonicalize, create, and chmod the store root.
+  _sw_ensure_store_root_safe "$store_root" || return 1
   # Only reach here on first-time init (VERSION absent) or VERSION == "1".
   # Refuse the global partition for load-bearing writes unless explicitly allowed.
   proj_key="$(_sw_project_key)"
