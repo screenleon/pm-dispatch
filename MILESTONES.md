@@ -36,14 +36,14 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
-| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ |
+| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ (#237) |
 | CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
 
 ### Phase 3 — 第一個 state consumer
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | ✅ |
+| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | ✅ (#237) |
 | CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
 
 ### 旁支修正（已合入 main，不在 Phase 1–3 主路徑）
