@@ -27,7 +27,7 @@
 | CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | ✅ (#232) |
 | CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | ✅ (#234) |
 | CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | ✅ (#238) |
-| CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | 🔵 active |
+| CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | ✅ (#239) |
 | CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」（由 CC-309 反轉測試實現） | 🟡 → v0.4.0 |
 | — | builds on **CC-230 ✅ #159**（state store + 佈局已在；本階段完成其本意） | — |
 
