@@ -17,6 +17,19 @@ reset_state_env() {
   unset PM_DISPATCH_STATE_ROOT XDG_DATA_HOME
 }
 
+state_store_mode() {
+  local path="$1" mode
+  if mode="$(stat -c %a -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  if mode="$(stat -f %Lp -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  return 1
+}
+
 mk_pmctl_brief() {
   local work="$1" brief
   brief="/tmp/brief-state-store-$$-$(date +%s%N).md"
@@ -181,6 +194,171 @@ case_state_store_init_structure() {
     pass "$name"
   else
     fail "$name" "missing=${missing[*]} version=$(cat "$store/VERSION" 2>/dev/null || true)"
+  fi
+}
+
+case_state_store_init_store_root_mode() {
+  # Verifies that state_store_init creates a fresh store root with private permissions.
+  #
+  # Steps:
+  #   1. Set PM_DISPATCH_STATE_ROOT to a fresh tmpdir path.
+  #   2. Call state_store_init with the global partition explicitly allowed.
+  #   3. Assert the store root and project dir exist with mode 0700.
+  local name="state_store_init: store root and project dir are mode 0700"
+  should_run "$name" || return 0
+  local store proj_dir root_mode proj_mode
+  store="$tmp_root/root-mode"
+  PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init >/dev/null 2>&1
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 _sw_project_dir)"
+  root_mode="$(state_store_mode "$store" 2>/dev/null || true)"
+  proj_mode="$(state_store_mode "$proj_dir" 2>/dev/null || true)"
+  if [[ "$root_mode" == "700" && "$proj_mode" == "700" ]]; then
+    pass "$name"
+  else
+    fail "$name" "root_mode=${root_mode:-empty} proj_mode=${proj_mode:-empty}"
+  fi
+}
+
+case_state_store_init_symlink_leaf_rejected() {
+  # Verifies that a symlinked store-root leaf is rejected before layout creation.
+  #
+  # Steps:
+  #   1. Create a real target directory and a symlink pointing at it.
+  #   2. Call state_store_init with PM_DISPATCH_STATE_ROOT set to the symlink.
+  #   3. Assert the call fails loudly and no VERSION file is written through the symlink.
+  local name="state_store_init: symlinked store-root leaf is rejected"
+  should_run "$name" || return 0
+  local target link rc=0 stderr_out
+  target="$tmp_root/root-symlink-target"
+  link="$tmp_root/root-symlink"
+  mkdir -p "$target"
+  ln -s "$target" "$link"
+  if [[ ! -L "$link" ]]; then
+    pass "$name (skip: symlinks unavailable)"
+    return 0
+  fi
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$link" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"symlink"* && ! -e "$target/VERSION" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty} version_exists=$([[ -e "$target/VERSION" ]] && printf yes || printf no)"
+  fi
+}
+
+case_state_store_init_symlink_leaf_escape_hatch() {
+  # Verifies that the unsafe-root escape hatch downgrades a symlinked leaf rejection to a warning.
+  #
+  # Steps:
+  #   1. Create a real target directory and a symlink pointing at it.
+  #   2. Call state_store_init with PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1.
+  #   3. Assert the call succeeds, warns, and writes VERSION through the configured root.
+  local name="state_store_init: unsafe-root escape hatch allows symlinked leaf"
+  should_run "$name" || return 0
+  local target link rc=0 stderr_out
+  target="$tmp_root/root-symlink-allowed-target"
+  link="$tmp_root/root-symlink-allowed"
+  mkdir -p "$target"
+  ln -s "$target" "$link"
+  if [[ ! -L "$link" ]]; then
+    pass "$name (skip: symlinks unavailable)"
+    return 0
+  fi
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$link" PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1 \
+    _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: unsafe state root"* && "$(cat "$target/VERSION" 2>/dev/null)" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_world_writable_rejected_when_chmod_cannot_secure() {
+  # Verifies that a store root left group/world-writable after chmod is rejected.
+  #
+  # Steps:
+  #   1. Create a 0777 store root.
+  #   2. Simulate a chmod that reports success but leaves the root writable.
+  #   3. Assert state_store_init fails loudly before writing VERSION.
+  local name="state_store_init: world-writable root rejected when chmod cannot secure"
+  should_run "$name" || return 0
+  local store rc=0 stderr_out
+  store="$tmp_root/root-world-writable"
+  mkdir -p "$store"
+  chmod 0777 "$store"
+  stderr_out="$({
+    chmod() {
+      if [[ "${1:-}" == "0700" ]]; then
+        return 0
+      fi
+      command chmod "$@"
+    }
+    PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
+  } 2>&1 >/dev/null)" || rc=$?
+  command chmod 0700 "$store"
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"group/world writable"* && ! -e "$store/VERSION" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_world_writable_escape_hatch() {
+  # Verifies that the unsafe-root escape hatch permits a root that remains writable after chmod.
+  #
+  # Steps:
+  #   1. Create a 0777 store root.
+  #   2. Simulate a chmod that reports success but leaves the root writable.
+  #   3. Assert state_store_init succeeds with a warning.
+  local name="state_store_init: unsafe-root escape hatch allows world-writable root"
+  should_run "$name" || return 0
+  local store rc=0 stderr_out
+  store="$tmp_root/root-world-writable-allowed"
+  mkdir -p "$store"
+  chmod 0777 "$store"
+  stderr_out="$({
+    chmod() {
+      if [[ "${1:-}" == "0700" ]]; then
+        return 0
+      fi
+      command chmod "$@"
+    }
+    PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1 \
+      _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
+  } 2>&1 >/dev/null)" || rc=$?
+  command chmod 0700 "$store"
+  if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: unsafe state root"* && "$(cat "$store/VERSION" 2>/dev/null)" == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_non_owner_rejected_when_simulatable() {
+  # Verifies that an existing store root not owned by the effective user is rejected.
+  #
+  # Steps:
+  #   1. Skip unless running with permission to change ownership.
+  #   2. Create a store root and chown it away from the effective user.
+  #   3. Assert state_store_init fails loudly without writing VERSION.
+  local name="state_store_init: non-owned store root is rejected"
+  should_run "$name" || return 0
+  if [[ "$(id -u)" -ne 0 ]]; then
+    pass "$name (skip: ownership change requires root)"
+    return 0
+  fi
+  local store rc=0 stderr_out
+  store="$tmp_root/root-non-owner"
+  mkdir -p "$store"
+  if ! chown 65534:65534 "$store" 2>/dev/null; then
+    pass "$name (skip: could not assign alternate owner)"
+    return 0
+  fi
+  stderr_out="$(PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
+  chown "$(id -u):$(id -g)" "$store" 2>/dev/null || true
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"not owned"* && ! -e "$store/VERSION" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
   fi
 }
 
@@ -475,17 +653,17 @@ case_task_upsert() {
   # Verifies that task_upsert atomically writes the task file using write-temp-then-rename.
   #
   # Steps:
-  #   1. Call task_upsert with task_id "CC-230" and a JSON body.
-  #   2. Resolve tasks/CC-230.json under the project dir.
+  #   1. Call task_upsert with task_id "TASK-230" and a JSON body.
+  #   2. Resolve tasks/TASK-230.json under the project dir.
   #   3. Assert the file exists and its content matches the input JSON exactly.
   local name="task_upsert: write-temp-then-rename"
   should_run "$name" || return 0
   local store proj_dir task_file expected
   store="$tmp_root/task-upsert"
-  expected='{"schema_version":1,"id":"CC-230","title":"test","state":"planned","created_ts":"2026-01-01T00:00:00Z"}'
-  PM_DISPATCH_STATE_ROOT="$store" task_upsert "CC-230" "$expected"
+  expected='{"schema_version":1,"id":"TASK-230","title":"test","state":"planned","created_ts":"2026-01-01T00:00:00Z"}'
+  PM_DISPATCH_STATE_ROOT="$store" task_upsert "TASK-230" "$expected"
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
-  task_file="$proj_dir/tasks/CC-230.json"
+  task_file="$proj_dir/tasks/TASK-230.json"
   if [[ -f "$task_file" && "$(cat "$task_file")" == "$expected" ]]; then
     pass "$name"
   else
@@ -545,17 +723,17 @@ case_runs_append_read_only_fails_loudly() {
   # Verifies that runs_append returns non-zero when the canonical write path fails.
   #
   # Steps:
-  #   1. Create a tmpdir and chmod it to 500 (read+execute, no write).
+  #   1. Initialize a store and replace runs.jsonl with a directory at the append path.
   #   2. Call runs_append against that store; capture its exit code.
-  #   3. Restore permissions; assert exit code is non-zero.
+  #   3. Assert the append failure propagates as a non-zero exit.
   local name="state-store: runs_append propagates non-zero when inner append fails"
   should_run "$name" || return 0
-  local store rc=0
-  store="$tmp_root/read-only-store"
-  mkdir -p "$store"
-  chmod 500 "$store"
+  local store proj_dir rc=0
+  store="$tmp_root/runs-path-collision-store"
+  PM_DISPATCH_STATE_ROOT="$store" state_store_init
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  mkdir "$proj_dir/runs.jsonl"
   PM_DISPATCH_STATE_ROOT="$store" runs_append '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}' >/dev/null 2>&1 || rc=$?
-  chmod 700 "$store"
   if [[ "$rc" -ne 0 ]]; then
     pass "$name"
   else
@@ -567,7 +745,7 @@ case_codex_dispatch_state_store_self_contained() {
   # Verifies that the state-writer source guard in the adapter uses 2>/dev/null || true
   # so dispatch is functional even when state-writer.sh is absent.
   # scripts/codex-dispatch.sh is now a thin exec shim; the state-store block lives in
-  # adapters/codex/dispatch.sh (CC-308 Windows compat migration).
+  # adapters/codex/dispatch.sh.
   #
   # Steps:
   #   1. Run bash -n on adapters/codex/dispatch.sh to verify syntax.
@@ -801,23 +979,23 @@ case_sw_build_run_json_task_id_anchor() {
   # real `task_id:` line when extracting the task attribution for the run row.
   #
   # Steps:
-  #   1. Write a brief with parent_task_id: CC-999 before task_id: CC-230.
+  #   1. Write a brief with parent_task_id before task_id.
   #   2. Run fake-codex dispatch.
-  #   3. Assert that runs.jsonl has task_id == "CC-230", not "CC-999" or "UNKN-0".
+  #   3. Assert that runs.jsonl has the exact task_id line, not the parent_task_id or "UNKN-0".
   local name="sw_build_run_json: task_id extraction is anchored (ignores parent_task_id)"
   should_run "$name" || return 0
   local brief_file work_dir run_json task_id_found
   work_dir="$tmp_root/anchor-workdir"
   mkdir -p "$work_dir"
   brief_file="$tmp_root/anchor-brief.md"
-  # parent_task_id: appears BEFORE task_id: - unanchored grep would pick CC-999
-  printf 'parent_task_id: CC-999\ntask_id: CC-230\nDo nothing.\n' > "$brief_file"
+  # parent_task_id: appears BEFORE task_id: - unanchored grep would pick the wrong value.
+  printf 'parent_task_id: TASK-999\ntask_id: TASK-230\nDo nothing.\n' > "$brief_file"
   run_json="$(sw_build_run_json codex 0 ok model "$brief_file" "$work_dir" "")"
   task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
-  if [[ "$task_id_found" == "CC-230" ]]; then
+  if [[ "$task_id_found" == "TASK-230" ]]; then
     pass "$name"
   else
-    fail "$name" "expected task_id=CC-230 but got task_id=${task_id_found:-none}"
+    fail "$name" "expected task_id=TASK-230 but got task_id=${task_id_found:-none}"
   fi
 }
 
@@ -828,13 +1006,13 @@ case_sw_build_run_json_inline_brief_task_id() {
   local work_dir run_json task_id_found
   work_dir="$tmp_root/inline-brief-workdir"
   mkdir -p "$work_dir"
-  run_json="$(sw_build_run_json codex 0 ok model "" "$work_dir" "" "task_id: CC-230
+  run_json="$(sw_build_run_json codex 0 ok model "" "$work_dir" "" "task_id: TASK-230
 Do nothing.")"
   task_id_found="$(jq -r '.task_id' <<< "$run_json" 2>/dev/null || true)"
-  if [[ "$task_id_found" == "CC-230" ]]; then
+  if [[ "$task_id_found" == "TASK-230" ]]; then
     pass "$name"
   else
-    fail "$name" "expected task_id=CC-230 but got '${task_id_found:-none}'"
+    fail "$name" "expected task_id=TASK-230 but got '${task_id_found:-none}'"
   fi
 }
 
@@ -844,7 +1022,7 @@ case_pmctl_dispatch_failed_records_state() {
   #
   # Steps:
   #   1. Create a fake codex that exits with code 42.
-  #   2. Write a brief file with task_id: CC-230.
+  #   2. Write a brief file with a valid task_id.
   #   3. Run codex-dispatch.sh (it exits non-zero but the wrapper may still exit 0).
   #   4. Assert runs.jsonl row has state == "failed" and exit_code == 42.
   local name="pmctl-dispatch: failed dispatch records state:failed and exit code"
@@ -1026,13 +1204,12 @@ case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
   # Verifies that a run.pending Event write failure causes pmctl to return
   # non-zero and NOT invoke the adapter (adapter binary not called).
   #
-  # Strategy: use a read-only store root so partition dir creation fails →
-  # events_append for run.pending returns non-zero → pmctl returns early.
-  # A probing codex writes a probe file on any invocation; its absence proves
-  # the adapter was not called.
+  # Strategy: place a directory at events.jsonl before dispatch so the
+  # run.pending append returns non-zero and pmctl returns early. A probing codex
+  # writes a probe file on any invocation; its absence proves the adapter was not called.
   local name="pmctl-dispatch: run.pending Event write failure blocks adapter invocation"
   should_run "$name" || return 0
-  local store fake_bin_dir brief_file work_dir probe_file rc=0
+  local store fake_bin_dir brief_file work_dir probe_file proj_dir rc=0
   store="$tmp_root/pre-event-fail-store"
   fake_bin_dir="$tmp_root/pre-event-fail-bin"
   work_dir="$tmp_root/pre-event-fail-workdir"
@@ -1041,12 +1218,12 @@ case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
   git -C "$work_dir" init -q
   install_probing_codex "$fake_bin_dir" 0 "$probe_file"
   brief_file="$(mk_pmctl_brief "$work_dir")"
-  mkdir -p "$store"
-  chmod 500 "$store"
+  PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work_dir" state_store_init
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work_dir" _sw_project_dir)"
+  mkdir "$proj_dir/events.jsonl"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
     "$PMCTL" dispatch run --adapter codex \
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
-  chmod 700 "$store"
   if [[ "$rc" -ne 0 && ! -f "$probe_file" ]]; then
     pass "$name"
   else
@@ -1301,12 +1478,12 @@ case_project_key_no_sha1sum() {
 }
 
 case_state_store_init_mkdir_fail_loud() {
-  # CC-330: layout mkdir failure must propagate as non-zero (not silently swallowed).
+  # Verifies that layout mkdir failure propagates as non-zero rather than being silently swallowed.
   #
   # Steps:
   #   1. Create store root with a pre-existing projects/ dir; chmod it to 500 (no write).
   #   2. Call state_store_init; assert non-zero exit and stderr contains "mkdir failed".
-  local name="state_store_init: layout mkdir failure propagates loud (CC-330)"
+  local name="state_store_init: layout mkdir failure propagates loud"
   should_run "$name" || return 0
   local store projects_dir rc=0 stderr_out
   store="$tmp_root/mkdir-fail-loud"
@@ -1323,13 +1500,13 @@ case_state_store_init_mkdir_fail_loud() {
 }
 
 case_state_store_init_global_key_refused() {
-  # CC-313: state_store_init must refuse the global partition for load-bearing writes.
+  # Verifies that state_store_init refuses the global partition for load-bearing writes.
   # _sw_project_key returns "global" when run from a non-git CWD with no _SW_REPO_ROOT.
   #
   # Steps:
   #   1. Create a non-git tmpdir; run state_store_init from that CWD (subshell).
   #   2. Assert non-zero exit and stderr mentions partition.
-  local name="state_store_init: global partition refused without _SW_ALLOW_GLOBAL_PARTITION (CC-313)"
+  local name="state_store_init: global partition refused without _SW_ALLOW_GLOBAL_PARTITION"
   should_run "$name" || return 0
   local store non_git rc=0 stderr_out
   store="$tmp_root/global-refused"
@@ -1349,12 +1526,12 @@ case_state_store_init_global_key_refused() {
 }
 
 case_state_store_init_global_key_allowed_explicit() {
-  # CC-313: _SW_ALLOW_GLOBAL_PARTITION=1 must bypass the global-partition guard.
+  # Verifies that _SW_ALLOW_GLOBAL_PARTITION=1 bypasses the global-partition guard.
   #
   # Steps:
   #   1. Create a non-git tmpdir; run state_store_init from that CWD with the override.
   #   2. Assert exit 0 and the global partition dir was created.
-  local name="state_store_init: _SW_ALLOW_GLOBAL_PARTITION=1 allows global partition (CC-313)"
+  local name="state_store_init: _SW_ALLOW_GLOBAL_PARTITION=1 allows global partition"
   should_run "$name" || return 0
   local store non_git rc=0
   store="$tmp_root/global-allowed"
@@ -1374,13 +1551,13 @@ case_state_store_init_global_key_allowed_explicit() {
 }
 
 case_state_store_init_writes_repo_json() {
-  # CC-313: state_store_init must write repo.json on first use with required fields.
+  # Verifies that state_store_init writes repo.json on first use with required fields.
   #
   # Steps:
   #   1. git init a fresh tmpdir; call state_store_init with _SW_REPO_ROOT set.
   #   2. Find repo.json under the project partition.
   #   3. Assert it contains repo_path, repo_name, and first_seen_ts.
-  local name="state_store_init: writes repo.json on first use (CC-313)"
+  local name="state_store_init: writes repo.json on first use"
   should_run "$name" || return 0
   local store git_repo rc=0 repo_json repo_path repo_name first_seen_ts
   store="$tmp_root/repo-json-write"
@@ -1401,13 +1578,13 @@ case_state_store_init_writes_repo_json() {
 }
 
 case_state_store_init_repo_json_idempotent() {
-  # CC-313: a second call to state_store_init must NOT overwrite an existing repo.json.
+  # Verifies that a second call to state_store_init does not overwrite an existing repo.json.
   #
   # Steps:
   #   1. Call state_store_init once; record the first_seen_ts from repo.json.
   #   2. Call state_store_init a second time.
   #   3. Assert first_seen_ts is unchanged (file not overwritten).
-  local name="state_store_init: repo.json not overwritten on subsequent calls (CC-313)"
+  local name="state_store_init: repo.json not overwritten on subsequent calls"
   should_run "$name" || return 0
   local store git_repo ts_first ts_second repo_json
   store="$tmp_root/repo-json-idem"
@@ -1434,6 +1611,12 @@ case_store_root_override
 case_store_root_xdg
 case_store_root_default
 case_state_store_init_structure
+case_state_store_init_store_root_mode
+case_state_store_init_symlink_leaf_rejected
+case_state_store_init_symlink_leaf_escape_hatch
+case_state_store_init_world_writable_rejected_when_chmod_cannot_secure
+case_state_store_init_world_writable_escape_hatch
+case_state_store_init_non_owner_rejected_when_simulatable
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
 case_runs_append_fails_on_version2

@@ -88,7 +88,7 @@ case_mkdir_lock_contention() {
   # subshell writes to the FIFO AFTER acquiring the lock; the foreground
   # blocks on `read` until that write happens. No `sleep` involved in the
   # readiness wait, so the test is independent of scheduler latency on
-  # any platform (addresses CC-104g gate r1 critic+qa advise).
+  # any platform.
   local fifo="$tmp_root/lock-contention.ready"
   if ! mkfifo "$fifo" 2>/dev/null; then
     printf 'SKIP: %s (mkfifo unavailable on this platform)\n' "$name"
@@ -102,7 +102,8 @@ case_mkdir_lock_contention() {
       echo fail > "$fifo"
       exit 1
     fi
-    sleep 1.2
+    sleep 2.5
+    rm -f "$lock/owner"
     rmdir "$lock"
   ) &
   local holder_pid=$!
@@ -122,6 +123,7 @@ case_mkdir_lock_contention() {
   fi
 
   if mkdir_lock "$lock" 1; then
+    rm -f "$lock/owner"
     rmdir "$lock"
     kill "$holder_pid" 2>/dev/null || true
     fail "$name" "second lock attempt unexpectedly succeeded"
@@ -141,13 +143,133 @@ case_mkdir_lock_release() {
     fail "$name" "initial lock acquire failed"
     return
   fi
+  rm -f "$lock/owner"
   rmdir "$lock"
 
   if mkdir_lock "$lock" 2; then
+    rm -f "$lock/owner"
     rmdir "$lock"
     pass "$name"
   else
     fail "$name" "second lock acquire after release failed"
+  fi
+}
+
+case_mkdir_lock_writes_owner_metadata() {
+  local name="portable-mkdir-lock-writes-owner-metadata"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-owner" owner pid host epoch extra
+
+  if ! mkdir_lock "$lock" 2; then
+    fail "$name" "lock acquire failed"
+    return
+  fi
+  owner="$(cat "$lock/owner" 2>/dev/null || true)"
+  read -r pid host epoch extra <<< "$owner"
+  rm -f "$lock/owner"
+  rmdir "$lock"
+
+  if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
+    pass "$name"
+  else
+    fail "$name" "owner metadata malformed: ${owner:-empty}"
+  fi
+}
+
+case_mkdir_lock_reclaims_dead_same_host_owner() {
+  local name="portable-mkdir-lock-reclaims-dead-same-host-owner"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-dead-owner" host now owner
+  mkdir "$lock"
+  host="$(_portable_lock_host)"
+  now="$(_portable_lock_now)"
+  printf '99999999 %s %s\n' "$host" "$now" > "$lock/owner"
+
+  if ! mkdir_lock "$lock" 2; then
+    fail "$name" "lock acquire did not reclaim dead owner"
+    return
+  fi
+  owner="$(cat "$lock/owner" 2>/dev/null || true)"
+  rm -f "$lock/owner"
+  rmdir "$lock"
+  if [[ "$owner" =~ ^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "new owner metadata missing after reclaim"
+  fi
+}
+
+case_mkdir_lock_reclaims_age_ceiling_owner() {
+  local name="portable-mkdir-lock-reclaims-owner-past-age-ceiling"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-old-owner" old_epoch
+  mkdir "$lock"
+  old_epoch="$(( $(_portable_lock_now) - 10 ))"
+  printf '1 remote-host %s\n' "$old_epoch" > "$lock/owner"
+
+  if PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$lock" 2; then
+    rm -f "$lock/owner"
+    rmdir "$lock"
+    pass "$name"
+  else
+    fail "$name" "lock acquire did not reclaim old owner"
+  fi
+}
+
+case_mkdir_lock_does_not_steal_live_lock() {
+  local name="portable-mkdir-lock-does-not-steal-live-lock"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-live-owner" rc=0
+  if ! mkdir_lock "$lock" 2; then
+    fail "$name" "initial lock acquire failed"
+    return
+  fi
+
+  PM_DISPATCH_LOCK_STALE_SECS=999 mkdir_lock "$lock" 1 >/dev/null 2>&1 || rc=$?
+  rm -f "$lock/owner"
+  rmdir "$lock"
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "contended live lock was acquired"
+  fi
+}
+
+_slw_term_self() {
+  kill -TERM "$BASHPID"
+  sleep 2
+}
+
+case_serialize_with_lock_fallback_signal_cleanup() {
+  # Behavior: the mkdir-fallback path releases its lockdir from the wrapped command's EXIT trap.
+  # Steps: 1. Force the mkdir fallback; 2. Run a helper that terminates its subshell; 3. Assert rc is non-zero and the lockdir is gone.
+  local name="portable-serialize-with-lock-mkdir-fallback-signal-cleanup"
+  should_run "$name" || return 0
+  local lockbase="$tmp_root/slw-signal" rc=0
+
+  FAKE_FLOCK_MISSING=1 serialize_with_lock "$lockbase" _slw_term_self >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 && ! -e "$lockbase.lockdir" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc lockdir_exists=$([[ -e "$lockbase.lockdir" ]] && printf yes || printf no)"
+  fi
+}
+
+case_mkdir_lock_unc_warning_nonfatal() {
+  local name="portable-mkdir-lock-unc-looking-path-warns-nonfatal"
+  should_run "$name" || return 0
+  local lock="//${tmp_root#/}/lock-unc" rc=0 stderr_out
+  unset _PORTABLE_LOCK_PREFLIGHT_WARNED
+
+  stderr_out="$(mkdir_lock "$lock" 2 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    rm -f "$lock/owner"
+    rmdir "$lock"
+  fi
+  if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: lock path may be on a network filesystem"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
   fi
 }
 
@@ -930,10 +1052,16 @@ case_realpath_m_windows_mode_relative_path
 case_safe_tmpdir
 case_mkdir_lock_contention
 case_mkdir_lock_release
+case_mkdir_lock_writes_owner_metadata
+case_mkdir_lock_reclaims_dead_same_host_owner
+case_mkdir_lock_reclaims_age_ceiling_owner
+case_mkdir_lock_does_not_steal_live_lock
 case_serialize_with_lock_basic
 case_serialize_with_lock_propagates_rc
 case_serialize_with_lock_fallback
+case_serialize_with_lock_fallback_signal_cleanup
 case_serialize_with_lock_missing_parent
+case_mkdir_lock_unc_warning_nonfatal
 case_detect_platform_override_windows
 case_detect_platform_host_native
 case_detect_platform_ostype_msys

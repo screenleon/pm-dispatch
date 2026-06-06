@@ -52,6 +52,7 @@ SUITE_NAMES=(
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
+  test-state-layout-parity
   test-state-store-rotation
   test-pmctl-trace
   test-brief-validate
@@ -71,7 +72,7 @@ fail_case() {
   printf 'FAIL: %s: %s\n' "$1" "$2"
 }
 
-# local helper — orchestrator uses pass_case/fail_case, not harness pass/fail; see CC-256
+# local helper — orchestrator uses pass_case/fail_case, not harness pass/fail.
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" != *"$needle"* ]]; then
@@ -121,6 +122,7 @@ suite_path() {
     test-pm-prep-snapshot) printf 'scripts/test-pm-prep-snapshot.sh\n' ;;
     test-schema-task-mirrors-backlog) printf 'scripts/test-schema-task-mirrors-backlog.sh\n' ;;
     test-state-store) printf 'scripts/test-state-store.sh\n' ;;
+    test-state-layout-parity) printf 'scripts/test-state-layout-parity.sh\n' ;;
     test-state-store-rotation) printf 'scripts/test-state-store-rotation.sh\n' ;;
     test-pmctl-trace) printf 'scripts/test-pmctl-trace.sh\n' ;;
     test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
@@ -195,8 +197,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 43.
-  local out status=0 actual_count expected_count=43
+  # Steps: invoke --list; count output lines; assert the count is 44.
+  local out status=0 actual_count expected_count=44
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then

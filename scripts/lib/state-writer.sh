@@ -42,6 +42,68 @@ _sw_store_root() {
   return 0
 }
 
+_sw_store_root_leaf() {
+  local root="$1"
+  while [[ "$root" != "/" && "$root" == */ ]]; do
+    root="${root%/}"
+  done
+  [[ -n "$root" ]] || root="/"
+  printf '%s\n' "$root"
+}
+
+_sw_store_root_mode_allows_write() {
+  local root="$1"
+  if find "$root" -maxdepth 0 -perm -0022 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+_sw_unsafe_store_root() {
+  local root="$1"
+  local reason="$2"
+  if [[ "${PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT:-}" == "1" ]]; then
+    printf 'state-writer: warning: unsafe state root accepted by PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1: %s (%s)\n' "$root" "$reason" >&2
+    return 0
+  fi
+  printf 'state-writer: unsafe state root rejected: %s (%s)\n' "$root" "$reason" >&2
+  return 1
+}
+
+_sw_ensure_store_root_safe() {
+  local store_root="$1" root_leaf canonical_root reasons=()
+  [[ -n "$store_root" ]] || { printf 'state-writer: empty state root\n' >&2; return 1; }
+  root_leaf="$(_sw_store_root_leaf "$store_root")"
+  canonical_root="$(realpath_m "$store_root" 2>/dev/null || printf '%s\n' "$store_root")"
+
+  if [[ -L "$root_leaf" ]]; then
+    reasons+=("leaf is a symlink")
+  fi
+  if [[ -e "$root_leaf" && ! -O "$root_leaf" ]]; then
+    reasons+=("not owned by effective user")
+  fi
+
+  if ! mkdir -p "$store_root" 2>/dev/null; then
+    printf 'state-writer: mkdir failed: %s\n' "$canonical_root" >&2
+    return 1
+  fi
+  chmod 0700 "$store_root" 2>/dev/null || true
+
+  if _sw_store_root_mode_allows_write "$store_root"; then
+    reasons+=("group/world writable after chmod")
+  fi
+
+  if [[ "${#reasons[@]}" -gt 0 ]]; then
+    local reason joined
+    joined="${reasons[0]}"
+    for reason in "${reasons[@]:1}"; do
+      joined="$joined; $reason"
+    done
+    _sw_unsafe_store_root "$canonical_root" "$joined" || return 1
+  fi
+  return 0
+}
+
 _sw_project_key() {
   {
     local repo_root project_key
@@ -360,6 +422,7 @@ state_project_identity_write() {
 state_store_init() {
   local store_root proj_dir version_file version_value proj_key
   store_root="$(_sw_store_root)"
+  _sw_ensure_store_root_safe "$store_root" || return 1
   version_file="$store_root/VERSION"
   # Version compatibility check before any layout creation — unsupported stores
   # must be observed but not mutated.
@@ -371,20 +434,21 @@ state_store_init() {
     fi
   fi
   # Only reach here on first-time init (VERSION absent) or VERSION == "1".
-  # CC-313: refuse the global partition for load-bearing writes unless explicitly allowed.
+  # Refuse the global partition for load-bearing writes unless explicitly allowed.
   proj_key="$(_sw_project_key)"
   if [[ "$proj_key" == "global" && -z "${_SW_ALLOW_GLOBAL_PARTITION:-}" ]]; then
     printf 'state-writer: cannot determine project partition (not in a git repo or hash unavailable)\n' >&2
     return 1
   fi
   proj_dir="$store_root/projects/$proj_key/"
-  # CC-330: fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics.
+  # Fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics.
   if ! mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
       "$proj_dir/context-packs" "$proj_dir/archive" 2>/dev/null; then
     printf 'state-writer: layout mkdir failed: %s\n' "$proj_dir" >&2
     return 1
   fi
-  # CC-313: write repo.json on first use for partition identity (best-effort).
+  chmod 0700 "$proj_dir" 2>/dev/null || true
+  # Write repo.json on first use for partition identity (best-effort).
   if [[ ! -f "$proj_dir/repo.json" ]]; then
     _sw_write_repo_json "$proj_dir"
   fi
@@ -436,7 +500,7 @@ events_append() {
 }
 
 # Extract the task_id field from a brief file (path) and/or inline brief text.
-# Outputs the ID (e.g. CC-123) or the sentinel "UNKN-0" when none is found.
+# Outputs the ID (e.g. TASK-123) or the sentinel "UNKN-0" when none is found.
 sw_extract_task_id() {
   {
     local _brief_file="${1:-}" _brief_inline="${2:-}"
