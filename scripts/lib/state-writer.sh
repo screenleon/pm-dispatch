@@ -75,6 +75,18 @@ _sw_project_dir() {
   return 0
 }
 
+# Rotation is best-effort maintenance, not a canonical state write: it must
+# never fail the Run/Event append (a missing `gzip` binary must not break the
+# substrate). So when rotation cannot proceed we keep the write succeeding, but
+# the degradation is surfaced LOUDLY (stderr + state-writer.err), never silent —
+# operators see that bounded growth has stopped. (D8 loud-fail applies to the
+# canonical append; rotation is an explicitly best-effort op, like the D5
+# telemetry sidecars.)
+_sw_rotate_warn() {
+  printf 'state-writer: %s\n' "${1:-}" >&2
+  _sw_log_error "${1:-}"
+}
+
 _sw_rotate_max_bytes() {
   local raw="${PM_DISPATCH_ROTATE_MAX_BYTES:-}" default=52428800
   if [[ "$raw" =~ ^[0-9]+$ ]] && (( 10#$raw > 0 )); then
@@ -104,7 +116,7 @@ _sw_clean_stale_archive_tmp() {
   local entity="$1" tmp
   for tmp in "archive/${entity}-"*.jsonl.gz.tmp; do
     [[ -e "$tmp" ]] || continue
-    rm -f -- "$tmp" 2>/dev/null || _sw_log_error "state rotation: failed to remove stale tmp: $tmp"
+    rm -f -- "$tmp" 2>/dev/null || _sw_rotate_warn "state rotation: failed to remove stale tmp: $tmp"
   done
   return 0
 }
@@ -117,17 +129,17 @@ _sw_archive_rotating_file() {
   tmp_path="${archive_path}.tmp"
   rm -f -- "$tmp_path" 2>/dev/null || true
   if ! gzip -c "$rotating" > "$tmp_path" 2>/dev/null; then
-    _sw_log_error "state rotation: gzip failed for $rotating"
+    _sw_rotate_warn "state rotation: gzip failed for $rotating"
     rm -f -- "$tmp_path" 2>/dev/null || true
     return 1
   fi
   if ! mv -f -- "$tmp_path" "$archive_path" 2>/dev/null; then
-    _sw_log_error "state rotation: archive publish failed: $archive_path"
+    _sw_rotate_warn "state rotation: archive publish failed: $archive_path"
     rm -f -- "$tmp_path" 2>/dev/null || true
     return 1
   fi
   if ! rm -f -- "$rotating" 2>/dev/null; then
-    _sw_log_error "state rotation: failed to remove rotating file: $rotating"
+    _sw_rotate_warn "state rotation: failed to remove rotating file: $rotating"
     return 1
   fi
   return 0
@@ -155,9 +167,9 @@ _sw_rotate_entity_if_needed() {
   if [[ -f "$rotating" || -f "$active" ]]; then
     if ! command -v gzip >/dev/null 2>&1; then
       if [[ -f "$rotating" ]]; then
-        _sw_log_error "state rotation: gzip unavailable; cannot recover $rotating"
+        _sw_rotate_warn "state rotation: gzip unavailable; cannot recover $rotating"
       elif size="$(file_size_bytes "$active" 2>/dev/null)" && [[ "$size" =~ ^[0-9]+$ ]] && (( size >= threshold )); then
-        _sw_log_error "state rotation: gzip unavailable; skipping $active rotation"
+        _sw_rotate_warn "state rotation: gzip unavailable; skipping $active rotation"
       fi
       return 0
     fi
@@ -170,18 +182,18 @@ _sw_rotate_entity_if_needed() {
 
   [[ -f "$active" ]] || return 0
   size="$(file_size_bytes "$active" 2>/dev/null)" || {
-    _sw_log_error "state rotation: failed to read size for $active"
+    _sw_rotate_warn "state rotation: failed to read size for $active"
     return 0
   }
   [[ "$size" =~ ^[0-9]+$ ]] || return 0
   (( size >= threshold )) || return 0
 
   if ! mv -f -- "$active" "$rotating" 2>/dev/null; then
-    _sw_log_error "state rotation: failed to stage $active"
+    _sw_rotate_warn "state rotation: failed to stage $active"
     return 0
   fi
   if ! : > "$active"; then
-    _sw_log_error "state rotation: failed to recreate $active"
+    _sw_rotate_warn "state rotation: failed to recreate $active"
     _sw_restore_rotating_active "$entity" || true
     return 0
   fi

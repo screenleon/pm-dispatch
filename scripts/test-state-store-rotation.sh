@@ -271,6 +271,44 @@ case_rotation_gzip_failure_nonfatal() {
   fi
 }
 
+case_rotation_max_bytes_parsing() {
+  local name="state rotation: PM_DISPATCH_ROTATE_MAX_BYTES default/zero/non-numeric fallback"
+  should_run "$name" || return 0
+  local def=52428800 out_unset out_empty out_zero out_alpha out_neg out_valid
+  out_unset="$(unset PM_DISPATCH_ROTATE_MAX_BYTES; _sw_rotate_max_bytes)"
+  out_empty="$(PM_DISPATCH_ROTATE_MAX_BYTES="" _sw_rotate_max_bytes)"
+  out_zero="$(PM_DISPATCH_ROTATE_MAX_BYTES=0 _sw_rotate_max_bytes)"
+  out_alpha="$(PM_DISPATCH_ROTATE_MAX_BYTES=abc _sw_rotate_max_bytes)"
+  out_neg="$(PM_DISPATCH_ROTATE_MAX_BYTES=-5 _sw_rotate_max_bytes)"
+  out_valid="$(PM_DISPATCH_ROTATE_MAX_BYTES=1048576 _sw_rotate_max_bytes)"
+  if [[ "$out_unset" == "$def" && "$out_empty" == "$def" && "$out_zero" == "$def" &&
+        "$out_alpha" == "$def" && "$out_neg" == "$def" && "$out_valid" == "1048576" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unset=$out_unset empty=$out_empty zero=$out_zero alpha=$out_alpha neg=$out_neg valid=$out_valid"
+  fi
+}
+
+case_rotation_exact_threshold() {
+  local name="state rotation: active size exactly at threshold triggers rotation"
+  should_run "$name" || return 0
+  local store proj size archive
+  store="$tmp_root/exact"
+  # One row under a large threshold → no rotation; measure its exact byte size.
+  append_event_n "$store" 1 100000
+  proj="$(project_dir_for_store "$store")"
+  size="$(file_size_bytes "$proj/events.jsonl")"
+  # Next append runs the threshold check first with threshold == current size,
+  # so the `>=` boundary (exact equality) must trigger rotation of row 1.
+  append_event_n "$store" 2 "$size"
+  archive="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*-0001.jsonl.gz' -print -quit)"
+  if [[ -f "$archive" && "$(ids_from_gzip "$archive")" == "evt-20260606T000001Z-000001 " ]]; then
+    pass "$name"
+  else
+    fail "$name" "size=$size archive=$archive"
+  fi
+}
+
 case_rotation_below_threshold
 case_rotation_byte_threshold_triggers
 case_rotation_monotonic_segments
@@ -280,5 +318,7 @@ case_rotation_runs_independent
 case_rotation_crash_recovery
 case_rotation_gzip_unavailable
 case_rotation_gzip_failure_nonfatal
+case_rotation_max_bytes_parsing
+case_rotation_exact_threshold
 
 th_summary
