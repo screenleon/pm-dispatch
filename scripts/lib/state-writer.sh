@@ -51,9 +51,20 @@ _sw_store_root_leaf() {
   printf '%s\n' "$root"
 }
 
+_sw_path_mode_octal() {
+  local p="$1" m
+  if m="$(stat -c %a -- "$p" 2>/dev/null)"; then printf '%s\n' "$m"; return 0; fi
+  if m="$(stat -f %Lp -- "$p" 2>/dev/null)"; then printf '%s\n' "$m"; return 0; fi
+  return 1
+}
+
 _sw_store_root_mode_allows_write() {
-  local root="$1"
-  if find "$root" -maxdepth 0 -perm -0022 2>/dev/null | grep -q .; then
+  local root="$1" mode
+  mode="$(_sw_path_mode_octal "$root")" || return 1
+  [[ "$mode" =~ ^[0-7]+$ ]] || return 1
+  # Reject if EITHER the group-write or world-write bit is set (octal 022),
+  # not only when both are set.
+  if (( (8#$mode & 8#22) != 0 )); then
     return 0
   fi
   return 1

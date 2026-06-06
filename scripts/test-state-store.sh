@@ -333,6 +333,68 @@ case_state_store_init_world_writable_escape_hatch() {
   fi
 }
 
+case_state_store_init_group_only_writable_rejected() {
+  # Verifies a store root left GROUP-writable only (0720) after an ineffective chmod
+  # is rejected — the either-bit permission check must catch a single write bit.
+  #
+  # Steps:
+  #   1. Create a 0720 store root.
+  #   2. Simulate a chmod that reports success but leaves the root group-writable.
+  #   3. Assert state_store_init fails loudly before writing VERSION.
+  local name="state_store_init: group-only-writable root rejected"
+  should_run "$name" || return 0
+  local store rc=0 stderr_out
+  store="$tmp_root/root-group-writable"
+  mkdir -p "$store"
+  chmod 0720 "$store"
+  stderr_out="$({
+    chmod() {
+      if [[ "${1:-}" == "0700" ]]; then
+        return 0
+      fi
+      command chmod "$@"
+    }
+    PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
+  } 2>&1 >/dev/null)" || rc=$?
+  command chmod 0700 "$store"
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"group/world writable"* && ! -e "$store/VERSION" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
+case_state_store_init_world_only_writable_rejected() {
+  # Verifies a store root left WORLD-writable only (0702) after an ineffective chmod
+  # is rejected — the either-bit permission check must catch a single write bit.
+  #
+  # Steps:
+  #   1. Create a 0702 store root.
+  #   2. Simulate a chmod that reports success but leaves the root world-writable.
+  #   3. Assert state_store_init fails loudly before writing VERSION.
+  local name="state_store_init: world-only-writable root rejected"
+  should_run "$name" || return 0
+  local store rc=0 stderr_out
+  store="$tmp_root/root-other-writable"
+  mkdir -p "$store"
+  chmod 0702 "$store"
+  stderr_out="$({
+    chmod() {
+      if [[ "${1:-}" == "0700" ]]; then
+        return 0
+      fi
+      command chmod "$@"
+    }
+    PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init
+  } 2>&1 >/dev/null)" || rc=$?
+  command chmod 0700 "$store"
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"group/world writable"* && ! -e "$store/VERSION" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
+  fi
+}
+
 case_state_store_init_non_owner_rejected_when_simulatable() {
   # Verifies that an existing store root not owned by the effective user is rejected.
   #
@@ -1616,6 +1678,8 @@ case_state_store_init_symlink_leaf_rejected
 case_state_store_init_symlink_leaf_escape_hatch
 case_state_store_init_world_writable_rejected_when_chmod_cannot_secure
 case_state_store_init_world_writable_escape_hatch
+case_state_store_init_group_only_writable_rejected
+case_state_store_init_world_only_writable_rejected
 case_state_store_init_non_owner_rejected_when_simulatable
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails

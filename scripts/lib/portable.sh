@@ -311,9 +311,16 @@ _portable_lock_owner_line_stale() {
 
   if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
     our_host="$(_portable_lock_host)"
-    if [[ "$host" == "$our_host" ]] && ! kill -0 "$pid" 2>/dev/null; then
+    if [[ "$host" == "$our_host" ]]; then
+      # Same host: PID liveness is authoritative. A live holder is never stale,
+      # regardless of how old its lock is — age alone must not steal a live lock.
+      if kill -0 "$pid" 2>/dev/null; then
+        return 1
+      fi
       return 0
     fi
+    # Different host: PID liveness is not checkable here, so fall back to the
+    # age ceiling for a remote owner only.
     if (( epoch > 0 && now > epoch && now - epoch > stale_secs )); then
       return 0
     fi

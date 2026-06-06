@@ -235,6 +235,30 @@ case_mkdir_lock_does_not_steal_live_lock() {
   fi
 }
 
+case_mkdir_lock_live_owner_old_age_not_stolen() {
+  # Behavior: a live, same-host owner is never reclaimed even when its lock age
+  #   exceeds PM_DISPATCH_LOCK_STALE_SECS — liveness, not age, decides on-host.
+  # Steps: 1. Pre-create the lockdir owned by our live pid with a far-past epoch;
+  #   2. Attempt mkdir_lock with a 1s stale ceiling and short timeout;
+  #   3. Assert acquisition fails (the live lock was not stolen by age).
+  local name="portable-mkdir-lock-live-owner-old-age-not-stolen"
+  should_run "$name" || return 0
+  local lock="$tmp_root/lock-live-old" rc=0 host old_epoch
+  mkdir "$lock" || { fail "$name" "setup mkdir failed"; return; }
+  host="$(_portable_lock_host)"
+  old_epoch="$(( $(_portable_lock_now) - 100000 ))"
+  printf '%s %s %s\n' "$$" "$host" "$old_epoch" > "$lock/owner"
+
+  PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$lock" 1 >/dev/null 2>&1 || rc=$?
+  rm -f "$lock/owner"
+  rmdir "$lock" 2>/dev/null || true
+  if [[ "$rc" -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "live same-host owner with old age was stolen"
+  fi
+}
+
 _slw_term_self() {
   kill -TERM "$BASHPID"
   sleep 2
@@ -1056,6 +1080,7 @@ case_mkdir_lock_writes_owner_metadata
 case_mkdir_lock_reclaims_dead_same_host_owner
 case_mkdir_lock_reclaims_age_ceiling_owner
 case_mkdir_lock_does_not_steal_live_lock
+case_mkdir_lock_live_owner_old_age_not_stolen
 case_serialize_with_lock_basic
 case_serialize_with_lock_propagates_rc
 case_serialize_with_lock_fallback
