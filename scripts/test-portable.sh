@@ -103,8 +103,7 @@ case_mkdir_lock_contention() {
       exit 1
     fi
     sleep 2.5
-    rm -f "$lock/owner"
-    rmdir "$lock"
+    mkdir_unlock "$lock"
   ) &
   local holder_pid=$!
 
@@ -123,8 +122,7 @@ case_mkdir_lock_contention() {
   fi
 
   if mkdir_lock "$lock" 1; then
-    rm -f "$lock/owner"
-    rmdir "$lock"
+    mkdir_unlock "$lock"
     kill "$holder_pid" 2>/dev/null || true
     fail "$name" "second lock attempt unexpectedly succeeded"
     return
@@ -143,12 +141,10 @@ case_mkdir_lock_release() {
     fail "$name" "initial lock acquire failed"
     return
   fi
-  rm -f "$lock/owner"
-  rmdir "$lock"
+  mkdir_unlock "$lock"
 
   if mkdir_lock "$lock" 2; then
-    rm -f "$lock/owner"
-    rmdir "$lock"
+    mkdir_unlock "$lock"
     pass "$name"
   else
     fail "$name" "second lock acquire after release failed"
@@ -166,8 +162,7 @@ case_mkdir_lock_writes_owner_metadata() {
   fi
   owner="$(cat "$lock/owner" 2>/dev/null || true)"
   read -r pid host epoch extra <<< "$owner"
-  rm -f "$lock/owner"
-  rmdir "$lock"
+  mkdir_unlock "$lock"
 
   if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
     pass "$name"
@@ -190,8 +185,7 @@ case_mkdir_lock_reclaims_dead_same_host_owner() {
     return
   fi
   owner="$(cat "$lock/owner" 2>/dev/null || true)"
-  rm -f "$lock/owner"
-  rmdir "$lock"
+  mkdir_unlock "$lock"
   if [[ "$owner" =~ ^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+$ ]]; then
     pass "$name"
   else
@@ -208,8 +202,7 @@ case_mkdir_lock_reclaims_age_ceiling_owner() {
   printf '1 remote-host %s\n' "$old_epoch" > "$lock/owner"
 
   if PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$lock" 2; then
-    rm -f "$lock/owner"
-    rmdir "$lock"
+    mkdir_unlock "$lock"
     pass "$name"
   else
     fail "$name" "lock acquire did not reclaim old owner"
@@ -226,8 +219,7 @@ case_mkdir_lock_does_not_steal_live_lock() {
   fi
 
   PM_DISPATCH_LOCK_STALE_SECS=999 mkdir_lock "$lock" 1 >/dev/null 2>&1 || rc=$?
-  rm -f "$lock/owner"
-  rmdir "$lock"
+  mkdir_unlock "$lock"
   if [[ "$rc" -ne 0 ]]; then
     pass "$name"
   else
@@ -250,8 +242,7 @@ case_mkdir_lock_live_owner_old_age_not_stolen() {
   printf '%s %s %s\n' "$$" "$host" "$old_epoch" > "$lock/owner"
 
   PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$lock" 1 >/dev/null 2>&1 || rc=$?
-  rm -f "$lock/owner"
-  rmdir "$lock" 2>/dev/null || true
+  mkdir_unlock "$lock"
   if [[ "$rc" -ne 0 ]]; then
     pass "$name"
   else
@@ -287,8 +278,7 @@ case_mkdir_lock_unc_warning_nonfatal() {
 
   stderr_out="$(mkdir_lock "$lock" 2 2>&1 >/dev/null)" || rc=$?
   if [[ "$rc" -eq 0 ]]; then
-    rm -f "$lock/owner"
-    rmdir "$lock"
+    mkdir_unlock "$lock"
   fi
   if [[ "$rc" -eq 0 && "$stderr_out" == *"warning: lock path may be on a network filesystem"* ]]; then
     pass "$name"

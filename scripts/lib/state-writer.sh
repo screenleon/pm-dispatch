@@ -81,36 +81,44 @@ _sw_unsafe_store_root() {
   return 1
 }
 
+_sw_join_reasons() {
+  local joined="${1:-}"; shift || true
+  local reason
+  for reason in "$@"; do
+    joined="$joined; $reason"
+  done
+  printf '%s\n' "$joined"
+}
+
 _sw_ensure_store_root_safe() {
-  local store_root="$1" root_leaf canonical_root reasons=()
+  local store_root="$1" root_leaf canonical_root pre_reasons=()
   [[ -n "$store_root" ]] || { printf 'state-writer: empty state root\n' >&2; return 1; }
   root_leaf="$(_sw_store_root_leaf "$store_root")"
   canonical_root="$(realpath_m "$store_root" 2>/dev/null || printf '%s\n' "$store_root")"
 
+  # Non-mutating safety checks run FIRST. A rejection here must not touch the
+  # unsafe target — never mkdir/chmod through a symlinked or unowned leaf.
   if [[ -L "$root_leaf" ]]; then
-    reasons+=("leaf is a symlink")
+    pre_reasons+=("leaf is a symlink")
   fi
   if [[ -e "$root_leaf" && ! -O "$root_leaf" ]]; then
-    reasons+=("not owned by effective user")
+    pre_reasons+=("not owned by effective user")
+  fi
+  if [[ "${#pre_reasons[@]}" -gt 0 ]]; then
+    # Without the escape hatch this returns non-zero BEFORE any mutation.
+    _sw_unsafe_store_root "$canonical_root" "$(_sw_join_reasons "${pre_reasons[@]}")" || return 1
   fi
 
+  # Safe to create + secure the root now.
   if ! mkdir -p "$store_root" 2>/dev/null; then
     printf 'state-writer: mkdir failed: %s\n' "$canonical_root" >&2
     return 1
   fi
   chmod 0700 "$store_root" 2>/dev/null || true
 
+  # Post-chmod check: if the root is still others-writable we could not secure it.
   if _sw_store_root_mode_allows_write "$store_root"; then
-    reasons+=("group/world writable after chmod")
-  fi
-
-  if [[ "${#reasons[@]}" -gt 0 ]]; then
-    local reason joined
-    joined="${reasons[0]}"
-    for reason in "${reasons[@]:1}"; do
-      joined="$joined; $reason"
-    done
-    _sw_unsafe_store_root "$canonical_root" "$joined" || return 1
+    _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
   fi
   return 0
 }

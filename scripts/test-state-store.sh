@@ -223,25 +223,29 @@ case_state_store_init_symlink_leaf_rejected() {
   # Verifies that a symlinked store-root leaf is rejected before layout creation.
   #
   # Steps:
-  #   1. Create a real target directory and a symlink pointing at it.
+  #   1. Create a real target directory (mode 0755) and a symlink pointing at it.
   #   2. Call state_store_init with PM_DISPATCH_STATE_ROOT set to the symlink.
-  #   3. Assert the call fails loudly and no VERSION file is written through the symlink.
+  #   3. Assert the call fails loudly, no VERSION is written through the symlink,
+  #      AND the target's mode is unmodified (rejection must not chmod the target).
   local name="state_store_init: symlinked store-root leaf is rejected"
   should_run "$name" || return 0
-  local target link rc=0 stderr_out
+  local target link rc=0 stderr_out before after
   target="$tmp_root/root-symlink-target"
   link="$tmp_root/root-symlink"
   mkdir -p "$target"
+  chmod 0755 "$target"
   ln -s "$target" "$link"
   if [[ ! -L "$link" ]]; then
     pass "$name (skip: symlinks unavailable)"
     return 0
   fi
+  before="$(_sw_path_mode_octal "$target")"
   stderr_out="$(PM_DISPATCH_STATE_ROOT="$link" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
-  if [[ "$rc" -ne 0 && "$stderr_out" == *"symlink"* && ! -e "$target/VERSION" ]]; then
+  after="$(_sw_path_mode_octal "$target")"
+  if [[ "$rc" -ne 0 && "$stderr_out" == *"symlink"* && ! -e "$target/VERSION" && "$before" == "$after" ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc stderr=${stderr_out:-empty} version_exists=$([[ -e "$target/VERSION" ]] && printf yes || printf no)"
+    fail "$name" "rc=$rc stderr=${stderr_out:-empty} version_exists=$([[ -e "$target/VERSION" ]] && printf yes || printf no) before=$before after=$after"
   fi
 }
 

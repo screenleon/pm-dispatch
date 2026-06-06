@@ -166,6 +166,19 @@ mkdir_lock() {
   return 1
 }
 
+# mkdir_unlock <lockdir>
+# Release a lock acquired with mkdir_lock. Because mkdir_lock now leaves an
+# `owner` metadata file inside the lockdir, a bare `rmdir` no longer suffices —
+# callers MUST release through this helper (it removes the owner file then the
+# directory). Always succeeds (best-effort).
+mkdir_unlock() {
+  local lockdir="$1"
+  [[ -n "$lockdir" ]] || return 0
+  rm -f -- "$lockdir/owner" 2>/dev/null || true
+  rmdir "$lockdir" 2>/dev/null || true
+  return 0
+}
+
 # serialize_with_lock <lockbase> <fn_name> [args...]
 # Run <fn_name> [args...] with exclusive lock. Prefers flock when available
 # (kernel-level, stale-lock-safe); falls back to mkdir_lock otherwise.
@@ -191,11 +204,10 @@ serialize_with_lock() {
     fi
     local _slw_rc=0
     (
-      trap 'rm -f -- "$lockdir/owner" 2>/dev/null || true; rmdir "$lockdir" 2>/dev/null || true' EXIT
+      trap 'mkdir_unlock "$lockdir"' EXIT
       "$@"
     ) || _slw_rc=$?
-    rm -f -- "$lockdir/owner" 2>/dev/null || true
-    rmdir "$lockdir" 2>/dev/null || true
+    mkdir_unlock "$lockdir"
     return $_slw_rc
   fi
 }
