@@ -20,18 +20,20 @@ pmctl_trace_ensure_state_writer() {
 
 pmctl_trace_scan_line() {
   local line="${1:-}" compact fields
-  local event_id ts kind subject_type subject_id actor operation_id
+  local event_id ts kind subject_id
 
   if ! compact="$(printf '%s\n' "$line" | jq -c 'if type == "object" then . else error("not object") end' 2>/dev/null)"; then
     _PMCTL_TRACE_SKIPPED=$((_PMCTL_TRACE_SKIPPED + 1))
     return 0
   fi
 
-  if ! fields="$(printf '%s\n' "$compact" | jq -r '[.id // "", .ts // "", .kind // "", .subject_type // "", .subject_id // "", .actor // "", .operation_id // ""] | @tsv' 2>/dev/null)"; then
+  # Only the fields used for filtering are extracted into shell vars; the
+  # emitters re-read subject_type / actor / operation_id from the JSON itself.
+  if ! fields="$(printf '%s\n' "$compact" | jq -r '[.id // "", .ts // "", .kind // "", .subject_id // ""] | @tsv' 2>/dev/null)"; then
     _PMCTL_TRACE_SKIPPED=$((_PMCTL_TRACE_SKIPPED + 1))
     return 0
   fi
-  IFS=$'\t' read -r event_id ts kind subject_type subject_id actor operation_id <<< "$fields"
+  IFS=$'\t' read -r event_id ts kind subject_id <<< "$fields"
 
   if [[ -n "${_PMCTL_TRACE_ID_FILTER:-}" && "$event_id" != "$_PMCTL_TRACE_ID_FILTER" ]]; then
     return 0
