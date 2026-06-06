@@ -9,9 +9,11 @@
 
 ---
 
-## v0.4.0 — state-first foundation（規劃中）
+## v0.4.0 — state-first foundation（地基完成 2026-06-06，尚未 tag）
 
 **主題**：把 v0.3.0 的 spine 補成**真正 state-first**——`pmctl` 成為機器狀態的**唯一 writer**，dispatch 路徑經 `pmctl` 寫出 Run + Event，`routing_log.md` 機器寫入廢棄改用 `pmctl trace`。決策見 `DECISIONS.md` 2026-06-03（CC-211 committed）；完整 scoping 見 [`docs/architecture/v0.4.0-state-first-foundation.md`](docs/architecture/v0.4.0-state-first-foundation.md)。
+
+> **狀態（2026-06-06）：地基全數落地。** writers（CC-309/310/311/312/313/314）+ reader `pmctl trace`（CC-315 #237）+ rotation（CC-316 #238）+ store 安全/鎖/layout-parity（CC-317 #239）皆已合併。release/tag **尚未**進行（維護者暫緩）。剩餘屬地基外：能力層（CC-234/235/237）、MCP（CC-216）、review-model（CC-323→327）；CC-306 為 optional P3 defense-in-depth（見下）。
 
 > **Scope 取捨（2026-06-03 拍板）**：維護者接受 v0.4.0 短期**無使用者可見賣點**——目前使用者少，基建正確性優先於推新功能。以 timeboxed thin vertical slice 降風險；撐不起（需跨 adapters/hooks/gate 大改）才退回增量。MCP（CC-216）與能力層（CC-234/237）延到地基落地之後。
 
@@ -19,7 +21,7 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ⏳ |
+| CC-211 | 承諾 state-first（epic）；§5 thin slice：一條 `pmctl dispatch run` 經 pmctl 寫 Run+Event、`routing_log.md` 不再機器寫 | ✅ slice (#223)（地基 CC-309..317 完成；epic 延續至能力層/MCP） |
 | CC-309 | single-writer：Run/Event 寫入上收 `pmctl`；guard emit Event；writer 邊界硬化（拒 newline/NUL + compact + schema-validate）；寫失敗變響；反轉 layer-boundary 測試 | ✅ (#223) |
 | CC-310 | transactional Run+Event（operation-id + 對帳不變量）+ Run FSM 生命週期（pending→…→terminal，每轉移 emit Event） | ✅ (#228) |
 | CC-311 | state store VERSION gating + migration（不得靜默降級） | ✅ (#230) |

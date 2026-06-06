@@ -1127,7 +1127,9 @@ This makes directory creation the mutex.
 
 **Why deferred / P3**: Optional defense-in-depth follow-up from CC-298; the implementation change is complete without strengthening validators in this ticket.
 
-**Cross-link**: `[[CC-233]]`, `[[CC-298]]`.
+**Not done by CC-309**: CC-309's inverted layer-boundary test (`check_adapters_no_state_writes` in `test-layer-boundaries.sh`) forbids **adapters** from writing state directly — a different rule. This ticket's `.codex-*`/`.claude-*` runtime-named **data-dir** guard under `scripts/` is still unimplemented. (Corrects a v0.4.0 MILESTONES row that had conflated the two.)
+
+**Cross-link**: `[[CC-233]]`, `[[CC-298]]`, `[[CC-309]]`.
 
 ## CC-314 — routing_log.md → events.jsonl migration + deprecate machine-write
 
