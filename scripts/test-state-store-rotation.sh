@@ -87,6 +87,10 @@ EOF
 }
 
 case_rotation_below_threshold() {
+  # Behavior: appends that stay under the byte threshold never rotate.
+  # Steps:
+  #   1. Append two small events with a large (100000) threshold.
+  #   2. Assert no archive segment exists and both rows remain in the active file.
   local name="state rotation: below byte threshold leaves active intact"
   should_run "$name" || return 0
   local store proj archives active_count
@@ -104,6 +108,10 @@ case_rotation_below_threshold() {
 }
 
 case_rotation_byte_threshold_triggers() {
+  # Behavior: crossing the byte threshold rotates the prior rows into segment 0001.
+  # Steps:
+  #   1. Append two events with a tiny (1-byte) threshold so the second triggers rotation.
+  #   2. Assert events-*-0001.jsonl.gz holds row 1 and the active file holds row 2.
   local name="state rotation: byte threshold creates first event archive"
   should_run "$name" || return 0
   local store proj archive active_id archive_id
@@ -123,6 +131,10 @@ case_rotation_byte_threshold_triggers() {
 }
 
 case_rotation_monotonic_segments() {
+  # Behavior: repeated rotations in one month allocate monotonic segment numbers.
+  # Steps:
+  #   1. Append three events with a tiny threshold so two rotations occur.
+  #   2. Assert the archive holds -0001 and -0002 segments (no collision/overwrite).
   local name="state rotation: same-month segments are monotonic"
   should_run "$name" || return 0
   local store proj names
@@ -144,6 +156,10 @@ case_rotation_monotonic_segments() {
 }
 
 case_rotation_gzip_integrity() {
+  # Behavior: the gzipped segment preserves exactly the rotated rows, in order.
+  # Steps:
+  #   1. Append two events under a large threshold, then one with a tiny threshold to rotate.
+  #   2. Gunzip segment 0001 and assert it contains rows 1 then 2 in order.
   local name="state rotation: gzip segment preserves rotated rows in order"
   should_run "$name" || return 0
   local store proj archive ids
@@ -162,6 +178,10 @@ case_rotation_gzip_integrity() {
 }
 
 case_rotation_reader_integration() {
+  # Behavior: pmctl trace tail merges archived segments with the active file (CC-315 ↔ CC-316).
+  # Steps:
+  #   1. Append two events with a tiny threshold so row 1 is archived and row 2 stays active.
+  #   2. Run `pmctl trace tail --all --json` and assert both rows are returned in ts order.
   local name="state rotation: pmctl trace tail reads archive plus active"
   should_run "$name" || return 0
   local store out err status=0 ids
@@ -180,6 +200,10 @@ case_rotation_reader_integration() {
 }
 
 case_rotation_runs_independent() {
+  # Behavior: runs.jsonl rotates on its own without rotating events.jsonl.
+  # Steps:
+  #   1. Append two runs with a tiny threshold so run 1 is archived.
+  #   2. Assert a runs-*-0001 segment exists, no events segment exists, run 2 stays active.
   local name="state rotation: runs rotate independently"
   should_run "$name" || return 0
   local store proj run_archive event_archives active_id archive_id
@@ -201,6 +225,12 @@ case_rotation_runs_independent() {
 }
 
 case_rotation_crash_recovery() {
+  # Behavior: a crash after staging but before publish is recovered on the next append.
+  # Steps:
+  #   1. Init store; place a destination-named .staging orphan (row 1) plus a stale .gz.tmp.
+  #   2. Append row 2 (large threshold → no fresh rotation).
+  #   3. Assert the stage is published to segment 0001 (row 1), the stale tmp and staging
+  #      are gone, and the active file holds row 2.
   local name="state rotation: stale staged segment is recovered idempotently"
   should_run "$name" || return 0
   local store proj period archive ids active_ids tmp_left staging_left
@@ -208,7 +238,6 @@ case_rotation_crash_recovery() {
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$REPO_ROOT" state_store_init
   proj="$(project_dir_for_store "$store")"
   period="$(date -u +%Y%m)"
-  # A crash AFTER staging but BEFORE publish leaves a destination-named stage.
   event_json 1 > "$proj/archive/events-${period}-0001.jsonl.gz.staging"
   printf 'partial\n' > "$proj/archive/events-${period}-9999.jsonl.gz.tmp"
   append_event_n "$store" 2 100000
@@ -227,20 +256,24 @@ case_rotation_crash_recovery() {
 }
 
 case_rotation_post_publish_no_duplicate() {
+  # Behavior: a stage left behind AFTER its segment was already published is dropped,
+  #   never re-archived, so no duplicate rows reach the reader (idempotent recovery).
+  # Steps:
+  #   1. Rotate for real so segment 0001 (row 1) is published and row 2 is active.
+  #   2. Recreate the already-published segment's .staging with identical content
+  #      (simulating a crash between publish and stage cleanup).
+  #   3. Append row 3, then assert: still exactly one segment (no -0002 duplicate),
+  #      no staging left, and `pmctl trace tail --all --json` emits no duplicate ids.
   local name="state rotation: post-publish stale stage does not duplicate rows"
   should_run "$name" || return 0
   local store proj period seg_count staging_left trace_ids uniq_ids out err status=0
   store="$tmp_root/postpublish"
-  # Real rotation: event 1 archived to segment 0001, event 2 stays in active.
   append_event_n "$store" 1 1
   append_event_n "$store" 2 1
   proj="$(project_dir_for_store "$store")"
   period="$(date -u +%Y%m)"
-  # Simulate a crash AFTER publish but BEFORE removing the stage: recreate the
-  # already-published segment's stage with identical content.
   gzip -cd "$proj/archive/events-${period}-0001.jsonl.gz" \
     > "$proj/archive/events-${period}-0001.jsonl.gz.staging"
-  # Next append must DROP the stage (segment already exists), not republish it.
   append_event_n "$store" 3 100000
   seg_count="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' | wc -l | tr -d ' ')"
   staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
@@ -257,7 +290,44 @@ case_rotation_post_publish_no_duplicate() {
   fi
 }
 
+case_rotation_recovery_failure_preserves_stage() {
+  # Behavior: when a pre-existing stage cannot be published (gzip failing during
+  #   recovery), rotation skips a fresh rotation, preserves the stage for retry,
+  #   keeps the append succeeding, and never allocates a new segment.
+  # Steps:
+  #   1. Init store; place a destination-named .staging orphan (row 1).
+  #   2. Append row 2 with a failing-gzip PATH and a tiny threshold.
+  #   3. Assert: append rc 0; the .staging orphan is preserved; no published
+  #      segment was created; the active file still holds row 2.
+  local name="state rotation: recovery failure preserves stage and does not rotate"
+  should_run "$name" || return 0
+  local store proj period path home rc=0 staging_left seg_count active_ids
+  store="$tmp_root/recovery-fail-store"
+  home="$tmp_root/recovery-fail-home"
+  PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$REPO_ROOT" state_store_init
+  proj="$(project_dir_for_store "$store")"
+  period="$(date -u +%Y%m)"
+  event_json 1 > "$proj/archive/events-${period}-0001.jsonl.gz.staging"
+  path="$(make_path_with_failing_gzip "$tmp_root/recovery-fail-bin")"
+  HOME="$home" PATH="$path" PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$REPO_ROOT" PM_DISPATCH_ROTATE_MAX_BYTES=1 \
+    events_append "$(event_json 2)" || rc=$?
+  staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
+  seg_count="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' | wc -l | tr -d ' ')"
+  active_ids="$(ids_from_file "$proj/events.jsonl")"
+  if [[ "$rc" -eq 0 && -n "$staging_left" && "$seg_count" == "0" &&
+        "$active_ids" == *"evt-20260606T000002Z-000002"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc staging_left=$staging_left seg_count=$seg_count active_ids=$active_ids"
+  fi
+}
+
 case_rotation_gzip_unavailable() {
+  # Behavior: a missing gzip binary degrades rotation loudly without failing the append.
+  # Steps:
+  #   1. Append row 1, then append row 2 with a gzip-less PATH and a tiny threshold.
+  #   2. Assert: append rc 0; no archive segment; both rows remain in the active file;
+  #      state-writer.err records the "gzip unavailable" degradation.
   local name="state rotation: missing gzip skips rotation without failing append"
   should_run "$name" || return 0
   local store proj path home rc=0 archives active_ids log
@@ -281,9 +351,15 @@ case_rotation_gzip_unavailable() {
 }
 
 case_rotation_gzip_failure_nonfatal() {
+  # Behavior: a gzip that fails before publish does not fail the append or lose rows —
+  #   the staged rows are restored to the active file (no orphan stage, no segment).
+  # Steps:
+  #   1. Append row 1, then append row 2 with a failing-gzip PATH and a tiny threshold.
+  #   2. Assert: append rc 0; no archive segment; no leftover .staging; both rows in the
+  #      active file; state-writer.err records the "gzip failed" degradation.
   local name="state rotation: gzip failure does not fail append or lose active rows"
   should_run "$name" || return 0
-  local store proj path home rc=0 archives active_ids rotating log
+  local store proj path home rc=0 archives active_ids staging_left log
   store="$tmp_root/gzip-fail-store"
   home="$tmp_root/gzip-fail-home"
   append_event_n "$store" 1 1
@@ -293,18 +369,23 @@ case_rotation_gzip_failure_nonfatal() {
   proj="$(project_dir_for_store "$store")"
   archives="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' -print 2>/dev/null)"
   active_ids="$(ids_from_file "$proj/events.jsonl")"
-  rotating="$(find "$proj" -maxdepth 1 -type f -name 'events.jsonl.rotating' -print 2>/dev/null)"
+  staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
   log="$(cat "$home/.claude/logs/state-writer.err" 2>/dev/null || true)"
-  if [[ "$rc" -eq 0 && -z "$archives" && -z "$rotating" &&
+  if [[ "$rc" -eq 0 && -z "$archives" && -z "$staging_left" &&
         "$active_ids" == "evt-20260606T000001Z-000001 evt-20260606T000002Z-000002 " &&
         "$log" == *"gzip failed"* ]]; then
     pass "$name"
   else
-    fail "$name" "rc=$rc archives=$archives rotating=$rotating active_ids=$active_ids log=$log"
+    fail "$name" "rc=$rc archives=$archives staging_left=$staging_left active_ids=$active_ids log=$log"
   fi
 }
 
 case_rotation_max_bytes_parsing() {
+  # Behavior: _sw_rotate_max_bytes falls back to the 50 MB default for unset/empty/
+  #   zero/non-numeric/negative input and passes through a valid positive integer.
+  # Steps:
+  #   1. Call _sw_rotate_max_bytes with each input form.
+  #   2. Assert the fallbacks return 52428800 and the valid value passes through.
   local name="state rotation: PM_DISPATCH_ROTATE_MAX_BYTES default/zero/non-numeric fallback"
   should_run "$name" || return 0
   local def=52428800 out_unset out_empty out_zero out_alpha out_neg out_valid
@@ -323,16 +404,18 @@ case_rotation_max_bytes_parsing() {
 }
 
 case_rotation_exact_threshold() {
+  # Behavior: an active file whose size exactly equals the threshold rotates (>= boundary).
+  # Steps:
+  #   1. Append one row under a large threshold; measure its exact byte size.
+  #   2. Append a second row with threshold == that size so the pre-append check sees
+  #      size == threshold; assert segment 0001 was created (exact equality triggers).
   local name="state rotation: active size exactly at threshold triggers rotation"
   should_run "$name" || return 0
   local store proj size archive
   store="$tmp_root/exact"
-  # One row under a large threshold → no rotation; measure its exact byte size.
   append_event_n "$store" 1 100000
   proj="$(project_dir_for_store "$store")"
   size="$(file_size_bytes "$proj/events.jsonl")"
-  # Next append runs the threshold check first with threshold == current size,
-  # so the `>=` boundary (exact equality) must trigger rotation of row 1.
   append_event_n "$store" 2 "$size"
   archive="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*-0001.jsonl.gz' -print -quit)"
   if [[ -f "$archive" && "$(ids_from_gzip "$archive")" == "evt-20260606T000001Z-000001 " ]]; then
@@ -350,6 +433,7 @@ case_rotation_reader_integration
 case_rotation_runs_independent
 case_rotation_crash_recovery
 case_rotation_post_publish_no_duplicate
+case_rotation_recovery_failure_preserves_stage
 case_rotation_gzip_unavailable
 case_rotation_gzip_failure_nonfatal
 case_rotation_max_bytes_parsing
