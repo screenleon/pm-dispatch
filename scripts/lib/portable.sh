@@ -131,6 +131,7 @@ mkdir_lock() {
   local timeout_sec="${2:-2}"
   local attempts
   local i
+  local stale_owner owner_now stale_reclaims=0 max_reclaims=2
 
   [[ -n "$lockdir" ]] || return 1
 
@@ -138,18 +139,44 @@ mkdir_lock() {
     timeout_sec=2
   fi
 
+  _portable_lock_preflight_warn "$lockdir"
+
   attempts=$(( timeout_sec * 20 ))
   (( attempts > 0 )) || attempts=1
 
   for ((i = 0; i < attempts; i++)); do
     if mkdir "$lockdir" 2>/dev/null; then
+      _portable_lock_write_owner "$lockdir"
       return 0
+    fi
+    if (( stale_reclaims < max_reclaims )) && stale_owner="$(_portable_lock_stale_owner "$lockdir")"; then
+      owner_now="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
+      if [[ "$owner_now" == "$stale_owner" ]]; then
+        rm -f -- "$lockdir/owner" 2>/dev/null || true
+        if rmdir "$lockdir" 2>/dev/null; then
+          stale_reclaims=$((stale_reclaims + 1))
+          continue
+        fi
+      fi
     fi
     sleep 0.05
   done
 
   printf 'portable: mkdir_lock timeout after %s seconds for %s\n' "$timeout_sec" "$lockdir" >&2
   return 1
+}
+
+# mkdir_unlock <lockdir>
+# Release a lock acquired with mkdir_lock. Because mkdir_lock now leaves an
+# `owner` metadata file inside the lockdir, a bare `rmdir` no longer suffices —
+# callers MUST release through this helper (it removes the owner file then the
+# directory). Always succeeds (best-effort).
+mkdir_unlock() {
+  local lockdir="$1"
+  [[ -n "$lockdir" ]] || return 0
+  rm -f -- "$lockdir/owner" 2>/dev/null || true
+  rmdir "$lockdir" 2>/dev/null || true
+  return 0
 }
 
 # serialize_with_lock <lockbase> <fn_name> [args...]
@@ -171,12 +198,16 @@ serialize_with_lock() {
     _slw_rc=$?
     return $_slw_rc
   else
-    if ! mkdir_lock "${lockbase}.lockdir" 2; then
+    local lockdir="${lockbase}.lockdir"
+    if ! mkdir_lock "$lockdir" 2; then
       return 1
     fi
     local _slw_rc=0
-    "$@" || _slw_rc=$?
-    rmdir "${lockbase}.lockdir"
+    (
+      trap 'mkdir_unlock "$lockdir"' EXIT
+      "$@"
+    ) || _slw_rc=$?
+    mkdir_unlock "$lockdir"
     return $_slw_rc
   fi
 }
@@ -228,6 +259,141 @@ file_size_bytes() {
 }
 
 # Helpers below are private.
+
+_portable_lock_host() {
+  local h=""
+  h="$(hostname 2>/dev/null || true)"
+  [[ -n "$h" ]] || h="${HOSTNAME:-unknown}"
+  [[ -n "$h" ]] || h="unknown"
+  printf '%s\n' "$h"
+}
+
+_portable_lock_now() {
+  local n
+  n="$(date +%s 2>/dev/null || true)"
+  if [[ "$n" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$n"
+  else
+    printf '0\n'
+  fi
+}
+
+_portable_lock_stale_secs() {
+  local raw="${PM_DISPATCH_LOCK_STALE_SECS:-60}"
+  if [[ "$raw" =~ ^[0-9]+$ ]] && (( 10#$raw > 0 )); then
+    printf '%s\n' "$((10#$raw))"
+  else
+    printf '60\n'
+  fi
+}
+
+_portable_lock_write_owner() {
+  local lockdir="$1" host epoch
+  host="$(_portable_lock_host)"
+  epoch="$(_portable_lock_now)"
+  printf '%s %s %s\n' "$$" "$host" "$epoch" > "$lockdir/owner" 2>/dev/null || true
+}
+
+_portable_lock_read_owner() {
+  local lockdir="$1"
+  [[ -f "$lockdir/owner" ]] || return 1
+  IFS= read -r _portable_owner_line < "$lockdir/owner" || return 1
+  printf '%s\n' "$_portable_owner_line"
+}
+
+_portable_lock_mtime() {
+  local path="$1" n
+  if n="$(stat -c %Y -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$n"
+    return 0
+  fi
+  if n="$(stat -f %m -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$n"
+    return 0
+  fi
+  return 1
+}
+
+_portable_lock_owner_line_stale() {
+  local lockdir="$1" owner_line="$2"
+  local pid host epoch extra our_host now stale_secs mtime
+  read -r pid host epoch extra <<< "$owner_line"
+  now="$(_portable_lock_now)"
+  stale_secs="$(_portable_lock_stale_secs)"
+
+  if [[ "$pid" =~ ^[0-9]+$ && -n "$host" && "$epoch" =~ ^[0-9]+$ && -z "${extra:-}" ]]; then
+    our_host="$(_portable_lock_host)"
+    if [[ "$host" == "$our_host" ]]; then
+      # Same host: PID liveness is authoritative. A live holder is never stale,
+      # regardless of how old its lock is — age alone must not steal a live lock.
+      if kill -0 "$pid" 2>/dev/null; then
+        return 1
+      fi
+      return 0
+    fi
+    # Different host: PID liveness is not checkable here, so fall back to the
+    # age ceiling for a remote owner only.
+    if (( epoch > 0 && now > epoch && now - epoch > stale_secs )); then
+      return 0
+    fi
+    return 1
+  fi
+
+  mtime="$(_portable_lock_mtime "$lockdir" 2>/dev/null || true)"
+  if [[ "$mtime" =~ ^[0-9]+$ ]] && (( now > mtime && now - mtime > stale_secs )); then
+    return 0
+  fi
+  return 1
+}
+
+_portable_lock_stale_owner() {
+  local lockdir="$1" owner_line
+  [[ -d "$lockdir" ]] || return 1
+  owner_line="$(_portable_lock_read_owner "$lockdir" 2>/dev/null || true)"
+  if [[ -n "$owner_line" ]]; then
+    if _portable_lock_owner_line_stale "$lockdir" "$owner_line"; then
+      printf '%s\n' "$owner_line"
+      return 0
+    fi
+    return 1
+  fi
+
+  if _portable_lock_owner_line_stale "$lockdir" ""; then
+    printf '\n'
+    return 0
+  fi
+  return 1
+}
+
+_portable_lock_fs_type() {
+  local path="$1" probe="$1" fs_type=""
+  if [[ ! -e "$probe" ]]; then
+    probe="$(dirname "$probe")"
+  fi
+  fs_type="$(stat -f -c %T -- "$probe" 2>/dev/null || true)"
+  [[ -n "$fs_type" ]] || fs_type="$(df -T "$probe" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+  [[ -n "$fs_type" ]] || fs_type="$(stat -f %T "$probe" 2>/dev/null || true)"
+  printf '%s\n' "$fs_type"
+}
+
+_portable_lock_preflight_warn() {
+  local path="$1" fs_type warn=0
+  [[ -z "${_PORTABLE_LOCK_PREFLIGHT_WARNED:-}" ]] || return 0
+  case "$path" in
+    //*|\\\\*) warn=1 ;;
+  esac
+  if [[ "$warn" -eq 0 ]]; then
+    fs_type="$(_portable_lock_fs_type "$path")"
+    case "$fs_type" in
+      9p|nfs|nfs4|cifs|smb|smbfs) warn=1 ;;
+    esac
+  fi
+  if [[ "$warn" -eq 1 ]]; then
+    _PORTABLE_LOCK_PREFLIGHT_WARNED=1
+    printf 'portable: warning: lock path may be on a network filesystem with unreliable advisory locking: %s\n' "$path" >&2
+  fi
+  return 0
+}
 
 # shellcheck disable=SC2155
 _portable_normalize_path() {

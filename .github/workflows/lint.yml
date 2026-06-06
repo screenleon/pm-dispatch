@@ -152,6 +152,7 @@ jobs:
             test-setup-project.sh
             test-skill-refine.sh
             test-state-store.sh
+            test-state-layout-parity.sh
             test-state-store-rotation.sh
             test-uninstall.sh
             test-usage-tracker.sh
@@ -316,6 +317,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: state store regression suite
         run: bash scripts/test-state-store.sh
+
+  test-state-layout-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: state layout parity regression suite
+        run: bash scripts/test-state-layout-parity.sh
 
   test-state-store-rotation:
     runs-on: ubuntu-latest
