@@ -25,7 +25,7 @@
 | CC-311 | state store VERSION gating + migration（不得靜默降級） | ✅ (#230) |
 | CC-312 | schema 收緊（dispatch-run 必填 trace 欄位）+ per-event payload / FSM 轉移驗證 | ✅ (#230) |
 | CC-313 | project partition identity：寫 `repo.json` + worktree/aliases + 拒 `global` | ✅ (#232) |
-| CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | 🔵 active |
+| CC-314 | `routing_log.md` → `events.jsonl` 遷移 + kind 映射 + 停機器寫（D3） | ✅ (#234) |
 | CC-316 | rotation 實作（gz、月內 segment 後綴、archive 可查；D7） | 🔵 active |
 | CC-317 | state store 安全/穩健硬化（store-root perms/symlink、mkdir-lock stale-owner、layout 可執行真相源） | 🔵 active |
 | CC-306 | layer enforcer 擴及「禁止 adapter/hook 直接寫 state」（由 CC-309 反轉測試實現） | 🟡 → v0.4.0 |
@@ -36,14 +36,14 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
-| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | 🔵 active |
+| CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ (#237) |
 | CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
 
 ### Phase 3 — 第一個 state consumer
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | 🔵 active |
+| CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | ✅ (#237) |
 | CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
 
 ### 旁支修正（已合入 main，不在 Phase 1–3 主路徑）

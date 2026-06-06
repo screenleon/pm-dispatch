@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -68,6 +68,12 @@ case "$cmd/$sub" in
       pmctl_die "dispatch run unavailable"
     fi
     pmctl_dispatch_run "$REPO_ROOT" "$@"
+    ;;
+  trace/tail)
+    if ! declare -F pmctl_trace_tail >/dev/null; then
+      pmctl_die "trace tail unavailable"
+    fi
+    pmctl_trace_tail "$REPO_ROOT" "$@"
     ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"
