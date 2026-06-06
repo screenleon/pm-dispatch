@@ -3,7 +3,7 @@
 
 SCRIPT_DIR_SW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/portable.sh
-if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function ]]; then
+if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _portable_sha1 2>/dev/null)" != function || "$(type -t file_size_bytes 2>/dev/null)" != function ]]; then
   _SW_SHELL_FLAGS="$-"
   _SW_PIPEFAIL=0
   set -o | grep -qE '^pipefail[[:space:]]+on$' && _SW_PIPEFAIL=1
@@ -72,6 +72,167 @@ _sw_project_dir() {
   {
     printf '%s/projects/%s/\n' "$(_sw_store_root)" "$(_sw_project_key)"
   } 2>/dev/null || true
+  return 0
+}
+
+# Rotation is best-effort maintenance, not a canonical state write: it must
+# never fail the Run/Event append (a missing `gzip` binary must not break the
+# substrate). So when rotation cannot proceed we keep the write succeeding, but
+# the degradation is surfaced LOUDLY (stderr + state-writer.err), never silent,
+# so operators see that bounded growth has stopped. The canonical append still
+# fails loudly on its own errors; only rotation is best-effort.
+_sw_rotate_warn() {
+  printf 'state-writer: %s\n' "${1:-}" >&2
+  _sw_log_error "${1:-}"
+}
+
+_sw_rotate_max_bytes() {
+  local raw="${PM_DISPATCH_ROTATE_MAX_BYTES:-}" default=52428800
+  if [[ "$raw" =~ ^[0-9]+$ ]] && (( 10#$raw > 0 )); then
+    printf '%s\n' "$((10#$raw))"
+  else
+    printf '%s\n' "$default"
+  fi
+}
+
+_sw_next_archive_path() {
+  local entity="$1" period max=0 path base segment n
+  period="$(date -u +%Y%m 2>/dev/null || date +%Y%m)"
+  # Consider published segments AND pending .staging files, so a crashed stage
+  # reserves its segment number and a fresh rotation never reuses it.
+  for path in "archive/${entity}-${period}-"*.jsonl.gz "archive/${entity}-${period}-"*.jsonl.gz.staging; do
+    [[ -e "$path" ]] || continue
+    base="${path##*/}"
+    segment="${base#"${entity}-${period}-"}"
+    segment="${segment%.staging}"
+    segment="${segment%.jsonl.gz}"
+    if [[ "$segment" =~ ^[0-9]{4}$ ]]; then
+      n=$((10#$segment))
+      (( n > max )) && max="$n"
+    fi
+  done
+  printf 'archive/%s-%s-%04d.jsonl.gz\n' "$entity" "$period" "$((max + 1))"
+}
+
+_sw_clean_stale_archive_tmp() {
+  local entity="$1" tmp
+  for tmp in "archive/${entity}-"*.jsonl.gz.tmp; do
+    [[ -e "$tmp" ]] || continue
+    rm -f -- "$tmp" 2>/dev/null || _sw_rotate_warn "state rotation: failed to remove stale tmp: $tmp"
+  done
+  return 0
+}
+
+_sw_has_staged_segments() {
+  local entity="$1" staging
+  for staging in "archive/${entity}-"*.jsonl.gz.staging; do
+    [[ -e "$staging" ]] && return 0
+  done
+  return 1
+}
+
+# Publish one destination-named staging file to its final .gz segment.
+# IDEMPOTENT: the staging name encodes its destination, so if that segment is
+# already published (a crash or `rm` failure after a prior publish left the
+# stage behind), the staged copy is dropped instead of re-archived — no
+# duplicate rows. Returns 0 on success or already-published; returns 1 only when
+# publish failed before the segment was created (the stage is kept for retry).
+_sw_publish_staged_segment() {
+  local staging="$1" dest tmp_path
+  [[ -f "$staging" ]] || return 0
+  dest="${staging%.staging}"
+  if [[ -f "$dest" ]]; then
+    rm -f -- "$staging" 2>/dev/null \
+      || _sw_rotate_warn "state rotation: failed to drop already-published stage: $staging"
+    return 0
+  fi
+  tmp_path="${dest}.tmp"
+  rm -f -- "$tmp_path" 2>/dev/null || true
+  if ! gzip -c "$staging" > "$tmp_path" 2>/dev/null; then
+    _sw_rotate_warn "state rotation: gzip failed for $staging"
+    rm -f -- "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f -- "$tmp_path" "$dest" 2>/dev/null; then
+    _sw_rotate_warn "state rotation: archive publish failed: $dest"
+    rm -f -- "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+  rm -f -- "$staging" 2>/dev/null \
+    || _sw_rotate_warn "state rotation: failed to remove staged file after publish: $staging"
+  return 0
+}
+
+# Recover any crashed staging files idempotently. Returns 1 if any could not be
+# published, so the caller skips starting a fresh rotation (avoids reusing a
+# segment number still owned by an unpublished stage).
+_sw_recover_staged_segments() {
+  local entity="$1" staging rc=0
+  for staging in "archive/${entity}-"*.jsonl.gz.staging; do
+    [[ -e "$staging" ]] || continue
+    _sw_publish_staged_segment "$staging" || rc=1
+  done
+  return "$rc"
+}
+
+_sw_rotate_entity_if_needed() {
+  local entity="$1" active staging dest
+  local threshold size
+  active="${entity}.jsonl"
+
+  threshold="$(_sw_rotate_max_bytes)"
+
+  # gzip gate: rotation and recovery both need gzip. Degrade loudly, never fail
+  # the append. A pending stage or an over-threshold active means growth is no
+  # longer bounded until gzip returns.
+  if ! command -v gzip >/dev/null 2>&1; then
+    if _sw_has_staged_segments "$entity"; then
+      _sw_rotate_warn "state rotation: gzip unavailable; cannot recover staged ${entity} segment(s)"
+    elif [[ -f "$active" ]] \
+        && size="$(file_size_bytes "$active" 2>/dev/null)" \
+        && [[ "$size" =~ ^[0-9]+$ ]] && (( size >= threshold )); then
+      _sw_rotate_warn "state rotation: gzip unavailable; skipping $active rotation"
+    fi
+    return 0
+  fi
+
+  _sw_clean_stale_archive_tmp "$entity"
+  # Recover crashed stages FIRST (idempotent). If any cannot publish, do not
+  # start a new rotation this round.
+  _sw_recover_staged_segments "$entity" || return 0
+
+  [[ -f "$active" ]] || return 0
+  size="$(file_size_bytes "$active" 2>/dev/null)" || {
+    _sw_rotate_warn "state rotation: failed to read size for $active"
+    return 0
+  }
+  [[ "$size" =~ ^[0-9]+$ ]] || return 0
+  (( size >= threshold )) || return 0
+
+  dest="$(_sw_next_archive_path "$entity")"
+  staging="${dest}.staging"
+  # Stage active to a destination-named file (atomic). The name pins the target
+  # segment, so a crash before publish is recovered to the SAME segment.
+  if ! mv -f -- "$active" "$staging" 2>/dev/null; then
+    _sw_rotate_warn "state rotation: failed to stage $active"
+    return 0
+  fi
+  if ! : > "$active"; then
+    _sw_rotate_warn "state rotation: failed to recreate $active"
+    mv -f -- "$staging" "$active" 2>/dev/null \
+      || _sw_rotate_warn "state rotation: rollback failed for $active"
+    return 0
+  fi
+  # Publish now. On a pre-publish failure (gzip/mv) the segment was NOT created,
+  # so restore the staged rows to the empty active file for visibility instead
+  # of leaving them staged. Post-publish, recovery is idempotent (above).
+  if ! _sw_publish_staged_segment "$staging"; then
+    if [[ ! -f "$dest" && -f "$staging" && ! -s "$active" ]]; then
+      rm -f -- "$active" 2>/dev/null || true
+      mv -f -- "$staging" "$active" 2>/dev/null \
+        || _sw_rotate_warn "state rotation: restore failed for $active"
+    fi
+  fi
   return 0
 }
 
@@ -236,6 +397,7 @@ state_store_init() {
 
 _runs_append_inner() {
   local json_line="$1" compact
+  _sw_rotate_entity_if_needed runs
   compact="$(_sw_compact_json_line "$json_line")" || return $?
   _sw_validate_compacted_json_line run "$compact" || return $?
   printf '%s\n' "$compact" >> runs.jsonl
@@ -255,6 +417,7 @@ runs_append() {
 
 _events_append_inner() {
   local json_line="$1" compact
+  _sw_rotate_entity_if_needed events
   compact="$(_sw_compact_json_line "$json_line")" || return $?
   _sw_validate_compacted_json_line event "$compact" || return $?
   printf '%s\n' "$compact" >> events.jsonl

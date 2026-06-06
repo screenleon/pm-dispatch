@@ -12,7 +12,8 @@
 #   $PROJECT       := sha1(git rev-parse --show-toplevel) — partitioning key
 #   $TASK_ID       := pattern ^[A-Z]{1,4}-[0-9]+$ (task.schema.json)
 #   $TS_HEX        := YYYYMMDDTHHMMSSZ-<6 hex>   (run/event/review id suffix)
-#   $YYYYMM        := archive rotation period
+#   $YYYYMM        := archive rotation period (UTC month)
+#   $NNNN          := zero-padded monotonic archive segment within $YYYYMM
 
 version: 1
 store_root_env: PM_DISPATCH_STATE_ROOT
@@ -44,9 +45,10 @@ project_partition:
       write_strategy: append-locked
       lock: runs.lock
       rotation:
-        threshold_bytes: 52428800   # 50 MB
-        threshold_days: 90
-        archive_path: archive/runs-$YYYYMM.jsonl.gz
+        threshold_bytes: 52428800   # 50 MB (overridable via PM_DISPATCH_ROTATE_MAX_BYTES)
+        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
+        # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
+        archive_path: archive/runs-$YYYYMM-$NNNN.jsonl.gz
 
     - path: "runs.lock"
       format: lockfile
@@ -58,9 +60,10 @@ project_partition:
       write_strategy: append-locked
       lock: events.lock
       rotation:
-        threshold_bytes: 52428800
-        threshold_days: 90
-        archive_path: archive/events-$YYYYMM.jsonl.gz
+        threshold_bytes: 52428800   # overridable via PM_DISPATCH_ROTATE_MAX_BYTES
+        threshold_days: 90          # not yet enforced; rotation triggers on threshold_bytes only
+        # $NNNN is a monotonic per-month segment suffix that avoids same-month collisions.
+        archive_path: archive/events-$YYYYMM-$NNNN.jsonl.gz
 
     - path: "events.lock"
       format: lockfile
@@ -94,8 +97,8 @@ project_partition:
     - path: "archive/"
       description: "Rotated JSONL segments from runs.jsonl / events.jsonl. Gzipped."
       file_patterns:
-        - "runs-$YYYYMM.jsonl.gz"
-        - "events-$YYYYMM.jsonl.gz"
+        - "runs-$YYYYMM-$NNNN.jsonl.gz"
+        - "events-$YYYYMM-$NNNN.jsonl.gz"
 
 # Writer-boundary contract
 writer:
