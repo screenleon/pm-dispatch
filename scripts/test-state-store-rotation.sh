@@ -201,26 +201,59 @@ case_rotation_runs_independent() {
 }
 
 case_rotation_crash_recovery() {
-  local name="state rotation: stale rotating file is recovered idempotently"
+  local name="state rotation: stale staged segment is recovered idempotently"
   should_run "$name" || return 0
-  local store proj archive ids active_ids tmp_left
+  local store proj period archive ids active_ids tmp_left staging_left
   store="$tmp_root/recovery"
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$REPO_ROOT" state_store_init
   proj="$(project_dir_for_store "$store")"
-  event_json 1 > "$proj/events.jsonl.rotating"
-  printf 'partial\n' > "$proj/archive/events-202606-9999.jsonl.gz.tmp"
+  period="$(date -u +%Y%m)"
+  # A crash AFTER staging but BEFORE publish leaves a destination-named stage.
+  event_json 1 > "$proj/archive/events-${period}-0001.jsonl.gz.staging"
+  printf 'partial\n' > "$proj/archive/events-${period}-9999.jsonl.gz.tmp"
   append_event_n "$store" 2 100000
   archive="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' -print -quit)"
   ids="$(ids_from_gzip "$archive")"
   active_ids="$(ids_from_file "$proj/events.jsonl")"
   tmp_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.tmp' -print 2>/dev/null)"
-  append_event_n "$store" 3 100000
-  if [[ -f "$archive" && ! -f "$proj/events.jsonl.rotating" && -z "$tmp_left" &&
+  staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
+  if [[ -f "$archive" && -z "$tmp_left" && -z "$staging_left" &&
         "$ids" == "evt-20260606T000001Z-000001 " &&
         "$active_ids" == "evt-20260606T000002Z-000002 " ]]; then
     pass "$name"
   else
-    fail "$name" "archive=$archive ids=$ids active_ids=$active_ids tmp_left=$tmp_left rotating=$(ls "$proj"/*.rotating 2>/dev/null || true)"
+    fail "$name" "archive=$archive ids=$ids active_ids=$active_ids tmp_left=$tmp_left staging_left=$staging_left"
+  fi
+}
+
+case_rotation_post_publish_no_duplicate() {
+  local name="state rotation: post-publish stale stage does not duplicate rows"
+  should_run "$name" || return 0
+  local store proj period seg_count staging_left trace_ids uniq_ids out err status=0
+  store="$tmp_root/postpublish"
+  # Real rotation: event 1 archived to segment 0001, event 2 stays in active.
+  append_event_n "$store" 1 1
+  append_event_n "$store" 2 1
+  proj="$(project_dir_for_store "$store")"
+  period="$(date -u +%Y%m)"
+  # Simulate a crash AFTER publish but BEFORE removing the stage: recreate the
+  # already-published segment's stage with identical content.
+  gzip -cd "$proj/archive/events-${period}-0001.jsonl.gz" \
+    > "$proj/archive/events-${period}-0001.jsonl.gz.staging"
+  # Next append must DROP the stage (segment already exists), not republish it.
+  append_event_n "$store" 3 100000
+  seg_count="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz' | wc -l | tr -d ' ')"
+  staging_left="$(find "$proj/archive" -maxdepth 1 -type f -name 'events-*.jsonl.gz.staging' -print 2>/dev/null)"
+  out="$tmp_root/postpublish.out"
+  err="$tmp_root/postpublish.err"
+  (cd "$REPO_ROOT" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" trace tail --all --json > "$out" 2> "$err") || status=$?
+  trace_ids="$(jq -r '.id' "$out" | sort)"
+  uniq_ids="$(printf '%s\n' "$trace_ids" | sort -u)"
+  if [[ "$status" -eq 0 && "$seg_count" == "1" && -z "$staging_left" &&
+        "$trace_ids" == "$uniq_ids" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status seg_count=$seg_count staging_left=$staging_left trace_ids=$(printf '%s' "$trace_ids" | tr '\n' ',')"
   fi
 }
 
@@ -316,6 +349,7 @@ case_rotation_gzip_integrity
 case_rotation_reader_integration
 case_rotation_runs_independent
 case_rotation_crash_recovery
+case_rotation_post_publish_no_duplicate
 case_rotation_gzip_unavailable
 case_rotation_gzip_failure_nonfatal
 case_rotation_max_bytes_parsing
