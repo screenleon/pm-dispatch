@@ -176,6 +176,10 @@ jobs:
             migrate-routing-to-events.sh
             test-migrate-routing-to-events.sh
             test-pmctl-trace.sh
+            pmctl-task.sh
+            pmctl-decision.sh
+            test-pmctl-task.sh
+            test-pmctl-decision.sh
 
   test-doctor:
     runs-on: ubuntu-latest

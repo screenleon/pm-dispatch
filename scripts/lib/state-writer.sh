@@ -581,25 +581,46 @@ task_upsert() {
   local task_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
   if [[ ! "${task_id}" =~ ^[A-Z]{1,4}-[0-9]+[a-z]?$ ]]; then
     _sw_log_error "task_upsert: invalid task_id='${task_id}'"
-    return 0
+    return 1
   fi
   state_store_init || return 1
-  {
-    proj_dir="$(_sw_project_dir)"
-    tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX")" || {
-      _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"
-      return 0
-    }
-    printf '%s\n' "$json_line" > "$tmp" || {
-      _sw_log_error "task_upsert temp write failed: $tmp"
-      rm -f "$tmp"
-      return 0
-    }
-    mv -f "$tmp" "$proj_dir/tasks/${task_id}.json" || {
-      _sw_log_error "task_upsert rename failed: $proj_dir/tasks/${task_id}.json"
-      rm -f "$tmp"
-      return 0
-    }
-  } 2>/dev/null || true
-  return 0
+  proj_dir="$(_sw_project_dir)" || return 1
+  tmp="$(mktemp "$proj_dir/tasks/.tmp-XXXXXX" 2>/dev/null)" || {
+    _sw_log_error "task_upsert mktemp failed: $proj_dir/tasks"
+    return 1
+  }
+  printf '%s\n' "$json_line" > "$tmp" 2>/dev/null || {
+    _sw_log_error "task_upsert temp write failed: $tmp"
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  }
+  mv -f "$tmp" "$proj_dir/tasks/${task_id}.json" 2>/dev/null || {
+    _sw_log_error "task_upsert rename failed: $proj_dir/tasks/${task_id}.json"
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  }
+}
+
+decision_upsert() {
+  local decision_id="${1:-}" json_line="${2:-}" proj_dir tmp=""
+  if [[ ! "${decision_id}" =~ ^dec-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$ ]]; then
+    _sw_log_error "decision_upsert: invalid decision_id='${decision_id}'"
+    return 1
+  fi
+  state_store_init || return 1
+  proj_dir="$(_sw_project_dir)" || return 1
+  tmp="$(mktemp "$proj_dir/decisions/.tmp-XXXXXX" 2>/dev/null)" || {
+    _sw_log_error "decision_upsert mktemp failed: $proj_dir/decisions"
+    return 1
+  }
+  printf '%s\n' "$json_line" > "$tmp" 2>/dev/null || {
+    _sw_log_error "decision_upsert temp write failed: $tmp"
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  }
+  mv -f "$tmp" "$proj_dir/decisions/${decision_id}.json" 2>/dev/null || {
+    _sw_log_error "decision_upsert rename failed: $proj_dir/decisions/${decision_id}.json"
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  }
 }

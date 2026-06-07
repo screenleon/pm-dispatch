@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -74,6 +74,36 @@ case "$cmd/$sub" in
       pmctl_die "trace tail unavailable"
     fi
     pmctl_trace_tail "$REPO_ROOT" "$@"
+    ;;
+  task/list)
+    if ! declare -F pmctl_task_list >/dev/null; then
+      pmctl_die "task list unavailable"
+    fi
+    pmctl_task_list "$REPO_ROOT" "$@"
+    ;;
+  task/show)
+    if ! declare -F pmctl_task_show >/dev/null; then
+      pmctl_die "task show unavailable"
+    fi
+    pmctl_task_show "$REPO_ROOT" "$@"
+    ;;
+  task/create)
+    if ! declare -F pmctl_task_create >/dev/null; then
+      pmctl_die "task create unavailable"
+    fi
+    pmctl_task_create "$REPO_ROOT" "$@"
+    ;;
+  task/update)
+    if ! declare -F pmctl_task_update >/dev/null; then
+      pmctl_die "task update unavailable"
+    fi
+    pmctl_task_update "$REPO_ROOT" "$@"
+    ;;
+  decision/add)
+    if ! declare -F pmctl_decision_add >/dev/null; then
+      pmctl_die "decision add unavailable"
+    fi
+    pmctl_decision_add "$REPO_ROOT" "$@"
     ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"

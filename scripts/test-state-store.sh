@@ -765,21 +765,21 @@ case_task_upsert() {
 }
 
 case_task_upsert_invalid_id() {
-  # Verifies that task_upsert with an invalid task_id returns 0 (non-fatal) and
-  # does not create any file, preventing path traversal or unexpected file creation.
+  # Verifies that task_upsert with an invalid task_id returns non-zero (fail-loud)
+  # and does not create any file, preventing path traversal or unexpected file creation.
+  # Contract change: invalid IDs now fail loudly (return 1) so callers can propagate errors.
   #
   # Steps:
   #   1. Call task_upsert with "../evil" as task_id and any JSON body.
-  #   2. Assert the return code is 0.
+  #   2. Assert the return code is non-zero.
   #   3. Assert no file was created at or near the tasks/ dir.
-  local name="task_upsert: invalid task_id is rejected non-fatally, no file created"
+  local name="task_upsert: invalid task_id is rejected with non-zero exit, no file created"
   should_run "$name" || return 0
-  local store proj_dir rc=0
+  local store rc=0
   store="$tmp_root/task-invalid"
   PM_DISPATCH_STATE_ROOT="$store" task_upsert "../evil" '{"id":"evil"}' || rc=$?
-  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
-  # Check: exit code is 0 AND no evil file was written anywhere in the store
-  if [[ "$rc" -eq 0 ]] && ! find "$store" -name "evil.json" -o -name "evil" 2>/dev/null | grep -q .; then
+  # Check: exit code is non-zero AND no evil file was written anywhere in the store
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name "evil.json" -o -name "evil" 2>/dev/null | grep -q .; then
     pass "$name"
   else
     fail "$name" "rc=$rc or unexpected file exists under $store"
@@ -807,6 +807,74 @@ case_task_upsert_version2_blocked() {
     fail "$name" "task file was written despite VERSION=2 (rc=$rc written=$written)"
   elif [[ "$rc" -eq 0 ]]; then
     fail "$name" "task_upsert returned rc=0 but expected non-zero for VERSION=2 rejection"
+  else
+    pass "$name"
+  fi
+}
+
+case_decision_upsert() {
+  # Verifies that decision_upsert atomically writes the decision file using write-temp-then-rename.
+  #
+  # Steps:
+  #   1. Call decision_upsert with a valid decision_id and a JSON body.
+  #   2. Resolve decisions/<decision_id>.json under the project dir.
+  #   3. Assert the file exists and its content matches the input JSON exactly.
+  local name="decision_upsert: write-temp-then-rename"
+  should_run "$name" || return 0
+  local store proj_dir dec_file expected
+  store="$tmp_root/decision-upsert"
+  expected='{"schema_version":1,"id":"dec-2026-06-07-test-decision","date":"2026-06-07","title":"Test Decision","decision_md_path":"DECISIONS.md"}'
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert "dec-2026-06-07-test-decision" "$expected"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  dec_file="$proj_dir/decisions/dec-2026-06-07-test-decision.json"
+  if [[ -f "$dec_file" && "$(cat "$dec_file")" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "decision file mismatch"
+  fi
+}
+
+case_decision_upsert_invalid_id() {
+  # Verifies that decision_upsert with an invalid decision_id returns non-zero (fail-loud)
+  # and does not create any file, preventing path traversal or unexpected file creation.
+  #
+  # Steps:
+  #   1. Call decision_upsert with "../evil-dec" as decision_id and any JSON body.
+  #   2. Assert the return code is non-zero.
+  #   3. Assert no file was created at or near the decisions/ dir.
+  local name="decision_upsert: invalid decision_id is rejected with non-zero exit, no file created"
+  should_run "$name" || return 0
+  local store rc=0
+  store="$tmp_root/decision-invalid"
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert "../evil-dec" '{"id":"evil"}' || rc=$?
+  if [[ "$rc" -ne 0 ]] && ! find "$store" -name "evil-dec.json" -o -name "evil-dec" 2>/dev/null | grep -q .; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc or unexpected file exists under $store"
+  fi
+}
+
+case_decision_upsert_version2_blocked() {
+  # Verifies that decision_upsert does not write a decision file when the state store has
+  # an unsupported VERSION=2, even when the decisions/ directory already exists.
+  #
+  # Steps:
+  #   1. Create a store root with VERSION=2 and a pre-existing decisions/ directory.
+  #   2. Call decision_upsert with a valid decision_id and JSON body.
+  #   3. Assert no decision file was written inside decisions/.
+  local name="decision_upsert: VERSION=2 store blocks write (no decision file created)"
+  should_run "$name" || return 0
+  local store proj_dir written rc=0
+  store="$tmp_root/decision-v2-block"
+  proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _sw_project_dir)"
+  mkdir -p "$proj_dir/decisions"
+  printf '2\n' > "$store/VERSION"
+  PM_DISPATCH_STATE_ROOT="$store" decision_upsert "dec-2026-06-07-blocked" '{"id":"dec-2026-06-07-blocked"}' >/dev/null 2>&1 || rc=$?
+  written="$(find "$proj_dir/decisions" -name 'dec-2026-06-07-blocked.json' 2>/dev/null | wc -l)"
+  if [[ "$written" -ne 0 ]]; then
+    fail "$name" "decision file was written despite VERSION=2 (rc=$rc written=$written)"
+  elif [[ "$rc" -eq 0 ]]; then
+    fail "$name" "decision_upsert returned rc=0 but expected non-zero for VERSION=2 rejection"
   else
     pass "$name"
   fi
@@ -1731,6 +1799,9 @@ case_runs_append_rejects_schema_invalid
 case_task_upsert
 case_task_upsert_invalid_id
 case_task_upsert_version2_blocked
+case_decision_upsert
+case_decision_upsert_invalid_id
+case_decision_upsert_version2_blocked
 case_runs_append_read_only_fails_loudly
 case_codex_dispatch_state_store_self_contained
 case_pmctl_dispatch_creates_run_row
