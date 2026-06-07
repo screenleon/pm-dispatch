@@ -52,6 +52,8 @@ SUITE_NAMES=(
   test-state-layout-parity
   test-state-store-rotation
   test-pmctl-trace
+  test-pmctl-task
+  test-pmctl-decision
   test-brief-validate
   test-archive-closed-backlog
 )
@@ -99,6 +101,8 @@ declare -A SUITE_PATHS=(
   [test-state-layout-parity]="scripts/test-state-layout-parity.sh"
   [test-state-store-rotation]="scripts/test-state-store-rotation.sh"
   [test-pmctl-trace]="scripts/test-pmctl-trace.sh"
+  [test-pmctl-task]="scripts/test-pmctl-task.sh"
+  [test-pmctl-decision]="scripts/test-pmctl-decision.sh"
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
 )

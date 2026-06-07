@@ -1,10 +1,10 @@
-<!-- pm-dispatch: backlog-archive 2026-06-05 -->
+<!-- pm-dispatch: backlog-archive 2026-06-07 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
 index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-05
+Last archived: 2026-06-07
 
 ---
 
@@ -2338,3 +2338,322 @@ Also shipped in same PR: `scripts/lib/pmctl-config.sh` shared config loader + `s
 3. **Stub-based verify 架構**（`install.sh` + `scripts/test-install.sh`）：`install.sh --verify` 加 `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫（`bash "${_PM_DISPATCH_PREFLIGHT_RUNNER:-$REPO_ROOT/scripts/run-all-tests.sh}"`）；`test_verify_flag_runs_preflights` 改為動態從 `run-all-tests.sh --list` 產生 stub，注入後呼叫 `install.sh --verify --dry-run`；同時顯式設 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=0` 防 run-all-tests.sh 帶入的 env 觸發 install.sh 自身 escape hatch；CI 移除 `CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1`。Suite 清單自動同步，無需手動維護。
 
 **Files**: `install.sh`, `scripts/test-install.sh`, `.github/workflows/lint.yml`
+## CC-027b — `tool-trace.jsonl` health signal 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-044。** 實作見 CC-044 Phase 2 — bounded error counter + downstream warning。以下原始需求保留供參考。
+**See**: CC-044 (merged primary — tool-trace reliability bundle)
+
+**Problem**: Trace collection failures are currently best-effort and audit-only. If append, parse, or rotation problems persist, downstream CC-025/CC-026 workflows may read incomplete `tool-trace.jsonl` data without a visible warning.
+**Why**: The hook must stay non-blocking, but silent long-term degradation makes later skill-refine / skill-distill signals unreliable. A bounded local error counter can preserve non-blocking behavior while surfacing sustained failure to downstream commands.
+**Requirement**: Add a bounded error counter for `tool-trace.jsonl` health and have downstream commands surface a warning when the error count exceeds N. Keep hook execution non-blocking and cap any health-state file growth.
+**Source**: `2026-05-15 CC-027 PR-gate risk-reviewer finding`.
+
+## CC-027c — `hook-tool-trace.sh` strict JSON validation 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-044。** 實作見 CC-044 Phase 3 — async post-validation strategy。以下原始需求保留供參考。
+**See**: CC-044 (merged primary — tool-trace reliability bundle)
+
+**Problem**: Brace-shaped malformed JSON (e.g. `{"cwd":"/x","tool_name":"Bash","tool_input":{` truncated mid-object) can pass the bash brace heuristic and produce a garbage line in `tool-trace.jsonl`. Identified by critic + qa-tester in CC-027 PR-gate.
+**Why**: Strict validation via inline `jq -e .` costs ~25ms/call subprocess startup on this host — alone exceeds the entire per-call budget (8.2ms baseline). Inline strict mode is structurally incompatible with the hook performance contract.
+**Requirement**: Explore async post-validation path: append first (non-blocking), validate sampled fraction asynchronously, or move strict validation to the downstream consumer (CC-025/026) where 25ms/call is amortized over rare reads instead of every tool invocation.
+**Note**: Garbage line is data-quality concern only — no security/risk vector (the garbage doesn't leak content, doesn't crash, downstream consumers can skip malformed lines defensively).
+**Source**: `2026-05-15 CC-027 PR-gate critic + qa-tester findings`.
+
+## CC-213 — `install_dir_junction()` Windows-aware idempotency probe 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-212。** 實作見 CC-212 Requirement (B) — manifest-driven idempotency probe。以下原始需求保留供參考。
+**See**: CC-212 (merged primary — Windows junction install hardening bundle)
+
+**Problem**: The idempotent reinstall path checks `[[ -L "$dest_dir" ]]` + `readlink` to detect
+an already-installed junction, but PowerShell-created Windows directory junctions may not appear
+as `-L` in Git Bash (reparse points vs. Unix symlinks). A second `bash install.sh` run could
+therefore treat the junction directory as a real directory, fall back to per-file copy, and
+flush a manifest without the `junction` mode entry.
+
+**Why**: Windows real-device verification confirmed idempotency passes in practice (PR #112), but
+the `-L` assumption was flagged as insufficiently proven by critic + qa-tester in gate-20260521-115634
+as [medium]. The QA block was overridden with Windows dogfood evidence; this ticket captures the
+remaining automation gap.
+
+**Requirement**: Add a manifest-driven idempotency probe: before the `-L` check, read the
+existing manifest for the entry's `mode` field; if `mode == "junction"` treat the destination as
+an existing junction regardless of whether Bash `-L` fires. Add a focused test that exercises
+the "manifest says junction, `-L` is false" branch.
+
+**Complements**: CC-207 (parent), CC-212 (path-passing — merged primary).
+
+**Priority**: P3.
+
+## CC-226 — lint-frontmatter: extract shared dq-escape validation helper 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-227。** shared helpers（dq-escape / adjacent-quote / empty-entry）直接住進 `scripts/lib/yaml-frontmatter.sh`，不需單獨 PR。以下原始需求保留供參考。
+**See**: CC-227 (merged primary — yaml-frontmatter lib extraction bundle)
+
+**Problem**: `scripts/lint-frontmatter.sh` repeats the same double-quoted escape whitelist regex and adjacent-quoted-scalar check across 4 separate collection branches (key-level flow seq, key-level flow mapping, list-item flow seq, list-item flow mapping). A future grammar fix applied to one branch can be missed in the others, causing a silent parity gap.
+
+**Why**: Raised as medium advisory by critic + architecture-reviewer in gate-20260522-171123 (CC-058 gating). The current branch coverage is green and covers all 4 paths, so the risk is low now, but will grow as the grammar is extended.
+
+**Requirement**: Extract the dq escape whitelist check, the adjacent-quoted-scalar check, and the empty-entry check into a shared bash helper or predicate function. Ensure a parity test (or single call site) prevents future per-branch divergence.
+
+**Dependencies**: CC-058 (lint-frontmatter rewrite — merged)
+
+**Priority**: P3 — maintainability; not blocking current workflows.
+
+**Cross-link**: CC-224 (hook-profile inventory duplication — same class of debt), CC-227 (module extraction — merged primary)
+
+## CC-268 — docs: run_in_background default async escalation undocumented 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-272。** 實作見 CC-272 — executor contract docs bundle Part (B)。以下原始需求保留供參考。
+**See**: CC-272 (merged primary — executor contract docs bundle)
+
+**Problem**: Agent tool called without `run_in_background:true` may silently promote the subagent to async mode and return `Async agent launched successfully` instead of blocking. Observed with `codex-executor` (ran ~3m45s async without the flag). Docs say "Claude decides" but give no criteria; callers cannot reliably predict whether the dispatch blocks the main thread.
+
+**Priority**: P3 — docs clarity only; no functional impact on existing flows.
+
+**Proposed fix**: Document in `commands/pm.md` or `docs/executor-contract.md` which subagent types always run async, and whether/when the default blocks.
+
+**See**: issue:#166
+
+## CC-269 — ops: hook-save-rate-limits.sh 應寫到 pm-dispatch 自己的 state 路徑 🚫 2026-06-07
+
+**↪ 此票已合併入 CC-018。** 實作見 CC-018 Requirement 步驟 4-5 — rate-limit 路徑統一至 `~/.local/share/pm-dispatch/state/rate-limits.json`。以下原始需求保留供參考。
+**See**: CC-018 (merged primary — rate-limit unification + Codex quota tracking)
+
+**Problem**: `scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 及其他工具共用同一檔名，多工具安裝時造成互相覆蓋。
+
+**Why**: pm-dispatch 和 claude-account-switcher 是獨立工具，各自的 rate-limit 資料應存於各自的 state 目錄，不應依賴共用檔名作為「約定」。
+
+**Requirement**:
+- `scripts/hook-save-rate-limits.sh` 改寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store 目錄）
+- 更新所有讀取此路徑的腳本（doctor.sh、usage 相關腳本等）
+- install.sh / uninstall.sh 同步更新 manifest（若有對應條目）
+- 設計上：`~/.claude/rate-limits.json` 屬於 Claude Code / claude-account-switcher，pm-dispatch 不寫該路徑
+
+**Context**: 2026-05-28 發現 — statusline-chain.conf 中 pm-dispatch hook 與 claude-account-switcher hook 同時寫到相同檔案。暫時從 chain 移除 pm-dispatch hook 以解除衝突；此票為正式修復。
+
+**Dependencies**: CC-230（state store 目錄已建立）
+
+**Priority**: P3 — 現有 workaround（從 chain 移除）可用；不阻斷其他工作。
+
+## CC-314 — routing_log.md → events.jsonl migration + deprecate machine-write
+
+**Problem**: deprecating the `routing_log.md` machine-write needs a real migration: the hook writes `kind` `bash-dispatch`/`agent-dispatch` (`hook-routing-log.sh:322-325`) which are **not** in the core Event enum (`event.schema.json:18-30`), and the existing `migrate-routing-log.sh` only migrates the old markdown shape.
+
+**Plan**: build a `routing_log → events.jsonl` migration with explicit kind mapping (→ `run.dispatched` etc.) + a subject-id strategy; stop the hook's markdown machine-write; keep `migrate-routing-log.sh` as legacy-markdown cleanup only.
+
+**Detail**: scoping doc §10.A6, §4 (D3 = deprecate).
+
+**Outcome**: 2026-06-05 — shipped in pr:#234. `hook-routing-log.sh` deprecated (early-exit), `migrate-routing-to-events.sh` added with deterministic IDs and idempotency, `ROUTE_LOG_ENABLED=0` in `install-hooks.sh`.
+
+**See**: pr:#234
+
+## CC-315 — state read/query contract + pmctl trace
+
+**Problem**: `state-writer.sh` is write-only and `cli/pmctl` has no read/query/trace subcommand (`cli/pmctl:35-78`); consumers would read state by ad-hoc JSONL grep, and a single-writer with no read contract is half a substrate.
+
+**Plan**: `pmctl` owns read ops over state — by id / `task_id` / event `kind` / time-window — with `pmctl --json` output; define active+archive read semantics (ordering, corrupt-row tolerance, time-window, indexed vs streamed). `pmctl trace` is the first consumer.
+
+**Detail**: scoping doc §3.7, §3.6, §10.B (D6). Related: [[CC-316]].
+
+**Outcome**: 2026-06-06 — shipped in pr:#237. `scripts/lib/pmctl-trace.sh` adds `pmctl trace tail` over `events.jsonl` + `archive/events-*.jsonl.gz` (partition via the writer's `_sw_project_dir`); filters by id/kind/subject/time-window, merges active+archive chronologically (append order preserved on equal `ts`), skips malformed rows with a counted warning, streamed linear scan (indexing deferred). 12-case suite `test-pmctl-trace.sh`. Read-only — no writer/schema/layout touched.
+
+**See**: pr:#237
+
+## CC-316 — state store rotation implementation
+
+**Problem**: `core/state/layout.yaml:46-63` specifies gz rotation (`archive/{runs,events}-$YYYYMM.jsonl.gz`) but no code implements it (`state_store_init` only mkdirs `archive/`), so `runs.jsonl`/`events.jsonl` grow unbounded; and the monthly path collides on >1 rotation/month.
+
+**Plan**: implement rotation per layout with a monotonic segment suffix (`*-$YYYYMM-NNNN.jsonl.gz`); the reader (CC-315) merges active + archived segments.
+
+**Detail**: scoping doc §3.8, §10.B (D7). Related: [[CC-315]].
+
+**Outcome**: 2026-06-06 — shipped in pr:#238. Rotation in `scripts/lib/state-writer.sh` under the per-entity append lock: byte threshold (50 MB, `PM_DISPATCH_ROTATE_MAX_BYTES` override; 90-day trigger deferred), monotonic `archive/<entity>-$YYYYMM-$NNNN.jsonl.gz` segments, **destination-named `.staging`** for genuinely idempotent crash recovery (no duplicate rows in the publish→cleanup window), best-effort + loud (never fails the canonical append; degradation on stderr + `state-writer.err`). 13-case suite `test-state-store-rotation.sh`. layout/writer golden-parity test left to [[CC-317]].
+
+**See**: pr:#238
+
+## CC-317 — state store safety & robustness hardening
+
+**Problem**: `_sw_store_root` trusts `PM_DISPATCH_STATE_ROOT`/`XDG_DATA_HOME` directly with plain `mkdir -p` (`state-writer.sh:32-90`) — no canonicalization, symlink-component rejection, world-writable check, or `0700` mode; `serialize_with_lock`'s mkdir fallback has no stale-owner protocol (`portable.sh:174-180`) — a killed writer on a flock-less FS blocks until timeout; and `layout.yaml` is "definitions only" while writer paths are hardcoded (drift-prone).
+
+**Plan**: canonicalize + permission-check the store root (reject unsafe symlink/world-writable; `0700`); mkdir lock carries pid/host/start-time + cleanup trap + bounded stale reclaim + a UNC/9P preflight warning; make `layout.yaml` an executable source of truth (writer/reader consume it, or golden tests compare paths/locks/subdirs).
+
+**Detail**: scoping doc §10.B.
+
+**Outcome**: 2026-06-06 — shipped in pr:#239, completing the v0.4.0 state-first foundation. (A) `state_store_init` runs a store-root safety gate — non-mutating symlink-leaf + ownership checks reject before any mkdir/chmod, then `0700` + either-bit group/world-writable rejection; VERSION gate runs before the mutating repair; `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` escape hatch. (B) `mkdir_lock` carries pid/host/epoch owner metadata, reclaims only clearly-stale owners (same-host dead-PID never on age; remote by age ceiling) with ABA guard + bounded retries; `mkdir_unlock` documents release; subshell `EXIT` trap for kill-safety; non-fatal UNC/9P warning. (C) `scripts/test-state-layout-parity.sh` golden test binds layout.yaml ↔ writer. Suites: portable 41, state-store 63, layout-parity 3.
+
+**See**: pr:#239
+
+## CC-322 — docs: review-model.md — Relocating Rigor 哲學文件
+
+**Problem**: pm-dispatch 已有 cross-context isolated reviewers（pr-gate sub-agents）、machine verification（`self_verify cmd:`）、上游 spec review（`/pre-impl`），但沒有文件把這些機制命名成一套完整的 Review Model，讓新接觸的維護者看不出設計意圖。
+
+**Why**: 「Relocating Rigor」—— 嚴謹從中間逐行 review 搬到兩頭（上游 intention / 下游 verification）—— 是 pm-dispatch workflow 的核心哲學，值得正式成文。文件也是後續 CC-323–CC-327 實作的理念錨點。
+
+**Requirement**:
+1. 新增 `docs/review-model.md`，定義四層：
+   - Layer 1（上游）：Intention & Spec review，在 agent 動手前確認方向
+   - Layer 2（中層）：Cross-Context Isolation，reviewer 用乾淨 session 讀最終產物
+   - Layer 3（下游）：Conceptual Map review，看架構不看每行 code
+   - Layer 4（驗收）：Machine Verification，`self_verify cmd:` 強制執行
+2. 說明 pm-dispatch 哪些現有機制對應哪一層
+3. 說明逐行 code review 降級為 exception（agent 卡住 / 方向明確錯才人工介入）
+4. 新增 cross-link：`docs/CONCEPTS.md`、`docs/dispatch-brief.md`、`docs/pr-gate-handover-schema.md`
+
+**Non-goals**: 不改任何 script / skill / agent。
+
+**Outcome**: 2026-06-05 — shipped in pr:#236. `docs/review-model.md` 落地（四層 Review Model + 逐行 review 降級為 exception + cross-links）；CHANGELOG [Unreleased] Added 記錄；Layer 1/Layer 3 的 planned 行為以 `> **Planned** (CC-323/CC-326)` blockquote 標示，與 backlog active 狀態對齊。
+
+**See**: pr:#236
+
+**Cross-link**: [[CC-323]], [[CC-324]], [[CC-326]], [[CC-327]].
+
+---
+
+## CC-323 — skill: 強化 /pre-impl 輸出 contract — Intention + Conceptual Map 必填
+
+**Problem**: `/pre-impl` 目前是輔助命令，輸出格式鬆散；`/pm` 不會自動要求先跑。架構影響型任務缺乏強制的上游 intention / boundary review 關卡，導致 agent 實作方向可能在沒有人明確點頭的情況下就開始。
+
+**Why**: 文章「Relocating Rigor」最核心的一點：在 agent 動手前，先把架構原型在腦袋裡（或文件裡）看過一遍再放它去做。這比事後逐行修正便宜得多。
+
+**Requirement**:
+1. 更新 `commands/pre-impl.md`，定義固定輸出 sections：
+   - `## Intention` — 這次真正解決什麼問題
+   - `## Non-goals` — 明確不做什麼
+   - `## Bounded Context` — 可碰 / 不可碰的 module / script / command
+   - `## Conceptual Map` — 純文字流程圖或結構圖（必填）
+   - `## Acceptance Metrics` — 可驗收條件（非「works as expected」）
+   - `## Verification Plan` — machine-check vs. semantic-check 分類
+2. `agents/project-pm.md` 路由規則新增：`behavioral_units ≥ 3` 或 `architecture_impact ≠ none` → 自動要求先跑 `/pre-impl`，PM approve 後才進 dispatch brief
+3. 輸出格式可直接銜接 dispatch brief schema（CC-324 的 `conceptual_map` 欄位）
+
+**Acceptance**:
+- `/pre-impl "<task>"` 輸出包含上述六個 sections
+- PM 收到 architecture 影響任務時，在 brief 前先呼叫 `/pre-impl` 並等待確認
+
+**Dependencies**: [[CC-322]]（文件錨點）；銜接 [[CC-324]]（brief schema）。
+
+**Outcome**: 2026-06-07 — shipped in pr:#241. `commands/pre-impl.md` 升級為六個固定 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；Step 4 保留 design constraint list 可直接 paste 進 brief；`agents/project-pm.md` routing rule 擴大觸發條件（加 `architecture_impact ≠ none`）；docs/review-model.md Layer 1 移除 Planned blockquote。
+
+**See**: pr:#241
+
+---
+
+## CC-324 — schema: dispatch brief 新增 conceptual_map + architecture_impact 欄位
+
+**Problem**: dispatch brief schema 目前沒有方式表達「這次改動的架構影響程度」或「架構概念圖」，導致 architecture-reviewer 只能掃 source diff，而非先看概念圖。
+
+**Why**: 讓 brief 攜帶 `architecture_impact` 與 `conceptual_map`，架構影響輕重就有明確的機器可讀欄位，後續 brief-validate（CC-325）與 tier 自動建議（CC-327）才有資料來源。
+
+**Requirement**:
+1. `docs/dispatch-brief.md` 加入新欄位說明：
+   ```yaml
+   architecture_impact: none | minor | major
+   conceptual_map: |
+     [純文字圖，architecture_impact != none 時必填]
+   ```
+2. `scripts/brief-validate.sh` 對新欄位做結構驗證（`architecture_impact` 必須是合法 enum 值）
+3. `docs/dispatch-brief.md` 說明 `conceptual_map` 優先給 `architecture-reviewer` 用，非強制掃 source diff 的替代品
+
+**Acceptance**:
+- `brief-validate.sh` 對合法 `architecture_impact` 值 PASS、非法值 FAIL
+- 文件有範例 brief 含 `conceptual_map`
+
+**Dependencies**: [[CC-323]]（pre-impl 產出可填入此欄位）；銜接 [[CC-325]], [[CC-326]], [[CC-327]].
+
+**Outcome**: 2026-06-07 — shipped in pr:#241. `docs/dispatch-brief.md` 加入 `architecture_impact`（`none|minor|major`）與 `conceptual_map` optional 欄位說明；含範例 YAML；`scripts/brief-validate.sh` 加入 enum 驗證函式與 `has_conceptual_map`。
+
+**See**: pr:#241
+
+---
+
+## CC-325 — infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查
+
+**Problem**: `brief-validate.sh` 目前只做結構檢查（欄位存在性、enum 合法性），不檢查「品質」。Acceptance Metrics 可以是空泛語（"works as expected"）、file-writing task 可以沒有任何 machine-checkable self_verify，這兩種情況都會讓 agent 有模糊空間偷懶或幻覺。
+
+**Why**: 文章「Relocating Rigor」：Acceptance Metrics 一定要先寫清楚，指標含糊就會用最省力的方式交差。機器檢查可以把這條規則變成強制 policy，不靠人工審查。
+
+**Requirement**:
+- `brief-validate.sh` 新增品質規則：
+
+| 條件 | 行為 |
+|---|---|
+| `acceptance` 含 "works as expected" / "passes tests" / "no errors" 等空泛語 | FAIL + 提示重寫 |
+| file-writing task 無任何 `- cmd:"…"` self_verify | FAIL |
+| `behavioral_units ≥ 3` 無 `qa_checklist` | WARN |
+| `architecture_impact: major` 無 `conceptual_map` | FAIL |
+| sensitive path + sequential pr-gate | WARN → 建議 `--parallel` |
+
+- 加入對應測試 cases
+
+**Non-goals**: 不改 brief 執行流程，只在驗證層加規則。
+
+**Dependencies**: [[CC-324]]（`architecture_impact` 欄位需先定義）；[[CC-323]]（acceptance metrics 格式由 pre-impl contract 奠定）.
+
+**Outcome**: 2026-06-07 — shipped in pr:#241. `scripts/brief-validate.sh` 加入品質規則：acceptance 含空泛語 → WARN；file-writing 無 `cmd:` self_verify → FAIL；`architecture_impact:major` 無 `conceptual_map` → FAIL；`behavioral_units ≥ 3` 無 `qa_checklist` → WARN；`scripts/test-brief-validate.sh` 加入 10 個新 test cases（32/32 pass）。
+
+**See**: pr:#241
+
+---
+
+## CC-326 — agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff
+
+**Problem**: `agents/architecture-reviewer.md` 目前直接讀 source diff / file list，沒有指示「先看 conceptual_map」。即使 brief 有 conceptual_map，reviewer 也不保證會用它。
+
+**Why**: 文章「Relocating Rigor」：「Architect / Editor，不是逐行 inspector」—— reviewer 看的是整個架構對不對，不是某行寫得漂不漂亮。只有在 conceptual_map 與 diff 不一致、或 risk surface 需要抽查時，才需要進入 source files。
+
+**Requirement**:
+1. `agents/architecture-reviewer.md` 在 review 指示開頭加入：
+   - 若 brief 有 `conceptual_map`：優先讀 map，確認 bounded context / layer boundary，只在 map 與 diff 不一致或 risk surface 需抽查時才看 source files
+   - 若 brief 無 `conceptual_map`：維持現行 source diff review，但在 finding 中 note「建議提供 conceptual_map」
+2. 改動僅限 `agents/architecture-reviewer.md`，不影響其他 reviewer
+
+**Acceptance**:
+- `architecture-reviewer` prompt 包含 conceptual_map 優先讀取指示
+
+**Cross-link**: [[CC-322]], [[CC-324]].
+
+**Outcome**: 2026-06-07 — shipped in pr:#241. `agents/architecture-reviewer.md` Process 段落改為 conceptual_map-first（有 map 時先讀 map，source diff selectively）；無 map fallback 維持 diff review 並 note 缺失；docs/review-model.md Layer 3 移除 Planned blockquote。
+
+**See**: pr:#241
+
+---
+
+## CC-327 — pr-gate: tier 定義改為 rigor level（而非 reviewer 數量）
+
+**Problem**: `express / standard / full` 三個 tier 目前的語意是「reviewer 數量多寡」，沒有對應到「review 嚴謹程度」的概念，也沒有與 brief 的 `architecture_impact` 掛鉤。
+
+**Why**: 文章「Relocating Rigor」：tier 應該反映「需要多嚴謹的 review」而不只是「幾個 reviewer」。與 brief 的 `architecture_impact` 掛鉤後，tier 選擇可以自動建議，減少人工判斷。
+
+**Requirement**:
+1. 更新 `scripts/pr-gate.sh` + 相關文件，重新定義 tier 語意：
+   - `express`：hotfix / docs-only / `architecture_impact: none` → machine verification + combined session reviewer
+   - `standard`：一般 feature / `architecture_impact: minor` → conceptual map 必要 + critic + qa + architecture
+   - `full`：架構變動 / `architecture_impact: major` / sensitive path → parallel cross-context + security + risk hard gates + synthesis
+2. `scripts/pr-gate.sh` 加入 tier 自動建議邏輯：若 brief 有 `architecture_impact`，啟動前 emit 建議 tier（user 仍可 override）
+3. 更新 `docs/review-model.md`（CC-322）tier 說明段落
+
+**Acceptance**:
+- 文件中三個 tier 的語意對應到 rigor level，不只是 reviewer 數量
+- 帶 `architecture_impact: major` 的 brief → gate 建議 `full` tier（emit warning，不強制）
+
+**Cross-link**: [[CC-322]], [[CC-324]], [[CC-323]].
+
+**Outcome**: 2026-06-07 — shipped in pr:#241. `scripts/pr-gate.sh` 加入 `--brief <file>` 選項與 tier advisory 邏輯（`architecture_impact:major` → suggest full；`minor` + express detected → suggest standard；advisory only，不強制）；`docs/review-model.md` 加入「pr-gate rigor tiers」章節；`skills/pr-gate-review/SKILL.md` tier 說明改為 rigor level 語意；移除 review-model.md 中的舊式 Planned blockquotes。
+
+**See**: pr:#241
+
+---
+
+## CC-332 — docs/process: PM size-first dispatch routing policy
+
+**Problem**: PM dispatch 的 model / route 選擇沒有以「任務大小」為一級判準，`docs/model-tier-policy.md` 與 `agents/project-pm.md` 對 Tiny / Small 任務的路由各說各話，存在 source-of-truth drift。
+
+**Plan**: 將 §Implementation tasks 改寫為 size-first 路由表 — Tiny → 主線程 inline（不派發、不寫 brief）；Small → `model: light`（codex-spark / haiku）；Medium/Large → Codex `default`。同步更新 `agents/project-pm.md` 的 Dispatch model selection，使 PM 對 Tiny 給 inline 建議、對 Small 寫 `model: light` brief，並澄清 main-thread 與 PM routing 角色。
+
+**Detail**: 純文件 / process change；不改腳本。
+
+**Outcome**: 2026-06-05 — shipped in pr:#236. `docs/model-tier-policy.md` 與 `agents/project-pm.md` 路由表對齊，CHANGELOG [Unreleased] Added 記錄。
+
+**See**: pr:#236
+
+---
