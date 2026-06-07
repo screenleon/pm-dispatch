@@ -87,11 +87,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-317 | ✅ closed 2026-06-06 | **[arch: state store safety & robustness hardening]** store-root 安全（canonicalize / 拒 symlink-component / world-writable / 0700）；mkdir-lock stale-owner 協定（pid/host/trap/bounded reclaim）+ UNC/9P preflight warn；`layout.yaml` 成可執行真相源（writer/reader 消費 或 golden test）。見 §10.B。 | arch | 2026-06-03 | pr:#239 | P2 | design |
 | CC-321 | 🔵 active | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
 | CC-322 | ✅ closed 2026-06-05 | **[docs: review-model.md — Relocating Rigor 哲學文件]** 把「嚴謹搬家」正式定名為 pm-dispatch Review Model：四層 = 上游 intention review → cross-context isolation → 下游 conceptual map → machine verification。連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md。不改任何腳本或 skill。 | docs | 2026-06-05 | pr:#236 | P2 | design |
-| CC-323 | ✅ closed 2026-06-07 | **[skill: 強化 /pre-impl 輸出 contract — Intention + Conceptual Map 必填]** 升級 `/pre-impl` 為架構影響任務的強制上游關卡：固定輸出 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑。 | process | 2026-06-05 | pr:#TBD | P2 | design |
-| CC-324 | ✅ closed 2026-06-07 | **[schema: dispatch brief 新增 conceptual_map + architecture_impact 欄位]** brief schema 加 `architecture_impact: none\|minor\|major` + `conceptual_map`（`major` 時必填）；conceptual_map 優先給 architecture-reviewer 用，而非直接掃 source diff。連結 CC-323 / CC-325 / CC-326。 | docs | 2026-06-05 | pr:#TBD | P2 | design |
-| CC-325 | ✅ closed 2026-06-07 | **[infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查]** 新增品質規則：acceptance 含空泛語則 WARN；file-writing task 無 `cmd:` self_verify 則 FAIL；`behavioral_units ≥ 3` 無 qa_checklist 則 WARN；`architecture_impact: major` 無 conceptual_map 則 FAIL；新增 10 個對應測試 cases（32/32 pass）。 | ops | 2026-06-05 | pr:#TBD | P2 | design |
-| CC-326 | ✅ closed 2026-06-07 | **[agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff]** reviewer 策略改為：(1) 優先讀 conceptual_map；(2) 確認 bounded context / layer boundary；(3) 只在 map 與 diff 不一致、risk surface 需抽查、architecture_impact:major 等情境才看 source files（selectively，非 only）。 | docs | 2026-06-05 | pr:#TBD | P3 | — |
-| CC-327 | ✅ closed 2026-06-07 | **[pr-gate: tier 定義改為 rigor level]** 重新定義 express / standard / full 語意；`--brief <file>` 選項讀 architecture_impact 做 tier 建議（advisory，永遠允許 override）；docs/review-model.md + skills/pr-gate-review/SKILL.md 對應更新。 | gate | 2026-06-05 | pr:#TBD | P3 | — |
+| CC-323 | ✅ closed 2026-06-07 | **[skill: 強化 /pre-impl 輸出 contract — Intention + Conceptual Map 必填]** 升級 `/pre-impl` 為架構影響任務的強制上游關卡：固定輸出 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑。 | process | 2026-06-05 | pr:#241 | P2 | design |
+| CC-324 | ✅ closed 2026-06-07 | **[schema: dispatch brief 新增 conceptual_map + architecture_impact 欄位]** brief schema 加 `architecture_impact: none\|minor\|major` + `conceptual_map`（`major` 時必填）；conceptual_map 優先給 architecture-reviewer 用，而非直接掃 source diff。連結 CC-323 / CC-325 / CC-326。 | docs | 2026-06-05 | pr:#241 | P2 | design |
+| CC-325 | ✅ closed 2026-06-07 | **[infra: brief-validate 強化 — Acceptance Metrics + conceptual_map 品質機器檢查]** 新增品質規則：acceptance 含空泛語則 WARN；file-writing task 無 `cmd:` self_verify 則 FAIL；`behavioral_units ≥ 3` 無 qa_checklist 則 WARN；`architecture_impact: major` 無 conceptual_map 則 FAIL；新增 10 個對應測試 cases（32/32 pass）。 | ops | 2026-06-05 | pr:#241 | P2 | design |
+| CC-326 | ✅ closed 2026-06-07 | **[agent: 更新 architecture-reviewer prompt — Conceptual Map 優先於 source diff]** reviewer 策略改為：(1) 優先讀 conceptual_map；(2) 確認 bounded context / layer boundary；(3) 只在 map 與 diff 不一致、risk surface 需抽查、architecture_impact:major 等情境才看 source files（selectively，非 only）。 | docs | 2026-06-05 | pr:#241 | P3 | — |
+| CC-327 | ✅ closed 2026-06-07 | **[pr-gate: tier 定義改為 rigor level]** 重新定義 express / standard / full 語意；`--brief <file>` 選項讀 architecture_impact 做 tier 建議（advisory，永遠允許 override）；docs/review-model.md + skills/pr-gate-review/SKILL.md 對應更新。 | gate | 2026-06-05 | pr:#241 | P3 | — |
 | CC-328 | 🟢 someday | **[spike: lightweight built-in symbol index for context-pack（standard Unix toolchain only）]** 在 v0.4.0 state-first 地基落地後，以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 symbol index，讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary。External backend（ctags / ffts-grep / tree-sitter）作為 optional 加速層，不列入 MVP scope。 | ops/token | 2026-06-05 | — | P3 | design |
 | CC-329 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
 | CC-330 | 🟢 someday | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。 | process/DX | 2026-06-05 | — | P3 | design |
@@ -1247,9 +1247,9 @@ This makes directory creation the mutex.
 
 **Dependencies**: [[CC-322]]（文件錨點）；銜接 [[CC-324]]（brief schema）。
 
-**Outcome**: 2026-06-07 — shipped in pr:#TBD. `commands/pre-impl.md` 升級為六個固定 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；Step 4 保留 design constraint list 可直接 paste 進 brief；`agents/project-pm.md` routing rule 擴大觸發條件（加 `architecture_impact ≠ none`）；docs/review-model.md Layer 1 移除 Planned blockquote。
+**Outcome**: 2026-06-07 — shipped in pr:#241. `commands/pre-impl.md` 升級為六個固定 sections（Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan）；Step 4 保留 design constraint list 可直接 paste 進 brief；`agents/project-pm.md` routing rule 擴大觸發條件（加 `architecture_impact ≠ none`）；docs/review-model.md Layer 1 移除 Planned blockquote。
 
-**See**: pr:#TBD
+**See**: pr:#241
 
 ---
 
@@ -1275,9 +1275,9 @@ This makes directory creation the mutex.
 
 **Dependencies**: [[CC-323]]（pre-impl 產出可填入此欄位）；銜接 [[CC-325]], [[CC-326]], [[CC-327]].
 
-**Outcome**: 2026-06-07 — shipped in pr:#TBD. `docs/dispatch-brief.md` 加入 `architecture_impact`（`none|minor|major`）與 `conceptual_map` optional 欄位說明；含範例 YAML；`scripts/brief-validate.sh` 加入 enum 驗證函式與 `has_conceptual_map`。
+**Outcome**: 2026-06-07 — shipped in pr:#241. `docs/dispatch-brief.md` 加入 `architecture_impact`（`none|minor|major`）與 `conceptual_map` optional 欄位說明；含範例 YAML；`scripts/brief-validate.sh` 加入 enum 驗證函式與 `has_conceptual_map`。
 
-**See**: pr:#TBD
+**See**: pr:#241
 
 ---
 
@@ -1304,9 +1304,9 @@ This makes directory creation the mutex.
 
 **Dependencies**: [[CC-324]]（`architecture_impact` 欄位需先定義）；[[CC-323]]（acceptance metrics 格式由 pre-impl contract 奠定）.
 
-**Outcome**: 2026-06-07 — shipped in pr:#TBD. `scripts/brief-validate.sh` 加入品質規則：acceptance 含空泛語 → WARN；file-writing 無 `cmd:` self_verify → FAIL；`architecture_impact:major` 無 `conceptual_map` → FAIL；`behavioral_units ≥ 3` 無 `qa_checklist` → WARN；`scripts/test-brief-validate.sh` 加入 10 個新 test cases（32/32 pass）。
+**Outcome**: 2026-06-07 — shipped in pr:#241. `scripts/brief-validate.sh` 加入品質規則：acceptance 含空泛語 → WARN；file-writing 無 `cmd:` self_verify → FAIL；`architecture_impact:major` 無 `conceptual_map` → FAIL；`behavioral_units ≥ 3` 無 `qa_checklist` → WARN；`scripts/test-brief-validate.sh` 加入 10 個新 test cases（32/32 pass）。
 
-**See**: pr:#TBD
+**See**: pr:#241
 
 ---
 
@@ -1327,9 +1327,9 @@ This makes directory creation the mutex.
 
 **Cross-link**: [[CC-322]], [[CC-324]].
 
-**Outcome**: 2026-06-07 — shipped in pr:#TBD. `agents/architecture-reviewer.md` Process 段落改為 conceptual_map-first（有 map 時先讀 map，source diff selectively）；無 map fallback 維持 diff review 並 note 缺失；docs/review-model.md Layer 3 移除 Planned blockquote。
+**Outcome**: 2026-06-07 — shipped in pr:#241. `agents/architecture-reviewer.md` Process 段落改為 conceptual_map-first（有 map 時先讀 map，source diff selectively）；無 map fallback 維持 diff review 並 note 缺失；docs/review-model.md Layer 3 移除 Planned blockquote。
 
-**See**: pr:#TBD
+**See**: pr:#241
 
 ---
 
@@ -1353,9 +1353,9 @@ This makes directory creation the mutex.
 
 **Cross-link**: [[CC-322]], [[CC-324]], [[CC-323]].
 
-**Outcome**: 2026-06-07 — shipped in pr:#TBD. `scripts/pr-gate.sh` 加入 `--brief <file>` 選項與 tier advisory 邏輯（`architecture_impact:major` → suggest full；`minor` + express detected → suggest standard；advisory only，不強制）；`docs/review-model.md` 加入「pr-gate rigor tiers」章節；`skills/pr-gate-review/SKILL.md` tier 說明改為 rigor level 語意；移除 review-model.md 中的舊式 Planned blockquotes。
+**Outcome**: 2026-06-07 — shipped in pr:#241. `scripts/pr-gate.sh` 加入 `--brief <file>` 選項與 tier advisory 邏輯（`architecture_impact:major` → suggest full；`minor` + express detected → suggest standard；advisory only，不強制）；`docs/review-model.md` 加入「pr-gate rigor tiers」章節；`skills/pr-gate-review/SKILL.md` tier 說明改為 rigor level 語意；移除 review-model.md 中的舊式 Planned blockquotes。
 
-**See**: pr:#TBD
+**See**: pr:#241
 
 ---
 
