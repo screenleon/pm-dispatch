@@ -66,7 +66,24 @@ This applies to both `codex` and `claude` executors — Claude has more context 
 
 Use as needed; not all briefs require all of them.
 
-- **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change. **When the brief introduces ≥ 3 behavioral units**, run `/pre-impl "<feature description>"` first and paste the output's design constraint list here — this prevents architecture-reviewer blocks from boundary/dependency issues caught too late.
+- **`architecture_impact`** — `none | minor | major`. Declares the architectural weight of this change. When `architecture_impact: major`, `conceptual_map` is **required** — `brief-validate.sh` will FAIL without it. When `architecture_impact: minor`, `conceptual_map` is recommended — `brief-validate.sh` will WARN if absent. Drives `pr-gate` tier suggestion: `none` → express; `minor` → standard; `major` → full.
+
+  | Value | Definition | Examples |
+  |---|---|---|
+  | `none` | No runtime behavior change, no command contract change, no module boundary touched | docs-only, typo fix, comment, pure test addition |
+  | `minor` | Single bounded context changed; external contract stable or locally narrowed | single command behavior tweak, agent prompt update, new validation rule, new optional field |
+  | `major` | Workflow, schema, cross-module contract, dispatch behavior, or security/risk path changed | brief schema change, pr-gate tier policy, PM routing logic, handover schema, new module |
+
+  **When in doubt**: schema changes (even optional fields) are typically `minor` at minimum and often `major` if downstream validators, reviewers, or PM routing consume the field.
+- **`conceptual_map`** — plain-text description of the proposed structure: data flow, module interactions, layer ownership. No source code. 5–15 lines. **Required when `architecture_impact: major`**; recommended for `minor`. This is the primary input for `architecture-reviewer` — the reviewer reads the map first and inspects source files only when the map and diff disagree. Produce this from `/pre-impl`'s `## Conceptual Map` output section. Example:
+  ```yaml
+  conceptual_map: |
+    caller → pmctl dispatch run → brief-validate → guard → route → executor
+    executor writes to working_dir; post-verify reads git diff from outside
+    architecture-reviewer: reads conceptual_map first; source diff only if map/diff diverge
+    layer boundary: cli/ → scripts/ → core/ (no reverse dependency)
+  ```
+- **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change. **When the brief introduces ≥ 3 behavioral units or has `architecture_impact ≠ none`**, run `/pre-impl "<feature description>"` first and paste the output's design constraint list here — this prevents architecture-reviewer blocks from boundary/dependency issues caught too late.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.

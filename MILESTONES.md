@@ -63,13 +63,13 @@
 |---|---|---|
 | CC-322 | `docs/review-model.md` — Relocating Rigor 哲學正式文件；連結 CONCEPTS.md / dispatch-brief.md / pr-gate-handover-schema.md | ✅ closed |
 | CC-332 | PM size-first dispatch routing：Tiny→inline / Small→`model: light` / Medium-Large→Codex default；更新 `docs/model-tier-policy.md` + `agents/project-pm.md` | ✅ closed |
-| CC-323 | 強化 `/pre-impl` 輸出 contract：Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan 必填；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑 | 🔵 active |
-| CC-324 | dispatch brief schema 新增 `conceptual_map` + `architecture_impact` 欄位；`architecture_impact: major` 時 `conceptual_map` 必填 | 🔵 active |
-| CC-325 | brief-validate 強化：Acceptance Metrics 品質機器檢查（禁空泛語）、file-writing task 無 `cmd:` 則 FAIL、`architecture_impact: major` 無 `conceptual_map` 則 FAIL | 🔵 active |
-| CC-326 | 更新 `architecture-reviewer` prompt：優先讀 conceptual_map，只在 map 與 diff 不一致時才抽查 source files（「Architect / Editor，非 inspector」） | 🔵 active |
-| CC-327 | `/pr-gate` tier 定義改為 rigor level：express（hotfix/docs）/ standard（feature，含 conceptual map）/ full（arch 變動 + parallel cross-context + hard gates） | 🔵 active |
+| CC-323 | 強化 `/pre-impl` 輸出 contract：Intention / Non-goals / Bounded Context / Conceptual Map / Acceptance Metrics / Verification Plan 必填；`/pm` 路由對 `behavioral_units ≥ 3` 或 `architecture_impact ≠ none` 自動要求先跑 | ✅ closed |
+| CC-324 | dispatch brief schema 新增 `conceptual_map` + `architecture_impact` 欄位；`architecture_impact: major` 時 `conceptual_map` 必填 | ✅ closed |
+| CC-325 | brief-validate 強化：acceptance 含空泛語 WARN；file-writing 無 `cmd:` FAIL；`architecture_impact: major` 無 `conceptual_map` FAIL；`behavioral_units ≥ 3` 無 `qa_checklist` WARN；32/32 tests pass | ✅ closed |
+| CC-326 | 更新 `architecture-reviewer` prompt：優先讀 conceptual_map，selectively 看 source diff（major / map-diff 不一致 / risk surface）；無 map fallback + note | ✅ closed |
+| CC-327 | `/pr-gate` tier 改為 rigor level；`--brief` 選項做 tier advisory；docs/review-model.md 加 rigor tiers 章節 | ✅ closed |
 
-**Phase 建議**：CC-322 / CC-326 / CC-327 可即插即做（XS–S）；CC-323 → CC-324 → CC-325 有依賴順序，預估 v0.4.0 末段或 v0.5.0 初段。
+**狀態（2026-06-07）：Review Model Track 全數完成。** CC-323 → CC-327 已落地；pre-impl 六段式 contract、brief schema 架構欄位、brief-validate 品質規則、architecture-reviewer conceptual-map-first、pr-gate rigor tier 均已上線。
 
 ### 地基之後 / 延後（不在地基範圍）
 

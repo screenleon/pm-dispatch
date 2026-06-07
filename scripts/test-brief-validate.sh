@@ -77,7 +77,7 @@ files:
 acceptance:
   - dispatch docs updated
 self_verify:
-  - bash scripts/test-brief-validate.sh
+  - cmd: "bash scripts/test-brief-validate.sh"
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -101,7 +101,7 @@ files:
 acceptance:
   - validator added
 self_verify:
-  - bash scripts/brief-validate.sh --help
+  - cmd: "bash scripts/brief-validate.sh --help"
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -486,6 +486,287 @@ EOF
   assert_validation "$name" "$brief" 1 "REJECT: working_dir must be an absolute path"
 }
 
+# A brief with architecture_impact:major and an empty conceptual_map: header is rejected.
+# Steps:
+# 1. Write a brief with architecture_impact: major and a bare "conceptual_map:" header with no value.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 1 and output containing "REJECT: architecture_impact:major requires 'conceptual_map'".
+case_reject_arch_major_empty_map_header() {
+  local name="reject-arch-major-empty-map-header"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-major-empty-map-header.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Introduce cross-layer module with empty map.
+files:
+  - write: core/state/store.sh
+architecture_impact: major
+conceptual_map:
+acceptance:
+  - core/state/store.sh exists
+self_verify:
+  - cmd: "test -f core/state/store.sh"
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: architecture_impact:major requires 'conceptual_map'"
+}
+
+# A brief with architecture_impact:major and a block-scalar conceptual_map with no indented content is rejected.
+# Steps:
+# 1. Write a brief with architecture_impact: major and "conceptual_map: |" with no following indented lines.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 1 and output containing "REJECT: architecture_impact:major requires 'conceptual_map'".
+case_reject_arch_major_empty_block_scalar() {
+  local name="reject-arch-major-empty-block-scalar"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-major-empty-block-scalar.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Introduce cross-layer module with block-scalar placeholder.
+files:
+  - write: core/state/store.sh
+architecture_impact: major
+conceptual_map: |
+acceptance:
+  - core/state/store.sh exists
+self_verify:
+  - cmd: "test -f core/state/store.sh"
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: architecture_impact:major requires 'conceptual_map'"
+}
+
+# A brief with architecture_impact:minor but no conceptual_map emits a WARN but still passes.
+# Steps:
+# 1. Write a brief with architecture_impact: minor and no conceptual_map field.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 0 (VALID) and output containing "WARN".
+case_warn_architecture_impact_minor_no_map() {
+  local name="warn-architecture-impact-minor-no-map"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-minor-no-map.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Add a new validation rule to brief-validate.sh.
+files:
+  - write: scripts/brief-validate.sh
+architecture_impact: minor
+acceptance:
+  - brief-validate.sh rejects invalid architecture_impact enum values
+self_verify:
+  - cmd: "grep -q 'architecture_impact' scripts/brief-validate.sh"
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"VALID"* && "$output" == *"WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with VALID+WARN; got rc=$rc output='$output'"
+  fi
+}
+
+# A brief with architecture_impact set to a valid value passes.
+# Steps:
+# 1. Write a brief with architecture_impact: minor and a conceptual_map.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 0 and output "VALID".
+case_valid_architecture_impact_minor() {
+  local name="valid-architecture-impact-minor"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-impact-minor.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Add a new optional field to the brief schema.
+files:
+  - write: docs/dispatch-brief.md
+architecture_impact: minor
+conceptual_map: |
+  dispatch-brief.md gains two optional fields; brief-validate.sh gains enum check
+  no layer boundary change; optional field only
+acceptance:
+  - dispatch-brief.md contains new field documentation
+self_verify:
+  - cmd: "grep -q 'architecture_impact' docs/dispatch-brief.md"
+EOF
+
+  assert_validation "$name" "$brief" 0 "VALID"
+}
+
+# A brief with architecture_impact:major and conceptual_map passes.
+# Steps:
+# 1. Write a brief with architecture_impact: major and a conceptual_map field.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 0 and output "VALID".
+case_valid_architecture_impact_major_with_map() {
+  local name="valid-architecture-impact-major-with-map"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-impact-major-with-map.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Introduce new cross-layer state module.
+files:
+  - write: core/state/store.sh
+architecture_impact: major
+conceptual_map: |
+  cli/ -> scripts/ -> core/state/ (new module)
+  no reverse dependency from core/ to scripts/ or cli/
+acceptance:
+  - core/state/store.sh exists and passes shellcheck
+self_verify:
+  - cmd: "bash -c 'shellcheck core/state/store.sh'"
+EOF
+
+  assert_validation "$name" "$brief" 0 "VALID"
+}
+
+# A brief with architecture_impact:major but no conceptual_map is rejected.
+# Steps:
+# 1. Write a brief with architecture_impact: major and no conceptual_map field.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 1 and output containing "REJECT: architecture_impact:major requires 'conceptual_map'".
+case_reject_arch_major_no_map() {
+  local name="reject-arch-major-no-map"
+  should_run "$name" || return 0
+  local brief="$tmpdir/arch-major-no-map.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Introduce new cross-layer module without a map.
+files:
+  - write: core/state/store.sh
+architecture_impact: major
+acceptance:
+  - core/state/store.sh exists
+self_verify:
+  - cmd: "test -f core/state/store.sh"
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: architecture_impact:major requires 'conceptual_map'"
+}
+
+# A brief with an invalid architecture_impact value is rejected.
+# Steps:
+# 1. Write a brief with architecture_impact set to an unlisted value.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 1 and output containing "REJECT: invalid field 'architecture_impact'".
+case_reject_invalid_architecture_impact() {
+  local name="reject-invalid-architecture-impact"
+  should_run "$name" || return 0
+  local brief="$tmpdir/invalid-arch-impact.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Reject invalid architecture_impact value.
+files:
+  - read: README.md
+architecture_impact: huge
+acceptance:
+  - architecture_impact must be none|minor|major
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: invalid field 'architecture_impact'"
+}
+
+# A file-writing brief whose self_verify has no cmd: entry is rejected.
+# Steps:
+# 1. Write a brief with a write: file entry and a self_verify block containing only executor-evaluated macros.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 1 and output containing "REJECT: file-writing brief self_verify has no 'cmd:' entry".
+case_reject_write_self_verify_no_cmd() {
+  local name="reject-write-self-verify-no-cmd"
+  should_run "$name" || return 0
+  local brief="$tmpdir/write-no-cmd-self-verify.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update a file with only executor-evaluated self_verify.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - file updated
+self_verify:
+  - git-status no-collateral-damage
+EOF
+
+  assert_validation "$name" "$brief" 1 "REJECT: file-writing brief self_verify has no 'cmd:' entry"
+}
+
+# A brief with a vague acceptance phrase emits a WARN but still passes.
+# Steps:
+# 1. Write a valid write brief whose acceptance contains "works as expected".
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 0 (VALID) and output containing "WARN".
+case_warn_vague_acceptance() {
+  local name="warn-vague-acceptance"
+  should_run "$name" || return 0
+  local brief="$tmpdir/vague-acceptance.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Test vague acceptance detection.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - works as expected
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"VALID"* && "$output" == *"WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with VALID+WARN; got rc=$rc output='$output'"
+  fi
+}
+
+# A brief with behavioral_units >= 3 but no qa_checklist emits a WARN but still passes.
+# Steps:
+# 1. Write a valid write brief with behavioral_units: 3 and no qa_checklist section.
+# 2. Run brief-validate.sh against the brief.
+# 3. Assert exit 0 (VALID) and output containing "WARN".
+case_warn_behavioral_units_no_qa_checklist() {
+  local name="warn-behavioral-units-no-qa-checklist"
+  should_run "$name" || return 0
+  local brief="$tmpdir/behavioral-units-no-qa.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Add three behavioral units without a qa_checklist.
+files:
+  - write: scripts/new-feature.sh
+behavioral_units: 3
+acceptance:
+  - new-feature.sh exists and is executable
+self_verify:
+  - cmd: "test -x scripts/new-feature.sh"
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"VALID"* && "$output" == *"WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with VALID+WARN; got rc=$rc output='$output'"
+  fi
+}
+
 case_valid_read_only_brief
 case_valid_write_with_self_verify
 case_valid_new_with_self_verify
@@ -508,5 +789,15 @@ case_no_args_exits_usage
 case_extra_args_exits_usage
 case_reject_invalid_schema_version
 case_reject_relative_working_dir
+case_reject_arch_major_empty_map_header
+case_reject_arch_major_empty_block_scalar
+case_warn_architecture_impact_minor_no_map
+case_valid_architecture_impact_minor
+case_valid_architecture_impact_major_with_map
+case_reject_arch_major_no_map
+case_reject_invalid_architecture_impact
+case_reject_write_self_verify_no_cmd
+case_warn_vague_acceptance
+case_warn_behavioral_units_no_qa_checklist
 
 th_summary

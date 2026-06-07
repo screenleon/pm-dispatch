@@ -31,13 +31,9 @@ The middle — line-by-line diff inspection — becomes an exception rather than
 
 ### Layer 1 — Intention & Spec review
 
-**When** (current): before writing a dispatch brief for any task with `behavioral_units ≥ 3`, or when the change touches a shared module or reviewer-flow surface.
+**When**: before writing a dispatch brief for any task where `behavioral_units ≥ 3` or `architecture_impact ≠ none` — any change touching a shared module, crossing a layer boundary, or introducing a new interface or schema field.
 
-> **Planned** (CC-323): the trigger will expand to also cover `architecture_impact ≠ none` once the dispatch brief schema ships the `architecture_impact` field.
-
-**Mechanism**: `/pre-impl "<task description>"` — produces a **design constraint list** of 3–5 structural rules the implementation must not violate. Paste the output directly into the brief's `constraints:` field.
-
-> **Planned** (CC-323): the output contract will be extended to a fixed set of sections — Intention, Non-goals, Bounded Context, Conceptual Map, Acceptance Metrics, Verification Plan — aligning with the `conceptual_map:` and `acceptance:` brief fields.
+**Mechanism**: `/pre-impl "<task description>"` — produces a **structured pre-impl artifact** with six fixed sections: Intention, Non-goals, Bounded Context, Conceptual Map, Acceptance Metrics, Verification Plan. Paste the `Conceptual Map` section into the brief's `conceptual_map:` field and the design constraint list into `constraints:`.
 
 The point is not to produce documentation — it is to catch a wrong direction before any code is written. A five-minute pre-impl that reveals a scope disagreement saves a multi-round gate cycle.
 
@@ -55,13 +51,11 @@ The isolation *from the dispatch session* is structural, not advisory: the revie
 
 **When**: as part of the Layer 2 gate; specifically the `architecture-reviewer` subagent's role.
 
-**Mechanism**: the architecture-reviewer's intended primary input is `conceptual_map` — a plain-text description of the proposed structure — from which it verifies layer boundaries and module ownership *before* looking at any source lines. Source file inspection is reserved for cases where the map and the diff disagree, or where a specific risk surface warrants a spot check.
+**Mechanism**: the architecture-reviewer reads `conceptual_map` first — a plain-text description of the proposed structure — and verifies layer boundaries and module ownership from the map. Source file inspection is used **selectively**: when the map and diff disagree, when a specific risk surface warrants a spot check, when `architecture_impact` is `major`, or when the map is silent on a boundary the diff crosses.
 
-> **Planned** (CC-326): this conceptual-map-first ordering is the target reviewer prompt and lands once CC-326 updates `architecture-reviewer` (and the brief ships the `conceptual_map` field under CC-324). Today the architecture-reviewer still leads with diff inspection and treats `conceptual_map`, when present, as supporting context rather than primary input.
+This distinguishes the architecture-reviewer's role as **Architect / Editor** rather than inspector. The aim is to evaluate structural correctness from a ten-line conceptual map without scanning 300 changed lines to form a layer-boundary opinion.
 
-This distinguishes the architecture-reviewer's intended role as **Architect / Editor** rather than inspector. The aim is to evaluate structural correctness from a ten-line conceptual map without grepping through 300 changed lines to form a layer-boundary opinion.
-
-When `conceptual_map` is absent, the architecture-reviewer falls back to diff inspection — which is slower, noisier, and more likely to produce false-positive findings. Under the target model the map is not optional decoration; it is meant to be the reviewer's primary input.
+When `conceptual_map` is absent, the architecture-reviewer falls back to diff inspection and notes the absence in its findings — the fallback is slower, noisier, and more likely to produce false-positive findings.
 
 ### Layer 4 — Machine Verification
 
@@ -96,7 +90,36 @@ If machine verification passes, the task is done. If it fails, it re-opens. This
 
 A typical task flows left to right. Each arrow is a checkpoint; a failure at any checkpoint stops forward motion rather than producing a bad merge.
 
-For small tasks (`behavioral_units < 3`), Layer 1 may be skipped and Layer 3 is lightweight. For tasks with significant architecture impact, all four layers are active and Layer 3 gets a full conceptual map as input.
+For small tasks (`behavioral_units < 3` and `architecture_impact: none`), Layer 1 may be skipped and Layer 3 is lightweight. For tasks with architecture impact, all four layers are active and Layer 3 gets a full conceptual map as input.
+
+### Evidence chain
+
+Each layer produces an artifact that the next layer consumes. This is not abstract philosophy — every arrow carries a concrete handoff:
+
+| Layer | Input | Artifact produced | Consumed by |
+|---|---|---|---|
+| Layer 1 | task request | `/pre-impl` sections: Conceptual Map + design constraints | brief `conceptual_map:` + `constraints:` fields |
+| Layer 2 | final diff + handover brief | isolated reviewer findings (critic / qa / security / risk) | pr-gate synthesis |
+| Layer 3 | `conceptual_map` + diff | architecture finding (map vs. diff alignment) | pr-gate synthesis |
+| Layer 4 | `self_verify cmd:` entries | command exit codes (pass / fail) | PM / merger decision |
+
+When an artifact is missing — no `conceptual_map`, no `self_verify cmd:`, no isolated review — the downstream consumer degrades or falls back. The four-layer model produces a reliable signal only when the full chain is intact.
+
+---
+
+## pr-gate rigor tiers
+
+The `/pr-gate` `--tier` flag selects the **rigor level** required for this change — not just the number of reviewers. Choose based on `architecture_impact` and blast radius:
+
+| Tier | When | Rigor |
+|---|---|---|
+| `express` | hotfix, docs-only, `architecture_impact: none` | machine verification + combined session (critic + qa) |
+| `standard` | feature, `architecture_impact: minor` | conceptual map required + critic + qa + architecture-reviewer |
+| `full` | architectural change, `architecture_impact: major`, sensitive path | parallel cross-context sessions + security + risk hard gates + synthesis |
+
+**Tier suggestion**: when a `--brief` is passed to `pr-gate.sh`, it reads `architecture_impact` from the brief and emits an advisory to stderr before dispatch if the auto-detected tier is lower than the impact level implies. The user-selected or auto-detected tier always takes precedence; the advisory is informational only and does not block or alter the tier.
+
+**Tier vs. reviewer count**: `express` is not "fewer reviewers" — it is "this change has bounded impact and does not need architecture-level judgment." `full` is not "more reviewers" — it is "this change has wide blast radius and needs independent parallel review with hard security/risk gates."
 
 ---
 
@@ -116,5 +139,5 @@ In all other cases, the four-layer model gives a faster signal with less noise.
 ## Cross-references
 
 - [docs/CONCEPTS.md](CONCEPTS.md) — the four Claude Code extensibility surfaces (hooks / slash commands / subagents / memory) that implement this model
-- [docs/dispatch-brief.md](dispatch-brief.md) — the brief schema, including the `self_verify` and `acceptance` fields (the `conceptual_map` field is planned under CC-324)
+- [docs/dispatch-brief.md](dispatch-brief.md) — the brief schema, including `self_verify`, `acceptance`, `conceptual_map`, and `architecture_impact` fields
 - [docs/pr-gate-handover-schema.md](pr-gate-handover-schema.md) — the handover protocol that enforces Layer 2 isolation

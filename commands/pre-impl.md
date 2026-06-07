@@ -5,22 +5,30 @@ argument-hint: "<feature description, e.g. 'add OAuth login to the API'>"
 
 Run a design review for `$ARGUMENTS` before any implementation starts. If no argument is provided, ask the user what feature they are about to implement.
 
-The goal is to produce a **design constraint list** — 3–5 structural rules the implementation must not violate — that can be pasted directly into a PM brief's `constraints:` field.
+The output is a **structured pre-impl artifact** with six fixed sections, ending in a design constraint list that can be pasted directly into a PM brief's `constraints:` field. The `Conceptual Map` section maps directly to the brief's `conceptual_map:` field.
 
 ## When to invoke
 
-PM **must** run `/pre-impl` before writing a Codex brief whenever the brief introduces **3 or more behavioral units** (new functions, endpoints, hooks, commands, or schema changes). For single-unit changes, it is optional but recommended when the change touches a module boundary or a shared dependency.
+PM **must** run `/pre-impl` before writing a dispatch brief whenever:
 
-The design constraint list produced here should be pasted into the brief's `constraints:` field so Codex implements with the constraints from the start, not after an architecture-reviewer flag.
+- the brief introduces **3 or more behavioral units**, OR
+- the task has **architecture impact** (`architecture_impact: minor` or `major` in the planned brief — any change that touches a shared module, crosses a layer boundary, or introduces a new interface/schema).
+
+A **behavioral unit** is one externally observable behavior change: a new command output, a new validation rule, a new dispatch decision path, a new reviewer behavior, a new file-writing side effect, or a new user-visible workflow branch. Examples: adding one brief validation rule = 1 unit; adding one enum field = 1 unit; changing PM routing = 1 unit; changing pr-gate tier selection = 1 unit; changing architecture-reviewer process = 1 unit.
+
+For single-unit changes that do not touch a module boundary, it is optional but recommended.
+
+The structured output produced here should be used to fill the brief's `constraints:` field (constraint list) and `conceptual_map:` field (Conceptual Map section).
 
 ## What
 
-`/pre-impl` produces a short constraint list for broader changes so implementation work stays within a safe boundary.
+`/pre-impl` produces a structured pre-impl artifact that captures intention, scope boundaries, architecture sketch, acceptance metrics, and a verification plan — so the implementation agent starts with a clear, approved direction rather than inferring it from the brief alone.
 
 ## When to use
 
 - Before introducing three or more new behavioral units.
 - Before touching shared modules, schema files, or reviewer flow surfaces.
+- Before any task where `architecture_impact: minor` or `major` — i.e., any cross-layer dependency, new abstraction, or shared-module change.
 - When a design guardrail is needed before dispatch to avoid avoidable PR-gate rework.
 
 ## Example
@@ -93,9 +101,58 @@ When applicable, list:
 
 For each entry in the list, confirm there is a corresponding assertion in the test script before dispatch. `qa-tester` treats each uncovered behavioral contract as a missing-coverage block — finding gaps one per gate round. This enumeration costs five minutes and prevents 4–6 extra rounds.
 
-## Step 3 — Produce the design constraint list
+## Step 3 — Produce the structured pre-impl artifact
 
-Based on the three answers above, synthesize 3–5 constraints. Each constraint must be:
+Based on the answers above, produce the following six sections. All six are required; do not omit or merge any.
+
+```markdown
+## Intention
+<One sentence: what specific problem this solves. Not "we want to improve X" — state the concrete outcome.>
+
+## Non-goals
+- <What this change explicitly does NOT do, even if related>
+- <Second explicit exclusion>
+[add entries as needed]
+
+## Bounded Context
+**May touch**: <comma-separated list of modules / scripts / commands / schema files>
+**Must not touch**: <anything off-limits — shared schemas modified only through their declared owner, etc.>
+
+## Conceptual Map
+<Plain-text diagram or structured prose describing the proposed structure: data flow, module interactions, layer ownership. No source code. 5–15 lines. Example:>
+
+  caller → /pre-impl → [scan codebase] → [Q1-Q3 analysis] → artifact
+  artifact.constraints  → brief.constraints:  (paste verbatim)
+  artifact.conceptual_map → brief.conceptual_map: (paste verbatim)
+  architecture-reviewer reads conceptual_map first; source diff only if map/diff diverge.
+
+## Acceptance Metrics
+- <Concrete, testable condition — not "works correctly" or "no errors">
+- <Second measurable condition>
+[each metric must be independently verifiable by a machine or a reviewer reading the diff]
+
+## Verification Plan
+| Check | Method |
+|---|---|
+| <condition> | cmd: <shell command> |
+| <condition> | semantic: <what a reviewer checks manually> |
+```
+
+Optionally, add a seventh section when there are genuine unknowns:
+
+```markdown
+## Assumptions / Open Questions
+- <Assumption the implementation must make because the answer is not yet known>
+- <Open question that PM should resolve before dispatch>
+```
+
+This section is not required. Include it when the analysis in Q1–Q3 reveals something the implementation will have to assume without a definitive answer. PM reads this before approving the brief — unresolved open questions are a signal to pause dispatch until the question is answered, not to proceed and hope.
+
+The `Conceptual Map` section content can be pasted verbatim into the brief's `conceptual_map:` field. The constraints section (Step 4 below) pastes into `constraints:`.
+
+## Step 4 — Synthesize the design constraint list
+
+Based on Q1–Q3 and the artifact above, synthesize 3–5 constraints. Each constraint must be:
 - **Structural** (about what can/cannot depend on what, or what belongs where) — not a style rule
 - **Falsifiable** (a reviewer can check whether the implementation violates it)
 - **Negative or boundary** (what NOT to do, or what MUST be separated)
@@ -114,8 +171,8 @@ Format:
 Ready to paste into brief `constraints:` field.
 ```
 
-## Step 4 — Optional: flag risks
+## Step 5 — Optional: flag risks
 
-If any of the three questions revealed a dependency or boundary that is particularly risky (e.g., touches auth, modifies shared schema, introduces a new cross-layer dependency), add a brief `## Risk flags` section after the constraints listing the specific concern. Keep it to 1–3 bullets.
+If any of the questions revealed a dependency or boundary that is particularly risky (e.g., touches auth, modifies shared schema, introduces a new cross-layer dependency), add a brief `## Risk flags` section after the constraints listing the specific concern. Keep it to 1–3 bullets.
 
-Do not suggest implementation. Do not write code. The output of this command is constraints, not a plan.
+Do not suggest implementation. Do not write code. The output of this command is a structured pre-impl artifact plus a constraint list — not a plan.

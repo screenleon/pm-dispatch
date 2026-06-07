@@ -149,7 +149,7 @@ When the background Bash completion notification arrives:
      per entry — so reviewers run detached without blocking the main thread.
      The reviewer brief's constraints already include an explicit
      `pmctl guard check --role reviewer --runtime claude --event pre-write`
-     call (CC-297): the executor enforces the guard before writing.
+     call: the executor enforces the guard before writing.
    - When every reviewer background agent has reported completion, read each
      entry's `<output_file>`.
    - If a synthesis entry exists, run one final `Agent(subagent_type:

@@ -89,7 +89,7 @@ notes: <surprises, scope expansion, deferred follow-ups, anything the main threa
 result — `cmd:` items as their exit-code outcome, macro/prose items as your
 judgment finding. This block is for the main thread's human review. It is **not**
 parsed by `dispatch-post-verify.sh`, which independently *executes* each `cmd:`
-item itself (CC-318) and marks macro/prose items `SKIP (executor-evaluated)`, so
+item itself and marks macro/prose items `SKIP (executor-evaluated)`, so
 your prose style here does not affect the machine gate.
 
 Differences from codex-executor's report shape:
