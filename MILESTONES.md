@@ -37,7 +37,7 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-215 | `pmctl task` / `pmctl decision add` / `pmctl trace tail`、`pmctl --json` 輸出、`task_upsert`/`decision`/event append 的生產端 caller | ⚠️ partial → v0.4.0 |
+| CC-215 | `pmctl task create/show/list/update` + `pmctl decision add`：schema validation、event emission、per-entity lock boundary、rollback（#242）；`pmctl task claim/dispatch/status/review`、`pmctl --json`、`safe-bash` 尚未實作 | ⚠️ partial (#171, #242) |
 | CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ (#237) |
 | CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
 
