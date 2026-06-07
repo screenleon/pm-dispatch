@@ -25,6 +25,7 @@ set -euo pipefail
 # Options:
 #   --cd <dir>           working directory (required)
 #   --tier <tier>        express|standard|full -- overrides auto-detection
+#   --brief <file>       dispatch brief for this change; architecture_impact field informs tier suggestion
 #   --reviewers <list>   comma-separated names -- overrides tier default (targeted re-gate)
 #   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
 #   --scope <text>       context hint passed into the review brief
@@ -57,11 +58,13 @@ DISPATCH_MODEL="default"
 DISPATCH_SANDBOX="workspace-write"
 DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
+BRIEF_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd)         WORK_DIR="$2";           shift 2;;
     --tier)       TIER_OVERRIDE="$2";      shift 2;;
+    --brief)      BRIEF_FILE="$2";         shift 2;;
     --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
     --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
     --scope)      SCOPE="$2";              shift 2;;
@@ -79,7 +82,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
+      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -363,6 +366,23 @@ else
   else
     TIER=standard
   fi
+fi
+
+# ── Brief-based tier suggestion (advisory; never overrides --tier) ────────────
+if [[ -n "$BRIEF_FILE" && -f "$BRIEF_FILE" && -z "$TIER_OVERRIDE" ]]; then
+  _brief_arch_impact="$(awk '/^architecture_impact:[[:space:]]*/{sub(/^architecture_impact:[[:space:]]*/,""); gsub(/[[:space:]]/,""); print; exit}' "$BRIEF_FILE")"
+  case "$_brief_arch_impact" in
+    major)
+      if [[ "$TIER" != "full" ]]; then
+        printf 'pr-gate: brief architecture_impact:major — suggested tier: full (detected: %s). Override with --tier full or continue with current tier.\n' "$TIER" >&2
+      fi
+      ;;
+    minor)
+      if [[ "$TIER" == "express" ]]; then
+        printf 'pr-gate: brief architecture_impact:minor — suggested tier: standard (detected: %s). Override with --tier standard or continue with current tier.\n' "$TIER" >&2
+      fi
+      ;;
+  esac
 fi
 
 # ── Determine reviewer list ───────────────────────────────────────────────────

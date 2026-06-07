@@ -3100,7 +3100,171 @@ run_test test_dirty_preflight_allow_dirty_includes_worktree
 run_test test_allow_dirty_includes_uncommitted_tracked
 run_test test_clean_committed_tree_passes_preflight
 run_test test_dirty_only_no_commit_still_reviewed
+test_brief_major_suggests_full() {
+  # A brief with architecture_impact:major emits a tier advisory to stderr
+  # when the auto-detected tier is not full.
+  local name="brief-major-suggests-full"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: major
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  set -e
+
+  assert_file_contains "$name" "$err" "architecture_impact:major" || return
+  assert_file_contains "$name" "$err" "suggested tier: full" || return
+  pass "$name"
+}
+
+test_brief_minor_express_suggests_standard() {
+  # A brief with architecture_impact:minor emits a standard-tier advisory to
+  # stderr when the auto-detected tier is express (docs-only diff).
+  local name="brief-minor-express-suggests-standard"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: minor
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  set -e
+
+  assert_file_contains "$name" "$err" "architecture_impact:minor" || return
+  assert_file_contains "$name" "$err" "suggested tier: standard" || return
+  pass "$name"
+}
+
+test_brief_explicit_tier_suppresses_advisory() {
+  # When --tier is explicitly set, the brief advisory is suppressed because
+  # TIER_OVERRIDE is populated and the advisory block is skipped.
+  local name="brief-explicit-tier-suppresses-advisory"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: major
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --tier full --brief "$brief"
+  set -e
+
+  if grep -q "suggested tier" "$err"; then
+    fail "$name" "--tier full should suppress the advisory but stderr contains 'suggested tier'"
+    return
+  fi
+  pass "$name"
+}
+
+test_brief_nonexistent_file_is_benign() {
+  # Passing a --brief path that does not exist is benign: the gate runs
+  # normally and emits no advisory (the brief block checks -f before reading).
+  local name="brief-nonexistent-file-is-benign"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$dir/no-such-brief.md"
+  set -e
+
+  if grep -q "suggested tier" "$err"; then
+    fail "$name" "missing brief should produce no advisory but stderr contains 'suggested tier'"
+    return
+  fi
+  pass "$name"
+}
+
+test_brief_none_no_advisory() {
+  # A brief with architecture_impact:none produces no tier advisory in stderr.
+  local name="brief-none-no-advisory"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  cat > "$brief" <<'BRIEF_EOF'
+schema_version: 1
+working_dir: /tmp
+goal: test
+files:
+  - read: README.md
+architecture_impact: none
+acceptance:
+  - test
+BRIEF_EOF
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --brief "$brief"
+  set -e
+
+  if grep -q "suggested tier" "$err"; then
+    fail "$name" "architecture_impact:none should produce no advisory but stderr contains 'suggested tier'"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_seq_brief_has_reviewer_guard_constraint
 run_test test_parallel_reviewer_brief_has_guard_constraint
+run_test test_brief_major_suggests_full
+run_test test_brief_minor_express_suggests_standard
+run_test test_brief_explicit_tier_suppresses_advisory
+run_test test_brief_nonexistent_file_is_benign
+run_test test_brief_none_no_advisory
 
 th_summary

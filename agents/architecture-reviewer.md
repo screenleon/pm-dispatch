@@ -24,9 +24,17 @@ Out of scope: style (critic), security/risk (separate), tests (qa-tester), featu
 
 # Process
 
+**If the brief contains `conceptual_map`** (preferred path):
+1. Read the brief's `conceptual_map` field. Verify layer ownership, bounded context, and module boundaries from the map alone.
+2. Read `git -C <repo> diff` and compare the diff against the map: do the changed files and module interactions match what the map describes?
+3. Open source files **selectively**: when the map and diff disagree, when a specific risk surface warrants a spot check, when `architecture_impact` is `major`, or when the map is silent on a boundary the diff crosses. Do not scan source files to form opinions already resolved by the map.
+4. Check project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` for prior decisions that bind this change.
+
+**If the brief has no `conceptual_map`** (fallback path):
 1. Read brief + `git -C <repo> diff`.
 2. Read what *was* the design: `ARCHITECTURE.md` if present, the changed module's directory layout, how peers handle similar concerns.
 3. Check project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` for prior decisions that bind this change.
+4. Note in `alignment` that no `conceptual_map` was provided; the review fell back to diff inspection.
 
 # Output
 

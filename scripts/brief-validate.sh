@@ -12,6 +12,10 @@ reject() {
   exit 1
 }
 
+warn() {
+  printf 'WARN: %s\n' "$1"
+}
+
 has_required_field() {
   local brief="$1" field="$2"
   grep -Eq "^${field}:[[:space:]]*[^[:space:]]" "$brief"
@@ -132,6 +136,107 @@ schema_version_value() {
   ' "$brief"
 }
 
+architecture_impact_value() {
+  local brief="$1"
+  awk '
+    /^architecture_impact:[[:space:]]*/ {
+      sub(/^architecture_impact:[[:space:]]*/, "", $0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      print
+      exit
+    }
+  ' "$brief"
+}
+
+has_conceptual_map() {
+  local brief="$1"
+  awk '
+    /^conceptual_map:[[:space:]]*/ {
+      rest = $0
+      sub(/^conceptual_map:[[:space:]]*/, "", rest)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+        found = 1
+        exit
+      }
+      in_map = 1
+      next
+    }
+    in_map {
+      if (/^[a-z_]+:[[:space:]]*/) { in_map = 0; next }
+      if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$brief"
+}
+
+has_cmd_self_verify() {
+  local brief="$1"
+  awk '
+    /^[a-z_]+:[[:space:]]*/ {
+      if ($0 ~ /^self_verify:/) {
+        in_self_verify = 1
+        next
+      }
+      if (in_self_verify) {
+        in_self_verify = 0
+      }
+    }
+    in_self_verify && /^[[:space:]]*-[[:space:]]*cmd:/ {
+      found = 1
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$brief"
+}
+
+has_vague_acceptance() {
+  local brief="$1"
+  awk '
+    /^[a-z_]+:[[:space:]]*/ {
+      if ($0 ~ /^acceptance:/) {
+        in_acceptance = 1
+        next
+      }
+      if (in_acceptance) {
+        in_acceptance = 0
+      }
+    }
+    in_acceptance && /^[[:space:]]*-[[:space:]]+/ {
+      lowered = tolower($0)
+      if (lowered ~ /works as expected|passes tests|no errors|everything works|looks good/) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$brief"
+}
+
+has_behavioral_units_field() {
+  local brief="$1"
+  grep -Eq '^behavioral_units:[[:space:]]*[0-9]' "$brief"
+}
+
+behavioral_units_value() {
+  local brief="$1"
+  awk '
+    /^behavioral_units:[[:space:]]*/ {
+      sub(/^behavioral_units:[[:space:]]*/, "", $0)
+      gsub(/[[:space:]]/, "", $0)
+      print
+      exit
+    }
+  ' "$brief"
+}
+
+has_qa_checklist() {
+  local brief="$1"
+  grep -Eq '^qa_checklist:' "$brief"
+}
+
 if [[ "${1:-}" == "--help" ]]; then
   usage
   exit 0
@@ -172,6 +277,37 @@ fi
 
 if [[ -n "$workdir" && ! -d "$workdir" ]]; then
   reject "working_dir not found on disk: $workdir"
+fi
+
+arch_impact="$(architecture_impact_value "$brief")"
+if [[ -n "$arch_impact" ]]; then
+  case "$arch_impact" in
+    none|minor|major) ;;
+    *) reject "invalid field 'architecture_impact': expected none|minor|major, got '${arch_impact}'";;
+  esac
+fi
+
+if [[ "$arch_impact" == "major" ]] && ! has_conceptual_map "$brief"; then
+  reject "architecture_impact:major requires 'conceptual_map' field"
+fi
+
+if [[ "$arch_impact" == "minor" ]] && ! has_conceptual_map "$brief"; then
+  warn "architecture_impact:minor without 'conceptual_map' — architecture-reviewer will fall back to diff inspection (slower, noisier)"
+fi
+
+if has_file_writing_entry "$brief" && has_self_verify_entry "$brief" && ! has_cmd_self_verify "$brief"; then
+  reject "file-writing brief self_verify has no 'cmd:' entry — at least one machine-executable check is required"
+fi
+
+if has_vague_acceptance "$brief"; then
+  warn "acceptance contains vague phrase (e.g. 'works as expected', 'passes tests') — replace with specific, testable conditions"
+fi
+
+if has_behavioral_units_field "$brief"; then
+  bu="$(behavioral_units_value "$brief")"
+  if [[ "$bu" =~ ^[0-9]+$ ]] && [[ "$bu" -ge 3 ]] && ! has_qa_checklist "$brief"; then
+    warn "behavioral_units:${bu} >= 3 but no 'qa_checklist' field — qa-tester will block without per-unit coverage"
+  fi
 fi
 
 printf 'VALID\n'

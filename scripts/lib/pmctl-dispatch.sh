@@ -332,6 +332,9 @@ pmctl_dispatch_run() {
     printf 'pmctl dispatch run: brief failed validation: %s\n%s\n' "$brief_file" "$brief_msg" >&2
     return 2
   fi
+  if [[ -n "$brief_msg" && "$brief_msg" != "VALID" ]]; then
+    printf '%s\n' "$brief_msg" >&2
+  fi
 
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
   #    Gates the executor's brief-file write for this runtime via the same code

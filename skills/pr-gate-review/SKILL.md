@@ -20,12 +20,13 @@ implement → pr-gate → fix NO-GO → push → PR).
   reviewers and writes a typed result to `.gate-results/`.
 - Direct: `bash scripts/pr-gate.sh --cd <repo> --executor auto [--parallel]`.
 
-**Tier / mode:**
-- Default = **sequential**, low token cost — routine code / docs / seed changes.
-- `--parallel` — reviewer independence; use for auth/payment/migration/sensitive
-  paths or load-bearing changes with wide blast radius.
-- Force a tier with `express` / `standard` / `full`; re-gate a subset with
-  `--targeted r1,r2`.
+**Tier / mode** (tiers reflect rigor level, not reviewer count):
+- `express` — hotfix, docs-only, `architecture_impact: none`; machine verify + critic + qa.
+- `standard` — feature, `architecture_impact: minor`; adds architecture-reviewer with conceptual map.
+- `full` — architectural change, `architecture_impact: major`, sensitive path; parallel cross-context + security + risk hard gates.
+- Default = **sequential**, low token cost. `--parallel` gives each reviewer an independent session.
+- Pass `--brief <file>` to get an advisory tier suggestion based on the brief's `architecture_impact`.
+- Force a tier with `--tier express|standard|full`; re-gate a subset with `--targeted r1,r2`.
 
 ## Reading the result
 
