@@ -5,7 +5,7 @@ argument-hint: "<feature description, e.g. 'add OAuth login to the API'>"
 
 Run a design review for `$ARGUMENTS` before any implementation starts. If no argument is provided, ask the user what feature they are about to implement.
 
-The output is a **structured pre-impl artifact** with six fixed sections, ending in a design constraint list that can be pasted directly into a PM brief's `constraints:` field. The `Conceptual Map` section maps directly to the brief's `conceptual_map:` field (CC-324).
+The output is a **structured pre-impl artifact** with six fixed sections, ending in a design constraint list that can be pasted directly into a PM brief's `constraints:` field. The `Conceptual Map` section maps directly to the brief's `conceptual_map:` field.
 
 ## When to invoke
 
