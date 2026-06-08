@@ -85,6 +85,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-336 | ✅ done | dx: deprecated warnings + executor docs preferred path update | docs | 2026-06-08 | pr:#246 | P2 | — |
 | CC-337 | ✅ done | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | pr:#247 | P1 | — |
 | CC-339 | 🟢 someday | **[lint: prevent duplicate CC id with divergent title]** Add a validator rule asserting one CC id never maps to two different titles across the BACKLOG active body and MILESTONES — surfaced when repo-index reused CC-328 already held by the shipped light-alias (resolved via CC-338, DECISIONS 2026-06-08). Catch the next collision at lint time, not by reading. v0.5.0 Phase 0 follow-up. | process | 2026-06-08 | — | P3 | hygiene |
+| CC-340 | 🟢 someday | **[knowledge index: standalone FTS over memory/backlog/decisions]** Local knowledge-search index (the second-brain plane, symmetric to the repo index CC-338): index MEMORY.md + memory cards + wiki + BACKLOG / DECISIONS / MILESTONES + episodes, answering "why / how was this decided / prior failure modes" before dispatch. v0.5.0 only aligns the schema (context_hit_v1, CC-237); the heavy standalone index overlaps /mem-search and is deferred to v0.6.0. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
+| CC-341 | 🔵 active | **[pmctl validate: wire handover-validate framework into pmctl]** The CC-202 handover-validator framework shipped (#170) but was never wired into a `pmctl validate` subcommand. MILESTONES v0.5.0 previously pointed at the closed CC-202; this is its active home. Wire `pmctl validate` to the extracted framework with schema validation + event emission, matching the other pmctl state-ops. | arch | 2026-06-08 | — | P2 | design |
 
 ---
 
@@ -441,7 +443,9 @@ document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
 
 ## CC-215 — pmctl — core CLI entrypoint（⚠️ partial）
 
-**Status (2026-06-07)**: Incremental slice shipped. **Shipped (PR #171)**: `adapter generate` (real) + `dispatch run`. **Shipped (this PR)**: `task list/show/create/update` + `decision add` — state-store commands with schema validation, duplicate-rejection, `serialize_with_lock` concurrency, and audit event emission (`task.created`, `task.state_changed`, `decision.recorded`). **Open (remaining scope)**: `task claim/dispatch/status/review`, `backlog sync/view`, `trace tail`, `guard check`, `safe-bash`, `adapter generate` from core agent definitions.
+**Status (2026-06-07)**: Incremental slice shipped. **Shipped (PR #171)**: `adapter generate` (real) + `dispatch run`. **Shipped (this PR)**: `task list/show/create/update` + `decision add` — state-store commands with schema validation, duplicate-rejection, `serialize_with_lock` concurrency, and audit event emission (`task.created`, `task.state_changed`, `decision.recorded`). **Open (remaining scope)**: `task claim/dispatch/status/review`, `safe-bash` (note: `backlog view/sync` shipped via CC-287, `guard check` via CC-288/CC-291, `trace` via CC-315 — that part of the list below is stale).
+
+**Milestone (2026-06-08)**: the genuinely-remaining pmctl state-ops — `task claim/dispatch/status/review` + `safe-bash` — are targeted for **v0.5.0 Phase 2** so the `⚠️ partial` does not float indefinitely. `pmctl validate` is split out as its own active ticket (CC-341).
 
 **Problem**: pm-dispatch has no language-agnostic runtime binary. All orchestration logic is
 reached through Claude-specific hooks and commands, preventing non-Claude CLIs from accessing
@@ -1357,3 +1361,42 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 **Priority**: P3.
 
 **Cross-link**: [[CC-338]] (renumber that motivated this), [[CC-237]].
+
+## CC-340 — knowledge index: standalone FTS over memory/backlog/decisions 🟢 someday → v0.6.0
+
+**Problem**: The repo index (CC-338) covers the code plane ("where to change, what to reuse"), but the second-brain plane — "why, how was this decided, what failed before" — has no structured search backing the context-pack. `/mem-search` exists as a skill but is keyword/grep over files, not an index with ranking or trust tiers.
+
+**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). v0.5.0 ships the repo plane + the shared interface (CC-237) and only *aligns the schema* for knowledge. A full standalone knowledge index is the symmetric other half — but it overlaps the existing `/mem-search` surface, so it is deferred until the context-pack interface proves the shape in real use.
+
+**Requirement** (v0.6.0):
+- Index MEMORY.md + memory cards + wiki + BACKLOG.md / DECISIONS.md / MILESTONES.md + episodes.jsonl (low-trust episodic chunks).
+- Emit `context_hit_v1` (CC-237) with `source_domain: knowledge`, `trust_level` (curated > wiki > backlog body > episode > raw event), and `refs` (CC / decision / event ids).
+- Search by title / alias / CC id / decision id / keyword; rank curated over generated, durable rule over recency.
+- FTS5 optional; `LIKE` / `grep` fallback mandatory and tested.
+
+**Non-goals**:
+- Embeddings (no Khoj / semantic backend in MVP — optional accelerator later).
+- Rewriting memory cards or making SQLite the source of truth (canonical stays the Markdown / JSONL).
+- Replacing `/mem-search` UX before the index proves out.
+
+**Milestone**: v0.6.0 — symmetric to CC-338; deferred while the v0.5.0 repo-index slice validates the context-pack shape.
+
+**Priority**: P3.
+
+**Cross-link**: [[CC-338]] (repo-index counterpart), [[CC-237]] (shared interface), [[CC-234]] (memory v2 content source), [[CC-232]] (pack schema).
+
+## CC-341 — pmctl validate: wire handover-validate framework into pmctl 🔵 active → v0.5.0 P2
+
+**Problem**: The handover-validator framework (CC-202) was extracted and shipped via PR #170, but the `pmctl validate` subcommand that exposes it was deferred ("→ pmctl validate 串接移 M3") and never landed. MILESTONES v0.5.0 was pointing at the **closed** CC-202 for this remaining wiring, leaving it without an active ticket — surfaced during v0.5.0 follow-up review 2026-06-08.
+
+**Why**: CC-202 is closed (framework done); reusing a closed id for open work is the same divergent-reference hazard the CC-328 → CC-338 renumber fixed. The remaining wiring deserves its own active id.
+
+**Requirement**:
+- Add `pmctl validate` wiring the extracted handover-validate framework, consistent with the other pmctl state-ops (schema validation, event emission, exit-code contract).
+- Update MILESTONES v0.5.0 to reference CC-341 (done in this PR); CC-202 stays closed.
+
+**Milestone**: v0.5.0 Phase 2.
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-202]] (framework, closed), [[CC-215]] (pmctl subcommand surface), [[CC-237]].

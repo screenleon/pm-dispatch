@@ -39,7 +39,8 @@
 | CC-330 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求 | P1 |
 | CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入；同時作為 knowledge 面的 content 來源 | P3 |
 | CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
-| CC-202 | `pmctl validate`（接 handover-validate） | P2 |
+| CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | P2 |
+| CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | P2 |
 
 ### Phase 3 — hygiene / deprecation（P2-P3）
 
@@ -50,7 +51,7 @@
 
 ### 延後至 v0.6.0+（明確排除於 v0.5.0）
 
-- **完整 knowledge index**（FTS over 全 memory / wiki / episodes）——與既有 `/mem-search` 重疊；v0.5.0 只對齊 schema，standalone index 延 v0.6.0。
+- **完整 knowledge index（CC-340）**（FTS over 全 memory / wiki / episodes）——與既有 `/mem-search` 重疊；v0.5.0 只對齊 schema，standalone index 延 v0.6.0。已開 `🟢 someday` 票追蹤，對稱於 repo-index CC-338。
 - **External index backends**——Khoj（semantic knowledge）、Memori（cross-runtime；回寫只走 `memory_proposal`）、tree-sitter / codegraph（CC-209 / CC-253 spike）、ctags。規則：local canonical first，external accelerator second。
 - **CC-216 MCP server**——需穩定 pmctl，延 v0.6.0+。
 - **CC-333 runtime 解耦（`PM_MEMORY_DIR`）**——knowledge index 落地後再評估 path 抽象需求。
