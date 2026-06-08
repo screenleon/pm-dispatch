@@ -7,6 +7,8 @@ ORIGINAL_PATH="$PATH"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
 
 TMP_ROOT="$(mktemp -d)"
@@ -523,6 +525,13 @@ run_case() {
     fail "$name" "case function returned non-zero"
   fi
 }
+
+_PGP_PLATFORM="$(detect_platform)"
+if [[ "$_PGP_PLATFORM" == "windows" ]]; then
+  printf 'SKIP: test-pr-gate-profile (Windows: ln -sf system binary stubs not supported on MSYS)\n'
+  th_summary
+  exit 0
+fi
 
 run_case "executor-codex-flag-explicit-keeps-behavior" test_executor_codex_flag_explicit_keeps_behavior
 run_case "executor-claude-sequential-emits-single-brief-handover" test_executor_claude_sequential_emits_single_brief_handover

@@ -78,6 +78,8 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-272 | executor contract cleanup bundle（Part A + Part B 全完成）：`docs/dispatch-brief.md` §Commit delegation rule + §Style notes；`docs/executor-contract.md` §Async dispatch behavior；false partial 來源消除 | ✅ |
+| CC-336 | deprecated warnings + executor docs preferred path update（codex-dispatch.sh → pmctl dispatch run；pm.md + codex-executor.md 同步） | ✅ |
+| CC-337 | Windows portability：doctor.sh auto-profile false FAIL fix + test suite skip-guards（test-pr-gate-profile/test-claude-executor/test-dispatch-post-verify）+ uninstall prune feedback | ✅ |
 | — | CHANGELOG.md v0.4.0 section + git tag `v0.4.0` + GitHub Release | 🟡 |
 
 ### 地基之後 / 延後（不在地基範圍）

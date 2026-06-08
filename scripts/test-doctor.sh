@@ -755,6 +755,39 @@ case_doctor_profile_minimal_skip_codex_hooks() {
   fi
 }
 
+case_doctor_windows_auto_profile_codex_on_path() {
+  # Verifies that PROFILE=auto selects minimal on Windows even when codex is in PATH.
+  # Without the Windows platform check, codex_available()=true → _want_full=1 →
+  # doctor checks codex hooks → FAIL (minimal settings has none). The fix in
+  # detect_hook_profile() must force _want_full=0 when detect_platform==windows.
+  #
+  # Steps:
+  #   1. Write minimal settings (no codex hooks); create memory dir and manifest.
+  #   2. Put a codex stub on PATH (auto-detection would pick full without Windows check).
+  #   3. Run doctor --no-color --repo <repo> with PM_DISPATCH_PLATFORM=windows (no --profile).
+  #   4. Assert exit 0 and no [FAIL] — codex hooks must not be required on Windows auto.
+  local name="doctor-windows-auto-profile-codex-on-path"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-win-auto-profile" out status=0 path
+  write_minimal_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-win-auto-profile" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_PLATFORM=windows \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" != *"[FAIL]"* && "$out" == *"Summary:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with no FAIL (Windows auto=minimal); status=$status out=$out"
+  fi
+}
+
 case_doctor_minimal_missing_routing_log_fails() {
   # Verifies that --profile minimal fails when hook-routing-log.sh is absent from
   # settings.json, confirming routing-log is required in the minimal profile.
@@ -1435,6 +1468,7 @@ case_doctor_manifest_bad_version_warn
 case_doctor_malformed_settings_fail
 case_doctor_malformed_settings_json
 case_doctor_profile_minimal_skip_codex_hooks
+case_doctor_windows_auto_profile_codex_on_path
 case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing

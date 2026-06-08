@@ -325,7 +325,13 @@ check_hooks() {
   case "$PROFILE" in
     full)    _want_full=1 ;;
     minimal) _want_full=0 ;;
-    *)       if codex_available; then _want_full=1; else _want_full=0; fi ;;
+    *)       if [[ "$(detect_platform)" == "windows" ]]; then
+               _want_full=0
+             elif codex_available; then
+               _want_full=1
+             else
+               _want_full=0
+             fi ;;
   esac
   if [[ "$_want_full" -eq 1 ]]; then
     profile="full"

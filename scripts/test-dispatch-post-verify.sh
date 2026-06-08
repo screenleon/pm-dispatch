@@ -8,7 +8,17 @@ VALIDATOR="$REPO_ROOT/scripts/dispatch-post-verify.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
+
+_DPV_PLATFORM="$(detect_platform)"
+_dpv_skip_win() {
+  local name="$1" reason="$2"
+  [[ "$_DPV_PLATFORM" == "windows" ]] || return 1
+  $LIST || printf 'SKIP: %s (%s)\n' "$name" "$reason"
+  return 0
+}
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -461,6 +471,7 @@ EOF
 case_symlink_indir_valid() {
   local name="symlink-indir-valid"
   should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -sfn has no real-symlink support on Windows MSYS"; then return 0; fi
   local work_dir out rc
 
   work_dir="$(make_work_dir "$name")"
@@ -483,6 +494,7 @@ case_symlink_indir_valid() {
 case_symlink_outofdir_rejected() {
   local name="symlink-outofdir-rejected"
   should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -sfn has no real-symlink support on Windows MSYS"; then return 0; fi
   local work_dir out rc
 
   work_dir="$(make_work_dir "$name")"
@@ -505,6 +517,7 @@ case_symlink_outofdir_rejected() {
 case_symlink_stderr_outofdir_rejected() {
   local name="symlink-stderr-outofdir-rejected"
   should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -sfn has no real-symlink support on Windows MSYS"; then return 0; fi
   local work_dir out rc
 
   work_dir="$(make_work_dir "$name")"
@@ -528,6 +541,7 @@ case_symlink_stderr_outofdir_rejected() {
 case_fail_trace_dir_is_symlink() {
   local name="fail-trace-dir-is-symlink"
   should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -s has no real-symlink support on Windows MSYS"; then return 0; fi
   local work_dir out rc outside_trace
 
   work_dir="$(make_work_dir "$name")"

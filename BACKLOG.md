@@ -82,7 +82,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
-| CC-336 | 🟡 deferred | **[dx: add deprecated warnings to legacy dispatch shim + update executor docs to prefer pmctl path]** `scripts/codex-dispatch.sh` 直呼後在 stderr 顯示 `[deprecated]` warning；`commands/pm.md` 更新 `executor: codex` primary route label；`agents/codex-executor.md` Step 2 Bash 模板從 `codex-dispatch.sh` 改為 `pmctl dispatch run --adapter codex`，確保 agent 讀到的是正確的 preferred path。 | docs | 2026-06-08 | — | P2 | — |
+| CC-336 | ✅ done | dx: deprecated warnings + executor docs preferred path update | docs | 2026-06-08 | pr:#246 | P2 | — |
+| CC-337 | ✅ done | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | pr:#247 | P1 | — |
 
 ---
 
@@ -1291,13 +1292,41 @@ symbols(id, file_id, name, kind, language, line_start, line_end, signature, back
 
 ---
 
-## CC-336 — dx: deprecated warnings + executor docs preferred path update 🟡 deferred
+## CC-336 — dx: deprecated warnings + executor docs preferred path update ✅ 2026-06-08
 
 三個變更確保呼叫舊路徑時有明確提示，且 agent/command 文件反映正確的 preferred path：
 
-1. **`scripts/codex-dispatch.sh`** — 加 stderr `[deprecated]` 三行 warning，任何直接呼叫都能看到。實作已完成。
+1. **`scripts/codex-dispatch.sh`** — 加 stderr `[deprecated]` 三行 warning，任何直接呼叫都能看到。
 2. **`commands/pm.md`** — `executor: codex` 的 primary route label 從 `scripts/codex-dispatch.sh` 改為 `pmctl dispatch run --adapter codex`。
 3. **`agents/codex-executor.md`** — Step 2 Bash 模板改為 `pmctl dispatch run --adapter codex ...`；Job 步驟和 §When NOT to use this agent 同步更新。
 
 **Root cause**: PM 主線程 dispatch 時看到的 agent 文件仍指向 `codex-dispatch.sh`，導致 agent 讀到舊 instruction 後繼續走 deprecated 路徑（blocking main thread）。
+
+**See**: pr:#246
+
+---
+
+## CC-337 — portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix ✅ 2026-06-08
+
+Windows v0.4.0 dogfood 發現三類問題，分 P1/P2/P3 修：
+
+**P1 — `scripts/doctor.sh` auto-profile false FAIL**（release blocker）
+
+`detect_hook_profile()` 的 `auto` case 只看 `codex_available`，不看平台。Windows Git Bash 若 PATH 有 codex CLI → 判定 `full` → 期待 codex hooks → FAIL。但 `install-hooks.sh` 在 Windows 正確安裝 `minimal`。
+
+Fix：在 `check_hooks()` 的 `detect_hook_profile()` inner logic 中，先 `detect_platform == windows` → 強制 `_want_full=0`，再才看 `codex_available`。
+
+**P2 — 測試套件缺 Windows skip-guards**（Windows CI 失敗）
+
+| 套件 | 問題 | 修法 |
+|---|---|---|
+| `test-pr-gate-profile` | `create_runner` 用 `ln -sf` 建 system binary stubs | suite-level skip on windows |
+| `test-claude-executor` case 5 | `ln -sfn` + `-L` check 在 MSYS 失敗 | case-level skip on windows |
+| `test-dispatch-post-verify` 4 cases | `ln -sfn`/`ln -s` symlink security tests | case-level skip on windows |
+
+**P3 — `uninstall.sh` 空目錄清理回饋**（UX）
+
+pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `pruned <dir>`，靜默略過非空目錄。
+
+**See**: pr:#247
 

@@ -366,11 +366,18 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
   exit 0
 fi
 
-# Refresh latest.* symlinks before launch so observers can attach immediately.
-# 2>/dev/null || true: ln -sfn fails on Windows MSYS when target doesn't yet exist.
-ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
-ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
-ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+# Point latest.* convenience pointers at this run's files. Best-effort: on
+# symlink-less hosts (Windows Git Bash) `ln -s` copy-falls-back, and a missing
+# pointer must never abort dispatch — post-verify reads the per-run footer path
+# (CC-305), not latest.*. Called before launch (Unix observers attach
+# immediately) and again after the run (symlink-less hosts get a usable copy once
+# the targets exist).
+_refresh_latest_pointers() {
+  ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+  ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+  ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+}
+_refresh_latest_pointers
 
 set +e
 if [[ "$TIMEOUT" -gt 0 ]]; then
@@ -380,6 +387,10 @@ else
 fi
 EXIT=$?
 set -e
+
+# Re-point latest.* now that the per-run files exist (usable copies on
+# symlink-less hosts; idempotent symlink refresh on Unix).
+_refresh_latest_pointers
 
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then

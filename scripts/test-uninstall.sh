@@ -981,6 +981,41 @@ test_pmctl_real_file_preserved() {
   pass "$name"
 }
 
+test_prune_feedback() {
+  # Verifies that uninstall prints "pruned <dir>" when an empty managed directory
+  # is successfully removed by the post-manifest pruning loop.
+  #
+  # Steps:
+  #   1. Install a copy-mode file into share/; compute SHA so manifest matches.
+  #   2. Run uninstall.sh; the copy is removed, share/ becomes empty.
+  #   3. Assert output contains "pruned" and share/ directory is gone.
+  local name="TC-27 prune-feedback"
+  local home="$tmp_root/home-prune-feedback"
+  local src="$tmp_root/model-aliases.tsv"
+  local dst="$home/.claude/share/model-aliases.tsv"
+  local out="$tmp_root/prune-feedback.out"
+  printf 'alias\tmodel\n' > "$src"
+  local sha
+  sha="$(sha256sum "$src" | cut -d' ' -f1)"
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+  write_manifest "$home" "$(copy_entry "$src" "$dst" "$sha")"
+
+  if ! run_uninstall "$home" "$out"; then
+    fail "$name" "uninstall exited non-zero: $(cat "$out")"
+    return
+  fi
+  if ! grep -q "pruned" "$out"; then
+    fail "$name" "expected 'pruned' in output but got: $(cat "$out")"
+    return
+  fi
+  if [[ -d "$home/.claude/share" ]]; then
+    fail "$name" "$home/.claude/share should have been pruned"
+    return
+  fi
+  pass "$name"
+}
+
 run_case "TC-01 no-manifest" test_no_manifest
 run_case "TC-02 symlink-removed" test_symlink_removed
 run_case "TC-03 symlink-foreign" test_symlink_foreign
@@ -1007,5 +1042,6 @@ run_case "TC-23 claude-home-symlink" test_claude_home_symlink
 run_case "TC-24 pmctl-symlink-removed" test_pmctl_symlink_removed
 run_case "TC-25 pmctl-foreign-symlink-preserved" test_pmctl_foreign_symlink_preserved
 run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
+run_case "TC-27 prune-feedback" test_prune_feedback
 
 th_summary
