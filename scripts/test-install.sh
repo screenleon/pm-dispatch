@@ -1018,6 +1018,235 @@ test_dispatch_allowlist_uninstall_dryrun() {
   pass "$name"
 }
 
+# ── CC-334: reviewer permissions merge ──────────────────────────────────────
+
+test_install_hooks_gate_perms_fresh() {
+  # Fresh settings gains the three CC-334 permissions.allow entries when
+  # PM_DISPATCH_GATE_WORKSPACE is set to a known path.
+  local name="install-hooks-gate-perms-fresh"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  CLAUDE_HOME="$home/.claude" \
+    PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local write_entry="Write(${ws}/**/.gate-results/**)"
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+    if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "missing permissions.allow entry: $entry"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_idempotent() {
+  # Re-running install-hooks.sh does not duplicate the three CC-334 entries.
+  local name="install-hooks-gate-perms-idempotent"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local write_entry="Write(${ws}/**/.gate-results/**)"
+  local count
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+    count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
+    if [[ "$count" != "1" ]]; then
+      fail "$name" "expected 1 copy of '$entry', got $count"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_dry_run() {
+  # --dry-run shows a diff but does not mutate settings.json.
+  local name="install-hooks-gate-perms-dry-run"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{}}\n' > "$settings"
+  local before after
+  before="$(md5sum "$settings" | awk '{print $1}')"
+
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run >/dev/null 2>&1
+
+  after="$(md5sum "$settings" | awk '{print $1}')"
+  if [[ "$before" != "$after" ]]; then
+    fail "$name" "settings.json was modified by --dry-run"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_preserves_existing() {
+  # Existing unrelated permissions.allow entries survive the CC-334 merge.
+  local name="install-hooks-gate-perms-preserves-existing"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git status:*)","Read(/tmp/*)"]}}\n' > "$settings"
+
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  for pre_entry in "Bash(git status:*)" "Read(/tmp/*)"; do
+    if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "pre-existing entry was removed: $pre_entry"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_workspace_override() {
+  # PM_DISPATCH_GATE_WORKSPACE is honoured verbatim — the Write glob uses the
+  # override path, not the auto-detected repo parent.
+  local name="install-hooks-gate-perms-workspace-override"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local custom_ws="/custom/tooling/workspace"
+  mkdir -p "$home/.claude"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$custom_ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${custom_ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not use PM_DISPATCH_GATE_WORKSPACE; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_home_fallback() {
+  # When the auto-detected git root's parent equals HOME, the Write glob falls
+  # back to $HOME/**/.gate-results/**. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a
+  # fake git root whose parent is the test HOME, exercising the real fallback branch.
+  local name="install-hooks-gate-perms-home-fallback"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  mkdir -p "$home/.claude"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  # dirname("$home/fake-pm") == "$home" == $HOME → triggers HOME fallback
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$home/fake-pm" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${home}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not use HOME fallback; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_git_failure_fallback() {
+  # When git rev-parse fails (non-git install, tarball), workspace root falls
+  # back to $HOME. Uses PM_DISPATCH_GATE_GIT_ROOT="" to simulate git failure.
+  local name="install-hooks-gate-perms-git-failure-fallback"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  mkdir -p "$home/.claude"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${home}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not fall back to HOME on git failure; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_normal_git_parent() {
+  # Normal path: git rev-parse succeeds, parent is not HOME → workspace root is
+  # the parent directory. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a fake git
+  # root under a non-HOME subdirectory, exercising the main auto-detection branch.
+  local name="install-hooks-gate-perms-normal-git-parent"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  # Fake git root: "$home/projects/pm-dispatch" → parent = "$home/projects" (not HOME)
+  local fake_ws="$home/projects"
+  local fake_git_root="$fake_ws/pm-dispatch"
+  mkdir -p "$home/.claude" "$fake_ws"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$fake_git_root" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${fake_ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not use git-parent workspace; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_uninstall_removes() {
+  # Lifecycle: uninstall-hooks.sh removes the three CC-334 permissions entries
+  # that install-hooks.sh added, and leaves unrelated entries intact.
+  local name="install-hooks-gate-perms-uninstall-removes"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)"]}}\n' > "$settings"
+
+  # Install
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local write_entry="Write(${ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$write_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "install did not add Write entry; cannot test lifecycle"
+    return
+  fi
+
+  # Uninstall
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+    if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "entry should be removed after uninstall: $entry"
+      return
+    fi
+  done
+  # Unrelated entry must survive
+  if ! jq -e --arg e "Bash(git log:*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "unrelated permissions.allow entry was incorrectly removed"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
   # Codex hooks are not wired; base managed hooks still are. The expected warning
@@ -2344,6 +2573,15 @@ test_install_dispatch_allowlist_backup_timestamped
 test_dispatch_allowlist_lib_parity
 test_dispatch_allowlist_uninstall_removes_entries
 test_dispatch_allowlist_uninstall_dryrun
+test_install_hooks_gate_perms_fresh
+test_install_hooks_gate_perms_idempotent
+test_install_hooks_gate_perms_dry_run
+test_install_hooks_gate_perms_preserves_existing
+test_install_hooks_gate_perms_workspace_override
+test_install_hooks_gate_perms_home_fallback
+test_install_hooks_gate_perms_git_failure_fallback
+test_install_hooks_gate_perms_normal_git_parent
+test_install_hooks_gate_perms_uninstall_removes
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_removes_stale_routing_hook

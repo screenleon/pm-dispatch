@@ -100,6 +100,8 @@ repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 settings="$CLAUDE_HOME/settings.json"
 # shellcheck source=scripts/lib/memory-dir.sh
 . "$repo_root/scripts/lib/memory-dir.sh"
+# shellcheck source=scripts/lib/gate-workspace.sh
+. "$repo_root/scripts/lib/gate-workspace.sh"
 
 if [[ "$PLATFORM" == "windows" ]] && ! command -v jq >/dev/null 2>&1; then
   ROUTE_LOG_ENABLED=0
@@ -352,8 +354,37 @@ jq \
   )
   ' "$settings" > "$tmp_new"
 
+# --- Permissions merge for reviewer subagents (CC-334) ---
+# Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
+# to write results and run guard checks. Workspace root detection is shared with
+# uninstall-hooks.sh via scripts/lib/gate-workspace.sh.
+_workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
+_gate_glob="${_workspace_root}/**/.gate-results/**"
+
+_tmp_perms="$(mktemp)"
+trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
+if ! jq \
+  --arg write_perm "Write(${_gate_glob})" \
+  --arg bash_guard "Bash(pmctl guard check:*)" \
+  --arg bash_mkdir "Bash(mkdir -p:*)" \
+  '
+  .permissions //= {} |
+  .permissions.allow //= [] |
+  ([$write_perm, $bash_guard, $bash_mkdir]) as $required |
+  .permissions.allow |= (
+    . as $existing |
+    . + ($required | map(select(. as $p | ($existing | map(select(. == $p)) | length) == 0)))
+  )
+  ' "$tmp_new" > "$_tmp_perms"; then
+  echo "install-hooks: ERROR: failed to merge permissions.allow — check that $settings is valid JSON" >&2
+  exit 2
+fi
+mv "$_tmp_perms" "$tmp_new"
+trap 'rm -f "$tmp_new"' EXIT
+
 echo "install-hooks: profile=$PROFILE"
 echo "install-hooks: platform=$PLATFORM"
+echo "install-hooks: gate-results glob: $_gate_glob"
 
 if cmp -s "$settings" "$tmp_new"; then
   echo "install-hooks: already wired, nothing to do (profile=$PROFILE)"

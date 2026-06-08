@@ -13,6 +13,8 @@ DRY_RUN=0
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$repo_root"
+# shellcheck source=scripts/lib/gate-workspace.sh
+[[ -f "$repo_root/scripts/lib/gate-workspace.sh" ]] && . "$repo_root/scripts/lib/gate-workspace.sh"
 if [[ -f "$repo_root/scripts/lib/allowlist.sh" ]]; then
   # shellcheck source=scripts/lib/allowlist.sh
   . "$repo_root/scripts/lib/allowlist.sh"
@@ -56,7 +58,19 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
-_managed_json="$(dispatch_allowlist_entries | jq -Rn '[inputs]')"
+# CC-334: compute the reviewer Write glob to include in managed removal.
+# gate_workspace_root is sourced from scripts/lib/gate-workspace.sh;
+# falls back to inline detection if the lib is absent (copy-mode installs).
+if command -v gate_workspace_root >/dev/null 2>&1; then
+  _gate_ws="$(gate_workspace_root "$repo_root" "$HOME")"
+else
+  _gate_ws="${PM_DISPATCH_GATE_WORKSPACE:-$HOME}"
+fi
+# The three reviewer permission entries are managed install artifacts: they are
+# added by install-hooks.sh and removed here. Bash(pmctl guard check:*) and
+# Bash(mkdir -p:*) are treated as pm-dispatch-owned; re-add manually if needed
+# for other tools after uninstall.
+_managed_json="$({ dispatch_allowlist_entries; printf 'Write(%s/**/.gate-results/**)\nBash(pmctl guard check:*)\nBash(mkdir -p:*)\n' "$_gate_ws"; } | jq -Rn '[inputs]')"
 
 jq \
   --arg repo_root "$repo_root" \
