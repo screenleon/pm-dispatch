@@ -75,7 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-296 | 🟡 deferred | **[chore: v0.3.0 deprecation sunset — remove after 2 official releases]** 移除 v0.3.0 引入的 deprecated 面，sunset 目標 **v0.5.0**（經 v0.3.0 + v0.4.0 兩個正式版本後）。(1) `pmctl guard check --profile pm/codex/claude` 別名 → 全部 caller 改 `--role`/`--runtime`，移除 alias + deprecation warning + back-compat 測試（[[CC-291]]）。(2) `scripts/codex-dispatch.sh` 相容 symlink shim → 真正 adapter 是 `adapters/codex/dispatch.sh`，移除 shim 並遷移外部 caller（[[CC-289]]）。Gate 在 release ≥ v0.5.0 才執行；屆時複查是否有其他 v0.3.0 deprecation 需一併清。User-requested 2026-06-01。關聯 [[CC-291]]、[[CC-289]]。 | release | 2026-06-01 | — | P2 | hygiene |
 | CC-306 | 🟡 deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-307 | 🟡 deferred | **[arch: pm role cross-runtime — guard 已 runtime-agnostic，但文件與 alias 仍暗示 pm = claude-only]** CC-291 的兩軸設計（role ⊥ runtime）明確要求 pm guard policy 不能綁 runtime。`hook-pm-write-guard.sh` 確實 runtime-agnostic（任何 runtime 套用同一規則）✓，且 `--role pm --runtime codex` CLI 路徑已可正常呼叫 ✓；但目前三個地方仍暗示 pm=claude-only：(1) deprecated `--profile pm` alias hardcode `runtime="claude"`，(2) `scripts/lib/pmctl-guard.sh` 說明說「currently claude-only」，(3) 無 codex-as-pm dispatch end-to-end 測試。修法：(1) alias 部分接受（deprecated, 將由 CC-296 移除，hardcode 是 convenience 不是設計限制）；(2) 把「currently claude-only」說明改為「guard policy is runtime-agnostic; no deployed codex-as-pm use case yet」以分清設計與現況；(3) 加 integration smoke test：`pmctl dispatch run --adapter codex --role pm` 可成功 dispatch。Origin user 2026-06-02。關聯 [[CC-291]]（two-axis design）、[[CC-296]]（alias sunset）、[[CC-215]]（pmctl dispatch run）。 | arch | 2026-06-02 | — | P3 | design |
-| CC-321 | ✅ closed 2026-06-08 | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | — | P2 | hygiene |
+| CC-321 | ✅ closed 2026-06-08 | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | pr:#243 | P2 | hygiene |
 | CC-328 | 🟢 someday | **[spike: lightweight built-in symbol index for context-pack（standard Unix toolchain only）]** 在 v0.4.0 state-first 地基落地後，以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 symbol index，讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary。External backend（ctags / ffts-grep / tree-sitter）作為 optional 加速層，不列入 MVP scope。 | ops/token | 2026-06-05 | — | P3 | design |
 | CC-329 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
 | CC-330 | 🟢 someday | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。 | process/DX | 2026-06-05 | — | P3 | design |
@@ -1059,7 +1059,7 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-233]]`, `[[CC-298]]`, `[[CC-309]]`.
 
-## CC-321 — refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* ✅ closed 2026-06-08
+## CC-321 — refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* ✅ 2026-06-08
 
 **Problem**: pm-dispatch hook configuration env vars use a `CLAUDE_HOOK_` prefix (`CLAUDE_HOOK_CODEX_READ_ROOTS`, `CLAUDE_HOOK_CODEX_GUARD`, `CLAUDE_HOOK_PM_GUARD`, `CLAUDE_HOOK_REVIEWER_GUARD`, `CLAUDE_HOOK_GATE_REPO_ROOT` (deleted), `CLAUDE_HOOK_DISPATCH_ABS`, `CLAUDE_HOOK_LOG_DIR`). The prefix creates a false coupling to the Claude Code agent system — these are pm-dispatch's own config knobs and should be in the `PM_HOOK_` or `PM_DISPATCH_` namespace.
 
@@ -1077,6 +1077,8 @@ This makes directory creation the mutex.
 **Result**: All 7 `CLAUDE_HOOK_*` vars renamed to `PM_HOOK_*` across 15 files (6 hook scripts, 1 adapter, 3 test scripts, README, spike doc). Backward-compat shims added in all production hooks (removed after v0.5.0). `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only shim printf lines. 427 tests, 0 failures.
 
 **Cross-link**: [[CC-319]], [[CC-320]].
+
+**See**: pr:#243
 
 ---
 
