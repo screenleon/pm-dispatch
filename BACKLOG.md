@@ -83,7 +83,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
 | CC-336 | ✅ done | dx: deprecated warnings + executor docs preferred path update | docs | 2026-06-08 | pr:#246 | P2 | — |
-| CC-337 | 🔵 active | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | — | P1 | — |
+| CC-337 | ✅ done | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | pr:#247 | P1 | — |
 
 ---
 
@@ -1306,7 +1306,7 @@ symbols(id, file_id, name, kind, language, line_start, line_end, signature, back
 
 ---
 
-## CC-337 — portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix 🔵 active
+## CC-337 — portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix ✅ 2026-06-08
 
 Windows v0.4.0 dogfood 發現三類問題，分 P1/P2/P3 修：
 
@@ -1327,4 +1327,6 @@ Fix：在 `check_hooks()` 的 `detect_hook_profile()` inner logic 中，先 `det
 **P3 — `uninstall.sh` 空目錄清理回饋**（UX）
 
 pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `pruned <dir>`，靜默略過非空目錄。
+
+**See**: pr:#247
 
