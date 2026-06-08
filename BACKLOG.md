@@ -867,7 +867,7 @@ This makes directory creation the mutex.
 
 **Result**: `docs/dispatch-brief.md` 新增 §Commit delegation rule（含反例 + 正例）；§Style notes 補 commit 禁止條目。`docs/executor-contract.md` 新增 §Async dispatch behavior（sync vs async 判斷規則、per-scenario table、diagnosis 指引）。消除 false partial 噪音來源。
 
-**See**: pr:TBD
+**See**: pr:#245
 
 兩個 executor 文件噪音問題合併成一個 docs PR：
 
