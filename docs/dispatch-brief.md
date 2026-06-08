@@ -600,11 +600,42 @@ Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "co
 
 Failing any check wastes the agent invocation before a single tool call is made. Check every item before sending.
 
+## Commit delegation rule
+
+**Executors MUST NOT include `git add`, `git commit`, or any commit step in briefs, `self_verify`, `constraints`, or `acceptance`.**
+
+Commit is always delegated to the main thread after dispatch-post-verify succeeds. This is a structural rule, not a style preference:
+
+- `hook-codex-bash-guard.sh` blocks `git commit` inside the executor sandbox. Any brief that includes a commit step will cause the executor to report `status: partial` — even when every code change landed correctly. This is a false partial that pollutes the signal.
+- `hook-claude-write-guard.sh` prevents `claude-executor` from committing to the repo outside its allowed write surface.
+- The main thread is always the commit authority: it runs `git diff`, reviews changes, and commits when satisfied.
+
+**What to write instead:**
+
+```yaml
+# ✗ Do not write:
+self_verify:
+  - cmd: "git add -A && git commit -m 'feat: ...'"
+acceptance:
+  - changes committed to branch
+
+# ✓ Write instead:
+self_verify:
+  - cmd: "<your actual test or check command>"
+  - git-status no-collateral-damage
+acceptance:
+  - <describe the file changes and test results>
+  - git status --short shows only the expected files modified
+```
+
+The main thread commits after Phase 3 (dispatch-post-verify) exits 0. If dispatch-post-verify exits 1, the main thread reviews the partial and decides whether to commit, fix-and-re-dispatch, or discard.
+
 ## Style notes
 
 - Prose is fine; YAML-like keys above are conventions, not strict syntax. Keep real dispatches file-backed via `--brief-file`.
 - Keep briefs in the active voice ("Audit X", not "X should be audited"). Codex parses imperatives more reliably than declaratives.
 - Don't write implementation steps. The brief tells Codex *what* and *what counts as done*; *how* is Codex's job.
+- Never include `git add` or `git commit` in `self_verify`, `constraints`, or `acceptance` — see §Commit delegation rule above.
 
 ## Trial dispatch end-to-end recipe
 

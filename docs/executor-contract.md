@@ -114,6 +114,25 @@ The surface is **fail-closed**: a success exit (`0`) always means a registered p
 
 Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract.
 
+## Async dispatch behavior
+
+When the main thread dispatches a subagent via the `Agent` tool, the Claude Code harness decides — independently of `run_in_background` — whether to run the agent **synchronously** (blocks until done) or **asynchronously** (returns immediately with `Async agent launched successfully`). The harness currently promotes to async when the estimated wall-clock exceeds ~2–3 minutes.
+
+**Observable difference:**
+- **Sync**: the `Agent` call blocks; the main thread cannot send new commands while it runs; result is returned inline.
+- **Async**: the `Agent` call returns `Async agent launched successfully` immediately; main thread receives a completion notification when done.
+
+**Rules for callers:**
+
+| Scenario | Rule |
+|---|---|
+| Single dispatch — primary (Bash/pmctl) | Use `pmctl gate run` (gate) or `pmctl dispatch run --adapter <profile> --brief-file <path>` (executor) with `run_in_background: true` on the outer Bash call. A plain Bash process is not subject to Agent async-escalation surprises. This is the preferred path. |
+| Single dispatch — Agent fallback | If the primary Bash/pmctl path is unavailable, use an `Agent` call and omit `run_in_background`. The harness decides sync vs async; either path completes correctly. Do not mix Agent fallback with the Bash path in the same dispatch. |
+| Parallel fan-out dispatches (e.g. pr-gate reviewers) | Set `run_in_background: true` explicitly on every `Agent` call. Without it the harness may promote one subagent to async while another blocks, making the completion order non-deterministic. |
+| `codex-executor` fallback Agent dispatch | Never set `run_in_background: true` on the inner Bash call inside codex-executor. That call must remain synchronous because the agent exits when its `Agent` call returns, killing any orphaned background job. See `agents/codex-executor.md`. |
+
+**Diagnosis:** If you see `Async agent launched successfully` when you expected blocking, the harness promoted the dispatch. Wait for the completion notification — the subagent is still running. If the notification never arrives, check whether the agent exited early or a background Bash job inside it was orphaned.
+
 ## Forward-compat notes
 
 `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.

@@ -13,7 +13,7 @@
 
 **主題**：把 v0.3.0 的 spine 補成**真正 state-first**——`pmctl` 成為機器狀態的**唯一 writer**，dispatch 路徑經 `pmctl` 寫出 Run + Event，`routing_log.md` 機器寫入廢棄改用 `pmctl trace`。決策見 `DECISIONS.md` 2026-06-03（CC-211 committed）；完整 scoping 見 [`docs/architecture/v0.4.0-state-first-foundation.md`](docs/architecture/v0.4.0-state-first-foundation.md)。
 
-> **狀態（2026-06-06）：地基全數落地。** writers（CC-309/310/311/312/313/314）+ reader `pmctl trace`（CC-315 #237）+ rotation（CC-316 #238）+ store 安全/鎖/layout-parity（CC-317 #239）皆已合併。release/tag **尚未**進行（維護者暫緩）。剩餘屬地基外：能力層（CC-234/235/237）、MCP（CC-216）、review-model（CC-323→327）；CC-306 為 optional P3 defense-in-depth（見下）。
+> **狀態（2026-06-08）：地基全數落地，review model track 完成。** writers（CC-309/310/311/312/313/314）+ reader `pmctl trace`（CC-315 #237）+ rotation（CC-316 #238）+ store 安全/鎖/layout-parity（CC-317 #239）+ review model（CC-322→327）+ PM_HOOK_* 改名（CC-321 #243）+ install permissions.allow（CC-334 #244）皆已合併。release/tag **尚未**進行。剩餘 release blocker：CC-272 ✅ 已完成（见 Release Blocker Polish）；剩餘：CHANGELOG + tag。能力層（CC-234/235/237）、CC-202、CC-235 移至 v0.5.0；CC-306 為 optional P3 defense-in-depth（見下）。
 
 > **Scope 取捨（2026-06-03 拍板）**：維護者接受 v0.4.0 短期**無使用者可見賣點**——目前使用者少，基建正確性優先於推新功能。以 timeboxed thin vertical slice 降風險；撐不起（需跨 adapters/hooks/gate 大改）才退回增量。MCP（CC-216）與能力層（CC-234/237）延到地基落地之後。
 
@@ -39,14 +39,14 @@
 |---|---|---|
 | CC-215 | `pmctl task create/show/list/update` + `pmctl decision add`：schema validation、event emission、per-entity lock boundary、rollback（#242）；`pmctl task claim/dispatch/status/review`、`pmctl --json`、`safe-bash` 尚未實作 | ⚠️ partial (#171, #242) |
 | CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ (#237) |
-| CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.4.0 |
+| CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.5.0 |
 
 ### Phase 3 — 第一個 state consumer
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-315 | **`pmctl trace`**（第一個 consumer，D2=a）：對 `events.jsonl` 的可觀測性，最小表面證明 event stream | ✅ (#237) |
-| CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.4.0 |
+| CC-235 | Task lifecycle gate（trace 之後的下一個 consumer） | 🟡 → v0.5.0 |
 
 ### 旁支修正（已合入 main，不在 Phase 1–3 主路徑）
 
@@ -54,7 +54,8 @@
 |---|---|---|
 | CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter） | ✅ (#229) |
 | CC-331 | test-install CI 並行化（core/hooks --group）+ jq batch + `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫 + stub-based verify 架構（移除 escape-hatch bypass） | ✅ (#231) |
-| CC-321 | rename `CLAUDE_HOOK_*` → `PM_HOOK_*` across 15 files；backward-compat shims（v0.5.0 移除）；427 tests 0 failures | ✅ |
+| CC-321 | rename `CLAUDE_HOOK_*` → `PM_HOOK_*` across 15 files；backward-compat shims（v0.5.0 移除）；427 tests 0 failures | ✅ (#243) |
+| CC-334 | install-hooks.sh 安裝時 idempotent merge `permissions.allow`（reviewer subagent 必需的 Write/.gate-results + Bash/pmctl guard check + mkdir -p）；gate-workspace lib 抽取；uninstall-hooks 對稱清除；83 tests 0 failures | ✅ (#244) |
 
 ### Review Model Track（並行；不阻塞 Phase 1–3）
 
@@ -72,13 +73,41 @@
 
 **狀態（2026-06-07）：Review Model Track 全數完成。** CC-323 → CC-327 已落地；pre-impl 六段式 contract、brief schema 架構欄位、brief-validate 品質規則、architecture-reviewer conceptual-map-first、pr-gate rigor tier 均已上線。
 
+### Release Blocker Polish（v0.4.0 tag 前必收）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-272 | executor contract cleanup bundle（Part A + Part B 全完成）：`docs/dispatch-brief.md` §Commit delegation rule + §Style notes；`docs/executor-contract.md` §Async dispatch behavior；false partial 來源消除 | ✅ |
+| — | CHANGELOG.md v0.4.0 section + git tag `v0.4.0` + GitHub Release | 🟡 |
+
 ### 地基之後 / 延後（不在地基範圍）
 
-- CC-234（memory v2 event-derived）、CC-237（context-enricher baseline）— 能力層，建在 event stream 上，地基落地後才做。
-- CC-216 — `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；MCP 必須包**穩定的** pmctl，故在 state ops 之後。
+- **CC-202**（pmctl validate）、**CC-235**（Task lifecycle gate）— 原標 `→ v0.4.0`，依 2026-06-08 scope 決策改為 **v0.5.0**（地基已完成，能力層不擠入 v0.4.0 release）。
+- CC-234（memory v2 event-derived）、CC-237（context-enricher baseline）— 能力層，建在 event stream 上，地基落地後才做，目標 **v0.5.0**。
+- **CC-330**（`/discover` milestone seeder）— 從 someday 提前至 **v0.5.0** 優先；實作成本 XS，槓桿高。
+- CC-216 — `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；MCP 必須包**穩定的** pmctl，故在 state ops 之後，目標 v0.6.0+。
 - CC-220（`/spike` workflow）、CC-209（codegraph spike，🟢 someday）。
 - CC-296 — v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim），目標 **v0.5.0**（待 2 個正式版本）。
 - `adapters/antigravity` / `adapters/opencode` — named slot，不實作。
+
+---
+
+## v0.5.0 — capability layer（規劃中）
+
+**主題**：把 v0.4.0 的 state-first substrate 升級為使用者可見的能力——dispatch 前有 context、milestone 有發散掃描、lifecycle 有 gate、memory 有 event 輸入。
+
+> **狀態**：規劃中。v0.4.0 tag 後開始排序。核心 scope 如下；細節待 `/discover` 跑完後調整。
+
+| 票號 | 說明 | 目標 P |
+|---|---|---|
+| CC-330 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單；用於 milestone 規劃 | P1 |
+| CC-202 | `pmctl validate`（接 handover-validate） | P2 |
+| CC-237 | context-enricher baseline：rg/git/memory → context-pack，dispatch 前 pre-research | P2 |
+| CC-239 | reuse-scan capability：brief 前先查 existing helpers/patterns | P2 |
+| CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
+| CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入 | P3 |
+| CC-296 | v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim） | P2 |
+| CC-255 | spike rubric + `test_target:` 模糊點修補 | P2 |
 
 ---
 

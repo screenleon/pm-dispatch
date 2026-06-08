@@ -176,6 +176,8 @@ jobs:
             migrate-routing-to-events.sh
             test-migrate-routing-to-events.sh
             test-pmctl-trace.sh
+            test-pmctl-gate.sh
+            pmctl-gate.sh
             pmctl-task.sh
             pmctl-decision.sh
             test-pmctl-task.sh
@@ -363,6 +365,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: pmctl trace tail regression suite
         run: bash scripts/test-pmctl-trace.sh
+
+  test-pmctl-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl gate run regression suite
+        run: bash scripts/test-pmctl-gate.sh
 
   lint-backlog:
     runs-on: ubuntu-latest
