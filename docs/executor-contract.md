@@ -126,10 +126,10 @@ When the main thread dispatches a subagent via the `Agent` tool, the Claude Code
 
 | Scenario | Rule |
 |---|---|
-| Single sequential dispatch (codex or claude) | Omit `run_in_background` — sync or async, the harness handles it. Use the Bash path (`pmctl dispatch run ... run_in_background:true`) instead. |
+| Single dispatch — primary (Bash/pmctl) | Use `pmctl gate run` (gate) or `pmctl dispatch run --adapter <profile> --brief-file <path>` (executor) with `run_in_background: true` on the outer Bash call. A plain Bash process is not subject to Agent async-escalation surprises. This is the preferred path. |
+| Single dispatch — Agent fallback | If the primary Bash/pmctl path is unavailable, use an `Agent` call and omit `run_in_background`. The harness decides sync vs async; either path completes correctly. Do not mix Agent fallback with the Bash path in the same dispatch. |
 | Parallel fan-out dispatches (e.g. pr-gate reviewers) | Set `run_in_background: true` explicitly on every `Agent` call. Without it the harness may promote one subagent to async while another blocks, making the completion order non-deterministic. |
 | `codex-executor` fallback Agent dispatch | Never set `run_in_background: true` on the inner Bash call inside codex-executor. That call must remain synchronous because the agent exits when its `Agent` call returns, killing any orphaned background job. See `agents/codex-executor.md`. |
-| Primary `/pm` dispatch route | Use `pmctl dispatch run --adapter <profile> --brief-file <path>` with `run_in_background: true` on the outer Bash call. This keeps the main thread responsive and is not subject to async-escalation surprises because it is a plain Bash process, not an Agent spawn. |
 
 **Diagnosis:** If you see `Async agent launched successfully` when you expected blocking, the harness promoted the dispatch. Wait for the completion notification — the subagent is still running. If the notification never arrives, check whether the agent exited early or a background Bash job inside it was orphaned.
 

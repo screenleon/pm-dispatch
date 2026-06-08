@@ -3,7 +3,8 @@ description: Run the tiered pre-PR review pipeline on the current branch.
 argument-hint: "[express|standard|full] [--targeted r1,r2] [--scope context] [--parallel]"
 ---
 
-Run the PR gate via `scripts/pr-gate.sh`.
+Run the PR gate via `pmctl gate run`. The `scripts/pr-gate.sh` script is the
+internal implementation; `pmctl gate run` is the preferred invocation surface.
 
 **Sequential mode (default):** all reviewers run in one combined session.
 Low main-thread token cost (~5k dispatch + read result).
@@ -19,14 +20,19 @@ paths or when reviewer independence matters.
 | Auth / payment / migration / sensitive paths | `--parallel` |
 | Force a specific tier | `express` / `standard` / `full` |
 
-## Step 1 - Locate the launcher
+## Step 1 - Locate pmctl
 
-Resolve the installed command symlink and derive the script path:
+Resolve the installed `pmctl` binary. `~/.local/bin/pmctl` is the installed
+symlink; fall back to the repo-relative path when the install is absent:
 
 ```bash
-CMD_LINK="${HOME}/.claude/commands/pr-gate.md"
-CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
-GATE_SCRIPT="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/scripts/pr-gate.sh"
+if [[ -x "${HOME}/.local/bin/pmctl" ]]; then
+  PMCTL="${HOME}/.local/bin/pmctl"
+else
+  CMD_LINK="${HOME}/.claude/commands/pr-gate.md"
+  CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
+  PMCTL="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/cli/pmctl"
+fi
 ```
 
 ## Step 2 - Parse args and launch in background
@@ -90,6 +96,8 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
 done
 
 SCOPE="${SCOPE_TOKENS[*]:-}"
+# --cd defaults to $PWD inside pmctl gate run when omitted; pass explicitly
+# so the intent is clear and portable across invocation contexts.
 GATE_ARGS=(--cd "$PWD" --executor auto)
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
@@ -98,7 +106,7 @@ GATE_ARGS=(--cd "$PWD" --executor auto)
 
 # Fire with run_in_background: true. The harness captures stdout/stderr and
 # emits a completion notification when this Bash call exits.
-bash "$GATE_SCRIPT" "${GATE_ARGS[@]}" 2>&1
+"$PMCTL" gate run "${GATE_ARGS[@]}" 2>&1
 ```
 
 After firing, reply with one short status line, e.g.:

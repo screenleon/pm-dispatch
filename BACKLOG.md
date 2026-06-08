@@ -865,7 +865,7 @@ This makes directory creation the mutex.
 
 ## CC-272 — docs: executor contract cleanup bundle ✅ 2026-06-08
 
-**Result**: `docs/dispatch-brief.md` 新增 §Commit delegation rule（含反例 + 正例）；§Style notes 補 commit 禁止條目。`docs/executor-contract.md` 新增 §Async dispatch behavior（sync vs async 判斷規則、per-scenario table、diagnosis 指引）。消除 false partial 噪音來源。
+**Result**: `docs/dispatch-brief.md` 新增 §Commit delegation rule（含反例 + 正例）；§Style notes 補 commit 禁止條目。`docs/executor-contract.md` 新增 §Async dispatch behavior（sync vs async 判斷規則、per-scenario table 拆分 primary Bash 路徑 vs Agent fallback、diagnosis 指引）。新增 `pmctl gate run` 子命令（`cli/pmctl` + `scripts/lib/pmctl-gate.sh`）使 gate 走統一 pmctl 介面而非直呼腳本；`commands/pr-gate.md` Step 1/2 同步更新。消除 false partial 噪音來源，確立 pmctl 為 gate 唯一 public 介面。
 
 **See**: pr:#245
 
