@@ -20,9 +20,9 @@
 # Allowed paths: /tmp/brief-<anything>.md
 # Denied:        everything else.
 #
-# Bypass: set CLAUDE_HOOK_CLAUDE_WRITE_GUARD=off in the environment (logged).
+# Bypass: set PM_HOOK_CLAUDE_WRITE_GUARD=off in the environment (logged).
 # Audit: every evaluated firing is appended to
-# $CLAUDE_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+# $PM_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
 
 set -uo pipefail
 
@@ -30,10 +30,14 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
+# Deprecated-name compat shims — remove after v0.5.0
+[[ -z "${PM_HOOK_LOG_DIR:-}"           && -n "${CLAUDE_HOOK_LOG_DIR:-}"           ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;                     PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+[[ -z "${PM_HOOK_CLAUDE_WRITE_GUARD:-}" && -n "${CLAUDE_HOOK_CLAUDE_WRITE_GUARD:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CLAUDE_WRITE_GUARD deprecated; use PM_HOOK_CLAUDE_WRITE_GUARD\n' >&2; PM_HOOK_CLAUDE_WRITE_GUARD="${CLAUDE_HOOK_CLAUDE_WRITE_GUARD}"; }
+
 HOOK_NAME="hook-claude-write-guard"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
-HK_BYPASS_ENV="CLAUDE_HOOK_CLAUDE_WRITE_GUARD"
+HK_BYPASS_ENV="PM_HOOK_CLAUDE_WRITE_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
 unset _SCRIPT_DIR
@@ -51,7 +55,7 @@ claude-executor: blocked by $HOOK_NAME — $reason
 The dispatch brief must be written to /tmp/brief-<task>.md, then dispatched via
 pmctl dispatch run --adapter claude.
 
-Bypass for one turn: set CLAUDE_HOOK_CLAUDE_WRITE_GUARD=off (logged).
+Bypass for one turn: set PM_HOOK_CLAUDE_WRITE_GUARD=off (logged).
 EOF
 }
 
@@ -76,7 +80,7 @@ file_path="$(hk_jq '.tool_input.file_path // ""')" || {
 HK_TARGET="$file_path"
 
 # Bypass AFTER parse so the audit line records the actual call being bypassed.
-hk_check_bypass CLAUDE_HOOK_CLAUDE_WRITE_GUARD
+hk_check_bypass PM_HOOK_CLAUDE_WRITE_GUARD
 
 hk_validate_path "$file_path"
 abs_path="$HK_ABS_PATH"

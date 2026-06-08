@@ -319,10 +319,12 @@ fi
 #                 Setting this env var REPLACES the guard default entirely, so we
 #                 must re-add /tmp here or codex loses scratch/brief access under
 #                 /tmp. This is required for correctness, not a policy widening.
-#   - inherited — any caller-set CLAUDE_HOOK_CODEX_READ_ROOTS is preserved as a
+#   - inherited — any caller-set PM_HOOK_CODEX_READ_ROOTS is preserved as a
 #                 trailing fallback.
+# Deprecated-name compat shim — remove after v0.5.0
+[[ -z "${PM_HOOK_CODEX_READ_ROOTS:-}" && -n "${CLAUDE_HOOK_CODEX_READ_ROOTS:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_READ_ROOTS deprecated; use PM_HOOK_CODEX_READ_ROOTS\n' >&2; PM_HOOK_CODEX_READ_ROOTS="${CLAUDE_HOOK_CODEX_READ_ROOTS}"; }
 _CODEX_GIT_ROOT="$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$WORK_DIR")"
-export CLAUDE_HOOK_CODEX_READ_ROOTS="$_CODEX_GIT_ROOT:/tmp${CLAUDE_HOOK_CODEX_READ_ROOTS:+:$CLAUDE_HOOK_CODEX_READ_ROOTS}"
+export PM_HOOK_CODEX_READ_ROOTS="$_CODEX_GIT_ROOT:/tmp${PM_HOOK_CODEX_READ_ROOTS:+:$PM_HOOK_CODEX_READ_ROOTS}"
 unset _CODEX_GIT_ROOT
 
 CMD=(codex exec

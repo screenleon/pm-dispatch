@@ -8,7 +8,7 @@
 # Wired into ~/.claude/settings.json as a PreToolUse hook with matcher
 # "Edit|Write". No-op for any other agent (main thread, other subagents).
 #
-# Bypass: set CLAUDE_HOOK_PM_GUARD=off in the environment to skip enforcement.
+# Bypass: set PM_HOOK_PM_GUARD=off in the environment to skip enforcement.
 # Each bypass is logged.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
@@ -20,10 +20,14 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
+# Deprecated-name compat shims — remove after v0.5.0
+[[ -z "${PM_HOOK_LOG_DIR:-}"  && -n "${CLAUDE_HOOK_LOG_DIR:-}"  ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;  PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+[[ -z "${PM_HOOK_PM_GUARD:-}" && -n "${CLAUDE_HOOK_PM_GUARD:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_PM_GUARD deprecated; use PM_HOOK_PM_GUARD\n' >&2; PM_HOOK_PM_GUARD="${CLAUDE_HOOK_PM_GUARD}"; }
+
 HOOK_NAME="hook-pm-write-guard"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
-HK_BYPASS_ENV="CLAUDE_HOOK_PM_GUARD"
+HK_BYPASS_ENV="PM_HOOK_PM_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
 unset _SCRIPT_DIR
@@ -43,7 +47,7 @@ project-pm: blocked by $HOOK_NAME — $reason
 If a code change is needed, hand a brief back to the main thread for codex-executor
 dispatch (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
 
-Bypass for one turn: set CLAUDE_HOOK_PM_GUARD=off (logged).
+Bypass for one turn: set PM_HOOK_PM_GUARD=off (logged).
 EOF
 }
 
@@ -69,7 +73,7 @@ file_path="$(hk_jq '.tool_input.file_path // ""')" || {
 HK_TARGET="$file_path"
 
 # Bypass AFTER parse so audit line records the actual call being bypassed.
-hk_check_bypass CLAUDE_HOOK_PM_GUARD
+hk_check_bypass PM_HOOK_PM_GUARD
 
 hk_validate_path "$file_path"
 abs_path="$HK_ABS_PATH"

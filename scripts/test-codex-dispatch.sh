@@ -988,16 +988,16 @@ FAKELN
 }
 
 case_codex_read_roots_includes_work_dir() {
-  # CC-320: the adapter exports CLAUDE_HOOK_CODEX_READ_ROOTS containing the
+  # CC-320: the adapter exports PM_HOOK_CODEX_READ_ROOTS containing the
   # dispatch target's git root, so hook-codex-bash-guard allows reads from any
   # project rather than only repos under $HOME/github.
   #
   # Steps:
   #   1. git init a temp work dir and capture its git root.
-  #   2. Dispatch with a fake codex that echoes CLAUDE_HOOK_CODEX_READ_ROOTS
+  #   2. Dispatch with a fake codex that echoes PM_HOOK_CODEX_READ_ROOTS
   #      into --output-last-message (surfaced in "=== final message ===").
   #   3. Assert the exported value contains the work dir's git root.
-  local name="codex-dispatch: CLAUDE_HOOK_CODEX_READ_ROOTS includes work_dir git root"
+  local name="codex-dispatch: PM_HOOK_CODEX_READ_ROOTS includes work_dir git root"
   should_run "$name" || return 0
   local _fake _work _brief _output _git_root
 
@@ -1015,7 +1015,7 @@ shift 2>/dev/null || true  # skip 'exec' subcommand
 while [[ $# -gt 0 ]]; do
   case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
 done
-[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${CLAUDE_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
+[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${PM_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 FAKEOF
   chmod +x "$_fake/codex"
@@ -1035,7 +1035,7 @@ FAKEOF
 }
 
 case_codex_read_roots_preserves_inherited() {
-  # CC-320: when the caller already exports CLAUDE_HOOK_CODEX_READ_ROOTS, the
+  # CC-320: when the caller already exports PM_HOOK_CODEX_READ_ROOTS, the
   # adapter prepends the target git root plus the /tmp baseline, then preserves
   # the inherited value as trailing fallback — the export must be EXACTLY
   # `<git_root>:/tmp:<inherited>` with no unintended extra roots. The /tmp
@@ -1045,10 +1045,10 @@ case_codex_read_roots_preserves_inherited() {
   # Steps:
   #   1. git init a temp work dir and capture its git root; pick an inherited
   #      read root (/opt/custom-read-root) distinct from git_root and /tmp.
-  #   2. Dispatch with CLAUDE_HOOK_CODEX_READ_ROOTS pre-set to the inherited
+  #   2. Dispatch with PM_HOOK_CODEX_READ_ROOTS pre-set to the inherited
   #      value and a fake codex that echoes the var into --output-last-message.
   #   3. Assert the exported value equals EXACTLY <git_root>:/tmp:<inherited>.
-  local name="codex-dispatch: CLAUDE_HOOK_CODEX_READ_ROOTS preserves inherited value"
+  local name="codex-dispatch: PM_HOOK_CODEX_READ_ROOTS preserves inherited value"
   should_run "$name" || return 0
   local _fake _work _brief _output _git_root _inherited _expected _got
 
@@ -1066,7 +1066,7 @@ shift 2>/dev/null || true  # skip 'exec' subcommand
 while [[ $# -gt 0 ]]; do
   case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
 done
-[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${CLAUDE_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
+[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${PM_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 FAKEOF
   chmod +x "$_fake/codex"
@@ -1074,7 +1074,7 @@ FAKEOF
   _brief="$(mktemp --suffix=.md)"
   printf 'working_dir: %s\ngoal: test read roots preservation\n' "$_work" > "$_brief"
 
-  _output="$(CLAUDE_HOOK_CODEX_READ_ROOTS="$_inherited" PATH="$_fake:$PATH" \
+  _output="$(PM_HOOK_CODEX_READ_ROOTS="$_inherited" PATH="$_fake:$PATH" \
     "$DISPATCH" --cd "$_work" --brief-file "$_brief" 2>/dev/null || true)"
   _got="$(printf '%s\n' "$_output" | grep '^READ_ROOTS=' || echo none)"
 

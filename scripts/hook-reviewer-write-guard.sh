@@ -20,11 +20,11 @@
 # `pmctl guard check --role reviewer` in reviewer briefs (both sequential and
 # parallel routes). No-op for any agent not in the reviewer role.
 #
-# Bypass: set CLAUDE_HOOK_REVIEWER_GUARD=off (logged). Operators using
+# Bypass: set PM_HOOK_REVIEWER_GUARD=off (logged). Operators using
 # --output outside .gate-results/ must set this bypass explicitly.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# $CLAUDE_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+# $PM_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
 
 set -uo pipefail
 
@@ -32,10 +32,14 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
+# Deprecated-name compat shims — remove after v0.5.0
+[[ -z "${PM_HOOK_LOG_DIR:-}"         && -n "${CLAUDE_HOOK_LOG_DIR:-}"         ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;          PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+[[ -z "${PM_HOOK_REVIEWER_GUARD:-}"  && -n "${CLAUDE_HOOK_REVIEWER_GUARD:-}"  ]] && { printf '[pm-dispatch] CLAUDE_HOOK_REVIEWER_GUARD deprecated; use PM_HOOK_REVIEWER_GUARD\n' >&2; PM_HOOK_REVIEWER_GUARD="${CLAUDE_HOOK_REVIEWER_GUARD}"; }
+
 HOOK_NAME="hook-reviewer-write-guard"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
-HK_BYPASS_ENV="CLAUDE_HOOK_REVIEWER_GUARD"
+HK_BYPASS_ENV="PM_HOOK_REVIEWER_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
 unset _SCRIPT_DIR
@@ -54,7 +58,7 @@ Reviewer Write/Edit is restricted to the .gate-results/ directory.
 This guard prevents prompt-injection payloads in diff content from
 inducing a reviewer to write arbitrary files.
 
-To use --output outside .gate-results/, set CLAUDE_HOOK_REVIEWER_GUARD=off
+To use --output outside .gate-results/, set PM_HOOK_REVIEWER_GUARD=off
 (bypass is logged).
 EOF
 }
@@ -85,7 +89,7 @@ file_path="$(hk_jq '.tool_input.file_path // ""')" || {
 HK_TARGET="$file_path"
 
 # Bypass AFTER parse so the audit line records the actual call being bypassed.
-hk_check_bypass CLAUDE_HOOK_REVIEWER_GUARD
+hk_check_bypass PM_HOOK_REVIEWER_GUARD
 
 hk_validate_path "$file_path"
 abs_path="$HK_ABS_PATH"

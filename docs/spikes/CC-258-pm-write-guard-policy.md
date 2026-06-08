@@ -199,9 +199,9 @@ The following stay denied (existing tests in `scripts/test-hooks.sh:147-160` con
 
 Order rationale: memory is the highest-volume PM target (correct authorship), so early-exit. Spike docs are next-most-permissive but rarest; placing them last lets the catch-all log every denied attempt against `docs/` so we can audit boundary-creep over time.
 
-**Bypass**: keep `CLAUDE_HOOK_PM_GUARD=off` as-is (`scripts/hook-pm-write-guard.sh:100-104`). The 20 logged bypasses in the audit window are all regression-test traffic (`scripts/test-hooks.sh:202`), so the mechanism is not abused in practice and remains the emergency escape hatch.
+**Bypass**: keep `PM_HOOK_PM_GUARD=off` as-is (`scripts/hook-pm-write-guard.sh:100-104`). The 20 logged bypasses in the audit window are all regression-test traffic (`scripts/test-hooks.sh:202`), so the mechanism is not abused in practice and remains the emergency escape hatch.
 
-Recommendation: do NOT add finer-grained bypasses (e.g. `CLAUDE_HOOK_PM_GUARD=allow-spikes`). They fragment the policy surface and make audit log analysis harder. If the user later finds a recurrent missing-allow case, the audit log will show it and policy can be widened — exactly the discovery loop that produced this spike.
+Recommendation: do NOT add finer-grained bypasses (e.g. `PM_HOOK_PM_GUARD=allow-spikes`). They fragment the policy surface and make audit log analysis harder. If the user later finds a recurrent missing-allow case, the audit log will show it and policy can be widened — exactly the discovery loop that produced this spike.
 
 ## Code change sketch
 
@@ -351,7 +351,7 @@ assert_log "pm: allow line records task-slug reason" "task-slug content dir"
 1. **Rule A `/tmp/<slug>/` shape** → **loose `[a-z][!/]*`** (any lowercase-prefixed single segment). Live traffic uses both `cc060-` and `cc249-prb2-content` styles; stricter rule would force PM to rename directories without security benefit.
 2. **Memory-private root configurability** → **env var with default** (`CLAUDE_MEMORY_PRIVATE_ROOT=${...:-$HOME/github/memory-private}`). **Note**: the memory-private repo split (`[[reference_memory_private_repo]]`) is itself **provisional** — user has flagged intent to evaluate external memory frameworks (mem0, agent-memory, etc.) and rework the memory architecture later. The env-var indirection is forward-compatible with any future move: only the env value changes, not the hook code.
 3. **`docs/spikes/` filename allowlist scope** → **only `CC-NNN*.md` / `*-scope.md` / `*-rfc.md`**. Do NOT pre-add `*-design.md` / `*-proposal.md`. Wait for audit evidence before widening — the audit-driven discovery loop is exactly what produced this spike.
-4. **Bypass mechanism** → **single `CLAUDE_HOOK_PM_GUARD=off`**. Audit confirms current bypass is only used in tests; no abuse signal. Per-rule bypasses fragment policy surface without benefit.
+4. **Bypass mechanism** → **single `PM_HOOK_PM_GUARD=off`**. Audit confirms current bypass is only used in tests; no abuse signal. Per-rule bypasses fragment policy surface without benefit.
 5. **Spike scope vs spike output split** → **NOT split**. Flat `docs/spikes/` + filename suffix convention is the adopted shape (`-scope.md` = PM-author, `-synthesis.md` = main-thread verdict, `-claude.md`/`-codex.md` = executor outputs). Repository has ~10 spike docs total; subdirectory split is premature optimization. If future hook policy needs to enforce main-thread-only authorship on verdict docs, add a deny rule for `*-synthesis.md` (suffix-pattern) rather than a directory split. Reconsider directory split at >30 spike docs or when automation needs directory-based discrimination.
 6. **Rollout** → **single PR** (test + code together). Diff is small enough for atomic review.
 

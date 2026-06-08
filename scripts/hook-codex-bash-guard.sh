@@ -24,14 +24,14 @@
 #      with `/` or `~` must resolve under one of $READ_ROOTS.
 #   4. No arg may contain a glob char (`*` `?` `[` `]`).
 #
-# Bypass: set CLAUDE_HOOK_CODEX_GUARD=off in the environment to skip enforcement
+# Bypass: set PM_HOOK_CODEX_GUARD=off in the environment to skip enforcement
 # for the duration of that env. Each bypass is logged.
 #
 # Read roots: comma-or-colon-separated absolute paths via
-# CLAUDE_HOOK_CODEX_READ_ROOTS. Defaults to "$HOME/github:/tmp".
+# PM_HOOK_CODEX_READ_ROOTS. Defaults to "$HOME/github:/tmp".
 #
 # Audit log: every evaluated firing (allow / deny / bypass) is appended to
-# $CLAUDE_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log). No-ops for
+# $PM_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log). No-ops for
 # other agents are not logged.
 
 set -uo pipefail
@@ -40,19 +40,25 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
+# Deprecated-name compat shims — remove after v0.5.0
+[[ -z "${PM_HOOK_LOG_DIR:-}"          && -n "${CLAUDE_HOOK_LOG_DIR:-}"          ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;          PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+[[ -z "${PM_HOOK_CODEX_GUARD:-}"      && -n "${CLAUDE_HOOK_CODEX_GUARD:-}"      ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_GUARD deprecated; use PM_HOOK_CODEX_GUARD\n' >&2;      PM_HOOK_CODEX_GUARD="${CLAUDE_HOOK_CODEX_GUARD}"; }
+[[ -z "${PM_HOOK_CODEX_READ_ROOTS:-}" && -n "${CLAUDE_HOOK_CODEX_READ_ROOTS:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_READ_ROOTS deprecated; use PM_HOOK_CODEX_READ_ROOTS\n' >&2; PM_HOOK_CODEX_READ_ROOTS="${CLAUDE_HOOK_CODEX_READ_ROOTS}"; }
+[[ -z "${PM_HOOK_DISPATCH_ABS:-}"     && -n "${CLAUDE_HOOK_DISPATCH_ABS:-}"     ]] && { printf '[pm-dispatch] CLAUDE_HOOK_DISPATCH_ABS deprecated; use PM_HOOK_DISPATCH_ABS\n' >&2;     PM_HOOK_DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS}"; }
+
 HOOK_NAME="hook-codex-bash-guard"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
-HK_BYPASS_ENV="CLAUDE_HOOK_CODEX_GUARD"
+HK_BYPASS_ENV="PM_HOOK_CODEX_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
 
-DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS:-$_SCRIPT_DIR/codex-dispatch.sh}"
+DISPATCH_ABS="${PM_HOOK_DISPATCH_ABS:-$_SCRIPT_DIR/codex-dispatch.sh}"
 _ABS_NO_HOME="${DISPATCH_ABS#"$HOME/"}"
 DISPATCH_REL="~/$_ABS_NO_HOME"
 unset _SCRIPT_DIR _ABS_NO_HOME
 
-READ_ROOTS_RAW="${CLAUDE_HOOK_CODEX_READ_ROOTS:-$HOME/github:/tmp}"
+READ_ROOTS_RAW="${PM_HOOK_CODEX_READ_ROOTS:-$HOME/github:/tmp}"
 # Split on either : or , for ergonomics; collect non-empty entries.
 IFS=':,' read -r -a READ_ROOTS <<<"$READ_ROOTS_RAW"
 
@@ -92,7 +98,7 @@ Allowed:
 
 Path args starting with / or ~ must resolve under a read root:
   ${READ_ROOTS[*]}
-(override: CLAUDE_HOOK_CODEX_READ_ROOTS=path1:path2 ...)
+(override: PM_HOOK_CODEX_READ_ROOTS=path1:path2 ...)
 
 Disallowed (always):
   shell composition / substitution / redirection — ;  &  |  \$  \`  (  )  <  >  {  }  \\  CR  newline
@@ -103,7 +109,7 @@ Disallowed (always):
 Never call \`codex exec\` directly — codex-dispatch.sh encodes sandbox / approval /
 trace flags the rest of the pipeline relies on.
 
-Bypass for one turn: set CLAUDE_HOOK_CODEX_GUARD=off (logged).
+Bypass for one turn: set PM_HOOK_CODEX_GUARD=off (logged).
 EOF
 }
 
@@ -254,7 +260,7 @@ command="$(hk_jq '.tool_input.command // ""')" || {
 HK_TARGET="$command"
 
 # Bypass AFTER parse so audit line records the actual call being bypassed.
-hk_check_bypass CLAUDE_HOOK_CODEX_GUARD
+hk_check_bypass PM_HOOK_CODEX_GUARD
 
 # Reject background mode. The dispatch script must run foreground so the
 # codex-executor subagent process stays alive until codex finishes; otherwise

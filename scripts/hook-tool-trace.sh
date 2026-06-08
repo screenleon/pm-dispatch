@@ -11,7 +11,9 @@ set -uo pipefail
 . "$(dirname "$0")/lib/memory.sh"
 
 HOOK_NAME="hook-tool-trace"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+# Deprecated-name compat shim — remove after v0.5.0
+[[ -z "${PM_HOOK_LOG_DIR:-}" && -n "${CLAUDE_HOOK_LOG_DIR:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2; PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/tool-trace.err"
 
 audit() {

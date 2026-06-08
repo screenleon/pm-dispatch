@@ -19,7 +19,7 @@ run_in_framework() {
     . "$SCRIPT_DIR/lib/portable.sh"
     HOOK_NAME="test-hook-framework"
     LOG_FILE="$TEST_LOG_FILE"
-    HK_BYPASS_ENV="CLAUDE_HOOK_TEST"
+    HK_BYPASS_ENV="PM_HOOK_TEST"
     HK_AGENT_TYPE="test-agent"
     HK_TOOL_NAME="TestTool"
     # shellcheck source=scripts/lib/hook-framework.sh
@@ -68,9 +68,9 @@ fw_allow() {
 }
 
 fw_bypass() {
-  CLAUDE_HOOK_TEST=off
+  PM_HOOK_TEST=off
   HK_TARGET="/tmp/bypass-target"
-  hk_check_bypass CLAUDE_HOOK_TEST
+  hk_check_bypass PM_HOOK_TEST
   exit 99
 }
 
@@ -226,7 +226,7 @@ test_bypass_allows() {
   run_in_framework '{}' fw_bypass >/dev/null 2>&1 || status=$?
   if [[ "$status" -eq 0 ]] &&
     grep -Fq 'decision=bypass' "$TEST_LOG_FILE" &&
-    grep -Fq 'CLAUDE_HOOK_TEST=off' "$TEST_LOG_FILE"; then
+    grep -Fq 'PM_HOOK_TEST=off' "$TEST_LOG_FILE"; then
     pass "$name"
   else
     fail "$name" "status=$status log=$(cat "$TEST_LOG_FILE" 2>/dev/null)"
