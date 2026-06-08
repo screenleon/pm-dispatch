@@ -352,8 +352,40 @@ jq \
   )
   ' "$settings" > "$tmp_new"
 
+# --- Permissions merge for reviewer subagents (CC-334) ---
+# Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
+# to write results and run guard checks. Detect workspace root from the pm-dispatch repo's parent.
+_pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || echo "$repo_root")"
+_workspace_root="$(dirname "$_pm_repo_git_root")"
+if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
+  _workspace_root="$HOME"
+fi
+_gate_glob="${_workspace_root}/**/.gate-results/**"
+
+_tmp_perms="$(mktemp)"
+trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
+if ! jq \
+  --arg write_perm "Write(${_gate_glob})" \
+  --arg bash_guard "Bash(pmctl guard check:*)" \
+  --arg bash_mkdir "Bash(mkdir -p:*)" \
+  '
+  .permissions //= {} |
+  .permissions.allow //= [] |
+  ([$write_perm, $bash_guard, $bash_mkdir]) as $required |
+  .permissions.allow |= (
+    . as $existing |
+    . + ($required | map(select(. as $p | ($existing | map(select(. == $p)) | length) == 0)))
+  )
+  ' "$tmp_new" > "$_tmp_perms"; then
+  echo "install-hooks: ERROR: failed to merge permissions.allow — check that $settings is valid JSON" >&2
+  exit 2
+fi
+mv "$_tmp_perms" "$tmp_new"
+trap 'rm -f "$tmp_new"' EXIT
+
 echo "install-hooks: profile=$PROFILE"
 echo "install-hooks: platform=$PLATFORM"
+echo "install-hooks: gate-results glob: $_gate_glob"
 
 if cmp -s "$settings" "$tmp_new"; then
   echo "install-hooks: already wired, nothing to do (profile=$PROFILE)"
