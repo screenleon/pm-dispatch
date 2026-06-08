@@ -114,6 +114,25 @@ The surface is **fail-closed**: a success exit (`0`) always means a registered p
 
 Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract.
 
+## Async dispatch behavior
+
+When the main thread dispatches a subagent via the `Agent` tool, the Claude Code harness decides — independently of `run_in_background` — whether to run the agent **synchronously** (blocks until done) or **asynchronously** (returns immediately with `Async agent launched successfully`). The harness currently promotes to async when the estimated wall-clock exceeds ~2–3 minutes.
+
+**Observable difference:**
+- **Sync**: the `Agent` call blocks; the main thread cannot send new commands while it runs; result is returned inline.
+- **Async**: the `Agent` call returns `Async agent launched successfully` immediately; main thread receives a completion notification when done.
+
+**Rules for callers:**
+
+| Scenario | Rule |
+|---|---|
+| Single sequential dispatch (codex or claude) | Omit `run_in_background` — sync or async, the harness handles it. Use the Bash path (`pmctl dispatch run ... run_in_background:true`) instead. |
+| Parallel fan-out dispatches (e.g. pr-gate reviewers) | Set `run_in_background: true` explicitly on every `Agent` call. Without it the harness may promote one subagent to async while another blocks, making the completion order non-deterministic. |
+| `codex-executor` fallback Agent dispatch | Never set `run_in_background: true` on the inner Bash call inside codex-executor. That call must remain synchronous because the agent exits when its `Agent` call returns, killing any orphaned background job. See `agents/codex-executor.md`. |
+| Primary `/pm` dispatch route | Use `pmctl dispatch run --adapter <profile> --brief-file <path>` with `run_in_background: true` on the outer Bash call. This keeps the main thread responsive and is not subject to async-escalation surprises because it is a plain Bash process, not an Agent spawn. |
+
+**Diagnosis:** If you see `Async agent launched successfully` when you expected blocking, the harness promoted the dispatch. Wait for the completion notification — the subagent is still running. If the notification never arrives, check whether the agent exited early or a background Bash job inside it was orphaned.
+
 ## Forward-compat notes
 
 `scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `agents/claude-executor.md`. This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.
