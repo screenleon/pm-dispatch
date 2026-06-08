@@ -17,7 +17,7 @@ printf '%s\n' 'hook-routing-log: deprecated; routing_log.md writes disabled' >&2
 exit 0
 
 HOOK_NAME="hook-routing-log"
-LOG_DIR="${CLAUDE_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 ERR_FILE="$LOG_DIR/routing-log.err"
 unset _SCRIPT_DIR
 

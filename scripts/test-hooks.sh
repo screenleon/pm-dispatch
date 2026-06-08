@@ -9,7 +9,7 @@
 # Claude Code emits, asserts the exit code, optionally checks for a substring in
 # stderr, and (on selected cases) asserts a substring in the audit log.
 #
-# Audit log is redirected to a per-run temp dir via $CLAUDE_HOOK_LOG_DIR — the
+# Audit log is redirected to a per-run temp dir via $PM_HOOK_LOG_DIR — the
 # live ~/.claude/logs/hooks.log is NOT polluted by this suite.
 #
 # Usage:
@@ -35,13 +35,13 @@ SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
 th_init --format=indent-2sp-quiet "$@"
 
 # Sandbox audit logs.
-export CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
-TEST_LOG_FILE="$CLAUDE_HOOK_LOG_DIR/hooks.log"
-trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
+export PM_HOOK_LOG_DIR="$(mktemp -d)"
+TEST_LOG_FILE="$PM_HOOK_LOG_DIR/hooks.log"
+trap 'rm -rf "$PM_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
 
 # Pin the codex-executor read roots to known values so path tests are
 # deterministic regardless of caller environment.
-export CLAUDE_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
+export PM_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
 
 # run_case <name> <expected_exit> <hook_path> <json_input> [<expected_stderr_substring>]
 run_case() {
@@ -75,7 +75,7 @@ run_case_env() {
   local name="$1" expect_exit="$2" envspec="$3" hook="$4" json="$5"
   should_run "$name" || return 0
   local actual_exit
-  actual_exit=$(printf '%s' "$json" | env "$envspec" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
+  actual_exit=$(printf '%s' "$json" | env "$envspec" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
   if [[ "$actual_exit" == "$expect_exit" ]]; then
     pass "$name"
   else
@@ -128,7 +128,7 @@ truncate_log() { : > "$TEST_LOG_FILE"; }
 
 make_stop_home() {
   local tmp_home
-  tmp_home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/stop-home.XXXXXX")"
+  tmp_home="$(mktemp -d "$PM_HOOK_LOG_DIR/stop-home.XXXXXX")"
   mkdir -p "$tmp_home/.claude/scripts"
   ln -s "$SCRIPT_DIR/log-usage.sh" "$tmp_home/.claude/scripts/log-usage.sh"
   printf '%s\n' "$tmp_home"
@@ -204,13 +204,13 @@ run_case "pm: project-pm Bash → no-op (matcher would not fire it)" 0 "$PMHOOK"
 run_case "pm: project-pm Read → no-op" 0 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}'
 
-run_case_env "pm: bypass via CLAUDE_HOOK_PM_GUARD=off" 0 "CLAUDE_HOOK_PM_GUARD=off" "$PMHOOK" \
+run_case_env "pm: bypass via PM_HOOK_PM_GUARD=off" 0 "PM_HOOK_PM_GUARD=off" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
-run_case_env "pm: bypass=Off (case mismatch) does NOT bypass" 2 "CLAUDE_HOOK_PM_GUARD=Off" "$PMHOOK" \
+run_case_env "pm: bypass=Off (case mismatch) does NOT bypass" 2 "PM_HOOK_PM_GUARD=Off" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
-run_case_env "pm: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_PM_GUARD=" "$PMHOOK" \
+run_case_env "pm: bypass=empty does NOT bypass" 2 "PM_HOOK_PM_GUARD=" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
 # Audit-log content assertions for pm-guard.
@@ -224,7 +224,7 @@ assert_log "pm: audit log contains deny line with reason" "decision=deny"
 assert_log "pm: audit log includes target file_path" "$code_path"
 
 $LIST || truncate_log
-$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env CLAUDE_HOOK_PM_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env PM_HOOK_PM_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
@@ -309,7 +309,7 @@ rm -f "$_cxw_symlink_brief" "$_cxw_symlink_target"
 unset _cxw_symlink_target _cxw_symlink_brief
 
 # --- bypass ---
-run_case_env "cxw: bypass via CLAUDE_HOOK_CODEX_WRITE_GUARD=off" 0 "CLAUDE_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
+run_case_env "cxw: bypass via PM_HOOK_CODEX_WRITE_GUARD=off" 0 "PM_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions ---
@@ -325,7 +325,7 @@ assert_log "cxw: audit log contains deny line" "decision=deny"
 assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env CLAUDE_HOOK_CODEX_WRITE_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
 assert_log "cxw: audit log contains bypass line" "decision=bypass"
 assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -425,7 +425,7 @@ rm -f "$_rw_symlink_out" "$_rw_symlink_target"
 unset _rw_symlink_target _rw_symlink_out
 
 # --- bypass ---
-run_case_env "rw: bypass via CLAUDE_HOOK_REVIEWER_GUARD=off" 0 "CLAUDE_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
+run_case_env "rw: bypass via PM_HOOK_REVIEWER_GUARD=off" 0 "PM_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
   '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
 # --- audit-log content assertions ---
@@ -441,7 +441,7 @@ assert_log "rw: audit log contains deny line" "decision=deny"
 assert_log "rw: deny line records agent=critic" "agent=critic"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | env CLAUDE_HOOK_REVIEWER_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | env PM_HOOK_REVIEWER_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1
 assert_log "rw: audit log contains bypass line" "decision=bypass"
 assert_log "rw: bypass line records agent=critic" "agent=critic"
 
@@ -457,7 +457,7 @@ $LIST || echo "== hook-codex-bash-guard =="
 truncate_log
 
 dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
-export CLAUDE_HOOK_DISPATCH_ABS="$dispatch_abs"
+export PM_HOOK_DISPATCH_ABS="$dispatch_abs"
 _abs_no_home="${dispatch_abs#"$HOME/"}"
 dispatch_tilde="~/$_abs_no_home"
 unset _abs_no_home
@@ -502,13 +502,13 @@ run_case "cx: dispatch (tilde) → allow" 0 "$CXHOOK" \
 # The guard matches the dispatch path as a literal prefix before splitting the
 # remainder, so the verb stays intact and the call is allowed.
 run_case_env "cx: dispatch path with space → allow" 0 \
-  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "PM_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /tmp -- brief\"}}"
 
 # The literal-prefix match must not bypass arg validation: a --cd outside the
 # read roots is still denied even when the dispatch path contains a space.
 run_case_env "cx: dispatch path with space + out-of-root --cd → deny" 2 \
-  "CLAUDE_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
+  "PM_HOOK_DISPATCH_ABS=/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh" "$CXHOOK" \
   "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"/c/Users/Lien Chen/pm-dispatch/scripts/codex-dispatch.sh --cd /etc -- brief\"}}"
 
 run_case "cx: dispatch_brief_file_allowed → allow" 0 "$CXHOOK" \
@@ -830,13 +830,13 @@ run_case "cx: codex-executor Read → no-op" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}'
 
 # --- bypass env var ---
-run_case_env "cx: bypass via CLAUDE_HOOK_CODEX_GUARD=off" 0 "CLAUDE_HOOK_CODEX_GUARD=off" "$CXHOOK" \
+run_case_env "cx: bypass via PM_HOOK_CODEX_GUARD=off" 0 "PM_HOOK_CODEX_GUARD=off" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
-run_case_env "cx: bypass=Off (case mismatch) does NOT bypass" 2 "CLAUDE_HOOK_CODEX_GUARD=Off" "$CXHOOK" \
+run_case_env "cx: bypass=Off (case mismatch) does NOT bypass" 2 "PM_HOOK_CODEX_GUARD=Off" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
-run_case_env "cx: bypass=empty does NOT bypass" 2 "CLAUDE_HOOK_CODEX_GUARD=" "$CXHOOK" \
+run_case_env "cx: bypass=empty does NOT bypass" 2 "PM_HOOK_CODEX_GUARD=" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
 # --- audit-log content assertions ---
@@ -857,12 +857,12 @@ $LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_in
 assert_log "cx: deny reason includes 'shell metacharacter'" 'shell\ metacharacter'
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env CLAUDE_HOOK_CODEX_GUARD=off CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' | env PM_HOOK_CODEX_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$CXHOOK" >/dev/null 2>&1
 assert_log "cx: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "cx: bypass line records codex-executor (not '?')" "agent=codex-executor"
 
 # --- read-root override via env var ---
-run_case_env "cx: cat /etc/x with /etc in read roots → allow" 0 "CLAUDE_HOOK_CODEX_READ_ROOTS=/etc" "$CXHOOK" \
+run_case_env "cx: cat /etc/x with /etc in read roots → allow" 0 "PM_HOOK_CODEX_READ_ROOTS=/etc" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"cat /etc/passwd"}}'
 
 # --- v4: quoted-path bypass ---
@@ -1089,10 +1089,10 @@ run_case "cx: run_in_background:false in tool_input → allow" 0 "$CXHOOK" \
 run_case "cx: run_in_background field absent → allow" 0 "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}'
 
-# Bypass: CLAUDE_HOOK_CODEX_GUARD=off must skip the new check (consistent with
+# Bypass: PM_HOOK_CODEX_GUARD=off must skip the new check (consistent with
 # the bypass behaviour for all other guard checks in this hook).
-run_case_env "cx: bypass CLAUDE_HOOK_CODEX_GUARD=off with run_in_background:true → allow" 0 \
-  "CLAUDE_HOOK_CODEX_GUARD=off" "$CXHOOK" \
+run_case_env "cx: bypass PM_HOOK_CODEX_GUARD=off with run_in_background:true → allow" 0 \
+  "PM_HOOK_CODEX_GUARD=off" "$CXHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
 
 # Narrowness: only an exact boolean true (jq -r "true") triggers — string "yes",
@@ -1118,7 +1118,7 @@ $LIST || echo "== hook-tool-trace =="
 
 tool_trace_run() {
   local payload="$1" trace_dir="$2" stdout_file="$3" stderr_file="$4"
-  printf '%s' "$payload" | CLAUDE_TOOL_TRACE_DIR="$trace_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$stdout_file" 2>"$stderr_file"
+  printf '%s' "$payload" | CLAUDE_TOOL_TRACE_DIR="$trace_dir" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$TRACE_HOOK" >"$stdout_file" 2>"$stderr_file"
 }
 
 tool_trace_record() {
@@ -1135,7 +1135,7 @@ tool_trace_case() {
   local name="$1" payload="$2" jq_filter="$3" forbidden_regex="${4:-}"
   should_run "$name" || return 0
   local trace_dir out err status line no_forbidden
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   tool_trace_run "$payload" "$trace_dir" "$out" "$err"
@@ -1255,7 +1255,7 @@ tool_trace_case "tool-trace/read_foreign_path_redacted" \
 tool_trace_first_arg_truncation() {
   local name="tool-trace/first_arg_truncation" trace_dir out err payload line value
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   payload="$(jq -nc --arg cwd "$REPO_ROOT" --arg subagent "$(printf 'a%.0s' $(seq 1 200))" '{cwd:$cwd,tool_name:"Agent",tool_input:{subagent_type:$subagent}}')"
@@ -1282,12 +1282,12 @@ tool_trace_first_arg_truncation
 tool_trace_no_project_dir() {
   local name="tool-trace/no_project_dir" config_dir out err status before after
   should_run "$name" || return 0
-  config_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace-config.XXXXXX")"
+  config_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace-config.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   before="$(find "$config_dir" -type f | wc -l)"
   printf '%s' '{"cwd":"/tmp/not-a-claude-project","tool_name":"Bash","tool_input":{"command":"ls"}}' \
-    | CLAUDE_CONFIG_DIR="$config_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
+    | CLAUDE_CONFIG_DIR="$config_dir" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
   status=$?
   after="$(find "$config_dir" -type f | wc -l)"
   if [[ "$status" == "0" && "$before" == "$after" && ! -s "$out" && ! -s "$err" ]]; then
@@ -1310,7 +1310,7 @@ tool_trace_no_project_dir
 tool_trace_missing_cwd() {
   local name="tool-trace/missing_cwd" trace_dir out err status
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   tool_trace_run '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$trace_dir" "$out" "$err"
@@ -1335,13 +1335,13 @@ tool_trace_missing_cwd
 tool_trace_malformed_json() {
   local name="tool-trace/malformed_json" trace_dir out err status
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   tool_trace_run 'not-json' "$trace_dir" "$out" "$err"
   status=$?
-  if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" && -f "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" ]] &&
-     grep -q -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err"; then
+  if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" && -f "$PM_HOOK_LOG_DIR/tool-trace.err" ]] &&
+     grep -q -F "malformed" "$PM_HOOK_LOG_DIR/tool-trace.err"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -1358,17 +1358,17 @@ tool_trace_malformed_key_bearing_rejected() {
   # Steps: 1. Run a broken payload containing cwd and tool_name keys; 2. Assert no JSONL line is written and audit records malformed JSON.
   local name="tool-trace/malformed_key_bearing_rejected" trace_dir out err status before after
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
-  before="$(grep -c -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
+  before="$(grep -c -F "malformed" "$PM_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
   # Strict jq validation deferred to CC-027c (jq inline cost ~25ms/call
   # exceeds budget); brace heuristic rejects this payload because it lacks
   # a closing `}`. Other brace-shaped malformed inputs may slip through —
   # see CC-027c.
   tool_trace_run '{"cwd":"/tmp/proj","tool_name":"Bash","tool_input":{"command":' "$trace_dir" "$out" "$err"
   status=$?
-  after="$(grep -c -F "malformed" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
+  after="$(grep -c -F "malformed" "$PM_HOOK_LOG_DIR/tool-trace.err" 2>/dev/null || true)"
   if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && ! -s "$trace_dir/tool-trace.jsonl" && "$after" -gt "$before" ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -1389,7 +1389,7 @@ tool_trace_malformed_key_bearing_rejected
 tool_trace_append_failure_non_blocking() {
   local name="tool-trace/append_failure_non_blocking" trace_dir out err status target
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   target="$trace_dir/tool-trace.jsonl"
   : > "$target"
   chmod 0444 "$target"
@@ -1398,8 +1398,8 @@ tool_trace_append_failure_non_blocking() {
   tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}" "$trace_dir" "$out" "$err"
   status=$?
   chmod 0644 "$target"
-  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -f "$CLAUDE_HOOK_LOG_DIR/tool-trace.err" ]] &&
-     grep -q -F "append" "$CLAUDE_HOOK_LOG_DIR/tool-trace.err"; then
+  if [[ "$status" == "0" && ! -s "$out" && ! -s "$err" && -f "$PM_HOOK_LOG_DIR/tool-trace.err" ]] &&
+     grep -q -F "append" "$PM_HOOK_LOG_DIR/tool-trace.err"; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -1419,11 +1419,11 @@ tool_trace_append_failure_non_blocking
 tool_trace_disabled_envvar() {
   local name="tool-trace/disabled_envvar" trace_dir out err status
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   printf '%s' "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}" \
-    | CLAUDE_TOOL_TRACE_DISABLE=1 CLAUDE_TOOL_TRACE_DIR="$trace_dir" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
+    | CLAUDE_TOOL_TRACE_DISABLE=1 CLAUDE_TOOL_TRACE_DIR="$trace_dir" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$TRACE_HOOK" >"$out" 2>"$err"
   status=$?
   if [[ "$status" == "0" && ! -f "$trace_dir/tool-trace.jsonl" && ! -s "$out" && ! -s "$err" ]]; then
     PASS=$((PASS+1))
@@ -1445,7 +1445,7 @@ tool_trace_disabled_envvar
 tool_trace_no_payload_leakage() {
   local name="tool-trace/no_payload_leakage" trace_dir out err line
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   out="$(mktemp)"
   err="$(mktemp)"
   tool_trace_run "{\"cwd\":\"$REPO_ROOT\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"printf SECRET_PAYLOAD\"}}" "$trace_dir" "$out" "$err"
@@ -1467,7 +1467,7 @@ tool_trace_no_payload_leakage
 tool_trace_rotation_at_size_cap() {
   local name="tool-trace/rotation_at_size_cap" trace_dir out err target status main_size archive_size main_lines archive_lines
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   target="$trace_dir/tool-trace.jsonl"
   out="$(mktemp)"
   err="$(mktemp)"
@@ -1495,7 +1495,7 @@ tool_trace_rotation_at_size_cap
 tool_trace_rotation_under_cap_no_op() {
   local name="tool-trace/rotation_under_cap_no_op" trace_dir out err target status lines
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   target="$trace_dir/tool-trace.jsonl"
   out="$(mktemp)"
   err="$(mktemp)"
@@ -1529,7 +1529,7 @@ tool_trace_case "tool-trace/jsonl_schema_shape" \
 tool_trace_install_hooks_idempotent() {
   local name="tool-trace/install_hooks_idempotent" home out1 out2 out3 count
   should_run "$name" || return 0
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-hooks.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-hooks.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '%s\n' '{"hooks":{}}' > "$home/.claude/settings.json"
   out1="$(mktemp)"
@@ -1560,7 +1560,7 @@ tool_trace_install_hooks_idempotent
 tool_trace_performance_budget() {
   local name="tool-trace/performance_budget" trace_dir payload start_ms end_ms elapsed_ms
   should_run "$name" || return 0
-  trace_dir="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/tool-trace.XXXXXX")"
+  trace_dir="$(mktemp -d "$PM_HOOK_LOG_DIR/tool-trace.XXXXXX")"
   payload='{"session_id":"perf","cwd":"'"$REPO_ROOT"'","tool_name":"Bash","tool_input":{"command":"git status"}}'
   start_ms=$(( $(date +%s%N) / 1000000 ))
   local i
@@ -1603,7 +1603,7 @@ stop_happy_path() {
   payload="$(jq -nc --arg path "$transcript" --arg session "sess1" '{transcript_path:$path,session_id:$session}')"
   out="$(mktemp)"
   err="$(mktemp)"
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
@@ -1623,7 +1623,7 @@ stop_missing_transcript_path() {
   local name="stop_missing_transcript_path" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' '{"session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' '{"session_id":"s1"}' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -1639,7 +1639,7 @@ stop_transcript_file_not_found() {
   local name="stop_transcript_file_not_found" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -1655,7 +1655,7 @@ stop_malformed_json_payload() {
   local name="stop_malformed_json_payload" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' 'not json' | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' 'not json' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" ]]; then
     PASS=$((PASS+1))
@@ -1674,7 +1674,7 @@ stop_zero_token_transcript() {
   transcript="$home/transcript-zero.jsonl"
   printf '%s\n' '{"role":"assistant","content":"hello"}' '{"role":"user","content":"ok"}' > "$transcript"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -1697,7 +1697,7 @@ stop_failure_logged() {
   chmod 444 "$logfile"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
   truncate_log
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   chmod 644 "$logfile"
   if [[ "$status" == "0" && -f "$TEST_LOG_FILE" ]] && grep -q -F "failed" "$TEST_LOG_FILE"; then
@@ -1722,9 +1722,9 @@ stop_idempotent_double_call() {
   payload="$(jq -nc --arg path "$transcript" --arg session "sess-idem" \
     '{transcript_path:$path,session_id:$session}')"
   # First invocation
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   # Second invocation (same session + transcript)
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   # Sum all session_total entries for this session - must equal 1700, not 3400
@@ -1751,7 +1751,7 @@ stop_nested_message_usage() {
     > "$transcript"
   payload="$(jq -nc --arg path "$transcript" --arg session "sess-nested" \
     '{transcript_path:$path,session_id:$session}')"
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
@@ -1777,8 +1777,8 @@ stop_no_session_id_skips_log() {
   # Payload has transcript_path but no session_id field
   payload="$(jq -nc --arg path "$transcript" '{transcript_path:$path}')"
   # Invoke twice — without session_id the hook must skip logging (cannot deduplicate)
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
-  printf '%s' "$payload" | HOME="$home" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -3479,11 +3479,11 @@ routing_hook_case() {
   local name="$1" payload="$2" expect_count="$3" jq_expr="$4"
   should_run "$name" || return 0
   local root mem before after status
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing.XXXXXX")"
   mem="$root/proj-routing-log/-home-screenleon-github-pm-dispatch/memory"
   make_routing_log "$mem"
   before="$(routing_count "$mem")"
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   status=$?
   after="$(routing_count "$mem")"
   if [[ "$status" == "0" ]] && [[ "$((after - before))" == "$expect_count" ]] && [[ "$expect_count" == "0" ]] && [[ -z "$jq_expr" ]]; then
@@ -3506,11 +3506,11 @@ routing_missing_file_case() {
   local name="routing: deprecated missing routing_log.md exits without write"
   should_run "$name" || return 0
   local root mem payload status
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-missing.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing-missing.XXXXXX")"
   mem="$root/memory"
   mkdir -p "$mem"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s7","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" ]] && [[ ! -e "$mem/routing_log.md" ]]; then
     PASS=$((PASS+1))
@@ -3532,13 +3532,13 @@ routing_missing_marker_case() {
   local name="routing: deprecated existing log without auto-block leaves file unmodified"
   should_run "$name" || return 0
   local root mem before payload status
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-nomarker.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing-nomarker.XXXXXX")"
   mem="$root/memory"
   mkdir -p "$mem"
   printf 'legacy only\n' > "$mem/routing_log.md"
   cp "$mem/routing_log.md" "$mem/routing_log.md.before"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"s8","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" ]] && cmp -s "$mem/routing_log.md" "$mem/routing_log.md.before"; then
     PASS=$((PASS+1))
@@ -3560,13 +3560,13 @@ routing_rotation_case() {
   local name="routing: deprecated over 1MiB log exits without rotation"
   should_run "$name" || return 0
   local root mem payload before after status
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing-rotate.XXXXXX")"
   mem="$root/memory"
   make_routing_log "$mem"
   perl -0pi -e 's/<!-- routing-log:auto-block:start -->/"x" x 1049000 . "\n<!-- routing-log:auto-block:start -->"/e' "$mem/routing_log.md"
   before="$(routing_count "$mem")"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r1","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   status=$?
   after="$(routing_count "$mem")"
   if [[ "$status" == "0" ]] && [[ ! -e "$mem/routing_log.md.1" ]] && [[ "$before" == "$after" ]]; then
@@ -3589,14 +3589,14 @@ routing_rotation_fail_case() {
   local name="routing: deprecated rotation failure path exits without write"
   should_run "$name" || return 0
   local root mem payload before after status
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-rotate-fail.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing-rotate-fail.XXXXXX")"
   mem="$root/memory"
   make_routing_log "$mem"
   perl -0pi -e 's/<!-- routing-log:auto-block:start -->/"x" x 1049000 . "\n<!-- routing-log:auto-block:start -->"/e' "$mem/routing_log.md"
   before="$(routing_count "$mem")"
   chmod 500 "$mem"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"r2","tool_name":"Agent","tool_input":{"subagent_type":"codex"}}'
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   status=$?
   chmod 700 "$mem"
   after="$(routing_count "$mem")"
@@ -3621,7 +3621,7 @@ routing_concurrent_append_case() {
   should_run "$name" || return 0
   local root mem n payload status pid count unique start_count end_count json_ok lockbase lockfile lockdir ready lock_release holder timeout_status before_timeout after_timeout
   local pids=()
-  root="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/routing-concurrent.XXXXXX")"
+  root="$(mktemp -d "$PM_HOOK_LOG_DIR/routing-concurrent.XXXXXX")"
   mem="$root/memory"
   make_routing_log "$mem"
   n=50
@@ -3630,7 +3630,7 @@ routing_concurrent_append_case() {
   for i in $(seq 1 "$n"); do
     payload="{\"cwd\":\"/home/screenleon/github/pm-dispatch\",\"session_id\":\"concurrent-$i\",\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"codex-executor\"}}"
     (
-      printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+      printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
     ) &
     pids+=("$!")
   done
@@ -3645,7 +3645,7 @@ routing_concurrent_append_case() {
   json_ok=0
   routing_rows "$mem" | jq -c . >/dev/null && json_ok=1
 
-  lockbase="$CLAUDE_HOOK_LOG_DIR/routing_log_append"
+  lockbase="$PM_HOOK_LOG_DIR/routing_log_append"
   lockfile="${lockbase}.lock"
   lockdir="${lockbase}.lockdir"
   ready="$root/lock-ready"
@@ -3672,7 +3672,7 @@ routing_concurrent_append_case() {
   IFS= read -r _ < "$ready" || true
   before_timeout="$(routing_count "$mem")"
   payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"lock-timeout","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
-  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" CLAUDE_HOOK_LOG_DIR="$CLAUDE_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
+  printf '%s' "$payload" | env CLAUDE_ROUTING_LOG_DIR="$mem" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   timeout_status=$?
   after_timeout="$(routing_count "$mem")"
   : > "$lock_release"
@@ -3701,18 +3701,18 @@ routing_concurrent_append_case() {
 # Steps:
 #   1. Create a temp HOME dir with no .claude/logs subdirectory.
 #   2. Create a memory dir with a valid routing_log.md.
-#   3. Run hook with CLAUDE_HOOK_LOG_DIR unset (hook defaults to $HOME/.claude/logs).
+#   3. Run hook with PM_HOOK_LOG_DIR unset (hook defaults to $HOME/.claude/logs).
 #   4. Assert routing_log.md still contains no JSON rows.
 routing_fresh_home_no_log_dir_case() {
   local name="routing: deprecated fresh HOME exits without write"
   should_run "$name" || return 0
   local tmp_home tmp_mem
-  tmp_home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/fresh-home.XXXXXX")"
-  tmp_mem="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/fresh-mem.XXXXXX")"
+  tmp_home="$(mktemp -d "$PM_HOOK_LOG_DIR/fresh-home.XXXXXX")"
+  tmp_mem="$(mktemp -d "$PM_HOOK_LOG_DIR/fresh-mem.XXXXXX")"
   make_routing_log "$tmp_mem"
   local payload='{"cwd":"/home/screenleon/github/pm-dispatch","session_id":"fresh-home-test","tool_name":"Agent","tool_input":{"subagent_type":"codex-executor"}}'
   printf '%s' "$payload" \
-    | env HOME="$tmp_home" CLAUDE_ROUTING_LOG_DIR="$tmp_mem" CLAUDE_HOOK_LOG_DIR= \
+    | env HOME="$tmp_home" CLAUDE_ROUTING_LOG_DIR="$tmp_mem" PM_HOOK_LOG_DIR= \
         "$SCRIPT_DIR/hook-routing-log.sh" >/dev/null 2>&1
   local count
   count="$(routing_count "$tmp_mem")"
@@ -3737,7 +3737,7 @@ install_routing_dry_run_case() {
   local name="routing: install-hooks dry-run omits deprecated PostToolUse hook"
   should_run "$name" || return 0
   local home out
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-routing.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   out="$(HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" --dry-run 2>&1)"
@@ -3761,7 +3761,7 @@ install_routing_idempotent_case() {
   local name="routing: install-hooks idempotent with deprecated hook omitted"
   should_run "$name" || return 0
   local home out count
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-idem.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-routing-idem.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   HOME="$home" bash "$SCRIPT_DIR/install-hooks.sh" >/dev/null 2>&1
@@ -3819,7 +3819,7 @@ EOF
 install_routing_migrates_unmarked_case() {
   local name="install-routing: deprecated unmarked routing_log is not migrated" home mem out count
   should_run "$name" || return 0
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-migrate.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-routing-migrate.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   mem="$(install_routing_memory_dir "$home")"
@@ -3848,7 +3848,7 @@ install_routing_migrates_unmarked_case() {
 install_routing_skips_already_migrated_case() {
   local name="install-routing: deprecated already-migrated routing_log leaves hook omitted" home mem out count
   should_run "$name" || return 0
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-skip.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-routing-skip.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{}\n' > "$home/.claude/settings.json"
   mem="$(install_routing_memory_dir "$home")"
@@ -3879,7 +3879,7 @@ install_routing_skips_already_migrated_case() {
 install_routing_migrator_failure_preserves_settings_case() {
   local name="install-routing: deprecated migrator conflict does not block install" home mem out status backups count
   should_run "$name" || return 0
-  home="$(mktemp -d "$CLAUDE_HOOK_LOG_DIR/install-routing-fail.XXXXXX")"
+  home="$(mktemp -d "$PM_HOOK_LOG_DIR/install-routing-fail.XXXXXX")"
   mkdir -p "$home/.claude"
   printf '{"hooks":{"PreToolUse":[]}}\n' > "$home/.claude/settings.json"
   cp "$home/.claude/settings.json" "$home/.claude/settings.json.before"
@@ -3907,8 +3907,8 @@ install_routing_migrator_failure_preserves_settings_case() {
 }
 
 $LIST || echo "== hook-routing-log =="
-ROUTING_BRIEF1="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief1.XXXXXX.md")"
-ROUTING_BRIEF2="$(mktemp "$CLAUDE_HOOK_LOG_DIR/brief2.XXXXXX.md")"
+ROUTING_BRIEF1="$(mktemp "$PM_HOOK_LOG_DIR/brief1.XXXXXX.md")"
+ROUTING_BRIEF2="$(mktemp "$PM_HOOK_LOG_DIR/brief2.XXXXXX.md")"
 printf 'goal:\n  first routing goal from brief\n' > "$ROUTING_BRIEF1"
 printf 'goal: second routing goal from brief\n' > "$ROUTING_BRIEF2"
 # Deprecated: hook-routing-log exits zero before parsing payloads and appends no rows.

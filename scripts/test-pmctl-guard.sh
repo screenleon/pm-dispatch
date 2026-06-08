@@ -53,10 +53,10 @@ CXBHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 
 # Sandbox audit logs + pin codex read roots so path-based cases are deterministic
 # regardless of the host's $HOME (mirrors scripts/test-hooks.sh).
-CLAUDE_HOOK_LOG_DIR="$(mktemp -d)"
-export CLAUDE_HOOK_LOG_DIR
-export CLAUDE_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
-trap 'rm -rf "$CLAUDE_HOOK_LOG_DIR"' EXIT
+PM_HOOK_LOG_DIR="$(mktemp -d)"
+export PM_HOOK_LOG_DIR
+export PM_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
+trap 'rm -rf "$PM_HOOK_LOG_DIR"' EXIT
 
 MEM_PATH="$HOME/.claude/projects/test-guard-proj/memory/note.md"
 
@@ -163,7 +163,7 @@ if should_run "reviewer-prewrite-deny-outside-gate-results"; then
 fi
 
 if should_run "reviewer-prewrite-allow-any-gate-results"; then
-  # CC-319: without CLAUDE_HOOK_GATE_REPO_ROOT, guard allows writes to any
+  # CC-319: without PM_HOOK_GATE_REPO_ROOT, guard allows writes to any
   # .gate-results/ directory — pr-gate runs on any project, not just pm-dispatch.
   _rw_guard_dir="$(mktemp -d)/.gate-results"
   mkdir -p "$_rw_guard_dir"
@@ -424,7 +424,7 @@ if should_run "hook-not-executable"; then
   # Point the function at a fake repo root whose guard hook is non-executable so
   # the fail-closed "hook not executable" usage-error branch (exit 2) is exercised.
   name="hook-not-executable"
-  fake_root="$CLAUDE_HOOK_LOG_DIR/fake-root"
+  fake_root="$PM_HOOK_LOG_DIR/fake-root"
   mkdir -p "$fake_root/scripts"
   : > "$fake_root/scripts/hook-codex-write-guard.sh"
   chmod -x "$fake_root/scripts/hook-codex-write-guard.sh"
@@ -496,7 +496,7 @@ fi
 
 if should_run "prewrite-no-mutation"; then
   name="prewrite-no-mutation"
-  target="$CLAUDE_HOOK_LOG_DIR/should-not-exist-brief-x.md"
+  target="$PM_HOOK_LOG_DIR/should-not-exist-brief-x.md"
   run_guard --event pre-write --role executor --runtime codex --file "$target"
   if [[ ! -e "$target" ]]; then
     pass "$name"
