@@ -1184,9 +1184,7 @@ symbols(id, file_id, name, kind, language, line_start, line_end, signature, back
 
 ---
 
-## CC-334 — install: install-hooks.sh 安裝時自動 merge permissions.allow ✅ done
-
-**PR**: #244
+## CC-334 — install: install-hooks.sh 安裝時自動 merge permissions.allow ✅ 2026-06-08
 
 **Problem**: pr-gate 的 `--executor claude` 路由會透過 Agent tool 派生 reviewer subagents（Claude Code harness agents）。這些 subagents 需要明確的 `permissions.allow` 條目才能寫入 `.gate-results/` 並執行 `pmctl guard check`。現行 `install-hooks.sh` 只在 `~/.claude/settings.json` 寫入 hooks（PreToolUse/PostToolUse 條目），完全沒有補 `permissions.allow`，導致**安裝後 `/pr-gate` 仍無法正常運作**——需要使用者自行發現問題並手動補。對使用者而言等同工具無用。
 
@@ -1219,6 +1217,10 @@ symbols(id, file_id, name, kind, language, line_start, line_end, signature, back
 - `cmd: "bash scripts/install-hooks.sh && bash scripts/install-hooks.sh; jq '.permissions.allow | length' ~/.claude/settings.json | diff - <(jq '.permissions.allow | length' ~/.claude/settings.json)"`（重複安裝長度不變）
 
 **Cross-link**: [[CC-321]]（PM_HOOK 重命名，同一 install UX 修復脈絡）。
+
+**Result**: `install-hooks.sh` 安裝後自動 idempotent merge 三個 reviewer permissions.allow 條目（Write glob、pmctl guard check、mkdir -p）。workspace root 從 pm-dispatch repo parent 動態推算，git 失敗或 parent==HOME 時 fallback 到 $HOME。`uninstall-hooks.sh` 同步移除這三個 managed entries。workspace 偵測邏輯抽出至 `scripts/lib/gate-workspace.sh` 供 install/uninstall 共用。9 個 gate-perms 測試案例，83 tests passed。
+
+**See**: pr:#244
 
 ---
 
