@@ -79,7 +79,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-328 | 🟢 someday | **[spike: lightweight built-in symbol index for context-pack（standard Unix toolchain only）]** 在 v0.4.0 state-first 地基落地後，以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 symbol index，讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary。External backend（ctags / ffts-grep / tree-sitter）作為 optional 加速層，不列入 MVP scope。 | ops/token | 2026-06-05 | — | P3 | design |
 | CC-329 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
 | CC-330 | 🟢 someday | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。 | process/DX | 2026-06-05 | — | P3 | design |
-| CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | — | P1 | — |
+| CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 
 ---
@@ -1185,6 +1185,8 @@ symbols(id, file_id, name, kind, language, line_start, line_end, signature, back
 ---
 
 ## CC-334 — install: install-hooks.sh 安裝時自動 merge permissions.allow ✅ done
+
+**PR**: #244
 
 **Problem**: pr-gate 的 `--executor claude` 路由會透過 Agent tool 派生 reviewer subagents（Claude Code harness agents）。這些 subagents 需要明確的 `permissions.allow` 條目才能寫入 `.gate-results/` 並執行 `pmctl guard check`。現行 `install-hooks.sh` 只在 `~/.claude/settings.json` 寫入 hooks（PreToolUse/PostToolUse 條目），完全沒有補 `permissions.allow`，導致**安裝後 `/pr-gate` 仍無法正常運作**——需要使用者自行發現問題並手動補。對使用者而言等同工具無用。
 

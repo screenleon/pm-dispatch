@@ -355,10 +355,16 @@ jq \
 # --- Permissions merge for reviewer subagents (CC-334) ---
 # Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
 # to write results and run guard checks. Detect workspace root from the pm-dispatch repo's parent.
-_pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || echo "$repo_root")"
-_workspace_root="$(dirname "$_pm_repo_git_root")"
-if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
-  _workspace_root="$HOME"
+# PM_DISPATCH_GATE_WORKSPACE overrides auto-detection (use when pm-dispatch is installed from a
+# central/tooling checkout that doesn't share a parent with the repos being gated).
+if [[ -n "${PM_DISPATCH_GATE_WORKSPACE:-}" ]]; then
+  _workspace_root="$PM_DISPATCH_GATE_WORKSPACE"
+else
+  _pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || echo "$repo_root")"
+  _workspace_root="$(dirname "$_pm_repo_git_root")"
+  if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
+    _workspace_root="$HOME"
+  fi
 fi
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 
