@@ -57,6 +57,7 @@ SUITE_NAMES=(
   test-pmctl-trace
   test-pmctl-task
   test-pmctl-decision
+  test-pmctl-gate
   test-brief-validate
   test-archive-closed-backlog
 )
@@ -129,6 +130,7 @@ suite_path() {
     test-pmctl-trace) printf 'scripts/test-pmctl-trace.sh\n' ;;
     test-pmctl-task) printf 'scripts/test-pmctl-task.sh\n' ;;
     test-pmctl-decision) printf 'scripts/test-pmctl-decision.sh\n' ;;
+    test-pmctl-gate) printf 'scripts/test-pmctl-gate.sh\n' ;;
     test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
     test-archive-closed-backlog) printf 'scripts/test-archive-closed-backlog.sh\n' ;;
     *) return 1 ;;
@@ -201,8 +203,8 @@ test_list() {
 test_known_suite_count() {
   local name="known-suite-count"
   # Behavior: the aggregator has exactly the expected number of registered suites.
-  # Steps: invoke --list; count output lines; assert the count is 46.
-  local out status=0 actual_count expected_count=46
+  # Steps: invoke --list; count output lines; assert the count is 47.
+  local out status=0 actual_count expected_count=47
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --list 2>&1) || status=$?
   actual_count="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   if [[ "$status" -eq 0 && "$SUITE_TOTAL" -eq "$expected_count" && "$actual_count" -eq "$expected_count" ]]; then
