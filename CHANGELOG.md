@@ -28,7 +28,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **`scripts/hook-*.sh`, `adapters/codex/dispatch.sh`, tests, docs** — all seven `CLAUDE_HOOK_*` env vars renamed to `PM_HOOK_*` (`PM_HOOK_LOG_DIR`, `PM_HOOK_PM_GUARD`, `PM_HOOK_CLAUDE_WRITE_GUARD`, `PM_HOOK_CODEX_GUARD`, `PM_HOOK_CODEX_WRITE_GUARD`, `PM_HOOK_CODEX_READ_ROOTS`, `PM_HOOK_DISPATCHER_ABS`, `PM_HOOK_REVIEWER_GUARD`) across 15 files. Backward-compat shims in all production hooks: if a `CLAUDE_HOOK_*` var is set, a deprecation warning is emitted to stderr and the value is honoured; shims are scheduled for removal after v0.5.0. `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only the shim deprecation-warning lines. 427 tests, 0 failures (CC-321).
+- **`scripts/hook-*.sh`, `adapters/codex/dispatch.sh`, tests, docs** — all seven `CLAUDE_HOOK_*` env vars renamed to `PM_HOOK_*` (`PM_HOOK_LOG_DIR`, `PM_HOOK_PM_GUARD`, `PM_HOOK_CLAUDE_WRITE_GUARD`, `PM_HOOK_CODEX_GUARD`, `PM_HOOK_CODEX_WRITE_GUARD`, `PM_HOOK_CODEX_READ_ROOTS`, `PM_HOOK_DISPATCH_ABS`, `PM_HOOK_REVIEWER_GUARD`) across 15 files. Backward-compat shims in all production hooks: if a `CLAUDE_HOOK_*` var is set, a deprecation warning is emitted to stderr and the value is honoured; shims are scheduled for removal after v0.5.0. `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only the shim deprecation-warning lines. 427 tests, 0 failures (CC-321).
 
 ### Fixed
 
