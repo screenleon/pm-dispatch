@@ -1183,6 +1183,31 @@ test_install_hooks_gate_perms_git_failure_fallback() {
   pass "$name"
 }
 
+test_install_hooks_gate_perms_normal_git_parent() {
+  # Normal path: git rev-parse succeeds, parent is not HOME → workspace root is
+  # the parent directory. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a fake git
+  # root under a non-HOME subdirectory, exercising the main auto-detection branch.
+  local name="install-hooks-gate-perms-normal-git-parent"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  # Fake git root: "$home/projects/pm-dispatch" → parent = "$home/projects" (not HOME)
+  local fake_ws="$home/projects"
+  local fake_git_root="$fake_ws/pm-dispatch"
+  mkdir -p "$home/.claude" "$fake_ws"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$fake_git_root" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${fake_ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not use git-parent workspace; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_hooks_gate_perms_uninstall_removes() {
   # Lifecycle: uninstall-hooks.sh removes the three CC-334 permissions entries
   # that install-hooks.sh added, and leaves unrelated entries intact.
@@ -2555,6 +2580,7 @@ test_install_hooks_gate_perms_preserves_existing
 test_install_hooks_gate_perms_workspace_override
 test_install_hooks_gate_perms_home_fallback
 test_install_hooks_gate_perms_git_failure_fallback
+test_install_hooks_gate_perms_normal_git_parent
 test_install_hooks_gate_perms_uninstall_removes
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks

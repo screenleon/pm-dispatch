@@ -100,6 +100,8 @@ repo_root="${PM_DISPATCH_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 settings="$CLAUDE_HOME/settings.json"
 # shellcheck source=scripts/lib/memory-dir.sh
 . "$repo_root/scripts/lib/memory-dir.sh"
+# shellcheck source=scripts/lib/gate-workspace.sh
+. "$repo_root/scripts/lib/gate-workspace.sh"
 
 if [[ "$PLATFORM" == "windows" ]] && ! command -v jq >/dev/null 2>&1; then
   ROUTE_LOG_ENABLED=0
@@ -354,27 +356,9 @@ jq \
 
 # --- Permissions merge for reviewer subagents (CC-334) ---
 # Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
-# to write results and run guard checks. Detect workspace root from the pm-dispatch repo's parent.
-# PM_DISPATCH_GATE_WORKSPACE overrides auto-detection (use when pm-dispatch is installed from a
-# central/tooling checkout that doesn't share a parent with the repos being gated).
-# PM_DISPATCH_GATE_GIT_ROOT: test-only override; set to empty string to simulate git failure.
-if [[ -n "${PM_DISPATCH_GATE_WORKSPACE:-}" ]]; then
-  _workspace_root="$PM_DISPATCH_GATE_WORKSPACE"
-else
-  if [[ -n "${PM_DISPATCH_GATE_GIT_ROOT+x}" ]]; then
-    _pm_repo_git_root="${PM_DISPATCH_GATE_GIT_ROOT}"
-  else
-    _pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)" || true
-  fi
-  if [[ -n "$_pm_repo_git_root" ]]; then
-    _workspace_root="$(dirname "$_pm_repo_git_root")"
-    if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
-      _workspace_root="$HOME"
-    fi
-  else
-    _workspace_root="$HOME"
-  fi
-fi
+# to write results and run guard checks. Workspace root detection is shared with
+# uninstall-hooks.sh via scripts/lib/gate-workspace.sh.
+_workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 
 _tmp_perms="$(mktemp)"
