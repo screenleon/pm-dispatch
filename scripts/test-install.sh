@@ -1140,8 +1140,9 @@ test_install_hooks_gate_perms_workspace_override() {
 }
 
 test_install_hooks_gate_perms_home_fallback() {
-  # When PM_DISPATCH_GATE_WORKSPACE is set to \$HOME, the Write glob is
-  # \$HOME/**/.gate-results/** (the documented HOME fallback behaviour).
+  # When the auto-detected git root's parent equals HOME, the Write glob falls
+  # back to $HOME/**/.gate-results/**. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a
+  # fake git root whose parent is the test HOME, exercising the real fallback branch.
   local name="install-hooks-gate-perms-home-fallback"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
@@ -1149,12 +1150,73 @@ test_install_hooks_gate_perms_home_fallback() {
   mkdir -p "$home/.claude"
   printf '{"hooks":{}}\n' > "$settings"
 
-  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$home" \
+  # dirname("$home/fake-pm") == "$home" == $HOME → triggers HOME fallback
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$home/fake-pm" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
 
   local expected="Write(${home}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
-    fail "$name" "Write glob did not match fallback workspace; expected: $expected"
+    fail "$name" "Write glob did not use HOME fallback; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_git_failure_fallback() {
+  # When git rev-parse fails (non-git install, tarball), workspace root falls
+  # back to $HOME. Uses PM_DISPATCH_GATE_GIT_ROOT="" to simulate git failure.
+  local name="install-hooks-gate-perms-git-failure-fallback"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  mkdir -p "$home/.claude"
+  printf '{"hooks":{}}\n' > "$settings"
+
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local expected="Write(${home}/**/.gate-results/**)"
+  if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "Write glob did not fall back to HOME on git failure; expected: $expected"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_gate_perms_uninstall_removes() {
+  # Lifecycle: uninstall-hooks.sh removes the three CC-334 permissions entries
+  # that install-hooks.sh added, and leaves unrelated entries intact.
+  local name="install-hooks-gate-perms-uninstall-removes"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local settings="$home/.claude/settings.json"
+  local ws="$tmp_root/$name-ws"
+  mkdir -p "$home/.claude" "$ws"
+  printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)"]}}\n' > "$settings"
+
+  # Install
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+
+  local write_entry="Write(${ws}/**/.gate-results/**)"
+  if ! jq -e --arg e "$write_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "install did not add Write entry; cannot test lifecycle"
+    return
+  fi
+
+  # Uninstall
+  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+    bash "$REPO_ROOT/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+    if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+      fail "$name" "entry should be removed after uninstall: $entry"
+      return
+    fi
+  done
+  # Unrelated entry must survive
+  if ! jq -e --arg e "Bash(git log:*)" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
+    fail "$name" "unrelated permissions.allow entry was incorrectly removed"
     return
   fi
   pass "$name"
@@ -2492,6 +2554,8 @@ test_install_hooks_gate_perms_dry_run
 test_install_hooks_gate_perms_preserves_existing
 test_install_hooks_gate_perms_workspace_override
 test_install_hooks_gate_perms_home_fallback
+test_install_hooks_gate_perms_git_failure_fallback
+test_install_hooks_gate_perms_uninstall_removes
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
 test_install_hooks_removes_stale_routing_hook

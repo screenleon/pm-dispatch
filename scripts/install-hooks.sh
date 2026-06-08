@@ -357,12 +357,21 @@ jq \
 # to write results and run guard checks. Detect workspace root from the pm-dispatch repo's parent.
 # PM_DISPATCH_GATE_WORKSPACE overrides auto-detection (use when pm-dispatch is installed from a
 # central/tooling checkout that doesn't share a parent with the repos being gated).
+# PM_DISPATCH_GATE_GIT_ROOT: test-only override; set to empty string to simulate git failure.
 if [[ -n "${PM_DISPATCH_GATE_WORKSPACE:-}" ]]; then
   _workspace_root="$PM_DISPATCH_GATE_WORKSPACE"
 else
-  _pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || echo "$repo_root")"
-  _workspace_root="$(dirname "$_pm_repo_git_root")"
-  if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
+  if [[ -n "${PM_DISPATCH_GATE_GIT_ROOT+x}" ]]; then
+    _pm_repo_git_root="${PM_DISPATCH_GATE_GIT_ROOT}"
+  else
+    _pm_repo_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)" || true
+  fi
+  if [[ -n "$_pm_repo_git_root" ]]; then
+    _workspace_root="$(dirname "$_pm_repo_git_root")"
+    if [[ "$_workspace_root" == "$HOME" || "$_workspace_root" == "/" ]]; then
+      _workspace_root="$HOME"
+    fi
+  else
     _workspace_root="$HOME"
   fi
 fi

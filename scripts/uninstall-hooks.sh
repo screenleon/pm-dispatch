@@ -56,7 +56,28 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
-_managed_json="$(dispatch_allowlist_entries | jq -Rn '[inputs]')"
+# CC-334: compute the reviewer Write glob to include in managed removal.
+# Mirrors the workspace-root detection in install-hooks.sh so uninstall is symmetric.
+if [[ -n "${PM_DISPATCH_GATE_WORKSPACE:-}" ]]; then
+  _gate_ws="$PM_DISPATCH_GATE_WORKSPACE"
+elif [[ -n "${PM_DISPATCH_GATE_GIT_ROOT+x}" ]]; then
+  _gate_git_root="${PM_DISPATCH_GATE_GIT_ROOT}"
+  if [[ -n "$_gate_git_root" ]]; then
+    _gate_ws="$(dirname "$_gate_git_root")"
+    if [[ "$_gate_ws" == "$HOME" || "$_gate_ws" == "/" ]]; then _gate_ws="$HOME"; fi
+  else
+    _gate_ws="$HOME"
+  fi
+else
+  _gate_git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)" || true
+  if [[ -n "${_gate_git_root:-}" ]]; then
+    _gate_ws="$(dirname "$_gate_git_root")"
+    if [[ "$_gate_ws" == "$HOME" || "$_gate_ws" == "/" ]]; then _gate_ws="$HOME"; fi
+  else
+    _gate_ws="$HOME"
+  fi
+fi
+_managed_json="$({ dispatch_allowlist_entries; printf 'Write(%s/**/.gate-results/**)\nBash(pmctl guard check:*)\nBash(mkdir -p:*)\n' "$_gate_ws"; } | jq -Rn '[inputs]')"
 
 jq \
   --arg repo_root "$repo_root" \
