@@ -33,7 +33,7 @@ If `self_verify` is absent from a file-writing brief, reject immediately before 
 # Job
 
 1. Validate brief (see Validation above). Reject before dispatching if any required field is missing.
-2. Dispatch via `~/github/pm-dispatch/scripts/codex-dispatch.sh`. Never call `codex exec` directly.
+2. Dispatch via `pmctl dispatch run --adapter codex` (see Step 2 below). Never call `codex exec` directly. `scripts/codex-dispatch.sh` is a deprecated shim — do not call it directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
 
@@ -54,10 +54,10 @@ The brief file is always pre-written by the main thread before dispatching to co
 **Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
 ```bash
-~/github/pm-dispatch/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
+pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write --brief-file /tmp/brief-<task>.md
 ```
 
-Do not inline the brief with `-- <brief>` for real work. That form is retained only for trivial smoke checks; shell quoting, hook validation, and multiline briefs are too easy to get wrong inline.
+`pmctl` must be in PATH (`~/.local/bin/pmctl` after install). If not available, fall back to `"${PM_DISPATCH_REPO}/cli/pmctl"`. Do not call `scripts/codex-dispatch.sh` directly — it is a deprecated shim and will emit a `[deprecated]` warning. Do not inline the brief with `-- <brief>` for real work; that form is retained only for trivial smoke checks.
 
 > **CRITICAL — NEVER set `run_in_background: true` on the dispatch Bash call.**
 >
@@ -115,7 +115,7 @@ The Write tool is NOT available to codex-executor subagents (the Agent tool does
 
 # When NOT to use this agent
 
-Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `dispatch_handover_v1` block, the main thread should write `brief_file` and run `scripts/codex-dispatch.sh` directly with `run_in_background:true`. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
+Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `dispatch_handover_v1` block, the main thread should write `brief_file` and run `pmctl dispatch run --adapter codex --brief-file <path> --cd <dir>` with `run_in_background:true` on the outer Bash call. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent. (`scripts/codex-dispatch.sh` is a deprecated shim for the same path; prefer `pmctl dispatch run`.)
 
 Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/dispatch-brief.md` §Fallback remains the canonical dispatch policy.
 
