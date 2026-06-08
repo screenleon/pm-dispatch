@@ -22,7 +22,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$REPO_ROOT/scripts/lib/handover-validate.sh"
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
+# shellcheck source=scripts/lib/portable.sh
+. "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
+_TCE_PLATFORM="$(detect_platform)"
 
 brief_file="$(mktemp -p /tmp brief-cc102-test-XXXXXX.md)"
 chmod 600 "$brief_file"
@@ -132,6 +135,10 @@ scratch_isolation() {
 trace_write_contract() {
   local name="claude-executor/trace write contract"
   should_run "$name" || return 0
+  if [[ "$_TCE_PLATFORM" == "windows" ]]; then
+    printf 'SKIP: %s (ln -sfn has no real-symlink support on Windows MSYS)\n' "$name"
+    return 0
+  fi
 
   local work_dir
   work_dir="$(mktemp -d)"
