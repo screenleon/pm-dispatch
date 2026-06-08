@@ -7,9 +7,39 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-08: ticket-id-collision-lint-and-cc-329-330-renumber
+
+Closes: BACKLOG.md#CC-339
+
+Relates: CC-339, CC-342, CC-343, CC-338, CC-328
+
+### Context
+
+The CC-328 → CC-338 renumber (same date) filed CC-339 as a follow-up: a divergent-title id collision is mechanically detectable, so the one-id-one-ticket invariant should be enforced by tooling, not by manual reading. While implementing CC-339 the literal framing — "compare the *title string* of an id across BACKLOG active body and MILESTONES" — proved unworkable: all three title surfaces (BACKLOG index column, BACKLOG body heading, MILESTONES description) are free-form and legitimately divergent (English title vs Chinese description; MILESTONES repeats one id across version sections with different per-milestone text). A literal string-equality check would false-positive on nearly every shared row.
+
+### Decision
+
+Reinterpret the invariant as a **cross-lifecycle id collision**, which is the actual fingerprint of the CC-328 failure and is string-comparison-free: the active board and the archive partition the id space, so a non-stub ticket lives in exactly one of them. `pm/scripts/lint-ticket-ids.sh` asserts no id is simultaneously **open (non-stub) on the active board** and **closed in the archive**, emitting `E-ID-COLLISION`. A ✅/🚫 tombstone stub on the active board is the legitimate mirror of the same archived ticket and is excluded. The linter is a sibling script (not folded into `validate.sh`, whose CLI signature and large test baseline stay untouched) wired into `lint.yml` as a `lint-ticket-ids` job that runs against the real BACKLOG.md + BACKLOG-ARCHIVE.md, mirroring the existing `lint-backlog` job.
+
+On first run the lint surfaced **two pre-existing collisions** that manual reading had missed: active `debt-auditor` reused **CC-329** (a closed FSM-transition-table ticket, ✅ 2026-06-05) and active `/discover` reused **CC-330** (a closed state_store_init fix, ✅ 2026-06-05). Per the CC-328 precedent, the closed/shipped tickets keep their immutable ids; the two unstarted forward tickets are renumbered to **CC-342** (debt-auditor) and **CC-343** (/discover). The renumber and the lint land in one PR so the new gate is green on merge.
+
+### Alternatives considered
+
+- **Literal title-string comparison across files** (as CC-339 was originally worded): rejected — no two title surfaces are comparable (EN title vs ZH description; per-version repetition), so it cannot be implemented without mass false positives.
+- **Fold the check into `validate.sh`**: rejected — would change its `<BACKLOG> [DECISIONS] [CHANGELOG]` signature and disturb every call site and the validator baseline; the archive×active check is a distinct concern with a clean sibling boundary.
+- **Land the lint in warning-mode and renumber later**: rejected — the whole value is a hard gate; bundling the renumber keeps the gate green immediately and follows the close-ticket-in-feature-PR discipline.
+- **Renumber the closed/archived tickets instead**: rejected — their ids are referenced in shipped history (commits/PRs/MILESTONES done rows); moving an unstarted forward ticket is cheapest, per the CC-328 decision.
+
+### Constraints introduced
+
+- The active board and the archive must partition the id space: closing a ticket moves it to the archive (a ✅/🚫 stub may remain on the board as a pointer), and a forward ticket must never reuse a number already closed in the archive.
+- New backlog/archive changes are gated by `lint-ticket-ids` in CI; a reused-across-lifecycle id now fails the build instead of surviving to a context-pack index.
+
+---
+
 ## 2026-06-08: cc-328-collision-renumber-repo-index-to-cc-338
 
-Relates: CC-338, CC-328, CC-237, CC-239, CC-330, CC-339
+Relates: CC-338, CC-328, CC-237, CC-239, CC-343, CC-339
 
 ### Context
 

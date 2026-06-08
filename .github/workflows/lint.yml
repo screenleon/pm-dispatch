@@ -387,3 +387,18 @@ jobs:
           printf '%s\n' "${error_output}"
           printf 'BACKLOG validation errors: %d\n' "${error_count}"
           exit "${rc}"
+
+  lint-ticket-ids:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert no ticket id collides across active board and archive
+        run: |
+          set +e
+          error_output=$(bash pm/scripts/lint-ticket-ids.sh BACKLOG.md BACKLOG-ARCHIVE.md 2>&1)
+          rc=$?
+          set -e
+          error_count=$(printf '%s\n' "${error_output}" | grep -c '^E-' || true)
+          printf '%s\n' "${error_output}"
+          printf 'Ticket id collisions: %d\n' "${error_count}"
+          exit "${rc}"

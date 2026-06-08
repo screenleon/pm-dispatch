@@ -15,14 +15,15 @@
 
 > **設計原則（2026-06-08 採納）**：knowledge 與 repo 是**兩個不同搜尋平面**，生命週期相反——knowledge 是 curated / durable / 人類語義（壞了要人修），repo index 是 derived / rebuildable / 程式碼結構（壞了刪掉重建）。原則：**分開建 index、統一輸出 context-pack**，不混成一坨。knowledge 給「為什麼」、repo 給「在哪改」、state/event 給「最近脈絡」。FTS5 列為 optional 加速層、**不可當 hard dependency**（Windows Git Bash 的 sqlite3 未必含 FTS5）→ 必備 `LIKE` / `grep` fallback 並納入測試。外部工具（Khoj / Memori / tree-sitter / codegraph）只接 backend，不入 MVP。
 
-> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例，v0.5.0 **不**一次做完雙索引全貌。聚焦**一條端到端可見路徑**：`repo index → context-pack → reuse-scan`（直接攻擊 CC-200..204 reuse-debt，dispatch brief 立即受益）。完整 knowledge index（FTS over 全 memory）與既有 `/mem-search` 重疊，v0.5.0 只做 schema 對齊，重型版延 v0.6.0。細節待 `/discover`（CC-330）跑完後再校準。
+> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例，v0.5.0 **不**一次做完雙索引全貌。聚焦**一條端到端可見路徑**：`repo index → context-pack → reuse-scan`（直接攻擊 CC-200..204 reuse-debt，dispatch brief 立即受益）。完整 knowledge index（FTS over 全 memory）與既有 `/mem-search` 重疊，v0.5.0 只做 schema 對齊，重型版延 v0.6.0。細節待 `/discover`（CC-343）跑完後再校準。
 
 ### Phase 0 — 票號 hygiene（pre-work，先解再開工）
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-328→CC-338 | **CC-328 票號衝突已解（2026-06-08）**：CC-328 同時指向「light alias 文件（#229 已 ship，記於 v0.4.0 旁支修正）」與「repo symbol index」。已 ship 的 light-alias 保留 CC-328（歷史不可動）；repo-index 改號至 **CC-338**。見 DECISIONS 2026-06-08 | ✅ 改號完成 |
-| CC-339 | 防同號異義 lint（同一 CC id 不可在 BACKLOG active body / MILESTONES 指向不同 title）——追蹤為 follow-up，不阻塞 spine | 🟢 someday |
+| CC-339 | 防同號異義 lint：`pm/scripts/lint-ticket-ids.sh` 斷言同一 id 不可同時是 active board 的 open 票與 archive 的 closed 票，emit `E-ID-COLLISION`，接入 lint.yml | ✅ 2026-06-08 |
+| CC-329→CC-342 / CC-330→CC-343 | **lint 首次抓到的兩個既存撞號**：active `debt-auditor`（CC-329）撞 archive FSM-table 票；active `/discover`（CC-330）撞 archive state_store_init 票。已關閉者保留原號（歷史不可動），未開工的 forward 票改號至 **CC-342 / CC-343**。見 DECISIONS 2026-06-08 | ✅ 改號完成 |
 
 ### Phase 1 — context-pack spine（P1；端到端垂直切片）
 
@@ -36,7 +37,7 @@
 
 | 票號 | 說明 | 目標 P |
 |---|---|---|
-| CC-330 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求 | P1 |
+| CC-343 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求（原 CC-330，撞號改號，見 Phase 0） | P1 |
 | CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入；同時作為 knowledge 面的 content 來源 | P3 |
 | CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
 | CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | P2 |
@@ -135,7 +136,7 @@
 
 - **CC-202**（pmctl validate）、**CC-235**（Task lifecycle gate）— 原標 `→ v0.4.0`，依 2026-06-08 scope 決策改為 **v0.5.0**（地基已完成，能力層不擠入 v0.4.0 release）。
 - CC-234（memory v2 event-derived）、CC-237（context-enricher baseline）— 能力層，建在 event stream 上，地基落地後才做，目標 **v0.5.0**。
-- **CC-330**（`/discover` milestone seeder）— 從 someday 提前至 **v0.5.0** 優先；實作成本 XS，槓桿高。
+- **CC-343**（`/discover` milestone seeder；原 CC-330，撞號改號）— 從 someday 提前至 **v0.5.0** 優先；實作成本 XS，槓桿高。
 - CC-216 — `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；MCP 必須包**穩定的** pmctl，故在 state ops 之後，目標 v0.6.0+。
 - CC-220（`/spike` workflow）、CC-209（codegraph spike，🟢 someday）。
 - CC-296 — v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim），目標 **v0.5.0**（待 2 個正式版本）。

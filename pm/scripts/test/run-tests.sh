@@ -80,6 +80,61 @@ run_validate_case_warn() {
   pass "$name"
 }
 
+# lint-ticket-ids.sh：active-board × archive 撞號偵測。
+run_idlint_case() {
+  name=$1
+  want_code=$2
+  want_token=$3
+  backlog=$4
+  archive=$5
+  err=$(mktemp)
+  set +e
+  bash "$root_dir/lint-ticket-ids.sh" "$backlog" "$archive" >/dev/null 2>"$err"
+  got_code=$?
+  set -e
+  if [ "$got_code" -ne "$want_code" ]; then
+    fail "$name" "exit $got_code, expected $want_code"
+    rm -f "$err"; return
+  fi
+  if [ -n "$want_token" ] && ! grep -q "$want_token" "$err"; then
+    fail "$name" "missing $want_token"
+    rm -f "$err"; return
+  fi
+  if [ "$want_code" -eq 0 ] && [ -s "$err" ]; then
+    fail "$name" "stderr was not empty"
+    rm -f "$err"; return
+  fi
+  rm -f "$err"
+  pass "$name"
+}
+
+run_idlint_case "idlint good-ticket-ids" 0 "" \
+  "$fixtures/good-ticket-ids/BACKLOG.md" "$fixtures/good-ticket-ids/BACKLOG-ARCHIVE.md"
+# Boundary: a valid board whose active side is only ✅/🚫 tombstone stubs (no
+# open ids) must pass cleanly, not trip pipefail on an empty open-id set.
+run_idlint_case "idlint good-stubs-only (empty open set)" 0 "" \
+  "$fixtures/good-ticket-ids-stubs-only/BACKLOG.md" "$fixtures/good-ticket-ids-stubs-only/BACKLOG-ARCHIVE.md"
+run_idlint_case "idlint bad-id-collision" 1 "E-ID-COLLISION" \
+  "$fixtures/bad-id-collision/BACKLOG.md" "$fixtures/bad-id-collision/BACKLOG-ARCHIVE.md"
+# Negative input: an OPEN ticket whose title contains ✅/🚫 must still collide,
+# i.e. only a TERMINAL status marker counts as a tombstone stub.
+run_idlint_case "idlint bad-id-collision (glyph in open title)" 1 "E-ID-COLLISION" \
+  "$fixtures/bad-id-collision-glyph-title/BACKLOG.md" "$fixtures/bad-id-collision-glyph-title/BACKLOG-ARCHIVE.md"
+run_idlint_case "idlint archive file not found" 2 "E-SCHEMA-HEADER" \
+  "$fixtures/good-ticket-ids/BACKLOG.md" "/nonexistent/BACKLOG-ARCHIVE.md"
+# Arity: omitting the archive argument entirely must exit 2 (usage), not run.
+idlint_arity_err=$(mktemp)
+set +e
+bash "$root_dir/lint-ticket-ids.sh" "$fixtures/good-ticket-ids/BACKLOG.md" >/dev/null 2>"$idlint_arity_err"
+idlint_arity_code=$?
+set -e
+if [ "$idlint_arity_code" -eq 2 ] && grep -q 'Usage:' "$idlint_arity_err"; then
+  pass "idlint missing archive arg (arity)"
+else
+  fail "idlint missing archive arg (arity)" "exit $idlint_arity_code, expected 2 with usage"
+fi
+rm -f "$idlint_arity_err"
+
 # validate.sh 基本案例。
 run_validate_case "validate good" 0 "" "$fixtures/good/BACKLOG.md"
 run_validate_case "v1.1 good" 0 "" "$fixtures/good-v11/BACKLOG.md"

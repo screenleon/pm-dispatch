@@ -77,14 +77,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-307 | 🟡 deferred | **[arch: pm role cross-runtime — guard 已 runtime-agnostic，但文件與 alias 仍暗示 pm = claude-only]** CC-291 的兩軸設計（role ⊥ runtime）明確要求 pm guard policy 不能綁 runtime。`hook-pm-write-guard.sh` 確實 runtime-agnostic（任何 runtime 套用同一規則）✓，且 `--role pm --runtime codex` CLI 路徑已可正常呼叫 ✓；但目前三個地方仍暗示 pm=claude-only：(1) deprecated `--profile pm` alias hardcode `runtime="claude"`，(2) `scripts/lib/pmctl-guard.sh` 說明說「currently claude-only」，(3) 無 codex-as-pm dispatch end-to-end 測試。修法：(1) alias 部分接受（deprecated, 將由 CC-296 移除，hardcode 是 convenience 不是設計限制）；(2) 把「currently claude-only」說明改為「guard policy is runtime-agnostic; no deployed codex-as-pm use case yet」以分清設計與現況；(3) 加 integration smoke test：`pmctl dispatch run --adapter codex --role pm` 可成功 dispatch。Origin user 2026-06-02。關聯 [[CC-291]]（two-axis design）、[[CC-296]]（alias sunset）、[[CC-215]]（pmctl dispatch run）。 | arch | 2026-06-02 | — | P3 | design |
 | CC-321 | ✅ closed 2026-06-08 | **[refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* for executor-agnostic naming]** pm-dispatch 的 hook 設定 env var（`CLAUDE_HOOK_CODEX_READ_ROOTS`、`CLAUDE_HOOK_CODEX_GUARD`、`CLAUDE_HOOK_PM_GUARD`、`CLAUDE_HOOK_REVIEWER_GUARD` 等）都冠 `CLAUDE_` 前綴，與 executor-agnostic 目標不符。改為 `PM_HOOK_` 前綴；舊名保留為 deprecated alias 一個 release 後移除。需同步更新 install-hooks.sh、test-hooks.sh、test-pmctl-guard.sh 及文件。Breaking change — 獨立 PR。 | ops | 2026-06-04 | pr:#243 | P2 | hygiene |
 | CC-338 | 🔵 active | **[v0.5.0 P1: lightweight built-in repo index for context-pack（standard Unix toolchain only）]** 以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 index（files / symbols / file_chunks），讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary；FTS5-optional + grep fallback。原 CC-328（與 #229 light-alias 撞號）改號至此，見 DECISIONS 2026-06-08。 | ops/token | 2026-06-05 | — | P1 | design |
-| CC-329 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
-| CC-330 | 🟡 deferred | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | — | P1 | design |
+| CC-342 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
+| CC-343 | 🟡 deferred | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | — | P1 | design |
 | CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
 | CC-336 | ✅ done | dx: deprecated warnings + executor docs preferred path update | docs | 2026-06-08 | pr:#246 | P2 | — |
 | CC-337 | ✅ done | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | pr:#247 | P1 | — |
-| CC-339 | 🟢 someday | **[lint: prevent duplicate CC id with divergent title]** Add a validator rule asserting one CC id never maps to two different titles across the BACKLOG active body and MILESTONES — surfaced when repo-index reused CC-328 already held by the shipped light-alias (resolved via CC-338, DECISIONS 2026-06-08). Catch the next collision at lint time, not by reading. v0.5.0 Phase 0 follow-up. | process | 2026-06-08 | — | P3 | hygiene |
+| CC-339 | ✅ done | **[lint: prevent duplicate CC id with divergent title]** Sibling `lint-ticket-ids.sh` + lint.yml job asserting no id is open on the active board while closed in the archive (cross-lifecycle collision; string-comparison-free reinterpretation). Caught CC-329/CC-330 collisions on first run (renumbered to CC-342/CC-343). v0.5.0 Phase 0 follow-up. | process | 2026-06-08 | pr:#250 | P3 | hygiene |
 | CC-340 | 🟢 someday | **[knowledge index: standalone FTS over memory/backlog/decisions]** Local knowledge-search index (the second-brain plane, symmetric to the repo index CC-338): index MEMORY.md + memory cards + wiki + BACKLOG / DECISIONS / MILESTONES + episodes, answering "why / how was this decided / prior failure modes" before dispatch. v0.5.0 only aligns the schema (context_hit_v1, CC-237); the heavy standalone index overlaps /mem-search and is deferred to v0.6.0. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-341 | 🔵 active | **[pmctl validate: wire handover-validate framework into pmctl]** The CC-202 handover-validator framework shipped (#170) but was never wired into a `pmctl validate` subcommand. MILESTONES v0.5.0 previously pointed at the closed CC-202; this is its active home. Wire `pmctl validate` to the extracted framework with schema validation + event emission, matching the other pmctl state-ops. | arch | 2026-06-08 | — | P2 | design |
 
@@ -1151,7 +1151,9 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 
 ---
 
-## CC-329 — agent: debt-auditor — proactive tech-debt health scan on living code 🟢 someday
+## CC-342 — agent: debt-auditor — proactive tech-debt health scan on living code 🟢 someday
+
+**Renumbered**: 原 CC-329；與 BACKLOG-ARCHIVE 已關閉的 FSM transition-table 票（✅ 2026-06-05）撞號，未開工的 debt-auditor 改號至 CC-342。撞號由 ticket-id lint 偵測，見 DECISIONS 2026-06-08。
 
 **Problem**: 所有現有 reviewer（critic / architecture-reviewer / qa-tester）均以 PR diff 為觸發點，無法主動掃描 codebase 區域的技術債。結果是：重複程式、慣例分歧、過早抽象這類問題只有在 PR gate 中偶然被提及（以 `advise` 方式），沒有系統性的優先排序與追蹤。
 
@@ -1180,7 +1182,9 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 
 ---
 
-## CC-330 — skill: /discover — milestone seeder + opportunity scanner 🟡 deferred → v0.5.0 P1
+## CC-343 — skill: /discover — milestone seeder + opportunity scanner 🟡 deferred → v0.5.0 P1
+
+**Renumbered**: 原 CC-330；與 BACKLOG-ARCHIVE 已關閉的 state_store_init mkdir-failure 票（✅ 2026-06-05）撞號，未開工的 /discover 改號至 CC-343。撞號由 ticket-id lint 偵測，見 DECISIONS 2026-06-08。
 
 **Problem**: project-pm 是**收斂模式**（reactive：收到任務 → 分解 → 派工），沒有內建的**發散模式**（proactive：讀 backlog + 近況 → 生成機會清單）。每次 milestone 規劃都靠對話即興，缺少系統性的「現在最值得做什麼」掃描。
 
@@ -1348,7 +1352,7 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 **See**: pr:#247
 
 
-## CC-339 — lint: prevent duplicate CC id with divergent title 🟢 someday
+## CC-339 — lint: prevent duplicate CC id with divergent title ✅ 2026-06-08
 
 **Problem**: The same CC id can silently map to two different tickets. CC-328 was assigned to the shipped light-alias work (#229, recorded in MILESTONES v0.4.0 旁支修正), then reused by the repo symbol-index ticket (#235) — only caught by manual reading during v0.5.0 planning. A knowledge/repo search index makes this worse: a recalled CC id that resolves to two meanings poisons the context-pack.
 
@@ -1356,11 +1360,17 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Requirement**: add a validator rule (in `pm/scripts/validate.sh` or a sibling wired into `lint.yml`) that asserts one CC id never maps to two different titles across the BACKLOG active body and MILESTONES tables. Emit an E-code on collision. The CC-328 → CC-338 renumber (DECISIONS 2026-06-08) is the first fixture.
 
+**Amendment (DECISIONS 2026-06-08)**: the literal "compare title *strings* across BACKLOG/MILESTONES" above proved unworkable — all title surfaces are free-form and legitimately divergent (EN title vs ZH description; one id repeated per milestone). The shipped invariant is the string-comparison-free equivalent: one id never both **open on the active board** and **closed in the archive** (cross-lifecycle collision). This narrower-but-mechanical scope is intentional, not drift — see the Result note below and DECISIONS.
+
 **Milestone**: v0.5.0 Phase 0 follow-up (hygiene; not blocking the spine).
 
 **Priority**: P3.
 
-**Cross-link**: [[CC-338]] (renumber that motivated this), [[CC-237]].
+**Result**: Shipped as `pm/scripts/lint-ticket-ids.sh` (sibling, not folded into `validate.sh`), wired into `lint.yml` as the `lint-ticket-ids` job. The literal "compare title strings across BACKLOG/MILESTONES" framing was unworkable (all title surfaces are free-form and legitimately divergent — EN title vs ZH description, ids repeated per-version), so the invariant was reinterpreted as a string-comparison-free **cross-lifecycle collision**: no id may be open (non-stub) on the active board while also closed in the archive. On first run it caught two pre-existing collisions — `debt-auditor` (CC-329) and `/discover` (CC-330) reusing closed archive ids — both renumbered to [[CC-342]] / [[CC-343]] in this PR. See DECISIONS 2026-06-08.
+
+**Cross-link**: [[CC-338]] (renumber that motivated this), [[CC-342]], [[CC-343]] (collisions caught), [[CC-237]].
+
+**See**: pr:#250
 
 ## CC-340 — knowledge index: standalone FTS over memory/backlog/decisions 🟢 someday → v0.6.0
 
