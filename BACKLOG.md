@@ -1314,7 +1314,7 @@ Windows v0.4.0 dogfood 發現三類問題，分 P1/P2/P3 修：
 
 `detect_hook_profile()` 的 `auto` case 只看 `codex_available`，不看平台。Windows Git Bash 若 PATH 有 codex CLI → 判定 `full` → 期待 codex hooks → FAIL。但 `install-hooks.sh` 在 Windows 正確安裝 `minimal`。
 
-Fix：先 `detect_platform == windows` → 強制 `_want_full=0`，再才看 `codex_available`。
+Fix：在 `check_hooks()` 的 `detect_hook_profile()` inner logic 中，先 `detect_platform == windows` → 強制 `_want_full=0`，再才看 `codex_available`。
 
 **P2 — 測試套件缺 Windows skip-guards**（Windows CI 失敗）
 
