@@ -7,6 +7,31 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-08: cc-328-collision-renumber-repo-index-to-cc-338
+
+Relates: CC-338, CC-328, CC-237, CC-239, CC-330, CC-339
+
+### Context
+
+CC-328 was assigned twice. First to the executor-agnostic `light` model-alias work (shipped via PR #229, recorded in MILESTONES v0.4.0 旁支修正); then reused by the lightweight built-in repo symbol-index ticket added in PR #235. Both labels are in git history. The collision surfaced during v0.5.0 planning, while restructuring the milestone around a dual-index (knowledge + repo) context-pack spine — a search index over BACKLOG/MILESTONES makes a divergent-title CC id actively harmful, not just untidy.
+
+### Decision
+
+**The shipped light-alias keeps CC-328** (its history is immutable); **the repo-index ticket is renumbered to CC-338** (a forward, not-yet-started ticket — cheapest to move). BACKLOG index row + body, MILESTONES v0.5.0, and cross-links are updated to CC-338; the v0.4.0 light-alias row gets a disambiguation note. A follow-up lint (CC-339) is filed to assert one CC id never maps to two titles across BACKLOG/MILESTONES, catching the next collision at lint time. v0.5.0 is re-scoped to the thin vertical slice `repo index (CC-338) → context-pack interface (CC-237) → reuse-scan (CC-239)`; the heavy standalone knowledge index (overlaps `/mem-search`) is deferred to v0.6.0.
+
+### Alternatives considered
+
+- **Renumber the shipped light-alias instead**: rejected — it is referenced in shipped commit/PR/CHANGELOG history; renumbering immutable history is more disruptive than moving an unstarted ticket.
+- **Keep both as CC-328, disambiguate by context**: rejected — defeats the point of a stable id and is exactly what a search index cannot tolerate.
+- **Implement the dedup lint now as part of the fix**: deferred to CC-339 — the lint is real code + tests + gate and does not belong in a docs/hygiene change; the renumber stands on its own.
+
+### Constraints introduced
+
+- CC-338 is the canonical id for the built-in repo index from now on; CC-328 refers only to the historical light-alias work.
+- Until CC-339 lands, the one-id-one-title invariant is maintained by review, not by tooling.
+
+---
+
 ## 2026-06-03: v0.4.0-state-first-foundation-commit
 
 Relates: CC-211, CC-215, CC-230, CC-306

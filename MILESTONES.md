@@ -9,6 +9,55 @@
 
 ---
 
+## v0.5.0 — local context substrate（本地 context 地基；規劃中）
+
+**主題**：把 v0.4.0 的 state-first substrate 升級為 **dispatch 前可用的 context**——以「**雙索引 + 單一 context-pack 介面**」的形狀，讓 PM 在派工前同時拿到「**為什麼**」（第二大腦：memory / backlog / decisions）、「**在哪改、可重用什麼**」（repo index：files / symbols / helpers / tests）、與「**最近發生什麼**」（state/event 作 ranking signal）。這是 v0.4.0「無使用者可見賣點」之後的第一個能力層。
+
+> **設計原則（2026-06-08 採納）**：knowledge 與 repo 是**兩個不同搜尋平面**，生命週期相反——knowledge 是 curated / durable / 人類語義（壞了要人修），repo index 是 derived / rebuildable / 程式碼結構（壞了刪掉重建）。原則：**分開建 index、統一輸出 context-pack**，不混成一坨。knowledge 給「為什麼」、repo 給「在哪改」、state/event 給「最近脈絡」。FTS5 列為 optional 加速層、**不可當 hard dependency**（Windows Git Bash 的 sqlite3 未必含 FTS5）→ 必備 `LIKE` / `grep` fallback 並納入測試。外部工具（Khoj / Memori / tree-sitter / codegraph）只接 backend，不入 MVP。
+
+> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例，v0.5.0 **不**一次做完雙索引全貌。聚焦**一條端到端可見路徑**：`repo index → context-pack → reuse-scan`（直接攻擊 CC-200..204 reuse-debt，dispatch brief 立即受益）。完整 knowledge index（FTS over 全 memory）與既有 `/mem-search` 重疊，v0.5.0 只做 schema 對齊，重型版延 v0.6.0。細節待 `/discover`（CC-330）跑完後再校準。
+
+### Phase 0 — 票號 hygiene（pre-work，先解再開工）
+
+| 票號 | 說明 | 狀態 |
+|---|---|---|
+| CC-328→CC-338 | **CC-328 票號衝突已解（2026-06-08）**：CC-328 同時指向「light alias 文件（#229 已 ship，記於 v0.4.0 旁支修正）」與「repo symbol index」。已 ship 的 light-alias 保留 CC-328（歷史不可動）；repo-index 改號至 **CC-338**。見 DECISIONS 2026-06-08 | ✅ 改號完成 |
+| CC-339 | 防同號異義 lint（同一 CC id 不可在 BACKLOG active body / MILESTONES 指向不同 title）——追蹤為 follow-up，不阻塞 spine | 🟢 someday |
+
+### Phase 1 — context-pack spine（P1；端到端垂直切片）
+
+| 票號 | 說明 | 目標 P |
+|---|---|---|
+| CC-237 | **context-enricher interface**：定義 `context_hit_v1`（`source_domain: knowledge / repo / state`、`why_relevant`、`trust_level`、`refs`）作為 CC-232 既有 context-pack schema 的擴充，並收斂 repo-index + memory-search + git(ls-files/diff) 成統一 `pmctl context pack` 輸出。定位 = interface（builtin-index 為 backend），非單一 source | P1 |
+| CC-338 | **repo index MVP**（原 CC-328，見 Phase 0 改號）：bash + sqlite3 實作 `files` / `symbols` / `file_chunks`；shell/python/ts/js/go regex symbols + markdown heading chunks；mtime+sha1 incremental；FTS5-optional + grep fallback；`pmctl context index/search/pack --source repo`。從 someday 提升 P1 | P1 |
+| CC-239 | **reuse-scan**（spine 的 user-visible 終點）：PM briefing 時查 prior art，輸出 `reuse_candidates`（helper / test pattern + why_relevant），brief 吸收。repo-index 的第一個 consumer，直接消化 reuse-debt | P2 |
+
+### Phase 2 — knowledge 面 + lifecycle（P2）
+
+| 票號 | 說明 | 目標 P |
+|---|---|---|
+| CC-330 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求 | P1 |
+| CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入；同時作為 knowledge 面的 content 來源 | P3 |
+| CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
+| CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | P2 |
+| CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | P2 |
+
+### Phase 3 — hygiene / deprecation（P2-P3）
+
+| 票號 | 說明 | 目標 P |
+|---|---|---|
+| CC-296 | v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim；已過 v0.3.0+v0.4.0 兩個正式版本） | P2 |
+| CC-255 | spike rubric + `test_target:` 模糊點修補 | P3 |
+
+### 延後至 v0.6.0+（明確排除於 v0.5.0）
+
+- **完整 knowledge index（CC-340）**（FTS over 全 memory / wiki / episodes）——與既有 `/mem-search` 重疊；v0.5.0 只對齊 schema，standalone index 延 v0.6.0。已開 `🟢 someday` 票追蹤，對稱於 repo-index CC-338。
+- **External index backends**——Khoj（semantic knowledge）、Memori（cross-runtime；回寫只走 `memory_proposal`）、tree-sitter / codegraph（CC-209 / CC-253 spike）、ctags。規則：local canonical first，external accelerator second。
+- **CC-216 MCP server**——需穩定 pmctl，延 v0.6.0+。
+- **CC-333 runtime 解耦（`PM_MEMORY_DIR`）**——knowledge index 落地後再評估 path 抽象需求。
+
+---
+
 ## v0.4.0 — state-first foundation（地基完成 2026-06-06，尚未 tag）
 
 **主題**：把 v0.3.0 的 spine 補成**真正 state-first**——`pmctl` 成為機器狀態的**唯一 writer**，dispatch 路徑經 `pmctl` 寫出 Run + Event，`routing_log.md` 機器寫入廢棄改用 `pmctl trace`。決策見 `DECISIONS.md` 2026-06-03（CC-211 committed）；完整 scoping 見 [`docs/architecture/v0.4.0-state-first-foundation.md`](docs/architecture/v0.4.0-state-first-foundation.md)。
@@ -52,7 +101,7 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter） | ✅ (#229) |
+| CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter）。註：此為 light-alias CC-328；後來撞號的 repo symbol-index 已改號 **CC-338**（見 v0.5.0 Phase 0） | ✅ (#229) |
 | CC-331 | test-install CI 並行化（core/hooks --group）+ jq batch + `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫 + stub-based verify 架構（移除 escape-hatch bypass） | ✅ (#231) |
 | CC-321 | rename `CLAUDE_HOOK_*` → `PM_HOOK_*` across 15 files；backward-compat shims（v0.5.0 移除）；427 tests 0 failures | ✅ (#243) |
 | CC-334 | install-hooks.sh 安裝時 idempotent merge `permissions.allow`（reviewer subagent 必需的 Write/.gate-results + Bash/pmctl guard check + mkdir -p）；gate-workspace lib 抽取；uninstall-hooks 對稱清除；83 tests 0 failures | ✅ (#244) |
@@ -91,25 +140,6 @@
 - CC-220（`/spike` workflow）、CC-209（codegraph spike，🟢 someday）。
 - CC-296 — v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim），目標 **v0.5.0**（待 2 個正式版本）。
 - `adapters/antigravity` / `adapters/opencode` — named slot，不實作。
-
----
-
-## v0.5.0 — capability layer（規劃中）
-
-**主題**：把 v0.4.0 的 state-first substrate 升級為使用者可見的能力——dispatch 前有 context、milestone 有發散掃描、lifecycle 有 gate、memory 有 event 輸入。
-
-> **狀態**：規劃中。v0.4.0 tag 後開始排序。核心 scope 如下；細節待 `/discover` 跑完後調整。
-
-| 票號 | 說明 | 目標 P |
-|---|---|---|
-| CC-330 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單；用於 milestone 規劃 | P1 |
-| CC-202 | `pmctl validate`（接 handover-validate） | P2 |
-| CC-237 | context-enricher baseline：rg/git/memory → context-pack，dispatch 前 pre-research | P2 |
-| CC-239 | reuse-scan capability：brief 前先查 existing helpers/patterns | P2 |
-| CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
-| CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入 | P3 |
-| CC-296 | v0.3.0 deprecation sunset（`--profile` alias + `codex-dispatch.sh` shim） | P2 |
-| CC-255 | spike rubric + `test_target:` 模糊點修補 | P2 |
 
 ---
 
