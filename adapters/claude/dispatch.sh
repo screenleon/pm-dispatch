@@ -250,11 +250,18 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
   exit 0
 fi
 
-# Refresh latest.* symlinks before launch so observers can attach immediately.
-# 2>/dev/null || true: ln -sfn fails on Windows MSYS when target doesn't yet exist.
-ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
-ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
-ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+# Point latest.* convenience pointers at this run's files. Best-effort: on
+# symlink-less hosts (Windows Git Bash) `ln -s` copy-falls-back, and a missing
+# pointer must never abort dispatch — post-verify reads the per-run footer path
+# (CC-305), not latest.*. Called before launch (Unix observers attach
+# immediately) and again after the run (symlink-less hosts get a usable copy once
+# the targets exist).
+_refresh_latest_pointers() {
+  ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+  ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+  ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+}
+_refresh_latest_pointers
 
 # Run claude in the work dir; brief is delivered on stdin as the prompt. JSON
 # stdout → TRACE (.jsonl); claude stderr → STDERR_LOG. Bounded by timeout.
@@ -280,14 +287,9 @@ if [[ -s "$TRACE" ]]; then
   fi
 fi
 
-# Refresh latest.* convenience pointers now that the per-run files exist. On
-# symlink-less hosts (Windows Git Bash) the pre-launch `ln -s` could not resolve
-# a not-yet-created target; redoing it here lets the copy-fallback produce a
-# usable pointer. Best-effort — never fatal, never load-bearing (post-verify
-# reads the per-run footer path, CC-305).
-ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
-ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
-ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+# Re-point latest.* now that the per-run files exist (usable copies on
+# symlink-less hosts; idempotent symlink refresh on Unix).
+_refresh_latest_pointers
 
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
