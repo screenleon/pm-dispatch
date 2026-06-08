@@ -280,6 +280,15 @@ if [[ -s "$TRACE" ]]; then
   fi
 fi
 
+# Refresh latest.* convenience pointers now that the per-run files exist. On
+# symlink-less hosts (Windows Git Bash) the pre-launch `ln -s` could not resolve
+# a not-yet-created target; redoing it here lets the copy-fallback produce a
+# usable pointer. Best-effort — never fatal, never load-bearing (post-verify
+# reads the per-run footer path, CC-305).
+ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
   _CLAUDE_TOKENS=$(jq -r '((.usage.input_tokens // 0) + (.usage.output_tokens // 0))' "$TRACE" 2>/dev/null || echo 0)

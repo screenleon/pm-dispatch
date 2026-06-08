@@ -381,6 +381,15 @@ fi
 EXIT=$?
 set -e
 
+# Refresh latest.* convenience pointers now that the per-run files exist. On
+# symlink-less hosts (Windows Git Bash) the pre-launch `ln -s` could not resolve
+# a not-yet-created target; redoing it here lets the copy-fallback produce a
+# usable pointer. Best-effort — never fatal, never load-bearing (post-verify
+# reads the per-run footer path, CC-305).
+ln -sfn "codex-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
+ln -sfn "codex-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
+ln -sfn "codex-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
+
 # --- auto-log token usage to usage-tracker.jsonl ---
 if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
   _CODEX_TOKENS=$(jq -rs '
