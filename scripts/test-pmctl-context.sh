@@ -78,7 +78,7 @@ case_context_index_missing_repo() {
   env -u REPO_ROOT bash -c \
     ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index" \
     > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 2 && pass "$name" || true
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
 case_context_index_unknown_flag() {
@@ -88,7 +88,7 @@ case_context_index_unknown_flag() {
   out="$tmp_root/idx-uf.out"; err="$tmp_root/idx-uf.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$REPO_ROOT" --frobnicate > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 2 && pass "$name" || true
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
 case_context_index_creates_db() {
@@ -347,7 +347,7 @@ case_context_query_missing_query() {
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 2 && pass "$name" || true
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
 case_context_query_unknown_flag() {
@@ -361,7 +361,7 @@ case_context_query_unknown_flag() {
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" --bad-flag "search" > "$out" 2> "$err" || status=$?
-  assert_exit "$name" "$status" 2 && pass "$name" || true
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
 case_context_query_known_symbol() {
@@ -411,7 +411,7 @@ case_context_query_unknown_term_exits_0() {
     "$PMCTL" context query "$fix_repo" "xyzzy_term_that_does_not_exist_8675309" \
     > "$out" 2> "$err" || status=$?
 
-  assert_exit "$name" "$status" 0 && pass "$name" || true
+  if assert_exit "$name" "$status" 0; then pass "$name"; fi
 }
 
 case_context_query_like_fallback() {
