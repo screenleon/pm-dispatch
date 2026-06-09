@@ -117,6 +117,6 @@ writer:
 
 # Forbidden writers (aspirational contract; no enforcement test exists yet)
 forbidden:
-  - "any path under $STORE/ written without serialize_with_lock"
+  - "any path under $STORE/ written without serialize_with_lock — EXCEPT derived caches declared rebuildable:true (e.g. repo-index.db), which use SQLite WAL for concurrency instead"
   - "any path under $STORE/ written by code outside the designated writer module (see writer.description above)"
   - "any hard-coded path; all paths must be resolved through this file"

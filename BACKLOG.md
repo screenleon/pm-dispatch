@@ -656,9 +656,9 @@ The ≥3-units threshold and the shared-module / new-interface triggers already 
 
 **Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). They must be indexed separately but emitted through one interface so consumers (`/pm`, `/discover`, reuse-scan, `/mem-search`) read one shape. This is the spine of v0.5.0; it is also the comparison baseline for the codegraph spike (CC-209).
 
-**Requirement**:
-- Define `context_hit_v1` extending the CC-232 context-pack schema: `source_domain` (knowledge / repo / state), `source_type`, `path`, `why_relevant`, `confidence`, `trust_level`, `refs`.
-- Converge sources — repo index (CC-338, the `builtin-index` backend), memory search, `git ls-files` / `git diff` — into `pmctl context pack`. `rg` / `ctags` / `tree-sitter` / codegraph (CC-209) are optional backends, not the baseline.
+**Requirement** (shipped 2026-06-09):
+- Extended CC-232 context-pack schema with `context_hit_v1` optional fields: `source_domain` (enum: knowledge / repo / state), `why_relevant` (string), `trust_level` (enum: high / medium / low), `refs` (string array). `schema_version` changed from `const:2` to `enum:[1,2]` for backward compat.
+- `pmctl context index / update / query` (builtin-index backend). Pack assembler (`pmctl context pack`) is CC-239.
 - FTS5 is optional; a `LIKE` / `grep` fallback is mandatory and tested (Windows Git Bash sqlite3 may lack FTS5).
 
 **Milestone**: v0.5.0 Phase 1 (P1 spine).
