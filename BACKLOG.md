@@ -79,6 +79,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-338 | 🔵 active | **[v0.5.0 P1: lightweight built-in repo index for context-pack（standard Unix toolchain only）]** 以 Bash + awk/sed/grep/find + sqlite3 實作 repo 持久化 index（files / symbols / file_chunks），讓 dispatch 前能產出低 token、高相關度的 context pack，減少 subagent 重複 grep/read。定位介於 CC-237（context-enricher interface）與 CC-209（codegraph external tool）之間——內建 layer，不依賴外部 binary；FTS5-optional + grep fallback。原 CC-328（與 #229 light-alias 撞號）改號至此，見 DECISIONS 2026-06-08。 | ops/token | 2026-06-05 | — | P1 | design |
 | CC-342 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
 | CC-343 | ✅ done | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | pr:#251 | P1 | design |
+| CC-344 | 🟢 someday | **[skill: /research — grounded external research with internal context anchoring]** 新增 `commands/research.md`：補足 `/discover` 純內部掃描的盲區，加入外部研究維度。流程：(1) 自動讀內部相關 memory/decisions 建立錨定；(2) 問使用者 1–2 個定向問題縮小搜尋範圍；(3) 派有 WebSearch 能力的 agent 抓取外部實作與方法；(4) 主線程以內部設計 constraint 過濾結果，標記「可採用」或「與 constraint X 衝突」。目標：讓外部技術知識能有效導入而非淪為噪音。與 `/discover` 互補——discover 看「我們已知但未做的」，research 看「外部有我們還沒想到的」。 | process/DX | 2026-06-09 | — | P3 | design |
 | CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
@@ -1213,6 +1214,35 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 **Milestone**: `🟢 someday` — 實作成本 XS（只需一個 commands/discover.md），可提前於其他 someday 項目。
 
 **Cross-link**: [[CC-220]], [[CC-239]], [[CC-237]], [[CC-338]].
+
+---
+
+## CC-344 — skill: /research — grounded external research with internal context anchoring 🟢 someday
+
+**Problem**: `/discover` 只掃內部 backlog——只能看到「我們已經想到但還沒做」的機會，完全沒有「我們還沒想到的事」這條路。每次想引入外部方法（競品設計、社群實作、學術技術）都要手動搜尋，且搜出來的結果缺乏內部設計 constraint 的過濾，噪音大。
+
+**Why**: 有效的外部研究需要兩個錨：(a) 知道自己「已有什麼」避免重複；(b) 知道「為什麼之前沒做某些事」避免搜到被排除的路。這兩個錨都在內部 memory/decisions 裡，用完全隔離的 agent 搜尋反而丟掉了最有用的 context。正確形狀是：先讀內部建立錨定，再問一個定向問題，最後帶著 constraint 去搜。
+
+**Requirement**:
+- `commands/research.md` — `/research [topic]` skill 定義：
+  1. **內部錨定**：自動讀取與 topic 相關的 memory cards + DECISIONS 段落，建立「已有什麼、哪些路已排除」的 baseline
+  2. **定向問題**：問使用者 1–2 個精準問題縮小搜尋查詢（例：「你說記憶優化，是指 recall 精度、token 壓縮、還是 episodic 連貫性？」）
+  3. **外部搜尋**：派一個有 WebSearch 工具的 agent，帶著定向查詢抓取 3–5 個外部資訊點（實作、論文、社群討論）
+  4. **過濾輸出**：主線程以內部 constraint 過濾，每個外部方法標記「可採用」或「與 [constraint X] 衝突，原因是 [decision Y]」
+- 輸出不是搜尋結果的 dump，而是「可行性評估清單」
+
+**Non-goals**:
+- 不自動開票（使用者決定是否跟進）
+- 不取代 `/discover`（兩者互補：discover 看內部機會，research 看外部方法）
+- 不做完全自由的 web crawl——搜尋查詢必須由定向問題錨定
+
+**Relationship**:
+- 互補於 `/discover`（CC-343）——discover 是內部發散，research 是外部引入
+- 未來可與 CC-338 repo index 整合：錨定時加入 repo 層的「已有哪些 helper/pattern」
+
+**Milestone**: `🟢 someday` — 需要 WebSearch agent 能力，設計依賴 `/discover` 先落地驗證發散模式形狀。
+
+**Cross-link**: [[CC-343]], [[CC-237]], [[CC-340]].
 
 ---
 
