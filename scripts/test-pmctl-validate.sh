@@ -140,11 +140,30 @@ case_validate_brief_unknown_flag() {
   fi
 }
 
+case_validate_brief_double_dash_separator() {
+  local name="pmctl validate brief: -- separator works as file path prefix"
+  should_run "$name" || return 0
+  # Behavior: validate brief accepts -- as an explicit separator; the next argument is treated as the file path.
+  # Steps: write a valid brief; invoke validate brief -- <file>; assert exit 0 and "ok:" in stdout.
+  local brief out err status=0
+  brief="$tmp_root/dd-brief.md"
+  out="$tmp_root/vb-dd.out"
+  err="$tmp_root/vb-dd.err"
+  write_valid_brief "$brief"
+  "$PMCTL" validate brief -- "$brief" > "$out" 2> "$err" && status=$? || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q "^ok:" "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with 'ok:' line, got $status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_validate_brief_accepts_valid
 case_validate_brief_missing_file
 case_validate_brief_missing_arg
 case_validate_brief_no_block
 case_validate_brief_invalid_executor
 case_validate_brief_unknown_flag
+case_validate_brief_double_dash_separator
 
 th_summary

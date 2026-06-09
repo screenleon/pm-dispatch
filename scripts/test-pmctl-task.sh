@@ -788,6 +788,24 @@ case_task_claim_missing_id() {
   fi
 }
 
+case_task_claim_unexpected_argument() {
+  local name="pmctl task claim: exits 2 for unexpected argument after task id"
+  should_run "$name" || return 0
+  # Behavior: task claim rejects trailing unknown arguments with a usage error.
+  # Steps: create CC-512; invoke task claim CC-512 extra-arg; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/claim-ua-store"
+  out="$tmp_root/claim-ua.out"
+  err="$tmp_root/claim-ua.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-512 --title "ua test" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-512 extra-arg && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # dispatch (task sub)
 # ---------------------------------------------------------------------------
@@ -863,6 +881,23 @@ case_task_dispatch_sub_missing_agent() {
   fi
 }
 
+case_task_dispatch_sub_not_found() {
+  local name="pmctl task dispatch: exits 2 when task not found"
+  should_run "$name" || return 0
+  # Behavior: task dispatch for a non-existent task ID exits with an error.
+  # Steps: invoke task dispatch CC-598 --agent codex on an empty store; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/tdispatch-nf-store"
+  out="$tmp_root/tdispatch-nf.out"
+  err="$tmp_root/tdispatch-nf.err"
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-598 --agent codex && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
@@ -918,6 +953,23 @@ case_task_status_not_found() {
   out="$tmp_root/status-nf.out"
   err="$tmp_root/status-nf.err"
   run_task_cmd "$store" "$out" "$err" task status CC-599 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_status_missing_id() {
+  local name="pmctl task status: exits 2 when task id missing"
+  should_run "$name" || return 0
+  # Behavior: task status with no task ID argument exits with a usage error.
+  # Steps: invoke task status with no arguments; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/status-mi-store"
+  out="$tmp_root/status-mi.out"
+  err="$tmp_root/status-mi.err"
+  run_task_cmd "$store" "$out" "$err" task status && status=$? || status=$?
   if [[ "$status" -eq 2 ]]; then
     pass "$name"
   else
@@ -1021,18 +1073,58 @@ case_task_review_no_result_defaults_to_done() {
   fi
 }
 
+case_task_review_missing_id() {
+  local name="pmctl task review: exits 2 when task id missing"
+  should_run "$name" || return 0
+  # Behavior: task review with no task ID argument exits with a usage error.
+  # Steps: invoke task review with no arguments; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/review-mi-store"
+  out="$tmp_root/review-mi.out"
+  err="$tmp_root/review-mi.err"
+  run_task_cmd "$store" "$out" "$err" task review && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_review_missing_result_value() {
+  local name="pmctl task review: exits 2 when --result has no value"
+  should_run "$name" || return 0
+  # Behavior: task review exits 2 when --result is given without a following value.
+  # Steps: create CC-513; invoke task review CC-513 --result with no value; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/review-mrv-store"
+  out="$tmp_root/review-mrv.out"
+  err="$tmp_root/review-mrv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-513 --title "missing result val" || true
+  run_task_cmd "$store" "$out" "$err" task review CC-513 --result && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
 case_task_claim_transitions_to_claimed
 case_task_claim_not_found
 case_task_claim_missing_id
+case_task_claim_unexpected_argument
 case_task_dispatch_sub_transitions_to_in_progress
 case_task_dispatch_sub_records_brief_file
 case_task_dispatch_sub_missing_agent
+case_task_dispatch_sub_not_found
 case_task_status_shows_task_and_events
 case_task_status_json_includes_recent_events
 case_task_status_not_found
+case_task_status_missing_id
 case_task_review_transitions_to_done
 case_task_review_with_note
 case_task_review_invalid_result
 case_task_review_no_result_defaults_to_done
+case_task_review_missing_id
+case_task_review_missing_result_value
 
 th_summary

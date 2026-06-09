@@ -122,10 +122,28 @@ case_safe_bash_denied_role_exits_nonzero() {
   fi
 }
 
+case_safe_bash_double_dash_separator() {
+  local name="pmctl safe bash: -- separator passes remaining args as command"
+  should_run "$name" || return 0
+  # Behavior: safe bash accepts -- as an explicit separator; everything after it is treated as the command.
+  # Steps: invoke safe bash --role executor --runtime codex -- "git status --short"; assert exit 0.
+  local out err status=0
+  out="$tmp_root/safe-dd.out"
+  err="$tmp_root/safe-dd.err"
+  run_safe_cmd "$out" "$err" safe bash \
+    --role executor --runtime codex -- "git status --short" && status=$? || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, got $status err=$(<"$err")"
+  fi
+}
+
 case_safe_bash_missing_role
 case_safe_bash_missing_runtime
 case_safe_bash_missing_command
 case_safe_bash_unknown_flag
+case_safe_bash_double_dash_separator
 case_safe_bash_allowed_command_executes
 case_safe_bash_denied_role_exits_nonzero
 

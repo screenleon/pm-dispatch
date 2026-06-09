@@ -218,6 +218,14 @@ bash scripts/brief-validate.sh <brief-file>
 
 Validates required fields (`schema_version`, `working_dir`, `goal`, `files`, `acceptance`) and enforces `self_verify` for file-writing briefs. Exits 0 = VALID; exits 1 = REJECT with reason. Run before dispatching to catch schema errors without wasting a full codex execution.
 
+**Quick check via pmctl:** `pmctl dispatch run` runs this validation automatically, but you can also run the lighter handover-block check standalone:
+
+```bash
+pmctl validate brief <brief-file>
+```
+
+Exit codes: `0` = valid handover block; `1` = invalid block or metadata; `2` = usage error or file not found. This is read-only — no state is written. Use it to verify a hand-authored brief before committing to a full dispatch.
+
 ### Phase 2 — Dispatch (executor-specific)
 
 ```bash
