@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pmctl-context.sh — builtin repo-index commands: index / update / query.
 # Sources state-writer.sh for path resolution (_sw_store_root / _sw_project_key) only.
-# Does NOT call serialize_with_lock; index DB is a derived cache — flock sufficient.
+# Does NOT call serialize_with_lock; index DB is a derived cache — SQLite WAL provides concurrency guarantees.
 # MUST NOT source pmctl-dispatch.sh or any adapter module.
 
 _CTX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -205,6 +205,25 @@ _ctx_sql_str() {
   printf '%s' "${s//\'/\'\'}"
 }
 
+# ── context_hit_v1 YAML emitter ───────────────────────────────────────────────
+#
+# Single entry point for emitting context_hit_v1 YAML blocks.
+# Sanitizes why_relevant to produce valid YAML single-quoted scalars:
+# strips newlines/CRs, escapes single quotes by doubling.
+
+_ctx_emit_hit() {
+  local ref="$1" source_domain="$2" why_relevant="$3" confidence="$4" trust_level="$5"
+  local safe_why="${why_relevant//$'\n'/ }"
+  safe_why="${safe_why//$'\r'/ }"
+  safe_why="${safe_why//\'/\'\'}"
+  printf -- '- ref: %s\n'         "$ref"
+  printf    '  source: builtin-index\n'
+  printf    '  source_domain: %s\n'  "$source_domain"
+  printf    "  why_relevant: '%s'\n" "$safe_why"
+  printf    '  confidence: %s\n'     "$confidence"
+  printf    '  trust_level: %s\n'    "$trust_level"
+}
+
 # ── SQL generation for one file (no BEGIN/COMMIT, no sqlite3 call) ────────────
 #
 # Outputs the SQL statements for one file to stdout.
@@ -358,6 +377,9 @@ pmctl_context_index() {
     [[ -f "$abs_path" ]] || continue
     local rel_path="${abs_path#"$repo_root/"}"
 
+    # Incremental contract: mtime-only skip. sha1 is stored for debugging but
+    # is NOT used for change detection; content changes with a preserved mtime
+    # will not trigger a re-index. This is the documented, tested semantics.
     local cur_mtime
     cur_mtime="$(_ctx_file_mtime "$abs_path")"
     if [[ "${_ctx_db_mtimes[$rel_path]+_}" == '_' && "${_ctx_db_mtimes[$rel_path]}" == "$cur_mtime" ]]; then
@@ -441,16 +463,38 @@ pmctl_context_update() {
   fi
 
   if [[ -n "$target_path" ]]; then
-    # Re-index a specific file only
-    local abs_path
-    abs_path="$repo_root/$target_path"
-    [[ -f "$abs_path" ]] || abs_path="$target_path"
-    if [[ ! -f "$abs_path" ]]; then
+    # Re-index a specific file — path must resolve within repo_root.
+    # Canonicalize repo_root (follow symlinks) for a reliable prefix check.
+    local canon_root
+    canon_root="$(cd "$repo_root" 2>/dev/null && pwd -P 2>/dev/null || printf '%s' "$repo_root")"
+
+    # Build absolute candidate: absolute paths stay as-is, relative join to canon_root.
+    local candidate
+    if [[ "${target_path:0:1}" == "/" ]]; then
+      candidate="$target_path"
+    else
+      candidate="$canon_root/$target_path"
+    fi
+
+    # Resolve .. (does not require file to exist); realpath_m from portable.sh.
+    local real_path
+    real_path="$(realpath_m "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+
+    # Enforce repo-root containment.
+    case "$real_path" in
+      "$canon_root"/*) ;;
+      *)
+        printf 'pmctl context update: path outside repo: %s\n' "$target_path" >&2
+        return 2
+        ;;
+    esac
+
+    if [[ ! -f "$real_path" ]]; then
       printf 'pmctl context update: file not found: %s\n' "$target_path" >&2
       return 1
     fi
-    local rel_path="${abs_path#"$repo_root/"}"
-    _ctx_index_file "$db" "$abs_path" "$rel_path"
+    local rel_path="${real_path#"$canon_root/"}"
+    _ctx_index_file "$db" "$real_path" "$rel_path"
     _ctx_fts_rebuild "$db"
     printf 'context update: re-indexed %s\n' "$rel_path"
   else
@@ -527,12 +571,7 @@ pmctl_context_query() {
     [[ -n "$path" ]] || continue
     [[ "$first" -eq 0 ]] && printf '\n'
     first=0
-    printf -- '- ref: %s:%s\n'     "$path" "$line_start"
-    printf '  source: builtin-index\n'
-    printf '  source_domain: repo\n'
-    printf '  why_relevant: "symbol: %s (%s)"\n' "$name" "$kind"
-    printf '  confidence: 0.85\n'
-    printf '  trust_level: high\n'
+    _ctx_emit_hit "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
     hits=$((hits + 1))
   done < <(sqlite3 -separator $'\t' "$db" \
     "SELECT f.path, s.name, s.kind, s.line_start
@@ -555,17 +594,11 @@ pmctl_context_query() {
       "$eq" > "$fts_tmpf"
     while IFS=$'\t' read -r ref text; do
       [[ -n "$ref" ]] || continue
-      # Skip refs already emitted via symbols LIKE search (avoid duplicates)
       [[ "$first" -eq 0 ]] && printf '\n'
       first=0
       local snippet
       snippet="$(printf '%s' "$text" | head -c 80 | tr '\n' ' ')"
-      printf -- '- ref: %s\n'        "$ref"
-      printf '  source: builtin-index\n'
-      printf '  source_domain: repo\n'
-      printf '  why_relevant: "fts5 match: %s"\n' "$snippet"
-      printf '  confidence: 0.75\n'
-      printf '  trust_level: medium\n'
+      _ctx_emit_hit "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
       hits=$((hits + 1))
     done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
     rm -f "$fts_tmpf"
@@ -575,12 +608,7 @@ pmctl_context_query() {
       [[ -n "$path" ]] || continue
       [[ "$first" -eq 0 ]] && printf '\n'
       first=0
-      printf -- '- ref: %s:%s\n'     "$path" "$line_start"
-      printf '  source: builtin-index\n'
-      printf '  source_domain: repo\n'
-      printf '  why_relevant: "text match in chunk"\n'
-      printf '  confidence: 0.7\n'
-      printf '  trust_level: medium\n'
+      _ctx_emit_hit "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
       hits=$((hits + 1))
     done < <(sqlite3 -separator $'\t' "$db" \
       "SELECT f.path, fc.line_start

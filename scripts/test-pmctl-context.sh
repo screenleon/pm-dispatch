@@ -221,6 +221,110 @@ case_context_update_no_path_full_scan() {
   fi
 }
 
+case_context_update_absolute_path_rejected() {
+  local name="pmctl context update: absolute path outside repo is rejected"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-abs"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/upd-abs.out"; err="$tmp_root/upd-abs.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context update "$fix_repo" /etc/passwd > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for absolute path; got $status err=$(<"$err")"; return 0
+  fi
+
+  # Confirm no /etc/passwd row was written to DB
+  local db
+  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  if [[ -n "$db" && -f "$db" ]]; then
+    local row
+    row="$(sqlite3 "$db" "SELECT path FROM files WHERE path LIKE '%etc/passwd%';" 2>/dev/null || true)"
+    if [[ -n "$row" ]]; then
+      fail "$name" "unexpected DB row for /etc/passwd: $row"; return 0
+    fi
+  fi
+  pass "$name"
+}
+
+case_context_update_traversal_rejected() {
+  local name="pmctl context update: traversal path outside repo is rejected"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-trav"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/upd-trav.out"; err="$tmp_root/upd-trav.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context update "$fix_repo" '../../etc/passwd' > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for traversal; got $status err=$(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  if [[ -n "$db" && -f "$db" ]]; then
+    local row
+    row="$(sqlite3 "$db" "SELECT path FROM files WHERE path LIKE '%etc/passwd%';" 2>/dev/null || true)"
+    if [[ -n "$row" ]]; then
+      fail "$name" "unexpected DB row after traversal rejection: $row"; return 0
+    fi
+  fi
+  pass "$name"
+}
+
+case_context_index_mtime_only_contract() {
+  local name="pmctl context index: mtime-only skip contract (preserved mtime skips re-index)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-mtime"
+  make_fixture_repo "$fix_repo"
+
+  # Initial index
+  local out1 err1 status=0
+  out1="$tmp_root/mtime-idx1.out"; err1="$tmp_root/mtime-idx1.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out1" 2> "$err1" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "initial index failed: $(<"$err1")"; return 0
+  fi
+
+  # Modify content of one file but restore its original mtime
+  local target="$fix_repo/main.py"
+  local orig_mtime
+  orig_mtime="$(stat -c '%Y' "$target" 2>/dev/null || stat -f '%m' "$target" 2>/dev/null || printf '0')"
+  printf '\n# modified\n' >> "$target"
+  touch -d "@$orig_mtime" "$target" 2>/dev/null || true  # restore mtime
+
+  # Second index — file should be skipped (mtime unchanged)
+  local out2 err2
+  out2="$tmp_root/mtime-idx2.out"; err2="$tmp_root/mtime-idx2.err"
+  status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out2" 2> "$err2" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second index failed: $(<"$err2")"; return 0
+  fi
+
+  # All files should be skipped (mtime-only semantics: content change not detected)
+  if grep -qE '^context index: 0 indexed, [1-9][0-9]* skipped' "$out2"; then
+    pass "$name"
+  else
+    fail "$name" "mtime-only contract violated; expected 0 indexed; got: $(<"$out2")"
+  fi
+}
+
 case_context_query_missing_query() {
   local name="pmctl context query: exits 2 when query string is missing"
   should_run "$name" || return 0
@@ -437,6 +541,9 @@ case_context_index_creates_db
 case_context_index_incremental_skip
 case_context_update_specific_path
 case_context_update_no_path_full_scan
+case_context_update_absolute_path_rejected
+case_context_update_traversal_rejected
+case_context_index_mtime_only_contract
 case_context_query_missing_query
 case_context_query_unknown_flag
 case_context_query_known_symbol

@@ -70,9 +70,8 @@ project_partition:
 
     - path: "repo-index.db"
       format: sqlite
-      description: "Builtin repo symbol index (files / symbols / file_chunks). Derived cache — rebuilable from source tree; written by pmctl-context.sh with flock, NOT serialize_with_lock."
+      description: "Builtin repo symbol index (files / symbols / file_chunks). Derived cache — rebuilable from source tree; concurrency handled by SQLite WAL, NOT serialize_with_lock."
       rebuilable: true
-      lock: repo-index.db.lock
 
   subdirs:
     - path: "tasks/"
