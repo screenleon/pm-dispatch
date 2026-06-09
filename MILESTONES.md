@@ -40,8 +40,8 @@
 | CC-343 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求（原 CC-330，撞號改號，見 Phase 0） | ✅ pr:#251 |
 | CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入；同時作為 knowledge 面的 content 來源 | P3 |
 | CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
-| CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | P2 |
-| CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | P2 |
+| CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | ✅ pr:#252 |
+| CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | ✅ pr:#252 |
 
 ### Phase 3 — hygiene / deprecation（P2-P3）
 

@@ -353,6 +353,300 @@ _pmctl_task_update_locked() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# claim / dispatch / status / review — semantic lifecycle operations
+# ---------------------------------------------------------------------------
+
+# Emit a task event with an arbitrary pre-built payload JSON object.
+# Complements _pmctl_emit_task_event (from_state/to_state pairs only) for
+# richer events (task.dispatched, task.reviewed) that carry domain-specific fields.
+_pmctl_emit_task_event_payload() {
+  local repo_root="$1" kind="$2" task_id="$3" payload_json="${4:-null}"
+  local evt_id ts event_json
+  evt_id="$(_pmctl_gen_event_id)"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  event_json="$(jq -cn \
+    --arg id "$evt_id" --arg ts "$ts" --arg kind "$kind" \
+    --arg subject_id "$task_id" --argjson payload "$payload_json" \
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,subject_type:"task",subject_id:$subject_id,actor:"pmctl",payload:$payload}')" || return $?
+  _SW_REPO_ROOT="$repo_root" events_append "$event_json" || {
+    printf 'pmctl task: event %s for %s failed to append to events.jsonl\n' "$kind" "$task_id" >&2
+    return 1
+  }
+}
+
+# Enforce the documented lifecycle FSM (open → claimed → in-progress → done) for
+# the semantic commands. Called inside the per-task lock so the from-state read
+# and the rejection decision are atomic with the write that follows. Returns 2
+# (usage-class) on a disallowed transition; `task update --state` remains the raw
+# override for out-of-band corrections (blocked/dropped, re-open, etc.).
+_pmctl_task_require_state() {
+  local cmd="$1" task_id="$2" actual="$3" expected="$4"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'pmctl task %s: invalid transition: %s is in state %s, expected %s\n' \
+      "$cmd" "$task_id" "${actual:-<none>}" "$expected" >&2
+    return 2
+  fi
+}
+
+# --- task claim ---
+
+pmctl_task_usage_claim() {
+  printf 'usage: pmctl task claim <ID>\n' >&2
+}
+
+_pmctl_task_claim_locked() {
+  local task_file="$1" updated_ts="$2" task_id="$3" repo_root="$4"
+  local old_state old_json json_line
+  old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state claim "$task_id" "$old_state" "open" || return $?
+  old_json="$(cat "$task_file" 2>/dev/null)" || return $?
+  json_line="$(jq -c --arg ts "$updated_ts" \
+    '.state = "claimed" | .updated_ts = $ts' "$task_file")" || return $?
+  pmctl_task_validate_json "$json_line" || return $?
+  _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$json_line" || return $?
+  local payload
+  payload="$(jq -cn --arg f "$old_state" --arg t "claimed" '{from_state:$f,to_state:$t}')"
+  _pmctl_emit_task_event_payload "$repo_root" "task.claimed" "$task_id" "$payload" || {
+    _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$old_json" 2>/dev/null || \
+      printf 'pmctl task claim: rollback FAILED for %s — repair manually\n' "$task_id" >&2
+    return 1
+  }
+}
+
+pmctl_task_claim() {
+  local repo_root="${1:-}" task_id="${2:-}"
+  shift 2 || true
+  pmctl_task_require_jq claim || return $?
+  if [[ -z "$task_id" ]]; then
+    printf 'pmctl task claim: missing task id\n' >&2
+    pmctl_task_usage_claim; return 2
+  fi
+  while [[ $# -gt 0 ]]; do
+    printf 'pmctl task claim: unexpected argument: %s\n' "$1" >&2
+    pmctl_task_usage_claim; return 2
+  done
+  if ! pmctl_task_valid_id "$task_id"; then
+    printf 'pmctl task claim: invalid task id: %s\n' "$task_id" >&2; return 2
+  fi
+  local proj_dir task_file updated_ts
+  proj_dir="$(pmctl_task_project_dir "$repo_root")" || return $?
+  task_file="${proj_dir%/}/tasks/${task_id}.json"
+  if [[ ! -f "$task_file" ]]; then
+    printf 'pmctl task claim: task not found: %s\n' "$task_id" >&2; return 2
+  fi
+  updated_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  serialize_with_lock "${proj_dir%/}/tasks/${task_id}" \
+    _pmctl_task_claim_locked "$task_file" "$updated_ts" "$task_id" "$repo_root" || return $?
+  printf '%s\n' "$task_id"
+}
+
+# --- task dispatch ---
+
+pmctl_task_usage_dispatch_sub() {
+  printf 'usage: pmctl task dispatch <ID> --agent <AGENT> [--brief-file <PATH>]\n' >&2
+}
+
+_pmctl_task_dispatch_sub_locked() {
+  local task_file="$1" updated_ts="$2" task_id="$3" repo_root="$4" \
+        agent="$5" brief_file="$6"
+  local old_state old_json json_line
+  old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state dispatch "$task_id" "$old_state" "claimed" || return $?
+  old_json="$(cat "$task_file" 2>/dev/null)" || return $?
+  json_line="$(jq -c \
+    --arg ts "$updated_ts" --arg agent "$agent" --arg brief "$brief_file" \
+    '.state = "in-progress" | .updated_ts = $ts | .dispatched_to = $agent
+     | if $brief != "" then .brief_file = $brief else . end' "$task_file")" || return $?
+  pmctl_task_validate_json "$json_line" || return $?
+  _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$json_line" || return $?
+  local payload
+  payload="$(jq -cn --arg f "$old_state" --arg t "in-progress" --arg a "$agent" \
+    '{from_state:$f,to_state:$t,agent:$a}')"
+  _pmctl_emit_task_event_payload "$repo_root" "task.dispatched" "$task_id" "$payload" || {
+    _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$old_json" 2>/dev/null || \
+      printf 'pmctl task dispatch: rollback FAILED for %s — repair manually\n' "$task_id" >&2
+    return 1
+  }
+}
+
+pmctl_task_dispatch_sub() {
+  local repo_root="${1:-}" task_id="${2:-}" agent="" brief_file=""
+  shift 2 || true
+  pmctl_task_require_jq dispatch || return $?
+  if [[ -z "$task_id" ]]; then
+    printf 'pmctl task dispatch: missing task id\n' >&2
+    pmctl_task_usage_dispatch_sub; return 2
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --agent)
+        [[ $# -lt 2 ]] && { printf 'pmctl task dispatch: missing value for --agent\n' >&2; return 2; }
+        agent="$2"; shift 2 ;;
+      --brief-file)
+        [[ $# -lt 2 ]] && { printf 'pmctl task dispatch: missing value for --brief-file\n' >&2; return 2; }
+        brief_file="$2"; shift 2 ;;
+      *)
+        printf 'pmctl task dispatch: unknown flag: %s\n' "$1" >&2
+        pmctl_task_usage_dispatch_sub; return 2 ;;
+    esac
+  done
+  if ! pmctl_task_valid_id "$task_id"; then
+    printf 'pmctl task dispatch: invalid task id: %s\n' "$task_id" >&2; return 2
+  fi
+  if [[ -z "$agent" ]]; then
+    printf 'pmctl task dispatch: missing --agent\n' >&2
+    pmctl_task_usage_dispatch_sub; return 2
+  fi
+  local proj_dir task_file updated_ts
+  proj_dir="$(pmctl_task_project_dir "$repo_root")" || return $?
+  task_file="${proj_dir%/}/tasks/${task_id}.json"
+  if [[ ! -f "$task_file" ]]; then
+    printf 'pmctl task dispatch: task not found: %s\n' "$task_id" >&2; return 2
+  fi
+  updated_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  serialize_with_lock "${proj_dir%/}/tasks/${task_id}" \
+    _pmctl_task_dispatch_sub_locked "$task_file" "$updated_ts" "$task_id" "$repo_root" \
+    "$agent" "$brief_file" || return $?
+  printf '%s\n' "$task_id"
+}
+
+# --- task status ---
+
+pmctl_task_usage_status() {
+  printf 'usage: pmctl task status <ID> [--json]\n' >&2
+}
+
+pmctl_task_status() {
+  local repo_root="${1:-}" task_id="${2:-}" json=0
+  shift 2 || true
+  pmctl_task_require_jq status || return $?
+  if [[ -z "$task_id" ]]; then
+    printf 'pmctl task status: missing task id\n' >&2
+    pmctl_task_usage_status; return 2
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      *)
+        printf 'pmctl task status: unknown flag: %s\n' "$1" >&2
+        pmctl_task_usage_status; return 2 ;;
+    esac
+  done
+  if ! pmctl_task_valid_id "$task_id"; then
+    printf 'pmctl task status: invalid task id: %s\n' "$task_id" >&2; return 2
+  fi
+  local proj_dir task_file events_file
+  proj_dir="$(pmctl_task_project_dir "$repo_root")" || return $?
+  task_file="${proj_dir%/}/tasks/${task_id}.json"
+  if [[ ! -f "$task_file" ]]; then
+    printf 'pmctl task status: task not found: %s\n' "$task_id" >&2; return 2
+  fi
+  events_file="${proj_dir%/}/events.jsonl"
+  if [[ "$json" -eq 1 ]]; then
+    local task_json events_arr
+    task_json="$(jq -c . "$task_file")"
+    if [[ -f "$events_file" ]]; then
+      events_arr="$(jq -c --arg id "$task_id" \
+        'select(.subject_id == $id)' "$events_file" | tail -5 | jq -sc '.')"
+    else
+      events_arr="[]"
+    fi
+    jq -cn --argjson task "$task_json" --argjson events "$events_arr" \
+      '{task:$task,recent_events:$events}'
+  else
+    pmctl_task_human_line < "$task_file"
+    if [[ -f "$events_file" ]]; then
+      local evts
+      evts="$(jq -r --arg id "$task_id" \
+        'select(.subject_id == $id) | "\(.ts)  \(.kind)"' "$events_file" | tail -5)"
+      if [[ -n "$evts" ]]; then
+        printf 'recent events:\n'
+        while IFS= read -r line; do
+          printf '  %s\n' "$line"
+        done <<< "$evts"
+      fi
+    fi
+  fi
+}
+
+# --- task review ---
+
+pmctl_task_usage_review() {
+  printf 'usage: pmctl task review <ID> [--result pass|fail|partial] [--note <TEXT>]\n' >&2
+}
+
+_pmctl_task_valid_review_result() {
+  case "${1:-}" in
+    pass|fail|partial|"") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_pmctl_task_review_locked() {
+  local task_file="$1" updated_ts="$2" task_id="$3" repo_root="$4" \
+        result="$5" note="$6"
+  local old_state old_json json_line
+  old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state review "$task_id" "$old_state" "in-progress" || return $?
+  old_json="$(cat "$task_file" 2>/dev/null)" || return $?
+  json_line="$(jq -c \
+    --arg ts "$updated_ts" --arg result "$result" --arg note "$note" \
+    '.state = "done" | .updated_ts = $ts
+     | if $result != "" then .review_result = $result else . end
+     | if $note != "" then .review_note = $note else . end' "$task_file")" || return $?
+  pmctl_task_validate_json "$json_line" || return $?
+  _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$json_line" || return $?
+  local payload
+  payload="$(jq -cn --arg f "$old_state" --arg t "done" --arg r "$result" \
+    '{from_state:$f,to_state:$t} | if $r != "" then . + {result:$r} else . end')"
+  _pmctl_emit_task_event_payload "$repo_root" "task.reviewed" "$task_id" "$payload" || {
+    _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$old_json" 2>/dev/null || \
+      printf 'pmctl task review: rollback FAILED for %s — repair manually\n' "$task_id" >&2
+    return 1
+  }
+}
+
+pmctl_task_review() {
+  local repo_root="${1:-}" task_id="${2:-}" result="" note=""
+  shift 2 || true
+  pmctl_task_require_jq review || return $?
+  if [[ -z "$task_id" ]]; then
+    printf 'pmctl task review: missing task id\n' >&2
+    pmctl_task_usage_review; return 2
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --result)
+        [[ $# -lt 2 ]] && { printf 'pmctl task review: missing value for --result\n' >&2; return 2; }
+        result="$2"; shift 2 ;;
+      --note)
+        [[ $# -lt 2 ]] && { printf 'pmctl task review: missing value for --note\n' >&2; return 2; }
+        note="$2"; shift 2 ;;
+      *)
+        printf 'pmctl task review: unknown flag: %s\n' "$1" >&2
+        pmctl_task_usage_review; return 2 ;;
+    esac
+  done
+  if ! pmctl_task_valid_id "$task_id"; then
+    printf 'pmctl task review: invalid task id: %s\n' "$task_id" >&2; return 2
+  fi
+  if ! _pmctl_task_valid_review_result "$result"; then
+    printf 'pmctl task review: invalid --result: %s (want pass|fail|partial)\n' "$result" >&2; return 2
+  fi
+  local proj_dir task_file updated_ts
+  proj_dir="$(pmctl_task_project_dir "$repo_root")" || return $?
+  task_file="${proj_dir%/}/tasks/${task_id}.json"
+  if [[ ! -f "$task_file" ]]; then
+    printf 'pmctl task review: task not found: %s\n' "$task_id" >&2; return 2
+  fi
+  updated_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  serialize_with_lock "${proj_dir%/}/tasks/${task_id}" \
+    _pmctl_task_review_locked "$task_file" "$updated_ts" "$task_id" "$repo_root" \
+    "$result" "$note" || return $?
+  printf '%s\n' "$task_id"
+}
+
 pmctl_task_update() {
   local repo_root="${1:-}" task_id="${2:-}" title="" state="" priority="" epic="" area="" backlog_ref=""
   local set_title=0 set_state=0 set_priority=0 set_epic=0 set_area=0 set_backlog_ref=0

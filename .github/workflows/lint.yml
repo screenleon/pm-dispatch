@@ -179,8 +179,12 @@ jobs:
             test-pmctl-gate.sh
             pmctl-gate.sh
             pmctl-task.sh
+            pmctl-safe.sh
+            pmctl-validate.sh
             pmctl-decision.sh
             test-pmctl-task.sh
+            test-pmctl-safe.sh
+            test-pmctl-validate.sh
             test-pmctl-decision.sh
 
   test-doctor:
@@ -372,6 +376,27 @@ jobs:
       - uses: actions/checkout@v6
       - name: pmctl gate run regression suite
         run: bash scripts/test-pmctl-gate.sh
+
+  test-pmctl-task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl task lifecycle regression suite
+        run: bash scripts/test-pmctl-task.sh
+
+  test-pmctl-safe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl safe bash regression suite
+        run: bash scripts/test-pmctl-safe.sh
+
+  test-pmctl-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl validate brief regression suite
+        run: bash scripts/test-pmctl-validate.sh
 
   lint-backlog:
     runs-on: ubuntu-latest

@@ -47,6 +47,22 @@
     "updated_ts": {
       "type": "string",
       "format": "date-time"
+    },
+    "dispatched_to": {
+      "type": "string",
+      "description": "Agent name recorded when task transitions to in-progress via task dispatch."
+    },
+    "brief_file": {
+      "type": "string",
+      "description": "Optional brief file path recorded at dispatch time."
+    },
+    "review_result": {
+      "enum": ["pass", "fail", "partial"],
+      "description": "Review outcome recorded when task transitions to done via task review."
+    },
+    "review_note": {
+      "type": "string",
+      "description": "Optional reviewer note recorded at review time."
     }
   },
   "additionalProperties": false

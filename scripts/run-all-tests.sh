@@ -55,6 +55,8 @@ SUITE_NAMES=(
   test-pmctl-task
   test-pmctl-decision
   test-pmctl-gate
+  test-pmctl-safe
+  test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
 )
@@ -105,6 +107,8 @@ declare -A SUITE_PATHS=(
   [test-pmctl-task]="scripts/test-pmctl-task.sh"
   [test-pmctl-decision]="scripts/test-pmctl-decision.sh"
   [test-pmctl-gate]="scripts/test-pmctl-gate.sh"
+  [test-pmctl-safe]="scripts/test-pmctl-safe.sh"
+  [test-pmctl-validate]="scripts/test-pmctl-validate.sh"
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
 )

@@ -110,6 +110,48 @@ The surface is **fail-closed**: a success exit (`0`) always means a registered p
 | `2` | usage error (bad/missing flags) **or** a registered policy **denied** the action (the hook's own deny exit is propagated) |
 | `3` | request recognized but **no policy registered** to evaluate it — `pm/pre-bash` (project-pm never runs Bash), `executor` + `runtime=claude` + `pre-bash` (claude-executor self-executes under harness perms; no dispatch-guard bash policy), and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". |
 
+### `pmctl guard check` vs `pmctl safe bash`
+
+These two surfaces share the same policy engine but serve different purposes and must not be substituted for each other:
+
+| Surface | Purpose | Executes a command? |
+|---|---|---|
+| `pmctl guard check` | Introspection-only policy query | No |
+| `pmctl safe bash` | Atomic guard check + execution | Yes |
+
+**`pmctl guard check`** queries the policy and exits. It does not run any command. Legitimate uses:
+- PR gate pre-write verification (`pmctl guard check --role reviewer --runtime claude --event pre-write`)
+- Pre-flight sanity checks before setting up a multi-step workflow
+- Debugging: testing what the policy would decide without side effects
+
+**`pmctl safe bash`** is the enforcement path for any bash execution under policy. It calls the guard internally, and only runs the command if the guard permits. Guard check and exec are atomic — there is no window between them.
+
+```
+usage: pmctl safe bash --role <ROLE> --runtime <RUNTIME> [--] <COMMAND>
+```
+
+**Anti-pattern — never use `guard check` as a gate for manual exec:**
+
+```bash
+# WRONG: not atomic — policy could be bypassed between check and exec
+pmctl guard check --role executor --runtime codex --event pre-bash --command "$cmd" && bash -c "$cmd"
+```
+
+Use `pmctl safe bash` instead:
+
+```bash
+# CORRECT: guard and exec are one atomic operation
+pmctl safe bash --role executor --runtime codex "$cmd"
+```
+
+The bypass risk: a caller that uses `guard check` alone and then manually executes the command is not enforced — the policy check is advisory, not a barrier. `pmctl safe bash` is the only surface that atomically checks and runs. On the deny path it propagates the guard's own exit status unchanged so callers can tell a refusal apart from a fail-closed enforcement gap:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Allowed and executed — the command's own exit status is returned |
+| `2` | Guard denied the command (policy blocked it), or a usage error — command not run |
+| `3` | No policy registered for this role/runtime/event — fail-closed deny, command not run |
+
 ## Selection
 
 Executor profile is an install-time choice (`codex` full profile versus `claude` minimal profile). PM continues writing briefs against the abstract contract, and the runtime profile determines execution behavior. Per-brief override via `executor: ...` is part of the handover metadata contract.

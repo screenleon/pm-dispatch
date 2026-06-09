@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision pmctl-gate; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision pmctl-gate pmctl-safe pmctl-validate; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -98,6 +98,42 @@ case "$cmd/$sub" in
       pmctl_die "task update unavailable"
     fi
     pmctl_task_update "$REPO_ROOT" "$@"
+    ;;
+  task/claim)
+    if ! declare -F pmctl_task_claim >/dev/null; then
+      pmctl_die "task claim unavailable"
+    fi
+    pmctl_task_claim "$REPO_ROOT" "$@"
+    ;;
+  task/dispatch)
+    if ! declare -F pmctl_task_dispatch_sub >/dev/null; then
+      pmctl_die "task dispatch unavailable"
+    fi
+    pmctl_task_dispatch_sub "$REPO_ROOT" "$@"
+    ;;
+  task/status)
+    if ! declare -F pmctl_task_status >/dev/null; then
+      pmctl_die "task status unavailable"
+    fi
+    pmctl_task_status "$REPO_ROOT" "$@"
+    ;;
+  task/review)
+    if ! declare -F pmctl_task_review >/dev/null; then
+      pmctl_die "task review unavailable"
+    fi
+    pmctl_task_review "$REPO_ROOT" "$@"
+    ;;
+  safe/bash)
+    if ! declare -F pmctl_safe_bash >/dev/null; then
+      pmctl_die "safe bash unavailable"
+    fi
+    pmctl_safe_bash "$REPO_ROOT" "$@"
+    ;;
+  validate/brief)
+    if ! declare -F pmctl_validate_brief >/dev/null; then
+      pmctl_die "validate brief unavailable"
+    fi
+    pmctl_validate_brief "$REPO_ROOT" "$@"
     ;;
   decision/add)
     if ! declare -F pmctl_decision_add >/dev/null; then

@@ -538,6 +538,86 @@ case_task_update_state_event_failure_rollback() {
   fi
 }
 
+case_task_claim_event_failure_rollback() {
+  local name="pmctl task claim: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after claim's task_upsert, the projection is restored
+  #   to the original state and the command exits non-zero.
+  # Steps: create CC-930; chmod 444 events.jsonl; invoke task claim; restore; assert non-zero
+  #   exit and task JSON state is still open (not claimed).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-claim-evt-fail-store"
+  out="$tmp_root/task-claim-evt-fail.out"
+  err="$tmp_root/task-claim-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-930 --title "ClaimFail" >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-930 >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-930.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
+case_task_dispatch_event_failure_rollback() {
+  local name="pmctl task dispatch: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after dispatch's task_upsert, the projection is restored
+  #   and the command exits non-zero.
+  # Steps: create + claim CC-931 (FSM requires claimed before dispatch; claim runs before the
+  #   chmod so its own event append succeeds); chmod 444 events.jsonl; invoke task dispatch;
+  #   restore; assert non-zero exit and task JSON state is rolled back to claimed (not in-progress).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-dispatch-evt-fail-store"
+  out="$tmp_root/task-dispatch-evt-fail.out"
+  err="$tmp_root/task-dispatch-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-931 --title "DispatchFail" >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-931 >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-931 --agent codex >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-931.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "claimed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
+case_task_review_event_failure_rollback() {
+  local name="pmctl task review: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after review's task_upsert, the projection is restored
+  #   and the command exits non-zero.
+  # Steps: create + claim + dispatch CC-932 (FSM requires in-progress before review; these run
+  #   before the chmod so their event appends succeed); chmod 444 events.jsonl; invoke task review;
+  #   restore; assert non-zero exit and task JSON state is rolled back to in-progress (not done).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-review-evt-fail-store"
+  out="$tmp_root/task-review-evt-fail.out"
+  err="$tmp_root/task-review-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-932 --title "ReviewFail" >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-932 >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-932 --agent codex >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task review CC-932 --result pass >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-932.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "in-progress" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
 case_task_update_state_raw_admin_edit() {
   local name="pmctl task update --state: raw administrative edit — any valid state accepted regardless of current state"
   should_run "$name" || return 0
@@ -648,5 +728,514 @@ case_task_create_event_failure_cleanup_fails
 case_task_create_event_failure_blocks_update
 case_task_update_state_event_failure_rollback
 case_task_update_state_raw_admin_edit
+case_task_claim_event_failure_rollback
+case_task_dispatch_event_failure_rollback
+case_task_review_event_failure_rollback
+
+# ---------------------------------------------------------------------------
+# claim
+# ---------------------------------------------------------------------------
+
+case_task_claim_transitions_to_claimed() {
+  local name="pmctl task claim: transitions task to claimed and emits task.claimed event"
+  should_run "$name" || return 0
+  # Behavior: task claim on an existing task transitions its state to claimed and appends a task.claimed event.
+  # Steps: create task CC-501; invoke task claim; assert exit 0, state=claimed in JSON file, task.claimed in events.jsonl.
+  local store proj out err status=0 task_file state kind
+  store="$tmp_root/claim-store"
+  out="$tmp_root/claim.out"
+  err="$tmp_root/claim.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-501 --title "claim me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-501 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-501.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-501" and .kind == "task.claimed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  if [[ "$status" -eq 0 && "$state" == "claimed" && "$kind" == "task.claimed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state kind=$kind"
+  fi
+}
+
+case_task_claim_not_found() {
+  local name="pmctl task claim: exits 2 when task not found"
+  should_run "$name" || return 0
+  # Behavior: task claim for a non-existent task ID exits with an error.
+  # Steps: invoke task claim CC-502 on an empty store; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/claim-nf-store"
+  out="$tmp_root/claim-nf.out"
+  err="$tmp_root/claim-nf.err"
+  run_task_cmd "$store" "$out" "$err" task claim CC-502 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_claim_missing_id() {
+  local name="pmctl task claim: exits 2 when task id missing"
+  should_run "$name" || return 0
+  # Behavior: task claim with no task ID argument exits with a usage error.
+  # Steps: invoke task claim with no arguments; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/claim-mi-store"
+  out="$tmp_root/claim-mi.out"
+  err="$tmp_root/claim-mi.err"
+  run_task_cmd "$store" "$out" "$err" task claim && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_claim_unexpected_argument() {
+  local name="pmctl task claim: exits 2 for unexpected argument after task id"
+  should_run "$name" || return 0
+  # Behavior: task claim rejects trailing unknown arguments with a usage error.
+  # Steps: create CC-512; invoke task claim CC-512 extra-arg; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/claim-ua-store"
+  out="$tmp_root/claim-ua.out"
+  err="$tmp_root/claim-ua.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-512 --title "ua test" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-512 extra-arg && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dispatch (task sub)
+# ---------------------------------------------------------------------------
+
+case_task_dispatch_sub_transitions_to_in_progress() {
+  local name="pmctl task dispatch: transitions to in-progress, records agent, emits task.dispatched"
+  should_run "$name" || return 0
+  # Behavior: task dispatch transitions the task to in-progress, stores the agent name, and appends a task.dispatched event.
+  # Steps: create + claim CC-503 (FSM requires claimed before dispatch); invoke task dispatch --agent codex; assert state=in-progress, dispatched_to=codex, task.dispatched event.
+  local store proj out err status=0 task_file state agent kind schema_ok
+  store="$tmp_root/tdispatch-store"
+  out="$tmp_root/tdispatch.out"
+  err="$tmp_root/tdispatch.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-503 --title "dispatch me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-503 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-503 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-503.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  agent="$(jq -r '.dispatched_to // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-503" and .kind == "task.dispatched") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  # Validate task projection contract: required fields intact, new fields are strings.
+  schema_ok="$(jq -r '
+    if (.id | type) != "string" then "bad:id"
+    elif (.schema_version) != 1 then "bad:schema_version"
+    elif (.state) != "in-progress" then "bad:state"
+    elif (.dispatched_to | type) != "string" then "bad:dispatched_to"
+    else "ok" end' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$agent" == "codex" && "$kind" == "task.dispatched" && "$schema_ok" == "ok" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state agent=$agent kind=$kind schema_ok=$schema_ok"
+  fi
+}
+
+case_task_dispatch_sub_records_brief_file() {
+  local name="pmctl task dispatch: records --brief-file when provided"
+  should_run "$name" || return 0
+  # Behavior: task dispatch with --brief-file stores the brief file path in the task JSON.
+  # Steps: create + claim CC-504; dispatch with --agent claude --brief-file /tmp/brief-cc504.md; assert brief_file field matches.
+  local store proj out err status=0 task_file brief
+  store="$tmp_root/tdispatch-bf-store"
+  out="$tmp_root/tdispatch-bf.out"
+  err="$tmp_root/tdispatch-bf.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-504 --title "with brief" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-504 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-504 --agent claude \
+    --brief-file /tmp/brief-cc504.md || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-504.json"
+  brief="$(jq -r '.brief_file // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$brief" == "/tmp/brief-cc504.md" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status brief=$brief"
+  fi
+}
+
+case_task_dispatch_sub_missing_agent() {
+  local name="pmctl task dispatch: exits 2 when --agent missing"
+  should_run "$name" || return 0
+  # Behavior: task dispatch without --agent exits 2 with a "missing --agent" usage error.
+  # Steps: create + claim CC-505 (so the task is in `claimed`, a valid dispatch
+  #   source state); invoke task dispatch with no --agent; assert exit 2 AND the
+  #   "missing --agent" diagnostic. Claiming first isolates the missing-agent
+  #   branch from the FSM transition check -- without it the open->dispatch
+  #   invalid-transition guard would return exit 2 even if the missing-agent
+  #   check were removed, so the assertion would not actually cover this branch.
+  local store out err status=0
+  store="$tmp_root/tdispatch-ma-store"
+  out="$tmp_root/tdispatch-ma.out"
+  err="$tmp_root/tdispatch-ma.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-505 --title "no agent" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-505 || status=$?
+  status=0
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-505 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'missing --agent' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'missing --agent', got status=$status err=$(cat "$err")"
+  fi
+}
+
+case_task_dispatch_sub_not_found() {
+  local name="pmctl task dispatch: exits 2 when task not found"
+  should_run "$name" || return 0
+  # Behavior: task dispatch for a non-existent task ID exits with an error.
+  # Steps: invoke task dispatch CC-598 --agent codex on an empty store; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/tdispatch-nf-store"
+  out="$tmp_root/tdispatch-nf.out"
+  err="$tmp_root/tdispatch-nf.err"
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-598 --agent codex && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+case_task_status_shows_task_and_events() {
+  local name="pmctl task status: shows task summary and recent events in human mode"
+  should_run "$name" || return 0
+  # Behavior: task status (human mode) prints the task ID line and a "recent events:" section listing at least one event kind.
+  # Steps: create and claim CC-506; invoke task status; assert output contains CC-506, "recent events:", and "task.claimed".
+  local store out err status=0 output
+  store="$tmp_root/status-store"
+  out="$tmp_root/status.out"
+  err="$tmp_root/status.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-506 --title "status me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-506 || status=$?
+  run_task_cmd "$store" "$out" "$err" task status CC-506 || status=$?
+  output="$(<"$out")"
+  if [[ "$status" -eq 0 && "$output" == *"CC-506"* && "$output" == *"recent events:"* && "$output" == *"task.claimed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$output err=$(<"$err")"
+  fi
+}
+
+case_task_status_json_includes_recent_events() {
+  local name="pmctl task status: --json output includes task and recent_events array"
+  should_run "$name" || return 0
+  # Behavior: task status --json returns a JSON object with task.id and recent_events array containing at least one event.
+  # Steps: create and claim CC-507; invoke task status --json; assert task.id=CC-507 and recent_events length >= 1.
+  local store out err status=0 task_id events_count
+  store="$tmp_root/status-json-store"
+  out="$tmp_root/status-json.out"
+  err="$tmp_root/status-json.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-507 --title "json status" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-507 || status=$?
+  run_task_cmd "$store" "$out" "$err" task status CC-507 --json || status=$?
+  task_id="$(jq -r '.task.id // ""' "$out" 2>/dev/null || true)"
+  events_count="$(jq '.recent_events | length' "$out" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$task_id" == "CC-507" && "$events_count" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_id=$task_id events_count=$events_count"
+  fi
+}
+
+case_task_status_not_found() {
+  local name="pmctl task status: exits 2 when task not found"
+  should_run "$name" || return 0
+  # Behavior: task status for a non-existent task ID exits with an error.
+  # Steps: invoke task status CC-599 on an empty store; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/status-nf-store"
+  out="$tmp_root/status-nf.out"
+  err="$tmp_root/status-nf.err"
+  run_task_cmd "$store" "$out" "$err" task status CC-599 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_status_missing_id() {
+  local name="pmctl task status: exits 2 when task id missing"
+  should_run "$name" || return 0
+  # Behavior: task status with no task ID argument exits with a usage error.
+  # Steps: invoke task status with no arguments; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/status-mi-store"
+  out="$tmp_root/status-mi.out"
+  err="$tmp_root/status-mi.err"
+  run_task_cmd "$store" "$out" "$err" task status && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+case_task_review_transitions_to_done() {
+  local name="pmctl task review: transitions task to done and emits task.reviewed"
+  should_run "$name" || return 0
+  # Behavior: task review transitions the task to done, stores review_result, and appends a task.reviewed event.
+  # Steps: create + claim + dispatch CC-508 (FSM requires in-progress before review); invoke task review --result pass; assert state=done, review_result=pass, task.reviewed event.
+  local store proj out err status=0 task_file state result kind schema_ok
+  store="$tmp_root/review-store"
+  out="$tmp_root/review.out"
+  err="$tmp_root/review.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-508 --title "review me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-508 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-508 --agent codex || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-508 --result pass || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-508.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  result="$(jq -r '.review_result // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-508" and .kind == "task.reviewed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  # Validate task projection contract: required fields intact, new review_result field is a valid enum value.
+  schema_ok="$(jq -r '
+    if (.id | type) != "string" then "bad:id"
+    elif (.schema_version) != 1 then "bad:schema_version"
+    elif (.state) != "done" then "bad:state"
+    elif (.review_result | . as $r | ["pass","fail","partial"] | index($r) == null) then "bad:review_result"
+    else "ok" end' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "done" && "$result" == "pass" && "$kind" == "task.reviewed" && "$schema_ok" == "ok" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state result=$result kind=$kind schema_ok=$schema_ok"
+  fi
+}
+
+case_task_review_with_note() {
+  local name="pmctl task review: records --note when provided"
+  should_run "$name" || return 0
+  # Behavior: task review with --note stores the reviewer's note text in the task JSON.
+  # Steps: create + claim + dispatch CC-509; invoke task review --result fail --note "gate found blocking issue"; assert review_note field matches.
+  local store proj out err status=0 task_file note
+  store="$tmp_root/review-note-store"
+  out="$tmp_root/review-note.out"
+  err="$tmp_root/review-note.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-509 --title "review note" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-509 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-509 --agent codex || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-509 --result fail \
+    --note "gate found blocking issue" || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-509.json"
+  note="$(jq -r '.review_note // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$note" == "gate found blocking issue" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status note=$note"
+  fi
+}
+
+case_task_review_invalid_result() {
+  local name="pmctl task review: exits 2 for invalid --result value"
+  should_run "$name" || return 0
+  # Behavior: task review rejects an unknown --result value with exit 2 and an
+  #   "invalid --result" usage error.
+  # Steps: create + claim + dispatch CC-510 (so the task is in `in-progress`, a
+  #   valid review source state); invoke task review --result oops; assert exit 2
+  #   AND the "invalid --result" diagnostic. Advancing to in-progress first
+  #   isolates the result-validation branch from the FSM transition check --
+  #   otherwise the open->review invalid-transition guard would return exit 2
+  #   even if the result validation were removed, leaving the branch uncovered.
+  local store out err status=0
+  store="$tmp_root/review-inv-store"
+  out="$tmp_root/review-inv.out"
+  err="$tmp_root/review-inv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-510 --title "bad result" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-510 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-510 --agent codex || status=$?
+  status=0
+  run_task_cmd "$store" "$out" "$err" task review CC-510 --result oops && status=$? || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'invalid --result' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'invalid --result', got status=$status err=$(cat "$err")"
+  fi
+}
+
+case_task_review_no_result_defaults_to_done() {
+  local name="pmctl task review: transitions to done even without --result"
+  should_run "$name" || return 0
+  # Behavior: task review with no --result still transitions the task to done (result defaults to unset).
+  # Steps: create + claim + dispatch CC-511; invoke task review with no --result; assert state=done.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/review-nr-store"
+  out="$tmp_root/review-nr.out"
+  err="$tmp_root/review-nr.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-511 --title "no result" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-511 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-511 --agent codex || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-511 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-511.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "done" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state"
+  fi
+}
+
+case_task_review_missing_id() {
+  local name="pmctl task review: exits 2 when task id missing"
+  should_run "$name" || return 0
+  # Behavior: task review with no task ID argument exits with a usage error.
+  # Steps: invoke task review with no arguments; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/review-mi-store"
+  out="$tmp_root/review-mi.out"
+  err="$tmp_root/review-mi.err"
+  run_task_cmd "$store" "$out" "$err" task review && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_review_missing_result_value() {
+  local name="pmctl task review: exits 2 when --result has no value"
+  should_run "$name" || return 0
+  # Behavior: task review exits 2 when --result is given without a following value.
+  # Steps: create CC-513; invoke task review CC-513 --result with no value; assert exit 2.
+  local store out err status=0
+  store="$tmp_root/review-mrv-store"
+  out="$tmp_root/review-mrv.out"
+  err="$tmp_root/review-mrv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-513 --title "missing result val" || true
+  run_task_cmd "$store" "$out" "$err" task review CC-513 --result && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_claim_idempotent_rejected() {
+  local name="pmctl task claim: re-claiming an already-claimed task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM enforces open→claimed; claiming a task already in claimed exits 2 with
+  #   "invalid transition" and leaves the projection unchanged (idempotency / state-unchanged rejection, QA #5).
+  # Steps: create + claim CC-514 (now claimed); claim again; assert exit 2, "invalid transition" in stderr,
+  #   state still claimed, and exactly one task.claimed event (no duplicate emitted).
+  local store proj out err status=0 task_file state evt_count
+  store="$tmp_root/claim-idem-store"
+  out="$tmp_root/claim-idem.out"
+  err="$tmp_root/claim-idem.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-514 --title "claim twice" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-514 || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-514 && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-514.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-514" and .kind == "task.claimed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "claimed" && "$evt_count" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_invalid_transition_from_open() {
+  local name="pmctl task dispatch: dispatching an open (unclaimed) task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM requires claimed before dispatch; dispatching from open exits 2 with
+  #   "invalid transition", writes no dispatched_to, emits no task.dispatched event, leaves state open.
+  # Steps: create CC-515 (open); dispatch --agent codex without claiming; assert exit 2,
+  #   "invalid transition" in stderr, state still open, no task.dispatched event.
+  local store proj out err status=0 task_file state evt_count agent
+  store="$tmp_root/dispatch-inv-store"
+  out="$tmp_root/dispatch-inv.out"
+  err="$tmp_root/dispatch-inv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-515 --title "dispatch from open" || true
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-515 --agent codex && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-515.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  agent="$(jq -r '.dispatched_to // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-515" and .kind == "task.dispatched") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "open" && -z "$agent" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state agent=$agent evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
+case_task_review_invalid_transition_from_claimed() {
+  local name="pmctl task review: reviewing a claimed (not in-progress) task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM requires in-progress before review; reviewing from claimed exits 2 with
+  #   "invalid transition", writes no review_result, emits no task.reviewed event, leaves state claimed.
+  # Steps: create + claim CC-516 (claimed, never dispatched); review --result pass; assert exit 2,
+  #   "invalid transition" in stderr, state still claimed, no task.reviewed event.
+  local store proj out err status=0 task_file state evt_count result
+  store="$tmp_root/review-inv-trans-store"
+  out="$tmp_root/review-inv-trans.out"
+  err="$tmp_root/review-inv-trans.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-516 --title "review from claimed" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-516 || true
+  run_task_cmd "$store" "$out" "$err" task review CC-516 --result pass && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-516.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  result="$(jq -r '.review_result // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-516" and .kind == "task.reviewed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "claimed" && -z "$result" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state result=$result evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
+case_task_claim_transitions_to_claimed
+case_task_claim_not_found
+case_task_claim_missing_id
+case_task_claim_unexpected_argument
+case_task_claim_idempotent_rejected
+case_task_dispatch_invalid_transition_from_open
+case_task_review_invalid_transition_from_claimed
+case_task_dispatch_sub_transitions_to_in_progress
+case_task_dispatch_sub_records_brief_file
+case_task_dispatch_sub_missing_agent
+case_task_dispatch_sub_not_found
+case_task_status_shows_task_and_events
+case_task_status_json_includes_recent_events
+case_task_status_not_found
+case_task_status_missing_id
+case_task_review_transitions_to_done
+case_task_review_with_note
+case_task_review_invalid_result
+case_task_review_no_result_defaults_to_done
+case_task_review_missing_id
+case_task_review_missing_result_value
 
 th_summary
