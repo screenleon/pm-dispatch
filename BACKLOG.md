@@ -459,14 +459,16 @@ Codex wrappers, and MCP server all become thin callers into one well-defined CLI
 Guard logic and dispatch state move from Claude-only paths into `pmctl` so any CLI without hook
 support can call `pmctl guard check` or `pmctl safe-bash`.
 
-**Requirement** (full surface — this PR covers task state-store slice only):
+**Requirement** (full surface — all subcommands now shipped across PRs #171/#242/#252):
 - Implement `cli/pmctl` with subcommand interface:
-  - ✅ `pmctl task list/show/create/update` (this PR — with schema validation + event emission)
-  - ✅ `pmctl decision add` (this PR — with schema validation + event emission)
-  - ⬜ `pmctl task claim|dispatch|status|review`
-  - ⬜ `pmctl backlog sync`
-  - ⬜ `pmctl trace tail`
-  - ⬜ `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>`
+  - ✅ `pmctl task list/show/create/update` (PR #242)
+  - ✅ `pmctl decision add` (PR #242)
+  - ✅ `pmctl task claim|dispatch|status|review` (PR #252)
+  - ✅ `pmctl validate brief` (PR #252, see CC-341)
+  - ✅ `pmctl safe bash` (PR #252)
+  - ✅ `pmctl backlog sync` (via CC-287)
+  - ✅ `pmctl trace tail` (via CC-315)
+  - ✅ `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>` (via CC-288/CC-291)
   - ✅ `pmctl adapter generate <claude|codex|antigravity|opencode>` (PR #171)
 - Claude adapter: `/pm task-123` → `pmctl task dispatch task-123 --agent claude`
 - Guard logic migrates from Claude-only hooks into `pmctl` so hook is just a thin caller.

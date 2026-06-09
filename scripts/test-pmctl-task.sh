@@ -538,6 +538,81 @@ case_task_update_state_event_failure_rollback() {
   fi
 }
 
+case_task_claim_event_failure_rollback() {
+  local name="pmctl task claim: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after claim's task_upsert, the projection is restored
+  #   to the original state and the command exits non-zero.
+  # Steps: create CC-930; chmod 444 events.jsonl; invoke task claim; restore; assert non-zero
+  #   exit and task JSON state is still open (not claimed).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-claim-evt-fail-store"
+  out="$tmp_root/task-claim-evt-fail.out"
+  err="$tmp_root/task-claim-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-930 --title "ClaimFail" >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-930 >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-930.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
+case_task_dispatch_event_failure_rollback() {
+  local name="pmctl task dispatch: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after dispatch's task_upsert, the projection is restored
+  #   and the command exits non-zero.
+  # Steps: create CC-931; chmod 444 events.jsonl; invoke task dispatch; restore; assert non-zero
+  #   exit and task JSON state is still open (not in-progress).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-dispatch-evt-fail-store"
+  out="$tmp_root/task-dispatch-evt-fail.out"
+  err="$tmp_root/task-dispatch-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-931 --title "DispatchFail" >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-931 --agent codex >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-931.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
+case_task_review_event_failure_rollback() {
+  local name="pmctl task review: event append failure rolls back projection to original state"
+  should_run "$name" || return 0
+  # Behavior: if event append fails after review's task_upsert, the projection is restored
+  #   and the command exits non-zero.
+  # Steps: create CC-932; chmod 444 events.jsonl; invoke task review; restore; assert non-zero
+  #   exit and task JSON state is still open (not done).
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state
+  store="$tmp_root/task-review-evt-fail-store"
+  out="$tmp_root/task-review-evt-fail.out"
+  err="$tmp_root/task-review-evt-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-932 --title "ReviewFail" >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task review CC-932 --result pass >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-932.json" 2>/dev/null || true)"
+  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
+  fi
+}
+
 case_task_update_state_raw_admin_edit() {
   local name="pmctl task update --state: raw administrative edit — any valid state accepted regardless of current state"
   should_run "$name" || return 0
@@ -648,6 +723,9 @@ case_task_create_event_failure_cleanup_fails
 case_task_create_event_failure_blocks_update
 case_task_update_state_event_failure_rollback
 case_task_update_state_raw_admin_edit
+case_task_claim_event_failure_rollback
+case_task_dispatch_event_failure_rollback
+case_task_review_event_failure_rollback
 
 # ---------------------------------------------------------------------------
 # claim
