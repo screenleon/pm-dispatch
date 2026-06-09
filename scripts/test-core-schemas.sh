@@ -4,7 +4,7 @@
 # These tests validate that:
 #   1. Every JSON Schema file under core/schema/ is valid JSON
 #   2. Every YAML file under core/policy/ and core/state/ is valid YAML
-#   3. Schemas declaring schema_version do so as `const: 1`
+#   3. Schemas declaring schema_version do so as a positive integer `const`
 #   4. Enum values referenced inline in schemas stay in sync with the
 #      corresponding policy YAML files (the documented editing source).
 #
@@ -103,20 +103,24 @@ case_yaml_parse() {
 }
 
 case_schema_version_const() {
-  # Verifies that the schema declares schema_version with const: 1.
-  #
-  # Steps:
-  #   1. Extract .properties.schema_version.const via jq.
-  #   2. Assert the value equals "1".
+  # Verifies schema_version is a positive integer const OR an enum of positive integers.
+  # context-pack uses enum [1,2] for v1/v2 compat; all others use const.
   local file="$1"
-  local name="schema_version: $file declares const: 1"
+  local name="schema_version: $file declares a positive integer const or enum"
   should_run "$name" || return 0
   local val
   val=$(jq -r '.properties.schema_version.const // empty' "$file")
-  if [[ "$val" == "1" ]]; then
+  if [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 1 )); then
+    pass "$name"; return 0
+  fi
+  # enum path: all values must be positive integers
+  local bad count
+  bad=$(jq -r '(.properties.schema_version.enum // [])[] | select(type != "number" or . < 1)' "$file" 2>/dev/null || true)
+  count=$(jq -r '(.properties.schema_version.enum // []) | length' "$file" 2>/dev/null || printf '0')
+  if [[ -z "$bad" && "$count" -ge 1 ]]; then
     pass "$name"
   else
-    fail "$name" "expected const: 1, got '$val'"
+    fail "$name" "expected positive integer const or enum; const='$val' enum_bad='$bad' enum_count=$count"
   fi
 }
 
@@ -511,5 +515,75 @@ case_handover_schema_oneOf_instance_semantics
 
 # 6. Adapter parity tests
 case_isolation_level_adapter_parity
+
+# 7. context-pack schema v2 contract tests
+# Verifies additive v1/v2 compat and new field enum constraints.
+
+_ctx_pack_base() {
+  # Minimal valid context-pack payload (v1 or v2 depending on $1).
+  # sources requires objects with name+version; files items require ref+source+confidence.
+  printf '{"schema_version":%s,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[]}' "$1"
+}
+
+case_context_pack_v1_still_valid() {
+  local name="context-pack.schema.json: v1 pack (schema_version:1) validates against v2 schema"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
+  _ctx_pack_base 1 > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "v1 pack should still validate against v2 schema"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v2_new_fields_valid() {
+  local name="context-pack.schema.json: v2 item with source_domain/why_relevant/trust_level/refs validates"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
+  printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"source_domain":"repo","why_relevant":"contains the function","trust_level":"high","refs":["src/bar.sh"]}]}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "v2 pack with new fields should validate"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_invalid_source_domain_rejected() {
+  local name="context-pack.schema.json: invalid source_domain value is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
+  printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"source_domain":"external"}]}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "source_domain='external' should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_invalid_trust_level_rejected() {
+  local name="context-pack.schema.json: invalid trust_level value is rejected"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
+  printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"trust_level":"critical"}]}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "trust_level='critical' should be rejected"
+  else
+    pass "$name"
+  fi
+  rm -f "$tmpf"
+}
+
+case_context_pack_v1_still_valid
+case_context_pack_v2_new_fields_valid
+case_context_pack_invalid_source_domain_rejected
+case_context_pack_invalid_trust_level_rejected
 
 th_summary
