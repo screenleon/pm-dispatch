@@ -158,6 +158,27 @@ case_validate_brief_double_dash_separator() {
   fi
 }
 
+case_validate_brief_double_dash_extra_arg() {
+  local name="pmctl validate brief: -- separator with an extra argument exits 2"
+  should_run "$name" || return 0
+  # Behavior: after `-- <file>` consumes the file path, any leftover argument is rejected with a
+  #   usage error (exit 2) — matching the positional path, which already rejects a second argument.
+  #   Guards against the separator branch silently ignoring trailing args.
+  # Steps: write a valid brief; invoke validate brief -- <file> extra-arg; assert exit 2 and
+  #   "unexpected argument" in stderr.
+  local brief out err status=0
+  brief="$tmp_root/dd-extra-brief.md"
+  out="$tmp_root/vb-dd-extra.out"
+  err="$tmp_root/vb-dd-extra.err"
+  write_valid_brief "$brief"
+  "$PMCTL" validate brief -- "$brief" extra-arg > "$out" 2> "$err" && status=$? || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"unexpected argument"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 with 'unexpected argument', got $status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_validate_brief_accepts_valid
 case_validate_brief_missing_file
 case_validate_brief_missing_arg
@@ -165,5 +186,6 @@ case_validate_brief_no_block
 case_validate_brief_invalid_executor
 case_validate_brief_unknown_flag
 case_validate_brief_double_dash_separator
+case_validate_brief_double_dash_extra_arg
 
 th_summary

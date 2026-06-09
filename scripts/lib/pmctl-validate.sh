@@ -17,6 +17,12 @@ pmctl_validate_brief() {
       --)
         shift
         if [[ $# -gt 0 ]]; then file="$1"; shift; fi
+        # Reject leftover arguments after `-- <file>` so the single-file usage
+        # contract matches the positional path (which rejects a second argument).
+        if [[ $# -gt 0 ]]; then
+          printf 'pmctl validate brief: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
         break
         ;;
       -*)
