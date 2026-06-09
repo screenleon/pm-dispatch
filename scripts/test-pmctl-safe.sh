@@ -21,6 +21,8 @@ run_safe_cmd() {
 case_safe_bash_missing_role() {
   local name="pmctl safe bash: exits 2 when --role is missing"
   should_run "$name" || return 0
+  # Behavior: safe bash without --role exits with a usage error before attempting any guard check or command.
+  # Steps: invoke safe bash --runtime codex "echo hi" omitting --role; assert exit 2.
   local out err status=0
   out="$tmp_root/safe-mr.out"
   err="$tmp_root/safe-mr.err"
@@ -35,6 +37,8 @@ case_safe_bash_missing_role() {
 case_safe_bash_missing_runtime() {
   local name="pmctl safe bash: exits 2 when --runtime is missing"
   should_run "$name" || return 0
+  # Behavior: safe bash without --runtime exits with a usage error before attempting any guard check or command.
+  # Steps: invoke safe bash --role executor "echo hi" omitting --runtime; assert exit 2.
   local out err status=0
   out="$tmp_root/safe-mrt.out"
   err="$tmp_root/safe-mrt.err"
@@ -49,6 +53,8 @@ case_safe_bash_missing_runtime() {
 case_safe_bash_missing_command() {
   local name="pmctl safe bash: exits 2 when command is missing"
   should_run "$name" || return 0
+  # Behavior: safe bash with --role and --runtime but no command exits with a usage error.
+  # Steps: invoke safe bash --role executor --runtime codex with no command argument; assert exit 2.
   local out err status=0
   out="$tmp_root/safe-mc.out"
   err="$tmp_root/safe-mc.err"
@@ -63,6 +69,8 @@ case_safe_bash_missing_command() {
 case_safe_bash_unknown_flag() {
   local name="pmctl safe bash: exits 2 for unknown flag"
   should_run "$name" || return 0
+  # Behavior: safe bash rejects unrecognised flags with a usage error.
+  # Steps: invoke safe bash with --frobnicate; assert exit 2.
   local out err status=0
   out="$tmp_root/safe-uf.out"
   err="$tmp_root/safe-uf.err"
@@ -78,6 +86,8 @@ case_safe_bash_unknown_flag() {
 case_safe_bash_allowed_command_executes() {
   local name="pmctl safe bash: allowed command executes and exits 0"
   should_run "$name" || return 0
+  # Behavior: safe bash runs the command and exits 0 when the guard policy allows it.
+  # Steps: invoke safe bash --role executor --runtime codex "git status --short" (codex allowlisted read-only git); assert exit 0.
   local out err status=0
   out="$tmp_root/safe-ok.out"
   err="$tmp_root/safe-ok.err"
@@ -94,6 +104,8 @@ case_safe_bash_allowed_command_executes() {
 case_safe_bash_denied_role_exits_nonzero() {
   local name="pmctl safe bash: pm role pre-bash is denied (no policy registered)"
   should_run "$name" || return 0
+  # Behavior: safe bash exits non-zero when the guard denies the request (pm/pre-bash has no registered policy → fail-closed).
+  # Steps: invoke safe bash --role pm --runtime claude "echo hi"; assert non-zero exit (guard exit 3 → safe bash exit 1).
   local out err status=0
   out="$tmp_root/safe-deny.out"
   err="$tmp_root/safe-deny.err"
