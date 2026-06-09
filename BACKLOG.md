@@ -81,6 +81,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-343 | ✅ done | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | pr:#251 | P1 | design |
 | CC-344 | 🟢 someday | **[skill: /research — grounded external research with internal context anchoring]** 新增 `commands/research.md`：補足 `/discover` 純內部掃描的盲區，加入外部研究維度。流程：(1) 自動讀內部相關 memory/decisions 建立錨定；(2) 問使用者 1–2 個定向問題縮小搜尋範圍；(3) 派有 WebSearch 能力的 agent 抓取外部實作與方法；(4) 主線程以內部設計 constraint 過濾結果，標記「可採用」或「與 constraint X 衝突」。目標：讓外部技術知識能有效導入而非淪為噪音。與 `/discover` 互補——discover 看「我們已知但未做的」，research 看「外部有我們還沒想到的」。 | process/DX | 2026-06-09 | — | P3 | design |
 | CC-345 | 🟢 someday | **[dx: claude adapter 即時進度串流（stream-json）]** `adapters/claude/dispatch.sh` 目前使用 `--output-format json`，stdout 完全 buffered 至 process 結束，dispatch 期間 trace 為空、working tree 無變動，使用者無法判斷 executor 在讀取或寫檔。改用 `--output-format stream-json` 並以 tee 寫入 trace，同步解析 tool-use events，在 stderr banner 即時顯示 `[reading]`、`[writing]`、`[running]` 進度行。 | ux/ops | 2026-06-09 | — | P2 | design |
+| CC-346 | 🟢 someday | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。 | ops | 2026-06-09 | — | P3 | design |
+| CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
+| CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
 | CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
@@ -696,13 +699,26 @@ The ≥3-units threshold and the shared-module / new-interface triggers already 
 
 The genuinely-missing piece is the **front-end**: a reuse-scan that runs *before* briefing so the brief reuses rather than duplicates. That is a capability, not an agent — "split by goal, not by role".
 
-**Requirement**: a reuse-scan **capability** (a skill / context step, not an agent), invoked by `project-pm` during briefing, that queries the codebase for prior art relevant to the task — similar functions, shared helpers, existing patterns (`rg` / `git grep` baseline; symbol / AST sources later) — and emits a "reuse report" the dispatch brief incorporates. It is one consumer of the `context-pack` (CC-232) / context-enricher (CC-237) infrastructure and belongs in `skills/` (CC-061). Refactor *execution* (mechanical or semantic) stays on the existing brief → executor → gate path with the `dispatch-brief.md` refactor skeleton — no new execution agent.
+**Requirement**: a reuse-scan **capability** (a skill / context step, not an agent), invoked by `project-pm` during briefing, that queries the codebase for prior art relevant to the task — similar functions, shared helpers, existing patterns — and emits a "reuse report" the dispatch brief incorporates. It is one consumer of the `context-pack` (CC-232) / context-enricher (CC-237) infrastructure and belongs in `skills/` (CC-061). Refactor *execution* stays on the existing brief → executor → gate path — no new execution agent.
 
-**Milestone**: v0.5.0 Phase 1 — the user-visible terminus of the context-pack spine; the first consumer of the repo index (CC-338) through the CC-237 interface.
+*Provider dispatch architecture (tiered)*:
+- Tier 0 (baseline): `rg` / `git grep` text search + `git log --oneline` for recently-touched files — zero setup, always available
+- Tier 1 (builtin-index): `pmctl context query` via CC-338 repo-index (symbol + chunk search, FTS5/LIKE fallback) — available after first `pmctl context index`
+- Tier 2 (cross-file refs): CC-346 `file_refs` layer (import/source call graph, 5 languages) — deepens relevance ranking
+- Tier 3 (future): CC-209 codegraph — optional accelerator; same interface, richer output
+
+Each tier is a **drop-in upgrade**: the consumer (`/pm` briefing, CC-239 reuse-scan) reads the same `context_hit_v1` shape regardless of which tier produced the hit.
+
+*Output shape extensions (aligned with context_hit_v1, CC-237)*:
+- `summary` (string): one-line description of the reuse candidate ("validates brief schema fields: schema_version, goal, …")
+- `tags` (string array): searchable labels drawn from symbol kind / language / topic ("schema", "bash", "validation")
+- `why_relevant` (string): reason this hit matches the current brief (filled by Tier 1+; may be absent for Tier 0 grep hits)
+
+**Milestone**: v0.5.0 Phase 2 — the user-visible terminus of the context-pack spine; the first consumer of the repo index (CC-338) through the CC-237 interface.
 
 **Priority**: P2 — depends on CC-338 (repo index) + CC-237 (interface) landing first.
 
-**Cross-link**: CC-232 (context-pack schema), CC-237 (context-enricher baseline), CC-061 (skills/), CC-200..CC-204 (the reuse debt this prevents recurring), `docs/architecture/v0.3.0-synthesis.md`.
+**Cross-link**: CC-232 (context-pack schema), CC-237 (context-enricher baseline), CC-338 (builtin-index backend), CC-346 (cross-file refs), CC-209 (future codegraph), CC-061 (skills/), CC-200..CC-204 (the reuse debt this prevents recurring), `docs/architecture/v0.3.0-synthesis.md`.
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
 
@@ -1283,6 +1299,101 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 **Priority**: P2.
 
 **Cross-link**: [[CC-338]], [[CC-341]].
+
+## CC-346 — repo-index: cross-file ref tracking（file_refs layer，5 languages）🟢 someday → v0.5.0 P3
+
+**Problem**: `pmctl context query` 回傳 symbol + chunk hits，但看不出哪些檔案 import / source 了命中的模組。同一個 helper 被 10 個腳本 source，在 context hit 中卻像孤立的節點——dispatcher 不知道修改它的波及範圍，reuse-scan（CC-239）也無法辨識「這個 helper 已到處被用，不要再重複」。
+
+**Why**: 加入 **import / source 解析層**（pure grep，無 AST），可以：
+1. 讓 `pmctl context query` 在回傳 symbol hit 時附帶 `refs`（哪些檔案引用了它）
+2. 讓 pr-gate blast-radius（CC-347）利用 ref graph 計算修改一個符號的實際影響檔案集
+3. 讓 reuse-scan（CC-239）從「誰已在用這個 helper」推斷重用建議
+
+架構上，這是 CC-338 repo-index 的第四張表，完全 optional（如無 CC-346 資料，CC-337/CC-239 fallback 到無 ref 模式）。不引入新的 binary 依賴。
+
+**Requirement**:
+
+*新增 SQLite 表*:
+```sql
+file_refs(id, from_id INTEGER REFERENCES files(id),
+          to_path TEXT,        -- 被引用的 normalized 相對路徑（未必已在 files 表）
+          ref_type TEXT,       -- source | import | require
+          line_number INTEGER,
+          resolved INTEGER)    -- 1 = to_path 已在 files 表；0 = unresolved
+```
+
+*語言支援（grep-only，無 AST）*:
+| Language | 觸發模式 | ref_type |
+|---|---|---|
+| Bash / sh | `. <file>` 或 `source <file>` | source |
+| Java | `import com.example.Foo;` | import |
+| JavaScript | `require("./foo")` | require |
+| TypeScript | `import ... from "./foo"` | import |
+| Go | `import "github.com/.../pkg"` | import |
+
+*增量更新*: `pmctl context update [path]` 執行後重新掃描受影響檔案的 ref 行；全量 `pmctl context index` 含 ref 掃描。
+
+*查詢整合*: `pmctl context query` 在 `context_hit_v1` 回傳的 `refs` 欄位附帶直接引用者（to_path 命中的 from_id 集合），最多 5 條。
+
+**Phase plan**:
+- Phase a（MVP）: Bash `source` / `.` 解析，驗證 file_refs 表 + 增量更新
+- Phase b: 加入 JS/TS `import` / `require`
+- Phase c: 加入 Java `import` + Go `import`
+
+**Milestone**: v0.5.0 P3（depends CC-338 landed）。
+
+**Priority**: P3.
+
+**Cross-link**: [[CC-338]] (repo-index, parent table), [[CC-237]] (context_hit_v1 refs 欄位), [[CC-239]] (reuse-scan consumer), [[CC-347]] (blast-radius consumer).
+
+## CC-347 — pr-gate: blast-radius analysis using cross-file refs 🟢 someday → v0.5.0 P3
+
+**Problem**: 現行 gate 只審查 diff 內的檔案，但一個 Bash helper 或 schema 的改動，波及的是**所有 source 它的腳本**。gate 在不知道波及範圍的情況下做 risk review，等於盲目評估——risk-reviewer 無從判斷「修一行 state-writer.sh 是低風險還是影響 15 個腳本的高風險」。
+
+**Why**: CC-346 的 `file_refs` 表提供了解析好的引用圖。在 gate brief 組裝時，對每個被修改的符號走一層 ref 圖，就能列出「直接受影響的未修改檔案集合」（blast radius）。這個資訊注入 brief 的 `context:` 節點，讓 risk-reviewer 和 security-reviewer 做有依據的 scope 評估。
+
+**Requirement**:
+- `scripts/pr-gate.sh` 在組裝 brief 前呼叫 `pmctl context query` 取得 diff 中每個變更符號的 `refs`
+- 彙整成 `blast_radius` 清單：`{file, referenced_by: [path, …], ref_count: N}`
+- 注入 brief `context:` 段落（`blast_radius_summary: N files directly affected outside diff`）
+- 如無 CC-346 index（`file_refs` 表不存在或為空），此步驟靜默跳過（不阻擋 gate）
+- risk-reviewer agent definition 補充：若 brief 含 `blast_radius` 節點，應審查 blast radius > 5 的符號改動
+
+**Acceptance**:
+- Gate brief for a change to a widely-sourced helper includes `blast_radius_summary`
+- Gate brief for a repo without CC-346 index proceeds without error
+
+**Milestone**: v0.5.0 P3（depends CC-346 Phase a）。
+
+**Priority**: P3.
+
+**Cross-link**: [[CC-346]] (data source), [[CC-338]] (repo-index), [[CC-237]] (context_hit_v1).
+
+## CC-348 — pmctl project-map: cross-file dependency graph visualisation 🟢 someday
+
+**Problem**: `pmctl context query` 回傳 per-query hits，但沒有辦法一眼看出 scripts/ 的整體引用結構：哪些腳本是「hub」（被大量 source），哪些是「leaf」（只被一個腳本 source），哪些 source 了不存在的路徑（broken refs）。這個結構對新貢獻者和 architecture-reviewer 都很有價值，但目前只能透過 grep + 手動追蹤推導。
+
+**Why**: CC-346 的 `file_refs` 表一旦存在，project-map 就是一個純 SQL 聚合 + 格式化輸出的薄 CLI，無需額外的分析邏輯。輸出一份 text 或 dot 格式的引用圖，可直接貼進 PR 描述或 architecture review。
+
+**Requirement**:
+- `pmctl project-map [--format text|dot] [--from <path>] [--depth <n>]`
+- `--format text`（default）: ASCII 樹狀列出引用鏈；indent 代表 depth
+- `--format dot`：輸出 Graphviz DOT，可用 `dot -Tsvg` 渲染
+- `--from <path>`：只顯示從指定檔案出發的子圖（單一起點 DFS）
+- `--depth <n>`（default 3）：限制展開深度，避免 hub 節點爆炸
+- 標示 broken refs（to_path 不在 files 表）
+- 如無 CC-346 index，列印 `project-map requires CC-346 ref index; run: pmctl context index` 並 exit 1
+
+**Non-goals**:
+- 不生成 HTML / interactive graph（shell-only MVP）
+- 不整合至 gate brief（那是 CC-347 的工作）
+- 不解析 AST（依賴 CC-346 的 grep-level refs）
+
+**Milestone**: `🟢 someday`（depends CC-346 Phase a+）。
+
+**Priority**: P4.
+
+**Cross-link**: [[CC-346]] (data source), [[CC-347]] (gate blast-radius consumer).
 
 ---
 
