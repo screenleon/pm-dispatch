@@ -719,7 +719,7 @@ case_task_dispatch_sub_transitions_to_in_progress() {
   should_run "$name" || return 0
   # Behavior: task dispatch transitions the task to in-progress, stores the agent name, and appends a task.dispatched event.
   # Steps: create CC-503; invoke task dispatch --agent codex; assert state=in-progress, dispatched_to=codex, task.dispatched event.
-  local store proj out err status=0 task_file state agent kind
+  local store proj out err status=0 task_file state agent kind schema_ok
   store="$tmp_root/tdispatch-store"
   out="$tmp_root/tdispatch.out"
   err="$tmp_root/tdispatch.err"
@@ -731,10 +731,17 @@ case_task_dispatch_sub_transitions_to_in_progress() {
   agent="$(jq -r '.dispatched_to // ""' "$task_file" 2>/dev/null || true)"
   kind="$(jq -r 'select(.subject_id == "CC-503" and .kind == "task.dispatched") | .kind' \
     "$proj/events.jsonl" 2>/dev/null | tail -1)"
-  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$agent" == "codex" && "$kind" == "task.dispatched" ]]; then
+  # Validate task projection contract: required fields intact, new fields are strings.
+  schema_ok="$(jq -r '
+    if (.id | type) != "string" then "bad:id"
+    elif (.schema_version) != 1 then "bad:schema_version"
+    elif (.state) != "in-progress" then "bad:state"
+    elif (.dispatched_to | type) != "string" then "bad:dispatched_to"
+    else "ok" end' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$agent" == "codex" && "$kind" == "task.dispatched" && "$schema_ok" == "ok" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status state=$state agent=$agent kind=$kind"
+    fail "$name" "status=$status state=$state agent=$agent kind=$kind schema_ok=$schema_ok"
   fi
 }
 
@@ -849,7 +856,7 @@ case_task_review_transitions_to_done() {
   should_run "$name" || return 0
   # Behavior: task review transitions the task to done, stores review_result, and appends a task.reviewed event.
   # Steps: create CC-508; invoke task review --result pass; assert state=done, review_result=pass, task.reviewed event.
-  local store proj out err status=0 task_file state result kind
+  local store proj out err status=0 task_file state result kind schema_ok
   store="$tmp_root/review-store"
   out="$tmp_root/review.out"
   err="$tmp_root/review.err"
@@ -861,10 +868,17 @@ case_task_review_transitions_to_done() {
   result="$(jq -r '.review_result // ""' "$task_file" 2>/dev/null || true)"
   kind="$(jq -r 'select(.subject_id == "CC-508" and .kind == "task.reviewed") | .kind' \
     "$proj/events.jsonl" 2>/dev/null | tail -1)"
-  if [[ "$status" -eq 0 && "$state" == "done" && "$result" == "pass" && "$kind" == "task.reviewed" ]]; then
+  # Validate task projection contract: required fields intact, new review_result field is a valid enum value.
+  schema_ok="$(jq -r '
+    if (.id | type) != "string" then "bad:id"
+    elif (.schema_version) != 1 then "bad:schema_version"
+    elif (.state) != "done" then "bad:state"
+    elif (.review_result | . as $r | ["pass","fail","partial"] | index($r) == null) then "bad:review_result"
+    else "ok" end' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "done" && "$result" == "pass" && "$kind" == "task.reviewed" && "$schema_ok" == "ok" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status state=$state result=$result kind=$kind"
+    fail "$name" "status=$status state=$state result=$result kind=$kind schema_ok=$schema_ok"
   fi
 }
 

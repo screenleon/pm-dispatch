@@ -104,18 +104,21 @@ case_safe_bash_allowed_command_executes() {
 case_safe_bash_denied_role_exits_nonzero() {
   local name="pmctl safe bash: pm role pre-bash is denied (no policy registered)"
   should_run "$name" || return 0
-  # Behavior: safe bash exits non-zero when the guard denies the request (pm/pre-bash has no registered policy → fail-closed).
-  # Steps: invoke safe bash --role pm --runtime claude "echo hi"; assert non-zero exit (guard exit 3 → safe bash exit 1).
-  local out err status=0
+  # Behavior: safe bash exits non-zero AND does not execute the command body when the guard denies the request.
+  # Steps: create a sentinel file; invoke safe bash --role pm --runtime claude "rm -f <sentinel>";
+  #        assert non-zero exit AND sentinel still exists (guard denied before exec).
+  local out err status=0 sentinel
   out="$tmp_root/safe-deny.out"
   err="$tmp_root/safe-deny.err"
-  # pm/pre-bash has no policy → deny (exit 1 from safe bash, guard exits 3).
+  sentinel="$tmp_root/safe-deny-sentinel.txt"
+  printf 'sentinel\n' > "$sentinel"
+  # pm/pre-bash has no policy → fail-closed deny (guard exits 3, safe bash exits 1).
   run_safe_cmd "$out" "$err" safe bash \
-    --role pm --runtime claude "echo hi" && status=$? || status=$?
-  if [[ "$status" -ne 0 ]]; then
+    --role pm --runtime claude "rm -f $sentinel" && status=$? || status=$?
+  if [[ "$status" -ne 0 && -f "$sentinel" ]]; then
     pass "$name"
   else
-    fail "$name" "expected non-zero exit, got 0"
+    fail "$name" "expected non-zero exit and sentinel intact, got status=$status sentinel_exists=$([[ -f $sentinel ]] && echo yes || echo no)"
   fi
 }
 
