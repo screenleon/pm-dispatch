@@ -13,8 +13,11 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 th_init "$@"
 
 # Write a valid brief file with a dispatch_handover_v1 block.
+# The body working_dir defaults to the metadata working_dir ($REPO_ROOT) so the
+# brief is consistent; pass a second argument to force a body/metadata mismatch.
 write_valid_brief() {
   local path="$1"
+  local body_wd="${2:-$REPO_ROOT}"
   cat > "$path" <<EOF
 Some preamble text.
 
@@ -31,6 +34,7 @@ model: default
 skip_git_check: false
 fallback_allowed: true
 ---
+working_dir: $body_wd
 goal: test goal
 EOF
   printf '```\n' >> "$path"
@@ -179,6 +183,49 @@ case_validate_brief_double_dash_extra_arg() {
   fi
 }
 
+case_validate_brief_body_working_dir_mismatch() {
+  local name="pmctl validate brief: exits 1 when body working_dir differs from metadata working_dir"
+  should_run "$name" || return 0
+  # Behavior: the documented handover route requires body/metadata working_dir consistency
+  #   (docs/dispatch-brief.md). A brief whose metadata working_dir is $REPO_ROOT but whose body
+  #   says /tmp passes metadata validation yet must be rejected (exit 1) for the mismatch.
+  # Steps: write a brief with body working_dir forced to /tmp; invoke validate brief; assert exit 1
+  #   and "working_dir does not match" in stderr.
+  local brief out err status=0
+  brief="$tmp_root/wd-mismatch.md"
+  out="$tmp_root/vb-wdm.out"
+  err="$tmp_root/vb-wdm.err"
+  write_valid_brief "$brief" /tmp
+  "$PMCTL" validate brief "$brief" > "$out" 2> "$err" && status=$? || status=$?
+  if [[ "$status" -eq 1 && "$(<"$err")" == *"working_dir does not match"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 with working_dir mismatch, got $status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_validate_brief_body_missing_working_dir() {
+  local name="pmctl validate brief: exits 1 when body has no working_dir"
+  should_run "$name" || return 0
+  # Behavior: a brief whose body omits working_dir entirely cannot satisfy the body-consistency
+  #   check and must be rejected (exit 1) rather than green-lit on metadata alone.
+  # Steps: write a valid brief then strip the body working_dir line (the one after the --- separator);
+  #   invoke validate brief; assert exit 1 and "working_dir does not match" in stderr.
+  local brief out err status=0
+  brief="$tmp_root/wd-missing.md"
+  out="$tmp_root/vb-wdmiss.out"
+  err="$tmp_root/vb-wdmiss.err"
+  write_valid_brief "$brief"
+  # Delete the body working_dir line: the second working_dir occurrence (after ---).
+  awk '/^working_dir: / { c++; if (c == 2) next } { print }' "$brief" > "$brief.tmp" && mv "$brief.tmp" "$brief"
+  "$PMCTL" validate brief "$brief" > "$out" 2> "$err" && status=$? || status=$?
+  if [[ "$status" -eq 1 && "$(<"$err")" == *"working_dir does not match"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 with working_dir mismatch, got $status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_validate_brief_accepts_valid
 case_validate_brief_missing_file
 case_validate_brief_missing_arg
@@ -187,5 +234,7 @@ case_validate_brief_invalid_executor
 case_validate_brief_unknown_flag
 case_validate_brief_double_dash_separator
 case_validate_brief_double_dash_extra_arg
+case_validate_brief_body_working_dir_mismatch
+case_validate_brief_body_missing_working_dir
 
 th_summary

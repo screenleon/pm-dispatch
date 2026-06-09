@@ -73,6 +73,28 @@ pmctl_validate_brief() {
     return 1
   fi
 
+  # Body consistency: the documented handover route (docs/dispatch-brief.md)
+  # requires the body's working_dir to match the metadata header, so a brief
+  # cannot pass metadata validation while dispatching into a different directory.
+  # Extract the body and enforce the match before declaring the brief ok.
+  local body meta_wd body_wd
+  if ! body="$(handover_extract_body "$block" 2>/dev/null)"; then
+    printf 'pmctl validate brief: failed to extract body section\n' >&2
+    return 1
+  fi
+
+  if ! meta_wd="$(handover_get_field "$metadata" working_dir 2>/dev/null)"; then
+    printf 'pmctl validate brief: missing metadata working_dir\n' >&2
+    return 1
+  fi
+
+  body_wd="$(awk -F': ' '$1 == "working_dir" { print substr($0, length("working_dir") + 3); exit }' <<<"$body")"
+
+  if ! handover_validate_working_dir_match "$meta_wd" "$body_wd" 2>/dev/null; then
+    printf 'pmctl validate brief: body working_dir does not match metadata working_dir in %s\n' "$file" >&2
+    return 1
+  fi
+
   printf 'ok: %s\n' "$file"
   return 0
 }
