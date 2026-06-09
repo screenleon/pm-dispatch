@@ -46,6 +46,7 @@ _ctx_fts5_available() {
 _ctx_db_init() {
   local db="$1"
   sqlite3 "$db" <<'SQLINIT'
+PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   path TEXT NOT NULL UNIQUE,
