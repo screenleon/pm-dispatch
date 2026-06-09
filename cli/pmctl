@@ -165,6 +165,18 @@ case "$cmd/$sub" in
     fi
     pmctl_context_query "$@"
     ;;
+  context/pack)
+    if ! declare -F pmctl_context_pack >/dev/null; then
+      pmctl_die "context pack unavailable"
+    fi
+    pmctl_context_pack "$@"
+    ;;
+  context/reuse-scan)
+    if ! declare -F pmctl_context_reuse_scan >/dev/null; then
+      pmctl_die "context reuse-scan unavailable"
+    fi
+    pmctl_context_reuse_scan "$@"
+    ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"
     ;;

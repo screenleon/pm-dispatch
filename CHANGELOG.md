@@ -8,6 +8,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/lib/pmctl-context.sh` / `cli/pmctl`** — `pmctl context pack` and `pmctl context reuse-scan` subcommands, the first consumers of the repo-index. `pack` assembles multiple repo-index queries into a JSON context-pack (schema_version 2, conforming to `core/schema/context-pack.schema.json`): hits classified into `symbols[]` (symbol-name matches) and `files[]` (chunk/FTS text matches), deduplicated by ref across queries. `reuse-scan` takes a free-text description, extracts search terms via `_ctx_extract_terms` (stop-word filter, min 3 chars, unique), runs each against the repo index, and emits a `reuse_candidates:` YAML block for pasting into a dispatch brief's `context:` field. Both require the repo index (`pmctl context index` first); no new external deps. 14 new test cases in `scripts/test-pmctl-context.sh`.
+
 ---
 
 ## [0.4.0] — 2026-06-08
