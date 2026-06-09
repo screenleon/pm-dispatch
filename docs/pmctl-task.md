@@ -1,6 +1,6 @@
 # pmctl task — task lifecycle operations
 
-`pmctl task` manages the semantic lifecycle of tasks tracked in the project store (`core/state/`). It is the only writer for task state — never edit task JSON files directly.
+`pmctl task` manages the semantic lifecycle of tasks. Runtime task files live in the per-project state store, whose layout is defined by `core/state/` (the in-repo layout definition, not the runtime location itself). It is the only writer for task state — never edit task JSON files directly.
 
 ## Subcommands
 
