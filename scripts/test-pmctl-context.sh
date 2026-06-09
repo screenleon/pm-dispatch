@@ -678,6 +678,38 @@ case_context_pack_missing_query() {
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
+case_context_pack_task_id_without_value() {
+  local name="pmctl context pack: exits 2 when --task-id flag has no value"
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-tiwv.out"; err="$tmp_root/pack-tiwv.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for --task-id without value; got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q 'requires a value' "$err"; then
+    fail "$name" "expected diagnostic in stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_query_without_value() {
+  local name="pmctl context pack: exits 2 when --query flag has no value"
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-qwv.out"; err="$tmp_root/pack-qwv.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for --query without value; got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q 'requires a value' "$err"; then
+    fail "$name" "expected diagnostic in stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_pack_no_db() {
   local name="pmctl context pack: exits 1 when index DB not found"
   should_run "$name" || return 0
@@ -879,10 +911,20 @@ case_context_reuse_scan_valid_output() {
 
   local first_line
   first_line="$(head -1 "$out")"
-  if [[ "$first_line" == "reuse_candidates:" ]]; then
+  if [[ "$first_line" != "reuse_candidates:" ]]; then
+    fail "$name" "first line not 'reuse_candidates:'; got: $first_line"; return 0
+  fi
+  if ! grep -q '^  terms:' "$out"; then
+    fail "$name" "missing 'terms:' line in output"; return 0
+  fi
+  if ! grep -q '^  hits' "$out"; then
+    fail "$name" "missing 'hits' line in output"; return 0
+  fi
+  # At least one hit or an empty-hits marker must be present
+  if grep -q '^    - ref:' "$out" || grep -q 'hits: \[\]' "$out"; then
     pass "$name"
   else
-    fail "$name" "first line not 'reuse_candidates:'; got: $first_line"
+    fail "$name" "output has hits section but no ref or empty marker; output: $(<"$out")"
   fi
 }
 
@@ -1019,6 +1061,8 @@ case_context_query_on_real_repo
 case_context_layer_boundary
 case_context_pack_missing_task_id
 case_context_pack_missing_query
+case_context_pack_task_id_without_value
+case_context_pack_query_without_value
 case_context_pack_no_db
 case_context_pack_unknown_flag
 case_context_pack_valid_json

@@ -760,11 +760,19 @@ pmctl_context_pack() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task-id)
-        task_id="${2:-}"
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context pack: --task-id requires a value\n' >&2
+          return 2
+        fi
+        task_id="$2"
         shift 2
         ;;
       --query)
-        terms+=("${2:-}")
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context pack: --query requires a value\n' >&2
+          return 2
+        fi
+        terms+=("$2")
         shift 2
         ;;
       -*)
