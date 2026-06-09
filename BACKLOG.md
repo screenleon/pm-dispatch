@@ -667,7 +667,7 @@ The ≥3-units threshold and the shared-module / new-interface triggers already 
 
 **Cross-link**: [[CC-232]] (schema), [[CC-338]] (repo-index backend), [[CC-239]] (consumer), [[CC-209]] (codegraph spike).
 
-**See**: pr:#253
+**See**: pr:#254
 
 ## CC-238 — /pr-gate claude-route background fan-out hardening（deferred）
 
@@ -1157,7 +1157,7 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 
 **Cross-link**: [[CC-237]], [[CC-209]], [[CC-232]], [[CC-239]], [[CC-315]].
 
-**See**: pr:#253
+**See**: pr:#254
 
 ---
 
