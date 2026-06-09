@@ -87,9 +87,9 @@
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
-| CC-215 | `pmctl task create/show/list/update` + `pmctl decision add`：schema validation、event emission、per-entity lock boundary、rollback（#242）；`pmctl task claim/dispatch/status/review`、`pmctl --json`、`safe-bash` 尚未實作 | ✅ pr:#252 |
+| CC-215 | `pmctl task create/show/list/update` + `pmctl decision add`：schema validation、event emission、per-entity lock boundary、rollback（#242）；`pmctl task claim/dispatch/status/review`、`pmctl --json`、`safe-bash` 尚未實作 | ⚠️ partial (#171, #242) |
 | CC-315 | 讀取/查詢契約（by id/task/kind/time-window；active+archive 語義）+ `pmctl trace`（D6） | ✅ (#237) |
-| CC-202 | `pmctl validate`（接 handover-validate）→ 由 CC-341 承接（closed） | ✅ CC-341 pr:#252 |
+| CC-202 | `pmctl validate`（接 handover-validate） | 🟡 → v0.5.0 |
 
 ### Phase 3 — 第一個 state consumer
 
