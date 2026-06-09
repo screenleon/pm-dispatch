@@ -144,7 +144,13 @@ Use `pmctl safe bash` instead:
 pmctl safe bash --role executor --runtime codex "$cmd"
 ```
 
-The bypass risk: a caller that uses `guard check` alone and then manually executes the command is not enforced — the policy check is advisory, not a barrier. `pmctl safe bash` is the only surface that atomically checks and runs. Exit codes are propagated identically: `0` = allowed and executed, `1` = guard denied (command not run), `2` = usage error, `3` = no policy registered.
+The bypass risk: a caller that uses `guard check` alone and then manually executes the command is not enforced — the policy check is advisory, not a barrier. `pmctl safe bash` is the only surface that atomically checks and runs. On the deny path it propagates the guard's own exit status unchanged so callers can tell a refusal apart from a fail-closed enforcement gap:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Allowed and executed — the command's own exit status is returned |
+| `2` | Guard denied the command (policy blocked it), or a usage error — command not run |
+| `3` | No policy registered for this role/runtime/event — fail-closed deny, command not run |
 
 ## Selection
 

@@ -48,10 +48,16 @@ pmctl_safe_bash() {
   fi
 
   # Guard check: policy runs first; deny exits non-zero and prints the reason.
-  if ! pmctl_guard_check "$repo_root" \
-       --role "$role" --runtime "$runtime" \
-       --event pre-bash --command "$cmd"; then
-    return 1
+  # Propagate the guard's own exit status verbatim so callers can tell a policy
+  # denial (2) apart from a fail-closed no-policy deny (3) — collapsing both to a
+  # single code hides whether the command was refused or simply could not be
+  # enforced. Only exit 0 permits execution.
+  local guard_rc=0
+  pmctl_guard_check "$repo_root" \
+    --role "$role" --runtime "$runtime" \
+    --event pre-bash --command "$cmd" || guard_rc=$?
+  if [[ "$guard_rc" -ne 0 ]]; then
+    return "$guard_rc"
   fi
 
   bash -c "$cmd"

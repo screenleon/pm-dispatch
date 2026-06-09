@@ -568,20 +568,22 @@ case_task_dispatch_event_failure_rollback() {
   should_run "$name" || return 0
   # Behavior: if event append fails after dispatch's task_upsert, the projection is restored
   #   and the command exits non-zero.
-  # Steps: create CC-931; chmod 444 events.jsonl; invoke task dispatch; restore; assert non-zero
-  #   exit and task JSON state is still open (not in-progress).
+  # Steps: create + claim CC-931 (FSM requires claimed before dispatch; claim runs before the
+  #   chmod so its own event append succeeds); chmod 444 events.jsonl; invoke task dispatch;
+  #   restore; assert non-zero exit and task JSON state is rolled back to claimed (not in-progress).
   if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
   local store proj out err status=0 task_state
   store="$tmp_root/task-dispatch-evt-fail-store"
   out="$tmp_root/task-dispatch-evt-fail.out"
   err="$tmp_root/task-dispatch-evt-fail.err"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-931 --title "DispatchFail" >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-931 >/dev/null 2>&1
   proj="$(task_project_dir "$store")"
   chmod 444 "${proj}events.jsonl"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-931 --agent codex >"$out" 2>"$err" || status=$?
   chmod 644 "${proj}events.jsonl"
   task_state="$(jq -r '.state // ""' "${proj}tasks/CC-931.json" 2>/dev/null || true)"
-  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+  if [[ "$status" -ne 0 && "$task_state" == "claimed" ]]; then
     pass "$name"
   else
     fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
@@ -593,20 +595,23 @@ case_task_review_event_failure_rollback() {
   should_run "$name" || return 0
   # Behavior: if event append fails after review's task_upsert, the projection is restored
   #   and the command exits non-zero.
-  # Steps: create CC-932; chmod 444 events.jsonl; invoke task review; restore; assert non-zero
-  #   exit and task JSON state is still open (not done).
+  # Steps: create + claim + dispatch CC-932 (FSM requires in-progress before review; these run
+  #   before the chmod so their event appends succeed); chmod 444 events.jsonl; invoke task review;
+  #   restore; assert non-zero exit and task JSON state is rolled back to in-progress (not done).
   if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
   local store proj out err status=0 task_state
   store="$tmp_root/task-review-evt-fail-store"
   out="$tmp_root/task-review-evt-fail.out"
   err="$tmp_root/task-review-evt-fail.err"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-932 --title "ReviewFail" >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-932 >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-932 --agent codex >/dev/null 2>&1
   proj="$(task_project_dir "$store")"
   chmod 444 "${proj}events.jsonl"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task review CC-932 --result pass >"$out" 2>"$err" || status=$?
   chmod 644 "${proj}events.jsonl"
   task_state="$(jq -r '.state // ""' "${proj}tasks/CC-932.json" 2>/dev/null || true)"
-  if [[ "$status" -ne 0 && "$task_state" == "open" ]]; then
+  if [[ "$status" -ne 0 && "$task_state" == "in-progress" ]]; then
     pass "$name"
   else
     fail "$name" "status=$status task_state=$task_state err=$(cat "$err")"
@@ -814,12 +819,13 @@ case_task_dispatch_sub_transitions_to_in_progress() {
   local name="pmctl task dispatch: transitions to in-progress, records agent, emits task.dispatched"
   should_run "$name" || return 0
   # Behavior: task dispatch transitions the task to in-progress, stores the agent name, and appends a task.dispatched event.
-  # Steps: create CC-503; invoke task dispatch --agent codex; assert state=in-progress, dispatched_to=codex, task.dispatched event.
+  # Steps: create + claim CC-503 (FSM requires claimed before dispatch); invoke task dispatch --agent codex; assert state=in-progress, dispatched_to=codex, task.dispatched event.
   local store proj out err status=0 task_file state agent kind schema_ok
   store="$tmp_root/tdispatch-store"
   out="$tmp_root/tdispatch.out"
   err="$tmp_root/tdispatch.err"
   run_task_cmd "$store" "$out" "$err" task create CC-503 --title "dispatch me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-503 || status=$?
   run_task_cmd "$store" "$out" "$err" task dispatch CC-503 --agent codex || status=$?
   proj="$(task_project_dir "$store")"
   task_file="$proj/tasks/CC-503.json"
@@ -845,12 +851,13 @@ case_task_dispatch_sub_records_brief_file() {
   local name="pmctl task dispatch: records --brief-file when provided"
   should_run "$name" || return 0
   # Behavior: task dispatch with --brief-file stores the brief file path in the task JSON.
-  # Steps: create CC-504; dispatch with --agent claude --brief-file /tmp/brief-cc504.md; assert brief_file field matches.
+  # Steps: create + claim CC-504; dispatch with --agent claude --brief-file /tmp/brief-cc504.md; assert brief_file field matches.
   local store proj out err status=0 task_file brief
   store="$tmp_root/tdispatch-bf-store"
   out="$tmp_root/tdispatch-bf.out"
   err="$tmp_root/tdispatch-bf.err"
   run_task_cmd "$store" "$out" "$err" task create CC-504 --title "with brief" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-504 || status=$?
   run_task_cmd "$store" "$out" "$err" task dispatch CC-504 --agent claude \
     --brief-file /tmp/brief-cc504.md || status=$?
   proj="$(task_project_dir "$store")"
@@ -985,12 +992,14 @@ case_task_review_transitions_to_done() {
   local name="pmctl task review: transitions task to done and emits task.reviewed"
   should_run "$name" || return 0
   # Behavior: task review transitions the task to done, stores review_result, and appends a task.reviewed event.
-  # Steps: create CC-508; invoke task review --result pass; assert state=done, review_result=pass, task.reviewed event.
+  # Steps: create + claim + dispatch CC-508 (FSM requires in-progress before review); invoke task review --result pass; assert state=done, review_result=pass, task.reviewed event.
   local store proj out err status=0 task_file state result kind schema_ok
   store="$tmp_root/review-store"
   out="$tmp_root/review.out"
   err="$tmp_root/review.err"
   run_task_cmd "$store" "$out" "$err" task create CC-508 --title "review me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-508 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-508 --agent codex || status=$?
   run_task_cmd "$store" "$out" "$err" task review CC-508 --result pass || status=$?
   proj="$(task_project_dir "$store")"
   task_file="$proj/tasks/CC-508.json"
@@ -1016,12 +1025,14 @@ case_task_review_with_note() {
   local name="pmctl task review: records --note when provided"
   should_run "$name" || return 0
   # Behavior: task review with --note stores the reviewer's note text in the task JSON.
-  # Steps: create CC-509; invoke task review --result fail --note "gate found blocking issue"; assert review_note field matches.
+  # Steps: create + claim + dispatch CC-509; invoke task review --result fail --note "gate found blocking issue"; assert review_note field matches.
   local store proj out err status=0 task_file note
   store="$tmp_root/review-note-store"
   out="$tmp_root/review-note.out"
   err="$tmp_root/review-note.err"
   run_task_cmd "$store" "$out" "$err" task create CC-509 --title "review note" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-509 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-509 --agent codex || status=$?
   run_task_cmd "$store" "$out" "$err" task review CC-509 --result fail \
     --note "gate found blocking issue" || status=$?
   proj="$(task_project_dir "$store")"
@@ -1056,12 +1067,14 @@ case_task_review_no_result_defaults_to_done() {
   local name="pmctl task review: transitions to done even without --result"
   should_run "$name" || return 0
   # Behavior: task review with no --result still transitions the task to done (result defaults to unset).
-  # Steps: create CC-511; invoke task review with no --result; assert state=done.
+  # Steps: create + claim + dispatch CC-511; invoke task review with no --result; assert state=done.
   local store proj out err status=0 task_file state
   store="$tmp_root/review-nr-store"
   out="$tmp_root/review-nr.out"
   err="$tmp_root/review-nr.err"
   run_task_cmd "$store" "$out" "$err" task create CC-511 --title "no result" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-511 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-511 --agent codex || status=$?
   run_task_cmd "$store" "$out" "$err" task review CC-511 || status=$?
   proj="$(task_project_dir "$store")"
   task_file="$proj/tasks/CC-511.json"
@@ -1108,10 +1121,92 @@ case_task_review_missing_result_value() {
   fi
 }
 
+case_task_claim_idempotent_rejected() {
+  local name="pmctl task claim: re-claiming an already-claimed task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM enforces open→claimed; claiming a task already in claimed exits 2 with
+  #   "invalid transition" and leaves the projection unchanged (idempotency / state-unchanged rejection, QA #5).
+  # Steps: create + claim CC-514 (now claimed); claim again; assert exit 2, "invalid transition" in stderr,
+  #   state still claimed, and exactly one task.claimed event (no duplicate emitted).
+  local store proj out err status=0 task_file state evt_count
+  store="$tmp_root/claim-idem-store"
+  out="$tmp_root/claim-idem.out"
+  err="$tmp_root/claim-idem.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-514 --title "claim twice" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-514 || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-514 && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-514.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-514" and .kind == "task.claimed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "claimed" && "$evt_count" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_invalid_transition_from_open() {
+  local name="pmctl task dispatch: dispatching an open (unclaimed) task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM requires claimed before dispatch; dispatching from open exits 2 with
+  #   "invalid transition", writes no dispatched_to, emits no task.dispatched event, leaves state open.
+  # Steps: create CC-515 (open); dispatch --agent codex without claiming; assert exit 2,
+  #   "invalid transition" in stderr, state still open, no task.dispatched event.
+  local store proj out err status=0 task_file state evt_count agent
+  store="$tmp_root/dispatch-inv-store"
+  out="$tmp_root/dispatch-inv.out"
+  err="$tmp_root/dispatch-inv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-515 --title "dispatch from open" || true
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-515 --agent codex && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-515.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  agent="$(jq -r '.dispatched_to // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-515" and .kind == "task.dispatched") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "open" && -z "$agent" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state agent=$agent evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
+case_task_review_invalid_transition_from_claimed() {
+  local name="pmctl task review: reviewing a claimed (not in-progress) task is rejected (invalid transition) and state is unchanged"
+  should_run "$name" || return 0
+  # Behavior: FSM requires in-progress before review; reviewing from claimed exits 2 with
+  #   "invalid transition", writes no review_result, emits no task.reviewed event, leaves state claimed.
+  # Steps: create + claim CC-516 (claimed, never dispatched); review --result pass; assert exit 2,
+  #   "invalid transition" in stderr, state still claimed, no task.reviewed event.
+  local store proj out err status=0 task_file state evt_count result
+  store="$tmp_root/review-inv-trans-store"
+  out="$tmp_root/review-inv-trans.out"
+  err="$tmp_root/review-inv-trans.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-516 --title "review from claimed" || true
+  run_task_cmd "$store" "$out" "$err" task claim CC-516 || true
+  run_task_cmd "$store" "$out" "$err" task review CC-516 --result pass && status=$? || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-516.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  result="$(jq -r '.review_result // ""' "$task_file" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-516" and .kind == "task.reviewed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid transition"* && "$state" == "claimed" && -z "$result" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state result=$result evt_count=$evt_count err=$(<"$err")"
+  fi
+}
+
 case_task_claim_transitions_to_claimed
 case_task_claim_not_found
 case_task_claim_missing_id
 case_task_claim_unexpected_argument
+case_task_claim_idempotent_rejected
+case_task_dispatch_invalid_transition_from_open
+case_task_review_invalid_transition_from_claimed
 case_task_dispatch_sub_transitions_to_in_progress
 case_task_dispatch_sub_records_brief_file
 case_task_dispatch_sub_missing_agent

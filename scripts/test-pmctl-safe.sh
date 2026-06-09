@@ -101,24 +101,48 @@ case_safe_bash_allowed_command_executes() {
   fi
 }
 
-case_safe_bash_denied_role_exits_nonzero() {
-  local name="pmctl safe bash: pm role pre-bash is denied (no policy registered)"
+case_safe_bash_no_policy_exits_3() {
+  local name="pmctl safe bash: no-policy role pre-bash exits exactly 3 (fail-closed) and does not execute"
   should_run "$name" || return 0
-  # Behavior: safe bash exits non-zero AND does not execute the command body when the guard denies the request.
-  # Steps: create a sentinel file; invoke safe bash --role pm --runtime claude "rm -f <sentinel>";
-  #        assert non-zero exit AND sentinel still exists (guard denied before exec).
+  # Behavior: when no guard policy is registered for the role/runtime/event, safe bash propagates
+  #   the guard's fail-closed exit code 3 verbatim AND does not execute the command body. This is the
+  #   exact-code contract assertion: 3 = cannot enforce, distinct from 2 = policy denied (see below).
+  # Steps: create a sentinel file; invoke safe bash --role pm --runtime claude "rm -f <sentinel>"
+  #        (pm/pre-bash has no policy → guard returns 3); assert exit 3 AND sentinel still exists.
+  local out err status=0 sentinel
+  out="$tmp_root/safe-nopolicy.out"
+  err="$tmp_root/safe-nopolicy.err"
+  sentinel="$tmp_root/safe-nopolicy-sentinel.txt"
+  printf 'sentinel\n' > "$sentinel"
+  run_safe_cmd "$out" "$err" safe bash \
+    --role pm --runtime claude "rm -f $sentinel" && status=$? || status=$?
+  if [[ "$status" -eq 3 && -f "$sentinel" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 3 and sentinel intact, got status=$status sentinel_exists=$([[ -f $sentinel ]] && echo yes || echo no) err=$(<"$err")"
+  fi
+}
+
+case_safe_bash_policy_denied_exits_2() {
+  local name="pmctl safe bash: policy-denied command exits exactly 2 (denied, distinct from no-policy 3) and does not execute"
+  should_run "$name" || return 0
+  # Behavior: when a policy IS registered but denies the command, safe bash propagates the guard's
+  #   denial exit code 2 verbatim AND does not execute the command body. Together with the no-policy
+  #   case above this pins the exit-code contract that distinguishes "denied" (2) from "cannot enforce" (3).
+  # Steps: create a sentinel file; invoke safe bash --role executor --runtime codex "rm -f <sentinel>"
+  #        (codex bash guard is registered but rm is not allowlisted → guard returns 2);
+  #        assert exit 2 AND sentinel still exists (denied before exec).
   local out err status=0 sentinel
   out="$tmp_root/safe-deny.out"
   err="$tmp_root/safe-deny.err"
   sentinel="$tmp_root/safe-deny-sentinel.txt"
   printf 'sentinel\n' > "$sentinel"
-  # pm/pre-bash has no policy → fail-closed deny (guard exits 3, safe bash exits 1).
   run_safe_cmd "$out" "$err" safe bash \
-    --role pm --runtime claude "rm -f $sentinel" && status=$? || status=$?
-  if [[ "$status" -ne 0 && -f "$sentinel" ]]; then
+    --role executor --runtime codex "rm -f $sentinel" && status=$? || status=$?
+  if [[ "$status" -eq 2 && -f "$sentinel" ]]; then
     pass "$name"
   else
-    fail "$name" "expected non-zero exit and sentinel intact, got status=$status sentinel_exists=$([[ -f $sentinel ]] && echo yes || echo no)"
+    fail "$name" "expected exit 2 and sentinel intact, got status=$status sentinel_exists=$([[ -f $sentinel ]] && echo yes || echo no) err=$(<"$err")"
   fi
 }
 
@@ -145,6 +169,7 @@ case_safe_bash_missing_command
 case_safe_bash_unknown_flag
 case_safe_bash_double_dash_separator
 case_safe_bash_allowed_command_executes
-case_safe_bash_denied_role_exits_nonzero
+case_safe_bash_no_policy_exits_3
+case_safe_bash_policy_denied_exits_2
 
 th_summary

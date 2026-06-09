@@ -375,6 +375,20 @@ _pmctl_emit_task_event_payload() {
   }
 }
 
+# Enforce the documented lifecycle FSM (open → claimed → in-progress → done) for
+# the semantic commands. Called inside the per-task lock so the from-state read
+# and the rejection decision are atomic with the write that follows. Returns 2
+# (usage-class) on a disallowed transition; `task update --state` remains the raw
+# override for out-of-band corrections (blocked/dropped, re-open, etc.).
+_pmctl_task_require_state() {
+  local cmd="$1" task_id="$2" actual="$3" expected="$4"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'pmctl task %s: invalid transition: %s is in state %s, expected %s\n' \
+      "$cmd" "$task_id" "${actual:-<none>}" "$expected" >&2
+    return 2
+  fi
+}
+
 # --- task claim ---
 
 pmctl_task_usage_claim() {
@@ -385,6 +399,7 @@ _pmctl_task_claim_locked() {
   local task_file="$1" updated_ts="$2" task_id="$3" repo_root="$4"
   local old_state old_json json_line
   old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state claim "$task_id" "$old_state" "open" || return $?
   old_json="$(cat "$task_file" 2>/dev/null)" || return $?
   json_line="$(jq -c --arg ts "$updated_ts" \
     '.state = "claimed" | .updated_ts = $ts' "$task_file")" || return $?
@@ -437,6 +452,7 @@ _pmctl_task_dispatch_sub_locked() {
         agent="$5" brief_file="$6"
   local old_state old_json json_line
   old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state dispatch "$task_id" "$old_state" "claimed" || return $?
   old_json="$(cat "$task_file" 2>/dev/null)" || return $?
   json_line="$(jq -c \
     --arg ts "$updated_ts" --arg agent "$agent" --arg brief "$brief_file" \
@@ -572,6 +588,7 @@ _pmctl_task_review_locked() {
         result="$5" note="$6"
   local old_state old_json json_line
   old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  _pmctl_task_require_state review "$task_id" "$old_state" "in-progress" || return $?
   old_json="$(cat "$task_file" 2>/dev/null)" || return $?
   json_line="$(jq -c \
     --arg ts "$updated_ts" --arg result "$result" --arg note "$note" \
