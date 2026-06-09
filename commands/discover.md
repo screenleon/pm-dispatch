@@ -31,11 +31,19 @@ Check that the required files exist:
 ls BACKLOG.md DECISIONS.md MILESTONES.md 2>/dev/null
 ```
 
-If `BACKLOG.md` is missing, report "No BACKLOG.md found — /discover requires a pm-dispatch project" and stop.
+Report each missing file explicitly and stop if any are absent:
+- `BACKLOG.md` missing → "No BACKLOG.md found — /discover requires a pm-dispatch project"
+- `DECISIONS.md` missing → "No DECISIONS.md found — design context unavailable; /discover cannot run"
+- `MILESTONES.md` missing → "No MILESTONES.md found — milestone scope unavailable; /discover cannot run"
 
 ## Step 2 — Extract backlog opportunities
 
-Read `BACKLOG.md` and collect all entries whose status marker is `🟢 someday` or `⏸ deferred`. Skip `✅ done`, `🔵 active`, and `⚠️ partial` — those are either finished or already in progress.
+Read `BACKLOG.md` and collect all entries whose status marker is any of the open/deferred states:
+- `🟢 someday` — explicitly queued for future consideration
+- `⏸ deferred` — explicitly deferred (non-emoji form)
+- `🟡 deferred` — deferred with caution flag (also a live deferred state)
+
+Skip `✅ done`, `🔵 active`, and `⚠️ partial` — those are either finished or already in progress.
 
 For each entry record: ticket id, one-line description, priority label (`P0`–`P3` or blank), tag (e.g. `arch`, `ux`, `ops`, `process`, `test`).
 
