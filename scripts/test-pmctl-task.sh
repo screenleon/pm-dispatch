@@ -649,4 +649,271 @@ case_task_create_event_failure_blocks_update
 case_task_update_state_event_failure_rollback
 case_task_update_state_raw_admin_edit
 
+# ---------------------------------------------------------------------------
+# claim
+# ---------------------------------------------------------------------------
+
+case_task_claim_transitions_to_claimed() {
+  local name="pmctl task claim: transitions task to claimed and emits task.claimed event"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file state kind
+  store="$tmp_root/claim-store"
+  out="$tmp_root/claim.out"
+  err="$tmp_root/claim.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-501 --title "claim me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-501 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-501.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-501" and .kind == "task.claimed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  if [[ "$status" -eq 0 && "$state" == "claimed" && "$kind" == "task.claimed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state kind=$kind"
+  fi
+}
+
+case_task_claim_not_found() {
+  local name="pmctl task claim: exits 2 when task not found"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/claim-nf-store"
+  out="$tmp_root/claim-nf.out"
+  err="$tmp_root/claim-nf.err"
+  run_task_cmd "$store" "$out" "$err" task claim CC-502 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_claim_missing_id() {
+  local name="pmctl task claim: exits 2 when task id missing"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/claim-mi-store"
+  out="$tmp_root/claim-mi.out"
+  err="$tmp_root/claim-mi.err"
+  run_task_cmd "$store" "$out" "$err" task claim && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# dispatch (task sub)
+# ---------------------------------------------------------------------------
+
+case_task_dispatch_sub_transitions_to_in_progress() {
+  local name="pmctl task dispatch: transitions to in-progress, records agent, emits task.dispatched"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file state agent kind
+  store="$tmp_root/tdispatch-store"
+  out="$tmp_root/tdispatch.out"
+  err="$tmp_root/tdispatch.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-503 --title "dispatch me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-503 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-503.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  agent="$(jq -r '.dispatched_to // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-503" and .kind == "task.dispatched") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$agent" == "codex" && "$kind" == "task.dispatched" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state agent=$agent kind=$kind"
+  fi
+}
+
+case_task_dispatch_sub_records_brief_file() {
+  local name="pmctl task dispatch: records --brief-file when provided"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file brief
+  store="$tmp_root/tdispatch-bf-store"
+  out="$tmp_root/tdispatch-bf.out"
+  err="$tmp_root/tdispatch-bf.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-504 --title "with brief" || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-504 --agent claude \
+    --brief-file /tmp/brief-cc504.md || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-504.json"
+  brief="$(jq -r '.brief_file // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$brief" == "/tmp/brief-cc504.md" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status brief=$brief"
+  fi
+}
+
+case_task_dispatch_sub_missing_agent() {
+  local name="pmctl task dispatch: exits 2 when --agent missing"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/tdispatch-ma-store"
+  out="$tmp_root/tdispatch-ma.out"
+  err="$tmp_root/tdispatch-ma.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-505 --title "no agent" || true
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-505 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+case_task_status_shows_task_and_events() {
+  local name="pmctl task status: shows task summary and recent events in human mode"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/status-store"
+  out="$tmp_root/status.out"
+  err="$tmp_root/status.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-506 --title "status me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-506 || status=$?
+  run_task_cmd "$store" "$out" "$err" task status CC-506 || status=$?
+  if [[ "$status" -eq 0 && "$(<"$out")" == *"CC-506"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_status_json_includes_recent_events() {
+  local name="pmctl task status: --json output includes task and recent_events array"
+  should_run "$name" || return 0
+  local store out err status=0 task_id events_count
+  store="$tmp_root/status-json-store"
+  out="$tmp_root/status-json.out"
+  err="$tmp_root/status-json.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-507 --title "json status" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-507 || status=$?
+  run_task_cmd "$store" "$out" "$err" task status CC-507 --json || status=$?
+  task_id="$(jq -r '.task.id // ""' "$out" 2>/dev/null || true)"
+  events_count="$(jq '.recent_events | length' "$out" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$task_id" == "CC-507" && "$events_count" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_id=$task_id events_count=$events_count"
+  fi
+}
+
+case_task_status_not_found() {
+  local name="pmctl task status: exits 2 when task not found"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/status-nf-store"
+  out="$tmp_root/status-nf.out"
+  err="$tmp_root/status-nf.err"
+  run_task_cmd "$store" "$out" "$err" task status CC-599 && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+case_task_review_transitions_to_done() {
+  local name="pmctl task review: transitions task to done and emits task.reviewed"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file state result kind
+  store="$tmp_root/review-store"
+  out="$tmp_root/review.out"
+  err="$tmp_root/review.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-508 --title "review me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-508 --result pass || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-508.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  result="$(jq -r '.review_result // ""' "$task_file" 2>/dev/null || true)"
+  kind="$(jq -r 'select(.subject_id == "CC-508" and .kind == "task.reviewed") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  if [[ "$status" -eq 0 && "$state" == "done" && "$result" == "pass" && "$kind" == "task.reviewed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state result=$result kind=$kind"
+  fi
+}
+
+case_task_review_with_note() {
+  local name="pmctl task review: records --note when provided"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file note
+  store="$tmp_root/review-note-store"
+  out="$tmp_root/review-note.out"
+  err="$tmp_root/review-note.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-509 --title "review note" || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-509 --result fail \
+    --note "gate found blocking issue" || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-509.json"
+  note="$(jq -r '.review_note // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$note" == "gate found blocking issue" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status note=$note"
+  fi
+}
+
+case_task_review_invalid_result() {
+  local name="pmctl task review: exits 2 for invalid --result value"
+  should_run "$name" || return 0
+  local store out err status=0
+  store="$tmp_root/review-inv-store"
+  out="$tmp_root/review-inv.out"
+  err="$tmp_root/review-inv.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-510 --title "bad result" || true
+  run_task_cmd "$store" "$out" "$err" task review CC-510 --result oops && status=$? || status=$?
+  if [[ "$status" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2, got $status"
+  fi
+}
+
+case_task_review_no_result_defaults_to_done() {
+  local name="pmctl task review: transitions to done even without --result"
+  should_run "$name" || return 0
+  local store proj out err status=0 task_file state
+  store="$tmp_root/review-nr-store"
+  out="$tmp_root/review-nr.out"
+  err="$tmp_root/review-nr.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-511 --title "no result" || status=$?
+  run_task_cmd "$store" "$out" "$err" task review CC-511 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-511.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "done" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state"
+  fi
+}
+
+case_task_claim_transitions_to_claimed
+case_task_claim_not_found
+case_task_claim_missing_id
+case_task_dispatch_sub_transitions_to_in_progress
+case_task_dispatch_sub_records_brief_file
+case_task_dispatch_sub_missing_agent
+case_task_status_shows_task_and_events
+case_task_status_json_includes_recent_events
+case_task_status_not_found
+case_task_review_transitions_to_done
+case_task_review_with_note
+case_task_review_invalid_result
+case_task_review_no_result_defaults_to_done
+
 th_summary
