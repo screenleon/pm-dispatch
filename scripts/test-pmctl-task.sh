@@ -873,18 +873,25 @@ case_task_dispatch_sub_records_brief_file() {
 case_task_dispatch_sub_missing_agent() {
   local name="pmctl task dispatch: exits 2 when --agent missing"
   should_run "$name" || return 0
-  # Behavior: task dispatch without --agent exits with a usage error.
-  # Steps: create CC-505; invoke task dispatch with no --agent; assert exit 2.
+  # Behavior: task dispatch without --agent exits 2 with a "missing --agent" usage error.
+  # Steps: create + claim CC-505 (so the task is in `claimed`, a valid dispatch
+  #   source state); invoke task dispatch with no --agent; assert exit 2 AND the
+  #   "missing --agent" diagnostic. Claiming first isolates the missing-agent
+  #   branch from the FSM transition check -- without it the open->dispatch
+  #   invalid-transition guard would return exit 2 even if the missing-agent
+  #   check were removed, so the assertion would not actually cover this branch.
   local store out err status=0
   store="$tmp_root/tdispatch-ma-store"
   out="$tmp_root/tdispatch-ma.out"
   err="$tmp_root/tdispatch-ma.err"
-  run_task_cmd "$store" "$out" "$err" task create CC-505 --title "no agent" || true
+  run_task_cmd "$store" "$out" "$err" task create CC-505 --title "no agent" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-505 || status=$?
+  status=0
   run_task_cmd "$store" "$out" "$err" task dispatch CC-505 && status=$? || status=$?
-  if [[ "$status" -eq 2 ]]; then
+  if [[ "$status" -eq 2 ]] && grep -q 'missing --agent' "$err"; then
     pass "$name"
   else
-    fail "$name" "expected exit 2, got $status"
+    fail "$name" "expected exit 2 + 'missing --agent', got status=$status err=$(cat "$err")"
   fi
 }
 
@@ -1048,18 +1055,27 @@ case_task_review_with_note() {
 case_task_review_invalid_result() {
   local name="pmctl task review: exits 2 for invalid --result value"
   should_run "$name" || return 0
-  # Behavior: task review rejects an unknown --result value with a usage error.
-  # Steps: create CC-510; invoke task review --result oops; assert exit 2.
+  # Behavior: task review rejects an unknown --result value with exit 2 and an
+  #   "invalid --result" usage error.
+  # Steps: create + claim + dispatch CC-510 (so the task is in `in-progress`, a
+  #   valid review source state); invoke task review --result oops; assert exit 2
+  #   AND the "invalid --result" diagnostic. Advancing to in-progress first
+  #   isolates the result-validation branch from the FSM transition check --
+  #   otherwise the open->review invalid-transition guard would return exit 2
+  #   even if the result validation were removed, leaving the branch uncovered.
   local store out err status=0
   store="$tmp_root/review-inv-store"
   out="$tmp_root/review-inv.out"
   err="$tmp_root/review-inv.err"
-  run_task_cmd "$store" "$out" "$err" task create CC-510 --title "bad result" || true
+  run_task_cmd "$store" "$out" "$err" task create CC-510 --title "bad result" || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-510 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-510 --agent codex || status=$?
+  status=0
   run_task_cmd "$store" "$out" "$err" task review CC-510 --result oops && status=$? || status=$?
-  if [[ "$status" -eq 2 ]]; then
+  if [[ "$status" -eq 2 ]] && grep -q 'invalid --result' "$err"; then
     pass "$name"
   else
-    fail "$name" "expected exit 2, got $status"
+    fail "$name" "expected exit 2 + 'invalid --result', got status=$status err=$(cat "$err")"
   fi
 }
 

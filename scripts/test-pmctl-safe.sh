@@ -86,18 +86,26 @@ case_safe_bash_unknown_flag() {
 case_safe_bash_allowed_command_executes() {
   local name="pmctl safe bash: allowed command executes and exits 0"
   should_run "$name" || return 0
-  # Behavior: safe bash runs the command and exits 0 when the guard policy allows it.
-  # Steps: invoke safe bash --role executor --runtime codex "git status --short" (codex allowlisted read-only git); assert exit 0.
-  local out err status=0
+  # Behavior: safe bash actually runs the command body (not just returns 0) and
+  #   exits 0 when the guard policy allows it.
+  # Steps: invoke safe bash --role executor --runtime codex
+  #   "git rev-parse --is-inside-work-tree" (codex allowlisted read-only git with
+  #   deterministic stdout); assert exit 0 AND stdout == "true". Asserting the
+  #   deterministic output -- not just the wrapper exit -- isolates the execution
+  #   side effect: replacing the `bash -c "$cmd"` body with a no-op that returns 0
+  #   would still exit 0 but produce empty stdout, failing this test.
+  local out err status=0 output
   out="$tmp_root/safe-ok.out"
   err="$tmp_root/safe-ok.err"
-  # git status is in the codex bash guard allowlist (read-only git operation).
+  # git rev-parse is in the codex bash guard read-only allowlist; the test runs
+  # from within the repo work tree so --is-inside-work-tree prints exactly "true".
   run_safe_cmd "$out" "$err" safe bash \
-    --role executor --runtime codex "git status --short" && status=$? || status=$?
-  if [[ "$status" -eq 0 ]]; then
+    --role executor --runtime codex "git rev-parse --is-inside-work-tree" && status=$? || status=$?
+  output="$(<"$out")"
+  if [[ "$status" -eq 0 && "$output" == "true" ]]; then
     pass "$name"
   else
-    fail "$name" "expected exit 0, got $status err=$(<"$err")"
+    fail "$name" "expected exit 0 + stdout 'true', got status=$status out=$output err=$(<"$err")"
   fi
 }
 
