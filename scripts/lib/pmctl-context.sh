@@ -369,14 +369,22 @@ pmctl_context_index() {
   done < <(sqlite3 "$db" "SELECT path, mtime FROM files;" 2>/dev/null || true)
 
   # Batch SQL for all changed files into one transaction (1 sqlite3 call vs. N).
+  # A temp table _cur_paths tracks every path present in the current scan so that
+  # rows for deleted files can be removed in the same transaction (reconciliation).
   local batch_sql
   batch_sql="$(mktemp /tmp/ctx-XXXXXX.sql)"
   printf 'BEGIN;\n' > "$batch_sql"
+  printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
 
   local indexed=0 skipped=0
   while IFS= read -r abs_path; do
     [[ -f "$abs_path" ]] || continue
     local rel_path="${abs_path#"$repo_root/"}"
+    local ep
+    ep="$(_ctx_sql_str "$rel_path")"
+
+    # Track every found path for stale-row reconciliation (before mtime skip).
+    printf "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$ep" >> "$batch_sql"
 
     # Incremental contract: mtime-only skip. sha1 is stored for debugging but
     # is NOT used for change detection; content changes with a preserved mtime
@@ -406,10 +414,16 @@ pmctl_context_index() {
         -name '*.json' \
       \) 2>/dev/null | sort)
 
-  printf 'COMMIT;\n' >> "$batch_sql"
-  if [[ "$indexed" -gt 0 ]]; then
-    sqlite3 "$db" < "$batch_sql"
-  fi
+  # Reconcile deletions: remove rows for files no longer in the repo.
+  {
+    printf 'DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
+    printf 'DELETE FROM file_chunks WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
+    printf 'DELETE FROM files WHERE path NOT IN (SELECT path FROM _cur_paths);\n'
+    printf 'COMMIT;\n'
+  } >> "$batch_sql"
+
+  # Always execute: even if nothing was indexed, reconciliation must run.
+  sqlite3 "$db" < "$batch_sql"
   rm -f "$batch_sql"
 
   _ctx_fts_rebuild "$db"
@@ -591,14 +605,15 @@ pmctl_context_query() {
   if [[ "$use_fts5" -eq 1 ]]; then
     local fts_tmpf
     fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    printf "SELECT ref, text FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
+    # Normalize newlines in text at the SQL layer so IFS-tab read is safe.
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
       "$eq" > "$fts_tmpf"
     while IFS=$'\t' read -r ref text; do
       [[ -n "$ref" ]] || continue
       [[ "$first" -eq 0 ]] && printf '\n'
       first=0
       local snippet
-      snippet="$(printf '%s' "$text" | head -c 80 | tr '\n' ' ')"
+      snippet="$(printf '%s' "$text" | head -c 80)"
       _ctx_emit_hit "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
       hits=$((hits + 1))
     done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)

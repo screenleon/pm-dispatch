@@ -530,6 +530,98 @@ case_context_query_fts5_path() {
   fi
 }
 
+case_context_index_deleted_file_reconciled() {
+  local name="pmctl context index: deleted file is removed from DB on re-index"
+  # Behavior: after a file is deleted from the repo and re-index runs, that file's
+  #   path must no longer appear in context query results.
+  # Steps: index fixture; delete a file; re-index; query the deleted symbol; assert 0 hits.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-del"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  # Remove the file that contains my_func_alpha
+  rm -f "$fix_repo/scripts/lib/mymodule.sh"
+
+  # Re-index — reconciliation should remove stale rows
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/q-del.out"; err="$tmp_root/q-del.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" "my_func_alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 ]] && grep -q '# no hits' "$out"; then
+    pass "$name"
+  elif [[ "$status" -eq 0 ]] && ! grep -q 'ref:' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "deleted file still queryable; out=$(<"$out")"
+  fi
+}
+
+case_context_query_fts_multiline_no_bogus_refs() {
+  local name="pmctl context query: FTS hit on multiline file emits only valid refs"
+  # Behavior: when file_chunks.text contains newlines, FTS query must not emit
+  #   continuation lines as bogus ref: entries.
+  # Steps: index a file with multiline content containing sentinel; query via FTS;
+  #   assert every emitted ref: line looks like a valid path:linenum format.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-fts-ml"
+  make_fixture_repo "$fix_repo"
+
+  # Add a multiline file where the sentinel is not on line 1
+  cat > "$fix_repo/MULTILINE.md" <<'MD'
+# Title
+
+Line two content.
+Line three content.
+multiline_fts_sentinel_9182736 appears on line five.
+Line six content.
+Line seven content.
+MD
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  # Only test if FTS5 is available; skip otherwise
+  local db
+  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    pass "$name"; return 0
+  fi
+  local fts_tbl
+  fts_tbl="$(sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || true)"
+  if [[ -z "$fts_tbl" ]]; then
+    pass "$name"; return 0  # FTS5 not available — LIKE path tested elsewhere
+  fi
+
+  out="$tmp_root/q-fts-ml.out"; err="$tmp_root/q-fts-ml.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" "multiline_fts_sentinel_9182736" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query failed: $(<"$err")"; return 0
+  fi
+
+  # Every ref: line must look like path:digits (no raw text content as ref)
+  local bogus
+  bogus="$(grep '^- ref:' "$out" | grep -v '^- ref: .\+:[0-9][0-9]*$' || true)"
+  if [[ -z "$bogus" ]]; then
+    pass "$name"
+  else
+    fail "$name" "bogus ref lines found: $bogus"
+  fi
+}
+
 case_context_query_on_real_repo() {
   local name="pmctl context query: pmctl_validate_brief found in real repo index"
   should_run "$name" || return 0
@@ -601,6 +693,8 @@ case_context_query_unknown_term_exits_0
 case_context_query_like_fallback
 case_context_query_file_chunks_text_path
 case_context_query_fts5_path
+case_context_index_deleted_file_reconciled
+case_context_query_fts_multiline_no_bogus_refs
 case_context_query_on_real_repo
 case_context_layer_boundary
 
