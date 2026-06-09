@@ -59,6 +59,7 @@ SUITE_NAMES=(
   test-pmctl-validate
   test-brief-validate
   test-archive-closed-backlog
+  test-pmctl-context
 )
 
 declare -A SUITE_PATHS=(
@@ -111,6 +112,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-validate]="scripts/test-pmctl-validate.sh"
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
+  [test-pmctl-context]="scripts/test-pmctl-context.sh"
 )
 
 declare -A SKIP_REQUESTED=()

@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision pmctl-gate pmctl-safe pmctl-validate; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision pmctl-gate pmctl-safe pmctl-validate pmctl-context; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -146,6 +146,24 @@ case "$cmd/$sub" in
       pmctl_die "gate run unavailable"
     fi
     pmctl_gate_run "$REPO_ROOT" "$@"
+    ;;
+  context/index)
+    if ! declare -F pmctl_context_index >/dev/null; then
+      pmctl_die "context index unavailable"
+    fi
+    pmctl_context_index "$@"
+    ;;
+  context/update)
+    if ! declare -F pmctl_context_update >/dev/null; then
+      pmctl_die "context update unavailable"
+    fi
+    pmctl_context_update "$@"
+    ;;
+  context/query)
+    if ! declare -F pmctl_context_query >/dev/null; then
+      pmctl_die "context query unavailable"
+    fi
+    pmctl_context_query "$@"
     ;;
   ""/)
     pmctl_die "missing command. Usage: pmctl <cmd> <sub> [args]"

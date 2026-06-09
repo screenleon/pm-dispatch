@@ -7,6 +7,32 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-09: context-pack-schema-version-bump-1-to-2
+
+Closes: BACKLOG.md#CC-237, BACKLOG.md#CC-338
+
+Relates: CC-237, CC-338, CC-232
+
+### Context
+
+`core/schema/context-pack.schema.json` defines `schema_version` as a `const: 1`. The CC-237 / CC-338 implementation adds four optional fields to the `item.$defs` schema: `source_domain` (enum), `why_relevant` (string), `trust_level` (enum), and `refs` (array of strings). These fields are all optional — not added to `required[]` — so existing producers and consumers that omit them continue to validate without modification.
+
+### Decision
+
+Bump `schema_version` from **1** to **2** despite the additive-only change. `core/README.md` invariant 3 states: "Any change to a schema is a versioned breaking event that requires a `schema_version` bump." The invariant does not distinguish between additive (non-breaking) and breaking changes; the bump is required regardless. The rationale: even optional additions change the surface of valid documents and should be traceable to a specific schema revision.
+
+### Alternatives considered
+
+- **Keep schema_version at 1**: rejected — violates core/ invariant 3 explicitly.
+- **Treat additive-only as non-breaking, skip bump**: rejected — the invariant is a hard rule; relaxing it ad-hoc would erode its usefulness.
+
+### Constraints introduced
+
+- Any future producer or consumer that reads `schema_version` must now accept 2. Existing code that validates `const: 1` must update its expectation.
+- The `context-pack.schema.json` version bump is the sole source of truth for which optional fields are valid in `item.$defs`.
+
+---
+
 ## 2026-06-08: ticket-id-collision-lint-and-cc-329-330-renumber
 
 Closes: BACKLOG.md#CC-339

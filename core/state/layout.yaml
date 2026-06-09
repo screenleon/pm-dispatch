@@ -68,6 +68,12 @@ project_partition:
     - path: "events.lock"
       format: lockfile
 
+    - path: "repo-index.db"
+      format: sqlite
+      description: "Builtin repo symbol index (files / symbols / file_chunks). Derived cache — rebuilable from source tree; written by pmctl-context.sh with flock, NOT serialize_with_lock."
+      rebuilable: true
+      lock: repo-index.db.lock
+
   subdirs:
     - path: "tasks/"
       file_pattern: "$TASK_ID.json"

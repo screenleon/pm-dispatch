@@ -4,7 +4,7 @@
 # These tests validate that:
 #   1. Every JSON Schema file under core/schema/ is valid JSON
 #   2. Every YAML file under core/policy/ and core/state/ is valid YAML
-#   3. Schemas declaring schema_version do so as `const: 1`
+#   3. Schemas declaring schema_version do so as a positive integer `const`
 #   4. Enum values referenced inline in schemas stay in sync with the
 #      corresponding policy YAML files (the documented editing source).
 #
@@ -103,20 +103,21 @@ case_yaml_parse() {
 }
 
 case_schema_version_const() {
-  # Verifies that the schema declares schema_version with const: 1.
+  # Verifies that the schema declares schema_version as a positive integer const.
+  # Schemas may be at different versions; what matters is that the field is a const.
   #
   # Steps:
   #   1. Extract .properties.schema_version.const via jq.
-  #   2. Assert the value equals "1".
+  #   2. Assert the value is a positive integer (>= 1).
   local file="$1"
-  local name="schema_version: $file declares const: 1"
+  local name="schema_version: $file declares a positive integer const"
   should_run "$name" || return 0
   local val
   val=$(jq -r '.properties.schema_version.const // empty' "$file")
-  if [[ "$val" == "1" ]]; then
+  if [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 1 )); then
     pass "$name"
   else
-    fail "$name" "expected const: 1, got '$val'"
+    fail "$name" "expected a positive integer const (>= 1), got '$val'"
   fi
 }
 
