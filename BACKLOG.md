@@ -1121,9 +1121,9 @@ This makes directory creation the mutex.
 
 *Phase 1 — MVP（Bash+SQLite only）*
 1. `pmctl context index --source repo`：掃描 repo 建立 SQLite index（`files` / `symbols` / `file_chunks` 三張表）
-2. `pmctl context update [path]`：增量更新（依 mtime/sha1 偵測變更）
-3. symbol 提取策略：Bash + awk/sed/grep 的 regex-based approximation，支援 Shell（function）、Go（func/type/struct/interface）、Python（def/class）、TypeScript/JavaScript（function/class/const arrow）；Markdown 以 heading 切 chunk
-4. `pmctl context pack "<query>" --source repo`：以關鍵字查詢，輸出 context pack（relevant files + symbols + search hints），格式對齊 `context_hit_v1`（CC-237）可直接嵌入 dispatch brief
+2. `pmctl context update [path]`：增量更新（**mtime-only** 偵測變更；sha1 儲存供 debug 用，不參與 skip 判斷——content 變更但 mtime 保留時不會重新 index，此為 documented contract）
+3. symbol 提取策略：Bash + awk/sed/grep 的 regex-based approximation，支援 Shell（function）、Go（func/type/struct/interface）、Python（def/class）、TypeScript/JavaScript（function/class/const arrow）；Markdown **以單一 chunk（前 2000 bytes）儲存**（heading-based chunking 延至後續 PR）
+4. `pmctl context query "<query>"` — symbol + text 搜尋，格式對齊 `context_hit_v1`（CC-237）；`pmctl context pack` 組裝層屬 CC-239
 5. FTS5 為 optional 加速層；缺 FTS5 時 fallback 到 `LIKE` / `grep` 並納入測試（Windows Git Bash sqlite3 未必含 FTS5）
 6. 以 pm-dispatch 自身 repo 作為第一個 fixture，比較 3 個真實任務的 before/after dispatch brief
 

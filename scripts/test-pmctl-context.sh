@@ -223,6 +223,8 @@ case_context_update_no_path_full_scan() {
 
 case_context_update_absolute_path_rejected() {
   local name="pmctl context update: absolute path outside repo is rejected"
+  # Behavior: context update must exit 2 and write no DB row for absolute paths outside repo.
+  # Steps: index fixture repo; run update with /etc/passwd; assert exit 2 and no DB row.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-abs"
@@ -255,6 +257,8 @@ case_context_update_absolute_path_rejected() {
 
 case_context_update_traversal_rejected() {
   local name="pmctl context update: traversal path outside repo is rejected"
+  # Behavior: context update must exit 2 and write no DB row for .. traversal paths.
+  # Steps: index fixture repo; run update with ../../etc/passwd; assert exit 2 and no DB row.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-trav"
@@ -286,6 +290,9 @@ case_context_update_traversal_rejected() {
 
 case_context_index_mtime_only_contract() {
   local name="pmctl context index: mtime-only skip contract (preserved mtime skips re-index)"
+  # Behavior: second index run skips a file whose content changed but mtime was restored.
+  # Steps: index fixture; modify a file and restore its mtime; re-index; assert 0 indexed.
+  # Contract: mtime-only skip is explicit — sha1 stored but not used for change detection.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-mtime"
@@ -437,6 +444,49 @@ case_context_query_like_fallback() {
   fi
 }
 
+case_context_query_file_chunks_text_path() {
+  local name="pmctl context query: file_chunks text LIKE path returns hit for text-only content"
+  # Behavior: querying a term that exists only in file_chunks.text (not in symbols.name)
+  #   must return a hit via the text LIKE fallback branch.
+  # Steps: create a file with no extractable symbols but unique text; index it; drop FTS;
+  #   query the unique text; assert a hit is returned.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-chunks"
+  make_fixture_repo "$fix_repo"
+
+  # Add a markdown file where the sentinel is in body text (not a heading).
+  # Markdown headings become symbols; body text does not — so only file_chunks.text can match.
+  cat > "$fix_repo/NOTES.md" <<'MD'
+# Notes
+
+Body text only: unique_chunk_sentinel_8675309_not_a_symbol here.
+MD
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  # Drop FTS table to force LIKE path through file_chunks
+  local db
+  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  if [[ -n "$db" && -f "$db" ]]; then
+    sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" 2>/dev/null || true
+  fi
+
+  out="$tmp_root/q-chunks.out"; err="$tmp_root/q-chunks.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" "unique_chunk_sentinel_8675309_not_a_symbol" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 ]] && grep -q 'ref:' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "file_chunks LIKE fallback did not hit; status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_context_query_fts5_path() {
   local name="pmctl context query: FTS5 code path taken when FTS5 available"
   should_run "$name" || return 0
@@ -549,6 +599,7 @@ case_context_query_unknown_flag
 case_context_query_known_symbol
 case_context_query_unknown_term_exits_0
 case_context_query_like_fallback
+case_context_query_file_chunks_text_path
 case_context_query_fts5_path
 case_context_query_on_real_repo
 case_context_layer_boundary
