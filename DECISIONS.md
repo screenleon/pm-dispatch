@@ -7,6 +7,29 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-10: v0.5.0-phase2-reanchored-to-memory-read-write-loop
+
+Relates: CC-354, CC-234, CC-340, CC-237, CC-338
+
+**Context**: After the repo-index spine landed (CC-338/237/239), the maintainer observed that memory/index still isn't used in practice — exploration still reaches for grep, not the index. Investigation confirmed a mechanical, not behavioural, cause: (1) `pmctl context query` only indexes the repo plane; the knowledge plane (BACKLOG/DECISIONS/MILESTONES/memory cards) has no queryable index. (2) The indexer stores one `head -c 2000` chunk per file, so a 180 KB BACKLOG only has its first ~30 lines indexed — finding CC-234 (line 615) genuinely requires grep. (3) Out-of-repo memory cards are never scanned. So the read reflex defaults to grep because the index literally cannot answer.
+
+**Decision**: Re-anchor v0.5.0 Phase 2 from scattered capabilities (CC-234 / CC-235 / knowledge index) to **memory read + write both usable**, success criterion = "what was written stays reachable, by the right mechanism for each kind — memory cards via MEMORY.md auto-injection, in-repo knowledge docs via `pmctl context query` — and the exploration reflex is query-before-grep instead of grep-first". (Note: cards are NOT queryable via pmctl in this slice — see the in-repo-only triage decision below.) Split into a read half (CC-354, new) and a write half (CC-234, re-scoped). Pull the **anchored-TOC slice** of CC-340 forward into CC-354 (per-section chunking of in-repo knowledge docs via a pluggable per-format chunker); CC-340 narrows to the heavy remainder (embeddings, full-text ranking, episodic chunks) and stays v0.6.0.
+
+Triage decisions (2026-06-10):
+- **CC-354 indexes in-repo knowledge docs only.** Out-of-repo memory cards are NOT indexed into pmctl in this slice — MEMORY.md auto-injection + `/mem-search` already surface them, so indexing would duplicate an existing mechanism. Deferred until a real need appears. Consequence: CC-354 does not touch memory-dir path resolution, so it does not trigger CC-333.
+- **Per-format chunker, not markdown-only.** Chunking dispatches by format: markdown → heading-based (`^#{1,6}`); txt/json/yaml/other → line-window (also fixes the head-2000-only limit for any large non-markdown file); html → window fallback now, semantic `<h1-6>` chunking split to **CC-355** (someday) because robust HTML parsing in bash is its own concern.
+- **CC-346 (cross-file ref tracking) promoted someday→P2**, placed in Phase 2 but decoupled from the memory loop (it is repo-plane / reuse-scan downstream) — without ref data reuse-scan has limited PM value.
+- **CC-235 (lifecycle gate) is optional** in v0.5.0 — unrelated to the memory loop; do it in spare capacity or slip to v0.6.0, never blocking Phase 2.
+- **CC-333 (`PM_MEMORY_DIR`) unchanged** (someday) — its trigger (knowledge index touching memory-dir paths) is not met now that CC-354 is in-repo-only.
+
+Two sub-decisions:
+- **Semantic transformation lives on the write side only.** The read-side index over structured Markdown is an anchored table-of-contents (heading + extracted id + line anchor + lead, not full body) — humans already chunked these docs into `## CC-NNN` titled sections, so the title is the distilled summary. No LLM summarisation of docs into the index (cost / staleness / non-determinism / loss of verbatim fidelity). Distillation into curated memory cards is `/mem-distill`'s job (CC-234).
+- **The retrieval reflex must be platform-neutral.** The query-before-grep discipline is documented in a neutral `docs/` contract and made ergonomic via `pmctl` (a neutral CLI any harness/executor can call). It is NOT written into CLAUDE.md (which binds the behaviour to the Claude Code platform); only a one-line pointer sits in the repo-owned `agents/project-pm.md`.
+
+**Alternatives considered**: (a) Implement CC-234 as originally specced (events → mem-distill) first — rejected: it only enriches a store nothing reads; retrieval is the live bottleneck. (b) Pull the full CC-340 (standalone FTS + embeddings) forward — rejected: violates the ≤1-PR thin-slice discipline; the anchored-TOC slice is the minimum that makes the read side usable. (c) Write the reflex into CLAUDE.md — rejected by the maintainer to avoid platform binding.
+
+**Constraints introduced**: CC-354 must reuse the CC-338 indexer machinery (no parallel index DB); the per-format chunker must populate the existing `file_chunks` columns with no schema migration and be a pluggable seam (CC-355 and future formats plug in without rewriting the caller); `LIKE`/`grep` fallback stays mandatory (FTS5 optional). Acceptance is per-half: CC-354 = `pmctl context query CC-234` returns the in-repo BACKLOG section (memory cards stay on auto-injection, not the index); CC-234 = `/mem-distill` produces an event-derived card under the existing four-tier schema.
+
 ## 2026-06-09: context-pack-schema-version-bump-1-to-2
 
 Closes: BACKLOG.md#CC-237, BACKLOG.md#CC-338

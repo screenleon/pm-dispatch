@@ -33,13 +33,19 @@
 | CC-338 | **repo index MVP**（原 CC-328，見 Phase 0 改號）：bash + sqlite3 實作 `files` / `symbols` / `file_chunks`；shell/python/ts/js/go regex symbols + markdown heading chunks；mtime incremental；FTS5-optional + grep fallback；SQLite WAL 並行；暴露 `pmctl context index/update/query` | ✅ pr:#253 |
 | CC-239 | **reuse-scan + context pack 組裝**（spine 的 user-visible 終點）：PM briefing 時查 prior art，輸出 `reuse_candidates`（helper / test pattern + why_relevant）並組裝 `pmctl context pack` 統一輸出（context_hit_v1 hits，依 symbols/files 分類）；brief 吸收。repo-index 的第一個 consumer，直接消化 reuse-debt | ✅ pr:#256 |
 
-### Phase 2 — knowledge 面 + lifecycle（P2）
+### Phase 2 — memory 讀寫閉環（P2；本 milestone 能力主軸）
+
+> **重定錨（2026-06-10）**：原 Phase 2 是散裝能力（CC-234 / CC-235 / knowledge index 各自為政）。改以 **memory 讀寫都順** 為主軸——驗收：寫側 `/mem-distill` 產 event-derived 卡片；讀側 in-repo knowledge docs 可 `pmctl context query`（不再 grep BACKLOG），memory cards 維持既有 MEMORY.md auto-injection；動手前先查 index 再 grep。觸發原因見 `DECISIONS.md` 2026-06-10：memory 寫了沒人讀——knowledge plane 無可查 index（`pmctl context query` 只索引 repo plane）、retrieval 反射仍是 grep；且 indexer 對每檔只存 `head -c 2000` 一塊，180 KB 的 BACKLOG 只有前 ~30 行進 index，連找 CC-234 都得 grep。
+>
+> **讀寫分工（語意轉化只發生在寫側）**：**寫側**做語意轉化（episodes + events → memory card，卡片本身即蒸餾產物）；**讀側**只當「**帶錨點的語意目錄**」（heading + 抽 id + 行錨點 + lead，**不存全文**，命中後 lazy-read 原檔）。index **不**對結構化 markdown 做 LLM 全文摘要——這類文件人類已用 `## CC-NNN` 標題語意化過，標題即摘要。
 
 | 票號 | 說明 | 目標 P |
 |---|---|---|
 | CC-343 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求（原 CC-330，撞號改號，見 Phase 0） | ✅ pr:#251 |
-| CC-234 | memory v2 minimal：`/mem-distill` 加 `events.jsonl` 輸入；同時作為 knowledge 面的 content 來源 | P3 |
-| CC-235 | Task lifecycle gate（warning mode first，不先 hard-gate） | P2 |
+| CC-354 | **讀側：anchored knowledge index + retrieval reflex**。對 in-repo knowledge docs（BACKLOG/DECISIONS/MILESTONES/docs）做 per-section TOC（heading + 抽 CC-id/decision-id + 行錨點 + lead，非全文），透過 pluggable per-format chunker（markdown heading / txt window / html fallback）；`pmctl context query --domain knowledge`；「查 index 再 grep」紀律寫入**中立 docs 契約 + pmctl**，不寫 CLAUDE.md（避免平台綁定），僅 agents/project-pm.md 放一行指標。repo 外 memory cards 維持 auto-injection，不進此刀 | P2 |
+| CC-234 | **寫側：memory v2（重定義範圍）**。`/mem-distill` 吃 events.jsonl + episodes.jsonl → 語意化 memory card；event tier 得 schema | P2 |
+| CC-346 | **repo plane 下游：cross-file ref tracking**（file_refs 層）。讓 reuse-scan 的 query 能回「被哪些檔案引用」——沒有它 reuse-scan 對 PM 幫助有限。someday→P2（2026-06-10），與 memory loop 解耦，排 loop 之後 | P2 |
+| CC-235 | Task lifecycle gate（warning mode first）——與 memory loop 無關，**optional**：有空檔才做，無則順延 v0.6.0，不阻塞 Phase 2 | P2 (optional) |
 | CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | ✅ pr:#252 |
 | CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | ✅ pr:#252 |
 
@@ -52,7 +58,8 @@
 
 ### 延後至 v0.6.0+（明確排除於 v0.5.0）
 
-- **完整 knowledge index（CC-340）**（FTS over 全 memory / wiki / episodes）——與既有 `/mem-search` 重疊；v0.5.0 只對齊 schema，standalone index 延 v0.6.0。已開 `🟢 someday` 票追蹤，對稱於 repo-index CC-338。
+- **完整 knowledge index（CC-340）**——standalone FTS + embeddings + episodes low-trust chunk 的重型版仍延 v0.6.0，與既有 `/mem-search` 重疊。**但 anchored-TOC 薄切（in-repo knowledge docs 的 section 目錄）已拉前至 v0.5.0 CC-354**：沒有它 memory 讀側完全不可用（連 BACKLOG 內的票都得 grep，見 Phase 2 重定錨）。CC-340 縮為剩餘範圍——repo 外 memory cards / wiki / episodes 索引 + standalone full-text + embeddings，對稱於 repo-index CC-338。
+- **CC-355 HTML semantic chunking**——CC-354 的 per-format chunker 對 html 先走 window fallback；`<h1-6>` 語意 chunking 留 follow-up（bash 解析 HTML 脆、且 repo 目前無 .html knowledge 來源），plug 進 CC-354 的 chunker seam。
 - **External index backends**——Khoj（semantic knowledge）、Memori（cross-runtime；回寫只走 `memory_proposal`）、tree-sitter / codegraph（CC-209 / CC-253 spike）、ctags。規則：local canonical first，external accelerator second。
 - **CC-216 MCP server**——需穩定 pmctl，延 v0.6.0+。
 - **CC-333 runtime 解耦（`PM_MEMORY_DIR`）**——knowledge index 落地後再評估 path 抽象需求。
