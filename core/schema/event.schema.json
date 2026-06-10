@@ -32,11 +32,13 @@
         "review.verdict",
         "guard.denied",
         "guard.warned",
-        "decision.recorded"
+        "decision.recorded",
+        "context.queried",
+        "context.reuse_scanned"
       ]
     },
     "subject_type": {
-      "enum": ["task", "run", "review", "decision"]
+      "enum": ["task", "run", "review", "decision", "context"]
     },
     "subject_id": {
       "type": "string"

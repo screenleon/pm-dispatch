@@ -647,6 +647,38 @@ _ctx_json_str() {
   printf '"%s"' "$s"
 }
 
+# ── Usage event emission ──────────────────────────────────────────────────────
+# Best-effort: emits a context.queried or context.reuse_scanned event to
+# events.jsonl via the already-sourced state-writer.  Any failure is silent —
+# the main query/reuse-scan operation must not be affected.
+
+_ctx_emit_usage_event() {
+  local kind="$1" query_term="$3" hit_count="${4:-0}"
+  declare -F events_append >/dev/null 2>&1 || return 0
+  declare -F state_store_init >/dev/null 2>&1 || return 0
+  # Events are written to the pmctl installation partition (same as pmctl trace
+  # tail reads from), not the indexed target-repo partition.
+  local pmctl_root ts stamp hex6 evt_id event_json
+  pmctl_root="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
+  hex6="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  hex6="${hex6:0:6}"
+  [[ -n "$hex6" ]] || return 0
+  evt_id="evt-${stamp}-${hex6}"
+  event_json="$(jq -cn \
+    --arg id     "$evt_id" \
+    --arg ts     "$ts" \
+    --arg kind   "$kind" \
+    --arg query  "$query_term" \
+    --argjson hits "$hit_count" \
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,
+      subject_type:"context",subject_id:("ctx-"+ $id),
+      actor:"pmctl",
+      payload:{query:$query,hits:$hits}}')" 2>/dev/null || return 0
+  _SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>/dev/null || true
+}
+
 # ── Term extraction from free-text description ────────────────────────────────
 # Outputs unique lower-case terms (≥ 3 chars, not stop words), one per line.
 # Isolated change seam — pmctl_context_pack and pmctl_context_reuse_scan
@@ -872,6 +904,7 @@ pmctl_context_query() {
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"
   fi
+  _ctx_emit_usage_event "context.queried" "$repo_root" "$query" "$hits"
   return 0
 }
 
@@ -1047,12 +1080,16 @@ pmctl_context_reuse_scan() {
   printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
   printf '  terms: %s\n' "$terms_yaml"
 
-  if [[ ! -s "$hits_tsv" ]]; then
+  local total_hits=0
+  [[ -s "$hits_tsv" ]] && total_hits="$(wc -l < "$hits_tsv" | tr -d ' ')"
+
+  if [[ "$total_hits" -eq 0 ]]; then
     printf '  hits: []\n'
   else
     printf '  hits:\n'
-    local first_hit=1
+    local first_hit=1 emitted=0
     while IFS=$'\t' read -r ref domain why conf trust; do
+      [[ "$emitted" -ge 5 ]] && break
       [[ "$first_hit" -eq 0 ]] && printf '\n'
       first_hit=0
       local safe_why="${why//$'\n'/ }"
@@ -1063,6 +1100,11 @@ pmctl_context_reuse_scan() {
       printf "      why_relevant: '%s'\n"   "$safe_why"
       printf '      confidence: %s\n'       "$conf"
       printf '      trust_level: %s\n'      "$trust"
+      emitted=$((emitted + 1))
     done < "$hits_tsv"
   fi
+
+  local reported_hits="$total_hits"
+  [[ "$reported_hits" -gt 5 ]] && reported_hits=5
+  _ctx_emit_usage_event "context.reuse_scanned" "$repo_root" "$desc" "$reported_hits"
 }

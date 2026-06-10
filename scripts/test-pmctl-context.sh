@@ -1122,6 +1122,170 @@ case_context_reuse_scan_on_real_repo() {
   fi
 }
 
+case_context_reuse_scan_hit_cap() {
+  local name="pmctl context reuse-scan: output capped at 5 hits even when more exist"
+  # Behavior: reuse-scan must emit at most 5 '- ref:' entries regardless of how many index hits exist.
+  # Steps: index a fixture repo with many symbols; describe with a broad term that matches many symbols;
+  # assert ref-count <= 5.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-cap"
+  mkdir -p "$fix_repo/scripts/lib"
+  # Generate a shell file with 10 functions that all share the term "captest"
+  {
+    printf '#!/usr/bin/env bash\n'
+    for i in $(seq 1 10); do
+      printf 'captest_func_%d() { printf captest_%d; }\n' "$i" "$i"
+    done
+  } > "$fix_repo/scripts/lib/captest.sh"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/scan-cap.out"; err="$tmp_root/scan-cap.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$fix_repo" "captest func" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  # The fixture generates 10 captest_func_* symbols; the cap must truncate to
+  # exactly 5 — asserting == 5 proves both the upper bound and that useful
+  # output was not silently dropped to zero.
+  local ref_count
+  ref_count="$(grep -c '^    - ref:' "$out" 2>/dev/null || printf '0')"
+  if [[ "$ref_count" -eq 5 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exactly 5 refs (cap), got $ref_count; output: $(<"$out")"
+  fi
+}
+
+case_context_query_emits_event() {
+  local name="pmctl context query: emits context.queried event readable via pmctl trace"
+  # Behavior: after a successful query, pmctl trace tail --kind context.queried must return at least one event.
+  # Steps: index fixture; run query; run trace with --kind context.queried --all --json; assert >= 1 line.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-evt"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-query-evt"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  local out err status=0
+  out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context query "$fix_repo" "alpha" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context query exited $status: $(<"$err")"; return 0
+  fi
+
+  local trace_out trace_err trace_status=0
+  trace_out="$tmp_root/query-trace.out"; trace_err="$tmp_root/query-trace.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.queried --all --json \
+    > "$trace_out" 2> "$trace_err" || trace_status=$?
+
+  if [[ "$trace_status" -ne 0 ]]; then
+    fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
+  fi
+
+  local line_count
+  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$line_count" -lt 1 ]]; then
+    fail "$name" "expected >= 1 context.queried event in trace; got $line_count lines"; return 0
+  fi
+
+  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  local evt_kind evt_subject_type payload_query payload_hits
+  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
+  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
+  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
+  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+
+  if [[ "$evt_kind" != "context.queried" ]]; then
+    fail "$name" "event kind: expected context.queried, got: $evt_kind"; return 0
+  fi
+  if [[ "$evt_subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $evt_subject_type"; return 0
+  fi
+  if [[ "$payload_query" != "alpha" ]]; then
+    fail "$name" "event payload.query: expected alpha, got: $payload_query"; return 0
+  fi
+  if ! [[ "$payload_hits" =~ ^[0-9]+$ ]]; then
+    fail "$name" "event payload.hits: expected integer, got: $payload_hits"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_reuse_scan_emits_event() {
+  local name="pmctl context reuse-scan: emits context.reuse_scanned event readable via pmctl trace"
+  # Behavior: after a successful reuse-scan, pmctl trace tail --kind context.reuse_scanned must return >= 1 event.
+  # Steps: index fixture; run reuse-scan; run trace; assert >= 1 line.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-reuse-evt"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-reuse-evt"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  local out err status=0
+  out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  local trace_out trace_err trace_status=0
+  trace_out="$tmp_root/reuse-trace.out"; trace_err="$tmp_root/reuse-trace.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
+    > "$trace_out" 2> "$trace_err" || trace_status=$?
+
+  if [[ "$trace_status" -ne 0 ]]; then
+    fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
+  fi
+
+  local line_count
+  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$line_count" -lt 1 ]]; then
+    fail "$name" "expected >= 1 context.reuse_scanned event in trace; got $line_count lines"; return 0
+  fi
+
+  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  local evt_kind evt_subject_type payload_query payload_hits
+  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
+  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
+  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
+  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+
+  if [[ "$evt_kind" != "context.reuse_scanned" ]]; then
+    fail "$name" "event kind: expected context.reuse_scanned, got: $evt_kind"; return 0
+  fi
+  if [[ "$evt_subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $evt_subject_type"; return 0
+  fi
+  if [[ "$payload_query" != "alpha beta function" ]]; then
+    fail "$name" "event payload.query: expected 'alpha beta function', got: $payload_query"; return 0
+  fi
+  if ! [[ "$payload_hits" =~ ^[0-9]+$ ]]; then
+    fail "$name" "event payload.hits: expected integer, got: $payload_hits"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_pack_empty_query_value() {
   local name="pmctl context pack: exits 2 when --query value is empty string"
   # Behavior: context pack must exit 2 when --query is given an explicit empty string.
@@ -1548,5 +1712,8 @@ case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms
 case_context_reuse_scan_dedup
 case_context_reuse_scan_on_real_repo
+case_context_reuse_scan_hit_cap
+case_context_query_emits_event
+case_context_reuse_scan_emits_event
 
 th_summary

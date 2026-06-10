@@ -106,6 +106,21 @@ Use as needed; not all briefs require all of them.
   - expected-head: bash -c "[[ \$(git rev-parse HEAD) == e2711dd802a3... ]]"
   ```
 
+## Prior-art scan
+
+Before filling in `files:` and `context:`, run a repo-plane prior-art scan so
+the executor reuses existing code rather than reimplementing it:
+
+    pmctl context reuse-scan [<repo_root>] "<task description>"
+
+Review the `reuse_candidates:` output and paste **at most 5 entries** into the
+brief's `context:` block.  Do not paste the raw block unfiltered — stop-word
+noise in the candidates inflates executor token cost without adding signal.
+For tasks with known symbol names, use `pmctl context pack` with explicit
+`--query` flags instead.
+
+See `docs/context-retrieval.md` for full usage and observable usage events.
+
 ## Brief skeletons
 
 Pick the closest skeleton, fill the angle-bracketed slots, drop unused lines. Skeletons exist so brief-writing time stays roughly constant regardless of task type.
