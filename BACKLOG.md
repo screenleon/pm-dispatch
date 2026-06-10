@@ -47,7 +47,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | 🟢 superseded 2026-06-08 | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
-| CC-234 | ⏸ deferred | **[v0.3.0 M4: memory v2 — event-derived]** Point `/mem-distill` at `events.jsonl` (the action stream) alongside `episodes.jsonl` — memory derived from what agents do (tool calls, decisions, gate verdicts), not just chat (Memori-inspired). Four-tier card system unchanged; gives the event tier a schema. | memory | 2026-05-22 | — | P2 | design |
+| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — event-derived semantic cards]** Point `/mem-distill` at `events.jsonl` (the action stream — tool calls, decisions, gate verdicts) alongside `episodes.jsonl`, distilling both into semantic memory cards. This is the write side of the v0.5.0 memory read+write loop; semantic transformation lives here, not in the index. Four-tier card system unchanged; gives the event tier a schema (Memori-inspired). Acceptance: a card written here is retrievable through the CC-354 read side (loop closes). | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ✅ closed 2026-06-09 | **[v0.5.0 P1: context-enricher interface]** Define `context_hit_v1` (source_domain knowledge/repo/state, why_relevant, trust_level, refs) extending the CC-232 context-pack schema; schema_version bumped 1→2 (additive; v1 packs remain valid via enum). Delivers the interface contract; the assembled `pmctl context pack` output is CC-239. builtin-index backend is CC-338. | ux | 2026-05-22 | pr:#253 | P1 | design |
@@ -81,7 +81,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-343 | ✅ done | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | pr:#251 | P1 | design |
 | CC-344 | 🟢 someday | **[skill: /research — grounded external research with internal context anchoring]** 新增 `commands/research.md`：補足 `/discover` 純內部掃描的盲區，加入外部研究維度。流程：(1) 自動讀內部相關 memory/decisions 建立錨定；(2) 問使用者 1–2 個定向問題縮小搜尋範圍；(3) 派有 WebSearch 能力的 agent 抓取外部實作與方法；(4) 主線程以內部設計 constraint 過濾結果，標記「可採用」或「與 constraint X 衝突」。目標：讓外部技術知識能有效導入而非淪為噪音。與 `/discover` 互補——discover 看「我們已知但未做的」，research 看「外部有我們還沒想到的」。 | process/DX | 2026-06-09 | — | P3 | design |
 | CC-345 | 🟢 someday | **[dx: claude adapter 即時進度串流（stream-json）]** `adapters/claude/dispatch.sh` 目前使用 `--output-format json`，stdout 完全 buffered 至 process 結束，dispatch 期間 trace 為空、working tree 無變動，使用者無法判斷 executor 在讀取或寫檔。改用 `--output-format stream-json` 並以 tee 寫入 trace，同步解析 tool-use events，在 stderr banner 即時顯示 `[reading]`、`[writing]`、`[running]` 進度行。 | ux/ops | 2026-06-09 | — | P2 | design |
-| CC-346 | 🟢 someday | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。 | ops | 2026-06-09 | — | P3 | design |
+| CC-346 | 🔵 active | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。Promoted someday→P2 2026-06-10：reuse-scan 沒有引用資料時對 PM 幫助有限。排 v0.5.0 Phase 2，與 memory loop 解耦（repo plane 下游）。 | ops | 2026-06-09 | — | P2 | design |
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
 | CC-349 | ✅ closed 2026-06-10 | **[repo-index: symbol index limited to code files only — Markdown headings are not reusable symbols]** `pmctl context index` 對所有 Markdown 檔案提取 heading 作為 symbol，但 Markdown heading 不是「可複用的程式碼符號」——shell function、Python function、JS/TS export 才是。Markdown heading 大量混入 symbol index 導致 reuse-scan 的命中以文件結構為主，淹沒真正有用的 code symbol。修法（語言層級，不綁特定檔名）：在 `_ctx_extract_symbols`（`scripts/lib/pmctl-context.sh`）移除 `markdown)` case——Markdown/YAML/JSON/文字檔只建 file_chunks index，不建 symbol。`_ctx_detect_language` 回傳的 `lang` 欄位已可判斷語言，修改範圍小。預期效果：任何 repo 上 reuse-scan 命中均以程式碼符號（函式、class、export）為主；文件標題不佔據排名。**See**: pr:#257 | ops/DX | 2026-06-10 | pr:#257 | P2 | — |
@@ -97,6 +97,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-351 | ✅ done | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-353 | ✅ done | **[unify executor dispatch: claude-executor symmetric to codex-executor]** claude-executor.md 缺 codex-executor 的「N-condition fallback allowlist」結構，兩份 executor 文件不對稱、難維護。統一：pmctl dispatch run --adapter claude 定為唯一文件化主路；claude-executor.md 重構成鏡像 codex 的窄 fallback（lifecycle 框架 + fallback 表 + caller checklist）；pr-gate reviewer fan-out 標為正當用途非 fallback。對齊 dispatch-brief.md §Fallback。隨 CC-351 同 PR。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
+| CC-354 | 🔵 active | **[v0.5.0 P2 read-half: anchored knowledge index + retrieval reflex]** knowledge plane has no queryable index — `pmctl context query` only covers the repo plane, and the indexer stores one `head -c 2000` chunk per file, so a 180 KB BACKLOG only has its first ~30 lines indexed (finding CC-234 needs grep). Pull the anchored-TOC slice of CC-340 forward via a pluggable per-format chunker (markdown heading-based, txt/json/yaml window-based, html window fallback — semantic html deferred to CC-355): store heading + extracted CC-id/decision-id + line anchor + lead, not full text; add `pmctl context query --domain knowledge`. In-repo knowledge docs only — out-of-repo memory cards stay on existing MEMORY.md auto-injection, deferred. Wire the query-before-grep discipline into a neutral docs contract plus pmctl — not CLAUDE.md, to avoid platform binding — with only a pointer in agents/project-pm.md. Read side of the memory read+write loop; closes with CC-234. | memory | 2026-06-10 | — | P2 | design |
+| CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
 
 ---
 
@@ -612,19 +614,21 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: surfaced during CC-222 close-out 2026-05-22.
 
-## CC-234 — memory v2: event-derived distillation（deferred）
+## CC-234 — memory v2: event-derived distillation（write-half of the memory loop）
 
 **Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable signal is the action stream (tool calls, decisions, gate verdicts).
 
-**Why**: Memori's insight — memory from what agents *do*, not just what they say. The Event log (CC-230) is that action stream.
+**Why**: Memori's insight — memory from what agents *do*, not just what they say. The Event log (CC-230) is that action stream. This is the **write side** of the v0.5.0 memory read+write loop: the semantic transformation (distilling raw episodes + events into a curated card) lives here, in `/mem-distill`, NOT in the read-side index — the index over structured docs stays an anchored table-of-contents (CC-354), and memory cards are where distilled semantic knowledge is authored.
 
-**Requirement**: Point `/mem-distill` at `events.jsonl` as an input alongside `episodes.jsonl`. The existing four-tier card system is unchanged; this gives the `event` tier a schema. No separate memory engine.
+**Requirement**: Point `/mem-distill` at `events.jsonl` as an input alongside `episodes.jsonl`. Filter to distillable kinds (run.completed/failed, review.verdict, decision.recorded, task.state_changed); analyse action-pattern signals (repeated failures in a subsystem, gate-verdict clusters, decision clusters) alongside chat summaries. The existing four-tier card system is unchanged; this gives the `event` tier a schema. No separate memory engine. State store may be uninitialised → graceful fallback to episodes-only distillation.
 
-**Milestone**: v0.3.0 M4.
+**Acceptance**: `/mem-distill` consuming a session's `events.jsonl` + `episodes.jsonl` produces/updates a memory card capturing an action-derived fact (not just chat), under the existing four-tier schema, with user confirmation. The card surfaces to the agent via the existing MEMORY.md auto-injection path (memory cards are NOT indexed into pmctl in v0.5.0 — see CC-354 scope boundary). Together with CC-354 (in-repo knowledge docs queryable), this makes memory read + write both usable — the write half here, the read half (docs) in CC-354.
+
+**Milestone**: v0.5.0 Phase 2 (memory read+write, write half).
 
 **Priority**: P2.
 
-**Cross-link**: CC-230 (events.jsonl), CC-229 (event schema).
+**Cross-link**: [[CC-354]] (read side — anchored knowledge index), CC-230 (events.jsonl), CC-229 (event schema), `commands/mem-distill.md` (modification target).
 
 ## CC-235 — Task lifecycle gate: tiered spec→design→plan（deferred）
 
@@ -1307,7 +1311,7 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 
 **Cross-link**: [[CC-338]], [[CC-341]].
 
-## CC-346 — repo-index: cross-file ref tracking（file_refs layer，5 languages）🟢 someday → v0.5.0 P3
+## CC-346 — repo-index: cross-file ref tracking（file_refs layer，5 languages）🔵 v0.5.0 Phase 2 P2
 
 **Problem**: `pmctl context query` 回傳 symbol + chunk hits，但看不出哪些檔案 import / source 了命中的模組。同一個 helper 被 10 個腳本 source，在 context hit 中卻像孤立的節點——dispatcher 不知道修改它的波及範圍，reuse-scan（CC-239）也無法辨識「這個 helper 已到處被用，不要再重複」。
 
@@ -1678,24 +1682,68 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Problem**: The repo index (CC-338) covers the code plane ("where to change, what to reuse"), but the second-brain plane — "why, how was this decided, what failed before" — has no structured search backing the context-pack. `/mem-search` exists as a skill but is keyword/grep over files, not an index with ranking or trust tiers.
 
-**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). v0.5.0 ships the repo plane + the shared interface (CC-237) and only *aligns the schema* for knowledge. A full standalone knowledge index is the symmetric other half — but it overlaps the existing `/mem-search` surface, so it is deferred until the context-pack interface proves the shape in real use.
+**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). v0.5.0 ships the repo plane + the shared interface (CC-237). The **anchored-TOC slice** of the knowledge index (per-section chunking + memory-card indexing — enough to make the read side usable) is pulled forward to **CC-354** (v0.5.0 Phase 2), because without it the knowledge plane has no queryable index at all. CC-340 narrows to the **heavy remainder**: standalone full-text ranking, embeddings, and low-trust episodic chunking — deferred to v0.6.0, overlapping the existing `/mem-search` surface.
 
-**Requirement** (v0.6.0):
-- Index MEMORY.md + memory cards + wiki + BACKLOG.md / DECISIONS.md / MILESTONES.md + episodes.jsonl (low-trust episodic chunks).
-- Emit `context_hit_v1` (CC-237) with `source_domain: knowledge`, `trust_level` (curated > wiki > backlog body > episode > raw event), and `refs` (CC / decision / event ids).
-- Search by title / alias / CC id / decision id / keyword; rank curated over generated, durable rule over recency.
-- FTS5 optional; `LIKE` / `grep` fallback mandatory and tested.
+**Requirement** (v0.6.0 — remainder after CC-354):
+- Full-text ranking over wiki + episodes.jsonl (low-trust episodic chunks) beyond the anchored TOC CC-354 delivers.
+- Embeddings / semantic backend (optional accelerator — Khoj-class).
+- Richer trust-tier ranking (curated > wiki > backlog body > episode > raw event) and recency vs durability weighting.
 
 **Non-goals**:
-- Embeddings (no Khoj / semantic backend in MVP — optional accelerator later).
 - Rewriting memory cards or making SQLite the source of truth (canonical stays the Markdown / JSONL).
 - Replacing `/mem-search` UX before the index proves out.
 
-**Milestone**: v0.6.0 — symmetric to CC-338; deferred while the v0.5.0 repo-index slice validates the context-pack shape.
+**Milestone**: v0.6.0 — symmetric to CC-338; the usable slice is CC-354, this is the heavy remainder.
 
 **Priority**: P3.
 
-**Cross-link**: [[CC-338]] (repo-index counterpart), [[CC-237]] (shared interface), [[CC-234]] (memory v2 content source), [[CC-232]] (pack schema).
+**Cross-link**: [[CC-354]] (anchored-TOC slice, pulled forward), [[CC-338]] (repo-index counterpart), [[CC-237]] (shared interface), [[CC-234]] (memory v2 write side), [[CC-232]] (pack schema).
+
+## CC-354 — anchored knowledge index + retrieval reflex（read-half of the memory loop）
+
+**Problem**: The knowledge plane (BACKLOG / DECISIONS / MILESTONES / memory cards) has no queryable index. `pmctl context query` (CC-338/237/239) only indexes the repo plane (files / symbols / chunks). Worse, the indexer stores exactly one `head -c 2000` chunk per file (`_ctx_generate_file_sql` in `scripts/lib/pmctl-context.sh`), so a 180 KB BACKLOG.md only has its first ~30 lines indexed — CC-234 at line 615 is unreachable, and finding it requires grep. Out-of-repo memory cards (`~/.claude/.../memory/`) are not scanned at all. Net effect: the whole context substrate exists but the read reflex is still grep.
+
+**Why**: This is the **read side** of the v0.5.0 memory read+write loop. Semantic transformation belongs on the write side (CC-234 memory cards); the read-side index over structured docs should be an **anchored table-of-contents**, not a copy of the document — humans already semantically chunked these files into `## CC-NNN` titled sections, so the heading IS the distilled summary. No LLM pass, always fresh, exact-match preserved, refs point to the real section for lazy-read.
+
+**Requirement**:
+- **Per-format chunking strategy** (replaces the current single `head -c 2000` chunk; dispatch by `_ctx_detect_language`):
+  - **markdown** → heading-based: split on `^#{1,6}` into per-section chunks; store heading + extracted CC-id/decision-id + short lead (Problem/Why first lines), NOT the full body.
+  - **txt / json / yaml / other non-heading formats** → window-based: fixed N-line windows with line anchors (also fixes the current head-2000-only limitation for any large non-markdown file).
+  - **html** → window fallback for this slice; semantic `<h1-6>` chunking deferred to CC-355 (robust HTML parsing in bash is a separate concern).
+  - All strategies populate the already-existing `file_chunks.heading` / `line_start` / `line_end` columns — no schema migration. The chunker must be a pluggable per-format seam so CC-355 (and future formats) plug in without rewriting the caller.
+- **Domain tagging**: path-based classifier so hits from BACKLOG / DECISIONS / MILESTONES / docs emit `source_domain: knowledge` + `trust_level: high` (currently `_ctx_query_hits_raw` hard-codes `repo`).
+- **`pmctl context query --domain knowledge|repo`** optional filter.
+- **Retrieval reflex (platform-neutral)**: document the query-before-grep discipline in a neutral `docs/` contract referenced by the dispatch/executor contract; surface `pmctl context query` as the ergonomic first stop. Do NOT write it into CLAUDE.md (platform binding); only a one-line pointer in `agents/project-pm.md`.
+- FTS5 optional; `LIKE` / `grep` fallback mandatory and tested (consistent with CC-338).
+
+**Scope boundary (decided 2026-06-10)**: this slice indexes **in-repo knowledge docs only** (BACKLOG / DECISIONS / MILESTONES / docs). Out-of-repo memory cards (`~/.claude/.../memory/`) are NOT indexed here — they are already surfaced to the agent via MEMORY.md auto-injection + `/mem-search`, so indexing them now would duplicate an existing mechanism. Indexing memory cards into pmctl is deferred until a real need appears (then revisit alongside CC-340 / CC-333). Consequence: CC-354 does not touch memory-dir path resolution, so it does not trigger CC-333.
+
+**Acceptance**: `pmctl context query CC-234` returns `BACKLOG.md:<section-line>` (the in-repo grep problem is fixed); `.txt` / large `.json` files return window chunks beyond their first 2000 bytes; the query-before-grep discipline is documented neutrally with the project-pm pointer. Memory-card retrieval is out of scope (stays on auto-injection).
+
+**Non-goals** (stay in CC-340): indexing out-of-repo memory cards / episodes; embeddings / semantic backend; full-text ranking; making SQLite the source of truth. This slice is the minimum that makes the in-repo knowledge-doc read side usable.
+
+**Milestone**: v0.5.0 Phase 2 (memory read+write loop, read half).
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-234]] (write side), [[CC-355]] (html semantic chunking follow-up), [[CC-340]] (heavy remainder, this is its pulled-forward slice), [[CC-338]] (repo-index machinery reused), [[CC-237]] (context_hit_v1 interface), [[CC-349]] (symmetric: removed markdown symbols, this adds markdown section chunks).
+
+## CC-355 — knowledge index: HTML semantic chunking（`<h1-6>` sections）🟢 someday
+
+**Problem**: CC-354 chunks knowledge files by a per-format strategy — markdown by `^#{1,6}` headings, txt/other by line windows. HTML files fall back to window chunking, which loses their real section structure (`<h1>..<h6>` headings carry the same human-authored semantic anchors as markdown headings).
+
+**Why**: HTML is structurally symmetric to Markdown (`<h1-6>` ≈ `^#{1,6}`), so it deserves heading-based chunking for the same retrieval quality. It is split out of CC-354 because robust HTML parsing in bash/grep is its own concern (nested tags, attributes, comments, `<pre>`/`<code>` blocks, entity decoding) and there is no `.html` knowledge source in the repo today — this is forward-looking generality, not a current need.
+
+**Requirement** (when an HTML knowledge source appears):
+- Plug an `html` strategy into the CC-354 per-format chunker seam: split on `<h1>`..`<h6>`, use the (tag-stripped) heading text as the chunk heading, strip tags for the lead.
+- Handle the parsing edge cases (comments, `<pre>`/`<code>`, entities) or document the known-fragile boundaries.
+- Reuse the existing `file_chunks` columns; no schema migration.
+
+**Trigger**: a real `.html` file enters the knowledge plane, or a consumer needs HTML-section retrieval.
+
+**Priority**: P3.
+
+**Cross-link**: [[CC-354]] (per-format chunker seam this plugs into), [[CC-340]] (knowledge index family).
 
 ## CC-341 — pmctl validate: wire handover-validate framework into pmctl ✅ 2026-06-09
 
