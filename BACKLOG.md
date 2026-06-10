@@ -720,7 +720,7 @@ Each tier is a **drop-in upgrade**: the consumer (`/pm` briefing, CC-239 reuse-s
 
 **Cross-link**: CC-232 (context-pack schema), CC-237 (context-enricher baseline), CC-338 (builtin-index backend), CC-346 (cross-file refs), CC-209 (future codegraph), CC-061 (skills/), CC-200..CC-204 (the reuse debt this prevents recurring), `docs/architecture/v0.3.0-synthesis.md`.
 
-**See**: pr:#TBD
+**See**: pr:#256
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
 
