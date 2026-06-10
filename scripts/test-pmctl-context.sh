@@ -654,6 +654,465 @@ case_context_query_on_real_repo() {
   fi
 }
 
+case_context_pack_missing_task_id() {
+  local name="pmctl context pack: exits 2 when --task-id is missing"
+  # Behavior: context pack must exit 2 when --task-id is absent from the argument list.
+  # Steps: call pack with only --query and no --task-id; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-mtid.out"; err="$tmp_root/pack-mtid.err"
+  local noarg_repo="$tmp_root/noarg-repo-mtid"
+  mkdir -p "$noarg_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$noarg_repo" --query foo > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_missing_query() {
+  local name="pmctl context pack: exits 2 when no --query is provided"
+  # Behavior: context pack must exit 2 when at least one --query term is absent.
+  # Steps: call pack with --task-id but no --query; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-mq.out"; err="$tmp_root/pack-mq.err"
+  local noarg_repo="$tmp_root/noarg-repo-mq"
+  mkdir -p "$noarg_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$noarg_repo" --task-id TASK-1 > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_task_id_without_value() {
+  local name="pmctl context pack: exits 2 when --task-id flag has no value"
+  # Behavior: context pack must exit 2 with a diagnostic when --task-id appears but its value is missing.
+  # Steps: call pack with --task-id as last argument; assert exit 2 and stderr diagnostic.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-tiwv.out"; err="$tmp_root/pack-tiwv.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for --task-id without value; got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q 'requires a value' "$err"; then
+    fail "$name" "expected diagnostic in stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_query_without_value() {
+  local name="pmctl context pack: exits 2 when --query flag has no value"
+  # Behavior: context pack must exit 2 with a diagnostic when --query appears but its value is missing.
+  # Steps: call pack with --task-id and --query as last argument; assert exit 2 and stderr diagnostic.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-qwv.out"; err="$tmp_root/pack-qwv.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for --query without value; got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q 'requires a value' "$err"; then
+    fail "$name" "expected diagnostic in stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_no_db() {
+  local name="pmctl context pack: exits 1 when index DB not found"
+  # Behavior: context pack must exit 1 when the repo-index DB does not exist.
+  # Steps: call pack on a repo with no prior index run (fresh state root); assert exit 1.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-nodb.out"; err="$tmp_root/pack-nodb.err"
+  local nodb_repo="$tmp_root/nodb-repo-pack"
+  mkdir -p "$nodb_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-nodb-pack-$$" \
+    "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 1; then pass "$name"; fi
+}
+
+case_context_pack_unknown_flag() {
+  local name="pmctl context pack: exits 2 for unknown flag"
+  # Behavior: context pack must exit 2 when an unrecognized flag is passed.
+  # Steps: call pack with --frobnicate flag; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-uf.out"; err="$tmp_root/pack-uf.err"
+  local uf_repo="$tmp_root/uf-repo-pack"
+  mkdir -p "$uf_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$uf_repo" --frobnicate > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_valid_json() {
+  local name="pmctl context pack: valid call produces schema_version 2 JSON with correct fields"
+  # Behavior: context pack must emit schema_version 2 JSON with task_id, sources, and at least one hit.
+  # Steps: index a fixture repo; run pack with one --query; validate JSON fields via jq.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-json"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/pack-json.out"; err="$tmp_root/pack-json.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query my_func_alpha \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    .schema_version == 2 and
+    .task_id == "TASK-1" and
+    (.sources | length) > 0 and
+    .sources[0].name == "builtin-index" and
+    ((.symbols | length) + (.files | length)) >= 1
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "JSON validation failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  printf 'pack JSON OK\n'
+  pass "$name"
+}
+
+case_context_pack_symbol_vs_file_split() {
+  local name="pmctl context pack: symbol hits go to symbols[], chunk hits go to files[]"
+  # Behavior: pack must route symbol-type hits to symbols[] and chunk/FTS-type hits to files[].
+  # Steps: index repo with a markdown body-only file; query both symbol and chunk terms; validate routing.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-split"
+  make_fixture_repo "$fix_repo"
+
+  # Add a markdown file with no headings (body text only) so it only
+  # produces chunk hits, not symbol hits.
+  cat > "$fix_repo/NOTES.md" <<'MD'
+Body text only: reusescan_chunk_sentinel_78432 no heading here.
+MD
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/pack-split.out"; err="$tmp_root/pack-split.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$fix_repo" \
+      --task-id TASK-1 \
+      --query my_func_alpha \
+      --query reusescan_chunk_sentinel_78432 \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    (.symbols | length) > 0 and
+    (.symbols | map(.ref) | any(contains("mymodule"))) and
+    (.symbols | map(.ref) | all(contains("NOTES.md") | not))
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "split validation failed: $(<"$err") out=$(<"$out")"
+    return 0
+  fi
+  printf 'symbol_vs_file_split OK\n'
+  pass "$name"
+}
+
+case_context_pack_dedup() {
+  local name="pmctl context pack: duplicate --query terms yield exactly one ref per symbol"
+  # Behavior: when the same --query term is passed twice, each ref must appear at most once in the output.
+  # Steps: index fixture repo; run pack with identical --query twice; assert no duplicate refs in JSON.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-dedup"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/pack-dedup.out"; err="$tmp_root/pack-dedup.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$fix_repo" \
+      --task-id TASK-1 \
+      --query my_func_alpha \
+      --query my_func_alpha \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    [(.symbols + .files) | map(.ref) | group_by(.) | .[] | select(length > 1)] | length == 0
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "dedup validation failed: $(<"$err") out=$(<"$out")"
+    return 0
+  fi
+  printf 'dedup OK\n'
+  pass "$name"
+}
+
+case_context_reuse_scan_missing_desc() {
+  local name="pmctl context reuse-scan: exits 2 when description is missing"
+  # Behavior: reuse-scan must exit 2 when no description argument is provided.
+  # Steps: call reuse-scan with only a repo path and no description; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/scan-md.out"; err="$tmp_root/scan-md.err"
+  local noarg_repo="$tmp_root/noarg-repo-scan"
+  mkdir -p "$noarg_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$noarg_repo" > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_reuse_scan_no_db() {
+  local name="pmctl context reuse-scan: exits 1 when index DB not found"
+  # Behavior: reuse-scan must exit 1 when the repo-index DB does not exist.
+  # Steps: call reuse-scan on a repo with a fresh state root (no DB); assert exit 1.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/scan-nodb.out"; err="$tmp_root/scan-nodb.err"
+  local nodb_repo="$tmp_root/nodb-repo-scan"
+  mkdir -p "$nodb_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-nodb-scan-$$" \
+    "$PMCTL" context reuse-scan "$nodb_repo" "some description" \
+    > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 1; then pass "$name"; fi
+}
+
+case_context_reuse_scan_unknown_flag() {
+  local name="pmctl context reuse-scan: exits 2 for unknown flag"
+  # Behavior: reuse-scan must exit 2 when an unrecognized flag is passed.
+  # Steps: call reuse-scan with --frobnicate flag; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/scan-uf.out"; err="$tmp_root/scan-uf.err"
+  local uf_repo="$tmp_root/uf-repo-scan"
+  mkdir -p "$uf_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$uf_repo" --frobnicate > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_reuse_scan_valid_output() {
+  local name="pmctl context reuse-scan: valid call exits 0 with reuse_candidates: header"
+  # Behavior: reuse-scan must emit YAML starting with reuse_candidates:, include terms: and hits sections.
+  # Steps: index fixture repo; run reuse-scan with a description containing known terms; validate YAML structure.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-valid"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/scan-valid.out"; err="$tmp_root/scan-valid.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  local first_line
+  first_line="$(head -1 "$out")"
+  if [[ "$first_line" != "reuse_candidates:" ]]; then
+    fail "$name" "first line not 'reuse_candidates:'; got: $first_line"; return 0
+  fi
+  if ! grep -q '^  terms:' "$out"; then
+    fail "$name" "missing 'terms:' line in output"; return 0
+  fi
+  if ! grep -q '^  hits' "$out"; then
+    fail "$name" "missing 'hits' line in output"; return 0
+  fi
+  # At least one hit or an empty-hits marker must be present
+  if grep -q '^    - ref:' "$out" || grep -q 'hits: \[\]' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "output has hits section but no ref or empty marker; output: $(<"$out")"
+  fi
+}
+
+case_context_reuse_scan_no_terms() {
+  local name="pmctl context reuse-scan: all-stop-word description exits 0 with empty terms and hits"
+  # Behavior: when every word in the description is filtered by stop-word logic, output terms: [] and hits: [].
+  # Steps: index fixture repo; run reuse-scan with an all-stop-word description; assert empty YAML lists.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-noterms"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/scan-noterms.out"; err="$tmp_root/scan-noterms.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$fix_repo" "a an the or" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  if grep -q 'terms: \[\]' "$out" && grep -q 'hits: \[\]' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected 'terms: []' and 'hits: []'; got: $(<"$out")"
+  fi
+}
+
+case_context_reuse_scan_dedup() {
+  local name="pmctl context reuse-scan: no duplicate refs in output across term queries"
+  # Behavior: when multiple extracted terms match the same ref, that ref must appear at most once in output.
+  # Steps: index fixture repo; run reuse-scan with a description yielding overlapping terms; assert unique refs.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-dedup"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/scan-dedup.out"; err="$tmp_root/scan-dedup.err"
+  # "func alpha" extracts terms ["alpha","func"] — both match my_func_alpha and my_func_beta,
+  # triggering the dedup path where the same ref from term "func" is already in seen_file.
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$fix_repo" "func alpha" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  local total_refs unique_refs
+  total_refs="$(grep -c '^    - ref:' "$out" 2>/dev/null || printf '0')"
+  unique_refs="$(grep '^    - ref:' "$out" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+
+  if [[ "$total_refs" -eq "$unique_refs" ]]; then
+    pass "$name"
+  else
+    fail "$name" "duplicate refs: total=$total_refs unique=$unique_refs out=$(<"$out")"
+  fi
+}
+
+case_context_reuse_scan_on_real_repo() {
+  local name="pmctl context reuse-scan: finds pmctl-context.sh ref in real repo"
+  # Behavior: reuse-scan on the actual pm-dispatch repo must find pmctl-context.sh in results.
+  # Steps: index the real repo; run reuse-scan with context-domain terms; assert pmctl-context.sh appears.
+  should_run "$name" || return 0
+
+  if [[ ! -f "$REPO_ROOT/scripts/lib/pmctl-context.sh" ]]; then
+    fail "$name" "scripts/lib/pmctl-context.sh not found in repo"; return 0
+  fi
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2>&1 || true
+
+  out="$tmp_root/scan-real.out"; err="$tmp_root/scan-real.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context reuse-scan "$REPO_ROOT" "emit context hit yaml" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  if grep -q 'pmctl-context.sh' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "no pmctl-context.sh ref in output; got: $(<"$out")"
+  fi
+}
+
+case_context_pack_empty_query_value() {
+  local name="pmctl context pack: exits 2 when --query value is empty string"
+  # Behavior: context pack must exit 2 when --query is given an explicit empty string.
+  # Steps: call pack with --task-id and --query ""; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-emq.out"; err="$tmp_root/pack-emq.err"
+  local emq_repo="$tmp_root/emq-repo"
+  mkdir -p "$emq_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$emq_repo" --task-id TASK-1 --query "" > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_whitespace_task_id() {
+  local name="pmctl context pack: exits 2 when --task-id is whitespace-only"
+  # Behavior: context pack must exit 2 when --task-id is whitespace-only.
+  # Steps: call pack with --task-id "   " and a --query; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-wstid.out"; err="$tmp_root/pack-wstid.err"
+  local ws_repo="$tmp_root/ws-repo"
+  mkdir -p "$ws_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$ws_repo" --task-id "   " --query foo > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_nondir_repo_path() {
+  local name="pmctl context pack: exits 2 when positional repo argument is not a directory"
+  # Behavior: context pack must exit 2 when a non-existent or non-directory positional repo path is given.
+  # Steps: call pack with /nonexistent/path as positional arg; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-ndr.out"; err="$tmp_root/pack-ndr.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_schema_contract() {
+  local name="pmctl context pack: emitted pack has all required schema_version 2 fields"
+  # Behavior: context pack must always include schema_version, task_id, built_ts, sources, files, symbols, memories, risks.
+  # Steps: index fixture repo; run pack; validate all top-level required fields are present.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-schema"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/pack-schema.out"; err="$tmp_root/pack-schema.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$fix_repo" --task-id SCHEMA-TEST --query my_func_alpha \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    has("schema_version") and has("task_id") and has("built_ts") and
+    has("sources") and has("files") and has("symbols") and
+    has("memories") and has("risks") and
+    .schema_version == 2
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "schema contract failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_context_layer_boundary() {
   local name="pmctl-context.sh: does not source pmctl-dispatch.sh or adapters"
   should_run "$name" || return 0
@@ -697,5 +1156,25 @@ case_context_index_deleted_file_reconciled
 case_context_query_fts_multiline_no_bogus_refs
 case_context_query_on_real_repo
 case_context_layer_boundary
+case_context_pack_missing_task_id
+case_context_pack_missing_query
+case_context_pack_task_id_without_value
+case_context_pack_query_without_value
+case_context_pack_no_db
+case_context_pack_unknown_flag
+case_context_pack_valid_json
+case_context_pack_symbol_vs_file_split
+case_context_pack_dedup
+case_context_pack_empty_query_value
+case_context_pack_whitespace_task_id
+case_context_pack_nondir_repo_path
+case_context_pack_schema_contract
+case_context_reuse_scan_missing_desc
+case_context_reuse_scan_no_db
+case_context_reuse_scan_unknown_flag
+case_context_reuse_scan_valid_output
+case_context_reuse_scan_no_terms
+case_context_reuse_scan_dedup
+case_context_reuse_scan_on_real_repo
 
 th_summary

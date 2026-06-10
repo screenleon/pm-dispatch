@@ -518,6 +518,142 @@ pmctl_context_update() {
   fi
 }
 
+# ── ISO-8601 UTC timestamp ────────────────────────────────────────────────────
+
+_ctx_now_iso8601() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# ── JSON string escaping ───────────────────────────────────────────────────────
+# Returns a JSON-escaped string WITH surrounding double-quotes.
+# Escape order: \ → " → newline → CR → tab.
+# Pure bash parameter expansion — no subshell, no external tool.
+
+_ctx_json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '"%s"' "$s"
+}
+
+# ── Term extraction from free-text description ────────────────────────────────
+# Outputs unique lower-case terms (≥ 3 chars, not stop words), one per line.
+# Isolated change seam — pmctl_context_pack and pmctl_context_reuse_scan
+# must not inline this logic.
+
+_ctx_extract_terms() {
+  local desc="$1"
+  local stopwords=" a an and are as at be been by do for from has have he in is it its of on or that the to was were will with "
+  printf '%s\n' "$desc" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -cs 'a-z0-9_' '\n' \
+    | awk -v sw="$stopwords" 'length($0) >= 3 && index(sw, " " $0 " ") == 0' \
+    | sort -u
+}
+
+# ── Raw query result emitter (internal only) ───────────────────────────────────
+# Outputs TSV rows: ref<TAB>domain<TAB>why<TAB>conf<TAB>trust
+# No deduplication — callers handle dedup and formatting.
+# Single query-execution path shared by pmctl_context_query (YAML output)
+# and _ctx_parse_query_tsv (pack / reuse-scan TSV accumulation).
+
+_ctx_query_hits_raw() {
+  local repo_root="$1" query="$2"
+  local db eq
+  db="$(_ctx_db_path "$repo_root")"
+  eq="$(_ctx_sql_str "$query")"
+
+  while IFS=$'\t' read -r path name kind line_start; do
+    [[ -n "$path" ]] || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
+  done < <(sqlite3 -separator $'\t' "$db" \
+    "SELECT f.path, s.name, s.kind, s.line_start
+     FROM symbols s JOIN files f ON s.file_id=f.id
+     WHERE s.name LIKE '%${eq}%'
+     LIMIT 20;" 2>/dev/null || true)
+
+  local use_fts5=0
+  if _ctx_fts5_available "$db" \
+    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
+       2>/dev/null | grep -q 'content_fts'; then
+    use_fts5=1
+  fi
+
+  if [[ "$use_fts5" -eq 1 ]]; then
+    local fts_tmpf
+    fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
+      "$eq" > "$fts_tmpf"
+    while IFS=$'\t' read -r ref text; do
+      [[ -n "$ref" ]] || continue
+      local snippet
+      snippet="${text:0:80}"
+      snippet="${snippet//$'\t'/ }"
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
+    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
+    rm -f "$fts_tmpf"
+  else
+    while IFS=$'\t' read -r path line_start; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
+    done < <(sqlite3 -separator $'\t' "$db" \
+      "SELECT f.path, fc.line_start
+       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+       WHERE fc.text LIKE '%${eq}%' AND fc.text IS NOT NULL
+       LIMIT 20;" 2>/dev/null || true)
+  fi
+}
+
+# ── Per-term query parser ──────────────────────────────────────────────────────
+# Uses _ctx_query_hits_raw for structured TSV input; deduplicates by ref
+# (appending to seen_file) and routes hits:
+#   why starts with "symbol:" → sym_tsv
+#   all others                → files_tsv
+
+_ctx_parse_query_tsv() {
+  local repo_root="$1" term="$2" seen_file="$3" sym_tsv="$4" files_tsv="$5"
+  while IFS=$'\t' read -r ref domain why conf trust; do
+    [[ -n "$ref" ]] || continue
+    grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
+    printf '%s\n' "$ref" >> "$seen_file"
+    if [[ "$why" == "symbol:"* ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$sym_tsv"
+    else
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$files_tsv"
+    fi
+  done < <(_ctx_query_hits_raw "$repo_root" "$term" 2>/dev/null)
+}
+
+# ── TSV-to-JSON array assembler ────────────────────────────────────────────────
+# Reads ref<TAB>domain<TAB>why<TAB>conf<TAB>trust rows and emits a JSON array
+# of context_hit_v1 objects. Missing or empty file → "[]".
+
+_ctx_tsv_to_json_array() {
+  local tsv_file="$1"
+  if [[ ! -f "$tsv_file" || ! -s "$tsv_file" ]]; then
+    printf '[]'
+    return
+  fi
+  local first=1
+  printf '['
+  while IFS=$'\t' read -r ref domain why conf trust; do
+    [[ "$first" -eq 0 ]] && printf ','
+    first=0
+    printf '{"ref":%s,"source":"builtin-index","confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
+      "$(_ctx_json_str "$ref")" "$conf" \
+      "$(_ctx_json_str "$domain")" \
+      "$(_ctx_json_str "$why")" \
+      "$(_ctx_json_str "$trust")"
+  done < "$tsv_file"
+  printf ']'
+}
+
 # ── pmctl_context_query ────────────────────────────────────────────────────────
 #
 # Searches the repo index and outputs context_hit_v1 YAML blocks.
@@ -578,63 +714,208 @@ pmctl_context_query() {
   fi
 
   local hits=0 first=1
-  local eq
-  eq="$(_ctx_sql_str "$query")"
-
-  # Always search symbols.name with LIKE — reliable for symbol names with underscores
-  while IFS=$'\t' read -r path name kind line_start; do
-    [[ -n "$path" ]] || continue
+  while IFS=$'\t' read -r ref domain why conf trust; do
+    [[ -n "$ref" ]] || continue
     [[ "$first" -eq 0 ]] && printf '\n'
     first=0
-    _ctx_emit_hit "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
+    _ctx_emit_hit "$ref" "$domain" "$why" "$conf" "$trust"
     hits=$((hits + 1))
-  done < <(sqlite3 -separator $'\t' "$db" \
-    "SELECT f.path, s.name, s.kind, s.line_start
-     FROM symbols s JOIN files f ON s.file_id=f.id
-     WHERE s.name LIKE '%${eq}%'
-     LIMIT 20;" 2>/dev/null || true)
-
-  # FTS5 path: full-text search over content_fts (symbols + chunk text)
-  local use_fts5=0
-  if _ctx_fts5_available "$db" \
-    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
-       2>/dev/null | grep -q 'content_fts'; then
-    use_fts5=1
-  fi
-
-  if [[ "$use_fts5" -eq 1 ]]; then
-    local fts_tmpf
-    fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    # Normalize newlines in text at the SQL layer so IFS-tab read is safe.
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
-      "$eq" > "$fts_tmpf"
-    while IFS=$'\t' read -r ref text; do
-      [[ -n "$ref" ]] || continue
-      [[ "$first" -eq 0 ]] && printf '\n'
-      first=0
-      local snippet
-      snippet="$(printf '%s' "$text" | head -c 80)"
-      _ctx_emit_hit "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
-      hits=$((hits + 1))
-    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
-    rm -f "$fts_tmpf"
-  else
-    # LIKE fallback: search file_chunks.text
-    while IFS=$'\t' read -r path line_start; do
-      [[ -n "$path" ]] || continue
-      [[ "$first" -eq 0 ]] && printf '\n'
-      first=0
-      _ctx_emit_hit "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
-      hits=$((hits + 1))
-    done < <(sqlite3 -separator $'\t' "$db" \
-      "SELECT f.path, fc.line_start
-       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE fc.text LIKE '%${eq}%' AND fc.text IS NOT NULL
-       LIMIT 20;" 2>/dev/null || true)
-  fi
+  done < <(_ctx_query_hits_raw "$repo_root" "$query" 2>/dev/null)
 
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"
   fi
   return 0
+}
+
+# ── pmctl_context_pack ────────────────────────────────────────────────────────
+#
+# Assembles multiple repo-index queries into a JSON context-pack (schema v2).
+# Symbol-name hits (why_relevant starts "symbol:") go into symbols[];
+# chunk/FTS hits go into files[]. Refs are deduplicated across all queries.
+#
+# CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ...
+
+pmctl_context_pack() {
+  local repo_root="${REPO_ROOT:-}"
+  local task_id=""
+  local terms=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task-id)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context pack: --task-id requires a value\n' >&2
+          return 2
+        fi
+        task_id="$2"
+        shift 2
+        ;;
+      --query)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context pack: --query requires a value\n' >&2
+          return 2
+        fi
+        if [[ -z "$2" ]] || [[ "$2" =~ ^[[:space:]]+$ ]]; then
+          printf 'pmctl context pack: --query value must not be empty\n' >&2
+          return 2
+        fi
+        terms+=("$2")
+        shift 2
+        ;;
+      -*)
+        printf 'pmctl context pack: unknown flag %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -d "$1" ]]; then
+          repo_root="$1"
+        else
+          printf 'pmctl context pack: %s: not a directory\n' "$1" >&2
+          return 2
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$task_id" ]] || [[ "$task_id" =~ ^[[:space:]]+$ ]]; then
+    printf 'pmctl context pack: --task-id is required\n' >&2
+    return 2
+  fi
+  if [[ ${#terms[@]} -eq 0 ]]; then
+    printf 'pmctl context pack: at least one --query is required\n' >&2
+    return 2
+  fi
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
+    return 1
+  fi
+
+  local db
+  db="$(_ctx_db_path "$repo_root")"
+  if [[ ! -f "$db" ]]; then
+    printf 'pmctl context pack: index not found; run pmctl context index first\n' >&2
+    return 1
+  fi
+
+  local seen_file sym_tsv files_tsv
+  seen_file="$(mktemp /tmp/ctx-pack-seen-XXXXXX)"
+  sym_tsv="$(mktemp /tmp/ctx-pack-sym-XXXXXX)"
+  files_tsv="$(mktemp /tmp/ctx-pack-files-XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv'" EXIT
+
+  for term in "${terms[@]}"; do
+    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
+  done
+
+  local ts sym_arr files_arr
+  ts="$(_ctx_now_iso8601)"
+  sym_arr="$(_ctx_tsv_to_json_array "$sym_tsv")"
+  files_arr="$(_ctx_tsv_to_json_array "$files_tsv")"
+
+  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":%s,"symbols":%s,"memories":[],"risks":[]}\n' \
+    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$files_arr" "$sym_arr"
+}
+
+# ── pmctl_context_reuse_scan ──────────────────────────────────────────────────
+#
+# Takes a free-text description, extracts search terms via _ctx_extract_terms,
+# queries the repo index for each term, and emits a reuse_candidates: YAML block
+# suitable for pasting into a dispatch brief's context: field.
+#
+# CLI: pmctl context reuse-scan [<repo_root>] "<description>"
+
+pmctl_context_reuse_scan() {
+  local repo_root="${REPO_ROOT:-}"
+  local desc=""
+  local repo_root_set=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*)
+        printf 'pmctl context reuse-scan: unknown flag %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ "$repo_root_set" -eq 0 && -d "$1" ]]; then
+          repo_root="$1"
+          repo_root_set=1
+        elif [[ -z "$desc" ]]; then
+          desc="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$desc" ]]; then
+    printf 'pmctl context reuse-scan: description required\n' >&2
+    return 2
+  fi
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context reuse-scan: sqlite3 not found on PATH\n' >&2
+    return 1
+  fi
+
+  local db
+  db="$(_ctx_db_path "$repo_root")"
+  if [[ ! -f "$db" ]]; then
+    printf 'pmctl context reuse-scan: index not found; run pmctl context index first\n' >&2
+    return 1
+  fi
+
+  local terms=()
+  while IFS= read -r term; do
+    [[ -n "$term" ]] && terms+=("$term")
+  done < <(_ctx_extract_terms "$desc")
+
+  local terms_yaml
+  if [[ ${#terms[@]} -eq 0 ]]; then
+    terms_yaml="[]"
+  else
+    local _t=""
+    for term in "${terms[@]}"; do
+      [[ -n "$_t" ]] && _t="$_t, "
+      _t="$_t$term"
+    done
+    terms_yaml="[$_t]"
+  fi
+
+  local seen_file sym_tsv files_tsv hits_tsv
+  seen_file="$(mktemp /tmp/ctx-reuse-seen-XXXXXX)"
+  sym_tsv="$(mktemp /tmp/ctx-reuse-sym-XXXXXX)"
+  files_tsv="$(mktemp /tmp/ctx-reuse-files-XXXXXX)"
+  hits_tsv="$(mktemp /tmp/ctx-reuse-hits-XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$hits_tsv'" EXIT
+
+  for term in "${terms[@]}"; do
+    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
+  done
+  cat "$sym_tsv" "$files_tsv" > "$hits_tsv"
+
+  printf 'reuse_candidates:\n'
+  printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
+  printf '  terms: %s\n' "$terms_yaml"
+
+  if [[ ! -s "$hits_tsv" ]]; then
+    printf '  hits: []\n'
+  else
+    printf '  hits:\n'
+    local first_hit=1
+    while IFS=$'\t' read -r ref domain why conf trust; do
+      [[ "$first_hit" -eq 0 ]] && printf '\n'
+      first_hit=0
+      local safe_why="${why//$'\n'/ }"
+      safe_why="${safe_why//\'/\'\'}"
+      printf '    - ref: %s\n'              "$ref"
+      printf '      source: builtin-index\n'
+      printf '      source_domain: %s\n'    "$domain"
+      printf "      why_relevant: '%s'\n"   "$safe_why"
+      printf '      confidence: %s\n'       "$conf"
+      printf '      trust_level: %s\n'      "$trust"
+    done < "$hits_tsv"
+  fi
 }

@@ -31,7 +31,7 @@
 |---|---|---|
 | CC-237 | **context-enricher interface**：定義 `context_hit_v1`（`source_domain: knowledge / repo / state`、`why_relevant`、`trust_level`、`refs`）作為 CC-232 既有 context-pack schema 的擴充；schema_version enum [1,2]（additive，v1 pack 繼續有效）。定位 = interface（builtin-index 為 backend），非單一 source | ✅ pr:#253 |
 | CC-338 | **repo index MVP**（原 CC-328，見 Phase 0 改號）：bash + sqlite3 實作 `files` / `symbols` / `file_chunks`；shell/python/ts/js/go regex symbols + markdown heading chunks；mtime incremental；FTS5-optional + grep fallback；SQLite WAL 並行；暴露 `pmctl context index/update/query` | ✅ pr:#253 |
-| CC-239 | **reuse-scan + context pack 組裝**（spine 的 user-visible 終點）：PM briefing 時查 prior art，輸出 `reuse_candidates`（helper / test pattern + why_relevant）並組裝 `pmctl context pack` 統一輸出（含 summary/tags）；brief 吸收。repo-index 的第一個 consumer，直接消化 reuse-debt | P2 |
+| CC-239 | **reuse-scan + context pack 組裝**（spine 的 user-visible 終點）：PM briefing 時查 prior art，輸出 `reuse_candidates`（helper / test pattern + why_relevant）並組裝 `pmctl context pack` 統一輸出（context_hit_v1 hits，依 symbols/files 分類）；brief 吸收。repo-index 的第一個 consumer，直接消化 reuse-debt | ✅ pr:#256 |
 
 ### Phase 2 — knowledge 面 + lifecycle（P2）
 
