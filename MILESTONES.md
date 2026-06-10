@@ -58,7 +58,7 @@
 
 ### 延後至 v0.6.0+（明確排除於 v0.5.0）
 
-- **完整 knowledge index（CC-340）**——standalone FTS + embeddings + episodes low-trust chunk 的重型版仍延 v0.6.0，與既有 `/mem-search` 重疊。**但 anchored-TOC 薄切（section 目錄 + memory-card 索引）已拉前至 v0.5.0 CC-354**：沒有它 memory 讀側完全不可用（連 BACKLOG 內的票都得 grep，見 Phase 2 重定錨）。CC-340 縮為「重型 standalone + embeddings」的剩餘範圍，對稱於 repo-index CC-338。
+- **完整 knowledge index（CC-340）**——standalone FTS + embeddings + episodes low-trust chunk 的重型版仍延 v0.6.0，與既有 `/mem-search` 重疊。**但 anchored-TOC 薄切（in-repo knowledge docs 的 section 目錄）已拉前至 v0.5.0 CC-354**：沒有它 memory 讀側完全不可用（連 BACKLOG 內的票都得 grep，見 Phase 2 重定錨）。CC-340 縮為剩餘範圍——repo 外 memory cards / wiki / episodes 索引 + standalone full-text + embeddings，對稱於 repo-index CC-338。
 - **CC-355 HTML semantic chunking**——CC-354 的 per-format chunker 對 html 先走 window fallback；`<h1-6>` 語意 chunking 留 follow-up（bash 解析 HTML 脆、且 repo 目前無 .html knowledge 來源），plug 進 CC-354 的 chunker seam。
 - **External index backends**——Khoj（semantic knowledge）、Memori（cross-runtime；回寫只走 `memory_proposal`）、tree-sitter / codegraph（CC-209 / CC-253 spike）、ctags。規則：local canonical first，external accelerator second。
 - **CC-216 MCP server**——需穩定 pmctl，延 v0.6.0+。

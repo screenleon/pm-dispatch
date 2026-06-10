@@ -47,7 +47,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | 🟢 superseded 2026-06-08 | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
-| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — event-derived semantic cards]** Point `/mem-distill` at `events.jsonl` (the action stream — tool calls, decisions, gate verdicts) alongside `episodes.jsonl`, distilling both into semantic memory cards. This is the write side of the v0.5.0 memory read+write loop; semantic transformation lives here, not in the index. Four-tier card system unchanged; gives the event tier a schema (Memori-inspired). Acceptance: a card written here is retrievable through the CC-354 read side (loop closes). | memory | 2026-05-22 | — | P2 | design |
+| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — event-derived semantic cards]** Point `/mem-distill` at `events.jsonl` (the action stream — tool calls, decisions, gate verdicts) alongside `episodes.jsonl`, distilling both into semantic memory cards. This is the write side of the v0.5.0 memory read+write loop; semantic transformation lives here, not in the index. Four-tier card system unchanged; gives the event tier a schema (Memori-inspired). The card surfaces to the agent via existing MEMORY.md auto-injection; CC-354 covers the complementary in-repo knowledge-doc read side (memory cards are not indexed in this slice). | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ✅ closed 2026-06-09 | **[v0.5.0 P1: context-enricher interface]** Define `context_hit_v1` (source_domain knowledge/repo/state, why_relevant, trust_level, refs) extending the CC-232 context-pack schema; schema_version bumped 1→2 (additive; v1 packs remain valid via enum). Delivers the interface contract; the assembled `pmctl context pack` output is CC-239. builtin-index backend is CC-338. | ux | 2026-05-22 | pr:#253 | P1 | design |
@@ -91,7 +91,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-336 | ✅ done | dx: deprecated warnings + executor docs preferred path update | docs | 2026-06-08 | pr:#246 | P2 | — |
 | CC-337 | ✅ done | portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix | ops/portability | 2026-06-08 | pr:#247 | P1 | — |
 | CC-339 | ✅ done | **[lint: prevent duplicate CC id with divergent title]** Sibling `lint-ticket-ids.sh` + lint.yml job asserting no id is open on the active board while closed in the archive (cross-lifecycle collision; string-comparison-free reinterpretation). Caught CC-329/CC-330 collisions on first run (renumbered to CC-342/CC-343). v0.5.0 Phase 0 follow-up. | process | 2026-06-08 | pr:#250 | P3 | hygiene |
-| CC-340 | 🟢 someday | **[knowledge index: standalone FTS over memory/backlog/decisions]** Local knowledge-search index (the second-brain plane, symmetric to the repo index CC-338): index MEMORY.md + memory cards + wiki + BACKLOG / DECISIONS / MILESTONES + episodes, answering "why / how was this decided / prior failure modes" before dispatch. v0.5.0 only aligns the schema (context_hit_v1, CC-237); the heavy standalone index overlaps /mem-search and is deferred to v0.6.0. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
+| CC-340 | 🟢 someday | **[knowledge index: heavy remainder after CC-354 — standalone FTS + embeddings]** The usable anchored-TOC slice (in-repo knowledge-doc section indexing) is pulled forward to CC-354 (v0.5.0). CC-340 is now the heavy remainder, symmetric to the repo index CC-338: out-of-repo memory cards + wiki + episodes (low-trust) indexing, standalone full-text ranking, embeddings, and richer trust-tier weighting — deferred to v0.6.0, overlapping /mem-search. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-341 | ✅ done | **[pmctl validate: wire handover-validate framework into pmctl]** The CC-202 handover-validator framework shipped (#170) but was never wired into a `pmctl validate` subcommand. MILESTONES v0.5.0 previously pointed at the closed CC-202; this is its active home. Wire `pmctl validate brief` as a read-only validation front-end matching the handover-validate.sh framework (exit 0=valid / 1=invalid / 2=usage). Read-only by design, same as guard check — no state written. | arch | 2026-06-08 | pr:#252 | P2 | design |
 | CC-350 | ✅ done | **[bug: pmctl gate run SIGPIPE×pipefail — stdout pipe → 0-byte result + false-success exit 0]** `scripts/pr-gate.sh` banner `printf` 在 stdout 接 pipe 時 SIGPIPE×pipefail 提前中斷 dispatch；結果檔 0 bytes；整條命令誤報 exit 0。false-success 對自動化 caller 比 false-failure 危險（空結果被當作 gate 通過）。Fix 方向：結果完整性把關（非空才 exit 0）、banner SIGPIPE 容錯、或介面文件警告。 | ops/gate | 2026-06-10 | pr:#258 | P2 | hygiene |
 | CC-351 | ✅ done | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
@@ -1351,9 +1351,15 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 - Phase b: 加入 JS/TS `import` / `require`
 - Phase c: 加入 Java `import` + Go `import`
 
-**Milestone**: v0.5.0 P3（depends CC-338 landed）。
+**Acceptance**:
+- `file_refs(from_id, to_path, ref_type, line_number, resolved)` table is created and populated by `pmctl context index` for at least the Phase a (Bash `source` / `.`) parser, with a fixture repo asserting resolved vs unresolved refs.
+- `pmctl context update <file>` re-scans refs for a single file without a full rebuild.
+- `pmctl context query` emits a bounded `refs` field (direct referrers) on hits; `LIKE`/`grep` fallback path tested.
+- No schema migration breakage to the existing CC-338 `files` / `symbols` / `file_chunks` tables.
 
-**Priority**: P3.
+**Milestone**: v0.5.0 Phase 2, P2（after the memory loop; depends CC-338 landed）。
+
+**Priority**: P2（promoted from P3 2026-06-10 — reuse-scan has limited PM value without ref data）。
 
 **Cross-link**: [[CC-338]] (repo-index, parent table), [[CC-237]] (context_hit_v1 refs 欄位), [[CC-239]] (reuse-scan consumer), [[CC-347]] (blast-radius consumer).
 
@@ -1682,7 +1688,7 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Problem**: The repo index (CC-338) covers the code plane ("where to change, what to reuse"), but the second-brain plane — "why, how was this decided, what failed before" — has no structured search backing the context-pack. `/mem-search` exists as a skill but is keyword/grep over files, not an index with ranking or trust tiers.
 
-**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). v0.5.0 ships the repo plane + the shared interface (CC-237). The **anchored-TOC slice** of the knowledge index (per-section chunking + memory-card indexing — enough to make the read side usable) is pulled forward to **CC-354** (v0.5.0 Phase 2), because without it the knowledge plane has no queryable index at all. CC-340 narrows to the **heavy remainder**: standalone full-text ranking, embeddings, and low-trust episodic chunking — deferred to v0.6.0, overlapping the existing `/mem-search` surface.
+**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). v0.5.0 ships the repo plane + the shared interface (CC-237). The **anchored-TOC slice** of the knowledge index (per-section chunking of in-repo knowledge docs — enough to make the read side usable; memory-card indexing explicitly excluded) is pulled forward to **CC-354** (v0.5.0 Phase 2), because without it the knowledge plane has no queryable index at all. CC-340 narrows to the **heavy remainder**: standalone full-text ranking, embeddings, and low-trust episodic chunking — deferred to v0.6.0, overlapping the existing `/mem-search` surface.
 
 **Requirement** (v0.6.0 — remainder after CC-354):
 - Full-text ranking over wiki + episodes.jsonl (low-trust episodic chunks) beyond the anchored TOC CC-354 delivers.
@@ -1709,8 +1715,9 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 - **Per-format chunking strategy** (replaces the current single `head -c 2000` chunk; dispatch by `_ctx_detect_language`):
   - **markdown** → heading-based: split on `^#{1,6}` into per-section chunks; store heading + extracted CC-id/decision-id + short lead (Problem/Why first lines), NOT the full body.
   - **txt / json / yaml / other non-heading formats** → window-based: fixed N-line windows with line anchors (also fixes the current head-2000-only limitation for any large non-markdown file).
-  - **html** → window fallback for this slice; semantic `<h1-6>` chunking deferred to CC-355 (robust HTML parsing in bash is a separate concern).
+  - **html** → for this slice, `.html` is classified `text` by `_ctx_detect_language` (no `html` branch yet) and therefore gets the window strategy automatically — no special-casing. Semantic `<h1-6>` chunking AND the `html` language branch are deferred to CC-355 (robust HTML parsing in bash is a separate concern).
   - All strategies populate the already-existing `file_chunks.heading` / `line_start` / `line_end` columns — no schema migration. The chunker must be a pluggable per-format seam so CC-355 (and future formats) plug in without rewriting the caller.
+- **Widen the index scan**: the `find` include list in `pmctl_context_index` (`scripts/lib/pmctl-context.sh`) currently covers `*.md` / `*.json` / `*.yaml` but NOT `*.txt` — add `*.txt` so window chunking actually reaches plain-text knowledge files. (`.html` scan inclusion lands with CC-355 alongside its detection.)
 - **Domain tagging**: path-based classifier so hits from BACKLOG / DECISIONS / MILESTONES / docs emit `source_domain: knowledge` + `trust_level: high` (currently `_ctx_query_hits_raw` hard-codes `repo`).
 - **`pmctl context query --domain knowledge|repo`** optional filter.
 - **Retrieval reflex (platform-neutral)**: document the query-before-grep discipline in a neutral `docs/` contract referenced by the dispatch/executor contract; surface `pmctl context query` as the ergonomic first stop. Do NOT write it into CLAUDE.md (platform binding); only a one-line pointer in `agents/project-pm.md`.
@@ -1718,7 +1725,14 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Scope boundary (decided 2026-06-10)**: this slice indexes **in-repo knowledge docs only** (BACKLOG / DECISIONS / MILESTONES / docs). Out-of-repo memory cards (`~/.claude/.../memory/`) are NOT indexed here — they are already surfaced to the agent via MEMORY.md auto-injection + `/mem-search`, so indexing them now would duplicate an existing mechanism. Indexing memory cards into pmctl is deferred until a real need appears (then revisit alongside CC-340 / CC-333). Consequence: CC-354 does not touch memory-dir path resolution, so it does not trigger CC-333.
 
-**Acceptance**: `pmctl context query CC-234` returns `BACKLOG.md:<section-line>` (the in-repo grep problem is fixed); `.txt` / large `.json` files return window chunks beyond their first 2000 bytes; the query-before-grep discipline is documented neutrally with the project-pm pointer. Memory-card retrieval is out of scope (stays on auto-injection).
+**Acceptance**:
+- `pmctl context query CC-234` returns `BACKLOG.md:<section-line>` for the CC-234 section (the in-repo grep problem is fixed).
+- A large `.txt` (and `.json`) fixture returns window chunks beyond its first 2000 bytes — proving the per-format chunker + widened scan list.
+- A DB assertion confirms knowledge-doc section chunks store heading + lead + line anchors, NOT the full section body.
+- `pmctl context query --domain knowledge` returns only knowledge-domain hits, and those hits carry `source_domain: knowledge` + `trust_level: high`; `--domain repo` excludes them.
+- The query-before-grep discipline is present in a neutral `docs/` contract with the `agents/project-pm.md` pointer, and NOT in CLAUDE.md.
+- `LIKE` / `grep` fallback path is tested (FTS5 absent) and returns the same refs.
+- Memory-card retrieval is out of scope (stays on auto-injection).
 
 **Non-goals** (stay in CC-340): indexing out-of-repo memory cards / episodes; embeddings / semantic backend; full-text ranking; making SQLite the source of truth. This slice is the minimum that makes the in-repo knowledge-doc read side usable.
 
@@ -1736,8 +1750,14 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Requirement** (when an HTML knowledge source appears):
 - Plug an `html` strategy into the CC-354 per-format chunker seam: split on `<h1>`..`<h6>`, use the (tag-stripped) heading text as the chunk heading, strip tags for the lead.
+- Add an `html`/`htm` branch to `_ctx_detect_language` and to the index scan `find` list (deferred from CC-354).
 - Handle the parsing edge cases (comments, `<pre>`/`<code>`, entities) or document the known-fragile boundaries.
 - Reuse the existing `file_chunks` columns; no schema migration.
+
+**Acceptance**:
+- An `.html` fixture with `<h1>` / `<h2>` sections produces one `file_chunks` row per heading, with tag-stripped heading text and correct `line_start` / `line_end` anchors.
+- Comments, `<pre>` / `<code>` blocks, and HTML entities are handled per a stated rule (either correctly parsed or explicitly documented as a known-fragile boundary with the observed behavior).
+- `pmctl context query` returns the right `<h2>` section ref for a query matching that section's heading.
 
 **Trigger**: a real `.html` file enters the knowledge plane, or a consumer needs HTML-section retrieval.
 
