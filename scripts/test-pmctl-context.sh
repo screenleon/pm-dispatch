@@ -1039,6 +1039,20 @@ case_context_reuse_scan_on_real_repo() {
   fi
 }
 
+case_context_pack_empty_query_value() {
+  local name="pmctl context pack: exits 2 when --query value is empty string"
+  # Behavior: context pack must exit 2 when --query is given an explicit empty string.
+  # Steps: call pack with --task-id and --query ""; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-emq.out"; err="$tmp_root/pack-emq.err"
+  local emq_repo="$tmp_root/emq-repo"
+  mkdir -p "$emq_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$emq_repo" --task-id TASK-1 --query "" > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
 case_context_pack_whitespace_task_id() {
   local name="pmctl context pack: exits 2 when --task-id is whitespace-only"
   # Behavior: context pack must exit 2 when --task-id is whitespace-only.
@@ -1151,6 +1165,7 @@ case_context_pack_unknown_flag
 case_context_pack_valid_json
 case_context_pack_symbol_vs_file_split
 case_context_pack_dedup
+case_context_pack_empty_query_value
 case_context_pack_whitespace_task_id
 case_context_pack_nondir_repo_path
 case_context_pack_schema_contract

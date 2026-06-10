@@ -756,6 +756,10 @@ pmctl_context_pack() {
           printf 'pmctl context pack: --query requires a value\n' >&2
           return 2
         fi
+        if [[ -z "$2" ]] || [[ "$2" =~ ^[[:space:]]+$ ]]; then
+          printf 'pmctl context pack: --query value must not be empty\n' >&2
+          return 2
+        fi
         terms+=("$2")
         shift 2
         ;;
