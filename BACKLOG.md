@@ -84,7 +84,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-346 | 🟢 someday | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。 | ops | 2026-06-09 | — | P3 | design |
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
-| CC-349 | 🟡 deferred | **[repo-index: exclude tracking-doc headings from symbol index to reduce reuse-scan noise]** `pmctl context index` 把所有 Markdown heading 一律當成 symbol 建索引，包含 BACKLOG-ARCHIVE.md、CHANGELOG.md、MILESTONES.md 等追蹤文件。這些 heading 在 reuse-scan 命中結果中佔大多數，把真正有用的 shell function symbol（`scripts/lib/*.sh`）淹沒，讓「找現成 helper」這個核心 use case 大打折扣。修法：在 `_ctx_index_file`（`scripts/lib/pmctl-context.sh`）中加入 path-based skip list，對已知追蹤文件（`BACKLOG*.md`、`BACKLOG-ARCHIVE.md`、`CHANGELOG.md`、`MILESTONES.md`、`DECISIONS.md`）只建 chunk index、不建 symbol index；或支援 `.pmctlignore` style 設定讓使用者自訂排除規則。預期效果：reuse-scan 命中結果以 `scripts/` 的函式符號為主，BACKLOG 歷史記錄不再佔據前 N 名。 | ops/DX | 2026-06-10 | — | P2 | — |
+| CC-349 | 🟡 deferred | **[repo-index: symbol index limited to code files only — Markdown headings are not reusable symbols]** `pmctl context index` 對所有 Markdown 檔案提取 heading 作為 symbol，但 Markdown heading 不是「可複用的程式碼符號」——shell function、Python function、JS/TS export 才是。Markdown heading 大量混入 symbol index 導致 reuse-scan 的命中以文件結構為主，淹沒真正有用的 code symbol。修法（語言層級，不綁特定檔名）：在 `_ctx_index_file`（`scripts/lib/pmctl-context.sh`）的 symbol 提取分支，只對程式碼語言（shell/python/js/ts/go/java/ruby 等）執行；Markdown、YAML、JSON、純文字等文件類型只建 file_chunks index，不建 symbol。`_ctx_detect_language` 回傳的 `lang` 欄位已可判斷語言，修改範圍小。預期效果：任何 repo 上 reuse-scan 命中均以程式碼符號（函式、class、export）為主；文件標題不佔據排名。 | ops/DX | 2026-06-10 | — | P2 | — |
 | CC-334 | ✅ done | **[install: install-hooks.sh 安裝時自動 merge 必要 permissions.allow 條目至 ~/.claude/settings.json]** pr-gate claude 路由的 reviewer subagent 需要 Write 和 Bash 權限才能寫入 .gate-results 並執行 guard check。現行安裝流程只裝 hooks，未補 permissions，導致安裝後 /pr-gate 仍不可用。需在 install-hooks.sh 結尾依使用者實際工作區路徑動態推算寫入的 glob，再 idempotent merge 進 settings.json。 | install/ux | 2026-06-08 | pr:#244 | P1 | — |
 | CC-333 | 🟢 someday | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。 | arch | 2026-06-07 | — | P3 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
@@ -1400,13 +1400,17 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 
 ---
 
-## CC-349 — repo-index: exclude tracking-doc headings from symbol index 🟡 deferred
+## CC-349 — repo-index: symbol index limited to code files only 🟡 deferred
 
-**Problem**: `pmctl context index` 把所有 Markdown heading 一律當成 symbol 建索引。BACKLOG-ARCHIVE.md、CHANGELOG.md、MILESTONES.md 等追蹤文件含有大量 heading，導致 `pmctl context reuse-scan` 的命中結果以這些文件的歷史記錄為主（如 `CC-201 — Reuse debt: detect_executor_profile() shim (heading)`），把真正有用的 shell function symbol（`scripts/lib/*.sh`）淹沒。核心 use case「寫新程式碼前確認現有 helper」因此失靈。
+**Problem**: `pmctl context index` 把所有 Markdown heading 當成 symbol 建索引，但 Markdown heading 不是「可複用的程式碼符號」——shell function、Python function、JS/TS export 才是。任何含有大量 heading 的 Markdown 文件（不限 pm-dispatch 的 BACKLOG/CHANGELOG）都會在 reuse-scan 中佔據大多數命中，淹沒真正的 code symbol。
 
-**Solution**: 在 `_ctx_index_file`（`scripts/lib/pmctl-context.sh`）加入 path-based skip：對已知追蹤文件（`BACKLOG*.md`、`BACKLOG-ARCHIVE.md`、`CHANGELOG.md`、`MILESTONES.md`、`DECISIONS.md`）只建 file_chunks index、跳過 symbol 提取。進階選項：支援 `.pmctlignore` style 設定讓使用者自訂排除規則。預期效果：reuse-scan 命中結果以 `scripts/` 函式符號為主，追蹤文件 heading 不再佔據排名前列。
+**Root cause**: `_ctx_index_file` 的 symbol 提取不區分語言——Markdown heading 和 shell function 都走同一條 symbol 路徑。
 
-**Scope**: 修改 `_ctx_index_file` 的 symbol 提取條件（約 10–20 行）+ 新增回歸測試確認排除行為 + 重建 index 後驗證 reuse-scan 結果改善。
+**Solution（語言層級，不綁特定檔名）**: 修改 `_ctx_index_file`（`scripts/lib/pmctl-context.sh`）的 symbol 提取分支，只對程式碼語言（shell/python/js/ts/go/java/ruby 等）執行；Markdown、YAML、JSON、純文字等文件類型只建 file_chunks index，不建 symbol。`_ctx_detect_language` 回傳的 `lang` 欄位已可判斷語言，修改範圍小（約 5–10 行）。
+
+**Expected outcome**: 任何 repo 上 reuse-scan 均以程式碼符號（函式、class、export）為主；文件標題不佔據排名。通用規則，不綁 pm-dispatch 特定檔案。
+
+**Scope**: 修改 `_ctx_index_file` symbol 提取條件 + 新增回歸測試（Markdown 檔案不產生 symbol）+ 重建 index 後驗證 reuse-scan 改善。
 
 **Priority**: P2（直接影響 reuse-scan 核心 use case）。
 
