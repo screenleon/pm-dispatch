@@ -47,7 +47,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | 🟢 superseded 2026-06-08 | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
-| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — event-derived semantic cards]** Point `/mem-distill` at `events.jsonl` (the action stream — tool calls, decisions, gate verdicts) alongside `episodes.jsonl`, distilling both into semantic memory cards. This is the write side of the v0.5.0 memory read+write loop; semantic transformation lives here, not in the index. Four-tier card system unchanged; gives the event tier a schema (Memori-inspired). The card surfaces to the agent via existing MEMORY.md auto-injection; CC-354 covers the complementary in-repo knowledge-doc read side (memory cards are not indexed in this slice). | memory | 2026-05-22 | — | P2 | design |
+| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — episodes + anomaly-event distillation（scope trimmed 2026-06-10）]** Point `/mem-distill` at `episodes.jsonl` plus the **anomaly slice** of `events.jsonl` only — run failures, timeouts, gate blocks（exit≠0 / blocked verdicts）. Trimmed by 2026-06-10 arch review: the live event stream is run-FSM lifecycle telemetry, so happy-path events carry nothing distillable and the generic event-tier schema is dropped from this slice. Acceptance = one real card distilled from one real recorded failure, user-confirmed, surfacing via existing MEMORY.md auto-injection. Write side of the memory loop; CC-354 is the read side. | memory | 2026-05-22 | — | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ✅ closed 2026-06-09 | **[v0.5.0 P1: context-enricher interface]** Define `context_hit_v1` (source_domain knowledge/repo/state, why_relevant, trust_level, refs) extending the CC-232 context-pack schema; schema_version bumped 1→2 (additive; v1 packs remain valid via enum). Delivers the interface contract; the assembled `pmctl context pack` output is CC-239. builtin-index backend is CC-338. | ux | 2026-05-22 | pr:#253 | P1 | design |
@@ -81,7 +81,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-343 | ✅ done | **[skill: /discover — milestone seeder + opportunity scanner]** 新增 `commands/discover.md`：以「發散模式」呼叫 project-pm，讀取 backlog（someday+deferred 項目）+ DECISIONS + MILESTONES + 近期 git activity，輸出高槓桿機會清單（含問題、why、預估規模）。定位為 brainstorm/ideation 的正確形狀——利用 PM 的既有 context 而非隔離，避免重新推導已有的設計決策。用於「v0.X.0 milestone 規劃前想知道可以做什麼」的發散探索。從 someday 提前至 v0.5.0 P1（實作成本 XS；提供 milestone seeder 功能後可用來規劃後續工作）。 | process/DX | 2026-06-05 | pr:#251 | P1 | design |
 | CC-344 | 🟢 someday | **[skill: /research — grounded external research with internal context anchoring]** 新增 `commands/research.md`：補足 `/discover` 純內部掃描的盲區，加入外部研究維度。流程：(1) 自動讀內部相關 memory/decisions 建立錨定；(2) 問使用者 1–2 個定向問題縮小搜尋範圍；(3) 派有 WebSearch 能力的 agent 抓取外部實作與方法；(4) 主線程以內部設計 constraint 過濾結果，標記「可採用」或「與 constraint X 衝突」。目標：讓外部技術知識能有效導入而非淪為噪音。與 `/discover` 互補——discover 看「我們已知但未做的」，research 看「外部有我們還沒想到的」。 | process/DX | 2026-06-09 | — | P3 | design |
 | CC-345 | 🟢 someday | **[dx: claude adapter 即時進度串流（stream-json）]** `adapters/claude/dispatch.sh` 目前使用 `--output-format json`，stdout 完全 buffered 至 process 結束，dispatch 期間 trace 為空、working tree 無變動，使用者無法判斷 executor 在讀取或寫檔。改用 `--output-format stream-json` 並以 tee 寫入 trace，同步解析 tool-use events，在 stderr banner 即時顯示 `[reading]`、`[writing]`、`[running]` 進度行。 | ux/ops | 2026-06-09 | — | P2 | design |
-| CC-346 | 🔵 active | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。Promoted someday→P2 2026-06-10：reuse-scan 沒有引用資料時對 PM 幫助有限。排 v0.5.0 Phase 2，與 memory loop 解耦（repo plane 下游）。 | ops | 2026-06-09 | — | P2 | design |
+| CC-346 | ⏸ deferred | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。**Paused 2026-06-10（arch review）**：reuse-scan 本身尚無任何操作面 caller——給沒人用的工具加深資料層是加倍下注未驗證假設。Resume trigger：reuse-scan 輸出（經 CC-356 接線）實際進過 ≥2 份真 brief，且觀察到缺 ref 資料確為瓶頸；屆時先只做 Phase a（bash source）。 | ops | 2026-06-09 | — | P3 | design |
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
 | CC-349 | ✅ closed 2026-06-10 | **[repo-index: symbol index limited to code files only — Markdown headings are not reusable symbols]** `pmctl context index` 對所有 Markdown 檔案提取 heading 作為 symbol，但 Markdown heading 不是「可複用的程式碼符號」——shell function、Python function、JS/TS export 才是。Markdown heading 大量混入 symbol index 導致 reuse-scan 的命中以文件結構為主，淹沒真正有用的 code symbol。修法（語言層級，不綁特定檔名）：在 `_ctx_extract_symbols`（`scripts/lib/pmctl-context.sh`）移除 `markdown)` case——Markdown/YAML/JSON/文字檔只建 file_chunks index，不建 symbol。`_ctx_detect_language` 回傳的 `lang` 欄位已可判斷語言，修改範圍小。預期效果：任何 repo 上 reuse-scan 命中均以程式碼符號（函式、class、export）為主；文件標題不佔據排名。**See**: pr:#257 | ops/DX | 2026-06-10 | pr:#257 | P2 | — |
@@ -97,8 +97,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-351 | ✅ done | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-353 | ✅ done | **[unify executor dispatch: claude-executor symmetric to codex-executor]** claude-executor.md 缺 codex-executor 的「N-condition fallback allowlist」結構，兩份 executor 文件不對稱、難維護。統一：pmctl dispatch run --adapter claude 定為唯一文件化主路；claude-executor.md 重構成鏡像 codex 的窄 fallback（lifecycle 框架 + fallback 表 + caller checklist）；pr-gate reviewer fan-out 標為正當用途非 fallback。對齊 dispatch-brief.md §Fallback。隨 CC-351 同 PR。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
-| CC-354 | 🔵 active | **[v0.5.0 P2 read-half: anchored knowledge index + retrieval reflex]** knowledge plane has no queryable index — `pmctl context query` only covers the repo plane, and the indexer stores one `head -c 2000` chunk per file, so a 180 KB BACKLOG only has its first ~30 lines indexed (finding CC-234 needs grep). Pull the anchored-TOC slice of CC-340 forward via a pluggable per-format chunker (markdown heading-based, txt/json/yaml window-based, html window fallback — semantic html deferred to CC-355): store heading + extracted CC-id/decision-id + line anchor + lead, not full text; add `pmctl context query --domain knowledge`. In-repo knowledge docs only — out-of-repo memory cards stay on existing MEMORY.md auto-injection, deferred. Wire the query-before-grep discipline into a neutral docs contract plus pmctl — not CLAUDE.md, to avoid platform binding — with only a pointer in agents/project-pm.md. Read side of the memory read+write loop; closes with CC-234. | memory | 2026-06-10 | — | P2 | design |
+| CC-354 | 🔵 active | **[v0.5.0 P2 read-half: anchored knowledge index + retrieval reflex]** knowledge plane has no queryable index — `pmctl context query` only covers the repo plane, and the indexer stores one `head -c 2000` chunk per file, so a 180 KB BACKLOG only has its first ~30 lines indexed (finding CC-234 needs grep). Pull the anchored-TOC slice of CC-340 forward via a pluggable per-format chunker (markdown heading-based, txt/json/yaml window-based, html window fallback — semantic html deferred to CC-355): store heading + extracted CC-id/decision-id + line anchor + lead, not full text; add `pmctl context query --domain knowledge`. In-repo knowledge docs only — out-of-repo memory cards stay on existing MEMORY.md auto-injection, deferred. Wire the query-before-grep discipline into a neutral docs contract plus pmctl — not CLAUDE.md, to avoid platform binding — with only a pointer in agents/project-pm.md. Read side of the memory read+write loop; closes with CC-234. **Success metric（2026-06-10 arch review）**: not tool existence nor query-count alone — a later similar task's brief cites memory / decision / backlog **anchors directly** instead of the main thread re-deriving background; wiring is part of acceptance（repo-plane wiring split to CC-356）. | memory | 2026-06-10 | — | P2 | design |
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
+| CC-356 | 🔵 active | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
 
 ---
 
@@ -614,21 +615,29 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: surfaced during CC-222 close-out 2026-05-22.
 
-## CC-234 — memory v2: event-derived distillation（write-half of the memory loop）
+## CC-234 — memory v2: episodes + anomaly-event distillation（write-half of the memory loop；scope trimmed 2026-06-10）
 
-**Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable signal is the action stream (tool calls, decisions, gate verdicts).
+**Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable *action* signal lives in `events.jsonl`, but inspection of the live stream (2026-06-10 arch review) shows it is run-FSM **lifecycle telemetry** (run.created → dispatched → verifying → completed, adapter + exit codes) — happy-path events carry almost no distillable semantics. A generic "distill all events" pass would be technically working machinery with nothing worth distilling.
 
-**Why**: Memori's insight — memory from what agents *do*, not just what they say. The Event log (CC-230) is that action stream. This is the **write side** of the v0.5.0 memory read+write loop: the semantic transformation (distilling raw episodes + events into a curated card) lives here, in `/mem-distill`, NOT in the read-side index — the index over structured docs stays an anchored table-of-contents (CC-354), and memory cards are where distilled semantic knowledge is authored.
+**Why**: Memori's insight — memory from what agents *do* — holds where the action stream actually encodes knowledge: **anomalies**. A failed dispatch, a timeout, a gate block each encode a lesson ("briefs shaped like X hang codex") that chat summaries may under-report. This is the **write side** of the v0.5.0 memory read+write loop: semantic transformation lives here in `/mem-distill`, NOT in the read-side index (CC-354 stays an anchored TOC). Scope trimmed 2026-06-10: episodes remain the primary semantic source; events contribute only their anomaly slice; the generic event-tier schema is dropped from this slice (revisit with CC-340 if a richer action stream ever materialises).
 
-**Requirement**: Point `/mem-distill` at `events.jsonl` as an input alongside `episodes.jsonl`. Filter to distillable kinds (run.completed/failed, review.verdict, decision.recorded, task.state_changed); analyse action-pattern signals (repeated failures in a subsystem, gate-verdict clusters, decision clusters) alongside chat summaries. The existing four-tier card system is unchanged; this gives the `event` tier a schema. No separate memory engine. State store may be uninitialised → graceful fallback to episodes-only distillation.
+**Requirement**:
+- Point `/mem-distill` at `episodes.jsonl` (primary semantic source, unchanged) plus the **anomaly slice** of `events.jsonl` only: run failures / timeouts (`exit_code != 0`, timeout kinds) and gate blocks (blocked review verdicts). Happy-path lifecycle events are explicitly out of scope.
+- Correlate an anomaly event with its episode (same session / run id) so the proposed card cites both: the episode line for the narrative, the event id for the machine evidence.
+- The existing four-tier card system is unchanged; no new card tier, no separate memory engine, no generic event-tier schema.
+- State store may be uninitialised → graceful fallback to episodes-only distillation (current behavior preserved).
 
-**Acceptance**: `/mem-distill` consuming a session's `events.jsonl` + `episodes.jsonl` produces/updates a memory card capturing an action-derived fact (not just chat), under the existing four-tier schema, with user confirmation. The card surfaces to the agent via the existing MEMORY.md auto-injection path (memory cards are NOT indexed into pmctl in v0.5.0 — see CC-354 scope boundary). Together with CC-354 (in-repo knowledge docs queryable), this makes memory read + write both usable — the write half here, the read half (docs) in CC-354.
+**Acceptance**:
+- `/mem-distill` run against a session containing **one real recorded failure** (e.g. a dispatch exit≠0 or gate block) proposes a card capturing the action-derived lesson, citing the source episode line AND event id; written only after user confirmation.
+- A session with only happy-path lifecycle events proposes **no** event-derived card (no noise from telemetry).
+- The card surfaces via the existing MEMORY.md auto-injection path (memory cards are NOT indexed into pmctl in v0.5.0 — see CC-354 scope boundary).
+- Loop-level success metric (shared with CC-354): on a later similar task, the PM cites the card / anchors directly in the brief instead of re-deriving the background.
 
 **Milestone**: v0.5.0 Phase 2 (memory read+write, write half).
 
 **Priority**: P2.
 
-**Cross-link**: [[CC-354]] (read side — anchored knowledge index), CC-230 (events.jsonl), CC-229 (event schema), `commands/mem-distill.md` (modification target).
+**Cross-link**: [[CC-354]] (read side — anchored knowledge index), [[CC-356]] (repo-plane wiring, same wiring-as-acceptance principle), CC-230 (events.jsonl), CC-229 (event schema), [[CC-340]] (deferred home of any future generic event-tier schema), `commands/mem-distill.md` (modification target).
 
 ## CC-235 — Task lifecycle gate: tiered spec→design→plan（deferred）
 
@@ -1311,7 +1320,7 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 
 **Cross-link**: [[CC-338]], [[CC-341]].
 
-## CC-346 — repo-index: cross-file ref tracking（file_refs layer，5 languages）🔵 v0.5.0 Phase 2 P2
+## CC-346 — repo-index: cross-file ref tracking（file_refs layer，5 languages）⏸ paused 2026-06-10
 
 **Problem**: `pmctl context query` 回傳 symbol + chunk hits，但看不出哪些檔案 import / source 了命中的模組。同一個 helper 被 10 個腳本 source，在 context hit 中卻像孤立的節點——dispatcher 不知道修改它的波及範圍，reuse-scan（CC-239）也無法辨識「這個 helper 已到處被用，不要再重複」。
 
@@ -1357,11 +1366,15 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 - `pmctl context query` emits a bounded `refs` field (direct referrers) on hits; `LIKE`/`grep` fallback path tested.
 - No schema migration breakage to the existing CC-338 `files` / `symbols` / `file_chunks` tables.
 
-**Milestone**: v0.5.0 Phase 2, P2（after the memory loop; depends CC-338 landed）。
+**Pause rationale（2026-06-10 arch review）**: 同日稍早曾以「reuse-scan 沒 ref 資料幫助有限」promote someday→P2，但 review 指出前提未驗證——reuse-scan 本身 ship 後（#256）操作面零 caller，給沒人用的工具加深資料層是加倍下注。先做 CC-356（接線 + 使用可觀測），用實際使用證據決定是否恢復本票。
 
-**Priority**: P2（promoted from P3 2026-06-10 — reuse-scan has limited PM value without ref data）。
+**Resume trigger**: reuse-scan 輸出（經 [[CC-356]] 接線）實際進過 ≥2 份真 brief，且觀察到「缺 ref 資料」確為 reuse 建議品質的瓶頸。恢復時先只做 Phase a（bash source），不直上 5 語言。
 
-**Cross-link**: [[CC-338]] (repo-index, parent table), [[CC-237]] (context_hit_v1 refs 欄位), [[CC-239]] (reuse-scan consumer), [[CC-347]] (blast-radius consumer).
+**Milestone**: paused — 原排 v0.5.0 Phase 2；恢復後依當時 milestone 重排（depends CC-338 landed, CC-356 evidence）。
+
+**Priority**: P3（promoted P3→P2 2026-06-10 早場，同日 arch review 改回 P3 + paused；見 DECISIONS 2026-06-10 scope-trim entry）。
+
+**Cross-link**: [[CC-338]] (repo-index, parent table), [[CC-237]] (context_hit_v1 refs 欄位), [[CC-239]] (reuse-scan consumer), [[CC-347]] (blast-radius consumer), [[CC-356]] (wiring precondition).
 
 ## CC-347 — pr-gate: blast-radius analysis using cross-file refs 🟢 someday → v0.5.0 P3
 
@@ -1733,6 +1746,7 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 - The query-before-grep discipline is present in a neutral `docs/` contract with the `agents/project-pm.md` pointer, and NOT in CLAUDE.md.
 - `LIKE` / `grep` fallback path is tested (FTS5 absent) and returns the same refs.
 - Memory-card retrieval is out of scope (stays on auto-injection).
+- **Loop-level success metric (2026-06-10 arch review)**: capability existence and query-count alone do NOT close this ticket's intent — the proof is that on a later similar task, the PM/brief cites memory / decision / backlog **anchors directly** (e.g. `BACKLOG.md#CC-NNN` section refs from `pmctl context query`) instead of the main thread re-deriving the background by grep + full-file reads. Wiring (the neutral docs contract + project-pm pointer above) is part of acceptance, not a follow-up.
 
 **Non-goals** (stay in CC-340): indexing out-of-repo memory cards / episodes; embeddings / semantic backend; full-text ranking; making SQLite the source of truth. This slice is the minimum that makes the in-repo knowledge-doc read side usable.
 
@@ -1740,7 +1754,7 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 **Priority**: P2.
 
-**Cross-link**: [[CC-234]] (write side), [[CC-355]] (html semantic chunking follow-up), [[CC-340]] (heavy remainder, this is its pulled-forward slice), [[CC-338]] (repo-index machinery reused), [[CC-237]] (context_hit_v1 interface), [[CC-349]] (symmetric: removed markdown symbols, this adds markdown section chunks).
+**Cross-link**: [[CC-234]] (write side), [[CC-356]] (repo-plane wiring counterpart — same wiring-as-acceptance principle), [[CC-355]] (html semantic chunking follow-up), [[CC-340]] (heavy remainder, this is its pulled-forward slice), [[CC-338]] (repo-index machinery reused), [[CC-237]] (context_hit_v1 interface), [[CC-349]] (symmetric: removed markdown symbols, this adds markdown section chunks).
 
 ## CC-355 — knowledge index: HTML semantic chunking（`<h1-6>` sections）🟢 someday
 
@@ -1764,6 +1778,33 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 **Priority**: P3.
 
 **Cross-link**: [[CC-354]] (per-format chunker seam this plugs into), [[CC-340]] (knowledge index family).
+
+## CC-356 — wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測
+
+**Problem**: `pmctl context pack` 與 `pmctl context reuse-scan`（CC-239, #256）ship 後**操作面零 caller**——`agents/`、`skills/`、`commands/`、操作 docs（dispatch-brief.md 等）沒有任何一處指示在 brief 撰寫流程中呼叫它們（grep 驗證 2026-06-10，僅 architecture 規劃文件提及）。repo plane 正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變，dispatch 行為沒有任何改變。
+
+**Why**: pm-dispatch 的價值主張是「減少 main thread 重新解釋背景、減少付費模型浪費」。索引只有在 brief 撰寫流程實際引用它的輸出時才兌現這個價值。本票把「接線即驗收」原則落到 repo plane（CC-354 已涵蓋 knowledge plane 的 query-before-grep reflex）：工具被叫、輸出進 brief、使用次數可量測。這也是 CC-346 是否恢復的證據來源——先觀察 reuse-scan 實際使用，再決定要不要給它加 ref 資料層。
+
+**Requirement**:
+- **接線（platform-neutral，與 CC-354 同紀律）**：在中立 docs 契約（`docs/dispatch-brief.md` 或 CC-354 新立的 retrieval 契約文件）加入 brief-authoring 步驟——撰寫 `files:` / `context:` 前先跑 `pmctl context reuse-scan`（或對已知 term 跑 `context pack`）取 prior-art anchors；`agents/project-pm.md` 與 `skills/dispatch-brief/SKILL.md` 各放指標（不含票號，遵守 no-CC-in-operational-files 規則）。不寫 CLAUDE.md。
+- **Brief 噪音上限**：`reuse_candidates` 輸出設 hit 上限（建議 ≤5）+ PM 人工篩選步驟；未經篩選不得整段貼進 brief（防 stop-word 抽詞噪音變成付費 executor 的 token 成本）。
+- **使用可觀測**：`pmctl context query` / `reuse-scan` 每次呼叫 emit 一筆 event（既有 state-writer 機制，無新基建），使「索引被用了幾次」可由 `pmctl trace --kind` 查出。
+- 不改 index 機制本身；本票純接線 + 可觀測，無 schema 變更。
+
+**Acceptance**:
+- 中立 docs 契約含 brief-authoring 的 reuse-scan / pack 步驟；`agents/project-pm.md` + `skills/dispatch-brief/SKILL.md` 有指標；CLAUDE.md 無新增。
+- `reuse_candidates` 上限生效（fixture 驗證超量截斷）。
+- `pmctl context query` / `reuse-scan` 呼叫後 `pmctl trace` 可查到對應 event（含 query term 與 hit 數）。
+- **End-to-end**：一份真實 dispatch brief 的 `context:` 含 index-derived anchors（reuse candidate 或 section ref），且該次查詢在 trace 中可回溯。
+- Loop-level success metric（與 CC-354 / CC-234 共用）：後續類似任務中，PM 直接引用 anchor 組 brief，main thread 不再重新推論背景。
+
+**Non-goals**: 不動 ranking / 抽詞演算法（觀察使用後再評估）；不做 CC-346 ref 資料層（本票的使用證據是其 resume trigger）；不索引新資料來源。
+
+**Milestone**: v0.5.0 Phase 2（與 CC-354 / CC-234 同屬 memory/context loop 的接線驗收）。
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-239]] (the shipped, unwired capability), [[CC-354]] (knowledge-plane reflex counterpart), [[CC-234]] (write side), [[CC-346]] (resume trigger depends on this ticket's usage evidence), [[CC-237]] (context_hit_v1), `docs/dispatch-brief.md` + `skills/dispatch-brief/SKILL.md` + `agents/project-pm.md` (modification targets).
 
 ## CC-341 — pmctl validate: wire handover-validate framework into pmctl ✅ 2026-06-09
 

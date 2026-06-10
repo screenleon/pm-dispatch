@@ -7,6 +7,26 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-10: v0.5.0-memory-loop-scope-trim-and-wiring-acceptance
+
+Relates: CC-234, CC-346, CC-354, CC-356, CC-239
+
+**Context**: A pragmatic architecture review (same day, after the Phase 2 re-anchor below) checked whether the v0.5.0 memory plan would be useful after implementation or merely implemented. Two empirical findings drove it: (1) `pmctl context pack` / `reuse-scan` (CC-239, #256) shipped with **zero operational callers** — no agent doc, skill, or operational docs contract invokes them (grep-verified; only architecture planning docs mention them) — the repo plane is repeating the exact "written but never read" disease the re-anchor diagnosed for memory. (2) The live `events.jsonl` is run-FSM **lifecycle telemetry** (run.created→dispatched→verifying→completed with adapter/exit codes); happy-path events carry almost no distillable semantics, so CC-234 as specced ("distill the action stream") risked being working machinery with nothing worth distilling.
+
+**Decision**: Four adjustments, keeping the re-anchored direction intact:
+1. **Wiring is part of acceptance** for every v0.5.0 capability ticket — a tool that exists but is not invoked by the workflow does not pass. New ticket **CC-356** wires pack/reuse-scan into the brief-authoring flow (neutral docs contract + PM/skill pointers, platform-neutral per the reflex sub-decision below), caps `reuse_candidates` hits to bound brief noise, and emits one event per query/reuse-scan call so usage is measurable via `pmctl trace`.
+2. **Loop success metric upgraded**: not "query count > 0" alone but "on a later similar task the PM cites memory / decision / backlog **anchors directly into the brief** instead of the main thread re-deriving the background". Recorded in CC-354 / CC-234 / CC-356 acceptance.
+3. **CC-234 scope trimmed**: episodes stay the primary semantic source; events contribute only the **anomaly slice** (run failures / timeouts / gate blocks); the generic event-tier schema is dropped (revisit with CC-340 if a richer action stream materialises). Acceptance = one real card from one real recorded failure, citing episode line + event id; happy-path-only sessions must propose no event-derived card.
+4. **CC-346 paused** (reverting the same-day someday→P2 promotion): deepening data for an unused tool doubles an unverified bet. Resume trigger = reuse-scan output (via CC-356 wiring) lands in ≥2 real briefs AND the missing-ref gap is observed as the bottleneck; resume with Phase a (bash source) only.
+
+Unchanged (re-confirmed): CC-354 as specced, highest priority; memory-card pmctl indexing stays deferred; embeddings / RAG / FTS ranking stay out (CC-340, v0.6.0+); markdown/JSONL canonical, SQLite derived-and-rebuildable.
+
+**Alternatives considered**: (a) Keep CC-234 full-event scope — rejected: empirically nothing to distill in happy-path telemetry; elegant read/write symmetry hid the signal-density asymmetry. (b) Fold the pack/reuse-scan wiring into CC-354 — rejected: CC-354 covers the knowledge-plane reflex; repo-plane wiring is a separate ≤1-PR slice with its own modification targets (dispatch-brief docs/skill), keeping the thin-slice discipline. (c) Proceed with CC-346 as promoted — rejected: the promotion's premise ("reuse-scan needs ref data to be useful") is untestable while reuse-scan has zero callers; wiring first produces the evidence either way.
+
+**Constraints introduced**: v0.5.0 Phase 2 closes only when the end-to-end loop is demonstrated on a real task (signal → confirmed card / queryable anchor → later dispatch cites it → behavior changes), not when the tools exist. `reuse_candidates` must be capped and PM-filtered before entering a brief (paid-executor token cost). CC-346 may not start before its resume trigger is met. Usage observability events reuse the existing state-writer machinery — no new infrastructure.
+
+---
+
 ## 2026-06-10: v0.5.0-phase2-reanchored-to-memory-read-write-loop
 
 Relates: CC-354, CC-234, CC-340, CC-237, CC-338
