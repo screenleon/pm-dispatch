@@ -12,6 +12,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **`scripts/lib/pmctl-context.sh` / `cli/pmctl`** — `pmctl context pack` and `pmctl context reuse-scan` subcommands, the first consumers of the repo-index. `pack` assembles multiple repo-index queries into a JSON context-pack (schema_version 2, conforming to `core/schema/context-pack.schema.json`): hits classified into `symbols[]` (symbol-name matches) and `files[]` (chunk/FTS text matches), deduplicated by ref across queries. `reuse-scan` takes a free-text description, extracts search terms via `_ctx_extract_terms` (stop-word filter, min 3 chars, unique), runs each against the repo index, and emits a `reuse_candidates:` YAML block for pasting into a dispatch brief's `context:` field. Both require the repo index (`pmctl context index` first); no new external deps. Hits are queried via internal `_ctx_query_hits_raw` (structured TSV emitter shared by pack, reuse-scan, and the YAML query surface — removes YAML-parse coupling). `context pack` rejects non-directory positional repo arguments (exit 2) and whitespace-only `--task-id` values. 20 new test cases in `scripts/test-pmctl-context.sh`.
 
+- **`scripts/lib/pmctl-context.sh`** — `_ctx_extract_symbols` no longer indexes Markdown headings as symbols. Markdown/YAML/JSON/text files contribute to `file_chunks` (text-search) only; symbol extraction is restricted to code-language files (shell/Go/Python/JS/TS). This removes document-structure noise from `reuse_candidates:` output — CHANGELOG, BACKLOG, and other prose files no longer dominate reuse-scan results. 1 new regression test (`pmctl context index: Markdown headings are not indexed as symbols`); total 41 tests in `scripts/test-pmctl-context.sh`.
+
 ---
 
 ## [0.4.0] — 2026-06-08
