@@ -93,6 +93,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-339 | ✅ done | **[lint: prevent duplicate CC id with divergent title]** Sibling `lint-ticket-ids.sh` + lint.yml job asserting no id is open on the active board while closed in the archive (cross-lifecycle collision; string-comparison-free reinterpretation). Caught CC-329/CC-330 collisions on first run (renumbered to CC-342/CC-343). v0.5.0 Phase 0 follow-up. | process | 2026-06-08 | pr:#250 | P3 | hygiene |
 | CC-340 | 🟢 someday | **[knowledge index: standalone FTS over memory/backlog/decisions]** Local knowledge-search index (the second-brain plane, symmetric to the repo index CC-338): index MEMORY.md + memory cards + wiki + BACKLOG / DECISIONS / MILESTONES + episodes, answering "why / how was this decided / prior failure modes" before dispatch. v0.5.0 only aligns the schema (context_hit_v1, CC-237); the heavy standalone index overlaps /mem-search and is deferred to v0.6.0. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-341 | ✅ done | **[pmctl validate: wire handover-validate framework into pmctl]** The CC-202 handover-validator framework shipped (#170) but was never wired into a `pmctl validate` subcommand. MILESTONES v0.5.0 previously pointed at the closed CC-202; this is its active home. Wire `pmctl validate brief` as a read-only validation front-end matching the handover-validate.sh framework (exit 0=valid / 1=invalid / 2=usage). Read-only by design, same as guard check — no state written. | arch | 2026-06-08 | pr:#252 | P2 | design |
+| CC-350 | ✅ done | **[bug: pmctl gate run SIGPIPE×pipefail — stdout pipe → 0-byte result + false-success exit 0]** `scripts/pr-gate.sh` banner `printf` 在 stdout 接 pipe 時 SIGPIPE×pipefail 提前中斷 dispatch；結果檔 0 bytes；整條命令誤報 exit 0。false-success 對自動化 caller 比 false-failure 危險（空結果被當作 gate 通過）。Fix 方向：結果完整性把關（非空才 exit 0）、banner SIGPIPE 容錯、或介面文件警告。 | ops/gate | 2026-06-10 | pr:#258 | P2 | hygiene |
+| CC-351 | 🔵 active | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | — | P2 | hygiene |
+| CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 
 ---
 
@@ -1417,6 +1420,70 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 **Cross-link**: [[CC-338]] (repo-index indexer), [[CC-239]] (reuse-scan consumer).
 
 **See**: pr:#257
+
+---
+
+## CC-350 — bug: pmctl gate run SIGPIPE×pipefail — stdout pipe → 0-byte result + false-success exit 0 ✅ 2026-06-10
+
+**Problem**: `scripts/pr-gate.sh` 在 dispatch reviewer 之前會 `printf` 多行 banner 到 stdout。當下游 consumer（`head -N`、`grep -q` 等早期關閉的 pipe）讀完後關閉 pipe，下一個 `printf` 寫入已關閉的 pipe → SIGPIPE；腳本 `set -o pipefail` 讓主流程在 dispatch 之前中斷；結果檔停在 `touch` 建立的 0 bytes；shell 對整條 pipeline 回報的 exit code 是最後一段（`head`）的 exit 0 → 整體誤報成功。false-success 比 false-failure 危險：自動化 caller（含 AI agent、CI）把空結果當成 gate 通過。
+
+**Evidence**: issue:#255 記錄了 7 次相同 branch gate run：接 `| head` 全部 0-byte + exit 0；無 pipe 全部正常產出。
+
+**Fix options（擇一或併用）**:
+1. **結果完整性把關**：main 結尾在回報前驗證 OUTPUT_FILE 非空且含 `^Final: (GO|NO-GO)$`；不滿足則 exit 非 0。確保 0-byte 永遠不會誤報成功。
+2. **stdout 容錯**：banner/progress 的 `printf` 對 SIGPIPE 容錯（`trap '' PIPE` 或 `|| true`），讓下游關 pipe 不中斷 gate 主流程。
+3. **文件警告**：README / `pmctl gate run -h` 明示不得 pipe gate stdout；截斷輸出請用 `> file` 或讀 `.gate-results/`。
+
+**Priority**: P2 — false-success 對自動化 caller 是靜默安全漏洞。
+
+**Resolution**: 採 option 2（stdout 容錯）為主。第一次嘗試（`trap '' PIPE`）在 `set -e` 下不足——EPIPE 讓 `printf` 回傳非零，`set -e` 仍在 dispatch 前中止。完整修法兩處：(1) `say()` helper 包裝所有進度輸出（`printf … 2>/dev/null || true`），訊號 + set-e 雙重容錯；(2) sequential 與 synthesis 的 foreground `eval` 改 `>&2`，避免 dispatch 子程序繼承已關閉的 consumer pipe 而提前死亡。既有 per-route result-integrity 檢查維持為 exit code 權威。回歸測試 `test_piped_stdout_does_not_abort_gate`（接 `head -n1` 斷言結果檔完整）。
+
+**See**: pr:#258, issue:#255
+
+---
+
+## CC-351 — codex-executor: brief schema validation must fail-fast before any file reads 🔵 active
+
+**Problem**: codex-executor 收到非 YAML brief（缺 schema_version/goal/files/self_verify 欄位）時行為不一致——同一 session、相同格式的兩個 brief，一個立即 REJECT，另一個進入無效 loop：讀 brief、嘗試 Bash edit（被 hook 擋）、循環找 Codex dispatch 路徑，耗費大量 token 後被外部 TaskStop 終止。行為分歧根因不明（可能是 session-state 差異或 prompt 快取邊界）。
+
+**Requirement**: `agents/codex-executor.md` 的執行協議應把 brief schema validation 移到 **所有 file reads 之前的第一步**：若 brief 缺少必填欄位或無法解析為 YAML frontmatter，立即 REJECT 並輸出明確錯誤訊息，無論 dispatch 上下文或 session 狀態為何。
+
+**Acceptance**:
+1. 以純 Markdown prose brief（無 `schema_version`）dispatch codex-executor → 立即 REJECT，不讀任何 target file
+2. REJECT 訊息含缺少的欄位名稱
+3. 行為在同 session 多次 dispatch 下一致（不因快取狀態改變）
+
+**Priority**: P2 — 每次格式錯誤 brief 都可能耗費數千 token；行為不可預測加劇除錯難度。
+
+**Cross-link**: [[CC-045]] (brief timeout heuristic), [[CC-272]] (executor contract docs).
+
+**See**: issue:#217
+
+---
+
+## CC-352 — codex-executor sandbox friction Pattern 1+2: apply_patch retry + Go module cache ⏸ deferred
+
+**Context**: issue:#173 記錄了三種 codex-executor sandbox 摩擦模式。Pattern 3（git commit blocked — executor 回報 false partial）已由 CC-272 pr:#245 修復（brief template 移除 commit block，文件化主線程 commit delegation）。本票追蹤剩餘兩種。
+
+**Pattern 1 — apply_patch 中途失敗 self-retry 噪音**
+
+apply_patch 對大型或結構複雜的檔案可能失敗（patch 與當前檔案狀態不對齊）；codex 偵測後重讀檔案重試，通常第二次成功。噪音出現在 trace 中，加 1-2 min/次，且摘要顯示「non-fatal error in stderr」易被誤判為真實失敗。
+
+Fix：brief authoring convention — 拆小 edit hunk，每段加 unique surrounding context 減少 patch ambiguity；可加入 codex-executor dispatch rules 文件。
+
+**Pattern 2 — go build GOPATH copy 被 sandbox 擋**
+
+sandbox 下 `cp -a <module-cache> /tmp` 被 workspace-write policy 擋；codex fallback 到 plain cp 或自行設 GOPATH，但需時 10-15 min/dispatch。
+
+Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go build template，讓 codex 不需在 runtime 自行發現 workaround。
+
+**Effort**: 兩者均為 pure doc/convention fix，無 code change。
+
+**Priority**: P3 — 非阻斷性；Pattern 2 每次 go build dispatch 都出現，但有已知 workaround。
+
+**Cross-link**: [[CC-272]] (Pattern 3 fix, pr:#245), [[CC-066]] (bash guard allowlist, relevant if Pattern 1 fix expands to allowlist approach).
+
+**See**: issue:#173
 
 ---
 
