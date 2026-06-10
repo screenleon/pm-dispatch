@@ -12,28 +12,18 @@ Thin dispatcher. You read pre-written brief files and invoke Codex; you do not i
 
 > **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(pmctl dispatch run --adapter codex, run_in_background:true)` from a `dispatch_handover_v1` block. Phase 3 post-verification is `scripts/dispatch-post-verify.sh` (CC-264b), which reads `.agent-trace/latest.last` written by `codex-dispatch.sh`. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/dispatch-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
 
-# Validation
+# Validation — delegated, deterministic, fail-fast
 
-Before dispatching, validate the brief against the schema at `~/github/pm-dispatch/docs/dispatch-brief.md`. **REJECT** (stop and ask the caller) if any required field is missing — do not improvise.
+**Do not hand-parse the brief to judge its fields.** Validation is delegated to `scripts/brief-validate.sh`, which `pmctl dispatch run` executes as its mandatory pre-flight step (`scripts/lib/pmctl-dispatch.sh` step 3, "Brief-validate (shared)") **before** any executor is spawned. The authoritative required-field list lives there and in `docs/dispatch-brief.md` §Required fields — `schema_version`, `working_dir`, `goal`, `files`, `acceptance`, and `self_verify` (required for any file-writing brief: any `files:` entry tagged `write:`/`new:` or with no explicit `read:` tag). Do not maintain a second copy of that list in this file; a hand-kept copy only drifts.
 
-| Field | Required when |
-|---|---|
-| `working_dir` | Always — absolute path that exists |
-| `goal` | Always — one sentence: what changes after this runs |
-| `files` | Always — concrete paths or search hint; create-new and edit-existing both enumerated |
-| `acceptance` | Always — testable post-conditions Codex can verify before declaring done |
-| `self_verify` | Any **file-writing brief** (see below) |
+Because the gate is a shell exit code, not a judgment call, it behaves identically on every dispatch regardless of session or prompt-cache state. A brief missing any required field — including a plain-prose brief with no `schema_version` — is REJECTed by `pmctl dispatch run` with exit 2 and a `REJECT: missing field '<name>'` message, **without spawning codex and without reading any target file**. Relay that message to the caller verbatim and stop. (The codex-executor cannot call `bash scripts/brief-validate.sh` directly — `hook-codex-bash-guard.sh` denies the `bash` verb — so the `pmctl dispatch run` command IS the gate; there is no separate validate-then-dispatch step.)
 
-**Defining a file-writing brief:** a brief is file-writing if its `files` block contains any entry tagged `write:` or `new:`, or any entry with no explicit `read:` tag. When in doubt, treat as file-writing. Read-only briefs (every `files:` entry explicitly tagged `read:`) may omit `self_verify`.
-
-If `self_verify` is absent from a file-writing brief, reject immediately before dispatching. Do not run codex and derive checks retroactively — early rejection is cheaper than a wasted full execution. Rejection message must name the missing field:
-
-> `REJECT: brief is missing required field 'self_verify'. This brief writes files. Rewrite the brief to include self_verify before re-dispatching.`
+**This is your first substantive action.** Before issuing the single `pmctl dispatch run` command (see §Dispatch), do NOT: read the files named in the brief's `files:` block, attempt a Bash edit, or hunt for an alternate dispatch path. Those behaviors waste tokens on a malformed brief; the dispatch command's built-in pre-flight is what rejects it.
 
 # Job
 
-1. Validate brief (see Validation above). Reject before dispatching if any required field is missing.
-2. Dispatch via `pmctl dispatch run --adapter codex` (see Step 2 below). Never call `codex exec` directly. `scripts/codex-dispatch.sh` is a deprecated shim — do not call it directly.
+1. Confirm a brief-file path is present and the file exists (the two STOP guards in §Dispatch). Do NOT hand-validate the brief's fields — that is delegated (see §Validation).
+2. Dispatch via `pmctl dispatch run --adapter codex` (see Step 2 below) — this is your first substantive action, and its built-in `brief-validate` pre-flight is the deterministic schema gate. Never call `codex exec` directly. `scripts/codex-dispatch.sh` is a deprecated shim — do not call it directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
 
@@ -47,9 +37,9 @@ If the path is present but the file does not exist on disk (Read tool returns no
 
 > `REJECT: Brief file not found at <path>. Verify the Write tool succeeded before re-dispatching.`
 
-**Step 1 — read and validate the brief file (path provided by main thread):**
+**Step 1 — confirm the brief file exists (path provided by main thread):**
 
-The brief file is always pre-written by the main thread before dispatching to codex-executor. Read it with the Read tool and validate against the schema at `~/github/pm-dispatch/docs/dispatch-brief.md`. Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
+The brief file is always pre-written by the main thread before dispatching to codex-executor. Confirm it exists (a Read or `test -f` is enough for the not-found guard above) — but do NOT hand-validate its fields here; schema validation is delegated to the `pmctl dispatch run` pre-flight (see §Validation). Do NOT write brief files yourself — the Write tool is not granted to codex-executor subagents.
 
 **Step 2 — dispatch via Bash (single line, no metacharacters, FOREGROUND only):**
 
