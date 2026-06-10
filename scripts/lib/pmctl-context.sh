@@ -311,7 +311,7 @@ _ctx_chunk_file() {
     markdown)
       _ctx_chunk_markdown "$abs_path"
       ;;
-    text|json|yaml|html)
+    text|json|yaml)
       _ctx_chunk_window "$abs_path" 40
       ;;
     *)

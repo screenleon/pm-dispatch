@@ -1435,6 +1435,49 @@ case_context_classify_domain() {
   fi
 }
 
+case_context_chunk_window_multiwindow() {
+  local name="pmctl context index: window chunker produces multiple chunks for large .txt"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-multiwin"
+  mkdir -p "$fix_repo"
+
+  # Write a 90-line .txt file; window size=40 → expect 3 chunks (lines 1-40, 41-80, 81-90).
+  local i
+  for i in $(seq 1 90); do
+    printf 'line%d content for window test\n' "$i"
+  done > "$fix_repo/large.txt"
+
+  local out err status=0
+  out="$tmp_root/mwin-idx.out"; err="$tmp_root/mwin-idx.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db chunk_count
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  chunk_count="$(sqlite3 "$db" \
+    "SELECT COUNT(*) FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+     WHERE f.path='large.txt';" 2>/dev/null || printf '0')"
+
+  if [[ "$chunk_count" -ge 2 ]]; then
+    # Also verify that the second window's line_start is > 1
+    local second_start
+    second_start="$(sqlite3 "$db" \
+      "SELECT line_start FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+       WHERE f.path='large.txt' ORDER BY line_start LIMIT 1 OFFSET 1;" 2>/dev/null || printf '0')"
+    if [[ "$second_start" -gt 1 ]]; then
+      pass "$name"
+    else
+      fail "$name" "second chunk line_start=$second_start, expected > 1 (chunk_count=$chunk_count)"
+    fi
+  else
+    fail "$name" "expected ≥ 2 chunks for 90-line .txt, got $chunk_count"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -1465,6 +1508,7 @@ case_context_layer_boundary
 case_context_index_markdown_heading_chunks
 case_context_chunk_markdown_no_code_fence_headings
 case_context_index_txt_indexed
+case_context_chunk_window_multiwindow
 case_context_classify_domain
 case_context_pack_missing_task_id
 case_context_pack_missing_query

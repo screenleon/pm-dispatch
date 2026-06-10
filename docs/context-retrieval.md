@@ -15,10 +15,13 @@ For code symbols, omit --domain or use --domain repo:
 
 ## Domain values
 
-| Domain      | Paths indexed                                              |
-|-------------|------------------------------------------------------------|
-| `knowledge` | BACKLOG.md, DECISIONS.md, MILESTONES.md, docs/* (any ext) |
-| `repo`      | All other files (shell, Go, Python, TS/JS, JSON, YAML)    |
+| Domain      | Paths indexed                                                          |
+|-------------|------------------------------------------------------------------------|
+| `knowledge` | BACKLOG.md, DECISIONS.md, MILESTONES.md, docs/*.md, docs/*.txt, docs/*.json, docs/*.yaml/yml |
+| `repo`      | All other indexed files (.sh, .go, .py, .ts/.tsx, .js/.jsx, .md, .yaml/yml, .json, .txt)     |
+
+Note: only extensions in the `pmctl context index` scan list are indexed. HTML files
+are not currently scanned; HTML semantic chunking is deferred to a later ticket.
 
 ## Success metric
 
