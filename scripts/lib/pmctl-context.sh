@@ -170,13 +170,10 @@ _ctx_extract_symbols() {
         esac
       done
       ;;
-    markdown)
-      # ^#+\s → file_chunks heading boundary; also extract as symbols for searchability
-      grep -n '^#\+ ' "$file" 2>/dev/null \
-        | sed 's/^\([0-9]*\):\(#\+[[:space:]]*\)\(.*\)/\3\theading\t\1\t\2\3/' \
-        || true
-      ;;
   esac
+  # markdown/yaml/json/text: no symbol extraction — headings are document
+  # structure, not reusable code symbols. These file types contribute to
+  # file_chunks (FTS/LIKE text search) only.
 }
 
 # ── File metadata helpers ──────────────────────────────────────────────────────

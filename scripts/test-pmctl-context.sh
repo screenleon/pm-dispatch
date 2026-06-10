@@ -332,6 +332,59 @@ case_context_index_mtime_only_contract() {
   fi
 }
 
+case_context_index_markdown_no_symbols() {
+  local name="pmctl context index: Markdown headings are not indexed as symbols"
+  # Behavior: indexing a Markdown file must produce 0 symbol rows and at least
+  # 1 file_chunk row — headings are document structure, not reusable code symbols.
+  # Steps: index a repo containing only a Markdown file with headings; assert
+  # symbols table is empty and file_chunks has at least one row for the file.
+  should_run "$name" || return 0
+
+  local md_repo="$tmp_root/md-only-repo"
+  mkdir -p "$md_repo"
+  cat > "$md_repo/NOTES.md" <<'MD'
+# Getting Started
+
+Some introductory text.
+
+## Installation
+
+Run the install script.
+
+### Advanced
+
+More details here.
+MD
+
+  local out err status=0
+  out="$tmp_root/md-idx.out"; err="$tmp_root/md-idx.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-md" \
+    "$PMCTL" context index "$md_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+
+  local sym_count chunk_count
+  sym_count="$(sqlite3 "$db" "SELECT COUNT(*) FROM symbols;" 2>/dev/null || printf '0')"
+  chunk_count="$(sqlite3 "$db" \
+    "SELECT COUNT(*) FROM file_chunks fc JOIN files f ON fc.file_id=f.id WHERE f.path='NOTES.md';" \
+    2>/dev/null || printf '0')"
+
+  if [[ "$sym_count" -ne 0 ]]; then
+    fail "$name" "expected 0 symbols for Markdown-only repo; got $sym_count"; return 0
+  fi
+  if [[ "$chunk_count" -lt 1 ]]; then
+    fail "$name" "expected at least 1 file_chunk for NOTES.md; got $chunk_count"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_query_missing_query() {
   local name="pmctl context query: exits 2 when query string is missing"
   should_run "$name" || return 0
@@ -1145,6 +1198,7 @@ case_context_update_no_path_full_scan
 case_context_update_absolute_path_rejected
 case_context_update_traversal_rejected
 case_context_index_mtime_only_contract
+case_context_index_markdown_no_symbols
 case_context_query_missing_query
 case_context_query_unknown_flag
 case_context_query_known_symbol
