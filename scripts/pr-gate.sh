@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap '' PIPE
 
 # pr-gate.sh -- PR-gate review via a dispatched session
 #
