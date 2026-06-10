@@ -99,6 +99,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-353 | ✅ done | **[unify executor dispatch: claude-executor symmetric to codex-executor]** claude-executor.md 缺 codex-executor 的「N-condition fallback allowlist」結構，兩份 executor 文件不對稱、難維護。統一：pmctl dispatch run --adapter claude 定為唯一文件化主路；claude-executor.md 重構成鏡像 codex 的窄 fallback（lifecycle 框架 + fallback 表 + caller checklist）；pr-gate reviewer fan-out 標為正當用途非 fallback。對齊 dispatch-brief.md §Fallback。隨 CC-351 同 PR。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
 | CC-354 | ✅ done | **[v0.5.0 P2 read-half: anchored knowledge index + retrieval reflex]** knowledge plane has no queryable index — `pmctl context query` only covers the repo plane, and the indexer stores one `head -c 2000` chunk per file, so a 180 KB BACKLOG only has its first ~30 lines indexed (finding CC-234 needs grep). Pull the anchored-TOC slice of CC-340 forward via a pluggable per-format chunker (markdown heading-based, txt/json/yaml window-based, html window fallback — semantic html deferred to CC-355): store heading + extracted CC-id/decision-id + line anchor + lead, not full text; add `pmctl context query --domain knowledge`. In-repo knowledge docs only — out-of-repo memory cards stay on existing MEMORY.md auto-injection, deferred. Wire the query-before-grep discipline into a neutral docs contract plus pmctl — not CLAUDE.md, to avoid platform binding — with only a pointer in agents/project-pm.md. Read side of the memory read+write loop; closes with CC-234. **Success metric（2026-06-10 arch review）**: not tool existence nor query-count alone — a later similar task's brief cites memory / decision / backlog **anchors directly** instead of the main thread re-deriving background; wiring is part of acceptance（repo-plane wiring split to CC-356）. | memory | 2026-06-10 | — | P2 | design |
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
+| CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
+| CC-358 | 🟢 someday | **[runner telemetry: evaluate with real runs — success rate / failure pattern / fallback analysis]** events.jsonl 已有每次 run 的完整生命週期資料（pending/dispatched/verifying/ok/failed），但沒有任何 consumer 分析「哪類任務成功率高低」、「失敗的主因是什麼」、「fallback 觸發頻率」。這使 adapter 路由決策完全主觀，也無從判斷 recovery 策略。本票在現有 events 原料上建立 runner telemetry layer：從 task history 計算 per-adapter 成功率、依 goal/context 分群的失敗模式、fallback 觸發原因分佈——提供資料驅動的 runner diversity（CC-2xx）與 recovery 決策依據。 | ops/memory | 2026-06-10 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
 
 ---
@@ -1791,3 +1793,50 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 **Priority**: P2.
 
 **Cross-link**: [[CC-202]] (framework, closed), [[CC-215]] (pmctl subcommand surface), [[CC-237]].
+
+## CC-357 — skill as contract: machine-readable schema for skills
+
+**Problem**: `skills/` 下的所有 skill（目前 `dispatch-brief`、`pr-gate-review`）都是純 markdown prose 的 `SKILL.md`。沒有任何機器可讀欄位定義：輸入型別是什麼、輸出格式是什麼、允許/禁止使用哪些工具、什麼狀態算「完成」。這和 brief 的狀況一模一樣——brief 在引入 `dispatch_handover_v1` schema + `brief-validate.sh` 之前，也是純 prose，無從驗證。
+
+**Why**: pm-dispatch 的 brief 已有明確契約（`dispatch_handover_v1` schema、`brief-validate.sh`、`pmctl validate brief`），任何 malformed brief 都在 dispatch 前被機器攔截。Skill 卻沒有對等機制——skill 的「輸入是什麼」、「輸出格式是什麼」、「需要什麼工具」完全靠人讀 prose 理解，沒有驗證層。長遠而言，skill 越來越多後，這個缺乏 contract 的問題會重演 brief 的問題：caller 不知道 skill 期待什麼、skill 產出什麼格式的東西、skill 用了哪些工具。
+
+**Core idea**: 給每個 skill 一份 machine-readable 描述，使 skill 能被驗證、被自動發現、被工具限制強制執行。參考 `dispatch_handover_v1` 的設計哲學：不是要限制創意，而是讓機器可以在 skill 被呼叫前/後做檢查。具體欄位設計留待實作期規劃，可能的方向：
+- `input:` — skill 接受的 arguments/context 型別
+- `output:` — skill 保證產出的格式（e.g. `dispatch_handover_v1 block`、`gate_verdict`、plain text）
+- `tool_constraints:` — 允許/禁止哪些工具（與 guard.sh 的 role-based policy 互補）
+- `completion_condition:` — 什麼算完成（observable state，不只是「模型說完了」）
+
+**Non-goals**: 不重新設計 skill 執行機制；不要求現有 skill prose 消失（schema 是 complement，不是 replace）；不在此票做 validator。
+
+**Milestone**: someday（無里程碑排期，概念票）。
+
+**Priority**: 未定（someday）。
+
+**Cross-link**: `dispatch_handover_v1` (brief contract analogue), `brief-validate.sh` (validator pattern), [[CC-215]] (pmctl validate surface), `skills/dispatch-brief/SKILL.md` + `skills/pr-gate-review/SKILL.md` (first candidates).
+
+## CC-358 — runner telemetry: evaluate with real runs — success rate / failure pattern / fallback analysis
+
+**Problem**: `events.jsonl` 已有每次 run 的完整生命週期原料（`run.pending` → `run.dispatched` → `run.verifying` → `run.ok`/`run.failed`），但目前沒有任何 consumer 分析這些資料。結果是：每次任務成功或失敗都只是一次性觀察，不會累積成任何可查詢的分佈。PM 無法知道「這類任務 codex adapter 的成功率如何」、「最常見的失敗原因是什麼」、「fallback 到 claude 的頻率有多高」——所有路由和 recovery 決策都靠直覺。
+
+**Why**: pm-dispatch 的核心價值主張之一是「減少浪費」，但沒有 runner telemetry 就無法衡量浪費在哪裡。目前有三個決策點完全沒有資料支撐：
+1. **Adapter routing**（codex vs claude）：根據什麼選？主觀猜測。
+2. **Recovery strategy**（失敗後 retry 還是 fallback）：沒有失敗模式分佈，無從判斷 retry 有沒有意義。
+3. **Runner diversity**（要不要支援第三個 adapter）：沒有現有 adapter 的成功率資料，無從判斷值不值得。
+
+本票的核心理念：**用自己的任務歷史來驅動自己的決策**——events.jsonl 是現成的 telemetry 原料，缺的是分析層。
+
+**Core idea**: 在現有 events 原料上建立 `pmctl run-stats`（或類似 subcommand），提供：
+- Per-adapter 成功率（成功/失敗/超時 分佈）
+- 依 goal 分群的失敗模式（常見失敗在哪類任務？）
+- Fallback 觸發頻率和觸發原因
+- 時序趨勢（最近 N 次 vs 歷史整體）
+
+**Non-goals**: 不做 ML 分類；不做實時 dashboard；不改 events.jsonl schema（用現有欄位）。分析是離線/按需，不是自動觸發。
+
+**Resume trigger for related tickets**: 本票的觀察結果是 [[CC-346]]（cross-file ref）resume 的補充證據，也是任何 runner diversity 票（multi-vendor adapter）的前置條件——先看數據，再決定要不要加第三個 adapter。
+
+**Milestone**: someday（無里程碑排期，概念票）。
+
+**Priority**: 未定（someday）。
+
+**Cross-link**: `events.jsonl` (data source), `pmctl trace tail` (existing consumer, read model to build on), [[CC-234]] (write side of memory loop — episodes 可補充 events 的語意), [[CC-346]] (paused; needs CC-356 evidence first, this ticket adds more evidence dimension).

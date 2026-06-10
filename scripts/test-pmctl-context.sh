@@ -1152,12 +1152,15 @@ case_context_reuse_scan_hit_cap() {
     fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
   fi
 
+  # The fixture generates 10 captest_func_* symbols; the cap must truncate to
+  # exactly 5 — asserting == 5 proves both the upper bound and that useful
+  # output was not silently dropped to zero.
   local ref_count
   ref_count="$(grep -c '^    - ref:' "$out" 2>/dev/null || printf '0')"
-  if [[ "$ref_count" -le 5 ]]; then
+  if [[ "$ref_count" -eq 5 ]]; then
     pass "$name"
   else
-    fail "$name" "expected <= 5 refs, got $ref_count; output: $(<"$out")"
+    fail "$name" "expected exactly 5 refs (cap), got $ref_count; output: $(<"$out")"
   fi
 }
 
