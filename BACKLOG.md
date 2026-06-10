@@ -1720,7 +1720,7 @@ pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `prune
 
 ## CC-354 — anchored knowledge index + retrieval reflex ✅ 2026-06-10
 
-**See**: pr:#???
+**See**: pr:#263
 
 Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line window), `--domain knowledge|repo` filtering, and the `docs/context-retrieval.md` query-before-grep contract. HTML is not scanned; semantic HTML chunking deferred to CC-355.
 
