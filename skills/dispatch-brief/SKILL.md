@@ -26,6 +26,12 @@ the executor can act on without re-asking questions.
 - **`scripts/lib/handover-validate.sh`** — the validator the main thread runs
   before constructing argv; your metadata values must pass it.
 
+## Prior-art scan (before writing `files:` / `context:`)
+
+Run `pmctl context reuse-scan "<task description>"` first.  Paste at most 5
+reviewed candidates into `context:` — do not paste unfiltered output.
+See `docs/context-retrieval.md` for full usage.
+
 ## Rules that actually bite
 
 1. **Prefer the `default` model** — omit `--model` and let the executor adapter
