@@ -2,6 +2,21 @@
 set -euo pipefail
 trap '' PIPE
 
+# say -- emit a progress/diagnostic line on stdout that tolerates a closed pipe.
+#
+# A consumer that reads a prefix of our stdout and closes the pipe early
+# (`pmctl gate run | head`, `| grep -q`, ...) makes the next stdout write fail
+# with EPIPE. `trap '' PIPE` keeps the SIGPIPE from killing us, but under
+# `set -e` the EPIPE write still makes printf return nonzero and aborts the
+# script BEFORE dispatch -- leaving a 0-byte result file while the pipeline
+# reports the consumer's exit 0 (silent false-success). The `|| true` here
+# absorbs that nonzero so the gate always runs to completion and the per-route
+# result-integrity checks remain the authority on the exit code. All human
+# progress output must go through say(); only the result file and the
+# machine-read handover block are gate "data".
+# shellcheck disable=SC2059  # printf passthrough wrapper: the caller owns the format string
+say() { printf "$@" 2>/dev/null || true; }
+
 # pr-gate.sh -- PR-gate review via a dispatched session
 #
 # DEFAULT (single-session / sequential):
@@ -241,7 +256,7 @@ else
     if GH_BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null); then
       if [[ -n "$GH_BASE" ]]; then
         BASE="$GH_BASE"
-        printf 'pr-gate: base detected from gh pr view: %s\n' "$BASE"
+        say 'pr-gate: base detected from gh pr view: %s\n' "$BASE"
       else
         BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
         : "${BASE:=main}"
@@ -477,11 +492,11 @@ emit_pr_gate_handover_block() {
   if [[ "${EXECUTOR:-}" != "claude" || "${#PR_GATE_HANDOVER_ENTRIES[@]}" -eq 0 ]]; then
     return
   fi
-  printf '```pr-gate-handover_v1\n'
+  say '```pr-gate-handover_v1\n'
   for out in "${PR_GATE_HANDOVER_ENTRIES[@]}"; do
-    printf '%s\n' "$out"
+    say '%s\n' "$out"
   done
-  printf '```\n'
+  say '```\n'
 }
 
 # ── Find adjacent test files not in the diff ─────────────────────────────────
@@ -544,9 +559,9 @@ DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
 REPO_REF_INDEX="$(_build_repo_ref_index "$WORK_DIR")"
 ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
-printf 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
-[[ "${ADJ_COUNT:-0}" -gt 0 ]] && printf '  adjacent test files added: %d\n' "$ADJ_COUNT"
-printf 'result will be written to: %s\n\n' "$OUTPUT_FILE"
+say 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
+[[ "${ADJ_COUNT:-0}" -gt 0 ]] && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
+say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
 _PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
@@ -557,12 +572,12 @@ if [[ "$ALLOW_HOOKS" != "true" ]]; then
 elif [[ -f "$_PRE_GATE_HOOK" && ! -x "$_PRE_GATE_HOOK" ]]; then
   printf 'Warning: .pm-dispatch/pre-gate.sh exists but is not executable -- skipping\n' >&2
 elif [[ -x "$_PRE_GATE_HOOK" ]]; then
-  printf 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
+  say 'Running pre-gate hook: .pm-dispatch/pre-gate.sh\n'
   if ! (cd "$WORK_DIR" && bash "$_PRE_GATE_HOOK"); then
     printf 'Error: pre-gate hook failed -- gate aborted\n' >&2
     exit 1
   fi
-  printf 'pre-gate hook completed.\n\n'
+  say 'pre-gate hook completed.\n\n'
 fi
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -699,7 +714,13 @@ BRIEF_EOF
 
   if [[ "$EXECUTOR" == "codex" ]]; then
     CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-    eval "$CODEX_DISPATCH_CMD"
+    # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
+    # not gate data (the verdict lands in the result file). If it inherited our
+    # stdout and a consumer closed that pipe (`gate run | head`), the child's
+    # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
+    # nonzero before writing the result, killing the gate before its integrity
+    # checks could fire (CC-350). Parallel reviewers already redirect to a log.
+    eval "$CODEX_DISPATCH_CMD" >&2
 
     # Validate sequential output: must exist, be non-empty, contain exactly one
     # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
@@ -834,15 +855,15 @@ RBRIEF_EOF
       CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
       eval "$CODEX_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
       DISPATCH_PIDS+=($!)
-      printf '  [parallel] launched %s (pid %d)\n' "$r" "$!"
+      say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
     else
       add_pr_gate_handover_entry reviewer "$r" "$REVIEWER_BRIEF" "$REVIEWER_OUTPUT"
-      printf '  [parallel] queued reviewer %s (claude handover)\n' "$r"
+      say '  [parallel] queued reviewer %s (claude handover)\n' "$r"
     fi
   done
 
   if [[ "$EXECUTOR" == "codex" ]]; then
-    printf '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
+    say '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
     # Wait for all reviewer sessions. Any non-zero exit aborts the gate -- an
     # incomplete review cannot certify a valid gate result.
@@ -946,7 +967,7 @@ RBRIEF_EOF
     REVIEWER_ARTIFACT_HASHES+=("$(cat "$rf" | $_HASH_CMD)")
   done
 
-  printf '  all reviewer sessions done.\n\n'
+  say '  all reviewer sessions done.\n\n'
 
   # Compute the final verdict deterministically in shell before synthesis.
   # Synthesis is treated as prose-only; the shell verdict is the authoritative gate result.
@@ -1106,9 +1127,13 @@ acceptance:
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 SBRIEF_P2
 
-  printf '  [synthesis] running PM consolidation...\n'
+  say '  [synthesis] running PM consolidation...\n'
   CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-  eval "$CODEX_DISPATCH_CMD"
+  # Diagnostic chatter to stderr, not our (possibly piped-closed) stdout -- see
+  # the sequential dispatch above. Synthesis runs in the foreground like the
+  # sequential route, so without this a closed `gate run --parallel | head`
+  # consumer pipe would kill synthesis before the result file is written (CC-350).
+  eval "$CODEX_DISPATCH_CMD" >&2
 
   # Validate synthesis output: must exist, be non-empty, contain exactly one
   # Final: GO|NO-GO line, and match the shell-computed verdict.
@@ -1189,21 +1214,21 @@ elif [[ -f "$_POST_GATE_HOOK" && ! -x "$_POST_GATE_HOOK" ]]; then
 elif [[ -x "$_POST_GATE_HOOK" ]]; then
   _GATE_FINAL=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
   if [[ "$_GATE_FINAL" != "GO" ]]; then
-    printf '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
+    say '\nSkipping post-gate hook: gate result is %s (post-gate runs only on GO)\n' "${_GATE_FINAL:-unknown}"
   else
-    printf '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
+    say '\nRunning post-gate hook: .pm-dispatch/post-gate.sh\n'
     if ! (cd "$WORK_DIR" && bash "$_POST_GATE_HOOK"); then
       printf '\n## Post-Gate Hook Failure\n**post-gate.sh exited nonzero -- this gate run is INCOMPLETE despite Final: GO above. Re-run after fixing the hook.**\n' >> "$OUTPUT_FILE"
       printf 'Error: post-gate hook failed\n' >&2
       exit 1
     fi
-    printf 'post-gate hook completed.\n'
+    say 'post-gate hook completed.\n'
   fi
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────
 emit_pr_gate_handover_block
-printf '\nresult: %s\n' "$OUTPUT_FILE"
+say '\nresult: %s\n' "$OUTPUT_FILE"
 
 _FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
 if [[ "$EXECUTOR" != "claude" && "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then

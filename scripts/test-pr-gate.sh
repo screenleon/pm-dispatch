@@ -381,7 +381,8 @@ test_tier_detection() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "Tier: express" || return
   assert_file_contains "$name" "$brief" "Executor: codex" || return
   assert_file_contains "$name" "$brief" "Reviewers: critic,qa-tester" || return
@@ -1200,6 +1201,43 @@ test_sequential_no_final_line_aborts_gate() {
   pass "$name"
 }
 
+test_piped_stdout_does_not_abort_gate() {
+  # CC-350 regression: a consumer that reads a prefix of gate stdout and closes
+  # the pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
+  # dispatches and writes the result file.
+  #
+  # Pre-fix the next stdout write after the pipe closed failed with EPIPE; under
+  # `set -e` that nonzero killed the script before dispatch, leaving a 0-byte
+  # result file while the outer pipeline reported the consumer's exit 0 (a silent
+  # false-success). The say() EPIPE-tolerant wrapper keeps the gate running to
+  # completion so the per-route result-integrity checks stay authoritative.
+  local name="piped-stdout-does-not-abort-gate"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  # Pipe gate stdout into `head -n1`: it reads the first progress line and closes
+  # the pipe, so every later stdout write hits EPIPE. set +e because the outer
+  # pipeline's exit status is head's (the gate's own exit is unobservable here --
+  # that is exactly the false-success hazard). Correctness is asserted on the
+  # result file, not the pipeline exit code.
+  set +e
+  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" --base main --output "$result" 2> "$err" | head -n1 >/dev/null
+  set -e
+
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file empty -- gate aborted on closed stdout pipe before writing (see $err)"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  pass "$name"
+}
+
 test_sequential_frontmatter_parity_mismatch_aborts_gate() {
   # Verifies that sequential mode aborts when the gate result YAML frontmatter
   # final: field disagrees with the body Final: line.
@@ -1962,7 +2000,8 @@ test_via_symlink() {
     fail "$name" "exit $code — readlink -f fix may be broken"
     return
   fi
-  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   pass "$name"
 }
 
@@ -2115,6 +2154,7 @@ run_test test_reviewer_invalid_verdict_aborts_gate
 run_test test_reviewer_no_output_aborts_gate
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
+run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
@@ -2898,7 +2938,8 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "dirtysrc.go" || return
   assert_file_contains "$name" "$err" "--allow-dirty set" || return
   pass "$name"
@@ -2951,7 +2992,8 @@ test_allow_dirty_includes_uncommitted_tracked() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "tracked_base.go" || return
   pass "$name"
 }

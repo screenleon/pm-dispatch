@@ -195,7 +195,8 @@ test_executor_codex_flag_explicit_keeps_behavior() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: codex dispatch chatter now lands on stderr, not stdout.
+  assert_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
   local result
   result=$(extract_result_path "$out")
@@ -315,7 +316,8 @@ EOF_CODEx
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" "DISPATCH_STUB:success" || return
+  # CC-350: codex dispatch chatter now lands on stderr, not stdout.
+  assert_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
   pass "$name"
 }
