@@ -1220,6 +1220,8 @@ case_context_layer_boundary() {
 case_context_query_domain_invalid() {
   local name="pmctl context query: --domain invalid exits 2"
   should_run "$name" || return 0
+  # Behavior: --domain with an unrecognized value must exit 2 with a diagnostic.
+  # Steps: run query with --domain invalid; assert exit 2 and error message on stderr.
 
   local fix_repo="$tmp_root/fix-repo-domain-invalid"
   make_fixture_repo "$fix_repo"
@@ -1242,6 +1244,8 @@ case_context_query_domain_invalid() {
 case_context_query_domain_knowledge_only() {
   local name="pmctl context query: --domain knowledge returns only knowledge hits"
   should_run "$name" || return 0
+  # Behavior: --domain knowledge must return hits only from knowledge-domain paths and set source_domain: knowledge.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query --domain knowledge; assert BACKLOG.md hit and no .sh hit.
 
   local fix_repo="$tmp_root/fix-repo-domain-knowledge"
   make_fixture_repo "$fix_repo"
@@ -1273,6 +1277,8 @@ case_context_query_domain_knowledge_only() {
 case_context_query_domain_repo_only() {
   local name="pmctl context query: --domain repo returns only repo hits"
   should_run "$name" || return 0
+  # Behavior: --domain repo must return hits only from code files and exclude knowledge-domain paths.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query --domain repo; assert .sh hit and no BACKLOG.md hit.
 
   local fix_repo="$tmp_root/fix-repo-domain-repo"
   make_fixture_repo "$fix_repo"
@@ -1300,6 +1306,8 @@ case_context_query_domain_repo_only() {
 case_context_query_domain_no_flag_backward_compat() {
   local name="pmctl context query: no --domain returns both domains"
   should_run "$name" || return 0
+  # Behavior: omitting --domain must preserve existing behavior — hits from both knowledge and repo domains.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query without --domain; assert both domains appear.
 
   local fix_repo="$tmp_root/fix-repo-domain-none"
   make_fixture_repo "$fix_repo"
@@ -1325,6 +1333,8 @@ case_context_query_domain_no_flag_backward_compat() {
 case_context_index_markdown_heading_chunks() {
   local name="pmctl context index: Markdown knowledge docs chunk by heading"
   should_run "$name" || return 0
+  # Behavior: indexing a Markdown file with multiple headings must produce one file_chunks row per heading.
+  # Steps: index fixture BACKLOG.md with 3 sections; assert 3 rows with non-empty heading field in file_chunks.
 
   local fix_repo="$tmp_root/fix-repo-heading-chunks"
   make_fixture_repo "$fix_repo"
@@ -1353,6 +1363,8 @@ case_context_index_markdown_heading_chunks() {
 case_context_chunk_markdown_no_code_fence_headings() {
   local name="pmctl context index: Markdown headings inside fences are ignored"
   should_run "$name" || return 0
+  # Behavior: a ## heading inside a fenced code block must not produce a separate file_chunks row.
+  # Steps: index a Markdown file with one real heading and one ## inside ```; assert no chunk with fenced heading text.
 
   local fix_repo="$tmp_root/fix-repo-fence-headings"
   mkdir -p "$fix_repo"
@@ -1391,6 +1403,8 @@ MD
 case_context_index_txt_indexed() {
   local name="pmctl context index: .txt files are indexed"
   should_run "$name" || return 0
+  # Behavior: .txt files must appear in the files table after pmctl context index.
+  # Steps: index fixture containing notes.txt; query files table; assert notes.txt row exists.
 
   local fix_repo="$tmp_root/fix-repo-txt"
   make_fixture_repo "$fix_repo"
@@ -1416,6 +1430,8 @@ case_context_index_txt_indexed() {
 case_context_classify_domain() {
   local name="pmctl-context.sh: _ctx_classify_domain classifies knowledge paths"
   should_run "$name" || return 0
+  # Behavior: _ctx_classify_domain must return "knowledge" for top-level knowledge docs and docs/* paths, "repo" for all others.
+  # Steps: call _ctx_classify_domain with BACKLOG.md, docs/arch.md, scripts/foo.sh, CHANGELOG.md; assert exact classification sequence.
 
   local out err status=0
   out="$tmp_root/classify.out"; err="$tmp_root/classify.err"
@@ -1438,6 +1454,8 @@ case_context_classify_domain() {
 case_context_chunk_window_multiwindow() {
   local name="pmctl context index: window chunker produces multiple chunks for large .txt"
   should_run "$name" || return 0
+  # Behavior: a .txt file larger than one window (40 lines) must produce ≥ 2 file_chunks rows with distinct line ranges.
+  # Steps: index a 90-line .txt fixture; assert chunk count ≥ 2 and second chunk line_start > 1.
 
   local fix_repo="$tmp_root/fix-repo-multiwin"
   mkdir -p "$fix_repo"

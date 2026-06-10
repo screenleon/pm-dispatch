@@ -246,7 +246,7 @@ _ctx_chunk_markdown() {
   local line lineno=1 in_fence=0 saw_heading=0
   local cur_heading="" cur_start=0 cur_lead="" lead_done=0
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^\`\`\` ]]; then
       in_fence=$((1 - in_fence))
     fi
@@ -288,7 +288,7 @@ _ctx_chunk_window() {
   total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
   [[ "$total" -eq 0 ]] && return 0
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$lead_done" -eq 0 && -n "$line" ]]; then
       win_lead="${win_lead:+$win_lead }${line:0:200}"
       win_lead="${win_lead:0:200}"
