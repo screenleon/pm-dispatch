@@ -222,6 +222,107 @@ _ctx_emit_hit() {
   printf    '  trust_level: %s\n'    "$trust_level"
 }
 
+# ── Domain classification (path-based, no DB column) ─────────────────────────
+
+_ctx_classify_domain() {
+  local rel_path="$1"
+  case "$rel_path" in
+    BACKLOG.md|DECISIONS.md|MILESTONES.md|docs/*)
+      printf 'knowledge'
+      ;;
+    *)
+      printf 'repo'
+      ;;
+  esac
+}
+
+# ── Per-format file chunkers ─────────────────────────────────────────────────
+#
+# Each outputs TSV rows: heading<TAB>line_start<TAB>line_end<TAB>lead
+# lead is the first non-empty body content after the heading, capped at 200 chars.
+
+_ctx_chunk_markdown() {
+  local abs_path="$1"
+  local line lineno=1 in_fence=0 saw_heading=0
+  local cur_heading="" cur_start=0 cur_lead="" lead_done=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\`\`\` ]]; then
+      in_fence=$((1 - in_fence))
+    fi
+
+    if [[ "$in_fence" -eq 0 && "$line" =~ ^(#{1,6})[[:space:]](.+) ]]; then
+      if [[ "$cur_start" -gt 0 ]]; then
+        printf '%s\t%s\t%s\t%s\n' "$cur_heading" "$cur_start" "$((lineno - 1))" "$cur_lead"
+      fi
+      saw_heading=1
+      cur_heading="${BASH_REMATCH[2]}"
+      cur_start="$lineno"
+      cur_lead=""
+      lead_done=0
+    elif [[ "$cur_start" -gt 0 && "$lead_done" -eq 0 && -n "$line" ]]; then
+      cur_lead="${cur_lead:+$cur_lead }${line:0:200}"
+      cur_lead="${cur_lead:0:200}"
+      [[ "${#cur_lead}" -ge 200 ]] && lead_done=1
+    fi
+
+    lineno=$((lineno + 1))
+  done < "$abs_path"
+
+  if [[ "$cur_start" -gt 0 ]]; then
+    printf '%s\t%s\t%s\t%s\n' "$cur_heading" "$cur_start" "$((lineno - 1))" "$cur_lead"
+  fi
+
+  if [[ "$saw_heading" -eq 0 ]]; then
+    local total lead
+    total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
+    lead="$(head -c 200 "$abs_path" 2>/dev/null | tr '\n' ' ' | cut -c1-200 || true)"
+    printf '%s\t%s\t%s\t%s\n' "" 1 "$total" "$lead"
+  fi
+}
+
+_ctx_chunk_window() {
+  local abs_path="$1" window_size="${2:-40}"
+  local total line lineno=1 win_start=1 win_lead="" lead_done=0
+
+  total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
+  [[ "$total" -eq 0 ]] && return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$lead_done" -eq 0 && -n "$line" ]]; then
+      win_lead="${win_lead:+$win_lead }${line:0:200}"
+      win_lead="${win_lead:0:200}"
+      [[ "${#win_lead}" -ge 200 ]] && lead_done=1
+    fi
+
+    if [[ $((lineno - win_start + 1)) -ge "$window_size" || "$lineno" -ge "$total" ]]; then
+      printf '%s\t%s\t%s\t%s\n' "" "$win_start" "$lineno" "$win_lead"
+      win_start=$((lineno + 1))
+      win_lead=""
+      lead_done=0
+    fi
+    lineno=$((lineno + 1))
+  done < "$abs_path"
+}
+
+_ctx_chunk_file() {
+  local abs_path="$1" lang="$2"
+  case "$lang" in
+    markdown)
+      _ctx_chunk_markdown "$abs_path"
+      ;;
+    text|json|yaml)
+      _ctx_chunk_window "$abs_path" 40
+      ;;
+    *)
+      local total lead
+      total="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
+      lead="$(head -c 200 "$abs_path" 2>/dev/null | tr '\n' ' ' | cut -c1-200 || true)"
+      printf '%s\t%s\t%s\t%s\n' "" 1 "$total" "$lead"
+      ;;
+  esac
+}
+
 # ── SQL generation for one file (no BEGIN/COMMIT, no sqlite3 call) ────────────
 #
 # Outputs the SQL statements for one file to stdout.
@@ -259,14 +360,23 @@ _ctx_generate_file_sql() {
       "$ep" "$en" "$ek" "$lang" "$sym_line" "$sym_line" "$esig"
   done < <(_ctx_extract_symbols "$abs_path" "$lang")
 
-  local chunk_text chunk_sha1 total_lines et
-  chunk_text="$(head -c 2000 "$abs_path" 2>/dev/null || true)"
-  chunk_sha1="$(printf '%s' "$chunk_text" | _portable_sha1 2>/dev/null || printf 'unknown')"
-  total_lines="$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
-  et="$(_ctx_sql_str "$chunk_text")"
-  printf "INSERT INTO file_chunks(file_id,heading,line_start,line_end,text,sha1)\n"
-  printf "  VALUES((SELECT id FROM files WHERE path='%s'),'',1,%s,'%s','%s');\n" \
-    "$ep" "$total_lines" "$et" "$chunk_sha1"
+  local chunk_row tab=$'\t'
+  local ch_heading ch_start ch_end ch_lead rest eh el chunk_sha1
+  while IFS= read -r chunk_row; do
+    ch_heading="${chunk_row%%"$tab"*}"
+    rest="${chunk_row#*"$tab"}"
+    ch_start="${rest%%"$tab"*}"
+    rest="${rest#*"$tab"}"
+    ch_end="${rest%%"$tab"*}"
+    ch_lead="${rest#*"$tab"}"
+    eh="$(_ctx_sql_str "$ch_heading")"
+    el="$(_ctx_sql_str "$ch_lead")"
+    chunk_sha1="$(printf '%s\t%s' "$ch_heading" "$ch_lead" \
+      | _portable_sha1 2>/dev/null || printf 'unknown')"
+    printf "INSERT INTO file_chunks(file_id,heading,line_start,line_end,text,sha1)\n"
+    printf "  VALUES((SELECT id FROM files WHERE path='%s'),'%s',%s,%s,'%s','%s');\n" \
+      "$ep" "$eh" "$ch_start" "$ch_end" "$el" "$chunk_sha1"
+  done < <(_ctx_chunk_file "$abs_path" "$lang")
 }
 
 # ── Single-file index (used by pmctl_context_update) ──────────────────────────
@@ -297,9 +407,9 @@ INSERT INTO content_fts(ref, text)
   SELECT f.path || ':' || s.line_start, s.name
   FROM symbols s JOIN files f ON s.file_id = f.id;
 INSERT INTO content_fts(ref, text)
-  SELECT f.path || ':' || fc.line_start, COALESCE(fc.text, '')
+  SELECT f.path || ':' || fc.line_start, TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, ''))
   FROM file_chunks fc JOIN files f ON fc.file_id = f.id
-  WHERE COALESCE(fc.text, '') != '';
+  WHERE TRIM(COALESCE(fc.heading, '') || ' ' || COALESCE(fc.text, '')) != '';
 SQLFTS
 }
 
@@ -408,7 +518,8 @@ pmctl_context_index() {
         -name '*.js'   -o -name '*.jsx'  -o \
         -name '*.md'   -o \
         -name '*.yaml' -o -name '*.yml'  -o \
-        -name '*.json' \
+        -name '*.json' -o \
+        -name '*.txt' \
       \) 2>/dev/null | sort)
 
   # Reconcile deletions: remove rows for files no longer in the repo.
@@ -558,19 +669,30 @@ _ctx_extract_terms() {
 # and _ctx_parse_query_tsv (pack / reuse-scan TSV accumulation).
 
 _ctx_query_hits_raw() {
-  local repo_root="$1" query="$2"
-  local db eq
+  local repo_root="$1" query="$2" domain="${3:-}"
+  local db eq domain_sql=""
   db="$(_ctx_db_path "$repo_root")"
   eq="$(_ctx_sql_str "$query")"
 
+  case "$domain" in
+    knowledge)
+      domain_sql=" AND (f.path IN ('BACKLOG.md','DECISIONS.md','MILESTONES.md') OR f.path LIKE 'docs/%')"
+      ;;
+    repo)
+      domain_sql=" AND NOT (f.path IN ('BACKLOG.md','DECISIONS.md','MILESTONES.md') OR f.path LIKE 'docs/%')"
+      ;;
+  esac
+
   while IFS=$'\t' read -r path name kind line_start; do
     [[ -n "$path" ]] || continue
+    local hit_domain
+    hit_domain="$(_ctx_classify_domain "$path")"
     printf '%s\t%s\t%s\t%s\t%s\n' \
-      "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
+      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "high"
   done < <(sqlite3 -separator $'\t' "$db" \
     "SELECT f.path, s.name, s.kind, s.line_start
      FROM symbols s JOIN files f ON s.file_id=f.id
-     WHERE s.name LIKE '%${eq}%'
+     WHERE s.name LIKE '%${eq}%'${domain_sql}
      LIMIT 20;" 2>/dev/null || true)
 
   local use_fts5=0
@@ -581,28 +703,38 @@ _ctx_query_hits_raw() {
   fi
 
   if [[ "$use_fts5" -eq 1 ]]; then
-    local fts_tmpf
+    local fts_tmpf fts_query
+    fts_query="${query//\"/\"\"}"
+    fts_query="$(_ctx_sql_str "$fts_query")"
     fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
-      "$eq" > "$fts_tmpf"
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '\"%s\"' LIMIT 20;\n" \
+      "$fts_query" > "$fts_tmpf"
     while IFS=$'\t' read -r ref text; do
       [[ -n "$ref" ]] || continue
+      local fts_path fts_domain
+      fts_path="${ref%:*}"
+      fts_domain="$(_ctx_classify_domain "$fts_path")"
+      if [[ -n "$domain" && "$fts_domain" != "$domain" ]]; then
+        continue
+      fi
       local snippet
       snippet="${text:0:80}"
       snippet="${snippet//$'\t'/ }"
       printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
+        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "medium"
     done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
     rm -f "$fts_tmpf"
   else
     while IFS=$'\t' read -r path line_start; do
       [[ -n "$path" ]] || continue
+      local hit_domain
+      hit_domain="$(_ctx_classify_domain "$path")"
       printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
+        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "medium"
     done < <(sqlite3 -separator $'\t' "$db" \
       "SELECT f.path, fc.line_start
        FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE fc.text LIKE '%${eq}%' AND fc.text IS NOT NULL
+       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
        LIMIT 20;" 2>/dev/null || true)
   fi
 }
@@ -615,16 +747,17 @@ _ctx_query_hits_raw() {
 
 _ctx_parse_query_tsv() {
   local repo_root="$1" term="$2" seen_file="$3" sym_tsv="$4" files_tsv="$5"
-  while IFS=$'\t' read -r ref domain why conf trust; do
+  local domain="${6:-}"
+  while IFS=$'\t' read -r ref hit_domain why conf trust; do
     [[ -n "$ref" ]] || continue
     grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
     printf '%s\n' "$ref" >> "$seen_file"
     if [[ "$why" == "symbol:"* ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$sym_tsv"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$hit_domain" "$why" "$conf" "$trust" >> "$sym_tsv"
     else
-      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$files_tsv"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$hit_domain" "$why" "$conf" "$trust" >> "$files_tsv"
     fi
-  done < <(_ctx_query_hits_raw "$repo_root" "$term" 2>/dev/null)
+  done < <(_ctx_query_hits_raw "$repo_root" "$term" "$domain" 2>/dev/null)
 }
 
 # ── TSV-to-JSON array assembler ────────────────────────────────────────────────
@@ -670,9 +803,21 @@ pmctl_context_query() {
     return 2
   fi
 
-  local query=""
+  local query="" domain=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --domain)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context query: --domain requires a value\n' >&2
+          return 2
+        fi
+        domain="$2"
+        shift 2
+        ;;
+      --domain=*)
+        domain="${1#--domain=}"
+        shift
+        ;;
       --)
         shift
         if [[ $# -gt 0 ]]; then
@@ -693,6 +838,11 @@ pmctl_context_query() {
     esac
   done
 
+  if [[ -n "$domain" && "$domain" != "knowledge" && "$domain" != "repo" ]]; then
+    printf 'pmctl context query: --domain must be "knowledge" or "repo" (got: %s)\n' "$domain" >&2
+    return 2
+  fi
+
   if [[ -z "$query" ]]; then
     printf 'pmctl context query: query string required\n' >&2
     return 2
@@ -711,13 +861,13 @@ pmctl_context_query() {
   fi
 
   local hits=0 first=1
-  while IFS=$'\t' read -r ref domain why conf trust; do
+  while IFS=$'\t' read -r ref hit_domain why conf trust; do
     [[ -n "$ref" ]] || continue
     [[ "$first" -eq 0 ]] && printf '\n'
     first=0
-    _ctx_emit_hit "$ref" "$domain" "$why" "$conf" "$trust"
+    _ctx_emit_hit "$ref" "$hit_domain" "$why" "$conf" "$trust"
     hits=$((hits + 1))
-  done < <(_ctx_query_hits_raw "$repo_root" "$query" 2>/dev/null)
+  done < <(_ctx_query_hits_raw "$repo_root" "$query" "$domain" 2>/dev/null)
 
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"

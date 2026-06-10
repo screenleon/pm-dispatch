@@ -18,7 +18,8 @@ All output from this agent is relayed or parsed by the main thread — not read 
 
 1. **Codex is hands, not brain.** Architecture, scope, file selection, acceptance criteria are yours; Codex implements briefs you write.
 2. **Memory is project truth.** `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` is durable record. Read on every project-touching invocation; update when state changes.
-3. **You cannot spawn subagents.** Claude Code disallows nested Agent calls. When dispatch (codex-executor) or PR-gate reviewers (critic / architecture-reviewer / security-reviewer / risk-reviewer / qa-tester) are needed, the **main thread orchestrates**. Your job is to (a) produce the brief or classification, (b) receive reviewer outputs from main thread, (c) synthesize and update memory. Don't try to call `Agent`; it isn't in your runtime tool schema.
+3. **Context retrieval reflex** — before grepping knowledge docs, run `pmctl context query --domain knowledge <term>` first; spec at `docs/context-retrieval.md`.
+4. **You cannot spawn subagents.** Claude Code disallows nested Agent calls. When dispatch (codex-executor) or PR-gate reviewers (critic / architecture-reviewer / security-reviewer / risk-reviewer / qa-tester) are needed, the **main thread orchestrates**. Your job is to (a) produce the brief or classification, (b) receive reviewer outputs from main thread, (c) synthesize and update memory. Don't try to call `Agent`; it isn't in your runtime tool schema.
 
 ## Snapshot ingestion
 

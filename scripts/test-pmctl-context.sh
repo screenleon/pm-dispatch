@@ -31,7 +31,7 @@ run_ctx() {
 # Set up a minimal fixture repo in a temp dir for index/update tests.
 make_fixture_repo() {
   local dir="$1"
-  mkdir -p "$dir/scripts/lib" "$dir/scripts"
+  mkdir -p "$dir/scripts/lib" "$dir/scripts" "$dir/docs"
 
   # A shell file with functions
   cat > "$dir/scripts/lib/mymodule.sh" <<'SH'
@@ -56,6 +56,36 @@ Some content here.
 
 More content.
 MD
+
+  # Knowledge docs
+  cat > "$dir/BACKLOG.md" <<'MD'
+# Backlog
+
+## Section One
+
+alpha knowledge body one.
+
+## Section Two
+
+beta knowledge body two.
+
+## Section Three
+
+gamma knowledge body three.
+MD
+
+  cat > "$dir/docs/arch.md" <<'MD'
+# Architecture
+
+## Architecture
+
+alpha architecture note.
+MD
+
+  cat > "$dir/notes.txt" <<'TXT'
+plain text note line one
+plain text note line two
+TXT
 
   # A python file
   cat > "$dir/main.py" <<'PY'
@@ -1187,6 +1217,285 @@ case_context_layer_boundary() {
   fi
 }
 
+case_context_query_domain_invalid() {
+  local name="pmctl context query: --domain invalid exits 2"
+  should_run "$name" || return 0
+  # Behavior: --domain with an unrecognized value must exit 2 with a diagnostic.
+  # Steps: run query with --domain invalid; assert exit 2 and error message on stderr.
+
+  local fix_repo="$tmp_root/fix-repo-domain-invalid"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/q-domain-invalid.out"; err="$tmp_root/q-domain-invalid.err"
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" --domain invalid "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2; got $status err=$(<"$err")"; return 0
+  fi
+  if grep -q -- '--domain must be' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected --domain diagnostic; got: $(<"$err")"
+  fi
+}
+
+case_context_query_domain_knowledge_only() {
+  local name="pmctl context query: --domain knowledge returns only knowledge hits"
+  should_run "$name" || return 0
+  # Behavior: --domain knowledge must return hits only from knowledge-domain paths and set source_domain: knowledge.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query --domain knowledge; assert BACKLOG.md hit and no .sh hit.
+
+  local fix_repo="$tmp_root/fix-repo-domain-knowledge"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/q-domain-knowledge.out"; err="$tmp_root/q-domain-knowledge.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" --domain knowledge "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q 'BACKLOG.md' "$out"; then
+    fail "$name" "expected BACKLOG.md hit; got: $(<"$out")"; return 0
+  fi
+  if grep -q '\.sh:' "$out"; then
+    fail "$name" "repo-domain .sh hit leaked into knowledge output: $(<"$out")"; return 0
+  fi
+  if grep -q 'source_domain: knowledge' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected source_domain: knowledge; got: $(<"$out")"
+  fi
+}
+
+case_context_query_domain_repo_only() {
+  local name="pmctl context query: --domain repo returns only repo hits"
+  should_run "$name" || return 0
+  # Behavior: --domain repo must return hits only from code files and exclude knowledge-domain paths.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query --domain repo; assert .sh hit and no BACKLOG.md hit.
+
+  local fix_repo="$tmp_root/fix-repo-domain-repo"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/q-domain-repo.out"; err="$tmp_root/q-domain-repo.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" --domain repo "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q '\.sh:' "$out"; then
+    fail "$name" "expected .sh hit; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'BACKLOG.md\|DECISIONS.md' "$out"; then
+    fail "$name" "knowledge hit leaked into repo output: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_domain_no_flag_backward_compat() {
+  local name="pmctl context query: no --domain returns both domains"
+  should_run "$name" || return 0
+  # Behavior: omitting --domain must preserve existing behavior — hits from both knowledge and repo domains.
+  # Steps: index fixture with BACKLOG.md and a .sh file; query without --domain; assert both domains appear.
+
+  local fix_repo="$tmp_root/fix-repo-domain-none"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/q-domain-none.out"; err="$tmp_root/q-domain-none.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context query "$fix_repo" "alpha" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q 'BACKLOG.md' "$out" && grep -q '\.sh:' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected both BACKLOG.md and .sh hits; got: $(<"$out")"
+  fi
+}
+
+case_context_index_markdown_heading_chunks() {
+  local name="pmctl context index: Markdown knowledge docs chunk by heading"
+  should_run "$name" || return 0
+  # Behavior: indexing a Markdown file with multiple headings must produce one file_chunks row per heading.
+  # Steps: index fixture BACKLOG.md with 3 sections; assert 3 rows with non-empty heading field in file_chunks.
+
+  local fix_repo="$tmp_root/fix-repo-heading-chunks"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/idx-heading.out"; err="$tmp_root/idx-heading.err"
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db count
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  count="$(sqlite3 "$db" \
+    "SELECT COUNT(*) FROM file_chunks fc JOIN files f ON fc.file_id=f.id WHERE f.path='BACKLOG.md' AND fc.heading LIKE 'Section %';" \
+    2>/dev/null || printf '0')"
+
+  if [[ "$count" -eq 3 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected 3 section heading chunks; got $count"
+  fi
+}
+
+case_context_chunk_markdown_no_code_fence_headings() {
+  local name="pmctl context index: Markdown headings inside fences are ignored"
+  should_run "$name" || return 0
+  # Behavior: a ## heading inside a fenced code block must not produce a separate file_chunks row.
+  # Steps: index a Markdown file with one real heading and one ## inside ```; assert no chunk with fenced heading text.
+
+  local fix_repo="$tmp_root/fix-repo-fence-headings"
+  mkdir -p "$fix_repo"
+  cat > "$fix_repo/BACKLOG.md" <<'MD'
+# Backlog
+
+## Real Heading
+
+alpha outside fence.
+
+```
+## Not A Heading
+```
+MD
+
+  local out err status=0
+  out="$tmp_root/idx-fence.out"; err="$tmp_root/idx-fence.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db fenced
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  fenced="$(sqlite3 "$db" \
+    "SELECT COUNT(*) FROM file_chunks fc JOIN files f ON fc.file_id=f.id WHERE f.path='BACKLOG.md' AND fc.heading='Not A Heading';" \
+    2>/dev/null || printf '0')"
+  if [[ "$fenced" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "fenced heading was indexed as a chunk"
+  fi
+}
+
+case_context_index_txt_indexed() {
+  local name="pmctl context index: .txt files are indexed"
+  should_run "$name" || return 0
+  # Behavior: .txt files must appear in the files table after pmctl context index.
+  # Steps: index fixture containing notes.txt; query files table; assert notes.txt row exists.
+
+  local fix_repo="$tmp_root/fix-repo-txt"
+  make_fixture_repo "$fix_repo"
+  local out err status=0
+  out="$tmp_root/idx-txt.out"; err="$tmp_root/idx-txt.err"
+
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db row
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  row="$(sqlite3 "$db" "SELECT path FROM files WHERE path='notes.txt';" 2>/dev/null || true)"
+  if [[ "$row" == "notes.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "notes.txt missing from files table"
+  fi
+}
+
+case_context_classify_domain() {
+  local name="pmctl-context.sh: _ctx_classify_domain classifies knowledge paths"
+  should_run "$name" || return 0
+  # Behavior: _ctx_classify_domain must return "knowledge" for top-level knowledge docs and docs/* paths, "repo" for all others.
+  # Steps: call _ctx_classify_domain with BACKLOG.md, docs/arch.md, scripts/foo.sh, CHANGELOG.md; assert exact classification sequence.
+
+  local out err status=0
+  out="$tmp_root/classify.out"; err="$tmp_root/classify.err"
+  bash -c ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; \
+    _ctx_classify_domain BACKLOG.md; printf '\n'; \
+    _ctx_classify_domain docs/arch.md; printf '\n'; \
+    _ctx_classify_domain scripts/foo.sh; printf '\n'; \
+    _ctx_classify_domain CHANGELOG.md; printf '\n'" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "classification command failed: $(<"$err")"; return 0
+  fi
+  if [[ "$(<"$out")" == $'knowledge\nknowledge\nrepo\nrepo' ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected classifications: $(<"$out")"
+  fi
+}
+
+case_context_chunk_window_multiwindow() {
+  local name="pmctl context index: window chunker produces multiple chunks for large .txt"
+  should_run "$name" || return 0
+  # Behavior: a .txt file larger than one window (40 lines) must produce ≥ 2 file_chunks rows with distinct line ranges.
+  # Steps: index a 90-line .txt fixture; assert chunk count ≥ 2 and second chunk line_start > 1.
+
+  local fix_repo="$tmp_root/fix-repo-multiwin"
+  mkdir -p "$fix_repo"
+
+  # Write a 90-line .txt file; window size=40 → expect 3 chunks (lines 1-40, 41-80, 81-90).
+  local i
+  for i in $(seq 1 90); do
+    printf 'line%d content for window test\n' "$i"
+  done > "$fix_repo/large.txt"
+
+  local out err status=0
+  out="$tmp_root/mwin-idx.out"; err="$tmp_root/mwin-idx.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "index failed: $(<"$err")"; return 0
+  fi
+
+  local db chunk_count
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  chunk_count="$(sqlite3 "$db" \
+    "SELECT COUNT(*) FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+     WHERE f.path='large.txt';" 2>/dev/null || printf '0')"
+
+  if [[ "$chunk_count" -ge 2 ]]; then
+    # Also verify that the second window's line_start is > 1
+    local second_start
+    second_start="$(sqlite3 "$db" \
+      "SELECT line_start FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+       WHERE f.path='large.txt' ORDER BY line_start LIMIT 1 OFFSET 1;" 2>/dev/null || printf '0')"
+    if [[ "$second_start" -gt 1 ]]; then
+      pass "$name"
+    else
+      fail "$name" "second chunk line_start=$second_start, expected > 1 (chunk_count=$chunk_count)"
+    fi
+  else
+    fail "$name" "expected ≥ 2 chunks for 90-line .txt, got $chunk_count"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -1201,6 +1510,10 @@ case_context_index_mtime_only_contract
 case_context_index_markdown_no_symbols
 case_context_query_missing_query
 case_context_query_unknown_flag
+case_context_query_domain_invalid
+case_context_query_domain_knowledge_only
+case_context_query_domain_repo_only
+case_context_query_domain_no_flag_backward_compat
 case_context_query_known_symbol
 case_context_query_unknown_term_exits_0
 case_context_query_like_fallback
@@ -1210,6 +1523,11 @@ case_context_index_deleted_file_reconciled
 case_context_query_fts_multiline_no_bogus_refs
 case_context_query_on_real_repo
 case_context_layer_boundary
+case_context_index_markdown_heading_chunks
+case_context_chunk_markdown_no_code_fence_headings
+case_context_index_txt_indexed
+case_context_chunk_window_multiwindow
+case_context_classify_domain
 case_context_pack_missing_task_id
 case_context_pack_missing_query
 case_context_pack_task_id_without_value
