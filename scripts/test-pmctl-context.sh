@@ -1196,11 +1196,30 @@ case_context_query_emits_event() {
 
   local line_count
   line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -ge 1 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected >= 1 context.queried event in trace; got $line_count lines"
+  if [[ "$line_count" -lt 1 ]]; then
+    fail "$name" "expected >= 1 context.queried event in trace; got $line_count lines"; return 0
   fi
+
+  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  local evt_kind evt_subject_type payload_query payload_hits
+  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
+  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
+  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
+  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+
+  if [[ "$evt_kind" != "context.queried" ]]; then
+    fail "$name" "event kind: expected context.queried, got: $evt_kind"; return 0
+  fi
+  if [[ "$evt_subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $evt_subject_type"; return 0
+  fi
+  if [[ "$payload_query" != "alpha" ]]; then
+    fail "$name" "event payload.query: expected alpha, got: $payload_query"; return 0
+  fi
+  if ! [[ "$payload_hits" =~ ^[0-9]+$ ]]; then
+    fail "$name" "event payload.hits: expected integer, got: $payload_hits"; return 0
+  fi
+  pass "$name"
 }
 
 case_context_reuse_scan_emits_event() {
@@ -1238,11 +1257,30 @@ case_context_reuse_scan_emits_event() {
 
   local line_count
   line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -ge 1 ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected >= 1 context.reuse_scanned event in trace; got $line_count lines"
+  if [[ "$line_count" -lt 1 ]]; then
+    fail "$name" "expected >= 1 context.reuse_scanned event in trace; got $line_count lines"; return 0
   fi
+
+  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  local evt_kind evt_subject_type payload_query payload_hits
+  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
+  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
+  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
+  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+
+  if [[ "$evt_kind" != "context.reuse_scanned" ]]; then
+    fail "$name" "event kind: expected context.reuse_scanned, got: $evt_kind"; return 0
+  fi
+  if [[ "$evt_subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $evt_subject_type"; return 0
+  fi
+  if [[ "$payload_query" != "alpha beta function" ]]; then
+    fail "$name" "event payload.query: expected 'alpha beta function', got: $payload_query"; return 0
+  fi
+  if ! [[ "$payload_hits" =~ ^[0-9]+$ ]]; then
+    fail "$name" "event payload.hits: expected integer, got: $payload_hits"; return 0
+  fi
+  pass "$name"
 }
 
 case_context_pack_empty_query_value() {

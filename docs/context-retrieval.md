@@ -31,8 +31,10 @@ For a targeted multi-term query (when key symbol names are already known), use
 
     pmctl context pack [<repo_root>] --task-id <id> --query <term> [--query <term> ...]
 
-Both commands emit a usage event readable via `pmctl trace tail --kind context.reuse_scanned`
-(or `context.queried` for single-term queries).
+`pmctl context reuse-scan` emits a `context.reuse_scanned` event and
+`pmctl context query` emits a `context.queried` event after each call.
+These are readable via `pmctl trace tail --kind context.reuse_scanned` (or
+`--kind context.queried`).  `pmctl context pack` does not emit usage events.
 
 ## Domain values
 

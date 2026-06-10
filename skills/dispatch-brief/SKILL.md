@@ -28,8 +28,10 @@ the executor can act on without re-asking questions.
 
 ## Prior-art scan (before writing `files:` / `context:`)
 
-Run `pmctl context reuse-scan "<task description>"` first.  Paste at most 5
-reviewed candidates into `context:` — do not paste unfiltered output.
+Run `pmctl context reuse-scan <working_dir> "<task description>"` first (pass
+the target repo root as the first argument — omitting it scans pm-dispatch
+itself, not the task's target).  Paste at most 5 reviewed candidates into
+`context:` — do not paste unfiltered output.
 See `docs/context-retrieval.md` for full usage.
 
 ## Rules that actually bite

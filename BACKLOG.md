@@ -1759,7 +1759,7 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 - **接線（platform-neutral，與 CC-354 同紀律）**：在中立 docs 契約（`docs/dispatch-brief.md` 或 CC-354 新立的 retrieval 契約文件）加入 brief-authoring 步驟——撰寫 `files:` / `context:` 前先跑 `pmctl context reuse-scan`（或對已知 term 跑 `context pack`）取 prior-art anchors；`agents/project-pm.md` 與 `skills/dispatch-brief/SKILL.md` 各放指標（不含票號，遵守 no-CC-in-operational-files 規則）。不寫 CLAUDE.md。
 - **Brief 噪音上限**：`reuse_candidates` 輸出設 hit 上限（建議 ≤5）+ PM 人工篩選步驟；未經篩選不得整段貼進 brief（防 stop-word 抽詞噪音變成付費 executor 的 token 成本）。
 - **使用可觀測**：`pmctl context query` / `reuse-scan` 每次呼叫 emit 一筆 event（既有 state-writer 機制，無新基建），使「索引被用了幾次」可由 `pmctl trace --kind` 查出。
-- 不改 index 機制本身；本票純接線 + 可觀測，無 schema 變更。
+- 不改 index 機制本身；純接線 + 可觀測。schema delta：`event.schema.json` 新增 `context.queried`、`context.reuse_scanned` event kinds 及 `context` subject_type。
 
 **Acceptance**:
 - 中立 docs 契約含 brief-authoring 的 reuse-scan / pack 步驟；`agents/project-pm.md` + `skills/dispatch-brief/SKILL.md` 有指標；CLAUDE.md 無新增。
