@@ -94,8 +94,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-340 | 🟢 someday | **[knowledge index: standalone FTS over memory/backlog/decisions]** Local knowledge-search index (the second-brain plane, symmetric to the repo index CC-338): index MEMORY.md + memory cards + wiki + BACKLOG / DECISIONS / MILESTONES + episodes, answering "why / how was this decided / prior failure modes" before dispatch. v0.5.0 only aligns the schema (context_hit_v1, CC-237); the heavy standalone index overlaps /mem-search and is deferred to v0.6.0. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-341 | ✅ done | **[pmctl validate: wire handover-validate framework into pmctl]** The CC-202 handover-validator framework shipped (#170) but was never wired into a `pmctl validate` subcommand. MILESTONES v0.5.0 previously pointed at the closed CC-202; this is its active home. Wire `pmctl validate brief` as a read-only validation front-end matching the handover-validate.sh framework (exit 0=valid / 1=invalid / 2=usage). Read-only by design, same as guard check — no state written. | arch | 2026-06-08 | pr:#252 | P2 | design |
 | CC-350 | ✅ done | **[bug: pmctl gate run SIGPIPE×pipefail — stdout pipe → 0-byte result + false-success exit 0]** `scripts/pr-gate.sh` banner `printf` 在 stdout 接 pipe 時 SIGPIPE×pipefail 提前中斷 dispatch；結果檔 0 bytes；整條命令誤報 exit 0。false-success 對自動化 caller 比 false-failure 危險（空結果被當作 gate 通過）。Fix 方向：結果完整性把關（非空才 exit 0）、banner SIGPIPE 容錯、或介面文件警告。 | ops/gate | 2026-06-10 | pr:#258 | P2 | hygiene |
-| CC-351 | 🔵 active | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | — | P2 | hygiene |
+| CC-351 | ✅ done | **[codex-executor: brief schema validation must fail-fast before any file reads]** 非 YAML brief（缺 schema_version/goal/files/self_verify）送到 codex-executor 時，部分 invocation 立即 REJECT，其他進入無效 loop 耗費大量 token；同 session 兩個相同格式 brief 行為分歧。Fix：把 schema validation 移到所有 file reads 之前的第一步，無論 dispatch 上下文或 session 狀態。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
+| CC-353 | ✅ done | **[unify executor dispatch: claude-executor symmetric to codex-executor]** claude-executor.md 缺 codex-executor 的「N-condition fallback allowlist」結構，兩份 executor 文件不對稱、難維護。統一：pmctl dispatch run --adapter claude 定為唯一文件化主路；claude-executor.md 重構成鏡像 codex 的窄 fallback（lifecycle 框架 + fallback 表 + caller checklist）；pr-gate reviewer fan-out 標為正當用途非 fallback。對齊 dispatch-brief.md §Fallback。隨 CC-351 同 PR。 | ops/DX | 2026-06-10 | pr:#259 | P2 | hygiene |
 
 ---
 
@@ -1442,7 +1443,7 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 
 ---
 
-## CC-351 — codex-executor: brief schema validation must fail-fast before any file reads 🔵 active
+## CC-351 — codex-executor: brief schema validation must fail-fast before any file reads ✅ 2026-06-10
 
 **Problem**: codex-executor 收到非 YAML brief（缺 schema_version/goal/files/self_verify 欄位）時行為不一致——同一 session、相同格式的兩個 brief，一個立即 REJECT，另一個進入無效 loop：讀 brief、嘗試 Bash edit（被 hook 擋）、循環找 Codex dispatch 路徑，耗費大量 token 後被外部 TaskStop 終止。行為分歧根因不明（可能是 session-state 差異或 prompt 快取邊界）。
 
@@ -1455,9 +1456,11 @@ file_refs(id, from_id INTEGER REFERENCES files(id),
 
 **Priority**: P2 — 每次格式錯誤 brief 都可能耗費數千 token；行為不可預測加劇除錯難度。
 
-**Cross-link**: [[CC-045]] (brief timeout heuristic), [[CC-272]] (executor contract docs).
+**Scope note (planning 2026-06-10)**: fix 對稱套用到**兩個 Agent fallback executor**。codex-executor 的 §0 gate 走 `pmctl dispatch run`（codex-bash-guard 擋 `bash` verb，無法直接呼叫 brief-validate），靠 `pmctl-dispatch.sh` 第 3 步 brief-validate 在 spawn codex 前 REJECT；claude-executor 的 §0 gate **直接** `bash scripts/brief-validate.sh <brief>`（claude 無 verb guard），exit 1 即 REJECT 且不讀 target file。兩者收斂到同一支 `scripts/brief-validate.sh`、同一 REJECT 訊息格式。兩檔都補回漏列的 `schema_version`。正規路徑（兩個 adapter 皆走 pmctl）本已有確定性 gate，僅 Agent fallback 需 prompt 硬化。
 
-**See**: issue:#217
+**Cross-link**: [[CC-045]] (brief timeout heuristic), [[CC-272]] (executor contract docs), [[CC-353]] (executor dispatch 統一，同 PR).
+
+**See**: pr:#259, issue:#217
 
 ---
 
@@ -1484,6 +1487,32 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Cross-link**: [[CC-272]] (Pattern 3 fix, pr:#245), [[CC-066]] (bash guard allowlist, relevant if Pattern 1 fix expands to allowlist approach).
 
 **See**: issue:#173
+
+---
+
+## CC-353 — unify executor dispatch: claude-executor symmetric to codex-executor ✅ 2026-06-10
+
+**Problem**: 兩個 executor 的文件結構不對稱，難維護。`codex-executor.md` 已是完整的「pmctl 主路 + N-condition fallback allowlist + caller decision checklist」結構（lifecycle-leak 警告、§When NOT to use 5-condition 表、10-item checklist）；`claude-executor.md` 的 §When NOT to use 只是簡單 bullet list，沒有對稱的 fallback 結構。心智模型雙軌，每次改 executor 契約都要分別理解兩套敘述。
+
+**Insight（planning 2026-06-10）**: claude 的「pmctl 優先」其實已是現行設計——`commands/pm.md` Route B 主路即 `pmctl dispatch run --adapter claude`，`Agent(claude-executor)` 已被文件化為「`claude --print` 不可用時」的窄 fallback。但 `Agent(claude-executor)` 不是純 legacy，有兩個真實職責：(1) 無 `claude` CLI 的主機上的 host-independent 逃生口（pmctl 路要 spawn 外部 `claude --print` binary，無 CLI 即失敗）；(2) `pr-gate` Route B 的 reviewer fan-out（in-session 並行 spawn，本來就該用 Agent）。因此**完全砍掉 Agent 路會損失能力 + 逼 pr-gate 重寫**——決議採對稱窄 fallback，不砍。
+
+**Requirement**:
+1. `agents/claude-executor.md` 重構成與 `agents/codex-executor.md` 鏡像的結構：頂部 lifecycle/fallback 框架、§When NOT to use 改成 N-condition fallback allowlist 表 + caller decision checklist。
+2. 明定 `pmctl dispatch run --adapter claude` 為唯一文件化的檔案式主路；`Agent(claude-executor)` 為窄 fallback，條件清楚列出：①無 `claude` CLI ②main-thread context 壓力 ③sync sequencing ④pr-gate reviewer fan-out（標為**正當用途、非 fallback**，避免被誤砍）。
+3. 窄幅對齊 `docs/dispatch-brief.md §Fallback`（claude fallback 表對稱於 codex）；如 `docs/executor-contract.md` 有不對稱敘述一併校準。
+
+**Acceptance**:
+1. `claude-executor.md` 與 `codex-executor.md` 的 fallback 段結構鏡像（同樣的 allowlist 表 + checklist 形狀）
+2. 文件明確標示 pmctl 為主路、Agent 為窄 fallback，且 pr-gate fan-out 不被列為「不要用」
+3. `bash scripts/lint-agents.sh` exit 0
+
+**Effort**: prose-only，無 code 變更。
+
+**Priority**: P2 — 維護性債；統一心智模型降低 executor 契約後續修改成本。
+
+**Cross-link**: [[CC-351]] (fail-fast 驗證，同 PR 同 branch), [[CC-272]] (executor contract docs), [[CC-266]] (claude adapter).
+
+**See**: pr:#259
 
 ---
 
