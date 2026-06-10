@@ -554,49 +554,80 @@ _ctx_extract_terms() {
     | sort -u
 }
 
+# ── Raw query result emitter (internal only) ───────────────────────────────────
+# Outputs TSV rows: ref<TAB>domain<TAB>why<TAB>conf<TAB>trust
+# No deduplication — callers handle dedup and formatting.
+# Single query-execution path shared by pmctl_context_query (YAML output)
+# and _ctx_parse_query_tsv (pack / reuse-scan TSV accumulation).
+
+_ctx_query_hits_raw() {
+  local repo_root="$1" query="$2"
+  local db eq
+  db="$(_ctx_db_path "$repo_root")"
+  eq="$(_ctx_sql_str "$query")"
+
+  while IFS=$'\t' read -r path name kind line_start; do
+    [[ -n "$path" ]] || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
+  done < <(sqlite3 -separator $'\t' "$db" \
+    "SELECT f.path, s.name, s.kind, s.line_start
+     FROM symbols s JOIN files f ON s.file_id=f.id
+     WHERE s.name LIKE '%${eq}%'
+     LIMIT 20;" 2>/dev/null || true)
+
+  local use_fts5=0
+  if _ctx_fts5_available "$db" \
+    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
+       2>/dev/null | grep -q 'content_fts'; then
+    use_fts5=1
+  fi
+
+  if [[ "$use_fts5" -eq 1 ]]; then
+    local fts_tmpf
+    fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
+    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
+      "$eq" > "$fts_tmpf"
+    while IFS=$'\t' read -r ref text; do
+      [[ -n "$ref" ]] || continue
+      local snippet
+      snippet="${text:0:80}"
+      snippet="${snippet//$'\t'/ }"
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
+    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
+    rm -f "$fts_tmpf"
+  else
+    while IFS=$'\t' read -r path line_start; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
+    done < <(sqlite3 -separator $'\t' "$db" \
+      "SELECT f.path, fc.line_start
+       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+       WHERE fc.text LIKE '%${eq}%' AND fc.text IS NOT NULL
+       LIMIT 20;" 2>/dev/null || true)
+  fi
+}
+
 # ── Per-term query parser ──────────────────────────────────────────────────────
-# Runs pmctl_context_query for one term, parses the context_hit_v1 YAML output,
-# deduplicates by ref (appending to seen_file), and routes hits:
+# Uses _ctx_query_hits_raw for structured TSV input; deduplicates by ref
+# (appending to seen_file) and routes hits:
 #   why starts with "symbol:" → sym_tsv
 #   all others                → files_tsv
-# Row format: ref<TAB>domain<TAB>why<TAB>conf<TAB>trust
 
 _ctx_parse_query_tsv() {
   local repo_root="$1" term="$2" seen_file="$3" sym_tsv="$4" files_tsv="$5"
-  local ref="" domain="" why="" conf="" trust=""
-  while IFS= read -r line; do
-    case "$line" in
-      "- ref: "*)
-        ref="${line#- ref: }"
-        domain=""; why=""; conf=""; trust=""
-        ;;
-      "  source_domain: "*)
-        domain="${line#  source_domain: }"
-        ;;
-      "  why_relevant: '"*)
-        why="${line#  why_relevant: \'}"
-        why="${why%\'}"
-        ;;
-      "  why_relevant: "*)
-        why="${line#  why_relevant: }"
-        ;;
-      "  confidence: "*)
-        conf="${line#  confidence: }"
-        ;;
-      "  trust_level: "*)
-        trust="${line#  trust_level: }"
-        if [[ -n "$ref" ]] && ! grep -qxF "$ref" "$seen_file" 2>/dev/null; then
-          printf '%s\n' "$ref" >> "$seen_file"
-          if [[ "$why" == "symbol:"* ]]; then
-            printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$sym_tsv"
-          else
-            printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$files_tsv"
-          fi
-        fi
-        ref=""; domain=""; why=""; conf=""; trust=""
-        ;;
-    esac
-  done < <(pmctl_context_query "$repo_root" "$term" 2>/dev/null)
+  while IFS=$'\t' read -r ref domain why conf trust; do
+    [[ -n "$ref" ]] || continue
+    grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
+    printf '%s\n' "$ref" >> "$seen_file"
+    if [[ "$why" == "symbol:"* ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$sym_tsv"
+    else
+      printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "$domain" "$why" "$conf" "$trust" >> "$files_tsv"
+    fi
+  done < <(_ctx_query_hits_raw "$repo_root" "$term" 2>/dev/null)
 }
 
 # ── TSV-to-JSON array assembler ────────────────────────────────────────────────
@@ -683,60 +714,13 @@ pmctl_context_query() {
   fi
 
   local hits=0 first=1
-  local eq
-  eq="$(_ctx_sql_str "$query")"
-
-  # Always search symbols.name with LIKE — reliable for symbol names with underscores
-  while IFS=$'\t' read -r path name kind line_start; do
-    [[ -n "$path" ]] || continue
+  while IFS=$'\t' read -r ref domain why conf trust; do
+    [[ -n "$ref" ]] || continue
     [[ "$first" -eq 0 ]] && printf '\n'
     first=0
-    _ctx_emit_hit "$path:$line_start" "repo" "symbol: $name ($kind)" "0.85" "high"
+    _ctx_emit_hit "$ref" "$domain" "$why" "$conf" "$trust"
     hits=$((hits + 1))
-  done < <(sqlite3 -separator $'\t' "$db" \
-    "SELECT f.path, s.name, s.kind, s.line_start
-     FROM symbols s JOIN files f ON s.file_id=f.id
-     WHERE s.name LIKE '%${eq}%'
-     LIMIT 20;" 2>/dev/null || true)
-
-  # FTS5 path: full-text search over content_fts (symbols + chunk text)
-  local use_fts5=0
-  if _ctx_fts5_available "$db" \
-    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
-       2>/dev/null | grep -q 'content_fts'; then
-    use_fts5=1
-  fi
-
-  if [[ "$use_fts5" -eq 1 ]]; then
-    local fts_tmpf
-    fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    # Normalize newlines in text at the SQL layer so IFS-tab read is safe.
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' ') FROM content_fts WHERE content_fts MATCH '%s' LIMIT 20;\n" \
-      "$eq" > "$fts_tmpf"
-    while IFS=$'\t' read -r ref text; do
-      [[ -n "$ref" ]] || continue
-      [[ "$first" -eq 0 ]] && printf '\n'
-      first=0
-      local snippet
-      snippet="$(printf '%s' "$text" | head -c 80)"
-      _ctx_emit_hit "$ref" "repo" "fts5 match: $snippet" "0.75" "medium"
-      hits=$((hits + 1))
-    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
-    rm -f "$fts_tmpf"
-  else
-    # LIKE fallback: search file_chunks.text
-    while IFS=$'\t' read -r path line_start; do
-      [[ -n "$path" ]] || continue
-      [[ "$first" -eq 0 ]] && printf '\n'
-      first=0
-      _ctx_emit_hit "$path:$line_start" "repo" "text match in chunk" "0.7" "medium"
-      hits=$((hits + 1))
-    done < <(sqlite3 -separator $'\t' "$db" \
-      "SELECT f.path, fc.line_start
-       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE fc.text LIKE '%${eq}%' AND fc.text IS NOT NULL
-       LIMIT 20;" 2>/dev/null || true)
-  fi
+  done < <(_ctx_query_hits_raw "$repo_root" "$query" 2>/dev/null)
 
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"
@@ -782,13 +766,16 @@ pmctl_context_pack() {
       *)
         if [[ -d "$1" ]]; then
           repo_root="$1"
+        else
+          printf 'pmctl context pack: %s: not a directory\n' "$1" >&2
+          return 2
         fi
         shift
         ;;
     esac
   done
 
-  if [[ -z "$task_id" ]]; then
+  if [[ -z "$task_id" ]] || [[ "$task_id" =~ ^[[:space:]]+$ ]]; then
     printf 'pmctl context pack: --task-id is required\n' >&2
     return 2
   fi

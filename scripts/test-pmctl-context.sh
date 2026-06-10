@@ -750,7 +750,7 @@ case_context_pack_unknown_flag() {
 case_context_pack_valid_json() {
   local name="pmctl context pack: valid call produces schema_version 2 JSON with correct fields"
   # Behavior: context pack must emit schema_version 2 JSON with task_id, sources, and at least one hit.
-  # Steps: index a fixture repo; run pack with one --query; validate JSON fields via python3.
+  # Steps: index a fixture repo; run pack with one --query; validate JSON fields via jq.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-pack-json"
@@ -769,19 +769,17 @@ case_context_pack_valid_json() {
     fail "$name" "pack exited $status: $(<"$err")"; return 0
   fi
 
-  if ! python3 -c "
-import json, sys
-d = json.load(open('$out'))
-assert d['schema_version'] == 2, 'schema_version != 2'
-assert d['task_id'] == 'TASK-1', 'task_id mismatch'
-assert d['sources'][0]['name'] == 'builtin-index', 'sources[0].name mismatch'
-total = len(d.get('symbols', [])) + len(d.get('files', []))
-assert total >= 1, 'no symbols or file hits'
-print('pack JSON OK')
-" 2>"$err"; then
+  if ! jq -e '
+    .schema_version == 2 and
+    .task_id == "TASK-1" and
+    (.sources | length) > 0 and
+    .sources[0].name == "builtin-index" and
+    ((.symbols | length) + (.files | length)) >= 1
+  ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "JSON validation failed: $(<"$err") output: $(<"$out")"
     return 0
   fi
+  printf 'pack JSON OK\n'
   pass "$name"
 }
 
@@ -816,18 +814,15 @@ MD
     fail "$name" "pack exited $status: $(<"$err")"; return 0
   fi
 
-  if ! python3 -c "
-import json, sys
-d = json.load(open('$out'))
-sym_refs = [x['ref'] for x in d.get('symbols', [])]
-assert sym_refs, 'symbols[] is empty'
-assert any('mymodule' in r for r in sym_refs), 'no mymodule ref in symbols: ' + str(sym_refs)
-assert not any('NOTES.md' in r for r in sym_refs), 'NOTES.md in symbols: ' + str(sym_refs)
-print('symbol_vs_file_split OK')
-" 2>"$err"; then
+  if ! jq -e '
+    (.symbols | length) > 0 and
+    (.symbols | map(.ref) | any(contains("mymodule"))) and
+    (.symbols | map(.ref) | all(contains("NOTES.md") | not))
+  ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "split validation failed: $(<"$err") out=$(<"$out")"
     return 0
   fi
+  printf 'symbol_vs_file_split OK\n'
   pass "$name"
 }
 
@@ -856,17 +851,13 @@ case_context_pack_dedup() {
     fail "$name" "pack exited $status: $(<"$err")"; return 0
   fi
 
-  if ! python3 -c "
-import json, sys
-d = json.load(open('$out'))
-refs = [x['ref'] for x in d.get('symbols', []) + d.get('files', [])]
-if refs:
-    assert refs.count(refs[0]) == 1, 'ref appears more than once: ' + refs[0]
-print('dedup OK')
-" 2>"$err"; then
+  if ! jq -e '
+    [(.symbols + .files) | map(.ref) | group_by(.) | .[] | select(length > 1)] | length == 0
+  ' "$out" > /dev/null 2>"$err"; then
     fail "$name" "dedup validation failed: $(<"$err") out=$(<"$out")"
     return 0
   fi
+  printf 'dedup OK\n'
   pass "$name"
 }
 
@@ -1048,6 +1039,66 @@ case_context_reuse_scan_on_real_repo() {
   fi
 }
 
+case_context_pack_whitespace_task_id() {
+  local name="pmctl context pack: exits 2 when --task-id is whitespace-only"
+  # Behavior: context pack must exit 2 when --task-id is whitespace-only.
+  # Steps: call pack with --task-id "   " and a --query; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-wstid.out"; err="$tmp_root/pack-wstid.err"
+  local ws_repo="$tmp_root/ws-repo"
+  mkdir -p "$ws_repo"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$ws_repo" --task-id "   " --query foo > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_nondir_repo_path() {
+  local name="pmctl context pack: exits 2 when positional repo argument is not a directory"
+  # Behavior: context pack must exit 2 when a non-existent or non-directory positional repo path is given.
+  # Steps: call pack with /nonexistent/path as positional arg; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pack-ndr.out"; err="$tmp_root/pack-ndr.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_pack_schema_contract() {
+  local name="pmctl context pack: emitted pack has all required schema_version 2 fields"
+  # Behavior: context pack must always include schema_version, task_id, built_ts, sources, files, symbols, memories, risks.
+  # Steps: index fixture repo; run pack; validate all top-level required fields are present.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-schema"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+
+  out="$tmp_root/pack-schema.out"; err="$tmp_root/pack-schema.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
+    "$PMCTL" context pack "$fix_repo" --task-id SCHEMA-TEST --query my_func_alpha \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+
+  if ! jq -e '
+    has("schema_version") and has("task_id") and has("built_ts") and
+    has("sources") and has("files") and has("symbols") and
+    has("memories") and has("risks") and
+    .schema_version == 2
+  ' "$out" > /dev/null 2>"$err"; then
+    fail "$name" "schema contract failed: $(<"$err") output: $(<"$out")"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_context_layer_boundary() {
   local name="pmctl-context.sh: does not source pmctl-dispatch.sh or adapters"
   should_run "$name" || return 0
@@ -1100,6 +1151,9 @@ case_context_pack_unknown_flag
 case_context_pack_valid_json
 case_context_pack_symbol_vs_file_split
 case_context_pack_dedup
+case_context_pack_whitespace_task_id
+case_context_pack_nondir_repo_path
+case_context_pack_schema_contract
 case_context_reuse_scan_missing_desc
 case_context_reuse_scan_no_db
 case_context_reuse_scan_unknown_flag
