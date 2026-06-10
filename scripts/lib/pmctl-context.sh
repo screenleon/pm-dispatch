@@ -330,11 +330,9 @@ _ctx_chunk_file() {
 
 _ctx_generate_file_sql() {
   local abs_path="$1" rel_path="$2"
-  local lang mtime sha1 size_bytes indexed_at ep source_domain
+  local lang mtime sha1 size_bytes indexed_at ep
 
   lang="$(_ctx_detect_language "$rel_path")"
-  source_domain="$(_ctx_classify_domain "$rel_path")"
-  : "$source_domain"
   mtime="$(_ctx_file_mtime "$abs_path")"
   sha1="$(_ctx_file_sha1 "$abs_path")"
   size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || printf '0')"
