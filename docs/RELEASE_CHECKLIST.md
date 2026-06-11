@@ -5,14 +5,15 @@ top to bottom, and only tag when every box is checked on **both Linux and
 Windows Git Bash** (macOS is out of scope — see `docs/platform-support.md`).
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
-Coverage splits into two layers:
+Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Automated** | `scripts/release-verify.sh` | prerequisites, all 49 test suites, real `pmctl context` smoke against this repo + real `sqlite3` |
-| **Manual E2E** | the steps in §2 below | real install + hooks, real dispatch on each executor, reviewer fan-out — things that mutate the environment or spend LLM tokens |
+| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 51 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract, real pr-gate structural validation — spends LLM tokens |
+| **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
-A release is **GO** only when §1 prints `GO` and every §2 / §3 / §4 box is ticked.
+A release is **GO** only when `release-verify.sh --e2e` prints `GO` and every §2a / §2d box is ticked.
 
 ---
 
@@ -29,19 +30,26 @@ A release is **GO** only when §1 prints `GO` and every §2 / §3 / §4 box is t
 
 ## 1. Automated verification (`release-verify.sh`)
 
-Run on **each** platform you ship to. Note: Phase 3 indexes the whole repo and is
-slow on Windows Git Bash (minutes) — this is expected (MSYS subprocess overhead).
+Run on **each** platform you ship to.
 
 ```bash
-# Linux / WSL2
+# Linux / WSL2 — Phases 1-3 (offline, no tokens)
 bash scripts/release-verify.sh
+
+# Same platform — Phase 4: real dispatch + pr-gate (spends LLM tokens)
+bash scripts/release-verify.sh --e2e
+# or with explicit adapter:
+bash scripts/release-verify.sh --e2e --adapter claude
 
 # Windows Git Bash (ensure sqlite3 is installed first — see §Prerequisites below)
-bash scripts/release-verify.sh
+bash scripts/release-verify.sh --e2e
 ```
 
-- [ ] **Linux**: final line prints `AUTOMATED VERDICT: GO`.
-- [ ] **Windows Git Bash**: final line prints `AUTOMATED VERDICT: GO`.
+Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
+— this is expected (MSYS subprocess overhead).
+
+- [ ] **Linux**: `release-verify.sh --e2e` final line prints `AUTOMATED VERDICT: GO`.
+- [ ] **Windows Git Bash**: `release-verify.sh --e2e` final line prints `AUTOMATED VERDICT: GO`.
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).
@@ -62,11 +70,11 @@ bash scripts/release-verify.sh
 
 ---
 
-## 2. Manual end-to-end (per platform)
+## 2. Manual steps (per platform)
 
-These touch the real environment and/or spend LLM tokens, so they are not in the
-automated script. Do them in a throwaway/dev `~/.claude`, not your production one
-if you want to be safe.
+**§2b (dispatch) and §2c (pr-gate) are now automated by `release-verify.sh
+--e2e`.** Only §2a (install/uninstall) and §2d (hooks) require manual steps
+because they mutate the real `~/.claude` environment.
 
 ### 2a. Install / health / uninstall
 
@@ -84,39 +92,38 @@ bash uninstall.sh                 # confirm clean removal, no leftover share/ di
 - [ ] `uninstall.sh` removes everything it installed (no dangling links, no empty
       `share/`).
 
-### 2b. Real dispatch — one per supported executor
+### 2b. Real dispatch + 2c. pr-gate — automated by `--e2e`
 
-Write a minimal valid brief to a file (see `docs/dispatch-brief.md` for the
-schema), then dispatch. The dispatch OWNS brief-validate + guard preflight.
+These are now covered by `release-verify.sh --e2e` Phase 4. No manual steps.
 
+To run them independently:
 ```bash
-# claude executor (supported on Linux AND Windows Git Bash)
-pmctl dispatch run --adapter claude --cd <workdir> --brief-file <brief.md>
-
-# codex executor (Linux / WSL2 only; needs `codex login` — see platform notes)
-pmctl dispatch run --adapter codex  --cd <workdir> --brief-file <brief.md>
+bash scripts/test-e2e.sh                   # auto-detect adapter
+bash scripts/test-e2e.sh --adapter claude  # force claude
+bash scripts/test-e2e.sh --skip-gate       # dispatch only, skip gate
 ```
 
-- [ ] **claude** dispatch exits 0, produces the expected artifact, and writes a
-      run footer + `trace`/`.jsonl` capture (and `latest.*` pointer).
-- [ ] **codex** dispatch (Linux) exits 0 with the same evidence.
-- [ ] A **malformed brief** (e.g. missing `schema_version`) is `REJECT`ed with no
-      executor spawned and no target file read.
-
-### 2c. Reviewer fan-out (PR gate)
-
-```bash
-bash scripts/pr-gate.sh --executor claude
-```
-
-- [ ] Gate runs the reviewer tiers and emits a GO / NO-GO synthesis; piped stdout
-      is non-empty and exit code matches the verdict (no 0-byte / false-success).
+- [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) prints `GO` on this platform.
 
 ### 2d. Claude Code hooks (live)
 
-- [ ] In a real Claude Code session against an installed checkout, confirm the
-      write-guard / routing-log / memory-inject hooks fire (trigger one of each
-      and check `share/`/trace output).
+In a real Claude Code session against an installed checkout, trigger each hook
+type once and confirm the output lands in `share/` or the trace store.
+
+```bash
+# write-guard: attempt a write outside the allowed path — should be DENIED with exit 2
+# (trigger by asking Claude to write to /tmp/test-hook-write.txt in a Claude Code session)
+
+# routing-log: any dispatch emits a routing event; check the log file grew
+tail -f ~/.claude/.pm/share/routing.log   # open in another terminal, then run a dispatch
+
+# memory-inject: start a new Claude Code session and confirm the MEMORY.md block appears
+# in the first UserPromptSubmit hook output
+```
+
+- [ ] write-guard hook fires and blocks a write outside the pm share path (exit 2, no file created).
+- [ ] routing-log hook appends a JSON line to `share/routing.log` after a dispatch.
+- [ ] memory-inject hook injects `=== auto-memory: MEMORY.md index ===` in the session context.
 
 ---
 
@@ -131,7 +138,9 @@ covering check has passed this cycle.
 | `pmctl context` pack / reuse-scan | §1 Phase 3 |
 | `pmctl task` lifecycle (create/claim/dispatch/status/review) | §1 Phase 2 (`test-pmctl-task`, `test-pmctl-gate`) |
 | `pmctl dispatch run` (claude / codex adapters) | §1 Phase 2 (`test-*-dispatch`) + §2b (real) |
-| `pmctl trace` / `decision` / `backlog` / `validate` / `safe` / `guard` | §1 Phase 2 (`test-pmctl-*`) |
+| `pmctl trace` / `decision` / `validate` / `safe` | §1 Phase 2 (`test-pmctl-*`) |
+| `pmctl backlog` view / lint | §1 Phase 2 (`test-pmctl-backlog`) |
+| `pmctl guard check` (write-guard / bash-guard policy) | §1 Phase 2 (`test-pmctl-guard`) |
 | `adapter generate` | §1 Phase 2 (`test-pmctl-adapter-generate`) |
 | install / uninstall / doctor | §1 Phase 2 (`test-install/uninstall/doctor`) + §2a (real) |
 | hooks (write-guard, routing, memory, usage…) | §1 Phase 2 (`test-hooks`, `test-hook-framework`) + §2d (live) |
@@ -146,10 +155,10 @@ covering check has passed this cycle.
 
 ## 4. Platform sign-off
 
-| Platform | §1 GO | §2a install/doctor/uninstall | §2b dispatch | §2c pr-gate | §2d hooks |
-|----------|:-----:|:----------------------------:|:------------:|:-----------:|:---------:|
-| Linux / WSL2 | ☐ | ☐ | ☐ (claude+codex) | ☐ | ☐ |
-| Windows Git Bash | ☐ | ☐ | ☐ (claude only) | ☐ | ☐ |
+| Platform | `--e2e` GO | §2a install/doctor/uninstall | §2d hooks |
+|----------|:----------:|:----------------------------:|:---------:|
+| Linux / WSL2 | ☐ | ☐ | ☐ |
+| Windows Git Bash | ☐ | ☐ | ☐ |
 
 ---
 

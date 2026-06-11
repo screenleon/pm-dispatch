@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # release-verify.sh — pre-release verification orchestrator for pm-dispatch.
 #
-# Runs every SAFE, automated verification phase in one shot and prints a
-# per-phase PASS/FAIL table plus a final GO / NO-GO verdict. Side-effect-free:
-# it never installs into the real ~/.claude and never spends LLM tokens. The
-# environment-mutating and credentialed-E2E checks (real dispatch, reviewer
-# fan-out, real install + Claude Code hooks) are MANUAL and live in
-# docs/RELEASE_CHECKLIST.md — this script prints a pointer to them at the end.
+# Runs every automated verification phase in one shot and prints a per-phase
+# PASS/FAIL table plus a final GO / NO-GO verdict.
 #
 # Usage:
-#   scripts/release-verify.sh [--no-suite] [--help]
+#   scripts/release-verify.sh [--no-suite] [--e2e] [--adapter claude|codex|auto] [--help]
 #
-#   --no-suite   Skip the full run-all-tests.sh aggregator (fast iteration only;
-#                NEVER skip for an actual release sign-off).
+#   --no-suite        Skip run-all-tests.sh (fast iteration only; NEVER skip
+#                     for an actual release sign-off).
+#   --e2e             Also run Phase 4: real dispatch + pr-gate via
+#                     test-e2e.sh. Spends LLM tokens. Required for release.
+#   --adapter <a>     Executor for --e2e (default: auto — codex if on PATH,
+#                     else claude).
 #
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
 #              2 = usage error.
@@ -23,12 +23,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
 
+# Temp files — declared upfront so the EXIT trap can always clean them safely.
+suite_log=""
+smoke_state=""
+smoke_err=""
+e2e_log=""
+cleanup() {
+  rm -f "$suite_log" "$smoke_err" "$e2e_log" 2>/dev/null || true
+  if [[ -n "$smoke_state" ]]; then rm -rf "$smoke_state" 2>/dev/null || true; fi
+}
+trap cleanup EXIT INT TERM
+
 RUN_SUITE=1
+RUN_E2E=0
+E2E_ADAPTER="auto"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-suite) RUN_SUITE=0; shift ;;
+    --e2e)      RUN_E2E=1; shift ;;
+    --adapter)
+      if [[ -z "${2:-}" ]]; then printf 'release-verify: --adapter requires a value\n' >&2; exit 2; fi
+      E2E_ADAPTER="$2"; shift 2
+      ;;
     --help|-h)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) printf 'release-verify: unknown flag %s\n' "$1" >&2; exit 2 ;;
@@ -100,7 +118,7 @@ section "Phase 2 — Automated test suite (run-all-tests.sh)"
 if [[ "$RUN_SUITE" -eq 0 ]]; then
   record "run-all-tests" SKIP "--no-suite requested (NOT valid for release sign-off)"
 else
-  suite_log="$(mktemp)"
+  suite_log="$(mktemp)"  # registered in cleanup trap above
   if bash "$SCRIPT_DIR/run-all-tests.sh" >"$suite_log" 2>&1; then
     record "run-all-tests" PASS "$(tail -1 "$suite_log")"
   else
@@ -113,7 +131,7 @@ else
     printf '    --- skipped suites (NOT covered here) ---\n'
     grep -E '^SKIP ' "$suite_log" | sed 's/^/    /'
   fi
-  rm -f "$suite_log"
+  rm -f "$suite_log"; suite_log=""
 fi
 
 # ── Phase 3: Real-binary feature smoke ───────────────────────────────────────
@@ -121,19 +139,20 @@ fi
 # feature (pmctl context) against the REAL repo with the REAL sqlite3 binary,
 # in a throwaway state root (no pollution).
 section "Phase 3 — Real-binary feature smoke (pmctl context on this repo)"
-if ! command -v sqlite3 >/dev/null 2>&1; then
+if [[ ! -x "$PMCTL" ]]; then
+  record "context smoke" SKIP "pmctl not found or not executable: $PMCTL"
+elif ! command -v sqlite3 >/dev/null 2>&1; then
   record "context smoke" SKIP "sqlite3 missing — cannot exercise context"
 else
-  smoke_state="$(mktemp -d)"
-  smoke_err="$(mktemp)"
-  (
+  smoke_state="$(mktemp -d)"  # registered in cleanup trap above
+  smoke_err="$(mktemp)"       # registered in cleanup trap above
+  if (
     export PM_DISPATCH_STATE_ROOT="$smoke_state"
-    set -e
+    set -eo pipefail
     "$PMCTL" context index "$REPO_ROOT" >/dev/null 2>"$smoke_err"
     # Incremental re-index must skip (proves mtime-skip works on this platform).
     "$PMCTL" context index "$REPO_ROOT" 2>>"$smoke_err" | grep -qE '0 indexed, [0-9]+ skipped'
-  )
-  if [[ $? -eq 0 ]]; then
+  ); then
     # A query for a known repo symbol should return at least one clean ref.
     q="$(PM_DISPATCH_STATE_ROOT="$smoke_state" "$PMCTL" context query "$REPO_ROOT" pmctl_context_index 2>/dev/null || true)"
     if printf '%s' "$q" | grep -q 'ref: ' && ! printf '%s' "$q" | grep -q $'\r'; then
@@ -155,16 +174,38 @@ else
   else
     record "context index+skip+query" FAIL "index/skip failed: $(tail -1 "$smoke_err")"
   fi
-  rm -rf "$smoke_state" "$smoke_err"
+  rm -rf "$smoke_state"; smoke_state=""
+  rm -f "$smoke_err"; smoke_err=""
+fi
+
+# ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────
+if [[ "$RUN_E2E" -eq 1 ]]; then
+  section "Phase 4 — Real E2E (pmctl dispatch + pr-gate)"
+  e2e_script="$SCRIPT_DIR/test-e2e.sh"
+  if [[ ! -x "$e2e_script" ]]; then
+    record "test-e2e.sh" FAIL "not found or not executable: $e2e_script"
+  else
+    e2e_log="$(mktemp)"  # registered in cleanup trap above
+    if bash "$e2e_script" --adapter "$E2E_ADAPTER" >"$e2e_log" 2>&1; then
+      record "e2e dispatch+gate" PASS \
+        "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'all checks passed')"
+    else
+      record "e2e dispatch+gate" FAIL \
+        "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'test-e2e.sh failed')"
+      printf '    --- E2E failures ---\n'
+      grep -E '^\s+\[FAIL\]' "$e2e_log" | sed 's/^/    /' || true
+    fi
+    rm -f "$e2e_log"; e2e_log=""
+  fi
 fi
 
 # ── Verdict ──────────────────────────────────────────────────────────────────
 section "Verdict"
 hr
-printf '%-32s %s\n' "PHASE" "RESULT"
+printf '%-44s %s\n' "PHASE" "RESULT"
 hr
 for i in "${!PHASE_NAMES[@]}"; do
-  printf '%-32s %s\n' "${PHASE_NAMES[$i]}" "${PHASE_RESULTS[$i]}"
+  printf '%-44s %s\n' "${PHASE_NAMES[$i]}" "${PHASE_RESULTS[$i]}"
 done
 hr
 if [[ "$FAILED" -eq 0 ]]; then
@@ -172,13 +213,13 @@ if [[ "$FAILED" -eq 0 ]]; then
 else
   printf 'AUTOMATED VERDICT: NO-GO  (%d failures)\n' "$FAILED"
 fi
-cat <<'EOF'
 
-NOTE: automated phases do NOT cover environment-mutating or credentialed steps.
-Before tagging a release you MUST also complete the MANUAL steps in
-docs/RELEASE_CHECKLIST.md (real install + doctor, real dispatch on each
-executor, /pr-gate reviewer fan-out, Claude Code hook execution), on BOTH
-Linux and Windows Git Bash.
-EOF
+if [[ "$RUN_E2E" -eq 0 ]]; then
+  printf '\nNOTE: Re-run with --e2e to validate real dispatch + pr-gate (spends LLM\n'
+  printf 'tokens). Required for release sign-off (see docs/RELEASE_CHECKLIST.md).\n'
+else
+  printf '\nNOTE: install/doctor/uninstall and Claude Code hook execution are still\n'
+  printf 'manual. See docs/RELEASE_CHECKLIST.md §2a and §2d before tagging.\n'
+fi
 
 [[ "$FAILED" -eq 0 ]] && exit 0 || exit 1
