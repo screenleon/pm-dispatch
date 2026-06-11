@@ -87,7 +87,7 @@ Group the anomaly table by `(adapter, exit_class)`. For each group:
 - **≥ 2 occurrences**: candidate for a `feedback` memory card describing the recurring failure pattern.
 - **1 occurrence, exit_class == timeout**: candidate only if no existing memory card already covers this adapter's timeout behaviour.
 - **guard.denied**: group by the denied path prefix; ≥ 2 denials on the same prefix → candidate for a policy or workflow feedback card.
-- Skip any anomaly whose task_id maps to a ticket that is now `✅ closed` in BACKLOG.md and the failure is clearly resolved.
+- Skip any anomaly where the same `subject_id` (run) was followed by a successful run on the same adapter, or where context makes clear the failure is already resolved (e.g., the brief_file name corresponds to a ticket now `✅ closed` in BACKLOG.md).
 
 **Only promote genuinely persistent, cross-session patterns.** A one-time fluke is not a memory card.
 
