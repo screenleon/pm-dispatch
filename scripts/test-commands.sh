@@ -113,6 +113,10 @@ should_run "mem-distill: Step 2b documents non-zero failure class" && assert_fil
 should_run "mem-distill: Step 2b documents no-output skip" && assert_file_contains "mem-distill: Step 2b documents no-output skip" "$MEM_DISTILL" "no output" && pass "mem-distill: Step 2b documents no-output skip"
 should_run "mem-distill: Step 3b cites event id in proposals" && assert_file_contains "mem-distill: Step 3b cites event id in proposals" "$MEM_DISTILL" "cite the event" && pass "mem-distill: Step 3b cites event id in proposals"
 should_run "mem-distill: Step 3b defines guard.denied path field" && assert_file_contains "mem-distill: Step 3b defines guard.denied path field" "$MEM_DISTILL" "payload.path" && pass "mem-distill: Step 3b defines guard.denied path field"
+# kind-specific payload contract — guard/task anomalies must not be forced through run-only fields
+should_run "mem-distill: kind-specific payload table documented" && assert_file_contains "mem-distill: kind-specific payload table documented" "$MEM_DISTILL" "Payload fields differ by kind" && pass "mem-distill: kind-specific payload table documented"
+should_run "mem-distill: task.blocked uses from_state field" && assert_file_contains "mem-distill: task.blocked uses from_state field" "$MEM_DISTILL" "from_state" && pass "mem-distill: task.blocked uses from_state field"
+should_run "mem-distill: task.blocked grouped by state transition" && assert_file_contains "mem-distill: task.blocked grouped by state transition" "$MEM_DISTILL" "from_state, to_state" && pass "mem-distill: task.blocked grouped by state transition"
 
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
 
