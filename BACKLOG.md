@@ -47,7 +47,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-225 | ⏸ deferred | **[claude-executor result observability]** `claude-executor` task output 寫入 session-scoped `/tmp/` 路徑，不進 REPO、不可跨 session 回溯，且無法 git diff 追蹤執行歷史。設計目標：主線程在 claude-executor 完成後把 brief 路徑、result 摘要、exit status 寫入 REPO 固定目錄（格式與 `.gate-results/` 一致），作為 CC-211 / CC-216 MCP 架構抽離的前提。sub-concern of CC-211. | ops | 2026-05-22 | — | P3 | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | 🟢 superseded 2026-06-08 | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
-| CC-234 | 🔵 active | **[v0.5.0 P2 write-half: memory v2 — episodes + anomaly-event distillation（scope trimmed 2026-06-10）]** Point `/mem-distill` at `episodes.jsonl` plus the **anomaly slice** of `events.jsonl` only — run failures, timeouts, gate blocks（exit≠0 / blocked verdicts）. Trimmed by 2026-06-10 arch review: the live event stream is run-FSM lifecycle telemetry, so happy-path events carry nothing distillable and the generic event-tier schema is dropped from this slice. Acceptance = one real card distilled from one real recorded failure, user-confirmed, surfacing via existing MEMORY.md auto-injection. Write side of the memory loop; CC-354 is the read side. | memory | 2026-05-22 | — | P2 | design |
+| CC-234 | ✅ closed 2026-06-11 | **[v0.5.0 P2 write-half: memory v2 — episodes + anomaly-event distillation（scope trimmed 2026-06-10）]** Point `/mem-distill` at `episodes.jsonl` plus the **anomaly slice** of `events.jsonl` only — run failures, timeouts, gate blocks（exit≠0 / blocked verdicts）. Trimmed by 2026-06-10 arch review: the live event stream is run-FSM lifecycle telemetry, so happy-path events carry nothing distillable and the generic event-tier schema is dropped from this slice. Acceptance = one real card distilled from one real recorded failure, user-confirmed, surfacing via existing MEMORY.md auto-injection. Write side of the memory loop; CC-354 is the read side. **See**: pr:#265 | memory | 2026-05-22 | pr:#265 | P2 | design |
 | CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ✅ closed 2026-06-09 | **[v0.5.0 P1: context-enricher interface]** Define `context_hit_v1` (source_domain knowledge/repo/state, why_relevant, trust_level, refs) extending the CC-232 context-pack schema; schema_version bumped 1→2 (additive; v1 packs remain valid via enum). Delivers the interface contract; the assembled `pmctl context pack` output is CC-239. builtin-index backend is CC-338. | ux | 2026-05-22 | pr:#253 | P1 | design |
@@ -101,6 +101,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
 | CC-358 | 🟢 someday | **[runner telemetry: evaluate with real runs — success rate / failure pattern / fallback analysis]** events.jsonl 已有每次 run 的完整生命週期資料（pending/dispatched/verifying/ok/failed），但沒有任何 consumer 分析「哪類任務成功率高低」、「失敗的主因是什麼」、「fallback 觸發頻率」。這使 adapter 路由決策完全主觀，也無從判斷 recovery 策略。本票在現有 events 原料上建立 runner telemetry layer：從 task history 計算 per-adapter 成功率、依 goal/context 分群的失敗模式、fallback 觸發原因分佈——提供資料驅動的 runner diversity（CC-2xx）與 recovery 決策依據。 | ops/memory | 2026-06-10 | — | — | design |
+| CC-359 | 🟢 someday | **[concept: backlog-driven batch dispatch with worktree isolation]** 設計理念：pm-dispatch 本身管理 git worktree 生命週期（`git worktree add/remove`），讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task，不依賴任何特定 executor 的 platform feature。核心原則：(1) executor-agnostic — worktree 管理是 pmctl 責任，非 executor 責任；(2) human-in-the-loop — batch dispatch 後 merge 決策仍在人這邊，無 auto-merge；(3) 衝突可觀測不禁止 — 以 BACKLOG area 欄位做粗粒度衝突分組（同 area 排隊，不同 area 可平行），不做逐檔 conflict detection；(4) PR-only — 每個 task 產出獨立 branch + PR，由人統一 review。適合類型：測試補強、文件補強、小 bug、CLI option 補齊；不適合：架構核心大改、schema breaking change。Token budget 可作為 scheduler 輸入控制並行度。 | arch/ops | 2026-06-11 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
 
 ---
@@ -617,7 +618,9 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: surfaced during CC-222 close-out 2026-05-22.
 
-## CC-234 — memory v2: episodes + anomaly-event distillation（write-half of the memory loop；scope trimmed 2026-06-10）
+## CC-234 — memory v2: episodes + anomaly-event distillation（write-half of the memory loop；scope trimmed 2026-06-10）✅ 2026-06-11
+
+**See**: pr:#265
 
 **Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable *action* signal lives in `events.jsonl`, but inspection of the live stream (2026-06-10 arch review) shows it is run-FSM **lifecycle telemetry** (run.created → dispatched → verifying → completed, adapter + exit codes) — happy-path events carry almost no distillable semantics. A generic "distill all events" pass would be technically working machinery with nothing worth distilling.
 
@@ -1840,3 +1843,24 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 **Priority**: 未定（someday）。
 
 **Cross-link**: `events.jsonl` (data source), `pmctl trace tail` (existing consumer, read model to build on), [[CC-234]] (write side of memory loop — episodes 可補充 events 的語意), [[CC-346]] (paused; needs CC-356 evidence first, this ticket adds more evidence dimension).
+
+## CC-359 — backlog-driven batch dispatch with worktree isolation（concept）
+
+**Concept**: pm-dispatch 自己管理 `git worktree` 生命週期，讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task。不依賴任何特定 executor 的 platform feature——worktree 管理是 pmctl 的責任，不是 codex 或 claude 等 executor 的責任。
+
+**Design principles**:
+
+- **Executor-agnostic worktree management**: `git worktree add <path> -b agent/<task-id>` / `git worktree remove <path>` 由 pmctl 負責，codex 和 claude 都能在各自的 worktree 裡跑，不依賴特定 executor 的 isolation 機制。
+- **Human-in-the-loop**: batch dispatch 後 merge 決策仍在人這邊，無 auto-merge，PR-only 原則不變。
+- **衝突可觀測不禁止**: 以 BACKLOG `area` 欄位做粗粒度衝突分組——同 area task 排隊不並行；不同 area 可平行。不做逐檔 conflict detection（成本高且在 brief 寫完前無法計算）。逐 PR review 和 rebase 流程處理邏輯衝突。
+- **PR-only output**: 每個 task 在各自 worktree 產出 commit + branch + PR，由人統一 review 和 merge。
+
+**Suitable tasks for parallel dispatch**: 測試補強、文件補強、小 bug 修復、CLI option 補齊、error message 改善、backlog spike/survey。不適合：架構核心大改、schema breaking change、多個 task 改相同核心介面。
+
+**Token budget as scheduler input**: 可設 `--budget low/normal/aggressive` 控制並行度（worker 數、adapter 選擇、是否使用 Opus）。
+
+**Priority reasoning**: 需要 memory loop 完整落地後，才能有足夠的 context substrate 讓 batch dispatcher 智能分派任務。無固定里程碑——後續視工作流需求與 backlog 積壓情況決定是否優先。
+
+**Non-goals for this concept ticket**: 不設計具體 subcommand syntax 或 schema——那是 implementation ticket 的工作；本票只記錄理念和約束。
+
+**Cross-link**: [[CC-358]] (runner telemetry — batch dispatcher 的決策依據), [[CC-346]] (paused), `git worktree` (stdlib, no new dependency).

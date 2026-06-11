@@ -86,6 +86,42 @@ assert_in_section() {
   fi
 }
 
+# ── mem-distill.md anomaly-slice contract ────────────────────────────────────
+
+MEM_DISTILL="$COMMANDS_DIR/mem-distill.md"
+
+assert_frontmatter "mem-distill: frontmatter valid" "$MEM_DISTILL"
+should_run "mem-distill: has Step 2b" && assert_file_contains "mem-distill: has Step 2b" "$MEM_DISTILL" "Step 2b" && pass "mem-distill: has Step 2b"
+should_run "mem-distill: documents run.failed anomaly kind" && assert_file_contains "mem-distill: documents run.failed anomaly kind" "$MEM_DISTILL" "run.failed" && pass "mem-distill: documents run.failed anomaly kind"
+should_run "mem-distill: documents guard.denied anomaly kind" && assert_file_contains "mem-distill: documents guard.denied anomaly kind" "$MEM_DISTILL" "guard.denied" && pass "mem-distill: documents guard.denied anomaly kind"
+should_run "mem-distill: documents task.blocked anomaly kind" && assert_file_contains "mem-distill: documents task.blocked anomaly kind" "$MEM_DISTILL" "task.blocked" && pass "mem-distill: documents task.blocked anomaly kind"
+should_run "mem-distill: defines exit_code 124 as timeout" && assert_file_contains "mem-distill: defines exit_code 124 as timeout" "$MEM_DISTILL" "exit_code == 124" && pass "mem-distill: defines exit_code 124 as timeout"
+should_run "mem-distill: report includes anomaly count" && assert_file_contains "mem-distill: report includes anomaly count" "$MEM_DISTILL" "anomaly group" && pass "mem-distill: report includes anomaly count"
+should_run "mem-distill: no python3 calls" && assert_not_contains "mem-distill: no python3 calls" "$MEM_DISTILL" "python3"
+should_run "mem-distill: Step 2b uses pmctl trace tail" && assert_file_contains "mem-distill: Step 2b uses pmctl trace tail" "$MEM_DISTILL" "pmctl trace tail" && pass "mem-distill: Step 2b uses pmctl trace tail"
+# Step 1 shell lookup contract
+should_run "mem-distill: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-distill: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_DISTILL" "CLAUDE_CONFIG_DIR" && pass "mem-distill: Step 1 references CLAUDE_CONFIG_DIR"
+should_run "mem-distill: Step 1 walks parent directories" && assert_file_contains "mem-distill: Step 1 walks parent directories" "$MEM_DISTILL" "dirname" && pass "mem-distill: Step 1 walks parent directories"
+# Step 3b anomaly policy rules
+should_run "mem-distill: Step 3b defines 60-day age cutoff" && assert_file_contains "mem-distill: Step 3b defines 60-day age cutoff" "$MEM_DISTILL" "60 days" && pass "mem-distill: Step 3b defines 60-day age cutoff"
+should_run "mem-distill: Step 3b defines recurrence threshold" && assert_file_contains "mem-distill: Step 3b defines recurrence threshold" "$MEM_DISTILL" "2 occurrences" && pass "mem-distill: Step 3b defines recurrence threshold"
+should_run "mem-distill: Step 3b defines guard.denied prefix grouping" && assert_file_contains "mem-distill: Step 3b defines guard.denied prefix grouping" "$MEM_DISTILL" "denied path prefix" && pass "mem-distill: Step 3b defines guard.denied prefix grouping"
+should_run "mem-distill: Step 3b defines resolved-run skip rule" && assert_file_contains "mem-distill: Step 3b defines resolved-run skip rule" "$MEM_DISTILL" "followed by a successful run" && pass "mem-distill: Step 3b defines resolved-run skip rule"
+should_run "mem-distill: Step 2b captures event id field" && assert_file_contains "mem-distill: Step 2b captures event id field" "$MEM_DISTILL" "evt-" && pass "mem-distill: Step 2b captures event id field"
+should_run "mem-distill: Step 2b documents exit_code 0 as ok" && assert_file_contains "mem-distill: Step 2b documents exit_code 0 as ok" "$MEM_DISTILL" "exit_code == 0" && pass "mem-distill: Step 2b documents exit_code 0 as ok"
+should_run "mem-distill: Step 2b documents non-zero failure class" && assert_file_contains "mem-distill: Step 2b documents non-zero failure class" "$MEM_DISTILL" "non-zero" && pass "mem-distill: Step 2b documents non-zero failure class"
+should_run "mem-distill: Step 2b documents no-output skip" && assert_file_contains "mem-distill: Step 2b documents no-output skip" "$MEM_DISTILL" "no output" && pass "mem-distill: Step 2b documents no-output skip"
+should_run "mem-distill: Step 3b cites event id in proposals" && assert_file_contains "mem-distill: Step 3b cites event id in proposals" "$MEM_DISTILL" "cite the event" && pass "mem-distill: Step 3b cites event id in proposals"
+should_run "mem-distill: Step 3b defines guard.denied path field" && assert_file_contains "mem-distill: Step 3b defines guard.denied path field" "$MEM_DISTILL" "payload.path" && pass "mem-distill: Step 3b defines guard.denied path field"
+# kind-specific payload contract — guard/task anomalies must not be forced through run-only fields
+should_run "mem-distill: kind-specific payload table documented" && assert_file_contains "mem-distill: kind-specific payload table documented" "$MEM_DISTILL" "Payload fields differ by kind" && pass "mem-distill: kind-specific payload table documented"
+should_run "mem-distill: task.blocked uses from_state field" && assert_file_contains "mem-distill: task.blocked uses from_state field" "$MEM_DISTILL" "from_state" && pass "mem-distill: task.blocked uses from_state field"
+should_run "mem-distill: task.blocked grouped by state transition" && assert_file_contains "mem-distill: task.blocked grouped by state transition" "$MEM_DISTILL" "from_state, to_state" && pass "mem-distill: task.blocked grouped by state transition"
+# gate block / blocked review verdict contract
+should_run "mem-distill: documents review.verdict event kind" && assert_file_contains "mem-distill: documents review.verdict event kind" "$MEM_DISTILL" "review.verdict" && pass "mem-distill: documents review.verdict event kind"
+should_run "mem-distill: review.verdict payload.verdict documented" && assert_file_contains "mem-distill: review.verdict payload.verdict documented" "$MEM_DISTILL" "payload.verdict" && pass "mem-distill: review.verdict payload.verdict documented"
+should_run "mem-distill: gate block fallback to gate-results documented" && assert_file_contains "mem-distill: gate block fallback to gate-results documented" "$MEM_DISTILL" ".gate-results" && pass "mem-distill: gate block fallback to gate-results documented"
+
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
 
 PRE_IMPL="$COMMANDS_DIR/pre-impl.md"
