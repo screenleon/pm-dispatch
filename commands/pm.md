@@ -17,7 +17,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 
 **Dispatch route**: Subagents cannot spawn subagents. If PM returns a `dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, reads `executor`, validates metadata with `handover_validate_all_metadata`, and then routes by `executor` value:
 
-- `executor: codex` → main-thread Bash to `pmctl dispatch run --adapter codex` (primary route; `scripts/codex-dispatch.sh` is a deprecated shim — do not call it directly)
+- `executor: codex` → main-thread Bash to `pmctl dispatch run --adapter codex`
 - `executor: claude` → main-thread `Agent(subagent_type: "claude-executor")` with the pre-written brief file path
 - any other value is rejected by the validator before this point
 

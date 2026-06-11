@@ -1,6 +1,6 @@
 # Dispatch brief schema
 
-The canonical structure for any brief dispatched to an executor (`codex-executor` via Agent or `scripts/codex-dispatch.sh`, or `claude-executor` via Agent).
+The canonical structure for any brief dispatched to an executor (`codex-executor` via `pmctl dispatch run --adapter codex` or Agent fallback, or `claude-executor` via Agent).
 
 Both executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
@@ -97,6 +97,7 @@ Use as needed; not all briefs require all of them.
     - spark pool: --model *spark* → pool=spark in log entry
     - log failure: log-usage.sh unavailable → dispatch still exits 0
   ```
+- **`test_target`** — **Required for language-aware tool spikes** (codegraph, AST-grep, semgrep, tree-sitter, etc.); optional otherwise. Commits to the representative target codebase the spike will exercise, distinct from `working_dir`. Without this field, the executor may choose any convenient repo, making the verdict non-reproducible. Example: `test_target: /home/user/github/my-go-project`. When the target's language and approximate LOC matter for generalizability, add a comment. See `docs/spikes/README.md` for the full `test_target:` contract.
 - **`expected_head_sha`** — **Recommended for any brief that touches > 4 files OR depends on a specific base commit**. 40-char git HEAD sha the brief was authored against. Codex should verify `git rev-parse HEAD == <sha>` at dispatch start; mismatch → HALT and report (catches "wrong branch / branch advanced / file changed under me" failures before any patch is attempted). Example:
   ```
   expected_head_sha: e2711dd802a3...
@@ -247,7 +248,7 @@ Exit codes: `0` = valid handover block (metadata and body consistent); `1` = inv
 
 ```bash
 # codex profile:
-bash scripts/codex-dispatch.sh --cd <work_dir> --brief-file <brief-file>
+pmctl dispatch run --adapter codex --cd <work_dir> --brief-file <brief-file>
 
 # claude profile:
 # dispatch via Agent(claude-executor)
@@ -361,7 +362,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 
 ## Main-thread dispatch via dispatch_handover_v1
 
-`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches `scripts/codex-dispatch.sh` directly with Bash in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
+`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter codex` in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
 
 ```dispatch_handover_v1
 handover_version: 2
@@ -416,12 +417,12 @@ Metadata fields:
 
 ### Env / config precedence
 
-Timeout resolution for `codex-dispatch.sh` follows this chain (highest priority first):
+Timeout resolution for the codex adapter follows this chain (highest priority first):
 
 - brief `timeout` value
 - `CODEX_DISPATCH_TIMEOUT` environment variable (public)
 - `dispatch.default_timeout` in `~/.pm-dispatch/config`
-- hardcoded fallback `1200` in `scripts/codex-dispatch.sh`
+- hardcoded fallback `1200` in `adapters/codex/dispatch.sh`
 
 Example `~/.pm-dispatch/config`:
 
@@ -477,7 +478,7 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 Direct Bash dispatch shape:
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "pmctl dispatch run --adapter codex --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
 When dispatching a legacy brief that has `sandbox:` instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`.
@@ -527,7 +528,7 @@ Each example above must reject before command construction through the correspon
 
 Argument order is stable:
 
-1. `bash <abs path>/scripts/codex-dispatch.sh`
+1. `pmctl dispatch run --adapter codex`
 2. `--cd <safe working_dir>`
 3. `--model <safe model>` only if `model` is not `default`
 4. `--isolation <safe isolation_level>` (canonical) OR `--sandbox <safe sandbox> --approval <safe approval>` (legacy fallback when `isolation_level` is absent)
@@ -548,9 +549,9 @@ Quoting and command-shape rules:
 Completion-parse procedure:
 
 1. When the completion notification arrives, read `BashOutput(bash_id: <id>)` to get the full merged stdout and stderr captured by the harness.
-2. Parse the stable stdout footer emitted by `scripts/codex-dispatch.sh:203-207`: `trace:`, `last:`, `stderr:`, and `exit:` between `---` separators.
-3. Use `scripts/codex-dispatch.sh:142-154` to recognize the start banner in stderr: cwd, model, sandbox, approval, timeout, trace, and brief.
-4. Use `scripts/codex-dispatch.sh:196-199` to recognize the finish banner and the optional timeout note.
+2. Parse the stable stdout footer emitted by `adapters/codex/dispatch.sh`: `trace:`, `last:`, `stderr:`, and `exit:` between `---` separators.
+3. Use the start banner in stderr to verify: cwd, model, sandbox, approval, timeout, trace, and brief.
+4. Use the finish banner in stderr to confirm completion and note any timeout.
 5. Read `<last>` for the final Codex message. If it is empty, fall back to the last `agent_message` item in the `.jsonl` trace.
 6. Read `<stderr>` regardless of exit code. Surface any non-empty content beyond the standard start and finish banners as `dispatch_errors`.
 7. Verify `git -C <working_dir> status --short`, `git -C <working_dir> diff --stat <base>...HEAD`, and observed `command_execution` events against the brief's `files:` and `self_verify:` blocks before reporting `ok`; otherwise report `partial` or `failed`.
@@ -617,7 +618,7 @@ goal: ...
 EOF
 
 # Dispatch (single line — no backslash continuation)
-~/github/pm-dispatch/scripts/codex-dispatch.sh --cd <abs path> --sandbox workspace-write --approval never --brief-file /tmp/brief-<task>.md
+pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write --brief-file /tmp/brief-<task>.md
 ```
 
 **Why `--brief-file` and not inline `-- "<brief>"`?**
@@ -697,7 +698,7 @@ acceptance:
 Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `scripts/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/scripts/codex-dispatch.sh --cd ${PM_DISPATCH_REPO} --sandbox workspace-write --approval never --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
+Bash(command: "pmctl dispatch run --adapter codex --cd ${PM_DISPATCH_REPO} --isolation workspace-write --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
 ```
 
 Expected sequence:
@@ -705,7 +706,7 @@ Expected sequence:
 1. Harness returns a background Bash task id.
 2. Completion notification arrives.
 3. Main thread reads `BashOutput(bash_id: <id>)`.
-4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from `scripts/codex-dispatch.sh:203-207`.
-5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start banner from `scripts/codex-dispatch.sh:142-154` and finish banner from `scripts/codex-dispatch.sh:196-199`.
+4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from the stable stdout footer emitted by `adapters/codex/dispatch.sh`.
+5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start and finish banners.
 6. Main thread runs `git -C ${PM_DISPATCH_REPO} status --short` and confirms no unexpected changes.
 7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook.

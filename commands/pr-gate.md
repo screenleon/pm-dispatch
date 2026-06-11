@@ -118,7 +118,7 @@ Do not poll, sleep, or call `BashOutput` immediately.
 ## Route A — `executor: codex` (default for full profile)
 
 This is the current codex-dispatch primary path. Gate writes one brief per dispatch,
-invokes `scripts/codex-dispatch.sh`, and waits for `result: <path>` in stdout.
+invokes `pmctl dispatch run --adapter codex`, and waits for `result: <path>` in stdout.
 
 - Dispatch shape: one Bash route per codex session.
 - Completion handling: open the result file directly from the footer path.
@@ -128,7 +128,7 @@ The command shape is stable and already implemented by `scripts/pr-gate.sh`.
 
 ## Route B — `executor: claude` (main-thread fan-out path)
 
-This route does **not** invoke `scripts/codex-dispatch.sh` at any point.
+This route does **not** invoke `pmctl dispatch run --adapter codex` at any point.
 
 - Dispatch shape: `scripts/pr-gate.sh` writes a `pr-gate-handover_v1` fenced block
   listing reviewer briefs and output files.

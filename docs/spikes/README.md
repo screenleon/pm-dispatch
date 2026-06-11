@@ -71,13 +71,69 @@ The **Recommendation** is the load-bearing output — a spike's product is a
 prototype; the durable artifacts are this result file and the follow-up
 tickets it justifies.
 
+## `test_target:` field (language-aware tool spikes)
+
+When a spike evaluates a **language-aware tool** (codegraph, AST-grep, semgrep,
+tree-sitter, etc.) that must index or analyse a representative codebase, the
+brief MUST commit to a `test_target:` field:
+
+```
+test_target: <absolute path to the representative target repo>
+```
+
+**Required** when the spike evaluates a language-aware tool whose verdict depends
+on the target's language/size/structure. **Optional** otherwise.
+
+`test_target:` is distinct from `working_dir:` (the spike executor's working
+directory, often pm-dispatch itself). A spike evaluating codegraph for a Go
+codebase would have `working_dir: ~/github/pm-dispatch` (where the tool setup
+lives) but `test_target: ~/github/some-go-project` (the corpus being indexed).
+
+Without a committed `test_target:`, the executor may pick any convenient repo,
+making the verdict non-reproducible. Include the language and approximate LOC in
+a comment when the exact repo matters for generalizability.
+
+## Verdict rubric for tool-evaluation spikes
+
+Verdict-issuing spikes that evaluate external tools must include a verdict rubric
+at `/tmp/cc<NNN>-content/verdict-rubric.md`. Reference template:
+
+```markdown
+## Verdict rubric
+
+### GREEN — adopt
+- Tool installs and the key capability works end-to-end on `test_target`.
+- Results are accurate enough to reduce the stated uncertainty.
+- No blocking constraints for the target use case.
+
+### AMBER — conditional
+- Tool works but with meaningful caveats (limited language support, index lag,
+  precision gap).
+- Adoption is viable with a documented workaround or scope restriction.
+- Cost or setup overhead is higher than expected but acceptable.
+
+### RED — do not adopt
+- Install fails after a reasonable attempt and the failure is **not** a local-env
+  issue (e.g. peerDep that the user could resolve, sandbox network isolation,
+  missing dev dependencies). ANY constraint of the executor's local environment
+  (sandbox, network block, missing tools) counts as local-env — not a project
+  quality signal. Only flag RED here when the failure would reproduce on a clean,
+  fully-provisioned dev machine.
+- Tool produces inaccurate results that cannot be worked around.
+- Security or licensing concern blocks use in this repo.
+```
+
+The RED criterion 1 enumeration of local-env examples (peerDep, sandbox network
+isolation, missing dev dependencies) is intentional: an executor running in a
+sandboxed environment that cannot reach the network must classify the failure as
+local-env and issue AMBER (needs-network caveat), not RED (tool broken).
+
 ## Producing a spike result
 
-v0.3.0 M5 adds `agents/spike.md` + the `/spike` command (CC-220): the spike
-agent plans the angles, the main thread fans out one investigation agent per
-angle (subagents cannot spawn subagents), and the spike agent synthesizes the
-angle outputs into the result file. Until `/spike` lands, a spike result file
-may be written by hand following the structure above.
+The spike agent plans the angles, the main thread fans out one investigation
+agent per angle (subagents cannot spawn subagents), and the spike agent
+synthesizes the angle outputs into the result file. A spike result file may be
+written by hand following the structure above.
 
 The first formal spike is **CC-209** — evaluating codegraph as a
-`context-pack` source (v0.3.0 M5).
+`context-pack` source.

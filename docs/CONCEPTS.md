@@ -99,7 +99,7 @@ Subagents can do things the main thread shouldn't have to do: long research, opi
 
 `pm-dispatch` uses subagents for two purposes:
 
-1. **Specialised roles.** `agents/project-pm.md` is a planner. `agents/critic.md`, `agents/qa-tester.md`, `agents/security-reviewer.md`, `agents/risk-reviewer.md`, `agents/architecture-reviewer.md` are five reviewers, each with a different lens. `agents/codex-executor.md` wraps `codex-dispatch.sh`. Each has a tight tool allowlist (e.g. the security-reviewer has read tools only) so the role enforces itself.
+1. **Specialised roles.** `agents/project-pm.md` is a planner. `agents/critic.md`, `agents/qa-tester.md`, `agents/security-reviewer.md`, `agents/risk-reviewer.md`, `agents/architecture-reviewer.md` are five reviewers, each with a different lens. `agents/codex-executor.md` wraps `adapters/codex/dispatch.sh` via `pmctl dispatch run`. Each has a tight tool allowlist (e.g. the security-reviewer has read tools only) so the role enforces itself.
 
 2. **Context isolation.** A long PR review can produce thousands of tokens of intermediate analysis. If the main thread did that work, every later turn would carry it. A subagent returns one summary message, leaving the main thread context lean.
 

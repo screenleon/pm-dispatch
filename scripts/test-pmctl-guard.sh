@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # QA category matrix for scripts/lib/pmctl-guard.sh + cli/pmctl guard dispatch.
 # Keying is role×runtime (CC-291): guard cares about --role (pm|executor|reviewer);
 # the --runtime axis (codex|claude) is consulted only where a role's policy differs
-# by runtime. --profile is a deprecated alias mapping onto (role, runtime).
+# by runtime.
 # 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, codex-prebash-allow, claude-prewrite-allow, reviewer-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
 # 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
 # 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # 9. Security: this IS the security surface - fail-closed cells (post-task-fail-closed, pm-prebash-fail-closed, claude-prebash-fail-closed) assert no silent allow; the fail-OPEN regression (claude-prewrite-nonbrief-deny) proves a non-brief claude pre-write is DENIED by the runtime-matched hook, not silently allowed by driving the wrong hook; deny cases assert the policy blocks; r2-equiv-* asserts the CLI is the same code path as the proven hooks
 # 10. Performance / scale boundaries: N/A - no published performance contract for the guard surface; this suite is behavioral
 # 11. Contract / interface compatibility: cli-unknown-sub - the cli/pmctl dispatch contract; the happy/deny cases above also exercise the real `cli/pmctl guard check` entry point
-# 12. Backward compatibility / migration: deprecated-profile-* asserts the legacy --profile alias still maps to (role, runtime) and warns; profile-role-mutex asserts the two surfaces are mutually exclusive; r2-equiv-* asserts the CLI produces identical allow/deny to the existing hooks (R2: equivalence-before-thinning)
+# 12. Backward compatibility / migration: r2-equiv-* asserts the CLI produces identical allow/deny to the existing hooks (R2: equivalence-before-thinning)
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -576,72 +576,8 @@ if should_run "cli-symlink-repo-root-relative" && _tpg_needs_symlink "cli-symlin
 fi
 
 # ---------------------------------------------------------------------------
-# 12a. Backward compatibility — deprecated --profile alias (CC-291)
 # ---------------------------------------------------------------------------
-
-# Each legacy --profile value still maps to its (role, runtime) cell and produces
-# the SAME verdict as the --role/--runtime form, plus a one-line stderr warning.
-
-if should_run "deprecated-profile-codex"; then
-  name="deprecated-profile-codex"
-  run_guard --event pre-write --profile codex --file /tmp/brief-task.md
-  if assert_exit "$name" "$GUARD_EXIT" "0" &&
-    assert_string_contains "$name" "$GUARD_OUT" "--profile is deprecated"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "deprecated-profile-pm"; then
-  name="deprecated-profile-pm"
-  run_guard --event pre-write --profile pm --file "$MEM_PATH"
-  if assert_exit "$name" "$GUARD_EXIT" "0" &&
-    assert_string_contains "$name" "$GUARD_OUT" "--profile is deprecated"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "deprecated-profile-claude"; then
-  name="deprecated-profile-claude"
-  run_guard --event pre-write --profile claude --file /tmp/brief-task.md
-  if assert_exit "$name" "$GUARD_EXIT" "0" &&
-    assert_string_contains "$name" "$GUARD_OUT" "--profile is deprecated"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "deprecated-profile-unknown"; then
-  name="deprecated-profile-unknown"
-  run_guard --event pre-write --profile bogus --file /tmp/brief-x.md
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "unknown profile"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "profile-role-mutex"; then
-  # --profile (deprecated) and --role (current) are mutually exclusive.
-  name="profile-role-mutex"
-  run_guard --event pre-write --profile codex --role executor --runtime codex --file /tmp/brief-x.md
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "mutually exclusive"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "profile-runtime-mutex"; then
-  # --profile carries the runtime itself, so --profile + --runtime is ambiguous
-  # (e.g. `--profile codex --runtime claude`) and is rejected, not silently
-  # resolved in favor of the profile.
-  name="profile-runtime-mutex"
-  run_guard --event pre-write --profile codex --runtime claude --file /tmp/brief-x.md
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "mutually exclusive"; then
-    pass "$name"
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# 12b. R2 equivalence — the CLI must produce identical allow/deny to the proven
+# 12. R2 equivalence — the CLI must produce identical allow/deny to the proven
 #     hooks. For each scenario, drive the hook DIRECTLY (the path test-hooks.sh
 #     exercises) and via pmctl, then assert identical exit codes.
 # ---------------------------------------------------------------------------
