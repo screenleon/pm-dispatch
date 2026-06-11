@@ -45,10 +45,9 @@
 |---|---|---|
 | CC-343 | `/discover` skill：讀 backlog（someday+deferred）+ DECISIONS + MILESTONES + 近期 git，輸出高槓桿機會清單（milestone seeder）。吃 knowledge 面、亦驗證 knowledge 搜尋需求（原 CC-330，撞號改號，見 Phase 0） | ✅ pr:#251 |
 | CC-354 | **讀側：anchored knowledge index + retrieval reflex**。對 in-repo knowledge docs（BACKLOG/DECISIONS/MILESTONES/docs）做 per-section TOC（heading + 抽 CC-id/decision-id + 行錨點 + lead，非全文），透過 pluggable per-format chunker（markdown heading / txt window；html deferred）；`pmctl context query --domain knowledge`；「查 index 再 grep」紀律寫入**中立 docs 契約 + pmctl**，不寫 CLAUDE.md（避免平台綁定），僅 agents/project-pm.md 放一行指標。repo 外 memory cards 維持 auto-injection，不進此刀。驗收含接線 + anchor-citation 指標（見上方驗收原則） | ✅ |
-| CC-234 | **寫側：memory v2（2026-06-10 縮範圍）**。`/mem-distill` 吃 episodes.jsonl + events.jsonl 的**異常切片**（run 失敗/timeout/gate block）→ 語意化 memory card；happy-path lifecycle events 明確排除；不做 generic event-tier schema（延 CC-340 再議）。驗收 = 從一次真實失敗蒸餾出一張真卡（cite episode 行 + event id），經確認後寫入 | P2 |
+| CC-234 | **寫側：memory v2（2026-06-10 縮範圍）**。`/mem-distill` 吃 episodes.jsonl + events.jsonl 的**異常切片**（run 失敗/timeout/gate block）→ 語意化 memory card；happy-path lifecycle events 明確排除；不做 generic event-tier schema（延 CC-340 再議）。驗收 = 從一次真實失敗蒸餾出一張真卡（cite episode 行 + event id），經確認後寫入 | ✅ pr:#265 |
 | CC-356 | **接線：context pack / reuse-scan 進 dispatch 流程 + 使用可觀測**（新增 2026-06-10）。pack/reuse-scan（#256）操作面零 caller——中立 docs 契約 + PM/skill 指標要求 brief 前先查 prior art；reuse_candidates 設 hit 上限防 brief 噪音；query/reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。亦為 CC-346 的 resume-trigger 證據來源 | ✅ pr:#264 |
-| CC-346 | **repo plane 下游：cross-file ref tracking**（file_refs 層）——**⏸ paused 2026-06-10**：同日早場曾 someday→P2，arch review 改回——reuse-scan 零 caller 時加深資料層是加倍下注未驗證假設。Resume trigger：CC-356 接線後 reuse-scan 輸出進過 ≥2 份真 brief 且 ref 缺口確為瓶頸；恢復時先只做 Phase a（bash source） | ⏸ paused |
-| CC-235 | Task lifecycle gate（warning mode first）——與 memory loop 無關，**optional**：有空檔才做，無則順延 v0.6.0，不阻塞 Phase 2 | P2 (optional) |
+| CC-235 | Task lifecycle gate（warning mode first）——`pmctl task dispatch` 在 claimed→in-progress 轉移時依 `behavioral_units` / `size_tier` 欄位導出 tier，substantial（≥3 units 或明確標記）時 warn to stderr + emit `task.lifecycle.warn` event，非 blocking；trivial/small/unknown 靜默放行 | ✅ pr:#TBD |
 | CC-341 | `pmctl validate`（接 CC-202 handover-validate framework；原 milestone 誤指已關閉的 CC-202，改用此 active 票） | ✅ pr:#252 |
 | CC-215 | pmctl state-ops 補完（remaining：`task claim/dispatch/status/review` + `safe-bash`）——收掉長期 ⚠️ partial | ✅ pr:#252 |
 
@@ -60,6 +59,8 @@
 | CC-255 | spike rubric + `test_target:` 模糊點修補 | P3 |
 
 ### 延後至 v0.6.0+（明確排除於 v0.5.0）
+
+- **CC-346 cross-file ref tracking（file_refs 層）**——Resume trigger：reuse-scan 輸出進過 ≥2 份真 brief 且 ref 缺口確為瓶頸；恢復時先只做 Phase a（bash source）。paused 2026-06-10：reuse-scan 零 caller 時加深資料層 = 加倍下注未驗證假設。
 
 - **完整 knowledge index（CC-340）**——standalone FTS + embeddings + episodes low-trust chunk 的重型版仍延 v0.6.0，與既有 `/mem-search` 重疊。**但 anchored-TOC 薄切（in-repo knowledge docs 的 section 目錄）已拉前至 v0.5.0 CC-354**：沒有它 memory 讀側完全不可用（連 BACKLOG 內的票都得 grep，見 Phase 2 重定錨）。CC-340 縮為剩餘範圍——repo 外 memory cards / wiki / episodes 索引 + standalone full-text + embeddings，對稱於 repo-index CC-338。
 - **CC-355 HTML semantic chunking**——CC-354 的 per-format chunker 對 html 先走 window fallback；`<h1-6>` 語意 chunking 留 follow-up（bash 解析 HTML 脆、且 repo 目前無 .html knowledge 來源），plug 進 CC-354 的 chunker seam。

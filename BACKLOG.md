@@ -48,7 +48,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-228 | 🟢 superseded 2026-06-08 | **[BACKLOG validator-debt cleanup]** `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes: E-INDEX-MISMATCH (CC-104d/e/f/g/j/k/m/r/s in index but no body section), E-AREA-ENUM (slash-combined / non-enum areas e.g. `arch`/`config`/`schema` on CC-052/060/104v/203/204), E-REFS-PREFIX (bare `CC-NNN` refs on CC-059/060/061/064/066). Resolve per class: add missing sections or drop index rows; widen the area enum (e.g. add `arch`) or rewrite rows; fix ref prefixes. Surfaced during CC-222 close-out. | process | 2026-05-22 | roadmap:CC-277 | P2 | hygiene |
 | CC-234 | ✅ closed 2026-06-11 | **[v0.5.0 P2 write-half: memory v2 — episodes + anomaly-event distillation（scope trimmed 2026-06-10）]** Point `/mem-distill` at `episodes.jsonl` plus the **anomaly slice** of `events.jsonl` only — run failures, timeouts, gate blocks（exit≠0 / blocked verdicts）. Trimmed by 2026-06-10 arch review: the live event stream is run-FSM lifecycle telemetry, so happy-path events carry nothing distillable and the generic event-tier schema is dropped from this slice. Acceptance = one real card distilled from one real recorded failure, user-confirmed, surfacing via existing MEMORY.md auto-injection. Write side of the memory loop; CC-354 is the read side. **See**: pr:#265 | memory | 2026-05-22 | pr:#265 | P2 | design |
-| CC-235 | ⏸ deferred | **[v0.3.0 M4: tiered lifecycle gate]** Make the spec→design→plan discipline (today advisory in `commands/pre-impl.md` + `agents/project-pm.md`) a `pmctl`-enforced Task lifecycle gate **graded by task size** (mirrors the pr-gate express/standard/full tiers): trivial/mechanical → no gate; small → one-line intent+acceptance; substantial (≥3 behavioral units, or touches a shared module, or new interface) → full `/pre-impl` design artifact before `claimed→in-progress`. Superpowers-inspired. | process | 2026-05-22 | — | P2 | design |
+| CC-235 | ✅ closed 2026-06-11 | **[v0.5.0 P2: tiered lifecycle gate — warning mode]** `pmctl task dispatch` (claimed→in-progress) checks `size_tier` / `behavioral_units` fields: substantial (≥3 units or explicit `size_tier=substantial`) → warn stderr + emit `task.lifecycle.warn` event (non-blocking); trivial/small/unknown → silent. New fields on task schema: `behavioral_units` (int ≥ 0) + `size_tier` (trivial/small/substantial). New event kind: `task.lifecycle.warn`. 8 new tests, 57/57 pass. **See**: pr:#TBD | process | 2026-05-22 | pr:#TBD | P2 | design |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
 | CC-237 | ✅ closed 2026-06-09 | **[v0.5.0 P1: context-enricher interface]** Define `context_hit_v1` (source_domain knowledge/repo/state, why_relevant, trust_level, refs) extending the CC-232 context-pack schema; schema_version bumped 1→2 (additive; v1 packs remain valid via enum). Delivers the interface contract; the assembled `pmctl context pack` output is CC-239. builtin-index backend is CC-338. | ux | 2026-05-22 | pr:#253 | P1 | design |
 | CC-238 | ⏸ deferred | **[/pr-gate claude-route fan-out hardening]** CC-217 made the `/pr-gate` claude-executor reviewer/synthesis fan-out run detached (`run_in_background`). Gate advisories on the new flow (CC-217 gate, gate-20260523): (a) no timeout/fallback if a reviewer agent never reports completion → indefinite wait; (b) single fan-out step weakens per-reviewer failure attribution on partial failure; (c) no test artifact validates background completion / relay ordering. Add a completion timeout + partial-failure attribution + test coverage for the claude-route fan-out. | gate | 2026-05-23 | pr:#124 | P3 | oss |
@@ -644,23 +644,17 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Cross-link**: [[CC-354]] (read side — anchored knowledge index), [[CC-356]] (repo-plane wiring, same wiring-as-acceptance principle), CC-230 (events.jsonl), CC-229 (event schema), [[CC-340]] (deferred home of any future generic event-tier schema), `commands/mem-distill.md` (modification target).
 
-## CC-235 — Task lifecycle gate: tiered spec→design→plan（deferred）
+## CC-235 — Task lifecycle gate: tiered spec→design→plan ✅ 2026-06-11
 
 **Problem**: The spec→design→plan discipline (`/pre-impl`, the `qa_checklist` rule) is advisory prose in `agents/project-pm.md` — not enforced. But a single uniform gate would over-burden trivial tasks — a typo fix should not need a design artifact.
 
 **Why**: Enforcement should be **graded by task size**, consistent with pm-dispatch's existing tiered patterns: the pr-gate express/standard/full tiers and the sonnet-default / Opus-escalation model-tier policy. The gate's weight scales with the task.
 
-**Requirement**: `pmctl` enforces a tiered gate on the `claimed → in-progress` transition:
-- **Trivial** — 1 mechanical unit (typo, rename, doc tweak, dep bump): no gate; dispatch directly.
-- **Small** — ~2 units, localized: lightweight — a one-line intent + acceptance in the brief; no `/pre-impl` artifact.
-- **Substantial** — ≥3 behavioral units, OR touches a shared module/schema, OR introduces a new interface: full spec→design→plan; a `/pre-impl` design artifact is required before the transition.
-The ≥3-units threshold and the shared-module / new-interface triggers already exist in `agents/project-pm.md`; this ticket makes them a graded state-machine gate rather than advisory prose.
-
-**Milestone**: v0.3.0 M4.
-
-**Priority**: P2.
+**Shipped (warning mode)**: `pmctl task dispatch` checks `size_tier` / `behavioral_units` on the task JSON at claimed→in-progress. If tier is `substantial`: warn to stderr + emit `task.lifecycle.warn` event (non-blocking). trivial/small/unknown: silent. New task fields: `behavioral_units` (int ≥ 0), `size_tier` (trivial/small/substantial). New event kind: `task.lifecycle.warn`. Hard-fail mode deferred to v0.6.0 when sufficient real-world usage data is available. 8 new tests, 57/57 pass.
 
 **Cross-link**: CC-229 (Task schema/lifecycle), CC-022 (`/pre-impl`).
+
+**See**: pr:#TBD
 
 ## CC-236 — pmctl report: away-from-keyboard state roll-up（someday）
 

@@ -63,6 +63,15 @@
     "review_note": {
       "type": "string",
       "description": "Optional reviewer note recorded at review time."
+    },
+    "behavioral_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Estimated behavioral unit count. Drives size_tier derivation when size_tier is absent."
+    },
+    "size_tier": {
+      "enum": ["trivial", "small", "substantial"],
+      "description": "Task size tier. trivial: 0-1 units; small: ~2 units; substantial: ≥3 units or cross-module/new-interface."
     }
   },
   "additionalProperties": false
