@@ -18,10 +18,7 @@ unset CODEX_DISPATCH_SNAPSHOT_ACTIVE CODEX_DISPATCH_SNAPSHOT_PATH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# The real adapter; scripts/codex-dispatch.sh is now a thin exec-wrapper shim
-# (CC-308/CC-104t) — snapshot/alias tests must target the adapter directly.
 DISPATCH="$REPO_ROOT/adapters/codex/dispatch.sh"
-DISPATCH_SHIM="$REPO_ROOT/scripts/codex-dispatch.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -916,23 +913,6 @@ FAKEOF
   rm -rf "$_fake" "$_home" "$_store" "$_work"; rm -f "$_brief"
 }
 
-case_shim_delegates_to_adapter() {
-  # Verifies that scripts/codex-dispatch.sh (the exec-wrapper shim introduced in
-  # CC-308) correctly delegates to adapters/codex/dispatch.sh by running --help
-  # through the shim and asserting exit 0. No codex binary required.
-  local name="shim/delegates to adapter via exec wrapper"
-  should_run "$name" || return 0
-  local out exit_code
-  set +e
-  out="$(bash "$DISPATCH_SHIM" --help 2>&1)"
-  exit_code=$?
-  set -e
-  if [[ "$exit_code" -eq 0 ]]; then
-    pass "$name"
-  else
-    fail "$name" "exit=$exit_code; shim did not delegate: $(head -1 <<<"$out")"
-  fi
-}
 
 # ---- latest.* symlink failure is tolerated (Windows MSYS, CC-308) ----
 # On Windows MSYS, `ln -sfn` fails when refreshing the latest.* convenience
@@ -1119,7 +1099,6 @@ case_isolation_none
 case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief
-case_shim_delegates_to_adapter
 case_latest_symlink_failure_tolerated
 case_codex_read_roots_includes_work_dir
 case_codex_read_roots_preserves_inherited

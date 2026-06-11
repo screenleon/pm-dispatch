@@ -17,7 +17,7 @@
 #   1. Command contains NO shell composition / substitution / redirection
 #      metacharacters: ;  &  |  $  `  (  )  <  >  {  }  \  CR  newline.
 #   2. First whitespace-delimited token is one of:
-#      - the codex-dispatch.sh path (tilde or absolute form)
+#      - the adapters/codex/dispatch.sh path (tilde or absolute form)
 #      - one of the read-only verbs in $READONLY_VERBS
 #      - `git` (further restricted to read-only subcommands and flags)
 #   3. After a positive verb match, every positional (non-flag) arg starting
@@ -53,7 +53,7 @@ HK_BYPASS_ENV="PM_HOOK_CODEX_GUARD"
 # shellcheck source=scripts/lib/hook-framework.sh
 . "$_SCRIPT_DIR/lib/hook-framework.sh"
 
-DISPATCH_ABS="${PM_HOOK_DISPATCH_ABS:-$_SCRIPT_DIR/codex-dispatch.sh}"
+DISPATCH_ABS="${PM_HOOK_DISPATCH_ABS:-$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)/adapters/codex/dispatch.sh}"
 _ABS_NO_HOME="${DISPATCH_ABS#"$HOME/"}"
 DISPATCH_REL="~/$_ABS_NO_HOME"
 unset _SCRIPT_DIR _ABS_NO_HOME
@@ -106,7 +106,7 @@ Disallowed (always):
   destructive git — push, reset, commit, rebase, checkout, merge, branch -d/-D, stash drop/pop/push/clear, --output=
   find, sed, awk, bash, sh, env, xargs
 
-Never call \`codex exec\` directly — codex-dispatch.sh encodes sandbox / approval /
+Never call \`codex exec\` directly — adapters/codex/dispatch.sh encodes sandbox / approval /
 trace flags the rest of the pipeline relies on.
 
 Bypass for one turn: set PM_HOOK_CODEX_GUARD=off (logged).

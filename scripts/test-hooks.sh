@@ -456,7 +456,7 @@ echo
 $LIST || echo "== hook-codex-bash-guard =="
 truncate_log
 
-dispatch_abs="$SCRIPT_DIR/codex-dispatch.sh"
+dispatch_abs="$REPO_ROOT/adapters/codex/dispatch.sh"
 export PM_HOOK_DISPATCH_ABS="$dispatch_abs"
 _abs_no_home="${dispatch_abs#"$HOME/"}"
 dispatch_tilde="~/$_abs_no_home"
