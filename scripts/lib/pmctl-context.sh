@@ -45,7 +45,9 @@ _ctx_fts5_available() {
 
 _ctx_db_init() {
   local db="$1"
-  sqlite3 "$db" <<'SQLINIT'
+  # Redirect stdout: `PRAGMA journal_mode=WAL` echoes the resulting mode ("wal")
+  # which would otherwise leak into `pmctl context index` output.
+  sqlite3 "$db" >/dev/null <<'SQLINIT'
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -473,7 +475,7 @@ pmctl_context_index() {
   local _p _m
   while IFS='|' read -r _p _m; do
     [[ -n "$_p" ]] && _ctx_db_mtimes["$_p"]="$_m"
-  done < <(sqlite3 "$db" "SELECT path, mtime FROM files;" 2>/dev/null || true)
+  done < <(sqlite3 "$db" "SELECT path, mtime FROM files;" 2>/dev/null | tr -d '\r' || true)
 
   # Batch SQL for all changed files into one transaction (1 sqlite3 call vs. N).
   # A temp table _cur_paths tracks every path present in the current scan so that
@@ -725,7 +727,7 @@ _ctx_query_hits_raw() {
     "SELECT f.path, s.name, s.kind, s.line_start
      FROM symbols s JOIN files f ON s.file_id=f.id
      WHERE s.name LIKE '%${eq}%'${domain_sql}
-     LIMIT 20;" 2>/dev/null || true)
+     LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
 
   local use_fts5=0
   if _ctx_fts5_available "$db" \
@@ -754,7 +756,7 @@ _ctx_query_hits_raw() {
       snippet="${snippet//$'\t'/ }"
       printf '%s\t%s\t%s\t%s\t%s\n' \
         "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "medium"
-    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null || true)
+    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null | tr -d '\r' || true)
     rm -f "$fts_tmpf"
   else
     while IFS=$'\t' read -r path line_start; do
@@ -767,7 +769,7 @@ _ctx_query_hits_raw() {
       "SELECT f.path, fc.line_start
        FROM file_chunks fc JOIN files f ON fc.file_id=f.id
        WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
-       LIMIT 20;" 2>/dev/null || true)
+       LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
   fi
 }
 
