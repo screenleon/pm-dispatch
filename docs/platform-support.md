@@ -37,7 +37,13 @@
 | bash ≥ 4 | system | Git for Windows | system |
 | jq ≥ 1.6 | `apt install jq` / `brew install jq` | `winget install jqlang.jq` | `apt install jq` |
 | git | system | Git for Windows | system |
+| sqlite3 (FTS5) | `apt install sqlite3` / `brew install sqlite` | `winget install SQLite.SQLite` | `apt install sqlite3` |
 | codex CLI | optional (`full` profile) | not supported | optional |
+
+> **`sqlite3`** is required by `pmctl context` (repo-index + FTS5 retrieval, v0.5.0+).
+> Without it, `pmctl context index/query/pack/reuse-scan` exit with an error; the
+> rest of pm-dispatch still works. On Windows the `winget` install appends `sqlite3`
+> to the **User PATH** — open a new Git Bash window so the PATH refresh takes effect.
 
 ### All platforms (Linux / macOS / WSL2)
 
