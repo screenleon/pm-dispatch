@@ -95,7 +95,7 @@ should_run "mem-distill: has Step 2b" && assert_file_contains "mem-distill: has 
 should_run "mem-distill: documents run.failed anomaly kind" && assert_file_contains "mem-distill: documents run.failed anomaly kind" "$MEM_DISTILL" "run.failed" && pass "mem-distill: documents run.failed anomaly kind"
 should_run "mem-distill: documents guard.denied anomaly kind" && assert_file_contains "mem-distill: documents guard.denied anomaly kind" "$MEM_DISTILL" "guard.denied" && pass "mem-distill: documents guard.denied anomaly kind"
 should_run "mem-distill: documents task.blocked anomaly kind" && assert_file_contains "mem-distill: documents task.blocked anomaly kind" "$MEM_DISTILL" "task.blocked" && pass "mem-distill: documents task.blocked anomaly kind"
-should_run "mem-distill: defines timeout exit class" && assert_file_contains "mem-distill: defines timeout exit class" "$MEM_DISTILL" "timeout" && pass "mem-distill: defines timeout exit class"
+should_run "mem-distill: defines exit_code 124 as timeout" && assert_file_contains "mem-distill: defines exit_code 124 as timeout" "$MEM_DISTILL" "exit_code == 124" && pass "mem-distill: defines exit_code 124 as timeout"
 should_run "mem-distill: report includes anomaly count" && assert_file_contains "mem-distill: report includes anomaly count" "$MEM_DISTILL" "anomaly group" && pass "mem-distill: report includes anomaly count"
 should_run "mem-distill: no python3 calls" && assert_not_contains "mem-distill: no python3 calls" "$MEM_DISTILL" "python3"
 should_run "mem-distill: Step 2b uses pmctl trace tail" && assert_file_contains "mem-distill: Step 2b uses pmctl trace tail" "$MEM_DISTILL" "pmctl trace tail" && pass "mem-distill: Step 2b uses pmctl trace tail"
@@ -106,7 +106,7 @@ should_run "mem-distill: Step 1 walks parent directories" && assert_file_contain
 should_run "mem-distill: Step 3b defines 60-day age cutoff" && assert_file_contains "mem-distill: Step 3b defines 60-day age cutoff" "$MEM_DISTILL" "60 days" && pass "mem-distill: Step 3b defines 60-day age cutoff"
 should_run "mem-distill: Step 3b defines recurrence threshold" && assert_file_contains "mem-distill: Step 3b defines recurrence threshold" "$MEM_DISTILL" "2 occurrences" && pass "mem-distill: Step 3b defines recurrence threshold"
 should_run "mem-distill: Step 3b defines guard.denied prefix grouping" && assert_file_contains "mem-distill: Step 3b defines guard.denied prefix grouping" "$MEM_DISTILL" "denied path prefix" && pass "mem-distill: Step 3b defines guard.denied prefix grouping"
-should_run "mem-distill: Step 3b defines resolved-run skip rule" && assert_file_contains "mem-distill: Step 3b defines resolved-run skip rule" "$MEM_DISTILL" "subject_id" && pass "mem-distill: Step 3b defines resolved-run skip rule"
+should_run "mem-distill: Step 3b defines resolved-run skip rule" && assert_file_contains "mem-distill: Step 3b defines resolved-run skip rule" "$MEM_DISTILL" "followed by a successful run" && pass "mem-distill: Step 3b defines resolved-run skip rule"
 
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
 
