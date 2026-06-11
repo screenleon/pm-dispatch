@@ -41,7 +41,8 @@ create_runner() {
   mkdir -p "$dir"
   cp "$REPO_ROOT/scripts/pr-gate.sh" "$dir/pr-gate.sh"
   chmod +x "$dir/pr-gate.sh"
-  cat > "$dir/codex-dispatch.sh" <<'STUB_EOF'
+  mkdir -p "$dir/adapters/codex"
+  cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -268,7 +269,7 @@ case "$effective_mode" in
     ;;
 esac
 STUB_EOF
-  chmod +x "$dir/codex-dispatch.sh"
+  chmod +x "$dir/adapters/codex/dispatch.sh"
 }
 
 create_agents() {
@@ -1399,7 +1400,8 @@ test_synthesis_artifact_tamper_detected() {
   chmod +x "$runner2/pr-gate.sh"
 
   # Wrapper dispatch: on synthesis brief, tamper with the most recently written reviewer artifact.
-  cat > "$runner2/codex-dispatch.sh" <<'TWRAP_EOF'
+  mkdir -p "$runner2/adapters/codex"
+  cat > "$runner2/adapters/codex/dispatch.sh" <<'TWRAP_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 brief_file=""
@@ -1431,7 +1433,7 @@ else
 fi
 exit 0
 TWRAP_EOF
-  chmod +x "$runner2/codex-dispatch.sh"
+  chmod +x "$runner2/adapters/codex/dispatch.sh"
 
   set +e
   HOME="$home" "$runner2/pr-gate.sh" --cd "$repo" --base main --parallel > "$out" 2> "$err"
@@ -2571,7 +2573,7 @@ test_isolation_flag_validation() {
 
 test_isolation_forwarding_through_pr_gate() {
   # Verifies that --isolation workspace-network is forwarded from pr-gate.sh
-  # to codex-dispatch.sh. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
+  # to the adapter dispatch. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
   # all raw args the stub dispatch received.
   local name="isolation-forwarding-through-pr-gate"
   should_run "$name" || return 0
@@ -2598,11 +2600,46 @@ test_isolation_forwarding_through_pr_gate() {
     return
   fi
   if ! grep -qx -- '--isolation' "$dispatch_args"; then
-    fail "$name" "--isolation flag not forwarded to codex-dispatch.sh"
+    fail "$name" "--isolation flag not forwarded to adapter dispatch"
     return
   fi
   if ! grep -qx 'workspace-network' "$dispatch_args"; then
-    fail "$name" "workspace-network value not forwarded to codex-dispatch.sh"
+    fail "$name" "workspace-network value not forwarded to adapter dispatch"
+    return
+  fi
+  pass "$name"
+}
+
+test_copy_mode_dispatches_via_adapter() {
+  # Regression guard: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
+  # must dispatch via adapters/codex/dispatch.sh — NOT scripts/codex-dispatch.sh
+  # (deleted in CC-296). The adapter stub is placed at the expected path; if
+  # pr-gate.sh resolves to the old shim path it will fail with file-not-found.
+  local name="copy-mode/dispatches-via-adapter"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/copy-mode-dispatches-via-adapter"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  # copy-mode requires lib/executor-router.sh to be absent
+  if [[ -f "$runner/lib/executor-router.sh" ]]; then
+    fail "$name" "lib/executor-router.sh present — copy-mode not in effect"
+    return
+  fi
+  # adapter stub must exist at the path the copy-mode fallback resolves to
+  if [[ ! -x "$runner/adapters/codex/dispatch.sh" ]]; then
+    fail "$name" "adapter stub not found at runner/adapters/codex/dispatch.sh"
+    return
+  fi
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "copy-mode dispatch exited $code; adapter stub not reached (old shim path?)"
     return
   fi
   pass "$name"
@@ -3127,6 +3164,7 @@ run_test test_post_gate_hook_skipped_on_nogo
 run_test test_hook_skipped_without_allow_hooks
 run_test test_isolation_flag_validation
 run_test test_isolation_forwarding_through_pr_gate
+run_test test_copy_mode_dispatches_via_adapter
 run_test test_unknown_arg_message
 run_test test_targeted_alias
 run_test test_seq_brief_ascii_separator
