@@ -86,6 +86,19 @@ assert_in_section() {
   fi
 }
 
+# ── mem-distill.md anomaly-slice contract ────────────────────────────────────
+
+MEM_DISTILL="$COMMANDS_DIR/mem-distill.md"
+
+assert_frontmatter "mem-distill: frontmatter valid" "$MEM_DISTILL"
+should_run "mem-distill: has Step 2b" && assert_file_contains "mem-distill: has Step 2b" "$MEM_DISTILL" "Step 2b" && pass "mem-distill: has Step 2b"
+should_run "mem-distill: documents run.failed anomaly kind" && assert_file_contains "mem-distill: documents run.failed anomaly kind" "$MEM_DISTILL" "run.failed" && pass "mem-distill: documents run.failed anomaly kind"
+should_run "mem-distill: documents guard.denied anomaly kind" && assert_file_contains "mem-distill: documents guard.denied anomaly kind" "$MEM_DISTILL" "guard.denied" && pass "mem-distill: documents guard.denied anomaly kind"
+should_run "mem-distill: defines timeout exit class" && assert_file_contains "mem-distill: defines timeout exit class" "$MEM_DISTILL" "timeout" && pass "mem-distill: defines timeout exit class"
+should_run "mem-distill: report includes anomaly count" && assert_file_contains "mem-distill: report includes anomaly count" "$MEM_DISTILL" "anomaly group" && pass "mem-distill: report includes anomaly count"
+should_run "mem-distill: no python3 calls" && assert_not_contains "mem-distill: no python3 calls" "$MEM_DISTILL" "python3"
+should_run "mem-distill: Step 2b uses pmctl trace tail" && assert_file_contains "mem-distill: Step 2b uses pmctl trace tail" "$MEM_DISTILL" "pmctl trace tail" && pass "mem-distill: Step 2b uses pmctl trace tail"
+
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
 
 PRE_IMPL="$COMMANDS_DIR/pre-impl.md"
