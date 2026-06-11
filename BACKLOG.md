@@ -101,6 +101,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
 | CC-358 | 🟢 someday | **[runner telemetry: evaluate with real runs — success rate / failure pattern / fallback analysis]** events.jsonl 已有每次 run 的完整生命週期資料（pending/dispatched/verifying/ok/failed），但沒有任何 consumer 分析「哪類任務成功率高低」、「失敗的主因是什麼」、「fallback 觸發頻率」。這使 adapter 路由決策完全主觀，也無從判斷 recovery 策略。本票在現有 events 原料上建立 runner telemetry layer：從 task history 計算 per-adapter 成功率、依 goal/context 分群的失敗模式、fallback 觸發原因分佈——提供資料驅動的 runner diversity（CC-2xx）與 recovery 決策依據。 | ops/memory | 2026-06-10 | — | — | design |
+| CC-359 | 🟢 someday | **[v0.6.0 concept: backlog-driven batch dispatch with worktree isolation]** 設計理念：pm-dispatch 本身管理 git worktree 生命週期（`git worktree add/remove`），讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task，不依賴任何特定 executor 的 platform feature。核心原則：(1) executor-agnostic — worktree 管理是 pmctl 責任，非 executor 責任；(2) human-in-the-loop — batch dispatch 後 merge 決策仍在人這邊，無 auto-merge；(3) 衝突可觀測不禁止 — 以 BACKLOG area 欄位做粗粒度衝突分組（同 area 排隊，不同 area 可平行），不做逐檔 conflict detection；(4) PR-only — 每個 task 產出獨立 branch + PR，由人統一 review。適合類型：測試補強、文件補強、小 bug、CLI option 補齊；不適合：架構核心大改、schema breaking change。Token budget 可作為 scheduler 輸入控制並行度。 | arch/ops | 2026-06-11 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
 
 ---
@@ -1842,3 +1843,24 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 **Priority**: 未定（someday）。
 
 **Cross-link**: `events.jsonl` (data source), `pmctl trace tail` (existing consumer, read model to build on), [[CC-234]] (write side of memory loop — episodes 可補充 events 的語意), [[CC-346]] (paused; needs CC-356 evidence first, this ticket adds more evidence dimension).
+
+## CC-359 — backlog-driven batch dispatch with worktree isolation（concept, v0.6.0）
+
+**Concept**: pm-dispatch 自己管理 `git worktree` 生命週期，讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task。不依賴任何特定 executor 的 platform feature——worktree 管理是 pmctl 的責任，不是 codex 或 claude 等 executor 的責任。
+
+**Design principles**:
+
+- **Executor-agnostic worktree management**: `git worktree add <path> -b agent/<task-id>` / `git worktree remove <path>` 由 pmctl 負責，codex 和 claude 都能在各自的 worktree 裡跑，不依賴特定 executor 的 isolation 機制。
+- **Human-in-the-loop**: batch dispatch 後 merge 決策仍在人這邊，無 auto-merge，PR-only 原則不變。
+- **衝突可觀測不禁止**: 以 BACKLOG `area` 欄位做粗粒度衝突分組——同 area task 排隊不並行；不同 area 可平行。不做逐檔 conflict detection（成本高且在 brief 寫完前無法計算）。逐 PR review 和 rebase 流程處理邏輯衝突。
+- **PR-only output**: 每個 task 在各自 worktree 產出 commit + branch + PR，由人統一 review 和 merge。
+
+**Suitable tasks for parallel dispatch**: 測試補強、文件補強、小 bug 修復、CLI option 補齊、error message 改善、backlog spike/survey。不適合：架構核心大改、schema breaking change、多個 task 改相同核心介面。
+
+**Token budget as scheduler input**: 可設 `--budget low/normal/aggressive` 控制並行度（worker 數、adapter 選擇、是否使用 Opus）。
+
+**Why v0.6.0**: 需要 v0.5.0 memory loop 完整落地（CC-354/CC-234/CC-356）後，才能有足夠的 context substrate 讓 batch dispatcher 智能分派任務。先把 memory 讀寫閉環，再做 batch execution 加速。
+
+**Non-goals for this concept ticket**: 不設計具體 subcommand syntax 或 schema——那是 implementation ticket 的工作；本票只記錄理念和約束。
+
+**Cross-link**: [[CC-358]] (runner telemetry — batch dispatcher 的決策依據), [[CC-346]] (paused), `git worktree` (stdlib, no new dependency).
