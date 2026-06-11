@@ -49,18 +49,26 @@ Read both:
 Run these commands to fetch recent anomaly events:
 
 ```bash
-pmctl trace tail --kind run.failed   --json -n 30
-pmctl trace tail --kind guard.denied --json -n 20
-pmctl trace tail --kind task.blocked --json -n 20
+pmctl trace tail --kind run.failed     --json -n 30
+pmctl trace tail --kind guard.denied   --json -n 20
+pmctl trace tail --kind task.blocked   --json -n 20
+pmctl trace tail --kind review.verdict --json -n 20
 ```
 
-Payload fields differ by kind — do not apply run-shaped fields to guard or task events:
+If `review.verdict` returns no output (events not yet written by the gate), fall back to scanning gate result files for blocked verdicts:
+
+```bash
+ls -t .gate-results/gate-*.md 2>/dev/null | head -10 | xargs grep -l "Final: NO-GO" 2>/dev/null
+```
+
+Payload fields differ by kind — do not apply run-shaped fields to guard, task, or review events:
 
 | kind | key payload fields |
 |------|--------------------|
 | `run.failed` | `payload.adapter`, `payload.exit_code`, `subject_id` (run-id) |
 | `guard.denied` | `payload.path` (denied file path), `subject_id` |
 | `task.blocked` | `payload.from_state`, `payload.to_state`, `subject_id` (task-id) |
+| `review.verdict` | `payload.verdict` (block/block-soft/advise/approve), `payload.reviewer`, `subject_id` |
 
 Build a separate summary table per kind. For `run.failed`:
 
@@ -74,7 +82,7 @@ Exit class rules (run.failed only):
 - exit_code == 0 → `ok` (skip — not an anomaly)
 - any other non-zero → `failure`
 
-Ignore events older than 60 days. If all three commands return no output, skip this step.
+Ignore events older than 60 days. If all four commands return no output and no NO-GO gate files exist, skip this step.
 
 ## Step 3 — Identify changes
 
@@ -100,6 +108,9 @@ Group and analyze **per kind**:
 - **`guard.denied`**: group by the denied path prefix (`payload.path`); ≥ 2 denials on the same prefix → candidate for a policy or workflow feedback card.
 
 - **`task.blocked`**: group by `(from_state, to_state)` transition pair; ≥ 2 occurrences of the same blocked transition → candidate for a workflow friction card.
+
+- **`review.verdict` (block/block-soft) / gate NO-GO files**: group by `payload.reviewer` (or reviewer name parsed from gate file); ≥ 2 blocked verdicts from the same reviewer area → candidate for a feedback card capturing the recurring gate-block pattern. For gate file fallback, extract reviewer block lines from the `## <reviewer> -- block` sections.
+
 - Skip any anomaly where the same `subject_id` (run) was followed by a successful run on the same adapter, or where context makes clear the failure is already resolved (e.g., the brief_file name corresponds to a ticket now `✅ closed` in BACKLOG.md).
 
 **Evidence**: When proposing an anomaly-derived card, cite the event `id`(s) that evidence the pattern (e.g. `evt-20260611T100000Z-abc123`). Where the anomaly date range overlaps an episode in `episodes.jsonl`, note the episode line number for cross-reference.
