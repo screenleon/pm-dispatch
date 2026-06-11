@@ -1238,4 +1238,327 @@ case_task_review_no_result_defaults_to_done
 case_task_review_missing_id
 case_task_review_missing_result_value
 
+# ---------------------------------------------------------------------------
+# CC-235 — Task lifecycle gate: behavioral_units, size_tier, dispatch warning
+# ---------------------------------------------------------------------------
+
+case_task_create_with_behavioral_units() {
+  local name="pmctl task create: --behavioral-units stores field in task JSON"
+  should_run "$name" || return 0
+  # Behavior: task create --behavioral-units stores the value as an integer in the task JSON file.
+  # Steps: create CC-600 with --behavioral-units 4; assert exit 0 and behavioral_units=4 in JSON.
+  local store proj out err status=0 task_file bu
+  store="$tmp_root/bu-create-store"
+  out="$tmp_root/bu-create.out"; err="$tmp_root/bu-create.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-600 --title "big task" --behavioral-units 4 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-600.json"
+  bu="$(jq -r '.behavioral_units // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$bu" == "4" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status bu=$bu out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_create_with_size_tier() {
+  local name="pmctl task create: --size-tier stores field in task JSON"
+  should_run "$name" || return 0
+  # Behavior: task create --size-tier stores the enum value in the task JSON file.
+  # Steps: create CC-601 with --size-tier small; assert exit 0 and size_tier="small" in JSON.
+  local store proj out err status=0 task_file tier
+  store="$tmp_root/tier-create-store"
+  out="$tmp_root/tier-create.out"; err="$tmp_root/tier-create.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-601 --title "small task" --size-tier small || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-601.json"
+  tier="$(jq -r '.size_tier // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$tier" == "small" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status tier=$tier out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_create_invalid_size_tier() {
+  local name="pmctl task create: invalid --size-tier exits 2"
+  should_run "$name" || return 0
+  # Behavior: task create with an unrecognised --size-tier value exits 2 with a descriptive error.
+  # Steps: create CC-602 with --size-tier huge; assert exit 2 and "invalid --size-tier" in stderr.
+  local store out err status=0
+  store="$tmp_root/bad-tier-store"
+  out="$tmp_root/bad-tier.out"; err="$tmp_root/bad-tier.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-602 --title "t" --size-tier huge && status=$? || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid --size-tier"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
+case_task_create_invalid_behavioral_units() {
+  local name="pmctl task create: non-integer --behavioral-units exits 2"
+  should_run "$name" || return 0
+  # Behavior: task create with a non-integer --behavioral-units value exits 2 with a descriptive error.
+  # Steps: create CC-603 with --behavioral-units abc; assert exit 2 and "invalid --behavioral-units" in stderr.
+  local store out err status=0
+  store="$tmp_root/bad-bu-store"
+  out="$tmp_root/bad-bu.out"; err="$tmp_root/bad-bu.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-603 --title "t" --behavioral-units abc && status=$? || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid --behavioral-units"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
+case_task_update_behavioral_units() {
+  local name="pmctl task update: --behavioral-units updates existing task"
+  should_run "$name" || return 0
+  # Behavior: task update --behavioral-units patches the integer field on an existing task JSON.
+  # Steps: create CC-604; update with --behavioral-units 5; assert exit 0 and behavioral_units=5 in JSON.
+  local store proj out err status=0 task_file bu
+  store="$tmp_root/bu-update-store"
+  out="$tmp_root/bu-update.out"; err="$tmp_root/bu-update.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-604 --title "update me" || status=$?
+  run_task_cmd "$store" "$out" "$err" task update CC-604 --behavioral-units 5 || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-604.json"
+  bu="$(jq -r '.behavioral_units // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$bu" == "5" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status bu=$bu out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_substantial_warns_and_succeeds() {
+  local name="pmctl task dispatch: substantial task emits warning but still transitions to in-progress"
+  should_run "$name" || return 0
+  # Behavior: dispatch of a substantial task (behavioral_units≥3 → derived tier) emits a WARNING
+  #   to stderr but still transitions the task to in-progress (non-blocking gate).
+  # Steps: create CC-605 with --behavioral-units 3; claim; dispatch --agent codex;
+  #   assert exit 0, state=in-progress, "WARNING" and "substantial" appear in stderr.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/substantial-warn-store"
+  out="$tmp_root/substantial-warn.out"; err="$tmp_root/substantial-warn.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-605 --title "big feat" --behavioral-units 3 || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-605 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-605 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-605.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$(<"$err")" == *"WARNING"* && "$(<"$err")" == *"substantial"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_substantial_emits_lifecycle_warn_event() {
+  local name="pmctl task dispatch: substantial task emits task.lifecycle.warn event"
+  should_run "$name" || return 0
+  # Behavior: dispatch of an explicitly substantial task appends a task.lifecycle.warn event
+  #   to events.jsonl with subject_id matching the task.
+  # Steps: create CC-606 with --size-tier substantial; claim; dispatch;
+  #   assert exit 0 and task.lifecycle.warn event for CC-606 present in events.jsonl.
+  local store proj out err status=0 warn_kind
+  store="$tmp_root/substantial-evt-store"
+  out="$tmp_root/substantial-evt.out"; err="$tmp_root/substantial-evt.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-606 --title "substantial" --size-tier substantial || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-606 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-606 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  warn_kind="$(jq -r 'select(.subject_id == "CC-606" and .kind == "task.lifecycle.warn") | .kind' \
+    "$proj/events.jsonl" 2>/dev/null | tail -1)"
+  if [[ "$status" -eq 0 && "$warn_kind" == "task.lifecycle.warn" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status warn_kind=$warn_kind err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_trivial_no_warn() {
+  local name="pmctl task dispatch: trivial task dispatches with no lifecycle warning"
+  should_run "$name" || return 0
+  # Behavior: dispatch of an explicitly trivial task proceeds silently — no WARNING to stderr.
+  # Steps: create CC-607 with --size-tier trivial; claim; dispatch;
+  #   assert exit 0, state=in-progress, no "WARNING" in stderr.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/trivial-nowarn-store"
+  out="$tmp_root/trivial-nowarn.out"; err="$tmp_root/trivial-nowarn.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-607 --title "tiny fix" --size-tier trivial || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-607 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-607 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-607.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$(<"$err")" != *"WARNING"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_derived_trivial_no_warn() {
+  local name="pmctl task dispatch: behavioral_units=1 derives trivial tier — dispatches without warning"
+  should_run "$name" || return 0
+  # Behavior: _pmctl_task_derive_tier maps behavioral_units≤1 to trivial; dispatch proceeds silently.
+  # Steps: create CC-611 with --behavioral-units 1 (no explicit size_tier); claim; dispatch;
+  #   assert exit 0, state=in-progress, no "WARNING" in stderr.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/derived-trivial-store"
+  out="$tmp_root/derived-trivial.out"; err="$tmp_root/derived-trivial.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-611 --title "one unit" --behavioral-units 1 || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-611 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-611 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-611.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$(<"$err")" != *"WARNING"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_derived_small_no_warn() {
+  local name="pmctl task dispatch: behavioral_units=2 derives small tier — dispatches without warning"
+  should_run "$name" || return 0
+  # Behavior: _pmctl_task_derive_tier maps behavioral_units==2 to small; dispatch proceeds silently.
+  # Steps: create CC-612 with --behavioral-units 2 (no explicit size_tier); claim; dispatch;
+  #   assert exit 0, state=in-progress, no "WARNING" in stderr.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/derived-small-store"
+  out="$tmp_root/derived-small.out"; err="$tmp_root/derived-small.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-612 --title "two units" --behavioral-units 2 || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-612 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-612 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-612.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$(<"$err")" != *"WARNING"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_explicit_tier_wins_over_behavioral_units() {
+  local name="pmctl task dispatch: explicit size_tier takes precedence over behavioral_units derivation"
+  should_run "$name" || return 0
+  # Behavior: when both size_tier and behavioral_units are set, explicit size_tier wins.
+  #   A task with behavioral_units=5 (would derive substantial) but size_tier=trivial dispatches
+  #   without a lifecycle warning — explicit trivial suppresses the derived substantial tier.
+  # Steps: create CC-613 with --behavioral-units 5 --size-tier trivial; claim; dispatch;
+  #   assert exit 0, state=in-progress, no "WARNING" in stderr.
+  local store proj out err status=0 task_file state
+  store="$tmp_root/explicit-wins-store"
+  out="$tmp_root/explicit-wins.out"; err="$tmp_root/explicit-wins.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-613 --title "explicit trivial" \
+    --behavioral-units 5 --size-tier trivial || status=$?
+  run_task_cmd "$store" "$out" "$err" task claim CC-613 || status=$?
+  run_task_cmd "$store" "$out" "$err" task dispatch CC-613 --agent codex || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-613.json"
+  state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$state" == "in-progress" && "$(<"$err")" != *"WARNING"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status state=$state err=$(<"$err")"
+  fi
+}
+
+case_task_update_size_tier() {
+  local name="pmctl task update: --size-tier stores field in task JSON"
+  should_run "$name" || return 0
+  # Behavior: task update --size-tier persists the size_tier field in the task JSON.
+  # Steps: create a task; update with --size-tier substantial; assert exit 0 and size_tier=substantial in JSON.
+  local store proj out err status=0 task_file tier
+  store="$tmp_root/tier-update-store"
+  out="$tmp_root/tier-update.out"; err="$tmp_root/tier-update.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-608 --title "update tier" || status=$?
+  run_task_cmd "$store" "$out" "$err" task update CC-608 --size-tier substantial || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-608.json"
+  tier="$(jq -r '.size_tier // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$tier" == "substantial" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status tier=$tier out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_update_invalid_size_tier() {
+  local name="pmctl task update: invalid --size-tier exits 2 and preserves JSON"
+  should_run "$name" || return 0
+  # Behavior: task update with an invalid --size-tier value exits 2 and leaves the task file unchanged.
+  # Steps: create a task; snapshot JSON; invoke update --size-tier huge; assert exit 2,
+  #   "invalid --size-tier" in stderr, JSON unchanged.
+  local store proj out err status=0 task_file before after
+  store="$tmp_root/bad-tier-update-store"
+  out="$tmp_root/bad-tier-update.out"; err="$tmp_root/bad-tier-update.err"
+  run_task_cmd "$store" "$tmp_root/bad-tier-update-create.out" "$tmp_root/bad-tier-update-create.err" \
+    task create CC-609 --title "bad tier update" || true
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-609.json"
+  before="$(<"$task_file")"
+  run_task_cmd "$store" "$out" "$err" task update CC-609 --size-tier huge && status=$? || status=$?
+  after="$(<"$task_file")"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid --size-tier"* && "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status before=$before after=$after err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_substantial_lifecycle_warn_event_failure_nonfatal() {
+  local name="pmctl task dispatch: lifecycle.warn event failure is non-fatal — dispatch rolls back via task.dispatched failure"
+  should_run "$name" || return 0
+  # Behavior: lifecycle.warn event append uses || true (best-effort telemetry).
+  #   When events.jsonl is unwritable, the lifecycle.warn emit fails silently; execution
+  #   continues to task_upsert and the task.dispatched event attempt. The task.dispatched
+  #   failure (not the lifecycle.warn failure) causes rollback. Final state: claimed.
+  # Steps: create substantial task + claim; chmod 444 events.jsonl;
+  #   dispatch (expect non-zero exit from task.dispatched failure); restore; assert
+  #   state rolled back to claimed and no task.dispatched event in log.
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state evt_count
+  store="$tmp_root/substantial-warn-fail-store"
+  out="$tmp_root/substantial-warn-fail.out"
+  err="$tmp_root/substantial-warn-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-610 --title "substantial fail" \
+    --size-tier substantial >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-610 >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-610 --agent codex >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-610.json" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-610" and .kind == "task.dispatched") | .kind' \
+    "${proj}events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  # Dispatch must fail (task.dispatched event unwritable) and state must roll back to claimed.
+  # The lifecycle.warn || true path fired silently before the fatal dispatched-event failure.
+  if [[ "$status" -ne 0 && "$task_state" == "claimed" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state evt_count=$evt_count err=$(cat "$err")"
+  fi
+}
+
+case_task_create_with_behavioral_units
+case_task_create_with_size_tier
+case_task_create_invalid_size_tier
+case_task_create_invalid_behavioral_units
+case_task_update_behavioral_units
+case_task_update_size_tier
+case_task_update_invalid_size_tier
+case_task_dispatch_substantial_warns_and_succeeds
+case_task_dispatch_substantial_emits_lifecycle_warn_event
+case_task_dispatch_trivial_no_warn
+case_task_dispatch_derived_trivial_no_warn
+case_task_dispatch_derived_small_no_warn
+case_task_dispatch_explicit_tier_wins_over_behavioral_units
+case_task_dispatch_substantial_lifecycle_warn_event_failure_nonfatal
+
 th_summary

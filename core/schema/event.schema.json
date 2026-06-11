@@ -34,7 +34,8 @@
         "guard.warned",
         "decision.recorded",
         "context.queried",
-        "context.reuse_scanned"
+        "context.reuse_scanned",
+        "task.lifecycle.warn"
       ]
     },
     "subject_type": {

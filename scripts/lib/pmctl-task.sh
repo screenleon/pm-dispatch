@@ -15,11 +15,11 @@ pmctl_task_usage_show() {
 }
 
 pmctl_task_usage_create() {
-  printf 'usage: pmctl task create <ID> --title <TITLE> [--priority P1|P2|P3] [--epic <EPIC>] [--area <AREA>] [--backlog-ref <REF>]\n' >&2
+  printf 'usage: pmctl task create <ID> --title <TITLE> [--priority P1|P2|P3] [--epic <EPIC>] [--area <AREA>] [--backlog-ref <REF>] [--behavioral-units <N>] [--size-tier trivial|small|substantial]\n' >&2
 }
 
 pmctl_task_usage_update() {
-  printf 'usage: pmctl task update <ID> [--title <TITLE>] [--state <STATE>] [--priority P1|P2|P3] [--epic <EPIC>] [--area <AREA>] [--backlog-ref <REF>]\n' >&2
+  printf 'usage: pmctl task update <ID> [--title <TITLE>] [--state <STATE>] [--priority P1|P2|P3] [--epic <EPIC>] [--area <AREA>] [--backlog-ref <REF>] [--behavioral-units <N>] [--size-tier trivial|small|substantial]\n' >&2
 }
 
 pmctl_task_require_jq() {
@@ -47,6 +47,13 @@ pmctl_task_valid_priority() {
   esac
 }
 
+pmctl_task_valid_size_tier() {
+  case "${1:-}" in
+    trivial|small|substantial|"") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Validate a task JSON line against core/schema/task.schema.json field rules.
 pmctl_task_validate_json() {
   local json="$1"
@@ -58,6 +65,8 @@ pmctl_task_validate_json() {
     elif (.state | . as $s | ["open","claimed","in-progress","blocked","done","dropped"] | index($s) == null) then "invalid state"
     elif (.created_ts | type != "string" or length == 0) then "missing required field: created_ts"
     elif (.priority != null and (.priority | . as $p | ["P1","P2","P3"] | index($p) == null)) then "invalid priority: must be P1, P2, P3, or absent"
+    elif (.behavioral_units != null and (.behavioral_units | type != "number" or . < 0 or floor != .)) then "invalid behavioral_units: must be non-negative integer"
+    elif (.size_tier != null and (.size_tier | . as $t | ["trivial","small","substantial"] | index($t) == null)) then "invalid size_tier: must be trivial, small, or substantial"
     else "ok"
     end' 2>/dev/null || true)"
   if [[ "$result" != "ok" ]]; then
@@ -209,7 +218,8 @@ pmctl_task_show() {
 # and rollback atomically — all inside the per-task lock.
 _pmctl_task_create_locked() {
   local task_id="$1" title="$2" created_ts="$3" priority="$4" \
-        epic="$5" area="$6" backlog_ref="$7" repo_root="$8"
+        epic="$5" area="$6" backlog_ref="$7" repo_root="$8" \
+        behavioral_units="${9:-}" size_tier="${10:-}"
   local task_file json_line
   task_file="$(_SW_REPO_ROOT="$repo_root" _sw_project_dir)/tasks/${task_id}.json"
   # Duplicate check inside the lock so concurrent creates are serialized.
@@ -225,11 +235,15 @@ _pmctl_task_create_locked() {
     --arg epic "$epic" \
     --arg area "$area" \
     --arg backlog_ref "$backlog_ref" \
+    --arg bu "$behavioral_units" \
+    --arg st "$size_tier" \
     '{schema_version:1,id:$id,title:$title,state:"open",ticket_origin:"ad_hoc",created_ts:$created_ts}
      | if $priority == "" then . else . + {priority:$priority} end
      | if $epic == "" then . else . + {epic:$epic} end
      | if $area == "" then . else . + {area:$area} end
-     | if $backlog_ref == "" then . else . + {backlog_ref:$backlog_ref} end')" || return $?
+     | if $backlog_ref == "" then . else . + {backlog_ref:$backlog_ref} end
+     | if $bu == "" then . else . + {behavioral_units:($bu | tonumber)} end
+     | if $st == "" then . else . + {size_tier:$st} end')" || return $?
   pmctl_task_validate_json "$json_line" || return $?
   _SW_REPO_ROOT="$repo_root" task_upsert "$task_id" "$json_line" || return $?
   # Emit event inside the lock — keeps dup-check, projection write, event append,
@@ -246,6 +260,7 @@ _pmctl_task_create_locked() {
 
 pmctl_task_create() {
   local repo_root="${1:-}" task_id="${2:-}" title="" priority="" epic="" area="" backlog_ref=""
+  local behavioral_units="" size_tier=""
   local created_ts proj_dir
   shift 2 || true
 
@@ -256,7 +271,7 @@ pmctl_task_create() {
   fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --title|--priority|--epic|--area|--backlog-ref)
+      --title|--priority|--epic|--area|--backlog-ref|--behavioral-units|--size-tier)
         if [[ $# -lt 2 ]]; then
           printf 'pmctl task create: missing value for %s\n' "$1" >&2
           pmctl_task_usage_create
@@ -268,6 +283,8 @@ pmctl_task_create() {
           --epic) epic="$2" ;;
           --area) area="$2" ;;
           --backlog-ref) backlog_ref="$2" ;;
+          --behavioral-units) behavioral_units="$2" ;;
+          --size-tier) size_tier="$2" ;;
         esac
         shift 2
         ;;
@@ -292,12 +309,21 @@ pmctl_task_create() {
     printf 'pmctl task create: invalid --priority: %s (must be P1, P2, or P3)\n' "$priority" >&2
     return 2
   fi
+  if [[ -n "$behavioral_units" ]] && ! [[ "$behavioral_units" =~ ^[0-9]+$ ]]; then
+    printf 'pmctl task create: invalid --behavioral-units: %s (must be non-negative integer)\n' "$behavioral_units" >&2
+    return 2
+  fi
+  if ! pmctl_task_valid_size_tier "$size_tier"; then
+    printf 'pmctl task create: invalid --size-tier: %s (must be trivial, small, or substantial)\n' "$size_tier" >&2
+    return 2
+  fi
   proj_dir="$(pmctl_task_project_dir "$repo_root")" || return $?
   created_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
   # Serialize dup-check + projection write + event emit + rollback under per-task lock.
   serialize_with_lock "$proj_dir/tasks/${task_id}" \
     _pmctl_task_create_locked \
-    "$task_id" "$title" "$created_ts" "$priority" "$epic" "$area" "$backlog_ref" "$repo_root" || return $?
+    "$task_id" "$title" "$created_ts" "$priority" "$epic" "$area" "$backlog_ref" "$repo_root" \
+    "$behavioral_units" "$size_tier" || return $?
   printf '%s\n' "$task_id"
 }
 
@@ -311,7 +337,9 @@ _pmctl_task_update_locked() {
         set_epic="$9" epic="${10}" \
         set_area="${11}" area="${12}" \
         set_backlog_ref="${13}" backlog_ref="${14}" \
-        task_id="${15}" repo_root="${16}"
+        task_id="${15}" repo_root="${16}" \
+        set_behavioral_units="${17:-0}" behavioral_units="${18:-}" \
+        set_size_tier="${19:-0}" size_tier="${20:-}"
   local json_line old_state old_json
   # Capture old state and full JSON before patch for event emission and rollback.
   old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
@@ -329,6 +357,10 @@ _pmctl_task_update_locked() {
     --argjson set_epic "$set_epic" \
     --argjson set_area "$set_area" \
     --argjson set_backlog_ref "$set_backlog_ref" \
+    --argjson set_behavioral_units "$set_behavioral_units" \
+    --arg behavioral_units "$behavioral_units" \
+    --argjson set_size_tier "$set_size_tier" \
+    --arg size_tier "$size_tier" \
     --arg updated_ts "$updated_ts" \
     '. | if $set_title == 1 then .title = $title else . end
        | if $set_state == 1 then .state = $state else . end
@@ -336,6 +368,8 @@ _pmctl_task_update_locked() {
        | if $set_epic == 1 then .epic = $epic else . end
        | if $set_area == 1 then .area = $area else . end
        | if $set_backlog_ref == 1 then .backlog_ref = $backlog_ref else . end
+       | if $set_behavioral_units == 1 then (if $behavioral_units == "" then del(.behavioral_units) else .behavioral_units = ($behavioral_units | tonumber) end) else . end
+       | if $set_size_tier == 1 then (if $size_tier == "" then del(.size_tier) else .size_tier = $size_tier end) else . end
        | .updated_ts = $updated_ts' "$task_file")" || return $?
   # Validate patched JSON before writing — same boundary as create.
   pmctl_task_validate_json "$json_line" || return $?
@@ -386,6 +420,23 @@ _pmctl_task_require_state() {
     printf 'pmctl task %s: invalid transition: %s is in state %s, expected %s\n' \
       "$cmd" "$task_id" "${actual:-<none>}" "$expected" >&2
     return 2
+  fi
+}
+
+# Derive size tier from task JSON file.
+# Returns: trivial, small, substantial, or "" (unknown — no gate applied).
+# Priority: explicit size_tier field > behavioral_units derivation.
+_pmctl_task_derive_tier() {
+  local task_file="$1"
+  local tier units
+  tier="$(jq -r '.size_tier // ""' "$task_file" 2>/dev/null || true)"
+  if [[ -n "$tier" ]]; then printf '%s' "$tier"; return; fi
+  units="$(jq -r 'if (.behavioral_units | type) == "number" then .behavioral_units else "" end' \
+    "$task_file" 2>/dev/null || true)"
+  [[ -z "$units" ]] && return
+  if [[ "$units" -le 1 ]]; then printf 'trivial'
+  elif [[ "$units" -eq 2 ]]; then printf 'small'
+  else printf 'substantial'
   fi
 }
 
@@ -450,9 +501,18 @@ pmctl_task_usage_dispatch_sub() {
 _pmctl_task_dispatch_sub_locked() {
   local task_file="$1" updated_ts="$2" task_id="$3" repo_root="$4" \
         agent="$5" brief_file="$6"
-  local old_state old_json json_line
+  local old_state old_json json_line tier
   old_state="$(jq -r '.state // ""' "$task_file" 2>/dev/null || true)"
   _pmctl_task_require_state dispatch "$task_id" "$old_state" "claimed" || return $?
+  # Lifecycle gate (warning mode): warn on substantial tasks; non-blocking.
+  tier="$(_pmctl_task_derive_tier "$task_file")"
+  if [[ "$tier" == "substantial" ]]; then
+    printf 'WARNING: %s is a substantial task — /pre-impl design artifact recommended before dispatch\n' \
+      "$task_id" >&2
+    _pmctl_emit_task_event_payload "$repo_root" "task.lifecycle.warn" "$task_id" \
+      "$(jq -cn --arg r "substantial_task" --arg t "substantial" '{reason:$r,size_tier:$t}')" \
+      2>/dev/null || true
+  fi
   old_json="$(cat "$task_file" 2>/dev/null)" || return $?
   json_line="$(jq -c \
     --arg ts "$updated_ts" --arg agent "$agent" --arg brief "$brief_file" \
@@ -649,7 +709,9 @@ pmctl_task_review() {
 
 pmctl_task_update() {
   local repo_root="${1:-}" task_id="${2:-}" title="" state="" priority="" epic="" area="" backlog_ref=""
+  local behavioral_units="" size_tier=""
   local set_title=0 set_state=0 set_priority=0 set_epic=0 set_area=0 set_backlog_ref=0
+  local set_behavioral_units=0 set_size_tier=0
   local proj_dir task_file updated_ts
   shift 2 || true
 
@@ -660,7 +722,7 @@ pmctl_task_update() {
   fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --title|--state|--priority|--epic|--area|--backlog-ref)
+      --title|--state|--priority|--epic|--area|--backlog-ref|--behavioral-units|--size-tier)
         if [[ $# -lt 2 ]]; then
           printf 'pmctl task update: missing value for %s\n' "$1" >&2
           pmctl_task_usage_update
@@ -673,6 +735,8 @@ pmctl_task_update() {
           --epic) epic="$2"; set_epic=1 ;;
           --area) area="$2"; set_area=1 ;;
           --backlog-ref) backlog_ref="$2"; set_backlog_ref=1 ;;
+          --behavioral-units) behavioral_units="$2"; set_behavioral_units=1 ;;
+          --size-tier) size_tier="$2"; set_size_tier=1 ;;
         esac
         shift 2
         ;;
@@ -699,7 +763,15 @@ pmctl_task_update() {
     printf 'pmctl task update: invalid --priority: %s (must be P1, P2, or P3)\n' "$priority" >&2
     return 2
   fi
-  if [[ "$set_title$set_state$set_priority$set_epic$set_area$set_backlog_ref" == "000000" ]]; then
+  if [[ "$set_behavioral_units" -eq 1 && -n "$behavioral_units" ]] && ! [[ "$behavioral_units" =~ ^[0-9]+$ ]]; then
+    printf 'pmctl task update: invalid --behavioral-units: %s (must be non-negative integer)\n' "$behavioral_units" >&2
+    return 2
+  fi
+  if [[ "$set_size_tier" -eq 1 ]] && ! pmctl_task_valid_size_tier "$size_tier"; then
+    printf 'pmctl task update: invalid --size-tier: %s (must be trivial, small, or substantial)\n' "$size_tier" >&2
+    return 2
+  fi
+  if [[ "$set_title$set_state$set_priority$set_epic$set_area$set_backlog_ref$set_behavioral_units$set_size_tier" == "00000000" ]]; then
     printf 'pmctl task update: no fields to update\n' >&2
     return 2
   fi
@@ -716,6 +788,7 @@ pmctl_task_update() {
     "$set_title" "$title" "$set_state" "$state" \
     "$set_priority" "$priority" "$set_epic" "$epic" \
     "$set_area" "$area" "$set_backlog_ref" "$backlog_ref" \
-    "$task_id" "$repo_root" || return $?
+    "$task_id" "$repo_root" \
+    "$set_behavioral_units" "$behavioral_units" "$set_size_tier" "$size_tier" || return $?
   printf '%s\n' "$task_id"
 }
