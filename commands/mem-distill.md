@@ -54,12 +54,12 @@ pmctl trace tail --kind guard.denied --json -n 20
 pmctl trace tail --kind task.blocked --json -n 20
 ```
 
-Each JSON object has `ts`, `kind`, `payload.adapter`, `payload.exit_code`, and `subject_id`. Build an anomaly summary table from the output:
+Each JSON object has `id`, `ts`, `kind`, `payload.adapter`, `payload.exit_code`, and `subject_id`. Build an anomaly summary table from the output:
 
-| subject_id | ts | adapter | exit_code | exit_class |
-|------------|----|---------|-----------|------------|
-| run-...    | ...| codex   | 124       | timeout    |
-| run-...    | ...| claude  | 1         | failure    |
+| id | subject_id | ts | adapter | exit_code | exit_class |
+|----|------------|----|---------|-----------|------------|
+| evt-... | run-... | ... | codex  | 124       | timeout    |
+| evt-... | run-... | ... | claude | 1         | failure    |
 
 Exit class rules:
 - exit_code == 124 → `timeout`
@@ -86,8 +86,10 @@ For each episode, ask: does this session reveal a fact or rule that should be pe
 Group the anomaly table by `(adapter, exit_class)`. For each group:
 - **≥ 2 occurrences**: candidate for a `feedback` memory card describing the recurring failure pattern.
 - **1 occurrence, exit_class == timeout**: candidate only if no existing memory card already covers this adapter's timeout behaviour.
-- **guard.denied**: group by the denied path prefix; ≥ 2 denials on the same prefix → candidate for a policy or workflow feedback card.
+- **guard.denied**: group by the denied path prefix (`payload.path`); ≥ 2 denials on the same prefix → candidate for a policy or workflow feedback card.
 - Skip any anomaly where the same `subject_id` (run) was followed by a successful run on the same adapter, or where context makes clear the failure is already resolved (e.g., the brief_file name corresponds to a ticket now `✅ closed` in BACKLOG.md).
+
+**Evidence**: When proposing an anomaly-derived card, cite the event `id`(s) that evidence the pattern (e.g. `evt-20260611T100000Z-abc123`). Where the anomaly date range overlaps an episode in `episodes.jsonl`, note the episode line number for cross-reference.
 
 **Only promote genuinely persistent, cross-session patterns.** A one-time fluke is not a memory card.
 
