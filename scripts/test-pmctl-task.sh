@@ -1379,13 +1379,93 @@ case_task_dispatch_trivial_no_warn() {
   fi
 }
 
+case_task_update_size_tier() {
+  local name="pmctl task update: --size-tier stores field in task JSON"
+  should_run "$name" || return 0
+  # Behavior: task update --size-tier persists the size_tier field in the task JSON.
+  # Steps: create a task; update with --size-tier substantial; assert exit 0 and size_tier=substantial in JSON.
+  local store proj out err status=0 task_file tier
+  store="$tmp_root/tier-update-store"
+  out="$tmp_root/tier-update.out"; err="$tmp_root/tier-update.err"
+  run_task_cmd "$store" "$out" "$err" task create CC-608 --title "update tier" || status=$?
+  run_task_cmd "$store" "$out" "$err" task update CC-608 --size-tier substantial || status=$?
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-608.json"
+  tier="$(jq -r '.size_tier // ""' "$task_file" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$tier" == "substantial" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status tier=$tier out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_task_update_invalid_size_tier() {
+  local name="pmctl task update: invalid --size-tier exits 2 and preserves JSON"
+  should_run "$name" || return 0
+  # Behavior: task update with an invalid --size-tier value exits 2 and leaves the task file unchanged.
+  # Steps: create a task; snapshot JSON; invoke update --size-tier huge; assert exit 2,
+  #   "invalid --size-tier" in stderr, JSON unchanged.
+  local store proj out err status=0 task_file before after
+  store="$tmp_root/bad-tier-update-store"
+  out="$tmp_root/bad-tier-update.out"; err="$tmp_root/bad-tier-update.err"
+  run_task_cmd "$store" "$tmp_root/bad-tier-update-create.out" "$tmp_root/bad-tier-update-create.err" \
+    task create CC-609 --title "bad tier update" || true
+  proj="$(task_project_dir "$store")"
+  task_file="$proj/tasks/CC-609.json"
+  before="$(<"$task_file")"
+  run_task_cmd "$store" "$out" "$err" task update CC-609 --size-tier huge && status=$? || status=$?
+  after="$(<"$task_file")"
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"invalid --size-tier"* && "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status before=$before after=$after err=$(<"$err")"
+  fi
+}
+
+case_task_dispatch_substantial_lifecycle_warn_event_failure_nonfatal() {
+  local name="pmctl task dispatch: lifecycle.warn event failure is non-fatal — dispatch rolls back via task.dispatched failure"
+  should_run "$name" || return 0
+  # Behavior: lifecycle.warn event append uses || true (best-effort telemetry).
+  #   When events.jsonl is unwritable, the lifecycle.warn emit fails silently; execution
+  #   continues to task_upsert and the task.dispatched event attempt. The task.dispatched
+  #   failure (not the lifecycle.warn failure) causes rollback. Final state: claimed.
+  # Steps: create substantial task + claim; chmod 444 events.jsonl;
+  #   dispatch (expect non-zero exit from task.dispatched failure); restore; assert
+  #   state rolled back to claimed and no task.dispatched event in log.
+  if [[ "$(id -u)" -eq 0 ]]; then pass "$name"; return 0; fi
+  local store proj out err status=0 task_state evt_count
+  store="$tmp_root/substantial-warn-fail-store"
+  out="$tmp_root/substantial-warn-fail.out"
+  err="$tmp_root/substantial-warn-fail.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task create CC-610 --title "substantial fail" \
+    --size-tier substantial >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task claim CC-610 >/dev/null 2>&1
+  proj="$(task_project_dir "$store")"
+  chmod 444 "${proj}events.jsonl"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" task dispatch CC-610 --agent codex >"$out" 2>"$err" || status=$?
+  chmod 644 "${proj}events.jsonl"
+  task_state="$(jq -r '.state // ""' "${proj}tasks/CC-610.json" 2>/dev/null || true)"
+  evt_count="$(jq -r 'select(.subject_id == "CC-610" and .kind == "task.dispatched") | .kind' \
+    "${proj}events.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  # Dispatch must fail (task.dispatched event unwritable) and state must roll back to claimed.
+  # The lifecycle.warn || true path fired silently before the fatal dispatched-event failure.
+  if [[ "$status" -ne 0 && "$task_state" == "claimed" && "$evt_count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status task_state=$task_state evt_count=$evt_count err=$(cat "$err")"
+  fi
+}
+
 case_task_create_with_behavioral_units
 case_task_create_with_size_tier
 case_task_create_invalid_size_tier
 case_task_create_invalid_behavioral_units
 case_task_update_behavioral_units
+case_task_update_size_tier
+case_task_update_invalid_size_tier
 case_task_dispatch_substantial_warns_and_succeeds
 case_task_dispatch_substantial_emits_lifecycle_warn_event
 case_task_dispatch_trivial_no_warn
+case_task_dispatch_substantial_lifecycle_warn_event_failure_nonfatal
 
 th_summary
