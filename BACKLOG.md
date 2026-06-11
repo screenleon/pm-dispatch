@@ -1843,11 +1843,14 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 **Problem**: `scripts/pr-gate.sh --executor claude` 輸出 `pr-gate-handover_v1` block，由 `/pr-gate` skill 在 main thread fan-out `Agent(claude-executor)` per reviewer。Route A（codex）則在 `pr-gate.sh` 內直接呼叫 `pmctl dispatch run --adapter codex`。兩條路架構不對稱，skill 端的 fan-out 邏輯增加維護負擔，且與「pmctl 統一派發介面」方向矛盾。
 
-**Why**: `adapters/claude/dispatch.sh` 已建立，`pmctl dispatch run --adapter claude` 介面已穩定。現在可以讓 claude 路徑與 codex 路徑對稱，由 `pr-gate.sh` 直接派發，不需要 skill 介入 orchestration。
+**現況限制（本票未完成前持續存在）**: `scripts/test-e2e.sh` Phase C（pr-gate 結構驗證）固定使用 `--executor codex`，因為 claude route 是 handover-only，在 bash shell 環境下無法自行完成 review 並寫入結果檔。沒有 codex 的環境 Phase C 會自動 SKIP。這是已知架構缺口，不是 bug。
+
+**Why**: `adapters/claude/dispatch.sh` 已建立，`pmctl dispatch run --adapter claude` 介面已穩定。現在可以讓 claude 路徑與 codex 路徑對稱，由 `pr-gate.sh` 直接派發，不需要 skill 介入 orchestration。完成後 `test-e2e.sh --adapter claude` 即可完整跑完 Phase B + Phase C，解除 codex 依賴。
 
 **Requirement**:
 - `executor-router.sh`：`dispatch_route_for "claude"` 回傳 `main_thread_bash_background`（與 codex 相同）；新增 `dispatch_via_claude()` 與 `dispatch_via_codex()` 對稱
 - `pr-gate.sh`：claude 路徑改為直接呼叫 `pmctl dispatch run --adapter claude --brief-file <path>`；移除 handover block 輸出邏輯
+- `scripts/test-e2e.sh`：Phase C 的 codex-only 限制解除，改為使用 `--adapter` 參數所指定的 executor
 - `commands/pr-gate.md`：Route B 說明更新，移除 fan-out 步驟；`pr-gate-handover_v1` block 相關說明移除或保留為 legacy-only note
 - `scripts/test-pr-gate-profile.sh`：executor-claude-* 測試全面改寫
 

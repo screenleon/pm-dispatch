@@ -146,10 +146,17 @@ else
 fi
 
 # ── Phase C — pr-gate express (structural validation) ────────────────────────
+# IMPORTANT: --executor claude is handover-only (reviewers run outside the
+# script in a CC session). Only --executor codex runs the review synchronously
+# and writes a non-empty result file. Phase C always uses codex regardless of
+# --adapter; if codex is not on PATH it is skipped.
 section "Phase C — pr-gate express (structural validation)"
 
 if [[ "$SKIP_GATE" -eq 1 ]]; then
-  record "pr-gate express" SKIP "--skip-gate requested"
+  record "pr-gate express (codex)" SKIP "--skip-gate requested"
+elif ! command -v codex >/dev/null 2>&1; then
+  record "pr-gate express (codex)" SKIP \
+    "codex not on PATH — claude executor is handover-only (no self-contained run)"
 else
   merge_base="$(git -C "$REPO_ROOT" merge-base HEAD origin/HEAD 2>/dev/null \
     || git -C "$REPO_ROOT" merge-base HEAD origin/main 2>/dev/null \
@@ -162,7 +169,8 @@ else
   fi
 
   if [[ "$diff_count" -eq 0 ]]; then
-    record "pr-gate express" SKIP "no committed diff vs origin/main — pass --skip-gate if intentional"
+    record "pr-gate express (codex)" SKIP \
+      "no committed diff vs origin/main — pass --skip-gate if intentional"
   else
     # Output must land in a .gate-results/ directory (reviewer-write-guard policy).
     gate_result="$REPO_ROOT/.gate-results/gate-e2e-smoke-$$.md"
@@ -170,13 +178,13 @@ else
     gate_rc=0
     bash "$SCRIPT_DIR/pr-gate.sh" \
       --cd "$REPO_ROOT" \
-      --executor "$ADAPTER" \
+      --executor codex \
       --tier express \
       --output "$gate_result" \
       >"$e2e_log" 2>&1 || gate_rc=$?
 
     # gate_rc 0 = GO, 1 = NO-GO: both are valid structural outcomes.
-    # gate_rc 2 = usage/fatal error: that is a failure.
+    # gate_rc 2+ = usage/fatal error: that is a failure.
     if [[ "$gate_rc" -le 1 ]]; then
       if [[ -s "$gate_result" ]]; then
         verdict="GO"; [[ "$gate_rc" -eq 1 ]] && verdict="NO-GO"
