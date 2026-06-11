@@ -111,7 +111,11 @@ Group and analyze **per kind**:
 
 - **`review.verdict` (block/block-soft) / gate NO-GO files**: group by `payload.reviewer` (or reviewer name parsed from gate file); ≥ 2 blocked verdicts from the same reviewer area → candidate for a feedback card capturing the recurring gate-block pattern. For gate file fallback, extract reviewer block lines from the `## <reviewer> -- block` sections.
 
-- Skip any anomaly where the same `subject_id` (run) was followed by a successful run on the same adapter, or where context makes clear the failure is already resolved (e.g., the brief_file name corresponds to a ticket now `✅ closed` in BACKLOG.md).
+Skip rules per kind:
+- **`run.failed`**: skip if the same `subject_id` (run-id) was followed by a successful run on the same adapter, or if the `brief_file` name corresponds to a ticket now `✅ closed` in BACKLOG.md.
+- **`guard.denied`**: skip if the denied path prefix no longer appears in any active workflow or brief pattern.
+- **`task.blocked`**: skip if the task with that `subject_id` has since moved to `done` or `dropped`.
+- **`review.verdict` / gate NO-GO**: skip if the same reviewer area passed on a later gate run for the same PR.
 
 **Evidence**: When proposing an anomaly-derived card, cite the event `id`(s) that evidence the pattern (e.g. `evt-20260611T100000Z-abc123`). Where the anomaly date range overlaps an episode in `episodes.jsonl`, note the episode line number for cross-reference.
 
