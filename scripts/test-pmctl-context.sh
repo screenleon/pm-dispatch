@@ -262,7 +262,8 @@ case_context_update_absolute_path_rejected() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-abs.out"; err="$tmp_root/upd-abs.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -296,7 +297,8 @@ case_context_update_traversal_rejected() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-trav.out"; err="$tmp_root/upd-trav.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -426,7 +428,8 @@ case_context_query_missing_query() {
 
   # First build an index so query doesn't fail for "no DB" reason
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" > "$out" 2> "$err" || status=$?
@@ -487,7 +490,8 @@ case_context_query_unknown_term_exits_0() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-zero.out"; err="$tmp_root/q-zero.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -506,7 +510,8 @@ case_context_query_like_fallback() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Simulate FTS5 unavailable by dropping the content_fts table if it exists
   local db
@@ -548,7 +553,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Drop FTS table to force LIKE path through file_chunks
   local db
@@ -579,7 +585,8 @@ case_context_query_fts5_path() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Check whether the content_fts table was created (indicates FTS5 was used)
   local db
@@ -625,14 +632,16 @@ case_context_index_deleted_file_reconciled() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Remove the file that contains my_func_alpha
   rm -f "$fix_repo/scripts/lib/mymodule.sh"
 
   # Re-index — reconciliation should remove stale rows
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-del.out"; err="$tmp_root/q-del.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -671,7 +680,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Only test if FTS5 is available; skip otherwise
   local db
@@ -841,7 +851,8 @@ case_context_pack_valid_json() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-json.out"; err="$tmp_root/pack-json.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -883,7 +894,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-split.out"; err="$tmp_root/pack-split.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -920,7 +932,8 @@ case_context_pack_dedup() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-dedup.out"; err="$tmp_root/pack-dedup.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -998,7 +1011,8 @@ case_context_reuse_scan_valid_output() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-valid.out"; err="$tmp_root/scan-valid.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1039,7 +1053,8 @@ case_context_reuse_scan_no_terms() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-noterms.out"; err="$tmp_root/scan-noterms.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1068,7 +1083,8 @@ case_context_reuse_scan_dedup() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-dedup.out"; err="$tmp_root/scan-dedup.err"
   # "func alpha" extracts terms ["alpha","func"] — both match my_func_alpha and my_func_beta,
@@ -1104,7 +1120,8 @@ case_context_reuse_scan_on_real_repo() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-real.out"; err="$tmp_root/scan-real.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1141,7 +1158,8 @@ case_context_reuse_scan_hit_cap() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-cap.out"; err="$tmp_root/scan-cap.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1175,7 +1193,8 @@ case_context_query_emits_event() {
 
   local state_root="$tmp_root/state-query-evt"
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   local out err status=0
   out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
@@ -1236,7 +1255,8 @@ case_context_reuse_scan_emits_event() {
 
   local state_root="$tmp_root/state-reuse-evt"
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   local out err status=0
   out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
@@ -1337,7 +1357,8 @@ case_context_pack_schema_contract() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-schema.out"; err="$tmp_root/pack-schema.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1416,7 +1437,8 @@ case_context_query_domain_knowledge_only() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-knowledge.out"; err="$tmp_root/q-domain-knowledge.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1449,7 +1471,8 @@ case_context_query_domain_repo_only() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-repo.out"; err="$tmp_root/q-domain-repo.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1478,7 +1501,8 @@ case_context_query_domain_no_flag_backward_compat() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-none.out"; err="$tmp_root/q-domain-none.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \

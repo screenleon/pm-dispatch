@@ -48,6 +48,7 @@ _ctx_db_init() {
   # Redirect stdout: `PRAGMA journal_mode=WAL` echoes the resulting mode ("wal")
   # which would otherwise leak into `pmctl context index` output.
   sqlite3 "$db" >/dev/null <<'SQLINIT'
+PRAGMA busy_timeout=5000;
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,11 +389,12 @@ _ctx_index_file() {
   local tmpf
   tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
   {
+    printf 'PRAGMA busy_timeout=5000;\n'
     printf 'BEGIN;\n'
     _ctx_generate_file_sql "$abs_path" "$rel_path"
     printf 'COMMIT;\n'
   } > "$tmpf"
-  sqlite3 "$db" < "$tmpf"
+  sqlite3 "$db" < "$tmpf" >/dev/null
   rm -f "$tmpf"
 }
 
@@ -402,7 +404,8 @@ _ctx_fts_rebuild() {
   local db="$1"
   _ctx_fts5_available "$db" || return 0
 
-  sqlite3 "$db" <<'SQLFTS'
+  sqlite3 "$db" >/dev/null <<'SQLFTS'
+PRAGMA busy_timeout=5000;
 DROP TABLE IF EXISTS content_fts;
 CREATE VIRTUAL TABLE content_fts USING fts5(ref, text);
 INSERT INTO content_fts(ref, text)
@@ -482,7 +485,8 @@ pmctl_context_index() {
   # rows for deleted files can be removed in the same transaction (reconciliation).
   local batch_sql
   batch_sql="$(mktemp /tmp/ctx-XXXXXX.sql)"
-  printf 'BEGIN;\n' > "$batch_sql"
+  printf 'PRAGMA busy_timeout=5000;\n' > "$batch_sql"
+  printf 'BEGIN;\n' >> "$batch_sql"
   printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
 
   local indexed=0 skipped=0
@@ -533,7 +537,7 @@ pmctl_context_index() {
   } >> "$batch_sql"
 
   # Always execute: even if nothing was indexed, reconciliation must run.
-  sqlite3 "$db" < "$batch_sql"
+  sqlite3 "$db" < "$batch_sql" >/dev/null
   rm -f "$batch_sql"
 
   _ctx_fts_rebuild "$db"
