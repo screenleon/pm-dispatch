@@ -8,12 +8,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`pmctl guard check --profile <pm|codex|claude>`** — deprecated alias removed (sunset target v0.5.0 reached, per CC-296). Callers must use `--role <pm|executor|reviewer>` + `--runtime <codex|claude>`. Back-compat test cases `deprecated-profile-*` / `profile-role-mutex` removed from `scripts/test-pmctl-guard.sh` (CC-296).
+- **`scripts/codex-dispatch.sh` compatibility exec wrapper** — removed. The canonical adapter is `adapters/codex/dispatch.sh`, invoked via `pmctl dispatch run --adapter codex`. All operational docs (`agents/`, `commands/`, `docs/`) updated to the canonical path; historical spike docs are unchanged (CC-296).
+
 ### Changed
 
 - **`agents/codex-executor.md` / `agents/claude-executor.md`** — brief schema validation is now a **deterministic, fail-fast first action** on both Agent fallback executors, replacing the hand-kept LLM-judgment field tables (which omitted `schema_version` and behaved inconsistently across sessions/prompt-cache state). Validation is delegated to the single `scripts/brief-validate.sh`: codex-executor reaches it through the `pmctl dispatch run` pre-flight (`hook-codex-bash-guard.sh` blocks a direct `bash` call, so the dispatch command IS the gate); claude-executor calls `brief-validate.sh` directly (no bash-verb guard) before reading any target file or editing. A malformed brief — including a plain-prose brief with no `schema_version` — is REJECTed (`REJECT: missing field '<name>'`) with no executor spawned and no target file read, identically on every dispatch. Authoritative required-field list now lives only in `brief-validate.sh` + `docs/dispatch-brief.md` §Required fields (no drift-prone duplicate in the agent prompts) (CC-351).
 - **`agents/claude-executor.md` / `docs/dispatch-brief.md`** — claude-executor restructured to mirror `agents/codex-executor.md`: `pmctl dispatch run --adapter claude` is the single documented file-based primary route, and `Agent(claude-executor)` is a narrow fallback with an explicit N-condition allowlist table + caller decision checklist (replacing the prior loose bullet list). The host-independent escape hatch (no `claude` CLI in PATH) and the `/pr-gate` reviewer fan-out are documented as sanctioned uses so neither is mistaken for legacy. `docs/dispatch-brief.md` §Fallback gains a symmetric claude fallback table. Unifies the two-executor mental model for maintenance; no runtime/code change (CC-353).
 
 ### Added
+
+- **`docs/spikes/README.md`** — `test_target:` field contract: required for language-aware tool verdict spikes (codegraph, AST-grep, semgrep, etc.); documents how it differs from `working_dir:` and why omitting it makes the verdict non-reproducible. Adds a reference verdict rubric template (GREEN/AMBER/RED) that explicitly enumerates sandbox network isolation and missing dev dependencies as local-env classes under RED criterion 1 — so an executor in a sandboxed environment correctly issues AMBER rather than RED for network-blocked installs (CC-255).
+- **`docs/dispatch-brief.md`** — new `test_target:` optional section in §Optional sections: required for language-aware tool verdict spikes, documents the contract and cross-links to `docs/spikes/README.md` (CC-255).
+- **`agents/project-pm.md`** — `test_target:` brief-authoring rule: when briefing a verdict-issuing spike for a language-aware tool, PM must set `test_target:` to a committed representative codebase and include the verdict rubric template in setup instructions; RED applies only to clean dev machines — sandbox/network local-env failures are AMBER (CC-255).
 
 - **`scripts/lib/pmctl-context.sh` / `cli/pmctl`** — `pmctl context pack` and `pmctl context reuse-scan` subcommands, the first consumers of the repo-index. `pack` assembles multiple repo-index queries into a JSON context-pack (schema_version 2, conforming to `core/schema/context-pack.schema.json`): hits classified into `symbols[]` (symbol-name matches) and `files[]` (chunk/FTS text matches), deduplicated by ref across queries. `reuse-scan` takes a free-text description, extracts search terms via `_ctx_extract_terms` (stop-word filter, min 3 chars, unique), runs each against the repo index, and emits a `reuse_candidates:` YAML block for pasting into a dispatch brief's `context:` field. Both require the repo index (`pmctl context index` first); no new external deps. Hits are queried via internal `_ctx_query_hits_raw` (structured TSV emitter shared by pack, reuse-scan, and the YAML query surface — removes YAML-parse coupling). `context pack` rejects non-directory positional repo arguments (exit 2) and whitespace-only `--task-id` values. 20 new test cases in `scripts/test-pmctl-context.sh`.
 
@@ -125,10 +134,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Deprecated
 
-> Sunset target: **v0.5.0** — these are kept through v0.3.0 + v0.4.0 (two official releases) then removed. Tracked by **CC-296**.
+> Sunset target: **v0.5.0** — these were kept through v0.3.0 + v0.4.0 (two official releases) and **removed in v0.5.0** (CC-296).
 
-- **`pmctl guard check --profile <pm|codex|claude>`** — superseded by `--role <pm|executor>` + `--runtime <codex|claude>` (CC-291). Still accepted as a back-compat alias that maps onto `(role, runtime)` and prints a one-line stderr deprecation warning. Migrate callers to `--role`/`--runtime`.
-- **`scripts/codex-dispatch.sh` compatibility exec wrapper** — the real adapter is `adapters/codex/dispatch.sh` (CC-289). The wrapper keeps external callers working; internal callers already use the canonical path. Remove once external references are migrated.
+- **`pmctl guard check --profile <pm|codex|claude>`** — superseded by `--role <pm|executor>` + `--runtime <codex|claude>` (CC-291). Was accepted as a back-compat alias; removed in v0.5.0.
+- **`scripts/codex-dispatch.sh` compatibility exec wrapper** — the real adapter is `adapters/codex/dispatch.sh` (CC-289). Was a thin exec-wrapper for external callers; removed in v0.5.0.
 
 ### Removed
 

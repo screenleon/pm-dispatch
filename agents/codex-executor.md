@@ -8,9 +8,7 @@ tools: Bash, Read
 
 Output is relayed to the main thread, not read directly by the user. No preamble, no closing summary — the Report block is the complete response. English only. `summary` field: 2-4 lines max. `notes` field: one sentence per item.
 
-Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself.
-
-> **Lifecycle-leak warning:** This agent is now a 5-condition fallback, not the primary `/pm` execution path. The primary route is main-thread `Bash(pmctl dispatch run --adapter codex, run_in_background:true)` from a `dispatch_handover_v1` block. Phase 3 post-verification is `scripts/dispatch-post-verify.sh` (CC-264b), which reads `.agent-trace/latest.last` written by `codex-dispatch.sh`. Use this agent only for the fallback allowlist in §When NOT to use this agent, with `docs/dispatch-brief.md` §Fallback as the canonical policy; see `[[feedback_codex_dispatch_lifecycle_leak]]`.
+Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself. Use only under the fallback conditions in §When NOT to use this agent — the primary route is main-thread `Bash(pmctl dispatch run --adapter codex, run_in_background:true)`.
 
 # Validation — delegated, deterministic, fail-fast
 
@@ -23,7 +21,7 @@ Because the gate is a shell exit code, not a judgment call, it behaves identical
 # Job
 
 1. Confirm a brief-file path is present and the file exists (the two STOP guards in §Dispatch). Do NOT hand-validate the brief's fields — that is delegated (see §Validation).
-2. Dispatch via `pmctl dispatch run --adapter codex` (see Step 2 below) — this is your first substantive action, and its built-in `brief-validate` pre-flight is the deterministic schema gate. Never call `codex exec` directly. `scripts/codex-dispatch.sh` is a deprecated shim — do not call it directly.
+2. Dispatch via `pmctl dispatch run --adapter codex` (see Step 2 below) — this is your first substantive action, and its built-in `brief-validate` pre-flight is the deterministic schema gate. Never call `codex exec` directly.
 3. Verify the result against `git diff` — Codex's self-report may not match reality.
 4. Report back in the shape below.
 
@@ -47,7 +45,7 @@ The brief file is always pre-written by the main thread before dispatching to co
 pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write --brief-file /tmp/brief-<task>.md
 ```
 
-`pmctl` must be in PATH (`~/.local/bin/pmctl` after install). If not available, fall back to `"${PM_DISPATCH_REPO}/cli/pmctl"`. Do not call `scripts/codex-dispatch.sh` directly — it is a deprecated shim and will emit a `[deprecated]` warning. Do not inline the brief with `-- <brief>` for real work; that form is retained only for trivial smoke checks.
+`pmctl` must be in PATH (`~/.local/bin/pmctl` after install). If not available, fall back to `"${PM_DISPATCH_REPO}/cli/pmctl"`. Do not inline the brief with `-- <brief>` for real work; that form is retained only for trivial smoke checks.
 
 > **CRITICAL — NEVER set `run_in_background: true` on the dispatch Bash call.**
 >
@@ -61,7 +59,7 @@ pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write -
 
 **If the dispatch script exits non-zero — STOP immediately, except exit 124 (see Retry policy).** Do NOT attempt to reformat the brief, bypass the hook, rewrite the dispatch command, or retry with different flags. Return this message to the main thread and stop:
 
-> `REJECT: codex-dispatch.sh failed with exit <N>. Error: <first non-empty line from stderr>. Do not retry without main-thread review. Trace: <path to .stderr if available, otherwise: dispatch did not reach trace creation>.`
+> `REJECT: pmctl dispatch run failed with exit <N>. Error: <first non-empty line from stderr>. Do not retry without main-thread review. Trace: <path to .stderr if available, otherwise: dispatch did not reach trace creation>.`
 
 The main thread is responsible for diagnosing and fixing dispatch failures. The codex-executor's job is to execute briefs, not to negotiate with the dispatch pipeline.
 
@@ -105,7 +103,7 @@ The Write tool is NOT available to codex-executor subagents (the Agent tool does
 
 # When NOT to use this agent
 
-Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `dispatch_handover_v1` block, the main thread should write `brief_file` and run `pmctl dispatch run --adapter codex --brief-file <path> --cd <dir>` with `run_in_background:true` on the outer Bash call. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent. (`scripts/codex-dispatch.sh` is a deprecated shim for the same path; prefer `pmctl dispatch run`.)
+Do not use `codex-executor` as the ordinary `/pm` dispatch route. For a valid `dispatch_handover_v1` block, the main thread should write `brief_file` and run `pmctl dispatch run --adapter codex --brief-file <path> --cd <dir>` with `run_in_background:true` on the outer Bash call. That route avoids the stale subagent lifecycle state described in `[[feedback_codex_dispatch_lifecycle_leak]]` and preserves completion notifications without nesting the dispatch in this agent.
 
 Use this agent only when one of these fallback conditions is true. This table is the executor-local "do not use me unless..." checklist; `docs/dispatch-brief.md` §Fallback remains the canonical dispatch policy.
 

@@ -76,7 +76,8 @@ create_runner() {
   done
 
   mkdir -p "$dir/.claude"
-  cat > "$dir/codex-dispatch.sh" <<'STUB_EOF'
+  mkdir -p "$dir/adapters/codex"
+  cat > "$dir/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -120,7 +121,7 @@ fi
 
 exit 0
 STUB_EOF
-  chmod +x "$dir/codex-dispatch.sh"
+  chmod +x "$dir/adapters/codex/dispatch.sh"
 }
 
 create_agents() {
@@ -417,14 +418,14 @@ test_executor_claude_never_calls_codex() {
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo"
 
-  cat > "$runner/codex-dispatch.sh" <<'STUB_EOF'
+  cat > "$runner/adapters/codex/dispatch.sh" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 marker="${CODEX_GATE_STUB_CALLED_MARKER:-}"
 [[ -n "$marker" ]] && printf 'called\n' > "$marker"
 exit 99
 STUB_EOF
-  chmod +x "$runner/codex-dispatch.sh"
+  chmod +x "$runner/adapters/codex/dispatch.sh"
 
   set +e
   CODEX_GATE_STUB_CALLED_MARKER="$marker" run_gate "$home" "$runner" "$repo" "$out" "$err" "$runner" --executor claude --base main
@@ -435,7 +436,7 @@ STUB_EOF
     return
   fi
   if [[ -f "$marker" ]]; then
-    fail "$name" "codex-dispatch was called in claude mode"
+    fail "$name" "adapter dispatch was called in claude mode"
     return
   fi
   assert_contains "$name" "$out" '```pr-gate-handover_v1' || return

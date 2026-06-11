@@ -126,14 +126,14 @@ Route by task size first; executor and model follow from size:
 |---|---|---|
 | **Tiny** | < 30 lines, 1–2 files, no new behavior | Main thread inline (Edit tool directly — no dispatch) |
 | **Small** | < 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks | Main thread inline, OR dispatch with `model: light` (codex-spark / haiku) |
-| **Medium** | 50–300 lines, 3–5 files, 3+ behavioral units | Dispatch with `model: default` (Codex default via `scripts/codex-dispatch.sh`) |
+| **Medium** | 50–300 lines, 3–5 files, 3+ behavioral units | Dispatch with `model: default` (Codex default via `pmctl dispatch run --adapter codex`) |
 | **Large** | > 300 lines, 5+ files, new modules/schemas | Dispatch with `model: default`; `/pre-impl` required |
 
 Decision rules:
 
 1. **Size determines route** — check the table above before writing a brief. Tiny tasks never need a brief; Small tasks may be handled inline by the main thread directly.
 2. **`light` for confirmed-small dispatches** — use `model: light` when all three Small criteria hold: diff < 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks. Misrouting a medium task to `light` degrades quality without a loud failure.
-3. **Codex default for medium/large** — follow the dispatch contract in `docs/dispatch-brief.md`; main-thread Bash route via `scripts/codex-dispatch.sh`. Use `codex-executor` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback.
+3. **Codex default for medium/large** — follow the dispatch contract in `docs/dispatch-brief.md`; main-thread Bash route via `pmctl dispatch run --adapter codex`. Use `codex-executor` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback.
 4. **Never use Opus for implementation** without explicit user instruction.
 
 **Main thread vs. PM routing**: the table above governs main-thread decisions. When the main thread invokes `/pm`, the PM always writes a brief for Small and above (PM does not perform inline edits). The "inline" route in the Small row applies when the main thread handles the change directly without going through PM.

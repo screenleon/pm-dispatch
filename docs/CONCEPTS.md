@@ -37,7 +37,7 @@ Two examples:
 
 - **`hook-pm-write-guard.sh`** — blocks the `project-pm` subagent from writing to anywhere except the memory directory and a small allowlist. The PM agent is supposed to plan and write briefs, not edit production code. If a PM session tries to `Write(src/api.go)`, the hook denies the call and the user sees why. Without the hook this is a strong suggestion in the prompt; with the hook it is structural.
 
-- **`hook-codex-bash-guard.sh`** — blocks the `codex-executor` subagent from spawning `codex-dispatch.sh` in the background. The harness can kill a subagent's background processes when the subagent returns, so this rule must be structural — see Concept 3 below for the underlying mechanic. The hook turns a footgun into a hard error.
+- **`hook-codex-bash-guard.sh`** — blocks the `codex-executor` subagent from invoking `pmctl dispatch run --adapter codex` (or any allowed dispatch) in the background. The harness can kill a subagent's background processes when the subagent returns, so this rule must be structural — see Concept 3 below for the underlying mechanic. The hook turns a footgun into a hard error.
 
 The general shape is: identify a recurring "you should not have done that" moment in your workflow, write the rule once as a hook, and the harness enforces it forever after. The cost of writing the hook is paid once; the policy then applies to every future session, including the ones you don't remember.
 
@@ -99,7 +99,7 @@ Subagents can do things the main thread shouldn't have to do: long research, opi
 
 `pm-dispatch` uses subagents for two purposes:
 
-1. **Specialised roles.** `agents/project-pm.md` is a planner. `agents/critic.md`, `agents/qa-tester.md`, `agents/security-reviewer.md`, `agents/risk-reviewer.md`, `agents/architecture-reviewer.md` are five reviewers, each with a different lens. `agents/codex-executor.md` wraps `codex-dispatch.sh`. Each has a tight tool allowlist (e.g. the security-reviewer has read tools only) so the role enforces itself.
+1. **Specialised roles.** `agents/project-pm.md` is a planner. `agents/critic.md`, `agents/qa-tester.md`, `agents/security-reviewer.md`, `agents/risk-reviewer.md`, `agents/architecture-reviewer.md` are five reviewers, each with a different lens. `agents/codex-executor.md` wraps `adapters/codex/dispatch.sh` via `pmctl dispatch run`. Each has a tight tool allowlist (e.g. the security-reviewer has read tools only) so the role enforces itself.
 
 2. **Context isolation.** A long PR review can produce thousands of tokens of intermediate analysis. If the main thread did that work, every later turn would carry it. A subagent returns one summary message, leaving the main thread context lean.
 

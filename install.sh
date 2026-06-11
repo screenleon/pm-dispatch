@@ -350,8 +350,8 @@ if [[ "$_INSTALL_PLATFORM" == "windows" ]]; then
   install_dir_junction agents
   install_dir_junction skills
   install_dir_junction commands
-  # adapters/ must be installed so codex-dispatch.sh shim can resolve
-  # $SELF_DIR/../adapters/codex/dispatch.sh from the installed location.
+  # adapters/ must be installed so pmctl dispatch run --adapter codex can
+  # resolve adapters/codex/dispatch.sh from the repo root.
   install_dir_junction adapters
 else
   install_dir agents
@@ -380,13 +380,14 @@ remove_legacy_symlink "$CLAUDE_HOME/commands/codex-pr-gate.md" "$REPO_ROOT/comma
 remove_legacy_symlink "$CLAUDE_HOME/commands/caveman.md" "$REPO_ROOT/commands/caveman.md"
 remove_legacy_symlink "$CLAUDE_HOME/commands/caveman-commit.md" "$REPO_ROOT/commands/caveman-commit.md"
 remove_legacy_symlink "$SCRIPTS_DEST/claude-usage.sh" "$REPO_ROOT/scripts/claude-usage.sh"
+remove_legacy_symlink "$SCRIPTS_DEST/codex-dispatch.sh" "$REPO_ROOT/scripts/codex-dispatch.sh"
 
 us_count=0; us_conflicts=0
 # Allowlist: user-facing scripts only. Excluded intentionally:
 #   test-*.sh   — run as install preflights above, not user tools
 #   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
-for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh doctor.sh; do
+for script in token-usage.sh log-usage.sh pr-gate.sh setup-project.sh patch-gitignore.sh doctor.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
     us_count=$((us_count + 1))
   else
@@ -398,7 +399,7 @@ echo "  ($us_count linked, $us_conflicts conflicts)"
 echo
 
 # Share assets - model-aliases.tsv must be co-installed with scripts so
-# ~/.claude/scripts/codex-dispatch.sh resolves $SCRIPT_DIR/../share/model-aliases.tsv correctly.
+# adapters/codex/dispatch.sh resolves $SCRIPT_DIR/../share/model-aliases.tsv correctly.
 echo "==> share assets"
 SHARE_DEST="$CLAUDE_HOME/share"
 if [[ ! -d "$SHARE_DEST" ]]; then

@@ -436,7 +436,6 @@ check_scripts_executable() {
     token-usage.sh
     log-usage.sh
     pr-gate.sh
-    codex-dispatch.sh
     setup-project.sh
     patch-gitignore.sh
     doctor.sh

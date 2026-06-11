@@ -182,7 +182,7 @@ else
     local approval=${5-}
     local timeout=${6-}
     local isolation_level=${7-}
-    local dispatch_script="$EXECUTOR_ROUTER_SCRIPT_DIR/codex-dispatch.sh"
+    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/codex/dispatch.sh"
     local -a cmd
     local arg
     local first=1

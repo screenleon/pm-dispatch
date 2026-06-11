@@ -119,6 +119,8 @@ The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Bri
 
 **`files:` block is a sandbox allowlist, not a must-read list** (per `docs/dispatch-brief.md` §`files:` block semantics): a `read:` entry means the executor MAY open that file, NOT that it MUST pre-load it. For survey-style briefs (spikes, audits) whose `files:` block lists > 4 reads or > 50KB total, add a `context:` instruction telling the executor to read on demand via `grep -n` / `sed -n` / section-targeted commands — never full-file Read on `BACKLOG.md`, `agents/*.md`, or large synthesis docs.
 
+**`test_target:` is required for language-aware tool verdict spikes**: when briefing a spike that evaluates a language-aware tool (codegraph, AST-grep, semgrep, tree-sitter, etc.) and the brief must produce a verdict (GREEN/AMBER/RED), set `test_target: <absolute path>` to a committed representative codebase distinct from `working_dir:`. Omitting it lets the executor pick any convenient repo, making the verdict non-reproducible. Also include in the brief setup instructions: write the verdict rubric template (from `docs/spikes/README.md §Verdict rubric`) to `/tmp/cc<NNN>-content/verdict-rubric.md` before dispatch. The RED criterion for install failure applies only to clean dev machines — sandbox network blocks and missing dev tools are local-env, not project quality signals.
+
 **Multi-file brief discipline** (per `[[feedback_codex_brief_discipline]]`; triggers when the brief touches > 4 files OR embeds > 50 lines of verbatim content the executor must reproduce byte-identically): include all three of these to prevent the apply_patch debug-loop hang pattern.
 1. **`apply_patch` retry-cap** in `constraints:` — `"If apply_patch fails verification on the same target file twice in a row, HALT and report current file state, last attempted patch, and the diff between expected vs actual context lines. Do NOT retry a 3rd time."` Codex has no built-in retry-cap; without this it can debug-loop for the full dispatch timeout (1800s) instead of failing fast.
 2. **Verbatim-as-attached-file**: instead of embedding > 50 lines of literal text (override-policy paragraphs, BACKLOG rows, brief-template fragments) inside the brief's `context:` block, write each block to `/tmp/<task>-content/<name>.md` BEFORE dispatch and reference the path from the brief (`"copy /tmp/<task>-content/<name>.md verbatim into <target>; do NOT paraphrase"`). Eliminates codex's hallucinate-when-retyping failure mode.
@@ -169,7 +171,7 @@ acceptance:
 
 Use direct background Bash by default. Set `dispatch_route: agent_executor` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback, and state the reason in one sentence outside the fence.
 
-You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not run `scripts/codex-dispatch.sh`; do not write the brief file yourself. Main thread extracts the `dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
+You cannot spawn subagents and you have no Dispatch action. Do not call `Agent`; do not write the brief file yourself. Main thread extracts the `dispatch_handover_v1` block, writes `brief_file`, dispatches, and relays the report. Verify the resulting report against `git diff` before claiming success.
 
 # Per-project memory shape
 

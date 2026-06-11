@@ -25,12 +25,6 @@
 # a new ROLE (spike / reviewer / doc-writer …) adds exactly one role branch to
 # the agent_type map + the registry below — role-keyed, not per-(role,runtime).
 #
-# `--profile pm|codex|claude` is a DEPRECATED back-compat alias (CC-291): it maps
-# to the (role, runtime) pair and emits one stderr warning. It conflated the two
-# axes (`pm` was a role name, `codex`/`claude` were runtime names). Prefer
-# `--role`/`--runtime`. `--profile` carries both axes, so it is mutually
-# exclusive with `--role` AND `--runtime`.
-#
 # Fail-closed: a guard must never report success without evaluating a policy.
 # Any recognized cell that has no registered policy — e.g. `pm/pre-bash`
 # (project-pm never runs Bash), `executor(claude)/pre-bash` (claude-executor
@@ -47,8 +41,8 @@
 #       from 2 so a caller can tell "I cannot enforce this" apart from "denied".
 
 pmctl_guard_check() {
-  local repo_root event="" role="" runtime="" profile="" file="" cmd_arg=""
-  local file_set=0 command_set=0 role_set=0 runtime_set=0 profile_set=0
+  local repo_root event="" role="" runtime="" file="" cmd_arg=""
+  local file_set=0 command_set=0 role_set=0 runtime_set=0
 
   repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -85,15 +79,6 @@ pmctl_guard_check() {
         runtime_set=1
         shift 2
         ;;
-      --profile)
-        if [[ $# -lt 2 ]]; then
-          printf 'pmctl guard check: missing value for --profile\n' >&2
-          return 2
-        fi
-        profile="$2"
-        profile_set=1
-        shift 2
-        ;;
       --file)
         if [[ $# -lt 2 ]]; then
           printf 'pmctl guard check: missing value for --file\n' >&2
@@ -118,31 +103,6 @@ pmctl_guard_check() {
         ;;
     esac
   done
-
-  # --profile is the deprecated alias; it carries BOTH axes itself, so it is
-  # mutually exclusive with --role AND --runtime. Allowing e.g.
-  # `--profile codex --runtime claude` would silently let the profile win — an
-  # ambiguous shape — so reject it rather than pick a precedence.
-  if [[ "$profile_set" -eq 1 && ( "$role_set" -eq 1 || "$runtime_set" -eq 1 ) ]]; then
-    printf 'pmctl guard check: --profile is mutually exclusive with --role/--runtime (--profile is deprecated; use --role/--runtime)\n' >&2
-    return 2
-  fi
-
-  # Normalize the deprecated --profile onto the (role, runtime) axes, then warn
-  # once. Everything downstream operates on role/runtime only.
-  if [[ "$profile_set" -eq 1 ]]; then
-    case "$profile" in
-      pm)     role="pm"; runtime="claude"; runtime_set=1 ;;
-      codex)  role="executor"; runtime="codex"; runtime_set=1 ;;
-      claude) role="executor"; runtime="claude"; runtime_set=1 ;;
-      *)
-        printf 'pmctl guard check: unknown profile: %s (want pm|codex|claude)\n' "$profile" >&2
-        return 2
-        ;;
-    esac
-    role_set=1
-    printf 'pmctl guard check: --profile is deprecated; use --role <pm|executor|reviewer> --runtime <codex|claude>\n' >&2
-  fi
 
   if [[ -z "$event" ]]; then
     printf 'pmctl guard check: missing --event (want pre-write|pre-bash|post-task)\n' >&2
