@@ -18,7 +18,7 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 **Dispatch route**: Subagents cannot spawn subagents. If PM returns a `dispatch_handover_v1` block, the **main thread** extracts the brief body, writes it to the declared `brief_file`, reads `executor`, validates metadata with `handover_validate_all_metadata`, and then routes by `executor` value:
 
 - `executor: codex` → main-thread Bash to `pmctl dispatch run --adapter codex`
-- `executor: claude` → main-thread `Agent(subagent_type: "claude-executor")` with the pre-written brief file path
+- `executor: claude` → main-thread Bash to `pmctl dispatch run --adapter claude`
 - any other value is rejected by the validator before this point
 
 The abstract contract both routes implement is documented in `docs/executor-contract.md`. Always source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
