@@ -1,14 +1,12 @@
 # Platform support
 
-> **Status (2026-05-20, v0.2.0)**: CC-104t (python→jq hook rewrite) has landed —
-> hooks are now functional on Windows Git Bash without requiring python3.
+> **Windows status**: hooks are functional on Windows Git Bash (pure bash+jq, no python3 required).
 > Windows is **experimental**: install succeeds and all hooks run, but
 > `install.sh` uses directory junctions for managed directories on Git Bash
 > so agents, commands, skills, and the pm schema auto-sync after updates.
 > Individual helper script files are still copied; re-run `bash install.sh`
 > after pulling when scripts change. `pmctl` is never copied on Windows; add
 > `<repo>/cli` to PATH manually so it can resolve repo-local libraries.
-> Tracked as CC-207.
 > **WSL2 remains the recommended Windows path** (treated as Linux, first-class).
 
 ## Support matrix

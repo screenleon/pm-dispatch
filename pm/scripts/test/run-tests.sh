@@ -201,7 +201,7 @@ run_validate_case "validate bad-changelog-missing explicit arg" 2 "E-SCHEMA-HEAD
 # rollup.sh 彙整案例。
 rollup_out=$(mktemp)
 set +e
-bash "$root_dir/rollup.sh" --root "$fixtures/rollup" --out "$rollup_out" >/dev/null 2>/dev/null
+bash "$root_dir/rollup.sh" --root "$fixtures/rollup" --out "$rollup_out" --today 2026-05-20 >/dev/null 2>/dev/null
 rollup_code=$?
 set -e
 if [ "$rollup_code" -ne 0 ]; then

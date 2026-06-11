@@ -148,6 +148,8 @@ After you finish the first `/pm` cycle, keep these in sync:
 - [`docs/memory-system.md`](docs/memory-system.md)
 - [`docs/dispatch-brief.md`](docs/dispatch-brief.md)
 - [`docs/executor-contract.md`](docs/executor-contract.md)
+- [`docs/context-retrieval.md`](docs/context-retrieval.md) — query the repo index before authoring a brief
+- [`docs/pmctl-task.md`](docs/pmctl-task.md) — full task lifecycle commands
 - [`docs/platform-support.md`](docs/platform-support.md)
 
 If a fork user path differs from yours, keep your edits small and local; this repo is designed to be copied and adapted.
