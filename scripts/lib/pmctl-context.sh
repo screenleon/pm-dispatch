@@ -959,6 +959,9 @@ pmctl_context_query() {
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
     printf '# no hits for: %s\n' "$query"
+    # No index yet is still a query: emit a zero-hit event so usage telemetry
+    # captures it and the "emits after each call" contract holds uniformly.
+    _ctx_emit_usage_event "context.queried" "$repo_root" "$query" 0
     return 0
   fi
 
@@ -1119,6 +1122,8 @@ pmctl_context_reuse_scan() {
     printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
     printf '  terms: []\n'
     printf '  hits: []\n'
+    # Mirror the query path: a no-index reuse-scan still emits a zero-hit event.
+    _ctx_emit_usage_event "context.reuse_scanned" "$repo_root" "$desc" 0
     return 0
   fi
 

@@ -945,6 +945,73 @@ case_context_reuse_scan_no_db() {
   fi
 }
 
+case_context_query_no_db() {
+  local name="pmctl context query: exits 0 with no-hits + zero-hit event when index DB not found"
+  # Behavior: query is an acceleration path — a missing index must return exit 0 with
+  # '# no hits', AND (telemetry contract) still emit a zero-hit context.queried event.
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-query"
+  mkdir -p "$nodb_repo"
+  local state_root="$tmp_root/state-query-nodb"; mkdir -p "$state_root"
+
+  local out err status=0
+  out="$tmp_root/query-nodb.out"; err="$tmp_root/query-nodb.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context query "$nodb_repo" "alpha" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q '# no hits' "$out"; then
+    fail "$name" "expected '# no hits' output; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "no-db query reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+  local evt hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | jq -c 'select(.payload.query == "alpha")' 2>/dev/null | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.queried event for the no-db query"; return 0
+  fi
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$hits" != "0" ]]; then
+    fail "$name" "expected payload.hits=0 for no-db query; got: $hits"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_reuse_scan_no_db_emits() {
+  local name="pmctl context reuse-scan: emits zero-hit context.reuse_scanned when index DB not found"
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-scan-evt"
+  mkdir -p "$nodb_repo"
+  local state_root="$tmp_root/state-scan-nodb"; mkdir -p "$state_root"
+
+  local err status=0
+  err="$tmp_root/scan-nodb-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context reuse-scan "$nodb_repo" "alpha beta function" \
+    > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "no-db reuse-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+  local evt hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | jq -c 'select(.payload.query == "alpha beta function")' 2>/dev/null | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.reuse_scanned event for the no-db scan"; return 0
+  fi
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$hits" != "0" ]]; then
+    fail "$name" "expected payload.hits=0 for no-db reuse-scan; got: $hits"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_reuse_scan_unknown_flag() {
   local name="pmctl context reuse-scan: exits 2 for unknown flag"
   # Behavior: reuse-scan must exit 2 when an unrecognized flag is passed.
@@ -1921,6 +1988,8 @@ case_context_pack_nondir_repo_path
 case_context_pack_schema_contract
 case_context_reuse_scan_missing_desc
 case_context_reuse_scan_no_db
+case_context_query_no_db
+case_context_reuse_scan_no_db_emits
 case_context_reuse_scan_unknown_flag
 case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms

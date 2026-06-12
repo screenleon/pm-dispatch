@@ -1862,7 +1862,7 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 **See**: pr:#270
 
-`_ctx_db_path()` now stores the context index at `<repo>/.pm-dispatch/ctx/context.db` instead of the global XDG path. `context index` auto-creates `.pm-dispatch/ctx/`, patches `.gitignore` on first run (if `.gitignore` exists), and emits an error on mkdir failure. `query` / `pack` / `reuse-scan` return graceful empty results on missing db (acceleration path — no index = no context, not an error). All 53 context unit tests pass; test suite updated to remove `PM_DISPATCH_STATE_ROOT` isolation pattern.
+`_ctx_db_path()` now stores the context index at `<repo>/.pm-dispatch/ctx/context.db` instead of the global XDG path. `context index` auto-creates `.pm-dispatch/ctx/`, patches `.gitignore` on every index (idempotent; skips symlinked / hardlinked / non-regular `.gitignore` for path safety), and emits an error on mkdir failure. `query` / `pack` / `reuse-scan` return graceful empty results on missing db (acceleration path — no index = no context, not an error); `query` / `reuse-scan` still emit a zero-hit usage event in that case. Only the **DB location** ignores `PM_DISPATCH_STATE_ROOT`; context usage telemetry honors it like every other state write, and the test suite isolates all state into a throwaway root. All context unit tests pass.
 
 ---
 
@@ -1901,7 +1901,7 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 **See**: pr:#270
 
-Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Phase 3 also removed `PM_DISPATCH_STATE_ROOT` isolation — db now goes to `$REPO_ROOT/.pm-dispatch/` as designed.
+Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Only the context **DB location** ignores `PM_DISPATCH_STATE_ROOT` — it is always repo-local under `$REPO_ROOT/.pm-dispatch/`. Phase 3 itself redirects context usage telemetry to a throwaway `PM_DISPATCH_STATE_ROOT` (torn down before Phase 4) so the smoke never writes `context.*` events into the operator's real trace store. Operator note: indexing the real checkout leaves a repo-local derived cache at `$REPO_ROOT/.pm-dispatch/ctx/` (gitignored); `rm -rf .pm-dispatch` if a fully clean tree is required.
 
 ## CC-364 — perf: `pmctl trace tail --all` per-event jq spawn（deferred）
 

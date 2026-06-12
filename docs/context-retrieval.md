@@ -32,9 +32,11 @@ For a targeted multi-term query (when key symbol names are already known), use
     pmctl context pack [<repo_root>] --task-id <id> --query <term> [--query <term> ...]
 
 `pmctl context reuse-scan` emits a `context.reuse_scanned` event and
-`pmctl context query` emits a `context.queried` event after each call.
-These are readable via `pmctl trace tail --kind context.reuse_scanned` (or
-`--kind context.queried`).  `pmctl context pack` does not emit usage events.
+`pmctl context query` emits a `context.queried` event after **every** call —
+including calls that find no hits and calls against a repo with no index yet
+(emitted with `hits: 0`).  These are readable via
+`pmctl trace tail --kind context.reuse_scanned` (or `--kind context.queried`).
+`pmctl context pack` does not emit usage events.
 
 ## Context DB location
 
