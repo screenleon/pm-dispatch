@@ -7,6 +7,27 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-13: passive-context-v1-auto-pack-pointer-only-opt-in
+
+Relates: CC-365, CC-366, CC-356, CC-346, CC-338
+
+**Context**: The context plane (repo + knowledge index, pack/reuse-scan, repo-local db, telemetry) is fully built (#253–#270) but consumption remains ACTIVE-reflex only: `agents/project-pm.md` §3 and the dispatch-brief docs *instruct* the PM to query before briefing, and operationally that instruction has produced zero reuse-scan calls (the exact gap CC-346's pause rationale documents). Two adoption barriers were identified: the index is manual-build-only (forget to run `pmctl context index` → permanently empty results), and `pmctl dispatch run` has no context-assembly step at all (brief is read as-is, scripts/lib/pmctl-dispatch.sh steps 1–7). Instruction-based wiring (CC-356) was necessary but not sufficient — capability exists, workflow unchanged.
+
+**Decision**: Make consumption a deterministic pmctl pipeline step, in two slices:
+1. **CC-365 lazy build + auto-refresh**: `query`/`pack`/`reuse-scan` auto-build a missing db when sqlite3 is available (stderr notice) and run an mtime-based incremental refresh when it exists. Opt-outs `PM_DISPATCH_CONTEXT_AUTOBUILD=0` / `PM_DISPATCH_CONTEXT_AUTOREFRESH=0`. The no-sqlite3 graceful-empty contract and zero-hit telemetry contract are unchanged.
+2. **CC-366 auto-pack at dispatch**: after brief-validate passes and before guard, `pmctl dispatch run` runs reuse-scan on the brief's `goal:` and appends ≤5 hits to an **augmented brief copy**; the adapter argv receives the copy. Three load-bearing sub-decisions:
+   - **Pointer-only**: injected entries carry `ref` + `why_relevant` + `confidence` only — never chunk text. Matches the brief lazy-read discipline; near-zero executor token cost; a garbage hit costs the executor one glance, not a context-window bite.
+   - **Authored brief is immutable**: the copy lives at `<work_dir>/.pm-dispatch/ctx/packs/<run_id>.md` (already gitignored). Guard and state transitions keep referencing the original brief; only the adapter argv is swapped. Human-authored artifact stays diffable/auditable.
+   - **Opt-in v1, fail-open**: `--auto-pack` flag or config `dispatch.auto_pack = on` (default off), mirroring the CC-235 observe-first rollout. Any packing failure degrades to the original brief with a stderr warning — auto-pack must never fail a dispatch. Every invocation emits `context.auto_packed` (hit count, pack path; 0-hit included) so usage and hit quality are measurable via `pmctl trace`.
+
+This also resolves the CC-346 chicken-and-egg: its resume trigger ("reuse-scan output lands in ≥2 real briefs") was unreachable while invocation was manual; auto-pack is the mechanism that generates that evidence either way.
+
+**Alternatives considered**: (a) Harden the instruction route (make reuse-scan a mandatory dispatch-brief skill step) — rejected: still model-discipline, not deterministic; same class as the wiring CC-356 already did. (b) Claude-side UserPromptSubmit injection hook — rejected: platform-bound (Claude-only), invisible to the codex route, and injects into the PM's context rather than the executor's brief, where the value is. (c) Inject chunk content not pointers — rejected: token cost scales with hit quality, which is unproven; pointer-only makes bad hits nearly free. (d) Default-on — rejected: hit quality unmeasured (live reuse-scan sampling shows mid-quality symbol hits + stop-word term noise); earn default-on with telemetry.
+
+**Constraints introduced**: auto-pack reads the brief `goal:` only (no full-brief term extraction in v1); cap stays at 5; the augmented copy must itself pass brief-validate, else fall back to the original; `context.auto_packed` reuses existing state-writer events machinery (no new infrastructure). Default flips to on only after telemetry shows acceptable hit quality across real dispatches.
+
+---
+
 ## 2026-06-10: v0.5.0-memory-loop-scope-trim-and-wiring-acceptance
 
 Relates: CC-234, CC-346, CC-354, CC-356, CC-239
