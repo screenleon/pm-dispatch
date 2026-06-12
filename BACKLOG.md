@@ -104,6 +104,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-360 | 🟢 someday | **[pr-gate Route B: migrate executor:claude path to pmctl dispatch run --adapter claude]** `scripts/pr-gate.sh --executor claude` 目前輸出 `pr-gate-handover_v1` block，由 `/pr-gate` skill 在 main thread fan-out `Agent(claude-executor)` per reviewer——與 Route A（codex）直接在 `pr-gate.sh` 內呼叫 `pmctl dispatch run --adapter codex` 的架構不對稱。目標：`executor-router.sh` 為 claude 回傳與 codex 相同的 `main_thread_bash_background` route，`pr-gate.sh` 改為直接呼叫 `pmctl dispatch run --adapter claude`，`commands/pr-gate.md` Route B 說明同步更新，並移除 skill 端的 handover block fan-out 邏輯。 | arch/DX | 2026-06-11 | — | P3 | design |
 | CC-359 | 🟢 someday | **[concept: backlog-driven batch dispatch with worktree isolation]** 設計理念：pm-dispatch 本身管理 git worktree 生命週期（`git worktree add/remove`），讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task，不依賴任何特定 executor 的 platform feature。核心原則：(1) executor-agnostic — worktree 管理是 pmctl 責任，非 executor 責任；(2) human-in-the-loop — batch dispatch 後 merge 決策仍在人這邊，無 auto-merge；(3) 衝突可觀測不禁止 — 以 BACKLOG area 欄位做粗粒度衝突分組（同 area 排隊，不同 area 可平行），不做逐檔 conflict detection；(4) PR-only — 每個 task 產出獨立 branch + PR，由人統一 review。適合類型：測試補強、文件補強、小 bug、CLI option 補齊；不適合：架構核心大改、schema breaking change。Token budget 可作為 scheduler 輸入控制並行度。 | arch/ops | 2026-06-11 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
+| CC-361 | 🟢 someday | **[context: repo-local state root + fix _ctx_emit_usage_event isolation]** `_ctx_emit_usage_event` writes events via `_sw_store_root()` which reads `PM_DISPATCH_STATE_ROOT` first — any caller that sets this env var (smoke tests, release-verify Phase 3) causes events to land in a temp dir then be deleted; no `context.queried` or `context.reuse_scanned` events survive in the production trace. Fix: emit to installation state partition regardless of `PM_DISPATCH_STATE_ROOT`; document `.pm-dispatch/` as the repo-local state root convention in `docs/context-retrieval.md` and `GETTING_STARTED.md`. | ops/DX | 2026-06-12 | — | P2 | hygiene |
 
 ---
 
@@ -1872,21 +1873,6 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 **Acceptance**: After fix, running `release-verify.sh --e2e` and then `pmctl trace tail --kind context.queried` shows new events from Phase 3.
 
 **Cross-link**: [[CC-356]] (wiring), [[CC-358]] (telemetry evaluation depends on correct event emission).
-
----
-
-## CC-362 — Phase C gate smoke: fix 0-byte result when --cd points to synthetic repo
-
-**Problem**: `test-e2e.sh` Phase C runs `pmctl gate run --cd "$synthetic_base"` with `--output "$REPO_ROOT/.gate-results/..."`. The codex session runs but the output file is 0-byte. Codex trace shows `cwd: /tmp` regardless of `--cd` value — root cause unclear (possible: synthetic_base cleaned up early, path not forwarded, or guard policy mismatch between `--cd` dir and output dir).
-
-**Investigation needed**:
-- Confirm whether codex receives the correct `--cwd` value from codex-dispatch.sh
-- Check if reviewer-write-guard fires differently when the codex session cwd differs from the output file's parent repo
-- Check if `pr-gate.sh` writes an empty output file before dispatching (then codex fails to overwrite it)
-
-**Acceptance**: `release-verify.sh --e2e` Phase 4 shows `[PASS] pr-gate smoke (codex)` with a non-empty gate result file.
-
-**Cross-link**: [[CC-360]] (gate route architecture), test-e2e.sh Phase C.
 
 ---
 
