@@ -766,14 +766,15 @@ case_context_pack_query_without_value() {
 
 case_context_pack_no_db() {
   local name="pmctl context pack: exits 0 with empty JSON when index DB not found"
-  # Behavior: context pack is an acceleration path — missing DB must return graceful
-  # empty JSON (schema_version 2, empty files/symbols arrays) rather than exiting 1.
-  # Steps: call pack on a repo with no prior index run; assert exit 0 and valid empty JSON.
+  # Behavior: with autobuild disabled, missing DB must still return graceful empty
+  # JSON (schema_version 2, empty files/symbols arrays) rather than exiting 1.
+  # Steps: call pack on a repo with no prior index run and autobuild disabled; assert exit 0 and valid empty JSON.
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-nodb.out"; err="$tmp_root/pack-nodb.err"
   local nodb_repo="$tmp_root/nodb-repo-pack"
   mkdir -p "$nodb_repo"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
     "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo \
     > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
@@ -782,6 +783,9 @@ case_context_pack_no_db() {
   if ! jq -e '.schema_version == 2 and (.files | length) == 0 and (.symbols | length) == 0' \
       "$out" > /dev/null 2>&1; then
     fail "$name" "expected empty schema_version-2 JSON; got: $(<"$out")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "autobuild disabled but context.db was created"; return 0
   fi
   pass "$name"
 }
@@ -925,18 +929,22 @@ case_context_reuse_scan_missing_desc() {
 
 case_context_reuse_scan_no_db() {
   local name="pmctl context reuse-scan: exits 0 with empty YAML when index DB not found"
-  # Behavior: reuse-scan is an acceleration path — missing DB must return graceful empty
+  # Behavior: with autobuild disabled, missing DB must still return graceful empty
   # YAML (reuse_candidates: header, hits: []) rather than exiting 1.
-  # Steps: call reuse-scan on a repo with no prior index run; assert exit 0 and empty hits.
+  # Steps: call reuse-scan on a repo with no prior index run and autobuild disabled; assert exit 0 and empty hits.
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/scan-nodb.out"; err="$tmp_root/scan-nodb.err"
   local nodb_repo="$tmp_root/nodb-repo-scan"
   mkdir -p "$nodb_repo"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
     "$PMCTL" context reuse-scan "$nodb_repo" "some description" \
     > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "autobuild disabled but context.db was created"; return 0
   fi
   if grep -q '^reuse_candidates:' "$out" && grep -q 'hits: \[\]' "$out"; then
     pass "$name"
@@ -947,8 +955,8 @@ case_context_reuse_scan_no_db() {
 
 case_context_query_no_db() {
   local name="pmctl context query: exits 0 with no-hits + zero-hit event when index DB not found"
-  # Behavior: query is an acceleration path — a missing index must return exit 0 with
-  # '# no hits', AND (telemetry contract) still emit a zero-hit context.queried event.
+  # Behavior: with autobuild disabled, a missing index must return exit 0 with
+  # '# no hits', and still emit a zero-hit context.queried event.
   should_run "$name" || return 0
 
   local nodb_repo="$tmp_root/nodb-repo-query"
@@ -957,10 +965,14 @@ case_context_query_no_db() {
 
   local out err status=0
   out="$tmp_root/query-nodb.out"; err="$tmp_root/query-nodb.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context query "$nodb_repo" "alpha" \
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context query "$nodb_repo" "alpha" \
     > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "autobuild disabled but context.db was created"; return 0
   fi
   if ! grep -q '# no hits' "$out"; then
     fail "$name" "expected '# no hits' output; got: $(<"$out")"; return 0
@@ -981,6 +993,38 @@ case_context_query_no_db() {
   pass "$name"
 }
 
+case_context_query_no_db_sqlite_missing() {
+  local name="pmctl context query: missing sqlite keeps no-db graceful fallback"
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-query-nosqlite"
+  mkdir -p "$nodb_repo"
+
+  local out err status=0
+  out="$tmp_root/query-nodb-nosqlite.out"; err="$tmp_root/query-nodb-nosqlite.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=scripts/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_sqlite3_check() { return 1; }
+    _ctx_emit_usage_event() { :; }
+    pmctl_context_query "$2" "alpha"
+  ' bash "$SCRIPT_DIR" "$nodb_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "sqlite unavailable but context.db was created"; return 0
+  fi
+  if ! grep -q '# no hits' "$out"; then
+    fail "$name" "expected '# no hits' output; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'sqlite3 not found' "$err" 2>/dev/null; then
+    fail "$name" "missing DB path should not emit sqlite error; stderr: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_reuse_scan_no_db_emits() {
   local name="pmctl context reuse-scan: emits zero-hit context.reuse_scanned when index DB not found"
   should_run "$name" || return 0
@@ -991,10 +1035,14 @@ case_context_reuse_scan_no_db_emits() {
 
   local err status=0
   err="$tmp_root/scan-nodb-evt.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context reuse-scan "$nodb_repo" "alpha beta function" \
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context reuse-scan "$nodb_repo" "alpha beta function" \
     > /dev/null 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "autobuild disabled but context.db was created"; return 0
   fi
   if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
     fail "$name" "no-db reuse-scan reported a telemetry emit failure: $(<"$err")"; return 0
@@ -1008,6 +1056,142 @@ case_context_reuse_scan_no_db_emits() {
   hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
   if [[ "$hits" != "0" ]]; then
     fail "$name" "expected payload.hits=0 for no-db reuse-scan; got: $hits"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_autobuilds_missing_db() {
+  local name="pmctl context query: auto-builds missing index DB"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-autobuild"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/query-autobuild.out"; err="$tmp_root/query-autobuild.err"
+  "$PMCTL" context query "$fix_repo" "my_func_alpha" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if [[ ! -f "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "expected auto-built context.db"; return 0
+  fi
+  if ! grep -q 'context: no index found' "$err" || ! grep -q 'building' "$err"; then
+    fail "$name" "expected auto-build notice on stderr; got: $(<"$err")"; return 0
+  fi
+  if grep -q '^context index:' "$out"; then
+    fail "$name" "index summary leaked to query stdout: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'mymodule.sh' "$out"; then
+    fail "$name" "expected query hit after auto-build; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_pack_autobuilds_missing_db() {
+  local name="pmctl context pack: auto-builds missing index DB"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pack-autobuild"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  out="$tmp_root/pack-autobuild.out"; err="$tmp_root/pack-autobuild.err"
+  "$PMCTL" context pack "$fix_repo" --task-id TASK-AUTO --query my_func_alpha \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pack exited $status: $(<"$err")"; return 0
+  fi
+  if [[ ! -f "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "expected auto-built context.db"; return 0
+  fi
+  if ! grep -q 'context: no index found' "$err"; then
+    fail "$name" "expected auto-build notice on stderr; got: $(<"$err")"; return 0
+  fi
+  if ! jq -e '((.symbols | length) + (.files | length)) >= 1' "$out" > /dev/null 2>&1; then
+    fail "$name" "expected pack hits after auto-build; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_autorefresh_existing_db() {
+  local name="pmctl context query: refreshes existing index before search"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-refresh"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/query-refresh-index.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/query-refresh-index.err")"; return 0; }
+
+  printf '\nautorefresh_query_sentinel_365\n' >> "$fix_repo/notes.txt"
+  # Deterministic mtime bump: a fixed future timestamp beats sleeping across a
+  # filesystem timestamp-granularity boundary.
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
+
+  local out err status=0
+  out="$tmp_root/query-refresh.out"; err="$tmp_root/query-refresh.err"
+  "$PMCTL" context query "$fix_repo" "autorefresh_query_sentinel_365" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q '^context index:' "$out"; then
+    fail "$name" "index summary leaked to query stdout: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'notes.txt' "$out"; then
+    fail "$name" "expected refreshed query hit; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_autorefresh_opt_out() {
+  local name="pmctl context query: auto-refresh can be disabled"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-query-refresh-off"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/query-refresh-off-index.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/query-refresh-off-index.err")"; return 0; }
+
+  printf '\nautorefresh_off_sentinel_365\n' >> "$fix_repo/notes.txt"
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
+
+  local out err status=0
+  out="$tmp_root/query-refresh-off.out"; err="$tmp_root/query-refresh-off.err"
+  PM_DISPATCH_CONTEXT_AUTOREFRESH=0 \
+    "$PMCTL" context query "$fix_repo" "autorefresh_off_sentinel_365" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "query exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q '# no hits' "$out"; then
+    fail "$name" "expected stale no-hit output with auto-refresh disabled; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_reuse_scan_autorefresh_existing_db() {
+  local name="pmctl context reuse-scan: refreshes existing index before scan"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-scan-refresh"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/scan-refresh-index.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/scan-refresh-index.err")"; return 0; }
+
+  printf '\nautorefresh_reuse_sentinel_365\n' >> "$fix_repo/notes.txt"
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
+
+  local out err status=0
+  out="$tmp_root/scan-refresh.out"; err="$tmp_root/scan-refresh.err"
+  "$PMCTL" context reuse-scan "$fix_repo" "autorefresh_reuse_sentinel_365" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reuse-scan exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q '^context index:' "$out"; then
+    fail "$name" "index summary leaked to reuse-scan stdout: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'notes.txt' "$out"; then
+    fail "$name" "expected refreshed reuse-scan hit; got: $(<"$out")"; return 0
   fi
   pass "$name"
 }
@@ -1989,7 +2173,13 @@ case_context_pack_schema_contract
 case_context_reuse_scan_missing_desc
 case_context_reuse_scan_no_db
 case_context_query_no_db
+case_context_query_no_db_sqlite_missing
 case_context_reuse_scan_no_db_emits
+case_context_query_autobuilds_missing_db
+case_context_pack_autobuilds_missing_db
+case_context_query_autorefresh_existing_db
+case_context_query_autorefresh_opt_out
+case_context_reuse_scan_autorefresh_existing_db
 case_context_reuse_scan_unknown_flag
 case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms

@@ -35,6 +35,7 @@
         "decision.recorded",
         "context.queried",
         "context.reuse_scanned",
+        "context.auto_packed",
         "task.lifecycle.warn"
       ]
     },

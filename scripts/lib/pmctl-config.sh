@@ -5,6 +5,7 @@
 # the two output globals:
 #   PM_CFG_TIMEOUT       — dispatch.default_timeout (integer string), or ""
 #   PM_CFG_DEFAULT_MODEL — dispatch.default_model (alias/id), or ""
+#   PM_CFG_AUTO_PACK     — dispatch.auto_pack (on|off), or ""
 #
 # Config file: ${PM_DISPATCH_CONFIG_FILE:-~/.pm-dispatch/config}
 # Format: key = value lines; # comments; unknown keys silently ignored.
@@ -12,6 +13,7 @@
 # shellcheck disable=SC2034  # globals consumed by callers (pmctl-dispatch.sh)
 PM_CFG_TIMEOUT=""
 PM_CFG_DEFAULT_MODEL=""
+PM_CFG_AUTO_PACK=""
 
 pm_config_load() {
   local _cfg_path="${PM_DISPATCH_CONFIG_FILE:-${HOME}/.pm-dispatch/config}"
@@ -19,6 +21,7 @@ pm_config_load() {
 
   PM_CFG_TIMEOUT=""
   PM_CFG_DEFAULT_MODEL=""
+  PM_CFG_AUTO_PACK=""
 
   [[ -r "$_cfg_path" ]] || return 0
 
@@ -49,6 +52,13 @@ pm_config_load() {
           PM_CFG_DEFAULT_MODEL="$_value"
         else
           printf 'pm-dispatch: config: warning: malformed value for dispatch.default_model in %s:%d; ignoring\n' "$_cfg_path" "$_line_no" >&2
+        fi
+        ;;
+      dispatch.auto_pack)
+        if [[ "$_value" == "on" || "$_value" == "off" ]]; then
+          PM_CFG_AUTO_PACK="$_value"
+        else
+          printf 'pm-dispatch: config: warning: malformed value for dispatch.auto_pack in %s:%d; ignoring\n' "$_cfg_path" "$_line_no" >&2
         fi
         ;;
     esac

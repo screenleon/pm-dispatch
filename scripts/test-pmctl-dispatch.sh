@@ -629,6 +629,182 @@ case_timeout_flag_beats_config_via_pmctl() {
   rm -rf "$home" "$work"; rm -f "$stderr"
 }
 
+case_auto_pack_default_off_emits_no_event() {
+  local name="dispatch/auto-pack default off emits no event"
+  should_run "$name" || return 0
+  local work brief state_root count code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 0 && "$count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code context.auto_packed_count=$count"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
+case_auto_pack_zero_hits_event_original_brief() {
+  local name="dispatch/--auto-pack zero hits emits event and keeps original brief"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code hits pack cmd_brief
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // "missing"' 2>/dev/null || printf 'missing')"
+  cmd_brief="$(awk '/brief:[[:space:]]/ { print $2; exit }' "$stderr")"
+  if [[ "$code" -eq 0 && "$hits" -eq 0 && "$pack" == "" && "$cmd_brief" == "$brief" ]] \
+     && [[ ! -d "$work/.pm-dispatch/ctx/packs" || -z "$(find "$work/.pm-dispatch/ctx/packs" -type f -name '*.md' -print -quit 2>/dev/null)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code hits=$hits pack=$pack cmd_brief=$cmd_brief brief=$brief"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr"
+}
+
+case_auto_pack_hits_creates_pack_and_forwards_copy() {
+  local name="dispatch/--auto-pack hits create pack and forward copy"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code hits pack cmd_brief refs original_part brief_lines
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // ""' 2>/dev/null || printf '')"
+  cmd_brief="$(awk '/brief:[[:space:]]/ { print $2; exit }' "$stderr")"
+  refs=0
+  [[ -f "$pack" ]] && refs="$(grep -c '^  - ref:' "$pack" 2>/dev/null || true)"
+  original_part="$(mktemp)"
+  brief_lines="$(wc -l < "$brief" | tr -d ' ')"
+  [[ -f "$pack" ]] && head -n "$brief_lines" "$pack" > "$original_part"
+  if [[ "$code" -eq 0 && "$hits" -ge 1 && "$hits" -le 5 && "$cmd_brief" == "$pack" && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md ]] \
+     && [[ -f "$pack" ]] \
+     && grep -q '^auto_context:' "$pack" \
+     && grep -q '^  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand$' "$pack" \
+     && grep -q '^  - ref: ' "$pack" \
+     && grep -q '^    why_relevant: "' "$pack" \
+     && grep -q '^    confidence: ' "$pack" \
+     && [[ "$refs" -le 5 ]] \
+     && cmp -s "$brief" "$original_part"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code hits=$hits pack=$pack cmd_brief=$cmd_brief refs=$refs"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part"
+}
+
+case_auto_pack_pack_failure_degrades_to_original_brief() {
+  local name="dispatch/--auto-pack pack write failure keeps original brief"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code hits pack cmd_brief warn
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  printf 'not a directory\n' > "$work/.pm-dispatch/ctx/packs"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // "missing"' 2>/dev/null || printf 'missing')"
+  cmd_brief="$(awk '/brief:[[:space:]]/ { print $2; exit }' "$stderr")"
+  warn="$(grep -c 'auto-pack skipped' "$stderr" 2>/dev/null || true)"
+  if [[ "$code" -eq 0 && "$hits" -eq 0 && "$pack" == "" && "$cmd_brief" == "$brief" && "$warn" -ge 1 ]] \
+     && [[ -f "$work/.pm-dispatch/ctx/packs" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code hits=$hits pack=$pack cmd_brief=$cmd_brief brief=$brief warnings=$warn"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr"
+}
+
+case_config_auto_pack_on_activates_without_flag() {
+  local name="config/dispatch.auto_pack on activates auto-pack"
+  should_run "$name" || return 0
+  local home work brief state_root evt code hits
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.auto_pack = on\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  set +e
+  HOME="$home" PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits // -1' 2>/dev/null || printf '-1')"
+  if [[ "$code" -eq 0 && "$hits" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code hits=$hits"
+  fi
+  rm -rf "$home" "$work" "$state_root"
+}
+
+case_no_auto_pack_overrides_config_on() {
+  local name="config/--no-auto-pack overrides dispatch.auto_pack on"
+  should_run "$name" || return 0
+  local home work brief state_root count code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  printf 'dispatch.auto_pack = on\n' > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  set +e
+  HOME="$home" PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --no-auto-pack --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 0 && "$count" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code context.auto_packed_count=$count"
+  fi
+  rm -rf "$home" "$work" "$state_root"
+}
+
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
@@ -654,5 +830,11 @@ case_caller_model_beats_config
 case_config_malformed_model_warns_and_fallback
 case_config_timeout_exported_to_claude_adapter
 case_timeout_flag_beats_config_via_pmctl
+case_auto_pack_default_off_emits_no_event
+case_auto_pack_zero_hits_event_original_brief
+case_auto_pack_hits_creates_pack_and_forwards_copy
+case_auto_pack_pack_failure_degrades_to_original_brief
+case_config_auto_pack_on_activates_without_flag
+case_no_auto_pack_overrides_config_on
 
 th_summary

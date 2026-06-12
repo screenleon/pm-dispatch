@@ -583,6 +583,34 @@ pmctl_context_index() {
   printf 'db: %s\n' "$db"
 }
 
+# Ensure read-side context commands do not depend on a prior manual index step.
+# Index stdout is suppressed because query/pack/reuse-scan stdout is parsed.
+_ctx_ensure_fresh() {
+  local repo_root="$1"
+  local db
+  db="$(_ctx_db_path "$repo_root")"
+
+  if [[ ! -f "$db" ]]; then
+    [[ "${PM_DISPATCH_CONTEXT_AUTOBUILD:-1}" == "0" ]] && return 1
+    _ctx_sqlite3_check || return 1
+
+    printf 'context: no index found — building %s\n' "$db" >&2
+    if ! pmctl_context_index "$repo_root" > /dev/null; then
+      printf 'context: auto-build failed for %s\n' "$db" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  [[ "${PM_DISPATCH_CONTEXT_AUTOREFRESH:-1}" == "0" ]] && return 0
+  _ctx_sqlite3_check || return 1
+
+  if ! pmctl_context_index "$repo_root" > /dev/null; then
+    printf 'context: auto-refresh failed for %s\n' "$db" >&2
+    return 1
+  fi
+}
+
 # ── pmctl_context_update ───────────────────────────────────────────────────────
 
 pmctl_context_update() {
@@ -950,19 +978,20 @@ pmctl_context_query() {
     return 2
   fi
 
-  if ! _ctx_sqlite3_check; then
-    printf 'pmctl context query: sqlite3 not found on PATH\n' >&2
-    return 1
-  fi
-
   local db
   db="$(_ctx_db_path "$repo_root")"
+  _ctx_ensure_fresh "$repo_root" || true
   if [[ ! -f "$db" ]]; then
     printf '# no hits for: %s\n' "$query"
     # No index yet is still a query: emit a zero-hit event so usage telemetry
     # captures it and the "emits after each call" contract holds uniformly.
     _ctx_emit_usage_event "context.queried" "$repo_root" "$query" 0
     return 0
+  fi
+
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context query: sqlite3 not found on PATH\n' >&2
+    return 1
   fi
 
   local hits=0 first=1
@@ -1040,19 +1069,20 @@ pmctl_context_pack() {
     printf 'pmctl context pack: at least one --query is required\n' >&2
     return 2
   fi
-  if ! _ctx_sqlite3_check; then
-    printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
-    return 1
-  fi
-
   local db
   db="$(_ctx_db_path "$repo_root")"
+  _ctx_ensure_fresh "$repo_root" || true
   if [[ ! -f "$db" ]]; then
     local ts
     ts="$(_ctx_now_iso8601)"
     printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
       "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
     return 0
+  fi
+
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
+    return 1
   fi
 
   local seen_file sym_tsv files_tsv
@@ -1110,13 +1140,9 @@ pmctl_context_reuse_scan() {
     printf 'pmctl context reuse-scan: description required\n' >&2
     return 2
   fi
-  if ! _ctx_sqlite3_check; then
-    printf 'pmctl context reuse-scan: sqlite3 not found on PATH\n' >&2
-    return 1
-  fi
-
   local db
   db="$(_ctx_db_path "$repo_root")"
+  _ctx_ensure_fresh "$repo_root" || true
   if [[ ! -f "$db" ]]; then
     printf 'reuse_candidates:\n'
     printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
@@ -1125,6 +1151,11 @@ pmctl_context_reuse_scan() {
     # Mirror the query path: a no-index reuse-scan still emits a zero-hit event.
     _ctx_emit_usage_event "context.reuse_scanned" "$repo_root" "$desc" 0
     return 0
+  fi
+
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context reuse-scan: sqlite3 not found on PATH\n' >&2
+    return 1
   fi
 
   local terms=()

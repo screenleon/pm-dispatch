@@ -282,7 +282,6 @@ bash install.sh && bash scripts/install-hooks.sh
 
 ## Known limitations on Windows Git Bash
 
-- `flock` unavailable → `hook-routing-log.sh` uses a directory-lock shim.
 - GNU `realpath -m` not guaranteed → shimmed `realpath_m` provides equivalent behavior.
 - Filesystem case-insensitive → avoid hook paths differing only by case.
 - `codex` CLI hooks unsupported on Windows; `--profile full` falls back to `minimal`.

@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- **`scripts/hook-tool-trace.sh`** — retired the write-only tool telemetry hook; `install-hooks.sh` no longer registers it and prunes existing registrations on upgrade (CC-367).
+- **`scripts/hook-routing-log.sh`** — removed the no-op routing-log deprecation stub; `install-hooks.sh` prunes existing PostToolUse registrations while the routing-to-events migration path remains available for legacy data (CC-367).
 - **`pmctl guard check --profile <pm|codex|claude>`** — deprecated alias removed (sunset target v0.5.0 reached, per CC-296). Callers must use `--role <pm|executor|reviewer>` + `--runtime <codex|claude>`. Back-compat test cases `deprecated-profile-*` / `profile-role-mutex` removed from `scripts/test-pmctl-guard.sh` (CC-296).
 - **`scripts/codex-dispatch.sh` compatibility exec wrapper** — removed. The canonical adapter is `adapters/codex/dispatch.sh`, invoked via `pmctl dispatch run --adapter codex`. All operational docs (`agents/`, `commands/`, `docs/`) updated to the canonical path; historical spike docs are unchanged (CC-296).
 
@@ -19,6 +21,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`agents/claude-executor.md` / `docs/dispatch-brief.md`** — claude-executor restructured to mirror `agents/codex-executor.md`: `pmctl dispatch run --adapter claude` is the single documented file-based primary route, and `Agent(claude-executor)` is a narrow fallback with an explicit N-condition allowlist table + caller decision checklist (replacing the prior loose bullet list). The host-independent escape hatch (no `claude` CLI in PATH) and the `/pr-gate` reviewer fan-out are documented as sanctioned uses so neither is mistaken for legacy. `docs/dispatch-brief.md` §Fallback gains a symmetric claude fallback table. Unifies the two-executor mental model for maintenance; no runtime/code change (CC-353).
 
 ### Added
+
+- **`scripts/lib/pmctl-dispatch.sh` / `scripts/lib/pmctl-config.sh`** — opt-in dispatch auto-pack for prior-art context. `pmctl dispatch run --auto-pack` (or config `dispatch.auto_pack = on`) extracts the brief `goal`, runs `pmctl context reuse-scan`, and forwards an augmented copy at `.pm-dispatch/ctx/packs/<run_id>.md` with up to 5 pointer-only `auto_context:` entries; `--no-auto-pack` overrides config. The authored brief stays unchanged, the default remains off, failures degrade to the original brief with stderr warnings, and every enabled dispatch emits `context.auto_packed` telemetry including zero-hit cases. Docs updated in `docs/dispatch-brief.md` and `docs/context-retrieval.md`; regression coverage added in `scripts/test-pmctl-dispatch.sh` (CC-366).
+
+- **`scripts/lib/pmctl-context.sh`** — `pmctl context query`, `pmctl context pack`, and `pmctl context reuse-scan` now lazy-build the repo-local context DB when it is missing and run the existing mtime-based incremental refresh before reading when it exists. `PM_DISPATCH_CONTEXT_AUTOBUILD=0` preserves the graceful empty no-DB path, and `PM_DISPATCH_CONTEXT_AUTOREFRESH=0` skips the refresh pass (CC-365).
 
 - **`docs/spikes/README.md`** — `test_target:` field contract: required for language-aware tool verdict spikes (codegraph, AST-grep, semgrep, etc.); documents how it differs from `working_dir:` and why omitting it makes the verdict non-reproducible. Adds a reference verdict rubric template (GREEN/AMBER/RED) that explicitly enumerates sandbox network isolation and missing dev dependencies as local-env classes under RED criterion 1 — so an executor in a sandboxed environment correctly issues AMBER rather than RED for network-blocked installs (CC-255).
 - **`docs/dispatch-brief.md`** — new `test_target:` optional section in §Optional sections: required for language-aware tool verdict spikes, documents the contract and cross-links to `docs/spikes/README.md` (CC-255).

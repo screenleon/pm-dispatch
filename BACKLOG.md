@@ -108,6 +108,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-362 | ✅ done | **[feat: add release verification scripts]** Adds `release-verify.sh`, `test-e2e.sh`, `test-release-verify.sh`, and `test-e2e-script.sh` — a four-phase release suite (offline prereqs, 54 suites, context smoke, live dispatch + pr-gate). PARTIAL GO exit 3/4 distinguishes offline-only from full release sign-off. | ops/test | 2026-06-12 | pr:#268 | P2 | hygiene |
 | CC-363 | ✅ closed 2026-06-12 | **[test: release-verify.sh Phase 3 external-repo-index smoke]** Phase 3 now includes: external repo index (db in `.pm-dispatch/`), db-location assertion, query hits, and no-db graceful degradation test. **See**: pr:#270 | ops/test | 2026-06-12 | pr:#270 | P2 | — |
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
+| CC-365 | ✅ closed 2026-06-13 | **[context: lazy auto-build + pre-query incremental refresh]** Index 目前純手動（`pmctl context index` 無任何自動觸發時機），是 passive-context 採用的第一個障礙：忘記跑 → db 缺失或過期 → query/reuse-scan 永遠空集。修法：`query`/`pack`/`reuse-scan` 進入點加 `_ctx_ensure_fresh` — db 缺失且 sqlite3 可用時自動 full build（stderr 提示）；db 存在時先跑 mtime-based incremental refresh 再查。Opt-out：`PM_DISPATCH_CONTEXT_AUTOBUILD=0` / `PM_DISPATCH_CONTEXT_AUTOREFRESH=0`。無 sqlite3 環境維持現有 graceful-empty 契約不變；zero-hit telemetry 契約不變。 **See**: pr:#271 | ops/DX | 2026-06-13 | pr:#271 | P2 | design |
+| CC-366 | ✅ closed 2026-06-13 | **[dispatch: auto-pack — reuse-scan pointer hits 注入 dispatch run（opt-in）]** Context plane 至今 ACTIVE-reflex only：docs 指示 PM 記得跑 reuse-scan，操作面零 caller（CC-346 暫停理由）。本票把消費做成 deterministic pipeline step：`pmctl dispatch run` 在 brief-validate 通過後、guard 前，以 brief `goal:` 跑 reuse-scan，把 ≤5 筆 pointer-only 命中（ref + why_relevant + confidence，不含 chunk 內文）append 成 **augmented brief 副本**（`<work_dir>/.pm-dispatch/ctx/packs/<run_id>.md`；原 brief 檔不可變動），adapter argv 改收副本；guard 與 state transitions 仍對原 brief。Opt-in：`--auto-pack` flag 或 config `dispatch.auto_pack = on`（default off）。每次 emit `context.auto_packed` event（含 hits 數、副本路徑；0-hit 也 emit）。Auto-pack 任何失敗不得 fail dispatch — 降級回原 brief + stderr 警示。打破 CC-346 的雞生蛋：自動產生 reuse-scan 操作面使用數據。 **See**: pr:#271 | ops/DX | 2026-06-13 | pr:#271 | P2 | design |
+| CC-367 | ✅ closed 2026-06-13 | **[memory-plane hygiene: retire tool-trace hook + routing-log stub sunset]** 兩個 write-only/死資料面收尾：(1) `hook-tool-trace.sh` 自 shipping 以來零消費者（無任何 command/skill 讀 tool-trace.jsonl）、無 rotation、每次 tool call fork 一個 process——違反「先有消費者再建資料面」原則（同 CC-346 暫停理由），移除 hook script + `install-hooks.sh` 接線 + `test-hooks.sh` 對應 cases + docs 引用。(2) `hook-routing-log.sh` no-op stub（deprecated 落日）：移除 stub + install-hooks 接線 + 殘餘 docs 引用；`migrate-routing-to-events.sh` 與其測試保留（migration 路徑仍對舊安裝有效）。 **See**: pr:#271 | ops | 2026-06-13 | pr:#271 | P3 | hygiene |
 
 ---
 
@@ -1857,6 +1860,30 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 - `scripts/test-e2e.sh`：Phase C 的 codex-only 限制解除，改為使用 `--adapter` 參數所指定的 executor
 - `commands/pr-gate.md`：Route B 說明更新，移除 fan-out 步驟；`pr-gate-handover_v1` block 相關說明移除或保留為 legacy-only note
 - `scripts/test-pr-gate-profile.sh`：executor-claude-* 測試全面改寫
+
+## CC-365 — context: lazy auto-build + pre-query incremental refresh ✅ 2026-06-13
+
+**See**: pr:#271
+
+`pmctl context query/pack/reuse-scan` now self-provision the repo index via `_ctx_ensure_fresh`: a missing db is auto-built when sqlite3 is available (one stderr notice), and an existing db gets an mtime-based incremental refresh before every read. Opt-outs: `PM_DISPATCH_CONTEXT_AUTOBUILD=0` / `PM_DISPATCH_CONTEXT_AUTOREFRESH=0`. The no-sqlite3 graceful-empty contract and zero-hit telemetry contract are unchanged; auto-build/refresh failures degrade to whatever the db state allows instead of failing the query.
+
+---
+
+## CC-366 — dispatch: auto-pack — reuse-scan pointer hits injected at dispatch run（opt-in） ✅ 2026-06-13
+
+**See**: pr:#271
+
+`pmctl dispatch run` gains step 3a: after brief-validate passes (and before guard), it runs reuse-scan on the brief's `goal:` and appends ≤5 pointer-only hits (`ref`/`why_relevant`/`confidence`, no chunk text) to an augmented brief copy at `<work_dir>/.pm-dispatch/ctx/packs/<run_id>.md`. The adapter argv receives the copy; guard and state transitions keep referencing the original authored brief. Activation: `--auto-pack` flag or config `dispatch.auto_pack = on` (default off; `--no-auto-pack` overrides config). Fail-open: any packing failure emits a stderr warning and proceeds with the original brief. Every auto-pack-on dispatch emits a `context.auto_packed` event (hits=0 included), making usage and hit quality measurable via `pmctl trace` — this generates the operational evidence CC-346's resume trigger requires. Design: DECISIONS 2026-06-13 `passive-context-v1-auto-pack-pointer-only-opt-in`.
+
+---
+
+## CC-367 — memory-plane hygiene: retire tool-trace hook + routing-log stub sunset ✅ 2026-06-13
+
+**See**: pr:#271
+
+`scripts/hook-tool-trace.sh` removed (write-only telemetry: zero consumers since shipping, no rotation, one forked process per tool call — violates the consumer-first principle). `scripts/hook-routing-log.sh` no-op deprecation stub removed. `install-hooks.sh` no longer registers either and now prunes both retired registrations from an existing `settings.json` on install while preserving all other entries. doctor inventories and the hooks/install/doctor test suites updated; `migrate-routing-to-events.sh` and its tests are unchanged (the migration path stays valid for old installs).
+
+---
 
 ## CC-361 — context: repo-local db placement + graceful no-db degradation ✅ 2026-06-12
 

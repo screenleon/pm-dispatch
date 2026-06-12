@@ -6,8 +6,6 @@
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
 #   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
-#   - matcher "*"          → scripts/hook-tool-trace.sh
-#   - matcher "Bash|Agent" → scripts/hook-routing-log.sh (deprecated; disabled by default)
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
@@ -35,8 +33,7 @@
 #   otherwise                     → profile=minimal
 # Minimal profile skips registering hook-codex-bash-guard.sh and
 # hook-codex-write-guard.sh in settings.json. Other hooks (pm-write-guard,
-# tool-trace, session-summary, inject-memory, save-rate-limits)
-# stay wired in both profiles.
+# session-summary, inject-memory, save-rate-limits) stay wired in both profiles.
 
 set -euo pipefail
 
@@ -53,7 +50,6 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 DRY_RUN=0
 PROFILE=""
 PLATFORM="auto"
-ROUTE_LOG_ENABLED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -103,10 +99,6 @@ settings="$CLAUDE_HOME/settings.json"
 # shellcheck source=scripts/lib/gate-workspace.sh
 . "$repo_root/scripts/lib/gate-workspace.sh"
 
-if [[ "$PLATFORM" == "windows" ]] && ! command -v jq >/dev/null 2>&1; then
-  ROUTE_LOG_ENABLED=0
-fi
-
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<EOF
 install-hooks: jq is required but not found on PATH.
@@ -133,8 +125,6 @@ fi
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
 cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
-trace_cmd="$repo_root/scripts/hook-tool-trace.sh"
-routing_cmd="$repo_root/scripts/hook-routing-log.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
@@ -160,13 +150,11 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$trace_cmd" ] || [ ! -x "$routing_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
   echo "  $cxw_cmd" >&2
-  echo "  $trace_cmd" >&2
-  echo "  $routing_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -203,15 +191,12 @@ jq \
   --arg pm "$pm_cmd" \
   --arg cx "$cx_cmd" \
   --arg cxw "$cxw_cmd" \
-  --arg trace "$trace_cmd" \
-  --arg routing "$routing_cmd" \
   --arg stop "$stop_cmd" \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd" \
   --arg inject "$inject_cmd" \
   --arg statusline "$statusline_cmd" \
   --argjson sl_present "$_statusline_already_wired" \
-  --argjson route_enabled "$ROUTE_LOG_ENABLED" \
   --arg profile "$PROFILE" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
@@ -228,12 +213,24 @@ jq \
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
+  # Prune retired managed hooks from existing installs.
+  .hooks.PreToolUse |= map(
+    .hooks |= map(select(
+      ((.command | split("/") | last) == ("hook-tool-" + "trace.sh") and (.command | split("/") | .[-2]) == "scripts") | not
+    ))
+  ) |
+  .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
+  .hooks.PostToolUse |= map(
+    .hooks |= map(select(
+      ((.command | split("/") | last) == ("hook-routing-" + "log.sh") and (.command | split("/") | .[-2]) == "scripts") | not
+    ))
+  ) |
+  .hooks.PostToolUse |= map(select((.hooks | length) > 0)) |
+
   # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $trace_present |
-  ( if $route_enabled == 1 then ( [ .hooks.PostToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) else 0 end ) as $routing_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
@@ -244,25 +241,8 @@ jq \
       if   ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
       elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
       elif ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cxw
-      elif ((.command | split("/") | last) == ($trace | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $trace
       else . end
     )
-  ) |
-  ( if $route_enabled == 1 then
-      .hooks.PostToolUse |= map(
-        .hooks |= map(
-          if ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $routing
-          else . end
-        )
-      )
-    else
-      .hooks.PostToolUse |= map(
-        .hooks |= map(select(
-          ((.command | split("/") | last) == ($routing | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") | not
-        ))
-      ) |
-      .hooks.PostToolUse |= map(select((.hooks | length) > 0))
-    end
   ) |
   .hooks.Stop |= map(
     .hooks |= map(
@@ -319,20 +299,6 @@ jq \
       .hooks.PreToolUse += [{
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": $cx}]
-      }]
-    else . end
-  ) |
-  ( if $trace_present == 0 then
-      .hooks.PreToolUse += [{
-        "matcher": "*",
-        "hooks": [{"type": "command", "command": $trace}]
-      }]
-    else . end
-  ) |
-  ( if $route_enabled == 1 and $routing_present == 0 then
-      .hooks.PostToolUse += [{
-        "matcher": "Bash|Agent",
-        "hooks": [{"type": "command", "command": $routing}]
       }]
     else . end
   ) |
@@ -397,7 +363,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-# Routing-log migration is manual (CC-314): run scripts/migrate-routing-to-events.sh
+# Routing-log migration is manual: run scripts/migrate-routing-to-events.sh
 # to move legacy routing_log.md records into state-store events.jsonl.
 
 backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
