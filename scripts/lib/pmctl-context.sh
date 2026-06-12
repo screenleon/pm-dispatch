@@ -20,10 +20,16 @@ _ctx_db_path() {
   printf '%s/.pm-dispatch/ctx/context.db\n' "$repo_root"
 }
 
+# VCS hygiene side effect: called during indexing to keep the derived cache
+# out of version control. Testable independently via the case_context_index_gitignore_* suite.
 _ctx_ensure_gitignore() {
   local repo_root="$1"
   local gitignore="$repo_root/.gitignore"
-  [[ -f "$gitignore" ]] || return 0
+  if [[ ! -f "$gitignore" ]]; then
+    printf '.pm-dispatch\n' > "$gitignore"
+    printf 'context index: created .gitignore with .pm-dispatch\n' >&2
+    return 0
+  fi
   grep -qxF '.pm-dispatch'  "$gitignore" 2>/dev/null && return 0
   grep -qxF '.pm-dispatch/' "$gitignore" 2>/dev/null && return 0
   printf '\n.pm-dispatch\n' >> "$gitignore"

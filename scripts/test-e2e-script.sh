@@ -157,13 +157,17 @@ test_skip_gate_reaches_phase_c_skip() {
 test_stub_e2e_no_pm_dispatch_artifact() {
   local stubdir; stubdir=$(mktemp -d)
   make_e2e_stubs "$stubdir"
+  # Redirect mktemp calls inside the E2E run to a controlled subdir so the
+  # artifact scan is scoped to this test's workspace only (avoids false positives
+  # from concurrent agent or test runs that may create .pm-dispatch dirs in /tmp).
+  local workdir="$stubdir/e2e-work"
+  mkdir -p "$workdir"
 
   local out rc=0
-  out=$(PATH="$stubdir:/usr/bin:/bin" PM_E2E_PMCTL="$stubdir/pmctl" \
+  out=$(TMPDIR="$workdir" PATH="$stubdir:/usr/bin:/bin" PM_E2E_PMCTL="$stubdir/pmctl" \
     bash "$E2E" --adapter codex --skip-gate 2>&1) || rc=$?
-  # Collect any .pm-dispatch dirs that appeared in /tmp (smoke dirs are mktemp -d in /tmp)
   local artifacts
-  artifacts="$(find /tmp -maxdepth 3 -name '.pm-dispatch' -newer "$stubdir" 2>/dev/null | head -5 || true)"
+  artifacts="$(find "$workdir" -maxdepth 4 -name '.pm-dispatch' 2>/dev/null | head -5 || true)"
   rm -rf "$stubdir"
 
   if [[ -z "$artifacts" ]]; then pass "stub-e2e-no-pm-dispatch-artifact"

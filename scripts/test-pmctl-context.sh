@@ -1698,6 +1698,25 @@ case_context_index_gitignore_idempotent_slash() {
   else fail "$name" "expected 1 .pm-dispatch* line total, got $line_count; contents: $(<"$fix_repo/.gitignore")"; fi
 }
 
+case_context_index_gitignore_absent() {
+  local name="pmctl context index: creates .gitignore with .pm-dispatch when none exists"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-absent"
+  make_fixture_repo "$fix_repo"
+  rm -f "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if [[ -f "$fix_repo/.gitignore" ]] && grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    local gi_exists; gi_exists=$(test -f "$fix_repo/.gitignore" && printf 'yes' || printf 'no')
+    fail "$name" ".gitignore exists=$gi_exists; expected to contain .pm-dispatch"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -1756,5 +1775,6 @@ case_context_reuse_scan_emits_event
 case_context_index_gitignore_new
 case_context_index_gitignore_idempotent_exact
 case_context_index_gitignore_idempotent_slash
+case_context_index_gitignore_absent
 
 th_summary
