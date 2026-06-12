@@ -10,7 +10,7 @@ if [ -e "$HOME/.claude/.pm" ] && [ ! -L "$HOME/.claude/.pm" ] && ! ps -o args= -
 fi
 
 usage() {
-  printf 'Usage: rollup.sh [--root <dir>] [--out <file>]\n' >&2
+  printf 'Usage: rollup.sh [--root <dir>] [--out <file>] [--today YYYY-MM-DD]\n' >&2
 }
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -18,6 +18,7 @@ PM_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 
 root="${HOME}/github"
 out="$PM_ROOT/rollup/PORTFOLIO.md"
+today_override=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -29,6 +30,11 @@ while [ "$#" -gt 0 ]; do
     --out)
       if [ "$#" -lt 2 ]; then usage; exit 1; fi
       out=$2
+      shift 2
+      ;;
+    --today)
+      if [ "$#" -lt 2 ]; then usage; exit 1; fi
+      today_override=$2
       shift 2
       ;;
     *)
@@ -50,7 +56,7 @@ data=$(mktemp)
 tmp=$(mktemp "$out_dir/.PORTFOLIO.md.XXXXXX")
 trap 'rm -f "$data" "$tmp"' EXIT
 
-today=$(date +%Y-%m-%d)
+today="${today_override:-$(date +%Y-%m-%d)}"
 
 # 掃描採用 schema marker 的 BACKLOG，未採用者安靜略過。
 for backlog in "$root"/*/BACKLOG.md; do

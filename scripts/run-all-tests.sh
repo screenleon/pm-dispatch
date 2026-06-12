@@ -60,6 +60,10 @@ SUITE_NAMES=(
   test-brief-validate
   test-archive-closed-backlog
   test-pmctl-context
+  test-pmctl-backlog
+  test-pmctl-guard
+  test-release-verify
+  test-e2e-script
 )
 
 declare -A SUITE_PATHS=(
@@ -113,6 +117,10 @@ declare -A SUITE_PATHS=(
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
   [test-pmctl-context]="scripts/test-pmctl-context.sh"
+  [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"
+  [test-pmctl-guard]="scripts/test-pmctl-guard.sh"
+  [test-release-verify]="scripts/test-release-verify.sh"
+  [test-e2e-script]="scripts/test-e2e-script.sh"
 )
 
 declare -A SKIP_REQUESTED=()
@@ -148,6 +156,7 @@ fi
 passed=0
 failed=0
 skipped=0
+FAILED_SUITE_NAMES=()
 
 run_suite() {
   local name="$1"
@@ -188,6 +197,7 @@ for name in "${SUITE_NAMES[@]}"; do
   if [[ ! -x "$script" ]]; then
     printf 'FAIL %s (not found or not executable)\n' "$name"
     failed=$((failed + 1))
+    FAILED_SUITE_NAMES+=("$name")
     continue
   fi
 
@@ -202,10 +212,14 @@ for name in "${SUITE_NAMES[@]}"; do
   else
     printf 'FAIL %s\n' "$name"
     failed=$((failed + 1))
+    FAILED_SUITE_NAMES+=("$name")
   fi
 done
 
 printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
-if [[ "$failed" -gt 0 ]]; then
+if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
+  printf 'failed suites:'
+  printf ' %s' "${FAILED_SUITE_NAMES[@]}"
+  printf '\n'
   exit 1
 fi

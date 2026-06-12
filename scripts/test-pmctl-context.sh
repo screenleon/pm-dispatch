@@ -262,7 +262,8 @@ case_context_update_absolute_path_rejected() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-abs.out"; err="$tmp_root/upd-abs.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -296,7 +297,8 @@ case_context_update_traversal_rejected() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-trav.out"; err="$tmp_root/upd-trav.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -426,7 +428,8 @@ case_context_query_missing_query() {
 
   # First build an index so query doesn't fail for "no DB" reason
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" > "$out" 2> "$err" || status=$?
@@ -487,7 +490,8 @@ case_context_query_unknown_term_exits_0() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-zero.out"; err="$tmp_root/q-zero.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -506,7 +510,8 @@ case_context_query_like_fallback() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Simulate FTS5 unavailable by dropping the content_fts table if it exists
   local db
@@ -548,7 +553,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Drop FTS table to force LIKE path through file_chunks
   local db
@@ -579,7 +585,8 @@ case_context_query_fts5_path() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Check whether the content_fts table was created (indicates FTS5 was used)
   local db
@@ -625,14 +632,16 @@ case_context_index_deleted_file_reconciled() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Remove the file that contains my_func_alpha
   rm -f "$fix_repo/scripts/lib/mymodule.sh"
 
   # Re-index — reconciliation should remove stale rows
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-del.out"; err="$tmp_root/q-del.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -671,7 +680,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Only test if FTS5 is available; skip otherwise
   local db
@@ -841,7 +851,8 @@ case_context_pack_valid_json() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-json.out"; err="$tmp_root/pack-json.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -883,7 +894,8 @@ MD
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-split.out"; err="$tmp_root/pack-split.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -920,7 +932,8 @@ case_context_pack_dedup() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-dedup.out"; err="$tmp_root/pack-dedup.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -998,7 +1011,8 @@ case_context_reuse_scan_valid_output() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-valid.out"; err="$tmp_root/scan-valid.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1039,7 +1053,8 @@ case_context_reuse_scan_no_terms() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-noterms.out"; err="$tmp_root/scan-noterms.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1068,7 +1083,8 @@ case_context_reuse_scan_dedup() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-dedup.out"; err="$tmp_root/scan-dedup.err"
   # "func alpha" extracts terms ["alpha","func"] — both match my_func_alpha and my_func_beta,
@@ -1104,7 +1120,8 @@ case_context_reuse_scan_on_real_repo() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-real.out"; err="$tmp_root/scan-real.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1141,7 +1158,8 @@ case_context_reuse_scan_hit_cap() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-cap.out"; err="$tmp_root/scan-cap.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1175,7 +1193,14 @@ case_context_query_emits_event() {
 
   local state_root="$tmp_root/state-query-evt"
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  # Snapshot event count before query to detect the new event (delta check).
+  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
+  local before_count=0
+  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
@@ -1187,28 +1212,43 @@ case_context_query_emits_event() {
     fail "$name" "context query exited $status: $(<"$err")"; return 0
   fi
 
+  # _ctx_emit_usage_event clears PM_DISPATCH_STATE_ROOT before events_append so the
+  # event is always written to the real installation partition, not the temp index root.
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/query-trace.out"; trace_err="$tmp_root/query-trace.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" trace tail --kind context.queried --all --json \
+  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
     fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
   fi
 
-  local line_count
-  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -lt 1 ]]; then
-    fail "$name" "expected >= 1 context.queried event in trace; got $line_count lines"; return 0
+  local after_count
+  after_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$after_count" -le "$before_count" ]]; then
+    fail "$name" "expected new context.queried event in installation trace (before=$before_count after=$after_count)"; return 0
   fi
 
-  # Assert payload contract: kind, subject_type, payload.query, payload.hits
-  local evt_kind evt_subject_type payload_query payload_hits
-  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
-  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
-  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
-  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+  # Isolation: event must NOT be written to the temp index root.
+  local temp_count=0
+  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || true
+  if [[ "$temp_count" -gt 0 ]]; then
+    fail "$name" "context.queried event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  fi
+
+  # Assert payload contract from OUR event (match by query term, not tail-1 which
+  # could be a concurrent hook event added between our query and this trace read).
+  local our_event evt_kind evt_subject_type payload_query payload_hits
+  our_event="$(jq -c 'select(.payload.query == "alpha")' "$trace_out" 2>/dev/null | tail -1)"
+  if [[ -z "$our_event" ]]; then
+    fail "$name" "no context.queried event with payload.query=alpha found in trace"; return 0
+  fi
+  evt_kind="$(printf '%s\n' "$our_event" | jq -r '.kind' 2>/dev/null)"
+  evt_subject_type="$(printf '%s\n' "$our_event" | jq -r '.subject_type' 2>/dev/null)"
+  payload_query="$(printf '%s\n' "$our_event" | jq -r '.payload.query' 2>/dev/null)"
+  payload_hits="$(printf '%s\n' "$our_event" | jq -r '.payload.hits' 2>/dev/null)"
 
   if [[ "$evt_kind" != "context.queried" ]]; then
     fail "$name" "event kind: expected context.queried, got: $evt_kind"; return 0
@@ -1236,7 +1276,14 @@ case_context_reuse_scan_emits_event() {
 
   local state_root="$tmp_root/state-reuse-evt"
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  # Snapshot event count before reuse-scan (for delta check).
+  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
+  local before_count=0
+  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
@@ -1248,28 +1295,41 @@ case_context_reuse_scan_emits_event() {
     fail "$name" "context reuse-scan exited $status: $(<"$err")"; return 0
   fi
 
+  # Event must appear in the real installation trace (not the temp index root).
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/reuse-trace.out"; trace_err="$tmp_root/reuse-trace.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
+  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
     fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
   fi
 
-  local line_count
-  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -lt 1 ]]; then
-    fail "$name" "expected >= 1 context.reuse_scanned event in trace; got $line_count lines"; return 0
+  local after_count
+  after_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$after_count" -le "$before_count" ]]; then
+    fail "$name" "expected new context.reuse_scanned event in installation trace (before=$before_count after=$after_count)"; return 0
   fi
 
-  # Assert payload contract: kind, subject_type, payload.query, payload.hits
-  local evt_kind evt_subject_type payload_query payload_hits
-  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
-  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
-  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
-  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+  # Isolation: event must NOT be written to the temp index root.
+  local temp_count=0
+  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || true
+  if [[ "$temp_count" -gt 0 ]]; then
+    fail "$name" "context.reuse_scanned event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  fi
+
+  # Assert payload contract from OUR event (match by query term, not tail-1).
+  local our_event evt_kind evt_subject_type payload_query payload_hits
+  our_event="$(jq -c 'select(.payload.query == "alpha beta function")' "$trace_out" 2>/dev/null | tail -1)"
+  if [[ -z "$our_event" ]]; then
+    fail "$name" "no context.reuse_scanned event with payload.query='alpha beta function' found in trace"; return 0
+  fi
+  evt_kind="$(printf '%s\n' "$our_event" | jq -r '.kind' 2>/dev/null)"
+  evt_subject_type="$(printf '%s\n' "$our_event" | jq -r '.subject_type' 2>/dev/null)"
+  payload_query="$(printf '%s\n' "$our_event" | jq -r '.payload.query' 2>/dev/null)"
+  payload_hits="$(printf '%s\n' "$our_event" | jq -r '.payload.hits' 2>/dev/null)"
 
   if [[ "$evt_kind" != "context.reuse_scanned" ]]; then
     fail "$name" "event kind: expected context.reuse_scanned, got: $evt_kind"; return 0
@@ -1337,7 +1397,8 @@ case_context_pack_schema_contract() {
 
   local out err status=0
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-schema.out"; err="$tmp_root/pack-schema.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1416,7 +1477,8 @@ case_context_query_domain_knowledge_only() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-knowledge.out"; err="$tmp_root/q-domain-knowledge.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1449,7 +1511,8 @@ case_context_query_domain_repo_only() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-repo.out"; err="$tmp_root/q-domain-repo.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
@@ -1478,7 +1541,8 @@ case_context_query_domain_no_flag_backward_compat() {
   local out err status=0
 
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 || true
+    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-none.out"; err="$tmp_root/q-domain-none.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/state" \

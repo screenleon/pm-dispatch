@@ -10,3 +10,12 @@ pm/rollup/.PORTFOLIO.md.*
 
 # Claude agent / codex output — not for VCS or Docker
 .agents/
+
+# Repo-local pm-dispatch state (context index, trace events)
+# Set PM_DISPATCH_STATE_ROOT=.pm-dispatch to use this location.
+.pm-dispatch/
+# SQLite context index files — global scope is intentional: covers custom
+# PM_DISPATCH_STATE_ROOT paths inside the repo in addition to .pm-dispatch/.
+*.db
+*.db-wal
+*.db-shm

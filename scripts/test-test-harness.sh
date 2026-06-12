@@ -160,8 +160,8 @@ case_harness_summary_no_match_filter() {
 case_harness_preset_colon_flat() {
   local name="preset-colon-flat"
   local expected_out expected_err
-  expected_out=$'PASS: foo\nFAIL: bar: detail\n1 passed, 1 failed'
-  expected_err=$'failed cases: bar'
+  expected_out=$'PASS: foo\nFAIL: bar: detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=colon-flat; pass 'foo'; fail 'bar' 'detail'; th_summary"
 }
@@ -169,8 +169,8 @@ case_harness_preset_colon_flat() {
 case_harness_preset_colon_mixed() {
   local name="preset-colon-mixed"
   local expected_out expected_err
-  expected_out=$'PASS: foo\n  FAIL  bar\n        detail\n1 passed, 1 failed'
-  expected_err=$'failed cases: bar'
+  expected_out=$'PASS: foo\n  FAIL  bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=colon-mixed; pass 'foo'; fail 'bar' 'detail'; th_summary"
 }
@@ -178,10 +178,10 @@ case_harness_preset_colon_mixed() {
 case_harness_preset_indent_1sp() {
   local name="preset-indent-1sp-verbose"
   local expected_on expected_on_err expected_off expected_off_err
-  expected_off=$'  FAIL bar\n        detail\n0 passed, 1 failed'
+  expected_off=$'  FAIL bar\n        detail\n0 passed, 1 failed\nfailed cases: bar'
   expected_off_err=''
-  expected_on=$'  PASS foo\n  FAIL bar\n        detail\n1 passed, 1 failed'
-  expected_on_err=$'failed cases: bar'
+  expected_on=$'  PASS foo\n  FAIL bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_on_err=''
   run_harness_probe "${name}-off" 1 "$expected_off" "$expected_off_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-1sp; fail 'bar' 'detail'; th_summary"
   run_harness_probe "$name" 1 "$expected_on" "$expected_on_err" \
@@ -191,8 +191,8 @@ case_harness_preset_indent_1sp() {
 case_harness_preset_indent_2sp() {
   local name="preset-indent-2sp"
   local expected_out expected_err
-  expected_out=$'  PASS  foo\n  FAIL  bar\n        detail\n1 passed, 1 failed'
-  expected_err=$'failed cases: bar'
+  expected_out=$'  PASS  foo\n  FAIL  bar\n        detail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "VERBOSE=1; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp; pass 'foo'; fail 'bar' 'detail'; th_summary"
 }
@@ -200,11 +200,11 @@ case_harness_preset_indent_2sp() {
 case_harness_preset_indent_2sp_quiet() {
   local name="preset-indent-2sp-quiet"
   local expected_on expected_off
-  expected_off=$'  FAIL  bar\ndetail\n1 passed, 1 failed'
-  expected_on=$'  PASS  foo\n  FAIL  bar\ndetail\n1 passed, 1 failed'
+  expected_off=$'  FAIL  bar\ndetail\n1 passed, 1 failed\nfailed cases: bar'
+  expected_on=$'  PASS  foo\n  FAIL  bar\ndetail\n1 passed, 1 failed\nfailed cases: bar'
   run_harness_probe "${name}-off" 1 "$expected_off" '' \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp-quiet; pass 'foo'; fail 'bar' 'detail'; th_summary"
-  run_harness_probe "$name" 1 "$expected_on" 'failed cases: bar' \
+  run_harness_probe "$name" 1 "$expected_on" '' \
     "VERBOSE=1; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp-quiet; pass 'foo'; fail 'bar' 'detail'; th_summary"
 }
 
@@ -270,8 +270,8 @@ case_harness_preset_unknown() {
 case_harness_fail_fast_on() {
   local name="fail-fast-on"
   local expected_out expected_err
-  expected_out=$'PASS: foo\nFAIL: fail-point: reason\n1 passed, 1 failed'
-  expected_err=$'failed cases: fail-point'
+  expected_out=$'PASS: foo\nFAIL: fail-point: reason\n1 passed, 1 failed\nfailed cases: fail-point'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --fail-fast; pass 'foo'; fail 'fail-point' 'reason'; pass 'after-sentinel'"
 }
@@ -279,8 +279,8 @@ case_harness_fail_fast_on() {
 case_harness_fail_fast_off() {
   local name="fail-fast-off"
   local expected_out expected_err
-  expected_out=$'  FAIL  bad-one\n        one\n  FAIL  bad-two\n        two\n0 passed, 2 failed'
-  expected_err=$'failed cases: bad-one bad-two'
+  expected_out=$'  FAIL  bad-one\n        one\n  FAIL  bad-two\n        two\n0 passed, 2 failed\nfailed cases: bad-one bad-two'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp; fail 'bad-one' 'one'; fail 'bad-two' 'two'; th_summary"
 }
@@ -297,8 +297,8 @@ case_harness_fail_fast_no_failures() {
 case_harness_fail_fast_and_format_orthogonal() {
   local name="fail-fast-orthogonal"
   local expected_out expected_err
-  expected_out=$'  FAIL  stop\n        reason\n0 passed, 1 failed'
-  expected_err=$'failed cases: stop'
+  expected_out=$'  FAIL  stop\n        reason\n0 passed, 1 failed\nfailed cases: stop'
+  expected_err=''
   run_harness_probe "$name" 1 "$expected_out" "$expected_err" \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init --format=indent-2sp --fail-fast; fail 'stop' 'reason'"
 }
@@ -314,7 +314,7 @@ case_assert_exit_pass() {
 case_assert_exit_fail() {
   local name="assert-exit-fail"
   local expected_out
-  expected_out=$'FAIL: assert-exit-fail: assert_exit: actual and expected mismatch (name=assert-exit-fail actual=0 expected=1)\n0 passed, 1 failed'
+  expected_out=$'FAIL: assert-exit-fail: assert_exit: actual and expected mismatch (name=assert-exit-fail actual=0 expected=1)\n0 passed, 1 failed\nfailed cases: assert-exit-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_exit 'assert-exit-fail' 0 1; th_summary"
 }
@@ -334,7 +334,7 @@ case_assert_file_contains_fail() {
   local expected_out
   expected_out=$'FAIL: assert-file-contains-fail: assert_file_contains: file did not contain literal substring (name=assert-file-contains-fail file='
   expected_out+="$tmp_file"
-  expected_out=$expected_out$' needle=missing)\n0 passed, 1 failed'
+  expected_out=$expected_out$' needle=missing)\n0 passed, 1 failed\nfailed cases: assert-file-contains-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'hello world' > \"$tmp_file\"; assert_file_contains 'assert-file-contains-fail' \"$tmp_file\" 'missing'; th_summary"
 }
@@ -354,7 +354,7 @@ case_assert_file_matches_fail() {
   local expected_out
   expected_out=$'FAIL: assert-file-matches-fail: assert_file_matches: file did not match regex (name=assert-file-matches-fail file='
   expected_out+="$tmp_file"
-  expected_out=$expected_out$' regex=^[0-9]+\x24)\n0 passed, 1 failed'
+  expected_out=$expected_out$' regex=^[0-9]+\x24)\n0 passed, 1 failed\nfailed cases: assert-file-matches-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "tmp_file='${tmp_file}'; source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; printf 'abc123' > \"$tmp_file\"; assert_file_matches 'assert-file-matches-fail' \"$tmp_file\" '^[0-9]+$'; th_summary"
 }
@@ -370,7 +370,7 @@ case_assert_string_contains_pass() {
 case_assert_string_contains_fail() {
   local name="assert-string-contains-fail"
   local expected_out
-  expected_out=$'FAIL: assert-string-contains-fail: assert_string_contains: string did not contain needle (name=assert-string-contains-fail haystack=the quick brown fox needle=slow)\n0 passed, 1 failed'
+  expected_out=$'FAIL: assert-string-contains-fail: assert_string_contains: string did not contain needle (name=assert-string-contains-fail haystack=the quick brown fox needle=slow)\n0 passed, 1 failed\nfailed cases: assert-string-contains-fail'
   run_harness_probe "$name" 1 "$expected_out" '' \
     "source '$SCRIPT_DIR/lib/test-harness.sh'; th_init; assert_string_contains 'assert-string-contains-fail' 'the quick brown fox' 'slow'; th_summary"
 }

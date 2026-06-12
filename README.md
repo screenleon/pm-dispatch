@@ -17,6 +17,9 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Dispatch brief schema](docs/dispatch-brief.md) — required brief fields + `self_verify` macros
 - [Model tier policy](docs/model-tier-policy.md) — sonnet-default, Opus escalation rules
 - [Memory system](docs/memory-system.md) — memory persistence layer: on-disk layout and recall lifecycle
+- [Context retrieval](docs/context-retrieval.md) — repo index + prior-art scan before dispatching
+- [Task lifecycle](docs/pmctl-task.md) — `pmctl task` subcommands (claim/dispatch/status/review)
+- [Review model](docs/review-model.md) — four-layer rigor model (pre-impl → pr-gate → machine verify)
 - [pr-gate handover schema](docs/pr-gate-handover-schema.md) — `pr-gate-handover_v1` block format (claude-executor fan-out)
 
 ## Working language
@@ -122,7 +125,7 @@ CLI is not installed).
 
 **Orchestration**
 - **project-pm** — PM across `~/github/` repos. Triages requests, decomposes work, writes briefs (main thread dispatches), synthesizes PR-gate reviews, maintains per-project memory at `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md`.
-- **codex-executor** — Thin wrapper subagent, dispatched by the main thread. Accepts a complete brief, invokes `pmctl dispatch run --adapter codex` (the preferred path; `scripts/codex-dispatch.sh` is a deprecated shim), verifies via `git diff`, reports back.
+- **codex-executor** — Thin wrapper subagent, dispatched by the main thread. Accepts a complete brief, invokes `pmctl dispatch run --adapter codex`, verifies via `git diff`, reports back.
 
 **Reviewers (advisors — PM may override with reasoning)**
 - **critic** — Adversarial review of plan / diff. Scope creep, incompleteness, convention drift.
@@ -154,14 +157,13 @@ usage.
 
 ### Scripts
 
-- **cli/pmctl** — Runtime CLI spine. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/macOS/WSL; Windows users should add `<repo>/cli` to `$PATH` manually because a copied `pmctl` cannot resolve repo-local libraries. Key sub-commands: `pmctl dispatch run --adapter <codex|claude> --brief-file <path>` (preferred dispatch path); `pmctl task create/show/list/update` (state-store write path for Task entity); `pmctl decision add` (state-store write path for Decision entity); `pmctl trace tail` (reads `events.jsonl` + archives with `--kind/--task/--since/--until/--json` filters); `pmctl adapter generate <name>` (scaffolds `adapters/<name>/adapter.yaml` and support files). `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
-- **codex-dispatch.sh** *(deprecated — use `pmctl dispatch run --adapter codex` instead; this shim will be removed in v0.6.0)* — Invokes `codex exec` with tracing, sandbox/approval flags, timeout (default 1200s, override via `--timeout`, `$CODEX_DISPATCH_TIMEOUT`, or `~/.pm-dispatch/config` key `dispatch.default_timeout`), file-first dispatch via `--brief-file <path>`, and final-message capture. Inline `-- <brief>` is retained only for trivial smoke checks; real briefs should be written to a file to avoid shell quoting, hook-validation, and multiline prompt failures. Writes `.agent-trace/codex-<ts>.{jsonl,last,stderr}` and refreshes `.agent-trace/latest.{jsonl,last,stderr}` symlinks so observers can attach without knowing the timestamp. Exit 124 = hit the timeout (silent codex hang most likely cause). `~/.pm-dispatch/config` is optional and user-managed only; the installer never creates it. Current supported keys are `dispatch.default_timeout` and reserved `dispatch.default_model` (reserved for future default-model support).
+- **cli/pmctl** — Runtime CLI spine. `install.sh` symlinks it into `${PMCTL_BIN_DIR:-$HOME/.local/bin}` on Linux/macOS/WSL; Windows users should add `<repo>/cli` to `$PATH` manually because a copied `pmctl` cannot resolve repo-local libraries. Key sub-commands: `pmctl dispatch run --adapter <codex|claude> --brief-file <path>` (preferred dispatch path); `pmctl task create/show/list/update/claim/dispatch/status/review` (task CRUD + lifecycle; see [`docs/pmctl-task.md`](docs/pmctl-task.md)); `pmctl decision add`; `pmctl trace tail` (reads `events.jsonl` + archives with `--kind/--task/--since/--until/--json` filters); `pmctl context index/update/query/pack/reuse-scan` (repo index + prior-art scan; see [`docs/context-retrieval.md`](docs/context-retrieval.md)); `pmctl validate brief`; `pmctl gate run`; `pmctl guard check --role <pm|executor|reviewer> --runtime <codex|claude>`; `pmctl safe bash`; `pmctl adapter generate <name>` (scaffolds `adapters/<name>/adapter.yaml` and support files). `adapter.yaml` is the source of truth and must stay out of `generated_files`; regenerate only the files listed there.
 - **pm-prep-snapshot.sh** — Captures branch/PR/backlog/tooling state before PM-agent spawn and writes a typed snapshot for PM consumption.
 - **codex-watch.sh** — Tails `.agent-trace/latest.jsonl` and prints a one-line human summary per event (`[turn.started]`, `[cmd] exit=0 …`, `[msg] …`, `[turn.completed] tokens: …`). Run from another terminal during a long dispatch to see real-time progress.
 - **hook-pm-write-guard.sh** — `PreToolUse` hook (matcher `Edit|Write`). Blocks `project-pm` from editing/writing outside `~/.claude/projects/<claude-project-id>/memory/`. Asserts absolute paths and normalizes `..`. No-op for any other agent or the main thread. Bypass (logged): `PM_HOOK_PM_GUARD=off`. Requires `jq` and `realpath`.
 - **hook-codex-bash-guard.sh** — `PreToolUse` hook (matcher `Bash`). Defends against accidental and prompt-injected misuse of `codex-executor`. Layers, in order:
   1. Reject any command containing shell composition / substitution / redirection metacharacters: `; & | $ \` ( ) < > { } \` or `CR` / `LF`. Also reject `"` and `'` (the tokenizer doesn't honor quoting; rejecting them prevents `cat "/etc/passwd"` from skipping path validation). Closes `git status; rm -rf /`, `git $(curl evil)`, `git status >/etc/cron.d/x`, `cat <(...)`, etc.
-  2. Allow only one of: the canonical `codex-dispatch.sh` path; one of the read-only verbs `cat ls head tail wc grep pwd realpath dirname basename jq test sleep date echo true false`; or `git`.
+  2. Allow only one of: the canonical `adapters/codex/dispatch.sh` path (via `pmctl dispatch run --adapter codex`); one of the read-only verbs `cat ls head tail wc grep pwd realpath dirname basename jq test sleep date echo true false`; or `git`.
   3. For `git`, only `status log diff show rev-parse ls-files describe` (always read-only), plus `branch` and `stash` (gated separately) are accepted as subcommands. `branch` rejects destructive flags (`-d/-D/--delete/-m/-M/--move/-c/-C/--copy/-f/--force/...`). `stash` only allows the explicit subverbs `list` and `show` — bare `git stash` (mutating push) and `drop/pop/clear/push/apply/...` are denied. Any git invocation with `--output*`, `--out-file*`, or `--output-directory*` is denied. Only the forms `git <subcmd>` and `git -C <dir> <subcmd>` are accepted; `git -c key=val` and `git --git-dir=...` are denied. The `<dir>` of `git -C` is itself path-validated against read roots.
   4. Every positional (non-flag) arg goes through path-validation: paths starting with `/` must resolve under one of `$PM_HOOK_CODEX_READ_ROOTS` (default `$HOME/github:/tmp`); paths starting with `~` are denied outright; any arg containing `..` as a path segment is denied (closes `cat ../etc/passwd`); glob chars (`* ? [ ]`) anywhere are denied. The VALUE part of `--flag=VALUE` forms gets the same validation (closes `grep --file=/etc/shadow x`), and dispatch `--brief-file VALUE` / `--brief-file=VALUE` values are explicitly validated the same way.
   
@@ -208,9 +210,9 @@ MIT. See [`LICENSE`](LICENSE).
 - New hook: drop a `scripts/hook-<name>.sh` and add a corresponding `PreToolUse` entry by re-running `scripts/install-hooks.sh` (extend the splice if it's a new pair); don't hand-edit `settings.json` if it can be avoided. Add test cases to `scripts/test-hooks.sh` — security-relevant scripts ship with regression coverage.
 - Settings allowlist additions: edit `~/.claude/settings.json` directly; don't try to symlink settings.
 
-## Codex briefs
+## Dispatch briefs
 
-Schema and reusable self-verify macros: [`docs/dispatch-brief.md`](docs/dispatch-brief.md). All briefs dispatched to `codex-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; the executor rejects briefs missing those fields.
+Schema and reusable self-verify macros: [`docs/dispatch-brief.md`](docs/dispatch-brief.md). All briefs dispatched to `codex-executor` or `claude-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; both executors reject briefs missing those fields.
 
 - `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains an entry tagged `write:` or `new:`, or any entry without an explicit `read:` tag; when in doubt, treat as file-writing). Optional only for read-only briefs where *every* `files:` entry is explicitly tagged `read:`. See [`docs/dispatch-brief.md`](docs/dispatch-brief.md) for the canonical definition.
 

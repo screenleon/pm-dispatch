@@ -1,8 +1,6 @@
 # Concepts
 
-This document explains the four ideas that make `pm-dispatch` more than a folder of shell scripts. If you've used Claude Code conversationally but never written a hook or an agent, this is the right place to start.
-
-> **Status**: first draft. The terminology and examples may still shift before v0.1.0. If something here disagrees with the code, the code is right — please file an issue.
+This document explains the four Claude Code extensibility primitives that `pm-dispatch` builds on. If you've used Claude Code conversationally but never written a hook or an agent, this is the right place to start.
 
 ## TL;DR
 
@@ -181,6 +179,7 @@ Every step uses one of the four concepts. None of them is "magic" — each is a 
 
 - **Set up the repo on your machine** → `docs/GETTING_STARTED.md`
 - **Understand the dispatch flow used by `/pm` and `/pr-gate`** → `docs/dispatch-brief.md`
+- **Query the repo index before writing a brief** → `docs/context-retrieval.md`
 - **Add a new slash command** → look at any existing `commands/*.md` and `scripts/test-hooks.sh`
 - **Write a new hook** → read `scripts/hook-pm-write-guard.sh` as a reference and add a test in `scripts/test-hooks.sh`
 - **Add a memory card** → see `~/.claude/projects/<id>/memory/MEMORY.md` for the index format; cards have YAML frontmatter (`name:` / `description:` / `metadata.type:`) and live next to the index
