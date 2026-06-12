@@ -104,9 +104,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-360 | 🟢 someday | **[pr-gate Route B: migrate executor:claude path to pmctl dispatch run --adapter claude]** `scripts/pr-gate.sh --executor claude` 目前輸出 `pr-gate-handover_v1` block，由 `/pr-gate` skill 在 main thread fan-out `Agent(claude-executor)` per reviewer——與 Route A（codex）直接在 `pr-gate.sh` 內呼叫 `pmctl dispatch run --adapter codex` 的架構不對稱。目標：`executor-router.sh` 為 claude 回傳與 codex 相同的 `main_thread_bash_background` route，`pr-gate.sh` 改為直接呼叫 `pmctl dispatch run --adapter claude`，`commands/pr-gate.md` Route B 說明同步更新，並移除 skill 端的 handover block fan-out 邏輯。 | arch/DX | 2026-06-11 | — | P3 | design |
 | CC-359 | 🟢 someday | **[concept: backlog-driven batch dispatch with worktree isolation]** 設計理念：pm-dispatch 本身管理 git worktree 生命週期（`git worktree add/remove`），讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task，不依賴任何特定 executor 的 platform feature。核心原則：(1) executor-agnostic — worktree 管理是 pmctl 責任，非 executor 責任；(2) human-in-the-loop — batch dispatch 後 merge 決策仍在人這邊，無 auto-merge；(3) 衝突可觀測不禁止 — 以 BACKLOG area 欄位做粗粒度衝突分組（同 area 排隊，不同 area 可平行），不做逐檔 conflict detection；(4) PR-only — 每個 task 產出獨立 branch + PR，由人統一 review。適合類型：測試補強、文件補強、小 bug、CLI option 補齊；不適合：架構核心大改、schema breaking change。Token budget 可作為 scheduler 輸入控制並行度。 | arch/ops | 2026-06-11 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
-| CC-361 | ✅ closed 2026-06-12 | **[context: repo-local db placement + graceful no-db degradation]** `_ctx_db_path()` now writes to `<repo>/.pm-dispatch/ctx/context.db`; first `context index` auto-creates dir and patches `.gitignore`; `query`/`pack`/`reuse-scan` return graceful empty on missing db instead of hard-failing. **See**: pr:#269 | ops/DX | 2026-06-12 | pr:#269 | P2 | hygiene |
+| CC-361 | ✅ closed 2026-06-12 | **[context: repo-local db placement + graceful no-db degradation]** `_ctx_db_path()` now writes to `<repo>/.pm-dispatch/ctx/context.db`; first `context index` auto-creates dir and patches `.gitignore`; `query`/`pack`/`reuse-scan` return graceful empty on missing db instead of hard-failing. **See**: pr:#270 | ops/DX | 2026-06-12 | pr:#270 | P2 | hygiene |
 | CC-362 | ✅ done | **[feat: add release verification scripts]** Adds `release-verify.sh`, `test-e2e.sh`, `test-release-verify.sh`, and `test-e2e-script.sh` — a four-phase release suite (offline prereqs, 54 suites, context smoke, live dispatch + pr-gate). PARTIAL GO exit 3/4 distinguishes offline-only from full release sign-off. | ops/test | 2026-06-12 | pr:#268 | P2 | hygiene |
-| CC-363 | ✅ closed 2026-06-12 | **[test: release-verify.sh Phase 3 external-repo-index smoke]** Phase 3 now includes: external repo index (db in `.pm-dispatch/`), db-location assertion, query hits, and no-db graceful degradation test. **See**: pr:#269 | ops/test | 2026-06-12 | pr:#269 | P2 | — |
+| CC-363 | ✅ closed 2026-06-12 | **[test: release-verify.sh Phase 3 external-repo-index smoke]** Phase 3 now includes: external repo index (db in `.pm-dispatch/`), db-location assertion, query hits, and no-db graceful degradation test. **See**: pr:#270 | ops/test | 2026-06-12 | pr:#270 | P2 | — |
 
 ---
 
@@ -1859,7 +1859,7 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 ## CC-361 — context: repo-local db placement + graceful no-db degradation ✅ 2026-06-12
 
-**See**: pr:#269
+**See**: pr:#270
 
 `_ctx_db_path()` now stores the context index at `<repo>/.pm-dispatch/ctx/context.db` instead of the global XDG path. `context index` auto-creates `.pm-dispatch/ctx/`, patches `.gitignore` on first run (if `.gitignore` exists), and emits an error on mkdir failure. `query` / `pack` / `reuse-scan` return graceful empty results on missing db (acceleration path — no index = no context, not an error). All 53 context unit tests pass; test suite updated to remove `PM_DISPATCH_STATE_ROOT` isolation pattern.
 
@@ -1898,6 +1898,6 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 ## CC-363 — test: release-verify.sh Phase 3 external-repo-index smoke ✅ 2026-06-12
 
-**See**: pr:#269
+**See**: pr:#270
 
 Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Phase 3 also removed `PM_DISPATCH_STATE_ROOT` isolation — db now goes to `$REPO_ROOT/.pm-dispatch/` as designed.
