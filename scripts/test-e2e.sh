@@ -206,9 +206,12 @@ SCRIPT
   if [[ "$_gate_ok" -eq 0 ]]; then
     record "pr-gate smoke (codex)" FAIL "failed to initialise synthetic git repo"
   else
-    # Output must be an absolute path ending in .gate-results/<file>
-    # (reviewer-write-guard policy).
-    gate_result="$REPO_ROOT/.gate-results/gate-e2e-smoke-$$.md"
+    # Output must be inside the --cd workspace (codex workspace-write sandbox
+    # blocks writes outside the working dir) AND inside a .gate-results/
+    # directory (reviewer-write-guard policy). Use synthetic_base/.gate-results/
+    # so both constraints are satisfied.
+    gate_result="$synthetic_base/.gate-results/gate-e2e-smoke-$$.md"
+    mkdir -p "$synthetic_base/.gate-results"
     e2e_log="$(mktemp)"
     gate_rc=0
     "$PMCTL" gate run \
