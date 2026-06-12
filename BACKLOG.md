@@ -1854,6 +1854,42 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 - `commands/pr-gate.md`：Route B 說明更新，移除 fan-out 步驟；`pr-gate-handover_v1` block 相關說明移除或保留為 legacy-only note
 - `scripts/test-pr-gate-profile.sh`：executor-claude-* 測試全面改寫
 
+## CC-361 — context: repo-local state root (.pm-dispatch/) + fix _ctx_emit_usage_event isolation
+
+**Problem**: Two related issues discovered during v0.5.0 release verification:
+
+1. **State root hijack**: `_ctx_emit_usage_event` uses `_SW_REPO_ROOT` to compute `pmctl_root`, but `_sw_store_root()` reads `PM_DISPATCH_STATE_ROOT` first. Any caller that sets `PM_DISPATCH_STATE_ROOT` (smoke tests, release-verify Phase 3) causes events to be written to the temp dir, which is then deleted. Result: no `context.queried` or `context.reuse_scanned` events survive in production trace.
+
+2. **No repo-local index location**: Context index defaults to `~/.local/share/pm-dispatch/state/` (global XDG). Developers working within pm-dispatch itself have no conventional local location. Proposal: treat `.pm-dispatch/` (in repo root, gitignored) as the repo-local state root, set via `PM_DISPATCH_STATE_ROOT=.pm-dispatch`.
+
+**Requirements**:
+
+- `_ctx_emit_usage_event` must write to the pmctl installation state partition (`_CTX_LIB_DIR/../..` path), not whatever `PM_DISPATCH_STATE_ROOT` is set to. Fix: call state-writer with `PM_DISPATCH_STATE_ROOT` unset locally before invoking `events_append`.
+- Add `.pm-dispatch/` to `.gitignore` (already done in pr:#268).
+- Document `PM_DISPATCH_STATE_ROOT=.pm-dispatch` as the convention for repo-local context index in `docs/context-retrieval.md` and `GETTING_STARTED.md`.
+- Add smoke test: run `pmctl context query` with `PM_DISPATCH_STATE_ROOT` set to a temp dir; verify `context.queried` event appears in the installation trace, not the temp dir.
+
+**Acceptance**: After fix, running `release-verify.sh --e2e` and then `pmctl trace tail --kind context.queried` shows new events from Phase 3.
+
+**Cross-link**: [[CC-356]] (wiring), [[CC-358]] (telemetry evaluation depends on correct event emission).
+
+---
+
+## CC-362 — Phase C gate smoke: fix 0-byte result when --cd points to synthetic repo
+
+**Problem**: `test-e2e.sh` Phase C runs `pmctl gate run --cd "$synthetic_base"` with `--output "$REPO_ROOT/.gate-results/..."`. The codex session runs but the output file is 0-byte. Codex trace shows `cwd: /tmp` regardless of `--cd` value — root cause unclear (possible: synthetic_base cleaned up early, path not forwarded, or guard policy mismatch between `--cd` dir and output dir).
+
+**Investigation needed**:
+- Confirm whether codex receives the correct `--cwd` value from codex-dispatch.sh
+- Check if reviewer-write-guard fires differently when the codex session cwd differs from the output file's parent repo
+- Check if `pr-gate.sh` writes an empty output file before dispatching (then codex fails to overwrite it)
+
+**Acceptance**: `release-verify.sh --e2e` Phase 4 shows `[PASS] pr-gate smoke (codex)` with a non-empty gate result file.
+
+**Cross-link**: [[CC-360]] (gate route architecture), test-e2e.sh Phase C.
+
+---
+
 ## CC-359 — backlog-driven batch dispatch with worktree isolation（concept）
 
 **Concept**: pm-dispatch 自己管理 `git worktree` 生命週期，讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task。不依賴任何特定 executor 的 platform feature——worktree 管理是 pmctl 的責任，不是 codex 或 claude 等 executor 的責任。
