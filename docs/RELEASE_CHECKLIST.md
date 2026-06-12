@@ -9,7 +9,7 @@ Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 52 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 54 test suites, real `pmctl context` smoke + real `sqlite3` |
 | **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 

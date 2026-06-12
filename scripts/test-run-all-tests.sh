@@ -65,6 +65,8 @@ SUITE_NAMES=(
   test-pmctl-context
   test-pmctl-backlog
   test-pmctl-guard
+  test-release-verify
+  test-e2e-script
 )
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
@@ -141,8 +143,10 @@ suite_path() {
     test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
     test-archive-closed-backlog) printf 'scripts/test-archive-closed-backlog.sh\n' ;;
     test-pmctl-context)  printf 'scripts/test-pmctl-context.sh\n' ;;
-    test-pmctl-backlog)  printf 'scripts/test-pmctl-backlog.sh\n' ;;
-    test-pmctl-guard)    printf 'scripts/test-pmctl-guard.sh\n' ;;
+    test-pmctl-backlog)   printf 'scripts/test-pmctl-backlog.sh\n' ;;
+    test-pmctl-guard)     printf 'scripts/test-pmctl-guard.sh\n' ;;
+    test-release-verify)  printf 'scripts/test-release-verify.sh\n' ;;
+    test-e2e-script)      printf 'scripts/test-e2e-script.sh\n' ;;
     *) return 1 ;;
   esac
 }

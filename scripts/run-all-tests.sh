@@ -62,6 +62,8 @@ SUITE_NAMES=(
   test-pmctl-context
   test-pmctl-backlog
   test-pmctl-guard
+  test-release-verify
+  test-e2e-script
 )
 
 declare -A SUITE_PATHS=(
@@ -117,6 +119,8 @@ declare -A SUITE_PATHS=(
   [test-pmctl-context]="scripts/test-pmctl-context.sh"
   [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"
   [test-pmctl-guard]="scripts/test-pmctl-guard.sh"
+  [test-release-verify]="scripts/test-release-verify.sh"
+  [test-e2e-script]="scripts/test-e2e-script.sh"
 )
 
 declare -A SKIP_REQUESTED=()

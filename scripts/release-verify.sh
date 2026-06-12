@@ -46,12 +46,17 @@ while [[ $# -gt 0 ]]; do
       E2E_ADAPTER="$2"; shift 2
       ;;
     --help|-h)
-      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) printf 'release-verify: unknown flag %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+case "$E2E_ADAPTER" in
+  claude|codex|auto) ;;
+  *) printf 'release-verify: --adapter must be claude|codex|auto (got: %s)\n' "$E2E_ADAPTER" >&2; exit 2 ;;
+esac
 
 # ── Result accumulation ──────────────────────────────────────────────────────
 PHASE_NAMES=()
@@ -109,7 +114,7 @@ if command -v sqlite3 >/dev/null 2>&1; then
   if sqlite3 ":memory:" "CREATE VIRTUAL TABLE t USING fts5(x);" >/dev/null 2>&1; then
     record "sqlite3 FTS5" PASS "full-text search available"
   else
-    record "sqlite3 FTS5" FAIL "sqlite3 lacks FTS5 — context query falls back to LIKE"
+    record "sqlite3 FTS5" SKIP "sqlite3 lacks FTS5 — context query uses LIKE fallback (optional feature)"
   fi
 fi
 
