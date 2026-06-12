@@ -150,6 +150,19 @@ test_e2e_delegation_required_skip() {
     || fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"
 }
 
+# ── No --e2e: Phase 4 recorded as required SKIP ───────────────────────────────
+
+test_no_e2e_phase4_skip_recorded() {
+  # When --e2e is omitted Phase 4 must be explicitly recorded as SKIP (required
+  # phase skipped), making the verdict PARTIAL GO (exit 3) — not GO.
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "no-e2e-skip-line" "[SKIP] e2e dispatch+gate" "$out"
+  assert_contains "no-e2e-partial"   "PARTIAL GO"               "$out"
+  [[ "$rc" -eq 3 ]] && pass "no-e2e-exits-3" \
+    || fail "no-e2e-exits-3" "exit $rc want 3 (PARTIAL GO)"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -166,6 +179,7 @@ test_no_suite_exits_3
 test_e2e_delegation_pass
 test_e2e_delegation_fail
 test_e2e_delegation_required_skip
+test_no_e2e_phase4_skip_recorded
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

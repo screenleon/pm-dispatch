@@ -110,7 +110,7 @@ smoke_dir="$(mktemp -d)"
 printf 'E2E-SMOKE-INPUT\n' > "$smoke_dir/smoke-input.txt"
 
 # Guard requires /tmp/brief-*.md (hook-claude-write-guard.sh pattern check).
-brief_file="/tmp/brief-e2e-smoke-$$.md"
+brief_file="$(mktemp /tmp/brief-XXXXXX.md)"
 cat > "$brief_file" <<EOF
 schema_version: 1
 working_dir: $smoke_dir

@@ -214,6 +214,10 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
     esac
     rm -f "$e2e_log"; e2e_log=""
   fi
+else
+  record "e2e dispatch+gate" SKIP \
+    "pass --e2e to include live dispatch + pr-gate (required for release sign-off)"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 fi
 
 # ── Verdict ──────────────────────────────────────────────────────────────────

@@ -114,7 +114,9 @@ th_summary() {
 
   printf '%s passed, %s failed\n' "$PASS" "$FAIL"
   if [[ "${#FAILED_CASES[@]}" -gt 0 ]]; then
-    printf 'failed cases: %s\n' "${FAILED_CASES[*]}" >&2
+    printf 'failed cases:'
+    printf ' %s' "${FAILED_CASES[@]}"
+    printf '\n'
   fi
 
   if [[ "$FAIL" -gt 0 ]]; then

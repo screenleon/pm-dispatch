@@ -156,6 +156,7 @@ fi
 passed=0
 failed=0
 skipped=0
+FAILED_SUITE_NAMES=()
 
 run_suite() {
   local name="$1"
@@ -196,6 +197,7 @@ for name in "${SUITE_NAMES[@]}"; do
   if [[ ! -x "$script" ]]; then
     printf 'FAIL %s (not found or not executable)\n' "$name"
     failed=$((failed + 1))
+    FAILED_SUITE_NAMES+=("$name")
     continue
   fi
 
@@ -210,10 +212,14 @@ for name in "${SUITE_NAMES[@]}"; do
   else
     printf 'FAIL %s\n' "$name"
     failed=$((failed + 1))
+    FAILED_SUITE_NAMES+=("$name")
   fi
 done
 
 printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
-if [[ "$failed" -gt 0 ]]; then
+if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
+  printf 'failed suites:'
+  printf ' %s' "${FAILED_SUITE_NAMES[@]}"
+  printf '\n'
   exit 1
 fi
