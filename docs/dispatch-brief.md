@@ -726,4 +726,4 @@ Expected sequence:
 4. Footer parse finds `trace:`, `last:`, `stderr:`, and `exit:` from the stable stdout footer emitted by `adapters/codex/dispatch.sh`.
 5. Main thread reads `<last>` and `<stderr>`, ignoring only the standard start and finish banners.
 6. Main thread runs `git -C ${PM_DISPATCH_REPO} status --short` and confirms no unexpected changes.
-7. `routing_log.md` receives one route-agnostic dispatch row from the PostToolUse hook.
+7. The run's lifecycle events (`pending` → `dispatched` → `verifying` → `ok`) are visible via `pmctl trace tail --kind run.dispatched`.

@@ -1123,8 +1123,10 @@ case_context_query_autorefresh_existing_db() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/query-refresh-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/query-refresh-index.err")"; return 0; }
 
-  sleep 1
   printf '\nautorefresh_query_sentinel_365\n' >> "$fix_repo/notes.txt"
+  # Deterministic mtime bump: a fixed future timestamp beats sleeping across a
+  # filesystem timestamp-granularity boundary.
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
 
   local out err status=0
   out="$tmp_root/query-refresh.out"; err="$tmp_root/query-refresh.err"
@@ -1150,8 +1152,8 @@ case_context_query_autorefresh_opt_out() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/query-refresh-off-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/query-refresh-off-index.err")"; return 0; }
 
-  sleep 1
   printf '\nautorefresh_off_sentinel_365\n' >> "$fix_repo/notes.txt"
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
 
   local out err status=0
   out="$tmp_root/query-refresh-off.out"; err="$tmp_root/query-refresh-off.err"
@@ -1175,8 +1177,8 @@ case_context_reuse_scan_autorefresh_existing_db() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/scan-refresh-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/scan-refresh-index.err")"; return 0; }
 
-  sleep 1
   printf '\nautorefresh_reuse_sentinel_365\n' >> "$fix_repo/notes.txt"
+  touch -m -t 210001010000 "$fix_repo/notes.txt"
 
   local out err status=0
   out="$tmp_root/scan-refresh.out"; err="$tmp_root/scan-refresh.err"
