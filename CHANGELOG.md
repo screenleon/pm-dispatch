@@ -20,6 +20,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`scripts/lib/pmctl-context.sh`** — `pmctl context query`, `pmctl context pack`, and `pmctl context reuse-scan` now lazy-build the repo-local context DB when it is missing and run the existing mtime-based incremental refresh before reading when it exists. `PM_DISPATCH_CONTEXT_AUTOBUILD=0` preserves the graceful empty no-DB path, and `PM_DISPATCH_CONTEXT_AUTOREFRESH=0` skips the refresh pass (CC-365).
+
 - **`docs/spikes/README.md`** — `test_target:` field contract: required for language-aware tool verdict spikes (codegraph, AST-grep, semgrep, etc.); documents how it differs from `working_dir:` and why omitting it makes the verdict non-reproducible. Adds a reference verdict rubric template (GREEN/AMBER/RED) that explicitly enumerates sandbox network isolation and missing dev dependencies as local-env classes under RED criterion 1 — so an executor in a sandboxed environment correctly issues AMBER rather than RED for network-blocked installs (CC-255).
 - **`docs/dispatch-brief.md`** — new `test_target:` optional section in §Optional sections: required for language-aware tool verdict spikes, documents the contract and cross-links to `docs/spikes/README.md` (CC-255).
 - **`agents/project-pm.md`** — `test_target:` brief-authoring rule: when briefing a verdict-issuing spike for a language-aware tool, PM must set `test_target:` to a committed representative codebase and include the verdict rubric template in setup instructions; RED applies only to clean dev machines — sandbox/network local-env failures are AMBER (CC-255).

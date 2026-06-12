@@ -41,11 +41,22 @@ including calls that find no hits and calls against a repo with no index yet
 ## Context DB location
 
 The context index is **always** written to `<repo-root>/.pm-dispatch/ctx/context.db`
-(repo-local, created automatically on first `pmctl context index`).  This path
+(repo-local).  This path
 is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT` — the
 database is a derived per-repo cache, so it lives next to the code it indexes.
 The `.pm-dispatch/` directory is added to `.gitignore` automatically so the
 database is never committed.
+
+`pmctl context query`, `pmctl context pack`, and `pmctl context reuse-scan` are
+self-sufficient readers: if the repo-local DB is missing and `sqlite3` is
+available, they build it before reading.  If the DB already exists, they run the
+same mtime-based incremental index pass first, so changed files are reflected
+without a manual `pmctl context index` or `pmctl context update`.
+
+Set `PM_DISPATCH_CONTEXT_AUTOBUILD=0` to keep a missing DB as a graceful empty
+read (`# no hits`, empty pack JSON, or empty `reuse_candidates:`).  Set
+`PM_DISPATCH_CONTEXT_AUTOREFRESH=0` to skip the incremental refresh when a DB
+already exists.
 
 `PM_DISPATCH_STATE_ROOT` governs only the **state partition** (tasks, reviews,
 decisions, events) written by the state-writer — not the context DB.  Context
