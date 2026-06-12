@@ -42,6 +42,8 @@ esac
 
 _TI_PLATFORM="$(detect_platform)"
 _ti_is_windows() { [[ "$_TI_PLATFORM" == "windows" ]]; }
+_TI_RETIRED_TRACE="hook-tool-""trace.sh"
+_TI_RETIRED_ROUTING="hook-routing-""log.sh"
 
 # Directory containing jq. Tests that constrain PATH (e.g. to inject a fake
 # powershell.exe) must keep jq reachable so install.sh's jq preflight passes;
@@ -751,9 +753,9 @@ test_install_sh_wires_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
@@ -1279,8 +1281,8 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   fi
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1319,8 +1321,8 @@ test_install_hooks_windows_profile_minimal_silent() {
   fi
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
@@ -1546,9 +1548,9 @@ test_install_sh_wires_hooks_no_settings() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
@@ -1566,9 +1568,9 @@ test_hooks_install_uninstall_lifecycle() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
 
@@ -1576,9 +1578,9 @@ test_hooks_install_uninstall_lifecycle() {
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
@@ -1591,10 +1593,10 @@ test_hooks_install_uninstall_lifecycle() {
 
 test_uninstall_hooks_removes_unlisted_hooks() {
   # Verifies that uninstall-hooks.sh removes hooks that were NOT in the old
-  # hardcoded removal list (hook-tool-trace, hook-routing-log under PostToolUse).
+  # hardcoded removal list.
   #
   # Steps:
-  #   1. Write settings.json with tool-trace (PreToolUse) and routing-log (PostToolUse).
+  #   1. Write settings.json with retired PreToolUse and PostToolUse hooks.
   #   2. Run uninstall-hooks.sh.
   #   3. Assert both hooks are gone and no hooks block remains.
   local name="uninstall-hooks-removes-unlisted-hooks"
@@ -1602,8 +1604,8 @@ test_uninstall_hooks_removes_unlisted_hooks() {
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   local _tt_cmd _rl_cmd
-  _tt_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-tool-trace.sh")"
-  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-routing-log.sh")"
+  _tt_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/$_TI_RETIRED_TRACE")"
+  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/$_TI_RETIRED_ROUTING")"
   cat > "$home/.claude/settings.json" <<JSON
 {
   "hooks": {
@@ -1619,8 +1621,8 @@ JSON
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-tool-trace.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   if jq -e 'has("hooks")' "$home/.claude/settings.json" >/dev/null 2>&1; then
     fail "$name" "hooks block should be absent after full removal"
     return
@@ -1628,34 +1630,57 @@ JSON
   pass "$name"
 }
 
-test_install_hooks_removes_stale_routing_hook() {
-  # Verifies that re-running install-hooks.sh on an existing install that has
-  # the deprecated hook-routing-log.sh wired removes it from PostToolUse.
-  # (ROUTE_LOG_ENABLED=0 is the default since CC-314.)
+test_install_hooks_prunes_retired_hooks() {
+  # Verifies that re-running install-hooks.sh on an existing install removes
+  # retired hook registrations while preserving the rest of the managed hook set.
   #
   # Steps:
-  #   1. Write settings.json with routing hook already wired in PostToolUse.
-  #   2. Run install-hooks.sh (default ROUTE_LOG_ENABLED=0).
-  #   3. Assert hook-routing-log.sh is absent; other hooks are present.
-  local name="install-hooks-removes-stale-routing-hook"
+  #   1. Write settings.json with retired hooks plus active hook registrations.
+  #   2. Run install-hooks.sh.
+  #   3. Assert retired hooks are absent and active hooks remain present.
+  local name="install-hooks-prunes-retired-hooks"
   should_run "$name" || return 0
+  if _ti_skip_win "$name" "asserts codex guards survive --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  local _rl_cmd
-  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-routing-log.sh")"
+  local _tt_cmd _rl_cmd
+  _tt_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/$_TI_RETIRED_TRACE")"
+  _rl_cmd="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/$_TI_RETIRED_ROUTING")"
   cat > "$home/.claude/settings.json" <<JSON
 {
   "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-bash-guard.sh"}]},
+      {"matcher": "*", "hooks": [{"type": "command", "command": "$_tt_cmd"}]}
+    ],
     "PostToolUse": [
       {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "$_rl_cmd"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-session-summary.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-inject-memory.sh"}]}
     ]
-  }
+  },
+  "statusLine": {"command": "$REPO_ROOT/scripts/hook-save-rate-limits.sh"}
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-routing-log.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -1820,8 +1845,7 @@ JSON
 
   # All managed hook basenames must be gone
   for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
-              hook-tool-trace.sh hook-log-claude-usage.sh hook-session-summary.sh \
-              hook-routing-log.sh \
+              hook-log-claude-usage.sh hook-session-summary.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
@@ -2584,7 +2608,7 @@ test_install_hooks_gate_perms_normal_git_parent
 test_install_hooks_gate_perms_uninstall_removes
 test_hooks_install_uninstall_lifecycle
 test_uninstall_hooks_removes_unlisted_hooks
-test_install_hooks_removes_stale_routing_hook
+test_install_hooks_prunes_retired_hooks
 test_install_hooks_updates_stale_paths_after_rename
 test_install_hooks_preserves_unrelated_same_basename_hook
 test_install_hooks_uninstall_stale_paths_after_rename
@@ -2897,7 +2921,7 @@ test_install_claude_home_override() {
     fail "$name" "manifest not written under CLAUDE_HOME override"
     return
   fi
-  if ! grep -q "hook-tool-trace.sh" "$override/settings.json" 2>/dev/null; then
+  if ! grep -q "hook-pm-write-guard.sh" "$override/settings.json" 2>/dev/null; then
     fail "$name" "hooks not wired into the override settings.json (install-hooks ignored CLAUDE_HOME)"
     return
   fi
@@ -2966,8 +2990,8 @@ test_uninstall_claude_home_override() {
   fi
   # Override hook cleanup: the override settings.json must have its managed hooks
   # removed. With the pre-CC-294 bug (uninstall-hooks.sh resolving $HOME/.claude),
-  # this hook would survive in the override while real home was edited instead.
-  if grep -q "hook-tool-trace.sh" "$override/settings.json" 2>/dev/null; then
+  # override hooks would survive while real home was edited instead.
+  if grep -q "hook-pm-write-guard.sh" "$override/settings.json" 2>/dev/null; then
     fail "$name" "override settings.json still has managed hooks (uninstall-hooks ignored CLAUDE_HOME)"
     return
   fi

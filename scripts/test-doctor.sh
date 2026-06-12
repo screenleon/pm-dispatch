@@ -76,35 +76,7 @@ write_minimal_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-tool-trace.sh"}]}
-    ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-routing-log.sh"}]}
-    ],
-    "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-session-summary.sh"}]}
-    ],
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-inject-memory.sh"}]}
-    ]
-  },
-  "statusLine": {"command": "${REPO_ROOT}/scripts/hook-save-rate-limits.sh"}
-}
-EOF
-  add_dispatch_allowlist "$home_dir"
-}
-
-write_minimal_settings_no_routing_log() {
-  local home_dir="$1"
-  mkdir -p "$home_dir/.claude"
-  cat > "$home_dir/.claude/settings.json" <<EOF
-{
-  "hooks": {
-    "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
@@ -130,12 +102,9 @@ write_stale_path_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]}
     ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-routing-log.sh"}]}
-    ],
+    "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
@@ -159,12 +128,9 @@ write_sibling_prefix_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-write-guard.sh"}]}
     ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-routing-log.sh"}]}
-    ],
+    "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-log-claude-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-session-summary.sh"}]}
@@ -188,12 +154,9 @@ write_full_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-codex-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-codex-write-guard.sh"}]}
     ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-routing-log.sh"}]}
-    ],
+    "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-log-claude-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-session-summary.sh"}]}
@@ -788,36 +751,6 @@ case_doctor_windows_auto_profile_codex_on_path() {
   fi
 }
 
-case_doctor_minimal_missing_routing_log_fails() {
-  # Verifies that --profile minimal fails when hook-routing-log.sh is absent from
-  # settings.json, confirming routing-log is required in the minimal profile.
-  #
-  # Steps:
-  #   1. Write minimal settings WITHOUT routing-log in PostToolUse; no codex in PATH.
-  #   2. Run doctor --no-color --repo <repo> --profile minimal.
-  #   3. Assert exit non-zero, output contains [FAIL] and "routing-log".
-  local name="doctor-minimal-missing-routing-log-fails"
-  should_run "$name" || return 0
-  if ! command -v jq >/dev/null 2>&1; then
-    pass "$name (jq not available - skip)"
-    return
-  fi
-  # Settings has all minimal hooks EXCEPT routing-log; no codex stub in PATH.
-  # With --profile minimal, doctor checks routing-log and must report FAIL.
-  local home="$tmp_root/home-minimal-no-routing" out status=0 path
-  write_minimal_settings_no_routing_log "$home"
-  create_memory_dir_for_pwd "$home"
-  write_manifest "$home"
-  path="$(make_stub_bin "$tmp_root/bin-minimal-no-routing" claude)"
-
-  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" --profile minimal 2>&1)" || status=$?
-  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"* && "$out" == *"routing-log"* ]]; then
-    pass "$name"
-  else
-    fail "$name" "status=$status out=$out"
-  fi
-}
-
 test_dispatch_allowlist_ok() {
   local name="test_dispatch_allowlist_ok"
   should_run "$name" || return 0
@@ -1073,12 +1006,9 @@ case_doctor_windows_path_hooks_present() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-pm-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-pm-write-guard.sh"}]}
     ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-routing-log.sh"}]}
-    ],
+    "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-log-claude-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-session-summary.sh"}]}
@@ -1125,12 +1055,9 @@ case_doctor_windows_path_hooks_stale() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-pm-write-guard.sh"}]},
-      {"matcher": "*",          "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-tool-trace.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-pm-write-guard.sh"}]}
     ],
-    "PostToolUse": [
-      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-routing-log.sh"}]}
-    ],
+    "PostToolUse": [],
     "Stop": [
       {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-log-claude-usage.sh"}]},
       {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-session-summary.sh"}]}
@@ -1354,8 +1281,8 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]},\n      {"matcher": "*",          "hooks": [{"type": "command", "command": "%s/scripts/hook-tool-trace.sh"}]}\n    ],\n    "PostToolUse": [\n      {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "%s/scripts/hook-routing-log.sh"}]}\n    ],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
-    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
+    "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.
   local _allow_json _f
@@ -1469,7 +1396,6 @@ case_doctor_malformed_settings_fail
 case_doctor_malformed_settings_json
 case_doctor_profile_minimal_skip_codex_hooks
 case_doctor_windows_auto_profile_codex_on_path
-case_doctor_minimal_missing_routing_log_fails
 test_dispatch_allowlist_ok
 test_dispatch_allowlist_missing
 test_dispatch_allowlist_adapter_absent

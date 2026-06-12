@@ -281,12 +281,10 @@ stale_hook_commands() {
         ($ncmd | split("/") | .[-2]) == "scripts" and
         (($ncmd | split("/") | last) | IN(
           "hook-pm-write-guard.sh",
-          "hook-tool-trace.sh",
           "hook-log-claude-usage.sh",
           "hook-session-summary.sh",
           "hook-inject-memory.sh",
           "hook-save-rate-limits.sh",
-          "hook-routing-log.sh",
           "hook-codex-bash-guard.sh",
           "hook-codex-write-guard.sh"
         )) and
@@ -314,12 +312,10 @@ check_hooks() {
   local profile
   local -a hooks=(
     hook-pm-write-guard.sh
-    hook-tool-trace.sh
     hook-log-claude-usage.sh
     hook-session-summary.sh
     hook-inject-memory.sh
     hook-save-rate-limits.sh
-    hook-routing-log.sh
   )
   local _want_full=0
   case "$PROFILE" in
@@ -427,8 +423,6 @@ check_scripts_executable() {
     hook-reviewer-write-guard.sh
     hook-codex-bash-guard.sh
     hook-codex-write-guard.sh
-    hook-tool-trace.sh
-    hook-routing-log.sh
     hook-log-claude-usage.sh
     hook-session-summary.sh
     hook-inject-memory.sh

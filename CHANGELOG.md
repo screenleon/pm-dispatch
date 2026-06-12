@@ -10,6 +10,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- **`scripts/hook-tool-trace.sh`** — retired the write-only tool telemetry hook; `install-hooks.sh` no longer registers it and prunes existing registrations on upgrade (CC-367).
+- **`scripts/hook-routing-log.sh`** — removed the no-op routing-log deprecation stub; `install-hooks.sh` prunes existing PostToolUse registrations while the routing-to-events migration path remains available for legacy data (CC-367).
 - **`pmctl guard check --profile <pm|codex|claude>`** — deprecated alias removed (sunset target v0.5.0 reached, per CC-296). Callers must use `--role <pm|executor|reviewer>` + `--runtime <codex|claude>`. Back-compat test cases `deprecated-profile-*` / `profile-role-mutex` removed from `scripts/test-pmctl-guard.sh` (CC-296).
 - **`scripts/codex-dispatch.sh` compatibility exec wrapper** — removed. The canonical adapter is `adapters/codex/dispatch.sh`, invoked via `pmctl dispatch run --adapter codex`. All operational docs (`agents/`, `commands/`, `docs/`) updated to the canonical path; historical spike docs are unchanged (CC-296).
 
