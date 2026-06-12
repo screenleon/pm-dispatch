@@ -17,11 +17,40 @@ fi
 
 _ctx_db_path() {
   local repo_root="$1"
-  local store_root proj_key
-  store_root="$(_sw_store_root)"
-  # Subshell export avoids polluting the caller's environment.
-  proj_key="$(export _SW_REPO_ROOT="$repo_root"; _sw_project_key)"
-  printf '%s/projects/%s/repo-index.db\n' "$store_root" "$proj_key"
+  printf '%s/.pm-dispatch/ctx/context.db\n' "$repo_root"
+}
+
+# VCS hygiene side effect: called during indexing to keep the derived cache
+# out of version control. Testable independently via the case_context_index_gitignore_* suite.
+_ctx_ensure_gitignore() {
+  local repo_root="$1"
+  local gitignore="$repo_root/.gitignore"
+  # Path safety: only ever read/write a real, single-linked regular file. A symlink
+  # or special file is not ours to follow, and a hardlinked file (link count > 1)
+  # shares its inode with another path — appending through any of these could
+  # clobber or write into an out-of-tree / shared target. Skip with a warning; the
+  # DB still works (just untracked).
+  if [[ -L "$gitignore" || ( -e "$gitignore" && ! -f "$gitignore" ) ]]; then
+    printf 'context index: .gitignore is not a regular file; skipping auto-patch\n' >&2
+    return 0
+  fi
+  if [[ -f "$gitignore" ]]; then
+    local nlink
+    nlink="$(stat -c '%h' "$gitignore" 2>/dev/null || stat -f '%l' "$gitignore" 2>/dev/null || printf '1')"
+    if [[ "$nlink" =~ ^[0-9]+$ && "$nlink" -gt 1 ]]; then
+      printf 'context index: .gitignore is hardlinked (shared inode); skipping auto-patch\n' >&2
+      return 0
+    fi
+  fi
+  if [[ ! -e "$gitignore" ]]; then
+    printf '.pm-dispatch\n' > "$gitignore"
+    printf 'context index: created .gitignore with .pm-dispatch\n' >&2
+    return 0
+  fi
+  grep -qxF '.pm-dispatch'  "$gitignore" 2>/dev/null && return 0
+  grep -qxF '.pm-dispatch/' "$gitignore" 2>/dev/null && return 0
+  printf '\n.pm-dispatch\n' >> "$gitignore"
+  printf 'context index: added .pm-dispatch to .gitignore\n' >&2
 }
 
 # ── SQLite availability ────────────────────────────────────────────────────────
@@ -468,9 +497,17 @@ pmctl_context_index() {
     return 1
   fi
 
-  local db
+  local db db_dir
   db="$(_ctx_db_path "$repo_root")"
-  mkdir -p "$(dirname "$db")"
+  db_dir="$(dirname "$db")"
+  if ! mkdir -p "$db_dir" 2>/dev/null; then
+    printf 'pmctl context index: cannot create %s\n' "$db_dir" >&2
+    return 1
+  fi
+  # Run every index, not just first cache-dir creation: _ctx_ensure_gitignore is
+  # idempotent (it no-ops when the entry already exists), so a repo with a
+  # pre-existing .pm-dispatch/ctx but no .gitignore entry still gets patched.
+  _ctx_ensure_gitignore "$repo_root"
   _ctx_db_init "$db"
 
   # Batch-load all known mtimes in one query to avoid one sqlite3 subprocess per file.
@@ -655,24 +692,42 @@ _ctx_json_str() {
 
 # ── Usage event emission ──────────────────────────────────────────────────────
 # Best-effort: emits a context.queried or context.reuse_scanned event to
-# events.jsonl via the already-sourced state-writer.  Any failure is silent —
-# the main query/reuse-scan operation must not be affected.
+# events.jsonl via the already-sourced state-writer.  A dropped event must never
+# change the caller's exit status or pollute stdout — but the failure is made
+# OBSERVABLE (one-line stderr warning + state-writer error log) rather than
+# swallowed silently, so an undelivered telemetry event is diagnosable instead
+# of surfacing later as an unexplained "no event" readback.
+
+_ctx_emit_warn() {
+  local kind="$1" reason="$2"
+  printf 'context: warning: %s telemetry not recorded (%s)\n' "$kind" "$reason" >&2
+  declare -F _sw_log_error >/dev/null 2>&1 \
+    && _sw_log_error "context: $kind event not recorded: $reason"
+  return 0
+}
 
 _ctx_emit_usage_event() {
   local kind="$1" query_term="$3" hit_count="${4:-0}"
-  declare -F events_append >/dev/null 2>&1 || return 0
-  declare -F state_store_init >/dev/null 2>&1 || return 0
-  # Events are written to the pmctl installation partition (same as pmctl trace
-  # tail reads from), not the indexed target-repo partition.
+  if ! declare -F events_append >/dev/null 2>&1 \
+     || ! declare -F state_store_init >/dev/null 2>&1; then
+    _ctx_emit_warn "$kind" "state-writer not loaded"; return 0
+  fi
+  # Telemetry is keyed to the pmctl installation repo partition (via _SW_REPO_ROOT),
+  # NOT the indexed target-repo partition — so `pmctl trace` run from the pmctl repo
+  # shows context usage aggregated across every repo it indexes. The store *root* is
+  # NOT forced: PM_DISPATCH_STATE_ROOT is honored like every other state write, so a
+  # user (or test) that redirects state also redirects this telemetry.
   local pmctl_root ts stamp hex6 evt_id event_json
   pmctl_root="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
   hex6="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
   hex6="${hex6:0:6}"
-  [[ -n "$hex6" ]] || return 0
+  if [[ -z "$hex6" ]]; then
+    _ctx_emit_warn "$kind" "could not generate event id (urandom unavailable)"; return 0
+  fi
   evt_id="evt-${stamp}-${hex6}"
-  event_json="$(jq -cn \
+  if ! event_json="$(jq -cn \
     --arg id     "$evt_id" \
     --arg ts     "$ts" \
     --arg kind   "$kind" \
@@ -681,8 +736,17 @@ _ctx_emit_usage_event() {
     '{schema_version:1,id:$id,ts:$ts,kind:$kind,
       subject_type:"context",subject_id:("ctx-"+ $id),
       actor:"pmctl",
-      payload:{query:$query,hits:$hits}}')" 2>/dev/null || return 0
-  PM_DISPATCH_STATE_ROOT="" _SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>/dev/null || true
+      payload:{query:$query,hits:$hits}}' 2>/dev/null)"; then
+    _ctx_emit_warn "$kind" "jq failed to build event json"; return 0
+  fi
+  local append_err append_status=0
+  append_err="$(_SW_REPO_ROOT="$pmctl_root" \
+    events_append "$event_json" 2>&1)" || append_status=$?
+  if [[ "$append_status" -ne 0 ]]; then
+    _ctx_emit_warn "$kind" "events_append exited $append_status: ${append_err:-no detail}"
+    return 0
+  fi
+  return 0
 }
 
 # ── Term extraction from free-text description ────────────────────────────────
@@ -894,8 +958,11 @@ pmctl_context_query() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context query: index not found; run pmctl context index first\n' >&2
-    return 1
+    printf '# no hits for: %s\n' "$query"
+    # No index yet is still a query: emit a zero-hit event so usage telemetry
+    # captures it and the "emits after each call" contract holds uniformly.
+    _ctx_emit_usage_event "context.queried" "$repo_root" "$query" 0
+    return 0
   fi
 
   local hits=0 first=1
@@ -981,8 +1048,11 @@ pmctl_context_pack() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context pack: index not found; run pmctl context index first\n' >&2
-    return 1
+    local ts
+    ts="$(_ctx_now_iso8601)"
+    printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
+    return 0
   fi
 
   local seen_file sym_tsv files_tsv
@@ -1048,8 +1118,13 @@ pmctl_context_reuse_scan() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context reuse-scan: index not found; run pmctl context index first\n' >&2
-    return 1
+    printf 'reuse_candidates:\n'
+    printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
+    printf '  terms: []\n'
+    printf '  hits: []\n'
+    # Mirror the query path: a no-index reuse-scan still emits a zero-hit event.
+    _ctx_emit_usage_event "context.reuse_scanned" "$repo_root" "$desc" 0
+    return 0
   fi
 
   local terms=()

@@ -18,15 +18,13 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
   exit 0
 fi
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# Isolate ALL state writes — including the context usage telemetry that query /
+# reuse-scan emit — into the throwaway tmp_root, so the suite never pollutes or
+# contends on the developer's real install partition. Cases that need a specific
+# root override this locally.
+export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 
-# Run pmctl context <sub> with a custom PM_DISPATCH_STATE_ROOT pointing at tmp_root.
-run_ctx() {
-  local out="$1" err="$2"
-  shift 2
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context "$@" > "$out" 2> "$err"
-}
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 # Set up a minimal fixture repo in a temp dir for index/update tests.
 make_fixture_repo() {
@@ -116,7 +114,6 @@ case_context_index_unknown_flag() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/idx-uf.out"; err="$tmp_root/idx-uf.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$REPO_ROOT" --frobnicate > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -130,7 +127,6 @@ case_context_index_creates_db() {
 
   local out err status=0
   out="$tmp_root/idx-db.out"; err="$tmp_root/idx-db.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" --source repo > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -168,7 +164,6 @@ case_context_index_incremental_skip() {
   out1="$tmp_root/idx-inc1.out"; err1="$tmp_root/idx-inc1.err"
   out2="$tmp_root/idx-inc2.out"; err2="$tmp_root/idx-inc2.err"
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out1" 2> "$err1" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "first run failed: $(<"$err1")"; return 0
@@ -176,7 +171,6 @@ case_context_index_incremental_skip() {
 
   # Second run without touching any files
   status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out2" 2> "$err2" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "second run failed: $(<"$err2")"; return 0
@@ -198,7 +192,6 @@ case_context_update_specific_path() {
 
   local out err status=0
   out="$tmp_root/upd-first.out"; err="$tmp_root/upd-first.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "initial index failed: $(<"$err")"; return 0
@@ -210,7 +203,6 @@ case_context_update_specific_path() {
   # Update only that file
   status=0
   out="$tmp_root/upd-path.out"; err="$tmp_root/upd-path.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context update "$fix_repo" scripts/lib/mymodule.sh > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -233,7 +225,6 @@ case_context_update_no_path_full_scan() {
 
   local out err status=0
   out="$tmp_root/upd-first2.out"; err="$tmp_root/upd-first2.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "initial index failed: $(<"$err")"; return 0
@@ -241,7 +232,6 @@ case_context_update_no_path_full_scan() {
 
   status=0
   out="$tmp_root/upd-noscan.out"; err="$tmp_root/upd-noscan.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context update "$fix_repo" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -eq 0 ]]; then
@@ -261,12 +251,10 @@ case_context_update_absolute_path_rejected() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-abs.out"; err="$tmp_root/upd-abs.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context update "$fix_repo" /etc/passwd > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for absolute path; got $status err=$(<"$err")"; return 0
@@ -274,8 +262,7 @@ case_context_update_absolute_path_rejected() {
 
   # Confirm no /etc/passwd row was written to DB
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -n "$db" && -f "$db" ]]; then
     local row
     row="$(sqlite3 "$db" "SELECT path FROM files WHERE path LIKE '%etc/passwd%';" 2>/dev/null || true)"
@@ -296,20 +283,17 @@ case_context_update_traversal_rejected() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/upd-trav.out"; err="$tmp_root/upd-trav.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context update "$fix_repo" '../../etc/passwd' > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for traversal; got $status err=$(<"$err")"; return 0
   fi
 
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -n "$db" && -f "$db" ]]; then
     local row
     row="$(sqlite3 "$db" "SELECT path FROM files WHERE path LIKE '%etc/passwd%';" 2>/dev/null || true)"
@@ -333,7 +317,6 @@ case_context_index_mtime_only_contract() {
   # Initial index
   local out1 err1 status=0
   out1="$tmp_root/mtime-idx1.out"; err1="$tmp_root/mtime-idx1.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out1" 2> "$err1" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "initial index failed: $(<"$err1")"; return 0
@@ -350,7 +333,6 @@ case_context_index_mtime_only_contract() {
   local out2 err2
   out2="$tmp_root/mtime-idx2.out"; err2="$tmp_root/mtime-idx2.err"
   status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out2" 2> "$err2" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "second index failed: $(<"$err2")"; return 0
@@ -390,7 +372,6 @@ MD
 
   local out err status=0
   out="$tmp_root/md-idx.out"; err="$tmp_root/md-idx.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state-md" \
     "$PMCTL" context index "$md_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -427,11 +408,9 @@ case_context_query_missing_query() {
   out="$tmp_root/q-mq.out"; err="$tmp_root/q-mq.err"
 
   # First build an index so query doesn't fail for "no DB" reason
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -445,7 +424,6 @@ case_context_query_unknown_flag() {
   local out err status=0
   out="$tmp_root/q-uf.out"; err="$tmp_root/q-uf.err"
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" --bad-flag "search" > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -459,7 +437,6 @@ case_context_query_known_symbol() {
 
   local out err status=0
   out="$tmp_root/q-sym-idx.out"; err="$tmp_root/q-sym-idx.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -467,7 +444,6 @@ case_context_query_known_symbol() {
 
   status=0
   out="$tmp_root/q-sym.out"; err="$tmp_root/q-sym.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "my_func_alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -489,12 +465,10 @@ case_context_query_unknown_term_exits_0() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-zero.out"; err="$tmp_root/q-zero.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "xyzzy_term_that_does_not_exist_8675309" \
     > "$out" 2> "$err" || status=$?
 
@@ -509,20 +483,17 @@ case_context_query_like_fallback() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Simulate FTS5 unavailable by dropping the content_fts table if it exists
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -n "$db" && -f "$db" ]]; then
     sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" 2>/dev/null || true
   fi
 
   out="$tmp_root/q-like.out"; err="$tmp_root/q-like.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "my_func_alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -eq 0 ]] && grep -q 'ref:' "$out"; then
@@ -552,20 +523,17 @@ Body text only: unique_chunk_sentinel_8675309_not_a_symbol here.
 MD
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Drop FTS table to force LIKE path through file_chunks
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -n "$db" && -f "$db" ]]; then
     sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" 2>/dev/null || true
   fi
 
   out="$tmp_root/q-chunks.out"; err="$tmp_root/q-chunks.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "unique_chunk_sentinel_8675309_not_a_symbol" \
     > "$out" 2> "$err" || status=$?
 
@@ -584,14 +552,12 @@ case_context_query_fts5_path() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Check whether the content_fts table was created (indicates FTS5 was used)
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -z "$db" || ! -f "$db" ]]; then
     fail "$name" "could not locate DB"; return 0
   fi
@@ -602,7 +568,6 @@ case_context_query_fts5_path() {
 
   # Also verify query works via FTS5 path (content_fts table present)
   out="$tmp_root/q-fts5.out"; err="$tmp_root/q-fts5.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "my_func" > "$out" 2> "$err" || status=$?
 
   if [[ -n "$fts_table" ]] || sqlite3 "$db" \
@@ -631,7 +596,6 @@ case_context_index_deleted_file_reconciled() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
@@ -639,12 +603,10 @@ case_context_index_deleted_file_reconciled() {
   rm -f "$fix_repo/scripts/lib/mymodule.sh"
 
   # Re-index — reconciliation should remove stale rows
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-del.out"; err="$tmp_root/q-del.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "my_func_alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -eq 0 ]] && grep -q '# no hits' "$out"; then
@@ -679,14 +641,12 @@ Line seven content.
 MD
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Only test if FTS5 is available; skip otherwise
   local db
-  db="$(PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
-    "$PMCTL" context index "$fix_repo" 2>/dev/null | grep '^db: ' | sed 's/^db: //')"
+  db="$fix_repo/.pm-dispatch/ctx/context.db"
   if [[ -z "$db" || ! -f "$db" ]]; then
     pass "$name"; return 0
   fi
@@ -697,7 +657,6 @@ MD
   fi
 
   out="$tmp_root/q-fts-ml.out"; err="$tmp_root/q-fts-ml.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "multiline_fts_sentinel_9182736" \
     > "$out" 2> "$err" || status=$?
 
@@ -725,7 +684,6 @@ case_context_query_on_real_repo() {
 
   local out err status=0
   out="$tmp_root/q-real-idx.out"; err="$tmp_root/q-real-idx.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$REPO_ROOT" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "real repo index failed: $(<"$err")"; return 0
@@ -733,7 +691,6 @@ case_context_query_on_real_repo() {
 
   status=0
   out="$tmp_root/q-real.out"; err="$tmp_root/q-real.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$REPO_ROOT" "pmctl_validate_brief" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -756,7 +713,6 @@ case_context_pack_missing_task_id() {
   out="$tmp_root/pack-mtid.out"; err="$tmp_root/pack-mtid.err"
   local noarg_repo="$tmp_root/noarg-repo-mtid"
   mkdir -p "$noarg_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$noarg_repo" --query foo > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -770,7 +726,6 @@ case_context_pack_missing_query() {
   out="$tmp_root/pack-mq.out"; err="$tmp_root/pack-mq.err"
   local noarg_repo="$tmp_root/noarg-repo-mq"
   mkdir -p "$noarg_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$noarg_repo" --task-id TASK-1 > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -782,7 +737,6 @@ case_context_pack_task_id_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-tiwv.out"; err="$tmp_root/pack-tiwv.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack --task-id > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --task-id without value; got $status err=$(<"$err")"; return 0
@@ -800,7 +754,6 @@ case_context_pack_query_without_value() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-qwv.out"; err="$tmp_root/pack-qwv.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack --task-id TASK-1 --query > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 2 ]]; then
     fail "$name" "expected exit 2 for --query without value; got $status err=$(<"$err")"; return 0
@@ -812,18 +765,25 @@ case_context_pack_query_without_value() {
 }
 
 case_context_pack_no_db() {
-  local name="pmctl context pack: exits 1 when index DB not found"
-  # Behavior: context pack must exit 1 when the repo-index DB does not exist.
-  # Steps: call pack on a repo with no prior index run (fresh state root); assert exit 1.
+  local name="pmctl context pack: exits 0 with empty JSON when index DB not found"
+  # Behavior: context pack is an acceleration path — missing DB must return graceful
+  # empty JSON (schema_version 2, empty files/symbols arrays) rather than exiting 1.
+  # Steps: call pack on a repo with no prior index run; assert exit 0 and valid empty JSON.
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-nodb.out"; err="$tmp_root/pack-nodb.err"
   local nodb_repo="$tmp_root/nodb-repo-pack"
   mkdir -p "$nodb_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state-nodb-pack-$$" \
     "$PMCTL" context pack "$nodb_repo" --task-id TASK-1 --query foo \
     > "$out" 2> "$err" || status=$?
-  if assert_exit "$name" "$status" 1; then pass "$name"; fi
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if ! jq -e '.schema_version == 2 and (.files | length) == 0 and (.symbols | length) == 0' \
+      "$out" > /dev/null 2>&1; then
+    fail "$name" "expected empty schema_version-2 JSON; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
 }
 
 case_context_pack_unknown_flag() {
@@ -835,7 +795,6 @@ case_context_pack_unknown_flag() {
   out="$tmp_root/pack-uf.out"; err="$tmp_root/pack-uf.err"
   local uf_repo="$tmp_root/uf-repo-pack"
   mkdir -p "$uf_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$uf_repo" --frobnicate > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -850,12 +809,10 @@ case_context_pack_valid_json() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-json.out"; err="$tmp_root/pack-json.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$fix_repo" --task-id TASK-1 --query my_func_alpha \
     > "$out" 2> "$err" || status=$?
 
@@ -893,12 +850,10 @@ Body text only: reusescan_chunk_sentinel_78432 no heading here.
 MD
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-split.out"; err="$tmp_root/pack-split.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$fix_repo" \
       --task-id TASK-1 \
       --query my_func_alpha \
@@ -931,12 +886,10 @@ case_context_pack_dedup() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-dedup.out"; err="$tmp_root/pack-dedup.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$fix_repo" \
       --task-id TASK-1 \
       --query my_func_alpha \
@@ -966,24 +919,97 @@ case_context_reuse_scan_missing_desc() {
   out="$tmp_root/scan-md.out"; err="$tmp_root/scan-md.err"
   local noarg_repo="$tmp_root/noarg-repo-scan"
   mkdir -p "$noarg_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$noarg_repo" > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
 case_context_reuse_scan_no_db() {
-  local name="pmctl context reuse-scan: exits 1 when index DB not found"
-  # Behavior: reuse-scan must exit 1 when the repo-index DB does not exist.
-  # Steps: call reuse-scan on a repo with a fresh state root (no DB); assert exit 1.
+  local name="pmctl context reuse-scan: exits 0 with empty YAML when index DB not found"
+  # Behavior: reuse-scan is an acceleration path — missing DB must return graceful empty
+  # YAML (reuse_candidates: header, hits: []) rather than exiting 1.
+  # Steps: call reuse-scan on a repo with no prior index run; assert exit 0 and empty hits.
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/scan-nodb.out"; err="$tmp_root/scan-nodb.err"
   local nodb_repo="$tmp_root/nodb-repo-scan"
   mkdir -p "$nodb_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state-nodb-scan-$$" \
     "$PMCTL" context reuse-scan "$nodb_repo" "some description" \
     > "$out" 2> "$err" || status=$?
-  if assert_exit "$name" "$status" 1; then pass "$name"; fi
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if grep -q '^reuse_candidates:' "$out" && grep -q 'hits: \[\]' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected reuse_candidates: header and hits: []; got: $(<"$out")"
+  fi
+}
+
+case_context_query_no_db() {
+  local name="pmctl context query: exits 0 with no-hits + zero-hit event when index DB not found"
+  # Behavior: query is an acceleration path — a missing index must return exit 0 with
+  # '# no hits', AND (telemetry contract) still emit a zero-hit context.queried event.
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-query"
+  mkdir -p "$nodb_repo"
+  local state_root="$tmp_root/state-query-nodb"; mkdir -p "$state_root"
+
+  local out err status=0
+  out="$tmp_root/query-nodb.out"; err="$tmp_root/query-nodb.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context query "$nodb_repo" "alpha" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q '# no hits' "$out"; then
+    fail "$name" "expected '# no hits' output; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "no-db query reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+  local evt hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | jq -c 'select(.payload.query == "alpha")' 2>/dev/null | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.queried event for the no-db query"; return 0
+  fi
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$hits" != "0" ]]; then
+    fail "$name" "expected payload.hits=0 for no-db query; got: $hits"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_reuse_scan_no_db_emits() {
+  local name="pmctl context reuse-scan: emits zero-hit context.reuse_scanned when index DB not found"
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-scan-evt"
+  mkdir -p "$nodb_repo"
+  local state_root="$tmp_root/state-scan-nodb"; mkdir -p "$state_root"
+
+  local err status=0
+  err="$tmp_root/scan-nodb-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context reuse-scan "$nodb_repo" "alpha beta function" \
+    > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "no-db reuse-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+  local evt hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | jq -c 'select(.payload.query == "alpha beta function")' 2>/dev/null | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.reuse_scanned event for the no-db scan"; return 0
+  fi
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$hits" != "0" ]]; then
+    fail "$name" "expected payload.hits=0 for no-db reuse-scan; got: $hits"; return 0
+  fi
+  pass "$name"
 }
 
 case_context_reuse_scan_unknown_flag() {
@@ -995,7 +1021,6 @@ case_context_reuse_scan_unknown_flag() {
   out="$tmp_root/scan-uf.out"; err="$tmp_root/scan-uf.err"
   local uf_repo="$tmp_root/uf-repo-scan"
   mkdir -p "$uf_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$uf_repo" --frobnicate > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -1010,12 +1035,10 @@ case_context_reuse_scan_valid_output() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-valid.out"; err="$tmp_root/scan-valid.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
     > "$out" 2> "$err" || status=$?
 
@@ -1052,12 +1075,10 @@ case_context_reuse_scan_no_terms() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-noterms.out"; err="$tmp_root/scan-noterms.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$fix_repo" "a an the or" \
     > "$out" 2> "$err" || status=$?
 
@@ -1082,14 +1103,12 @@ case_context_reuse_scan_dedup() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-dedup.out"; err="$tmp_root/scan-dedup.err"
   # "func alpha" extracts terms ["alpha","func"] — both match my_func_alpha and my_func_beta,
   # triggering the dedup path where the same ref from term "func" is already in seen_file.
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$fix_repo" "func alpha" \
     > "$out" 2> "$err" || status=$?
 
@@ -1119,12 +1138,10 @@ case_context_reuse_scan_on_real_repo() {
   fi
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$REPO_ROOT" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-real.out"; err="$tmp_root/scan-real.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$REPO_ROOT" "emit context hit yaml" \
     > "$out" 2> "$err" || status=$?
 
@@ -1157,12 +1174,10 @@ case_context_reuse_scan_hit_cap() {
   } > "$fix_repo/scripts/lib/captest.sh"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-cap.out"; err="$tmp_root/scan-cap.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context reuse-scan "$fix_repo" "captest func" \
     > "$out" 2> "$err" || status=$?
 
@@ -1191,32 +1206,37 @@ case_context_query_emits_event() {
   local fix_repo="$tmp_root/fix-repo-query-evt"
   make_fixture_repo "$fix_repo"
 
+  # Telemetry honors PM_DISPATCH_STATE_ROOT, so the whole test runs in an isolated
+  # state root — no pollution of, or lock contention on, the shared install partition.
   local state_root="$tmp_root/state-query-evt"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Snapshot event count before query to detect the new event (delta check).
-  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
   local before_count=0
-  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+  before_count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context query "$fix_repo" "alpha" \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context query "$fix_repo" "alpha" \
     > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "context query exited $status: $(<"$err")"; return 0
   fi
 
-  # _ctx_emit_usage_event clears PM_DISPATCH_STATE_ROOT before events_append so the
-  # event is always written to the real installation partition, not the temp index root.
+  # Emit is observable: a dropped telemetry event prints a "telemetry not recorded"
+  # warning to stderr (see _ctx_emit_warn). Catch it at the source — this turns a
+  # silent event drop into a diagnosable failure instead of an unexplained after=0.
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "context query reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/query-trace.out"; trace_err="$tmp_root/query-trace.err"
-  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
@@ -1226,16 +1246,20 @@ case_context_query_emits_event() {
   local after_count
   after_count="$(wc -l < "$trace_out" | tr -d ' ')"
   if [[ "$after_count" -le "$before_count" ]]; then
-    fail "$name" "expected new context.queried event in installation trace (before=$before_count after=$after_count)"; return 0
+    fail "$name" "expected new context.queried event in trace (before=$before_count after=$after_count); query stderr: $(<"$err")"; return 0
   fi
 
-  # Isolation: event must NOT be written to the temp index root.
-  local temp_count=0
-  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+  # Isolation: a DIFFERENT, fresh state root must NOT see our event — proves the
+  # event is scoped to $state_root (i.e. PM_DISPATCH_STATE_ROOT is honored, not
+  # forced global). Reads a known-empty root, so it stays fast regardless of how
+  # large the real install partition has grown.
+  local other_root="$tmp_root/state-query-other"; mkdir -p "$other_root"
+  local leak_count=0
+  leak_count="$(PM_DISPATCH_STATE_ROOT="$other_root" \
     "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || true
-  if [[ "$temp_count" -gt 0 ]]; then
-    fail "$name" "context.queried event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  if [[ "$leak_count" -gt 0 ]]; then
+    fail "$name" "context.queried event visible under an unrelated state root ($leak_count events); state-root scoping failure"; return 0
   fi
 
   # Assert payload contract from OUR event (match by query term, not tail-1 which
@@ -1274,31 +1298,36 @@ case_context_reuse_scan_emits_event() {
   local fix_repo="$tmp_root/fix-repo-reuse-evt"
   make_fixture_repo "$fix_repo"
 
+  # Telemetry honors PM_DISPATCH_STATE_ROOT, so the whole test runs in an isolated
+  # state root — no pollution of, or lock contention on, the shared install partition.
   local state_root="$tmp_root/state-reuse-evt"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Snapshot event count before reuse-scan (for delta check).
-  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
   local before_count=0
-  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+  before_count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
     > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "context reuse-scan exited $status: $(<"$err")"; return 0
   fi
 
-  # Event must appear in the real installation trace (not the temp index root).
+  # Catch a dropped telemetry event at its source (see _ctx_emit_warn) rather than
+  # inferring it later from an unexplained after=0.
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "context reuse-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/reuse-trace.out"; trace_err="$tmp_root/reuse-trace.err"
-  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
@@ -1308,16 +1337,19 @@ case_context_reuse_scan_emits_event() {
   local after_count
   after_count="$(wc -l < "$trace_out" | tr -d ' ')"
   if [[ "$after_count" -le "$before_count" ]]; then
-    fail "$name" "expected new context.reuse_scanned event in installation trace (before=$before_count after=$after_count)"; return 0
+    fail "$name" "expected new context.reuse_scanned event in trace (before=$before_count after=$after_count); reuse-scan stderr: $(<"$err")"; return 0
   fi
 
-  # Isolation: event must NOT be written to the temp index root.
-  local temp_count=0
-  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+  # Isolation: a DIFFERENT, fresh state root must NOT see our event — proves it is
+  # scoped to $state_root (PM_DISPATCH_STATE_ROOT honored, not forced global), and
+  # stays fast because the read target is always empty.
+  local other_root="$tmp_root/state-reuse-other"; mkdir -p "$other_root"
+  local leak_count=0
+  leak_count="$(PM_DISPATCH_STATE_ROOT="$other_root" \
     "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || true
-  if [[ "$temp_count" -gt 0 ]]; then
-    fail "$name" "context.reuse_scanned event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  if [[ "$leak_count" -gt 0 ]]; then
+    fail "$name" "context.reuse_scanned event visible under an unrelated state root ($leak_count events); state-root scoping failure"; return 0
   fi
 
   # Assert payload contract from OUR event (match by query term, not tail-1).
@@ -1355,7 +1387,6 @@ case_context_pack_empty_query_value() {
   out="$tmp_root/pack-emq.out"; err="$tmp_root/pack-emq.err"
   local emq_repo="$tmp_root/emq-repo"
   mkdir -p "$emq_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$emq_repo" --task-id TASK-1 --query "" > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -1369,7 +1400,6 @@ case_context_pack_whitespace_task_id() {
   out="$tmp_root/pack-wstid.out"; err="$tmp_root/pack-wstid.err"
   local ws_repo="$tmp_root/ws-repo"
   mkdir -p "$ws_repo"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$ws_repo" --task-id "   " --query foo > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -1381,7 +1411,6 @@ case_context_pack_nondir_repo_path() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/pack-ndr.out"; err="$tmp_root/pack-ndr.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "/nonexistent/path/xyz" --task-id TASK-1 --query foo > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
@@ -1396,12 +1425,10 @@ case_context_pack_schema_contract() {
   make_fixture_repo "$fix_repo"
 
   local out err status=0
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/pack-schema.out"; err="$tmp_root/pack-schema.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context pack "$fix_repo" --task-id SCHEMA-TEST --query my_func_alpha \
     > "$out" 2> "$err" || status=$?
 
@@ -1453,7 +1480,6 @@ case_context_query_domain_invalid() {
   local out err status=0
   out="$tmp_root/q-domain-invalid.out"; err="$tmp_root/q-domain-invalid.err"
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" --domain invalid "alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 2 ]]; then
@@ -1476,12 +1502,10 @@ case_context_query_domain_knowledge_only() {
   make_fixture_repo "$fix_repo"
   local out err status=0
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-knowledge.out"; err="$tmp_root/q-domain-knowledge.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" --domain knowledge "alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -1510,12 +1534,10 @@ case_context_query_domain_repo_only() {
   make_fixture_repo "$fix_repo"
   local out err status=0
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-repo.out"; err="$tmp_root/q-domain-repo.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" --domain repo "alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -1540,12 +1562,10 @@ case_context_query_domain_no_flag_backward_compat() {
   make_fixture_repo "$fix_repo"
   local out err status=0
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/q-domain-none.out"; err="$tmp_root/q-domain-none.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context query "$fix_repo" "alpha" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -1569,7 +1589,6 @@ case_context_index_markdown_heading_chunks() {
   local out err status=0
   out="$tmp_root/idx-heading.out"; err="$tmp_root/idx-heading.err"
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -1610,7 +1629,6 @@ MD
 
   local out err status=0
   out="$tmp_root/idx-fence.out"; err="$tmp_root/idx-fence.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -1639,7 +1657,6 @@ case_context_index_txt_indexed() {
   local out err status=0
   out="$tmp_root/idx-txt.out"; err="$tmp_root/idx-txt.err"
 
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -1696,7 +1713,6 @@ case_context_chunk_window_multiwindow() {
 
   local out err status=0
   out="$tmp_root/mwin-idx.out"; err="$tmp_root/mwin-idx.err"
-  PM_DISPATCH_STATE_ROOT="$tmp_root/state" \
     "$PMCTL" context index "$fix_repo" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "index failed: $(<"$err")"; return 0
@@ -1722,6 +1738,207 @@ case_context_chunk_window_multiwindow() {
   else
     fail "$name" "expected ≥ 2 chunks for 90-line .txt, got $chunk_count"
   fi
+}
+
+case_context_index_gitignore_new() {
+  local name="pmctl context index: patches .gitignore that has no .pm-dispatch entry"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-new"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ".pm-dispatch not added to .gitignore; contents: $(<"$fix_repo/.gitignore")"
+  fi
+}
+
+case_context_index_gitignore_idempotent_exact() {
+  local name="pmctl context index: no duplicate when .gitignore already has .pm-dispatch (exact)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-exact"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n.pm-dispatch\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  local count
+  count="$(grep -cxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null || printf '0')"
+  if [[ "$count" -eq 1 ]]; then pass "$name"
+  else fail "$name" "expected 1 .pm-dispatch line, got $count"; fi
+}
+
+case_context_index_gitignore_idempotent_slash() {
+  local name="pmctl context index: no duplicate when .gitignore already has .pm-dispatch/ (slash form)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-slash"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n.pm-dispatch/\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  local line_count
+  line_count="$(grep -cE '^\.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null || printf '0')"
+  if [[ "$line_count" -eq 1 ]]; then pass "$name"
+  else fail "$name" "expected 1 .pm-dispatch* line total, got $line_count; contents: $(<"$fix_repo/.gitignore")"; fi
+}
+
+case_context_index_gitignore_absent() {
+  local name="pmctl context index: creates .gitignore with .pm-dispatch when none exists"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-absent"
+  make_fixture_repo "$fix_repo"
+  rm -f "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if [[ -f "$fix_repo/.gitignore" ]] && grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    local gi_exists; gi_exists=$(test -f "$fix_repo/.gitignore" && printf 'yes' || printf 'no')
+    fail "$name" ".gitignore exists=$gi_exists; expected to contain .pm-dispatch"
+  fi
+}
+
+case_context_db_path_repo_local() {
+  local name="pmctl context index: DB is repo-local and ignores PM_DISPATCH_STATE_ROOT"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-dbpath"
+  make_fixture_repo "$fix_repo"
+  local alt_state="$tmp_root/alt-state-root"
+  mkdir -p "$alt_state"
+
+  # Index with a non-default STATE_ROOT exported. Contract: the context DB is a
+  # per-repo derived cache, so it must still land repo-local and nothing
+  # context.db-shaped may appear under the state root.
+  PM_DISPATCH_STATE_ROOT="$alt_state" "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if [[ ! -f "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "expected repo-local DB at .pm-dispatch/ctx/context.db (not found)"; return 0
+  fi
+  if find "$alt_state" -name 'context.db' 2>/dev/null | grep -q .; then
+    fail "$name" "context.db leaked into PM_DISPATCH_STATE_ROOT ($alt_state); DB must be repo-local"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_index_gitignore_symlink() {
+  local name="pmctl context index: does not write through a symlinked .gitignore"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-symlink"
+  make_fixture_repo "$fix_repo"
+  local target="$tmp_root/gi-symlink-target"
+  printf 'ORIGINAL\n' > "$target"
+  ln -sf "$target" "$fix_repo/.gitignore"
+
+  local status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/gi-symlink.err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context index exited $status: $(<"$tmp_root/gi-symlink.err")"; return 0
+  fi
+
+  # The symlink target must be untouched — no write-through into an out-of-tree file.
+  if grep -q '.pm-dispatch' "$target" 2>/dev/null; then
+    fail "$name" "index wrote .pm-dispatch through the symlink into $target"; return 0
+  fi
+  if ! grep -q 'not a regular file' "$tmp_root/gi-symlink.err" 2>/dev/null; then
+    fail "$name" "expected 'not a regular file' skip warning; stderr: $(<"$tmp_root/gi-symlink.err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_index_gitignore_hardlink() {
+  local name="pmctl context index: does not write through a hardlinked .gitignore"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-hardlink"
+  make_fixture_repo "$fix_repo"
+  local target="$tmp_root/gi-hardlink-target"
+  printf 'ORIGINAL\n' > "$target"
+  # A hardlink shares the inode with $target; writing through .gitignore would
+  # append into the out-of-tree file. Skip if the platform/FS can't hardlink.
+  if ! ln "$target" "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name (skipped: hardlink unsupported here)"; return 0
+  fi
+
+  local status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/gi-hardlink.err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context index exited $status: $(<"$tmp_root/gi-hardlink.err")"; return 0
+  fi
+
+  # The shared-inode target must be untouched.
+  if grep -q '.pm-dispatch' "$target" 2>/dev/null; then
+    fail "$name" "index wrote .pm-dispatch through the hardlink into $target"; return 0
+  fi
+  if ! grep -q 'hardlinked' "$tmp_root/gi-hardlink.err" 2>/dev/null; then
+    fail "$name" "expected 'hardlinked' skip warning; stderr: $(<"$tmp_root/gi-hardlink.err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_index_gitignore_preexisting_dir() {
+  local name="pmctl context index: patches .gitignore even when .pm-dispatch/ctx already exists"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-preexist"
+  make_fixture_repo "$fix_repo"
+  # Pre-existing cache dir + a .gitignore that lacks the entry — the previous
+  # first-creation-only guard would leave the DB unignored.
+  mkdir -p "$fix_repo/.pm-dispatch/ctx"
+  printf '*.log\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ".pm-dispatch not added despite pre-existing cache dir; contents: $(<"$fix_repo/.gitignore")"
+  fi
+}
+
+case_context_emit_event_failure_observable() {
+  local name="_ctx_emit_usage_event: surfaces an observable warning when the event cannot be recorded"
+  should_run "$name" || return 0
+
+  local out err status=0
+  out="$tmp_root/emit-warn.out"; err="$tmp_root/emit-warn.err"
+  # Stub events_append to fail. Emit must stay best-effort (return 0, no stdout)
+  # yet surface a "telemetry not recorded" warning on stderr — the observability
+  # contract that turns a silent event drop into a diagnosable one.
+  HOME="$tmp_root" bash -c '
+    . "'"$SCRIPT_DIR"'/lib/pmctl-context.sh" 2>/dev/null
+    events_append() { printf "boom\n" >&2; return 7; }
+    state_store_init() { return 0; }
+    _ctx_emit_usage_event "context.queried" "ignored" "alpha" 3
+    printf "rc=%s\n" "$?"
+  ' > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "harness exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q 'rc=0' "$out" 2>/dev/null; then
+    fail "$name" "emit must return 0 (best-effort); stdout: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'context.queried telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "expected observable warning on stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
 }
 
 # ── Run all cases ──────────────────────────────────────────────────────────────
@@ -1771,6 +1988,8 @@ case_context_pack_nondir_repo_path
 case_context_pack_schema_contract
 case_context_reuse_scan_missing_desc
 case_context_reuse_scan_no_db
+case_context_query_no_db
+case_context_reuse_scan_no_db_emits
 case_context_reuse_scan_unknown_flag
 case_context_reuse_scan_valid_output
 case_context_reuse_scan_no_terms
@@ -1779,5 +1998,14 @@ case_context_reuse_scan_on_real_repo
 case_context_reuse_scan_hit_cap
 case_context_query_emits_event
 case_context_reuse_scan_emits_event
+case_context_index_gitignore_new
+case_context_index_gitignore_idempotent_exact
+case_context_index_gitignore_idempotent_slash
+case_context_index_gitignore_absent
+case_context_db_path_repo_local
+case_context_index_gitignore_symlink
+case_context_index_gitignore_hardlink
+case_context_index_gitignore_preexisting_dir
+case_context_emit_event_failure_observable
 
 th_summary
