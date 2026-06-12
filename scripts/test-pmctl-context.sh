@@ -1794,6 +1794,57 @@ case_context_index_gitignore_symlink() {
   pass "$name"
 }
 
+case_context_index_gitignore_hardlink() {
+  local name="pmctl context index: does not write through a hardlinked .gitignore"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-hardlink"
+  make_fixture_repo "$fix_repo"
+  local target="$tmp_root/gi-hardlink-target"
+  printf 'ORIGINAL\n' > "$target"
+  # A hardlink shares the inode with $target; writing through .gitignore would
+  # append into the out-of-tree file. Skip if the platform/FS can't hardlink.
+  if ! ln "$target" "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name (skipped: hardlink unsupported here)"; return 0
+  fi
+
+  local status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/gi-hardlink.err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context index exited $status: $(<"$tmp_root/gi-hardlink.err")"; return 0
+  fi
+
+  # The shared-inode target must be untouched.
+  if grep -q '.pm-dispatch' "$target" 2>/dev/null; then
+    fail "$name" "index wrote .pm-dispatch through the hardlink into $target"; return 0
+  fi
+  if ! grep -q 'hardlinked' "$tmp_root/gi-hardlink.err" 2>/dev/null; then
+    fail "$name" "expected 'hardlinked' skip warning; stderr: $(<"$tmp_root/gi-hardlink.err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_index_gitignore_preexisting_dir() {
+  local name="pmctl context index: patches .gitignore even when .pm-dispatch/ctx already exists"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-preexist"
+  make_fixture_repo "$fix_repo"
+  # Pre-existing cache dir + a .gitignore that lacks the entry — the previous
+  # first-creation-only guard would leave the DB unignored.
+  mkdir -p "$fix_repo/.pm-dispatch/ctx"
+  printf '*.log\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ".pm-dispatch not added despite pre-existing cache dir; contents: $(<"$fix_repo/.gitignore")"
+  fi
+}
+
 case_context_emit_event_failure_observable() {
   local name="_ctx_emit_usage_event: surfaces an observable warning when the event cannot be recorded"
   should_run "$name" || return 0
@@ -1884,6 +1935,8 @@ case_context_index_gitignore_idempotent_slash
 case_context_index_gitignore_absent
 case_context_db_path_repo_local
 case_context_index_gitignore_symlink
+case_context_index_gitignore_hardlink
+case_context_index_gitignore_preexisting_dir
 case_context_emit_event_failure_observable
 
 th_summary

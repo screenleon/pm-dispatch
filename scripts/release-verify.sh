@@ -27,11 +27,13 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 suite_log=""
 smoke_state=""
 smoke_err=""
+smoke_telemetry_root=""
 e2e_log=""
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317  # invoked indirectly via trap
 cleanup() {
   rm -f "$suite_log" "$smoke_err" "$e2e_log" 2>/dev/null || true
   if [[ -n "$smoke_state" ]]; then rm -rf "$smoke_state" 2>/dev/null || true; fi
+  if [[ -n "$smoke_telemetry_root" ]]; then rm -rf "$smoke_telemetry_root" 2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
 
@@ -145,13 +147,20 @@ fi
 # ── Phase 3: Real-binary feature smoke ───────────────────────────────────────
 # The unit suites use fixtures; this phase exercises the headline v0.5.0
 # feature (pmctl context) against the REAL repo with the REAL sqlite3 binary.
-# DB is repo-local (.pm-dispatch/ctx/context.db) — no global state root needed.
+# DB is repo-local (.pm-dispatch/ctx/context.db); usage telemetry is redirected to
+# a throwaway state root below so the smoke never pollutes the real trace store.
 section "Phase 3 — Real-binary feature smoke (pmctl context on this repo)"
 if [[ ! -x "$PMCTL" ]]; then
   record "context smoke" SKIP "pmctl not found or not executable: $PMCTL"
 elif ! command -v sqlite3 >/dev/null 2>&1; then
   record "context smoke" SKIP "sqlite3 missing — cannot exercise context"
 else
+  # Isolate verification telemetry: context query / reuse-scan emit usage events,
+  # which now honor PM_DISPATCH_STATE_ROOT. Redirect them to a throwaway root so a
+  # release smoke run never writes context.* events into the operator's real trace
+  # state. The DB itself is repo-local and unaffected by this redirect.
+  smoke_telemetry_root="$(mktemp -d)"   # registered in cleanup trap above
+  export PM_DISPATCH_STATE_ROOT="$smoke_telemetry_root"
   smoke_err="$(mktemp)"       # registered in cleanup trap above
   if (
     set -eo pipefail
@@ -221,6 +230,11 @@ else
     record "context-no-db-graceful" FAIL "reuse-scan errored on missing index (expected graceful empty)"
   fi
   rm -rf "$nodeb_repo"
+
+  # Tear down the isolated telemetry root and restore the ambient state config so
+  # later phases (e.g. E2E dispatch) write to the real store as intended.
+  unset PM_DISPATCH_STATE_ROOT
+  rm -rf "$smoke_telemetry_root"; smoke_telemetry_root=""
 fi
 
 # ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────

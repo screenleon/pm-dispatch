@@ -25,12 +25,22 @@ _ctx_db_path() {
 _ctx_ensure_gitignore() {
   local repo_root="$1"
   local gitignore="$repo_root/.gitignore"
-  # Path safety: only ever read/write a real regular file. A symlink or special
-  # file at .gitignore is not ours to follow — writing through it could clobber
-  # an out-of-tree target. Skip with a warning; the DB still works (just untracked).
+  # Path safety: only ever read/write a real, single-linked regular file. A symlink
+  # or special file is not ours to follow, and a hardlinked file (link count > 1)
+  # shares its inode with another path — appending through any of these could
+  # clobber or write into an out-of-tree / shared target. Skip with a warning; the
+  # DB still works (just untracked).
   if [[ -L "$gitignore" || ( -e "$gitignore" && ! -f "$gitignore" ) ]]; then
     printf 'context index: .gitignore is not a regular file; skipping auto-patch\n' >&2
     return 0
+  fi
+  if [[ -f "$gitignore" ]]; then
+    local nlink
+    nlink="$(stat -c '%h' "$gitignore" 2>/dev/null || stat -f '%l' "$gitignore" 2>/dev/null || printf '1')"
+    if [[ "$nlink" =~ ^[0-9]+$ && "$nlink" -gt 1 ]]; then
+      printf 'context index: .gitignore is hardlinked (shared inode); skipping auto-patch\n' >&2
+      return 0
+    fi
   fi
   if [[ ! -e "$gitignore" ]]; then
     printf '.pm-dispatch\n' > "$gitignore"
@@ -490,13 +500,14 @@ pmctl_context_index() {
   local db db_dir
   db="$(_ctx_db_path "$repo_root")"
   db_dir="$(dirname "$db")"
-  local is_new_dir=0
-  [[ -d "$db_dir" ]] || is_new_dir=1
   if ! mkdir -p "$db_dir" 2>/dev/null; then
     printf 'pmctl context index: cannot create %s\n' "$db_dir" >&2
     return 1
   fi
-  [[ "$is_new_dir" -eq 1 ]] && _ctx_ensure_gitignore "$repo_root"
+  # Run every index, not just first cache-dir creation: _ctx_ensure_gitignore is
+  # idempotent (it no-ops when the entry already exists), so a repo with a
+  # pre-existing .pm-dispatch/ctx but no .gitignore entry still gets patched.
+  _ctx_ensure_gitignore "$repo_root"
   _ctx_db_init "$db"
 
   # Batch-load all known mtimes in one query to avoid one sqlite3 subprocess per file.
