@@ -1646,6 +1646,58 @@ case_context_chunk_window_multiwindow() {
   fi
 }
 
+case_context_index_gitignore_new() {
+  local name="pmctl context index: patches .gitignore that has no .pm-dispatch entry"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-new"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" ".pm-dispatch not added to .gitignore; contents: $(<"$fix_repo/.gitignore")"
+  fi
+}
+
+case_context_index_gitignore_idempotent_exact() {
+  local name="pmctl context index: no duplicate when .gitignore already has .pm-dispatch (exact)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-exact"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n.pm-dispatch\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  local count
+  count="$(grep -cxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null || printf '0')"
+  if [[ "$count" -eq 1 ]]; then pass "$name"
+  else fail "$name" "expected 1 .pm-dispatch line, got $count"; fi
+}
+
+case_context_index_gitignore_idempotent_slash() {
+  local name="pmctl context index: no duplicate when .gitignore already has .pm-dispatch/ (slash form)"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-slash"
+  make_fixture_repo "$fix_repo"
+  printf '*.log\n.pm-dispatch/\n' > "$fix_repo/.gitignore"
+
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  local line_count
+  line_count="$(grep -cE '^\.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null || printf '0')"
+  if [[ "$line_count" -eq 1 ]]; then pass "$name"
+  else fail "$name" "expected 1 .pm-dispatch* line total, got $line_count; contents: $(<"$fix_repo/.gitignore")"; fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -1701,5 +1753,8 @@ case_context_reuse_scan_on_real_repo
 case_context_reuse_scan_hit_cap
 case_context_query_emits_event
 case_context_reuse_scan_emits_event
+case_context_index_gitignore_new
+case_context_index_gitignore_idempotent_exact
+case_context_index_gitignore_idempotent_slash
 
 th_summary

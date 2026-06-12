@@ -24,7 +24,8 @@ _ctx_ensure_gitignore() {
   local repo_root="$1"
   local gitignore="$repo_root/.gitignore"
   [[ -f "$gitignore" ]] || return 0
-  grep -qxF '.pm-dispatch' "$gitignore" 2>/dev/null && return 0
+  grep -qxF '.pm-dispatch'  "$gitignore" 2>/dev/null && return 0
+  grep -qxF '.pm-dispatch/' "$gitignore" 2>/dev/null && return 0
   printf '\n.pm-dispatch\n' >> "$gitignore"
   printf 'context index: added .pm-dispatch to .gitignore\n' >&2
 }
