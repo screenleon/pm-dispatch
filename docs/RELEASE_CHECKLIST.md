@@ -9,8 +9,8 @@ Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 51 test suites, real `pmctl context` smoke + real `sqlite3` |
-| **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract, real pr-gate structural validation — spends LLM tokens |
+| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 52 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
 A release is **GO** only when `release-verify.sh --e2e` prints `GO` and every §2a / §2d box is ticked.
@@ -98,17 +98,25 @@ These are now covered by `release-verify.sh --e2e` Phase 4. No manual steps.
 
 **Phase B** exercises real `pmctl dispatch run` output contract (files exist, non-empty).
 **Phase C** runs `pmctl gate run` against a tiny synthetic git repo (local bare remote +
-feature branch with a one-function diff). This validates the gate mechanism end-to-end
-on every release without depending on the current branch state.
+feature branch with a one-function diff). **Phase C requires codex on PATH** — if codex
+is not available, Phase C is auto-skipped (neutral SKIP, not FAIL) and pr-gate coverage
+must be verified manually on a machine with codex. On Windows, ensure codex is on PATH
+before sign-off.
+
+> **Coverage note**: on platforms without codex (e.g. claude-only environments), a
+> `release-verify.sh --e2e` GO covers dispatch (Phase B) + offline suites (Phase 1–3)
+> but does NOT include pr-gate structural validation (Phase C). Full release sign-off
+> requires at least one codex-enabled run of Phase C.
 
 To run them independently:
 ```bash
 bash scripts/test-e2e.sh                    # auto-detect adapter
-bash scripts/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B)
-bash scripts/test-e2e.sh --skip-gate        # dispatch only, skip Phase C
+bash scripts/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B only)
+bash scripts/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Phase C
 ```
 
-- [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) prints `GO` on this platform.
+- [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) prints `GO` **with Phase C PASS** on this platform.
+  - If Phase C was SKIP (no codex): note it and confirm Phase C passes on a codex-enabled machine.
 
 ### 2d. Claude Code hooks (live)
 
