@@ -25,7 +25,14 @@ _ctx_db_path() {
 _ctx_ensure_gitignore() {
   local repo_root="$1"
   local gitignore="$repo_root/.gitignore"
-  if [[ ! -f "$gitignore" ]]; then
+  # Path safety: only ever read/write a real regular file. A symlink or special
+  # file at .gitignore is not ours to follow — writing through it could clobber
+  # an out-of-tree target. Skip with a warning; the DB still works (just untracked).
+  if [[ -L "$gitignore" || ( -e "$gitignore" && ! -f "$gitignore" ) ]]; then
+    printf 'context index: .gitignore is not a regular file; skipping auto-patch\n' >&2
+    return 0
+  fi
+  if [[ ! -e "$gitignore" ]]; then
     printf '.pm-dispatch\n' > "$gitignore"
     printf 'context index: created .gitignore with .pm-dispatch\n' >&2
     return 0
@@ -674,24 +681,42 @@ _ctx_json_str() {
 
 # ── Usage event emission ──────────────────────────────────────────────────────
 # Best-effort: emits a context.queried or context.reuse_scanned event to
-# events.jsonl via the already-sourced state-writer.  Any failure is silent —
-# the main query/reuse-scan operation must not be affected.
+# events.jsonl via the already-sourced state-writer.  A dropped event must never
+# change the caller's exit status or pollute stdout — but the failure is made
+# OBSERVABLE (one-line stderr warning + state-writer error log) rather than
+# swallowed silently, so an undelivered telemetry event is diagnosable instead
+# of surfacing later as an unexplained "no event" readback.
+
+_ctx_emit_warn() {
+  local kind="$1" reason="$2"
+  printf 'context: warning: %s telemetry not recorded (%s)\n' "$kind" "$reason" >&2
+  declare -F _sw_log_error >/dev/null 2>&1 \
+    && _sw_log_error "context: $kind event not recorded: $reason"
+  return 0
+}
 
 _ctx_emit_usage_event() {
   local kind="$1" query_term="$3" hit_count="${4:-0}"
-  declare -F events_append >/dev/null 2>&1 || return 0
-  declare -F state_store_init >/dev/null 2>&1 || return 0
-  # Events are written to the pmctl installation partition (same as pmctl trace
-  # tail reads from), not the indexed target-repo partition.
+  if ! declare -F events_append >/dev/null 2>&1 \
+     || ! declare -F state_store_init >/dev/null 2>&1; then
+    _ctx_emit_warn "$kind" "state-writer not loaded"; return 0
+  fi
+  # Telemetry is keyed to the pmctl installation repo partition (via _SW_REPO_ROOT),
+  # NOT the indexed target-repo partition — so `pmctl trace` run from the pmctl repo
+  # shows context usage aggregated across every repo it indexes. The store *root* is
+  # NOT forced: PM_DISPATCH_STATE_ROOT is honored like every other state write, so a
+  # user (or test) that redirects state also redirects this telemetry.
   local pmctl_root ts stamp hex6 evt_id event_json
   pmctl_root="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
   hex6="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
   hex6="${hex6:0:6}"
-  [[ -n "$hex6" ]] || return 0
+  if [[ -z "$hex6" ]]; then
+    _ctx_emit_warn "$kind" "could not generate event id (urandom unavailable)"; return 0
+  fi
   evt_id="evt-${stamp}-${hex6}"
-  event_json="$(jq -cn \
+  if ! event_json="$(jq -cn \
     --arg id     "$evt_id" \
     --arg ts     "$ts" \
     --arg kind   "$kind" \
@@ -700,8 +725,17 @@ _ctx_emit_usage_event() {
     '{schema_version:1,id:$id,ts:$ts,kind:$kind,
       subject_type:"context",subject_id:("ctx-"+ $id),
       actor:"pmctl",
-      payload:{query:$query,hits:$hits}}')" 2>/dev/null || return 0
-  PM_DISPATCH_STATE_ROOT="" _SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>/dev/null || true
+      payload:{query:$query,hits:$hits}}' 2>/dev/null)"; then
+    _ctx_emit_warn "$kind" "jq failed to build event json"; return 0
+  fi
+  local append_err append_status=0
+  append_err="$(_SW_REPO_ROOT="$pmctl_root" \
+    events_append "$event_json" 2>&1)" || append_status=$?
+  if [[ "$append_status" -ne 0 ]]; then
+    _ctx_emit_warn "$kind" "events_append exited $append_status: ${append_err:-no detail}"
+    return 0
+  fi
+  return 0
 }
 
 # ── Term extraction from free-text description ────────────────────────────────

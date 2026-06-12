@@ -38,19 +38,23 @@ These are readable via `pmctl trace tail --kind context.reuse_scanned` (or
 
 ## Context DB location
 
-By default, the context index is written to `<repo-root>/.pm-dispatch/ctx/context.db`
-(repo-local, created automatically on first `pmctl context index`).
+The context index is **always** written to `<repo-root>/.pm-dispatch/ctx/context.db`
+(repo-local, created automatically on first `pmctl context index`).  This path
+is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT` — the
+database is a derived per-repo cache, so it lives next to the code it indexes.
 The `.pm-dispatch/` directory is added to `.gitignore` automatically so the
 database is never committed.
 
-To override the root where state is written, set `PM_DISPATCH_STATE_ROOT`
-before any `pmctl context` command:
-
-    export PM_DISPATCH_STATE_ROOT=/path/to/custom/state
-
-All `pmctl context` subcommands (`index`, `query`, `pack`, `reuse-scan`) read
-`PM_DISPATCH_STATE_ROOT` automatically.  You can export it in your shell session
-or add it to a project-local `.envrc` file.
+`PM_DISPATCH_STATE_ROOT` governs only the **state partition** (tasks, reviews,
+decisions, events) written by the state-writer — not the context DB.  Context
+*usage telemetry* (the `context.queried` / `context.reuse_scanned` events you
+can read via `pmctl trace`) is the one part of `pmctl context` that the
+state-writer records.  Those events are keyed to the pmctl **installation
+repo** partition (so `pmctl trace` shows context usage aggregated across every
+repo pmctl indexes, no matter which repo you run the query from), but they live
+under whatever store root `PM_DISPATCH_STATE_ROOT` selects — like every other
+state write, the telemetry follows a redirected store root rather than forcing
+the default location.
 
 ## Domain values
 

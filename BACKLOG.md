@@ -107,6 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-361 | ✅ closed 2026-06-12 | **[context: repo-local db placement + graceful no-db degradation]** `_ctx_db_path()` now writes to `<repo>/.pm-dispatch/ctx/context.db`; first `context index` auto-creates dir and patches `.gitignore`; `query`/`pack`/`reuse-scan` return graceful empty on missing db instead of hard-failing. **See**: pr:#270 | ops/DX | 2026-06-12 | pr:#270 | P2 | hygiene |
 | CC-362 | ✅ done | **[feat: add release verification scripts]** Adds `release-verify.sh`, `test-e2e.sh`, `test-release-verify.sh`, and `test-e2e-script.sh` — a four-phase release suite (offline prereqs, 54 suites, context smoke, live dispatch + pr-gate). PARTIAL GO exit 3/4 distinguishes offline-only from full release sign-off. | ops/test | 2026-06-12 | pr:#268 | P2 | hygiene |
 | CC-363 | ✅ closed 2026-06-12 | **[test: release-verify.sh Phase 3 external-repo-index smoke]** Phase 3 now includes: external repo index (db in `.pm-dispatch/`), db-location assertion, query hits, and no-db graceful degradation test. **See**: pr:#270 | ops/test | 2026-06-12 | pr:#270 | P2 | — |
+| CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 
 ---
 
@@ -1901,3 +1902,9 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 **See**: pr:#270
 
 Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Phase 3 also removed `PM_DISPATCH_STATE_ROOT` isolation — db now goes to `$REPO_ROOT/.pm-dispatch/` as designed.
+
+## CC-364 — perf: `pmctl trace tail --all` per-event jq spawn（deferred）
+
+**See**: pr:#270
+
+`pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.

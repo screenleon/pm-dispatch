@@ -18,6 +18,12 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
   exit 0
 fi
 
+# Isolate ALL state writes — including the context usage telemetry that query /
+# reuse-scan emit — into the throwaway tmp_root, so the suite never pollutes or
+# contends on the developer's real install partition. Cases that need a specific
+# root override this locally.
+export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 # Set up a minimal fixture repo in a temp dir for index/update tests.
@@ -1133,30 +1139,37 @@ case_context_query_emits_event() {
   local fix_repo="$tmp_root/fix-repo-query-evt"
   make_fixture_repo "$fix_repo"
 
+  # Telemetry honors PM_DISPATCH_STATE_ROOT, so the whole test runs in an isolated
+  # state root — no pollution of, or lock contention on, the shared install partition.
   local state_root="$tmp_root/state-query-evt"
-    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Snapshot event count before query to detect the new event (delta check).
-  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
   local before_count=0
-  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+  before_count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
-    "$PMCTL" context query "$fix_repo" "alpha" \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context query "$fix_repo" "alpha" \
     > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "context query exited $status: $(<"$err")"; return 0
   fi
 
-  # _ctx_emit_usage_event clears PM_DISPATCH_STATE_ROOT before events_append so the
-  # event is always written to the real installation partition, not the temp index root.
+  # Emit is observable: a dropped telemetry event prints a "telemetry not recorded"
+  # warning to stderr (see _ctx_emit_warn). Catch it at the source — this turns a
+  # silent event drop into a diagnosable failure instead of an unexplained after=0.
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "context query reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/query-trace.out"; trace_err="$tmp_root/query-trace.err"
-  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.queried --all --json \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.queried --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
@@ -1166,16 +1179,20 @@ case_context_query_emits_event() {
   local after_count
   after_count="$(wc -l < "$trace_out" | tr -d ' ')"
   if [[ "$after_count" -le "$before_count" ]]; then
-    fail "$name" "expected new context.queried event in installation trace (before=$before_count after=$after_count)"; return 0
+    fail "$name" "expected new context.queried event in trace (before=$before_count after=$after_count); query stderr: $(<"$err")"; return 0
   fi
 
-  # Isolation: event must NOT be written to the temp index root.
-  local temp_count=0
-  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+  # Isolation: a DIFFERENT, fresh state root must NOT see our event — proves the
+  # event is scoped to $state_root (i.e. PM_DISPATCH_STATE_ROOT is honored, not
+  # forced global). Reads a known-empty root, so it stays fast regardless of how
+  # large the real install partition has grown.
+  local other_root="$tmp_root/state-query-other"; mkdir -p "$other_root"
+  local leak_count=0
+  leak_count="$(PM_DISPATCH_STATE_ROOT="$other_root" \
     "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || true
-  if [[ "$temp_count" -gt 0 ]]; then
-    fail "$name" "context.queried event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  if [[ "$leak_count" -gt 0 ]]; then
+    fail "$name" "context.queried event visible under an unrelated state root ($leak_count events); state-root scoping failure"; return 0
   fi
 
   # Assert payload contract from OUR event (match by query term, not tail-1 which
@@ -1214,29 +1231,36 @@ case_context_reuse_scan_emits_event() {
   local fix_repo="$tmp_root/fix-repo-reuse-evt"
   make_fixture_repo "$fix_repo"
 
+  # Telemetry honors PM_DISPATCH_STATE_ROOT, so the whole test runs in an isolated
+  # state root — no pollution of, or lock contention on, the shared install partition.
   local state_root="$tmp_root/state-reuse-evt"
-    "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   # Snapshot event count before reuse-scan (for delta check).
-  # PM_DISPATCH_STATE_ROOT="" forces real install root regardless of any inherited temp root.
   local before_count=0
-  before_count="$(PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+  before_count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || before_count=0
 
   local out err status=0
   out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
-    "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context reuse-scan "$fix_repo" "alpha beta function" \
     > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "context reuse-scan exited $status: $(<"$err")"; return 0
   fi
 
-  # Event must appear in the real installation trace (not the temp index root).
+  # Catch a dropped telemetry event at its source (see _ctx_emit_warn) rather than
+  # inferring it later from an unexplained after=0.
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "context reuse-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/reuse-trace.out"; trace_err="$tmp_root/reuse-trace.err"
-  PM_DISPATCH_STATE_ROOT="" "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
@@ -1246,16 +1270,19 @@ case_context_reuse_scan_emits_event() {
   local after_count
   after_count="$(wc -l < "$trace_out" | tr -d ' ')"
   if [[ "$after_count" -le "$before_count" ]]; then
-    fail "$name" "expected new context.reuse_scanned event in installation trace (before=$before_count after=$after_count)"; return 0
+    fail "$name" "expected new context.reuse_scanned event in trace (before=$before_count after=$after_count); reuse-scan stderr: $(<"$err")"; return 0
   fi
 
-  # Isolation: event must NOT be written to the temp index root.
-  local temp_count=0
-  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+  # Isolation: a DIFFERENT, fresh state root must NOT see our event — proves it is
+  # scoped to $state_root (PM_DISPATCH_STATE_ROOT honored, not forced global), and
+  # stays fast because the read target is always empty.
+  local other_root="$tmp_root/state-reuse-other"; mkdir -p "$other_root"
+  local leak_count=0
+  leak_count="$(PM_DISPATCH_STATE_ROOT="$other_root" \
     "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
     | wc -l | tr -d ' ')" || true
-  if [[ "$temp_count" -gt 0 ]]; then
-    fail "$name" "context.reuse_scanned event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  if [[ "$leak_count" -gt 0 ]]; then
+    fail "$name" "context.reuse_scanned event visible under an unrelated state root ($leak_count events); state-root scoping failure"; return 0
   fi
 
   # Assert payload contract from OUR event (match by query term, not tail-1).
@@ -1717,6 +1744,85 @@ case_context_index_gitignore_absent() {
   fi
 }
 
+case_context_db_path_repo_local() {
+  local name="pmctl context index: DB is repo-local and ignores PM_DISPATCH_STATE_ROOT"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-dbpath"
+  make_fixture_repo "$fix_repo"
+  local alt_state="$tmp_root/alt-state-root"
+  mkdir -p "$alt_state"
+
+  # Index with a non-default STATE_ROOT exported. Contract: the context DB is a
+  # per-repo derived cache, so it must still land repo-local and nothing
+  # context.db-shaped may appear under the state root.
+  PM_DISPATCH_STATE_ROOT="$alt_state" "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+
+  if [[ ! -f "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "expected repo-local DB at .pm-dispatch/ctx/context.db (not found)"; return 0
+  fi
+  if find "$alt_state" -name 'context.db' 2>/dev/null | grep -q .; then
+    fail "$name" "context.db leaked into PM_DISPATCH_STATE_ROOT ($alt_state); DB must be repo-local"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_index_gitignore_symlink() {
+  local name="pmctl context index: does not write through a symlinked .gitignore"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-symlink"
+  make_fixture_repo "$fix_repo"
+  local target="$tmp_root/gi-symlink-target"
+  printf 'ORIGINAL\n' > "$target"
+  ln -sf "$target" "$fix_repo/.gitignore"
+
+  local status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/gi-symlink.err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "context index exited $status: $(<"$tmp_root/gi-symlink.err")"; return 0
+  fi
+
+  # The symlink target must be untouched — no write-through into an out-of-tree file.
+  if grep -q '.pm-dispatch' "$target" 2>/dev/null; then
+    fail "$name" "index wrote .pm-dispatch through the symlink into $target"; return 0
+  fi
+  if ! grep -q 'not a regular file' "$tmp_root/gi-symlink.err" 2>/dev/null; then
+    fail "$name" "expected 'not a regular file' skip warning; stderr: $(<"$tmp_root/gi-symlink.err")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_emit_event_failure_observable() {
+  local name="_ctx_emit_usage_event: surfaces an observable warning when the event cannot be recorded"
+  should_run "$name" || return 0
+
+  local out err status=0
+  out="$tmp_root/emit-warn.out"; err="$tmp_root/emit-warn.err"
+  # Stub events_append to fail. Emit must stay best-effort (return 0, no stdout)
+  # yet surface a "telemetry not recorded" warning on stderr — the observability
+  # contract that turns a silent event drop into a diagnosable one.
+  HOME="$tmp_root" bash -c '
+    . "'"$SCRIPT_DIR"'/lib/pmctl-context.sh" 2>/dev/null
+    events_append() { printf "boom\n" >&2; return 7; }
+    state_store_init() { return 0; }
+    _ctx_emit_usage_event "context.queried" "ignored" "alpha" 3
+    printf "rc=%s\n" "$?"
+  ' > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "harness exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q 'rc=0' "$out" 2>/dev/null; then
+    fail "$name" "emit must return 0 (best-effort); stdout: $(<"$out")"; return 0
+  fi
+  if ! grep -q 'context.queried telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "expected observable warning on stderr; got: $(<"$err")"; return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -1776,5 +1882,8 @@ case_context_index_gitignore_new
 case_context_index_gitignore_idempotent_exact
 case_context_index_gitignore_idempotent_slash
 case_context_index_gitignore_absent
+case_context_db_path_repo_local
+case_context_index_gitignore_symlink
+case_context_emit_event_failure_observable
 
 th_summary

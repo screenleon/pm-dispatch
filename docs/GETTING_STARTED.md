@@ -110,21 +110,21 @@ bash scripts/run-all-tests.sh
 In normal docs-first workflows, passing `doctor.sh` alone is sufficient before
 your first `/pm` run.
 
-## 5) (Optional) Set up a repo-local context index
+## 5) (Optional) Build the repo-local context index
 
-By default `pmctl context` stores the repository index in a global path under
-`~/.local/share/pm-dispatch/state/`.  To keep the index alongside the repository
-instead, export one environment variable before your first `pmctl context index`
-run:
+`pmctl context` keeps its repository index alongside the repo at
+`<repo-root>/.pm-dispatch/ctx/context.db` — repo-local by default, created on
+your first index run:
 
 ```sh
-export PM_DISPATCH_STATE_ROOT=.pm-dispatch
 pmctl context index "$PM_DISPATCH_REPO"
 ```
 
-The `.pm-dispatch/` directory is gitignored, so the database file is never
-committed.  See [`docs/context-retrieval.md`](docs/context-retrieval.md) for the
-full convention and available subcommands.
+The path is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT`
+(that variable governs the state partition, not the context DB).  The
+`.pm-dispatch/` directory is gitignored automatically, so the database file is
+never committed.  See [`docs/context-retrieval.md`](docs/context-retrieval.md)
+for the full convention and available subcommands.
 
 ## 6) First `/pm` run (end-to-end walkthrough)
 
