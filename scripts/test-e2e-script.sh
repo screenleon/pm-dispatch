@@ -16,17 +16,17 @@ fail() { printf 'FAIL: %s: %s\n' "$1" "${2:-}"; FAILED=$((FAILED+1)); }
 assert_exit() {  # assert_exit <name> <want> <cmd…>
   local name="$1" want="$2"; shift 2
   local rc=0; "$@" >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq "$want" ]] && pass "$name" || fail "$name" "exit $rc want $want"
+  if [[ "$rc" -eq "$want" ]]; then pass "$name"; else fail "$name" "exit $rc want $want"; fi
 }
 
 assert_contains() {
   local name="$1" needle="$2" hay="$3"
-  [[ "$hay" == *"$needle"* ]] && pass "$name" || fail "$name" "expected: $needle"
+  if [[ "$hay" == *"$needle"* ]]; then pass "$name"; else fail "$name" "expected: $needle"; fi
 }
 
 assert_not_contains() {
   local name="$1" needle="$2" hay="$3"
-  [[ "$hay" != *"$needle"* ]] && pass "$name" || fail "$name" "must not contain: $needle"
+  if [[ "$hay" != *"$needle"* ]]; then pass "$name"; else fail "$name" "must not contain: $needle"; fi
 }
 
 # ── --help / -h ───────────────────────────────────────────────────────────────
@@ -57,19 +57,19 @@ test_unknown_flag() {
   local rc=0 out
   out=$(bash "$E2E" --bad-flag 2>&1) || rc=$?
   assert_contains "unknown-flag-msg" "unknown flag" "$out"
-  [[ "$rc" -eq 2 ]] && pass "unknown-flag-exit2" || fail "unknown-flag-exit2" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "unknown-flag-exit2"; else fail "unknown-flag-exit2" "exit $rc want 2"; fi
 }
 
 test_adapter_missing_value() {
   local rc=0
   bash "$E2E" --adapter 2>/dev/null || rc=$?
-  [[ "$rc" -eq 2 ]] && pass "adapter-missing-value" || fail "adapter-missing-value" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "adapter-missing-value"; else fail "adapter-missing-value" "exit $rc want 2"; fi
 }
 
 test_adapter_invalid() {
   local rc=0
   bash "$E2E" --adapter xyznotvalid 2>/dev/null || rc=$?
-  [[ "$rc" -eq 2 ]] && pass "adapter-invalid" || fail "adapter-invalid" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "adapter-invalid"; else fail "adapter-invalid" "exit $rc want 2"; fi
 }
 
 # ── Exit-code contract ────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ test_usage_error_exits_2() {
 test_missing_adapter_exits_1() {
   local rc=0 out
   out=$(PATH=/usr/bin:/bin bash "$E2E" --adapter codex 2>&1) || rc=$?
-  [[ "$rc" -eq 1 ]] && pass "missing-adapter-exits-1" || fail "missing-adapter-exits-1" "exit $rc want 1"
+  if [[ "$rc" -eq 1 ]]; then pass "missing-adapter-exits-1"; else fail "missing-adapter-exits-1" "exit $rc want 1"; fi
   assert_contains "missing-adapter-no-go" "NO-GO" "$out"
 }
 
@@ -96,8 +96,8 @@ test_missing_adapter_exits_1() {
 test_skip_gate_flag_accepted() {
   local rc=0
   PATH=/usr/bin:/bin bash "$E2E" --adapter codex --skip-gate 2>/dev/null || rc=$?
-  [[ "$rc" -eq 1 ]] && pass "skip-gate-flag-accepted" \
-    || fail "skip-gate-flag-accepted" "exit $rc want 1 (parse error would be 2)"
+  if [[ "$rc" -eq 1 ]]; then pass "skip-gate-flag-accepted"
+  else fail "skip-gate-flag-accepted" "exit $rc want 1 (parse error would be 2)"; fi
 }
 
 # ── Phase C produces SKIP (not FAIL) when --skip-gate requested ───────────────
@@ -106,8 +106,8 @@ test_skip_gate_flag_accepted() {
 test_skip_gate_not_usage_error() {
   local rc=0
   PATH=/usr/bin:/bin bash "$E2E" --skip-gate --adapter codex 2>/dev/null || rc=$?
-  [[ "$rc" -ne 2 ]] && pass "skip-gate-not-usage-error" \
-    || fail "skip-gate-not-usage-error" "--skip-gate caused a parse error (exit 2)"
+  if [[ "$rc" -ne 2 ]]; then pass "skip-gate-not-usage-error"
+  else fail "skip-gate-not-usage-error" "--skip-gate caused a parse error (exit 2)"; fi
 }
 
 # ── Phase C skip actually reaches Phase C via pmctl/adapter stubs ─────────────
@@ -143,8 +143,8 @@ PMCTL_STUB
     bash "$E2E" --adapter codex --skip-gate 2>&1) || rc=$?
   rm -rf "$stubdir"
 
-  [[ "$rc" -eq 4 ]] && pass "skip-gate-reaches-phase-c-exit4" \
-    || fail "skip-gate-reaches-phase-c-exit4" "exit $rc want 4 (PARTIAL GO)"
+  if [[ "$rc" -eq 4 ]]; then pass "skip-gate-reaches-phase-c-exit4"
+  else fail "skip-gate-reaches-phase-c-exit4" "exit $rc want 4 (PARTIAL GO)"; fi
   assert_contains     "skip-gate-records-skip" "SKIP"   "$out"
   assert_not_contains "skip-gate-no-fail"      "[FAIL]" "$out"
 }

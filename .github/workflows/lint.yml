@@ -164,6 +164,7 @@ jobs:
             memory-dir.sh
             doctor.sh
             test-doctor.sh
+            test-e2e.sh
             test-harness.sh
             test-test-harness.sh
             test-lint-model-aliases.sh

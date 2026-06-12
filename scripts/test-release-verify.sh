@@ -16,17 +16,17 @@ fail() { printf 'FAIL: %s: %s\n' "$1" "${2:-}"; FAILED=$((FAILED+1)); }
 assert_exit() {  # assert_exit <name> <want> <cmd…>
   local name="$1" want="$2"; shift 2
   local rc=0; "$@" >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq "$want" ]] && pass "$name" || fail "$name" "exit $rc want $want"
+  if [[ "$rc" -eq "$want" ]]; then pass "$name"; else fail "$name" "exit $rc want $want"; fi
 }
 
 assert_contains() {
   local name="$1" needle="$2" hay="$3"
-  [[ "$hay" == *"$needle"* ]] && pass "$name" || fail "$name" "expected: $needle"
+  if [[ "$hay" == *"$needle"* ]]; then pass "$name"; else fail "$name" "expected: $needle"; fi
 }
 
 assert_not_contains() {
   local name="$1" needle="$2" hay="$3"
-  [[ "$hay" != *"$needle"* ]] && pass "$name" || fail "$name" "must not contain: $needle"
+  if [[ "$hay" != *"$needle"* ]]; then pass "$name"; else fail "$name" "must not contain: $needle"; fi
 }
 
 # ── --help / -h ───────────────────────────────────────────────────────────────
@@ -57,19 +57,19 @@ test_unknown_flag() {
   local rc=0 out
   out=$(bash "$RV" --not-a-real-flag 2>&1) || rc=$?
   assert_contains "unknown-flag-msg" "unknown flag" "$out"
-  [[ "$rc" -eq 2 ]] && pass "unknown-flag-exit2" || fail "unknown-flag-exit2" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "unknown-flag-exit2"; else fail "unknown-flag-exit2" "exit $rc want 2"; fi
 }
 
 test_adapter_missing_value() {
   local rc=0
   bash "$RV" --adapter 2>/dev/null || rc=$?
-  [[ "$rc" -eq 2 ]] && pass "adapter-missing-value" || fail "adapter-missing-value" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "adapter-missing-value"; else fail "adapter-missing-value" "exit $rc want 2"; fi
 }
 
 test_adapter_invalid() {
   local rc=0
   bash "$RV" --adapter xyznotvalid 2>/dev/null || rc=$?
-  [[ "$rc" -eq 2 ]] && pass "adapter-invalid" || fail "adapter-invalid" "exit $rc want 2"
+  if [[ "$rc" -eq 2 ]]; then pass "adapter-invalid"; else fail "adapter-invalid" "exit $rc want 2"; fi
 }
 
 # ── Exit-code contract ────────────────────────────────────────────────────────
@@ -87,9 +87,8 @@ test_help_ends_with_newline() {
   # $() strips trailing \n; empty $last on a non-empty file means last byte was \n
   local sz; sz=$(wc -c < "$tmpf")
   rm -f "$tmpf"
-  [[ -z "$last" && "$sz" -gt 0 ]] \
-    && pass "help-ends-with-newline" \
-    || fail "help-ends-with-newline" "help output does not end with a newline"
+  if [[ -z "$last" && "$sz" -gt 0 ]]; then pass "help-ends-with-newline"
+  else fail "help-ends-with-newline" "help output does not end with a newline"; fi
 }
 
 # ── Verdict contract: --no-suite produces PARTIAL GO (exit 3) ─────────────────
@@ -121,8 +120,8 @@ test_e2e_delegation_pass() {
   rm -f "$stub"
   # --no-suite increments REQUIRED_SKIPPED → PARTIAL GO (exit 3) even with GO from stub
   assert_not_contains "e2e-pass-no-fail" "[FAIL]" "$out"
-  [[ "$rc" -eq 3 ]] && pass "e2e-pass-exit3" \
-    || fail "e2e-pass-exit3" "exit $rc want 3 (PARTIAL GO)"
+  if [[ "$rc" -eq 3 ]]; then pass "e2e-pass-exit3"
+  else fail "e2e-pass-exit3" "exit $rc want 3 (PARTIAL GO)"; fi
 }
 
 test_e2e_delegation_fail() {
@@ -133,8 +132,8 @@ test_e2e_delegation_fail() {
   PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
     >/dev/null 2>&1 || rc=$?
   rm -f "$stub"
-  [[ "$rc" -eq 1 ]] && pass "e2e-fail-exit1" \
-    || fail "e2e-fail-exit1" "exit $rc want 1 (NO-GO)"
+  if [[ "$rc" -eq 1 ]]; then pass "e2e-fail-exit1"
+  else fail "e2e-fail-exit1" "exit $rc want 1 (NO-GO)"; fi
 }
 
 test_e2e_delegation_required_skip() {
@@ -146,8 +145,8 @@ test_e2e_delegation_required_skip() {
   out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
   rm -f "$stub"
   assert_contains "e2e-req-skip-text" "SKIP" "$out"
-  [[ "$rc" -eq 3 ]] && pass "e2e-req-skip-exit3" \
-    || fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"
+  if [[ "$rc" -eq 3 ]]; then pass "e2e-req-skip-exit3"
+  else fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"; fi
 }
 
 # ── No --e2e: Phase 4 recorded as required SKIP ───────────────────────────────
@@ -159,8 +158,8 @@ test_no_e2e_phase4_skip_recorded() {
   out=$(bash "$RV" --no-suite 2>&1) || rc=$?
   assert_contains "no-e2e-skip-line" "[SKIP] e2e dispatch+gate" "$out"
   assert_contains "no-e2e-partial"   "PARTIAL GO"               "$out"
-  [[ "$rc" -eq 3 ]] && pass "no-e2e-exits-3" \
-    || fail "no-e2e-exits-3" "exit $rc want 3 (PARTIAL GO)"
+  if [[ "$rc" -eq 3 ]]; then pass "no-e2e-exits-3"
+  else fail "no-e2e-exits-3" "exit $rc want 3 (PARTIAL GO)"; fi
 }
 
 # ── Run ───────────────────────────────────────────────────────────────────────
