@@ -110,7 +110,23 @@ bash scripts/run-all-tests.sh
 In normal docs-first workflows, passing `doctor.sh` alone is sufficient before
 your first `/pm` run.
 
-## 5) First `/pm` run (end-to-end walkthrough)
+## 5) (Optional) Set up a repo-local context index
+
+By default `pmctl context` stores the repository index in a global path under
+`~/.local/share/pm-dispatch/state/`.  To keep the index alongside the repository
+instead, export one environment variable before your first `pmctl context index`
+run:
+
+```sh
+export PM_DISPATCH_STATE_ROOT=.pm-dispatch
+pmctl context index "$PM_DISPATCH_REPO"
+```
+
+The `.pm-dispatch/` directory is gitignored, so the database file is never
+committed.  See [`docs/context-retrieval.md`](docs/context-retrieval.md) for the
+full convention and available subcommands.
+
+## 6) First `/pm` run (end-to-end walkthrough)
 
 After the checks are green, open a Claude Code session in the repo and send a concrete request:
 
@@ -140,7 +156,7 @@ If you use a non-destructive request for this walkthrough, run:
 
 That gives the full PM + dispatch chain without requiring immediate code changes.
 
-## 6) Useful follow-up reading
+## 7) Useful follow-up reading
 
 After you finish the first `/pm` cycle, keep these in sync:
 
@@ -148,6 +164,8 @@ After you finish the first `/pm` cycle, keep these in sync:
 - [`docs/memory-system.md`](docs/memory-system.md)
 - [`docs/dispatch-brief.md`](docs/dispatch-brief.md)
 - [`docs/executor-contract.md`](docs/executor-contract.md)
+- [`docs/context-retrieval.md`](docs/context-retrieval.md) — query the repo index before authoring a brief
+- [`docs/pmctl-task.md`](docs/pmctl-task.md) — full task lifecycle commands
 - [`docs/platform-support.md`](docs/platform-support.md)
 
 If a fork user path differs from yours, keep your edits small and local; this repo is designed to be copied and adapted.

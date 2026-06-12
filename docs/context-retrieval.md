@@ -36,6 +36,23 @@ For a targeted multi-term query (when key symbol names are already known), use
 These are readable via `pmctl trace tail --kind context.reuse_scanned` (or
 `--kind context.queried`).  `pmctl context pack` does not emit usage events.
 
+## Repo-local state root
+
+By default, the context index is written to `~/.local/share/pm-dispatch/state/`
+(global XDG path shared across all repos).  For workflows where you want the
+index to live alongside a specific repository, set `PM_DISPATCH_STATE_ROOT`
+before any `pmctl context` command:
+
+    export PM_DISPATCH_STATE_ROOT=.pm-dispatch
+
+With this setting, `pmctl context index` writes the database to
+`<repo-root>/.pm-dispatch/repo-index.db`.  The `.pm-dispatch/` directory is
+gitignored, so the file is never committed.
+
+All `pmctl context` subcommands (`index`, `query`, `pack`, `reuse-scan`) read
+`PM_DISPATCH_STATE_ROOT` automatically.  You can export it in your shell session
+or add it to a project-local `.envrc` file.
+
 ## Domain values
 
 | Domain      | Classification rule                                                    |
