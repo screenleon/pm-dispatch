@@ -11,6 +11,7 @@
 #   1. validate adapter name (strict identifier) + resolve by convention
 #   2. route + allowlist             executor-router: MANDATORY, fail-closed
 #   3. brief-validate                scripts/brief-validate.sh
+#  3a. optional auto-pack             context reuse-scan + pointer-only brief copy
 #   4. guard                         pmctl guard check (shared policy, MANDATORY)
 #   5. invoke adapter subprocess     the ONLY executor-specific step
 #   6. read output contract          .agent-trace/latest.last (read-only)
@@ -197,6 +198,217 @@ pmctl_dispatch_write_transition() {
     "$state" "$exit_code" "$adapter" "$note" "$op_id" "$from_state" || return $?
 }
 
+pmctl_dispatch_extract_goal() {
+  local brief="$1"
+  awk '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    function clean(s) {
+      sub(/^[[:space:]]*-[[:space:]]*/, "", s)
+      gsub(/[|>]/, " ", s)
+      s = trim(s)
+      if ((s ~ /^".*"$/) || (s ~ /^'\''.*'\''$/)) {
+        s = substr(s, 2, length(s) - 2)
+      }
+      return trim(s)
+    }
+    /^goal:[[:space:]]*/ {
+      line = $0
+      sub(/^goal:[[:space:]]*/, "", line)
+      line = trim(line)
+      if (line ~ /^([|>][+-]?)?$/) {
+        in_goal = 1
+        next
+      }
+      print clean(line)
+      found = 1
+      exit
+    }
+    in_goal {
+      if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*/) {
+        exit
+      }
+      line = clean($0)
+      if (line != "") {
+        out = (out == "" ? line : out " " line)
+      }
+    }
+    END {
+      if (!found && in_goal && out != "") {
+        print out
+      }
+    }
+  ' "$brief"
+}
+
+pmctl_dispatch_reuse_yaml_to_auto_context() {
+  local yaml="$1"
+  awk '
+    function emit() {
+      if (ref != "" && count < 5) {
+        if (conf == "") {
+          conf = "0"
+        }
+        gsub(/\\/, "\\\\", why)
+        gsub(/"/, "\\\"", why)
+        printf "  - ref: %s\n", ref
+        printf "    why_relevant: \"%s\"\n", why
+        printf "    confidence: %s\n", conf
+        count += 1
+      }
+      ref = ""; why = ""; conf = ""
+    }
+    /^  hits:/ { in_hits = 1; next }
+    in_hits && /^    - ref:[[:space:]]*/ {
+      emit()
+      ref = $0
+      sub(/^    - ref:[[:space:]]*/, "", ref)
+      next
+    }
+    in_hits && /^      why_relevant:[[:space:]]*/ {
+      why = $0
+      sub(/^      why_relevant:[[:space:]]*/, "", why)
+      if (why ~ /^'\''.*'\''$/) {
+        why = substr(why, 2, length(why) - 2)
+        gsub(/'\'''\''/, "'\''", why)
+      }
+      next
+    }
+    in_hits && /^      confidence:[[:space:]]*/ {
+      conf = $0
+      sub(/^      confidence:[[:space:]]*/, "", conf)
+      next
+    }
+    END { emit() }
+  ' "$yaml"
+}
+
+pmctl_dispatch_emit_auto_packed_event() {
+  local repo_root="${1:-}" run_id="${2:-}" hits="${3:-0}" pack="${4:-}" source_brief="${5:-}"
+  local ts evt_id event_json append_err append_status=0
+
+  pmctl_dispatch_ensure_state_writer "$repo_root" || {
+    printf 'pmctl dispatch run: warning: context.auto_packed telemetry not recorded (state-writer unavailable)\n' >&2
+    return 0
+  }
+  [[ "$hits" =~ ^[0-9]+$ ]] || hits=0
+  ts="$(pmctl_dispatch_utc_ts)"
+  evt_id="evt-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  if [[ "$evt_id" == "evt--" || "$evt_id" == *"-" ]]; then
+    printf 'pmctl dispatch run: warning: context.auto_packed telemetry not recorded (could not generate event id)\n' >&2
+    return 0
+  fi
+  if ! event_json="$(jq -cn \
+    --arg id "$evt_id" \
+    --arg ts "$ts" \
+    --arg kind "context.auto_packed" \
+    --arg run_id "$run_id" \
+    --arg pack "$pack" \
+    --arg source_brief "$source_brief" \
+    --argjson hits "$hits" \
+    '{schema_version:1,id:$id,ts:$ts,kind:$kind,
+      subject_type:"context",subject_id:$run_id,actor:"pmctl",
+      payload:{run_id:$run_id,hits:$hits,pack:$pack,source_brief:$source_brief}}' 2>/dev/null)"; then
+    printf 'pmctl dispatch run: warning: context.auto_packed telemetry not recorded (jq failed)\n' >&2
+    return 0
+  fi
+  append_err="$(_SW_REPO_ROOT="$repo_root" events_append "$event_json" 2>&1)" || append_status=$?
+  if [[ "$append_status" -ne 0 ]]; then
+    printf 'pmctl dispatch run: warning: context.auto_packed telemetry not recorded: %s\n' "${append_err:-events_append failed}" >&2
+  fi
+  return 0
+}
+
+pmctl_dispatch_auto_pack() {
+  local repo_root="${1:-}" work_dir="${2:-}" brief_file="${3:-}" run_id="${4:-}"
+  local goal reuse_yaml reuse_err block_file block_hits pack_dir pack_path validate_msg validate_status=0
+
+  if ! declare -F pmctl_context_reuse_scan >/dev/null 2>&1; then
+    # shellcheck disable=SC1091  # dynamic repo root path.
+    . "$repo_root/scripts/lib/pmctl-context.sh" 2>/dev/null || true
+  fi
+  if ! declare -F pmctl_context_reuse_scan >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: pmctl context reuse-scan unavailable\n' >&2
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+
+  if ! goal="$(pmctl_dispatch_extract_goal "$brief_file" 2>/dev/null)" || [[ -z "$goal" ]]; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: could not extract goal from %s\n' "$brief_file" >&2
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+
+  reuse_err="$(mktemp)" || {
+    printf 'pmctl dispatch run: warning: auto-pack skipped: mktemp failed\n' >&2
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  }
+  if ! reuse_yaml="$(pmctl_context_reuse_scan "$work_dir" "$goal" 2>"$reuse_err")"; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: reuse-scan failed: %s\n' "$(tr '\n' ' ' < "$reuse_err")" >&2
+    rm -f "$reuse_err"
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+  if [[ -s "$reuse_err" ]]; then
+    printf '%s' "$(cat "$reuse_err")" >&2
+    [[ "$(tail -c 1 "$reuse_err" 2>/dev/null || true)" == $'\n' ]] || printf '\n' >&2
+  fi
+  rm -f "$reuse_err"
+
+  block_file="$(mktemp)" || {
+    printf 'pmctl dispatch run: warning: auto-pack skipped: mktemp failed\n' >&2
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  }
+  printf '%s\n' "$reuse_yaml" | pmctl_dispatch_reuse_yaml_to_auto_context /dev/stdin > "$block_file" || true
+  block_hits="$(grep -c '^  - ref:' "$block_file" 2>/dev/null || true)"
+  [[ "$block_hits" =~ ^[0-9]+$ ]] || block_hits=0
+  if [[ "$block_hits" -eq 0 ]]; then
+    rm -f "$block_file"
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+
+  pack_dir="$work_dir/.pm-dispatch/ctx/packs"
+  pack_path="$pack_dir/$run_id.md"
+  if ! mkdir -p "$pack_dir"; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: cannot create %s\n' "$pack_dir" >&2
+    rm -f "$block_file"
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+  if ! {
+    cat "$brief_file"
+    printf '\n\nauto_context:\n'
+    printf '  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand\n'
+    cat "$block_file"
+  } > "$pack_path"; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: cannot write %s\n' "$pack_path" >&2
+    rm -f "$block_file"
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+  rm -f "$block_file"
+
+  validate_msg="$(bash "$repo_root/scripts/brief-validate.sh" "$pack_path" 2>&1)" || validate_status=$?
+  if [[ "$validate_status" -ne 0 ]]; then
+    printf 'pmctl dispatch run: warning: auto-pack skipped: augmented brief failed validation: %s\n%s\n' "$pack_path" "$validate_msg" >&2
+    rm -f "$pack_path"
+    pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
+    return 0
+  fi
+  if [[ -n "$validate_msg" && "$validate_msg" != "VALID" ]]; then
+    printf '%s\n' "$validate_msg" >&2
+  fi
+
+  PMCTL_DISPATCH_AUTO_PACK_PATH="$pack_path"
+  pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" "$block_hits" "$pack_path" "$brief_file"
+  return 0
+}
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -205,7 +417,7 @@ pmctl_dispatch_run() {
   fi
   shift || true
 
-  local adapter="" work_dir="" brief_file="" print_cmd=0
+  local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag=""
   local -a forward=()
 
   # Peek at the flags the shared steps need (--adapter is consumed; --cd and
@@ -242,6 +454,14 @@ pmctl_dispatch_run() {
       --print-cmd)
         print_cmd=1
         forward+=(--print-cmd)
+        shift
+        ;;
+      --auto-pack)
+        auto_pack_flag="on"
+        shift
+        ;;
+      --no-auto-pack)
+        auto_pack_flag="off"
         shift
         ;;
       --)
@@ -336,6 +556,35 @@ pmctl_dispatch_run() {
     printf '%s\n' "$brief_msg" >&2
   fi
 
+  # 3a. Optional auto-pack. Config is loaded here because dispatch.auto_pack
+  # decides whether this pre-guard step runs; adapter-facing config exports are
+  # still applied below before invocation.
+  if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
+  local _dispatch_model _dispatch_created_ts _dispatch_run_id _auto_pack_effective
+  _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
+  _dispatch_created_ts="$(pmctl_dispatch_utc_ts)"
+  _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  _auto_pack_effective="off"
+  if [[ "$auto_pack_flag" == "on" || "$auto_pack_flag" == "off" ]]; then
+    _auto_pack_effective="$auto_pack_flag"
+  elif [[ "${PM_CFG_AUTO_PACK:-}" == "on" || "${PM_CFG_AUTO_PACK:-}" == "off" ]]; then
+    _auto_pack_effective="$PM_CFG_AUTO_PACK"
+  fi
+  PMCTL_DISPATCH_AUTO_PACK_PATH=""
+  if [[ "$_auto_pack_effective" == "on" ]]; then
+    pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true
+    if [[ -n "${PMCTL_DISPATCH_AUTO_PACK_PATH:-}" ]]; then
+      local _brief_i
+      for ((_brief_i = 0; _brief_i < ${#forward[@]}; _brief_i += 1)); do
+        if [[ "${forward[$_brief_i]}" == "--brief-file" && $((_brief_i + 1)) -lt ${#forward[@]} ]]; then
+          forward[_brief_i + 1]="$PMCTL_DISPATCH_AUTO_PACK_PATH"
+          break
+        fi
+      done
+      unset _brief_i
+    fi
+  fi
+
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
   #    Gates the executor's brief-file write for this runtime via the same code
   #    path the PreToolUse hooks enforce. The dispatch adapter IS the runtime
@@ -349,7 +598,7 @@ pmctl_dispatch_run() {
     return 2
   fi
 
-  # 4a. Resolve config defaults and export to the adapter subprocess (CC-293).
+  # 4a. Export config defaults to the adapter subprocess (CC-293).
   #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
   #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
   #     lower than an explicit --timeout / --model flag — the existing elif chains
@@ -357,14 +606,8 @@ pmctl_dispatch_run() {
   #     Export is unconditional; adapters that omit the config branch safely ignore
   #     unknown env vars. pm_config_load is guarded so test environments that did
   #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
-  if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
   # shellcheck disable=SC2163
-  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL
-
-  local _dispatch_model _dispatch_created_ts _dispatch_run_id
-  _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
-  _dispatch_created_ts="$(pmctl_dispatch_utc_ts)"
-  _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
 
   if [[ "$print_cmd" -eq 0 ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \

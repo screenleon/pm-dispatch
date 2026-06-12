@@ -114,9 +114,26 @@ the executor reuses existing code rather than reimplementing it:
 
     pmctl context reuse-scan [<repo_root>] "<task description>"
 
-Review the `reuse_candidates:` output and paste **at most 5 entries** into the
-brief's `context:` block.  Do not paste the raw block unfiltered — stop-word
-noise in the candidates inflates executor token cost without adding signal.
+This manual route is the curated default. Review the `reuse_candidates:` output
+and paste **at most 5 entries** into the brief's `context:` block. Do not paste
+the raw block unfiltered — stop-word noise in the candidates inflates executor
+token cost without adding signal.
+
+For deterministic opt-in packing at dispatch time, run:
+
+    pmctl dispatch run --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+
+or set:
+
+    dispatch.auto_pack = on
+
+When enabled, `pmctl dispatch run` extracts the brief `goal`, runs
+`pmctl context reuse-scan`, and writes a temporary augmented copy under the
+work repo with an `auto_context:` block containing up to 5 pointer-only hits.
+The authored brief file is not modified. If reuse-scan, pack writing, or
+validation fails, dispatch prints a warning to stderr and continues with the
+original brief.
+
 For tasks with known symbol names, use `pmctl context pack` with explicit
 `--query` flags instead.
 

@@ -38,6 +38,38 @@ including calls that find no hits and calls against a repo with no index yet
 `pmctl trace tail --kind context.reuse_scanned` (or `--kind context.queried`).
 `pmctl context pack` does not emit usage events.
 
+## Dispatch auto-pack
+
+`pmctl dispatch run` can opt in to a deterministic prior-art packing step:
+
+    pmctl dispatch run --adapter <executor> --cd <repo-root> --brief-file <brief> --auto-pack
+
+The equivalent config default is:
+
+    dispatch.auto_pack = on
+
+Use `--no-auto-pack` to override a config default for one dispatch. Auto-pack is
+off by default.
+
+When auto-pack is on, dispatch extracts the brief `goal`, runs
+`pmctl context reuse-scan` against the work repo, and forwards the executor an
+augmented brief copy at:
+
+    <repo-root>/.pm-dispatch/ctx/packs/<run_id>.md
+
+The copy contains the original brief plus an appended `auto_context:` block with
+up to 5 pointer-only candidates. The authored brief file stays unchanged. If
+reuse-scan, pack creation, or validation fails, dispatch warns on stderr and
+continues with the original brief and the same exit semantics.
+
+Every dispatch with auto-pack enabled records a `context.auto_packed` event,
+including zero-hit and fail-open cases. Inspect it with:
+
+    pmctl trace tail --kind context.auto_packed
+
+Use `--json` to read the payload fields: `run_id`, `hits`, `pack`, and
+`source_brief`.
+
 ## Context DB location
 
 The context index is **always** written to `<repo-root>/.pm-dispatch/ctx/context.db`
@@ -46,6 +78,10 @@ is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT` — the
 database is a derived per-repo cache, so it lives next to the code it indexes.
 The `.pm-dispatch/` directory is added to `.gitignore` automatically so the
 database is never committed.
+
+Auto-pack files are written under the same repo-local context directory at
+`<repo-root>/.pm-dispatch/ctx/packs/<run_id>.md`; they are derived dispatch
+artifacts and are not committed.
 
 `pmctl context query`, `pmctl context pack`, and `pmctl context reuse-scan` are
 self-sufficient readers: if the repo-local DB is missing and `sqlite3` is
