@@ -49,7 +49,7 @@ Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
 — this is expected (MSYS subprocess overhead).
 
 - [ ] **Linux / WSL2 (full sign-off)**: `release-verify.sh --e2e` exits 0 and prints `AUTOMATED VERDICT: GO` (all phases including Phase C pass).
-- [ ] **Windows Git Bash**: `release-verify.sh --e2e` exits 0 or 3. Exit 3 (`PARTIAL GO`) is expected when `codex` is not on PATH — Phase C is auto-skipped. Confirm Phase C passes on a Linux/WSL2 machine with codex before tagging.
+- [ ] **Windows Git Bash**: `release-verify.sh --e2e` exits 0 or 3. Exit 3 (`PARTIAL GO`) is expected when `codex` is not on PATH — Phase C is auto-skipped. Windows exit 3 satisfies the Windows row **only** after a codex-enabled Linux/WSL2 run (row above) has already recorded Phase C PASS.
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).
@@ -60,7 +60,7 @@ Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
 |------|-----------|------------------|
 | bash ≥ 4, git | system / Git for Windows | system / Git for Windows |
 | `jq` | `apt install jq` | `winget install jqlang.jq` |
-| **`sqlite3` (with FTS5)** | `apt install sqlite3` | `winget install SQLite.SQLite` |
+| **`sqlite3`** (FTS5 optional — context uses LIKE fallback when absent) | `apt install sqlite3` | `winget install SQLite.SQLite` |
 | `codex` (optional, `full` profile) | `npm i -g @openai/codex` | not supported on Windows |
 | `claude` (optional, for real E2E) | per Claude Code install | per Claude Code install |
 

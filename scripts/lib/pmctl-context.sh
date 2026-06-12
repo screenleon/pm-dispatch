@@ -682,7 +682,7 @@ _ctx_emit_usage_event() {
       subject_type:"context",subject_id:("ctx-"+ $id),
       actor:"pmctl",
       payload:{query:$query,hits:$hits}}')" 2>/dev/null || return 0
-  _SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>/dev/null || true
+  PM_DISPATCH_STATE_ROOT="" _SW_REPO_ROOT="$pmctl_root" events_append "$event_json" 2>/dev/null || true
 }
 
 # ── Term extraction from free-text description ────────────────────────────────

@@ -1196,6 +1196,11 @@ case_context_query_emits_event() {
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
+  # Snapshot event count before query to detect the new event (delta check).
+  local before_count=0
+  before_count="$("$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || before_count=0
+
   local out err status=0
   out="$tmp_root/query-evt.out"; err="$tmp_root/query-evt.err"
   PM_DISPATCH_STATE_ROOT="$state_root" \
@@ -1206,28 +1211,38 @@ case_context_query_emits_event() {
     fail "$name" "context query exited $status: $(<"$err")"; return 0
   fi
 
+  # _ctx_emit_usage_event clears PM_DISPATCH_STATE_ROOT before events_append so the
+  # event is always written to the real installation partition, not the temp index root.
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/query-trace.out"; trace_err="$tmp_root/query-trace.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" trace tail --kind context.queried --all --json \
+  "$PMCTL" trace tail --kind context.queried --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
     fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
   fi
 
-  local line_count
-  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -lt 1 ]]; then
-    fail "$name" "expected >= 1 context.queried event in trace; got $line_count lines"; return 0
+  local after_count
+  after_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$after_count" -le "$before_count" ]]; then
+    fail "$name" "expected new context.queried event in installation trace (before=$before_count after=$after_count)"; return 0
   fi
 
-  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  # Isolation: event must NOT be written to the temp index root.
+  local temp_count=0
+  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || true
+  if [[ "$temp_count" -gt 0 ]]; then
+    fail "$name" "context.queried event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  fi
+
+  # Assert payload contract from the most recent event (last JSONL line).
   local evt_kind evt_subject_type payload_query payload_hits
-  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
-  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
-  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
-  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+  evt_kind="$(tail -1 "$trace_out" | jq -r '.kind' 2>/dev/null)"
+  evt_subject_type="$(tail -1 "$trace_out" | jq -r '.subject_type' 2>/dev/null)"
+  payload_query="$(tail -1 "$trace_out" | jq -r '.payload.query' 2>/dev/null)"
+  payload_hits="$(tail -1 "$trace_out" | jq -r '.payload.hits' 2>/dev/null)"
 
   if [[ "$evt_kind" != "context.queried" ]]; then
     fail "$name" "event kind: expected context.queried, got: $evt_kind"; return 0
@@ -1258,6 +1273,11 @@ case_context_reuse_scan_emits_event() {
     "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
+  # Snapshot event count before reuse-scan (for delta check).
+  local before_count=0
+  before_count="$("$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || before_count=0
+
   local out err status=0
   out="$tmp_root/reuse-evt.out"; err="$tmp_root/reuse-evt.err"
   PM_DISPATCH_STATE_ROOT="$state_root" \
@@ -1268,28 +1288,37 @@ case_context_reuse_scan_emits_event() {
     fail "$name" "context reuse-scan exited $status: $(<"$err")"; return 0
   fi
 
+  # Event must appear in the real installation trace (not the temp index root).
   local trace_out trace_err trace_status=0
   trace_out="$tmp_root/reuse-trace.out"; trace_err="$tmp_root/reuse-trace.err"
-  PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
+  "$PMCTL" trace tail --kind context.reuse_scanned --all --json \
     > "$trace_out" 2> "$trace_err" || trace_status=$?
 
   if [[ "$trace_status" -ne 0 ]]; then
     fail "$name" "pmctl trace exited $trace_status; stderr: $(<"$trace_err")"; return 0
   fi
 
-  local line_count
-  line_count="$(wc -l < "$trace_out" | tr -d ' ')"
-  if [[ "$line_count" -lt 1 ]]; then
-    fail "$name" "expected >= 1 context.reuse_scanned event in trace; got $line_count lines"; return 0
+  local after_count
+  after_count="$(wc -l < "$trace_out" | tr -d ' ')"
+  if [[ "$after_count" -le "$before_count" ]]; then
+    fail "$name" "expected new context.reuse_scanned event in installation trace (before=$before_count after=$after_count)"; return 0
   fi
 
-  # Assert payload contract: kind, subject_type, payload.query, payload.hits
+  # Isolation: event must NOT be written to the temp index root.
+  local temp_count=0
+  temp_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.reuse_scanned --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || true
+  if [[ "$temp_count" -gt 0 ]]; then
+    fail "$name" "context.reuse_scanned event leaked to temp index root ($temp_count events); state-root isolation failure"; return 0
+  fi
+
+  # Assert payload contract from the most recent event (last JSONL line).
   local evt_kind evt_subject_type payload_query payload_hits
-  evt_kind="$(jq -r '.kind' "$trace_out" 2>/dev/null | head -1)"
-  evt_subject_type="$(jq -r '.subject_type' "$trace_out" 2>/dev/null | head -1)"
-  payload_query="$(jq -r '.payload.query' "$trace_out" 2>/dev/null | head -1)"
-  payload_hits="$(jq -r '.payload.hits' "$trace_out" 2>/dev/null | head -1)"
+  evt_kind="$(tail -1 "$trace_out" | jq -r '.kind' 2>/dev/null)"
+  evt_subject_type="$(tail -1 "$trace_out" | jq -r '.subject_type' 2>/dev/null)"
+  payload_query="$(tail -1 "$trace_out" | jq -r '.payload.query' 2>/dev/null)"
+  payload_hits="$(tail -1 "$trace_out" | jq -r '.payload.hits' 2>/dev/null)"
 
   if [[ "$evt_kind" != "context.reuse_scanned" ]]; then
     fail "$name" "event kind: expected context.reuse_scanned, got: $evt_kind"; return 0
