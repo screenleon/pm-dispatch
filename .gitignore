@@ -14,7 +14,8 @@ pm/rollup/.PORTFOLIO.md.*
 # Repo-local pm-dispatch state (context index, trace events)
 # Set PM_DISPATCH_STATE_ROOT=.pm-dispatch to use this location.
 .pm-dispatch/
-# SQLite context index files — never commit db or WAL/SHM journal files.
+# SQLite context index files — global scope is intentional: covers custom
+# PM_DISPATCH_STATE_ROOT paths inside the repo in addition to .pm-dispatch/.
 *.db
 *.db-wal
 *.db-shm
