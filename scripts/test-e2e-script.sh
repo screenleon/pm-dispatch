@@ -114,15 +114,11 @@ test_skip_gate_not_usage_error() {
 # Phases A+B run with stubs (no tokens). --skip-gate causes Phase C to record
 # SKIP → REQUIRED_SKIPPED=1 → exit 4 (PARTIAL GO).
 
-test_skip_gate_reaches_phase_c_skip() {
-  local stubdir; stubdir=$(mktemp -d)
-
-  # Stub codex: responds to any invocation (--version check + adapter check).
+make_e2e_stubs() {
+  local stubdir="$1"
   printf '#!/usr/bin/env bash\necho "stub-codex 0.0.0"\nexit 0\n' \
     > "$stubdir/codex"
   chmod +x "$stubdir/codex"
-
-  # Stub pmctl: creates required trace files in --cd directory for Phase B.
   cat > "$stubdir/pmctl" <<'PMCTL_STUB'
 #!/usr/bin/env bash
 cd_arg=""
@@ -137,6 +133,11 @@ fi
 exit 0
 PMCTL_STUB
   chmod +x "$stubdir/pmctl"
+}
+
+test_skip_gate_reaches_phase_c_skip() {
+  local stubdir; stubdir=$(mktemp -d)
+  make_e2e_stubs "$stubdir"
 
   local out rc=0
   out=$(PATH="$stubdir:/usr/bin:/bin" PM_E2E_PMCTL="$stubdir/pmctl" \
@@ -147,6 +148,26 @@ PMCTL_STUB
   else fail "skip-gate-reaches-phase-c-exit4" "exit $rc want 4 (PARTIAL GO)"; fi
   assert_contains     "skip-gate-records-skip" "SKIP"   "$out"
   assert_not_contains "skip-gate-no-fail"      "[FAIL]" "$out"
+}
+
+# ── Stub-based E2E does not create .pm-dispatch/ in working dirs ───────────────
+# Regression: context db is repo-local; dispatch stub must not trigger context
+# index as a side effect, leaving no .pm-dispatch/ artifact in the smoke workdir.
+
+test_stub_e2e_no_pm_dispatch_artifact() {
+  local stubdir; stubdir=$(mktemp -d)
+  make_e2e_stubs "$stubdir"
+
+  local out rc=0
+  out=$(PATH="$stubdir:/usr/bin:/bin" PM_E2E_PMCTL="$stubdir/pmctl" \
+    bash "$E2E" --adapter codex --skip-gate 2>&1) || rc=$?
+  # Collect any .pm-dispatch dirs that appeared in /tmp (smoke dirs are mktemp -d in /tmp)
+  local artifacts
+  artifacts="$(find /tmp -maxdepth 3 -name '.pm-dispatch' -newer "$stubdir" 2>/dev/null | head -5 || true)"
+  rm -rf "$stubdir"
+
+  if [[ -z "$artifacts" ]]; then pass "stub-e2e-no-pm-dispatch-artifact"
+  else fail "stub-e2e-no-pm-dispatch-artifact" ".pm-dispatch created at: $artifacts"; fi
 }
 
 # ── Run ───────────────────────────────────────────────────────────────────────
@@ -163,6 +184,7 @@ test_missing_adapter_exits_1
 test_skip_gate_flag_accepted
 test_skip_gate_not_usage_error
 test_skip_gate_reaches_phase_c_skip
+test_stub_e2e_no_pm_dispatch_artifact
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

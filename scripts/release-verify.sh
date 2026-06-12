@@ -144,37 +144,35 @@ fi
 
 # ── Phase 3: Real-binary feature smoke ───────────────────────────────────────
 # The unit suites use fixtures; this phase exercises the headline v0.5.0
-# feature (pmctl context) against the REAL repo with the REAL sqlite3 binary,
-# in a throwaway state root (no pollution).
+# feature (pmctl context) against the REAL repo with the REAL sqlite3 binary.
+# DB is repo-local (.pm-dispatch/ctx/context.db) — no global state root needed.
 section "Phase 3 — Real-binary feature smoke (pmctl context on this repo)"
 if [[ ! -x "$PMCTL" ]]; then
   record "context smoke" SKIP "pmctl not found or not executable: $PMCTL"
 elif ! command -v sqlite3 >/dev/null 2>&1; then
   record "context smoke" SKIP "sqlite3 missing — cannot exercise context"
 else
-  smoke_state="$(mktemp -d)"  # registered in cleanup trap above
   smoke_err="$(mktemp)"       # registered in cleanup trap above
   if (
-    export PM_DISPATCH_STATE_ROOT="$smoke_state"
     set -eo pipefail
     "$PMCTL" context index "$REPO_ROOT" >/dev/null 2>"$smoke_err"
     # Incremental re-index must skip (proves mtime-skip works on this platform).
     "$PMCTL" context index "$REPO_ROOT" 2>>"$smoke_err" | grep -qE '0 indexed, [0-9]+ skipped'
   ); then
     # A query for a known repo symbol should return at least one clean ref.
-    q="$(PM_DISPATCH_STATE_ROOT="$smoke_state" "$PMCTL" context query "$REPO_ROOT" pmctl_context_index 2>/dev/null || true)"
+    q="$("$PMCTL" context query "$REPO_ROOT" pmctl_context_index 2>/dev/null || true)"
     if printf '%s' "$q" | grep -q 'ref: ' && ! printf '%s' "$q" | grep -q $'\r'; then
       record "context index+skip+query" PASS "index, incremental skip, and clean-ref query all OK"
     else
       record "context index+skip+query" FAIL "query returned no clean ref (got: $(printf '%s' "$q" | head -1))"
     fi
     # pack + reuse-scan are the v0.5.0 index consumers.
-    if PM_DISPATCH_STATE_ROOT="$smoke_state" "$PMCTL" context pack "$REPO_ROOT" --task-id REL-SMOKE --query dispatch >/dev/null 2>&1; then
+    if "$PMCTL" context pack "$REPO_ROOT" --task-id REL-SMOKE --query dispatch >/dev/null 2>&1; then
       record "context pack" PASS "context-pack assembled"
     else
       record "context pack" FAIL "pmctl context pack failed"
     fi
-    if PM_DISPATCH_STATE_ROOT="$smoke_state" "$PMCTL" context reuse-scan "$REPO_ROOT" "dispatch a brief to an executor" >/dev/null 2>&1; then
+    if "$PMCTL" context reuse-scan "$REPO_ROOT" "dispatch a brief to an executor" >/dev/null 2>&1; then
       record "context reuse-scan" PASS "reuse-scan emitted candidates"
     else
       record "context reuse-scan" FAIL "pmctl context reuse-scan failed"
@@ -182,8 +180,47 @@ else
   else
     record "context index+skip+query" FAIL "index/skip failed: $(tail -1 "$smoke_err")"
   fi
+  rm -f "$smoke_err"; smoke_err=""
+
+  # ── External repo smoke: repo-local db placement + bootstrap ─────────────────
+  smoke_state="$(mktemp -d)"  # registered in cleanup trap above — rm'd below
+  smoke_err="$(mktemp)"
+  mkdir -p "$smoke_state/scripts/lib"
+  printf '#!/usr/bin/env bash\n# dummy helper\ndummy_fn() { echo hello; }\n' \
+    > "$smoke_state/scripts/lib/dummy.sh"
+  printf '# Temp test repo\n\nDummy readme.\n' > "$smoke_state/README.md"
+  printf 'key: value\n' > "$smoke_state/config.yaml"
+
+  if "$PMCTL" context index "$smoke_state" >/dev/null 2>"$smoke_err"; then
+    record "external-repo-index" PASS "context index on external repo succeeded"
+  else
+    record "external-repo-index" FAIL "context index failed: $(tail -1 "$smoke_err")"
+  fi
+
+  if [[ -f "$smoke_state/.pm-dispatch/ctx/context.db" ]]; then
+    record "external-repo-db-location" PASS ".pm-dispatch/ctx/context.db created inside target repo"
+  else
+    record "external-repo-db-location" FAIL ".pm-dispatch/ctx/context.db not found in target repo"
+  fi
+
+  ext_q="$("$PMCTL" context query "$smoke_state" "dummy_fn" 2>/dev/null || true)"
+  if printf '%s' "$ext_q" | grep -q 'ref: '; then
+    record "external-repo-query" PASS "query on external repo returned hits"
+  else
+    record "external-repo-query" FAIL "query returned no hits (got: $(printf '%s' "$ext_q" | head -1))"
+  fi
+
   rm -rf "$smoke_state"; smoke_state=""
   rm -f "$smoke_err"; smoke_err=""
+
+  # ── No-db graceful degradation ────────────────────────────────────────────────
+  nodeb_repo="$(mktemp -d)"
+  if "$PMCTL" context reuse-scan "$nodeb_repo" "dispatch a task" >/dev/null 2>&1; then
+    record "context-no-db-graceful" PASS "reuse-scan returns empty on missing index"
+  else
+    record "context-no-db-graceful" FAIL "reuse-scan errored on missing index (expected graceful empty)"
+  fi
+  rm -rf "$nodeb_repo"
 fi
 
 # ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────

@@ -162,6 +162,28 @@ test_no_e2e_phase4_skip_recorded() {
   else fail "no-e2e-exits-3" "exit $rc want 3 (PARTIAL GO)"; fi
 }
 
+# ── Phase 3: repo-local db + external-repo smoke cases ────────────────────────
+# Verifies that the new context behavior (db in .pm-dispatch/, external-repo-index
+# smoke, and no-db graceful degradation) appears in Phase 3 output.
+
+test_phase3_external_repo_cases() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3-external-repo-index"    "[PASS] external-repo-index"    "$out"
+  assert_contains "phase3-external-repo-db-loc"   "external-repo-db-location"     "$out"
+  assert_contains "phase3-external-repo-query"    "external-repo-query"           "$out"
+  assert_contains "phase3-no-db-graceful"         "context-no-db-graceful"        "$out"
+}
+
+test_phase3_repo_local_db_smoke() {
+  # The standard Phase 3 smoke (this repo) must PASS — proves repo-local db works.
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3-index-skip-query" "[PASS] context index+skip+query" "$out"
+  assert_contains "phase3-pack"             "[PASS] context pack"             "$out"
+  assert_contains "phase3-reuse-scan"       "[PASS] context reuse-scan"       "$out"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -179,6 +201,8 @@ test_e2e_delegation_pass
 test_e2e_delegation_fail
 test_e2e_delegation_required_skip
 test_no_e2e_phase4_skip_recorded
+test_phase3_external_repo_cases
+test_phase3_repo_local_db_smoke
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

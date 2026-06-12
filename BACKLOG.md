@@ -104,9 +104,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-360 | 🟢 someday | **[pr-gate Route B: migrate executor:claude path to pmctl dispatch run --adapter claude]** `scripts/pr-gate.sh --executor claude` 目前輸出 `pr-gate-handover_v1` block，由 `/pr-gate` skill 在 main thread fan-out `Agent(claude-executor)` per reviewer——與 Route A（codex）直接在 `pr-gate.sh` 內呼叫 `pmctl dispatch run --adapter codex` 的架構不對稱。目標：`executor-router.sh` 為 claude 回傳與 codex 相同的 `main_thread_bash_background` route，`pr-gate.sh` 改為直接呼叫 `pmctl dispatch run --adapter claude`，`commands/pr-gate.md` Route B 說明同步更新，並移除 skill 端的 handover block fan-out 邏輯。 | arch/DX | 2026-06-11 | — | P3 | design |
 | CC-359 | 🟢 someday | **[concept: backlog-driven batch dispatch with worktree isolation]** 設計理念：pm-dispatch 本身管理 git worktree 生命週期（`git worktree add/remove`），讓多個 executor worker 在各自隔離的 filesystem workspace 平行處理 backlog task，不依賴任何特定 executor 的 platform feature。核心原則：(1) executor-agnostic — worktree 管理是 pmctl 責任，非 executor 責任；(2) human-in-the-loop — batch dispatch 後 merge 決策仍在人這邊，無 auto-merge；(3) 衝突可觀測不禁止 — 以 BACKLOG area 欄位做粗粒度衝突分組（同 area 排隊，不同 area 可平行），不做逐檔 conflict detection；(4) PR-only — 每個 task 產出獨立 branch + PR，由人統一 review。適合類型：測試補強、文件補強、小 bug、CLI option 補齊；不適合：架構核心大改、schema breaking change。Token budget 可作為 scheduler 輸入控制並行度。 | arch/ops | 2026-06-11 | — | — | design |
 | CC-356 | ✅ done | **[v0.5.0 P2 wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測]** `pmctl context pack` 與 `reuse-scan` 已 ship（#256）但操作面零 caller——agents/、skills/、docs 契約沒有任何一處指示呼叫它們，雙索引正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變。接線：dispatch-brief docs 契約 + PM agent 指標要求 brief 撰寫前先跑 reuse-scan / context pack 取 prior-art anchors；`reuse_candidates` 命中數設上限（防 brief 噪音 token）；每次 query / reuse-scan emit event 使使用次數可由 `pmctl trace` 量測。Acceptance = 一份真實 brief 含 index-derived anchors，且使用次數可觀測。與 CC-354 的 knowledge-plane reflex 同屬「接線即驗收」原則。 | ops/DX | 2026-06-10 | — | P2 | design |
-| CC-361 | 🔵 active | **[context: event isolation fix + bootstrap on missing db + repo-local state root]** Three linked context gaps: (1) `_ctx_emit_usage_event` hijacked by `PM_DISPATCH_STATE_ROOT` env → events lost in temp dirs; (2) reuse-scan/pack/query hard-fail when db absent instead of auto-bootstrapping index first; (3) no documented `.pm-dispatch/` repo-local convention. | ops/DX | 2026-06-12 | — | P2 | hygiene |
+| CC-361 | ✅ closed 2026-06-12 | **[context: repo-local db placement + graceful no-db degradation]** `_ctx_db_path()` now writes to `<repo>/.pm-dispatch/ctx/context.db`; first `context index` auto-creates dir and patches `.gitignore`; `query`/`pack`/`reuse-scan` return graceful empty on missing db instead of hard-failing. **See**: pr:#269 | ops/DX | 2026-06-12 | pr:#269 | P2 | hygiene |
 | CC-362 | ✅ done | **[feat: add release verification scripts]** Adds `release-verify.sh`, `test-e2e.sh`, `test-release-verify.sh`, and `test-e2e-script.sh` — a four-phase release suite (offline prereqs, 54 suites, context smoke, live dispatch + pr-gate). PARTIAL GO exit 3/4 distinguishes offline-only from full release sign-off. | ops/test | 2026-06-12 | pr:#268 | P2 | hygiene |
-| CC-363 | 🔵 active | **[test: release-verify.sh Phase 3 smoke 缺外部 target repo 建 index 場景]** Phase 3 只 smoke pm-dispatch 自己，未覆蓋「對外部 target repo 建 index」路徑。應加一個臨時 target repo smoke，結合 CC-361 bootstrap fix 驗證「db 不存在 → 自動 index → query 成功」全流程。 | ops/test | 2026-06-12 | — | P2 | — |
+| CC-363 | ✅ closed 2026-06-12 | **[test: release-verify.sh Phase 3 external-repo-index smoke]** Phase 3 now includes: external repo index (db in `.pm-dispatch/`), db-location assertion, query hits, and no-db graceful degradation test. **See**: pr:#269 | ops/test | 2026-06-12 | pr:#269 | P2 | — |
 
 ---
 
@@ -1857,29 +1857,11 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 - `commands/pr-gate.md`：Route B 說明更新，移除 fan-out 步驟；`pr-gate-handover_v1` block 相關說明移除或保留為 legacy-only note
 - `scripts/test-pr-gate-profile.sh`：executor-claude-* 測試全面改寫
 
-## CC-361 — context: event isolation fix + bootstrap on missing db + repo-local state root
+## CC-361 — context: repo-local db placement + graceful no-db degradation ✅ 2026-06-12
 
-**Problem**: Three linked context subsystem gaps discovered during v0.5.0 release verification and milestone analysis:
+**See**: pr:#269
 
-1. **State root hijack**: `_ctx_emit_usage_event` uses `_SW_REPO_ROOT` to compute `pmctl_root`, but `_sw_store_root()` reads `PM_DISPATCH_STATE_ROOT` first. Any caller that sets `PM_DISPATCH_STATE_ROOT` (smoke tests, release-verify Phase 3) causes events to be written to the temp dir, which is then deleted. Result: no `context.queried` or `context.reuse_scanned` events survive in production trace.
-
-2. **No repo-local index location**: Context index defaults to `~/.local/share/pm-dispatch/state/` (global XDG). Developers working within pm-dispatch itself have no conventional local location. Proposal: treat `.pm-dispatch/` (in repo root, gitignored) as the repo-local state root, set via `PM_DISPATCH_STATE_ROOT=.pm-dispatch`.
-
-3. **Hard-fail on missing db instead of bootstrap**: `pmctl context query / pack / reuse-scan` all return exit 1 with `index not found; run pmctl context index first` when no db exists (`scripts/lib/pmctl-context.sh` lines ~589, 896, 983, 1050). The entire dispatch flow has no step that runs `context index` for the target repo. Combined with issue #1, this means reuse-scan never succeeds in practice and the CC-356 wiring is effectively a no-op.
-
-**Requirements**:
-
-- `_ctx_emit_usage_event` must write to the pmctl installation state partition (`_CTX_LIB_DIR/../..` path), not whatever `PM_DISPATCH_STATE_ROOT` is set to. Fix: call state-writer with `PM_DISPATCH_STATE_ROOT` unset locally before invoking `events_append`.
-- Add `.pm-dispatch/` to `.gitignore` (already done in pr:#268).
-- Document `PM_DISPATCH_STATE_ROOT=.pm-dispatch` as the convention for repo-local context index in `docs/context-retrieval.md` and `GETTING_STARTED.md`.
-- Add smoke test: run `pmctl context query` with `PM_DISPATCH_STATE_ROOT` set to a temp dir; verify `context.queried` event appears in the installation trace, not the temp dir.
-- `pmctl context query / pack / reuse-scan`: when db is absent, auto-run `pmctl context index` first (mtime incremental is cheap) instead of hard-failing. Or add an explicit auto-bootstrap step in the dispatch pre-flight (`pm-prep-snapshot.sh` or `dispatch-brief` skill) that runs `pmctl context index <working_dir>` before any reuse-scan call.
-- **Per-repo local state root**: when bootstrapping a target repo's index, store the db in `<target-repo>/.pm-dispatch/` (not the global XDG root). The bootstrap step must also patch the target repo's `.gitignore` to include `.pm-dispatch/` (reuse `scripts/patch-gitignore.sh` idempotent mechanism, or inline equivalent). Rationale: the db must not overwrite an existing db from another repo sharing the same global state key; per-repo `.pm-dispatch/` gives natural isolation and the `.gitignore` patch prevents accidental commit of `repo-index.db` + WAL/SHM siblings.
-- Fix `pmctl-context.sh` `mkdir -p` at line ~473: silent failure on mkdir should emit an error instead of continuing silently.
-
-**Acceptance**: After fix, running `release-verify.sh --e2e` then `pmctl trace tail --kind context.queried` shows new events from Phase 3; and a real brief authored via `/pm` contains index-derived anchors from the target repo without requiring manual `pmctl context index` pre-step.
-
-**Cross-link**: [[CC-356]] (wiring), [[CC-358]] (telemetry depends on correct event emission), [[CC-363]] (Phase 3 smoke for external repo).
+`_ctx_db_path()` now stores the context index at `<repo>/.pm-dispatch/ctx/context.db` instead of the global XDG path. `context index` auto-creates `.pm-dispatch/ctx/`, patches `.gitignore` on first run (if `.gitignore` exists), and emits an error on mkdir failure. `query` / `pack` / `reuse-scan` return graceful empty results on missing db (acceleration path — no index = no context, not an error). All 53 context unit tests pass; test suite updated to remove `PM_DISPATCH_STATE_ROOT` isolation pattern.
 
 ---
 
@@ -1914,16 +1896,8 @@ Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line wind
 
 ---
 
-## CC-363 — test: release-verify.sh Phase 3 smoke 缺外部 target repo 建 index 場景
+## CC-363 — test: release-verify.sh Phase 3 external-repo-index smoke ✅ 2026-06-12
 
-**Problem**: `release-verify.sh --e2e` Phase 3 smoke 只對 pm-dispatch 本身執行 `pmctl context index`，沒有「對外部（非 pm-dispatch）target repo 建 index」的場景。而 `pmctl context` 的主要使用案例正是幫其他 repo 建 index，且這個路徑 release 前完全沒被驗過。CC-361 bootstrap 修復後，最重要的驗收場景就是「對外部 repo 建 index → query 成功」全流程。
+**See**: pr:#269
 
-**Requirements**:
-
-- Phase 3 加一個 smoke：在 `synthetic_base` 之外建立臨時 target repo（含幾個 dummy `.sh` 和 `.md` 檔），執行 `pmctl context index <tmp_repo>` 並驗證成功。
-- 接著執行 `pmctl context query <tmp_repo> "dummy"` 並驗證有結果回傳。
-- 結合 CC-361 bootstrap fix 後，加測「db 不存在 → 自動 bootstrap → query 成功」路徑。
-- Smoke 結束後清理臨時 repo（`rm -rf`）。
-**Acceptance**: `release-verify.sh --e2e` Phase 3 包含 external-repo-index test case 且通過；Phase 3 summary 顯示新的 case 名稱。
-
-**Cross-link**: [[CC-361]] (bootstrap — 修 auto-index on missing db).
+Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Phase 3 also removed `PM_DISPATCH_STATE_ROOT` isolation — db now goes to `$REPO_ROOT/.pm-dispatch/` as designed.

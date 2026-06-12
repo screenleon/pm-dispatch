@@ -19,3 +19,5 @@ pm/rollup/.PORTFOLIO.md.*
 *.db
 *.db-wal
 *.db-shm
+
+.pm-dispatch

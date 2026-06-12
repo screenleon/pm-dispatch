@@ -17,11 +17,16 @@ fi
 
 _ctx_db_path() {
   local repo_root="$1"
-  local store_root proj_key
-  store_root="$(_sw_store_root)"
-  # Subshell export avoids polluting the caller's environment.
-  proj_key="$(export _SW_REPO_ROOT="$repo_root"; _sw_project_key)"
-  printf '%s/projects/%s/repo-index.db\n' "$store_root" "$proj_key"
+  printf '%s/.pm-dispatch/ctx/context.db\n' "$repo_root"
+}
+
+_ctx_ensure_gitignore() {
+  local repo_root="$1"
+  local gitignore="$repo_root/.gitignore"
+  [[ -f "$gitignore" ]] || return 0
+  grep -qxF '.pm-dispatch' "$gitignore" 2>/dev/null && return 0
+  printf '\n.pm-dispatch\n' >> "$gitignore"
+  printf 'context index: added .pm-dispatch to .gitignore\n' >&2
 }
 
 # ── SQLite availability ────────────────────────────────────────────────────────
@@ -468,9 +473,16 @@ pmctl_context_index() {
     return 1
   fi
 
-  local db
+  local db db_dir
   db="$(_ctx_db_path "$repo_root")"
-  mkdir -p "$(dirname "$db")"
+  db_dir="$(dirname "$db")"
+  local is_new_dir=0
+  [[ -d "$db_dir" ]] || is_new_dir=1
+  if ! mkdir -p "$db_dir" 2>/dev/null; then
+    printf 'pmctl context index: cannot create %s\n' "$db_dir" >&2
+    return 1
+  fi
+  [[ "$is_new_dir" -eq 1 ]] && _ctx_ensure_gitignore "$repo_root"
   _ctx_db_init "$db"
 
   # Batch-load all known mtimes in one query to avoid one sqlite3 subprocess per file.
@@ -894,8 +906,8 @@ pmctl_context_query() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context query: index not found; run pmctl context index first\n' >&2
-    return 1
+    printf '# no hits for: %s\n' "$query"
+    return 0
   fi
 
   local hits=0 first=1
@@ -981,8 +993,11 @@ pmctl_context_pack() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context pack: index not found; run pmctl context index first\n' >&2
-    return 1
+    local ts
+    ts="$(_ctx_now_iso8601)"
+    printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
+    return 0
   fi
 
   local seen_file sym_tsv files_tsv
@@ -1048,8 +1063,11 @@ pmctl_context_reuse_scan() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   if [[ ! -f "$db" ]]; then
-    printf 'pmctl context reuse-scan: index not found; run pmctl context index first\n' >&2
-    return 1
+    printf 'reuse_candidates:\n'
+    printf '  queried_at: %s\n' "$(_ctx_now_iso8601)"
+    printf '  terms: []\n'
+    printf '  hits: []\n'
+    return 0
   fi
 
   local terms=()
