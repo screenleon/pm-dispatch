@@ -96,11 +96,16 @@ bash uninstall.sh                 # confirm clean removal, no leftover share/ di
 
 These are now covered by `release-verify.sh --e2e` Phase 4. No manual steps.
 
+**Phase B** exercises real `pmctl dispatch run` output contract (files exist, non-empty).
+**Phase C** runs `pmctl gate run` against a tiny synthetic git repo (local bare remote +
+feature branch with a one-function diff). This validates the gate mechanism end-to-end
+on every release without depending on the current branch state.
+
 To run them independently:
 ```bash
-bash scripts/test-e2e.sh                   # auto-detect adapter
-bash scripts/test-e2e.sh --adapter claude  # force claude
-bash scripts/test-e2e.sh --skip-gate       # dispatch only, skip gate
+bash scripts/test-e2e.sh                    # auto-detect adapter
+bash scripts/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B)
+bash scripts/test-e2e.sh --skip-gate        # dispatch only, skip Phase C
 ```
 
 - [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) prints `GO` on this platform.
