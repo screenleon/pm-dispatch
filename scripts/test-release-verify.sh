@@ -92,6 +92,64 @@ test_help_ends_with_newline() {
     || fail "help-ends-with-newline" "help output does not end with a newline"
 }
 
+# ── Verdict contract: --no-suite produces PARTIAL GO (exit 3) ─────────────────
+# These tests invoke real Phase 1 + Phase 3; they assume bash/jq/git/sqlite3/pmctl
+# pass in the current environment (same assumption as release-verify --no-suite).
+
+test_no_suite_partial_verdict() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "no-suite-partial-verdict"   "PARTIAL GO"                     "$out"
+  assert_contains "no-suite-skip-reason"       "NOT valid for release sign-off" "$out"
+}
+
+test_no_suite_exits_3() {
+  # PARTIAL GO is exit 3: distinct from 0=full GO, 1=NO-GO, 2=usage error.
+  assert_exit "no-suite-exits-3" 3 bash "$RV" --no-suite
+}
+
+# ── Phase 4 delegation via PM_RELEASE_VERIFY_E2E_SCRIPT stub ──────────────────
+# Each test stubs the e2e script to return a specific exit code; Phase 4 handling
+# is tested without spending LLM tokens. Phase 1+3 still run for real.
+
+test_e2e_delegation_pass() {
+  local stub; stub=$(mktemp)
+  printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: GO (stub)\\n"\nexit 0\n' > "$stub"
+  chmod +x "$stub"
+  local out rc=0
+  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"
+  # --no-suite increments REQUIRED_SKIPPED → PARTIAL GO (exit 3) even with GO from stub
+  assert_not_contains "e2e-pass-no-fail" "[FAIL]" "$out"
+  [[ "$rc" -eq 3 ]] && pass "e2e-pass-exit3" \
+    || fail "e2e-pass-exit3" "exit $rc want 3 (PARTIAL GO)"
+}
+
+test_e2e_delegation_fail() {
+  local stub; stub=$(mktemp)
+  printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: NO-GO (stub)\\n"\nexit 1\n' > "$stub"
+  chmod +x "$stub"
+  local rc=0
+  PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude \
+    >/dev/null 2>&1 || rc=$?
+  rm -f "$stub"
+  [[ "$rc" -eq 1 ]] && pass "e2e-fail-exit1" \
+    || fail "e2e-fail-exit1" "exit $rc want 1 (NO-GO)"
+}
+
+test_e2e_delegation_required_skip() {
+  # test-e2e.sh exit 4 = PARTIAL GO (Phase C SKIP) → release-verify records SKIP
+  local stub; stub=$(mktemp)
+  printf '#!/usr/bin/env bash\nprintf "AUTOMATED VERDICT: PARTIAL GO (stub)\\n"\nexit 4\n' > "$stub"
+  chmod +x "$stub"
+  local out rc=0
+  out=$(PM_RELEASE_VERIFY_E2E_SCRIPT="$stub" bash "$RV" --no-suite --e2e --adapter claude 2>&1) || rc=$?
+  rm -f "$stub"
+  assert_contains "e2e-req-skip-text" "SKIP" "$out"
+  [[ "$rc" -eq 3 ]] && pass "e2e-req-skip-exit3" \
+    || fail "e2e-req-skip-exit3" "exit $rc want 3 (PARTIAL GO)"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -103,6 +161,11 @@ test_adapter_missing_value
 test_adapter_invalid
 test_usage_error_exits_2
 test_help_ends_with_newline
+test_no_suite_partial_verdict
+test_no_suite_exits_3
+test_e2e_delegation_pass
+test_e2e_delegation_fail
+test_e2e_delegation_required_skip
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

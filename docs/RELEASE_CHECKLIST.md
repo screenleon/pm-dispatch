@@ -13,7 +13,7 @@ Coverage splits into three layers:
 | **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
-A release is **GO** only when `release-verify.sh --e2e` prints `GO` and every §2a / §2d box is ticked.
+A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED VERDICT: GO`) and every §2a / §2d box is ticked. Exit 3 (`PARTIAL GO`) means required phases were skipped and is **not** sufficient for tagging.
 
 ---
 
@@ -48,8 +48,8 @@ bash scripts/release-verify.sh --e2e
 Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
 — this is expected (MSYS subprocess overhead).
 
-- [ ] **Linux**: `release-verify.sh --e2e` final line prints `AUTOMATED VERDICT: GO`.
-- [ ] **Windows Git Bash**: `release-verify.sh --e2e` final line prints `AUTOMATED VERDICT: GO`.
+- [ ] **Linux / WSL2 (full sign-off)**: `release-verify.sh --e2e` exits 0 and prints `AUTOMATED VERDICT: GO` (all phases including Phase C pass).
+- [ ] **Windows Git Bash**: `release-verify.sh --e2e` exits 0 or 3. Exit 3 (`PARTIAL GO`) is expected when `codex` is not on PATH — Phase C is auto-skipped. Confirm Phase C passes on a Linux/WSL2 machine with codex before tagging.
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).
@@ -99,14 +99,14 @@ These are now covered by `release-verify.sh --e2e` Phase 4. No manual steps.
 **Phase B** exercises real `pmctl dispatch run` output contract (files exist, non-empty).
 **Phase C** runs `pmctl gate run` against a tiny synthetic git repo (local bare remote +
 feature branch with a one-function diff). **Phase C requires codex on PATH** — if codex
-is not available, Phase C is auto-skipped (neutral SKIP, not FAIL) and pr-gate coverage
-must be verified manually on a machine with codex. On Windows, ensure codex is on PATH
-before sign-off.
+is not available, Phase C is auto-skipped and `release-verify.sh --e2e` exits 3 (`PARTIAL
+GO`) instead of 0 (`GO`). A `PARTIAL GO` is **not** sufficient for release sign-off.
 
-> **Coverage note**: on platforms without codex (e.g. claude-only environments), a
-> `release-verify.sh --e2e` GO covers dispatch (Phase B) + offline suites (Phase 1–3)
-> but does NOT include pr-gate structural validation (Phase C). Full release sign-off
-> requires at least one codex-enabled run of Phase C.
+> **Coverage note**: on platforms without codex (e.g. Windows Git Bash or claude-only
+> environments), `release-verify.sh --e2e` exits 3 (`PARTIAL GO`) — it covers dispatch
+> (Phase B) + offline suites (Phases 1–3) but NOT pr-gate structural validation (Phase C).
+> Full release sign-off requires at least one codex-enabled Linux/WSL2 run where Phase C
+> passes and the script exits 0 (`AUTOMATED VERDICT: GO`).
 
 To run them independently:
 ```bash
@@ -115,8 +115,8 @@ bash scripts/test-e2e.sh --adapter claude   # force claude for dispatch (Phase B
 bash scripts/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Phase C
 ```
 
-- [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) prints `GO` **with Phase C PASS** on this platform.
-  - If Phase C was SKIP (no codex): note it and confirm Phase C passes on a codex-enabled machine.
+- [ ] `test-e2e.sh` (or `release-verify.sh --e2e`) exits 0 (`GO`) **with Phase C PASS** on a codex-enabled Linux/WSL2 machine.
+  - If Phase C was SKIP (no codex): script exits 4 / release-verify exits 3 (`PARTIAL GO`) — this does **not** satisfy release sign-off.
 
 ### 2d. Claude Code hooks (live)
 
@@ -168,10 +168,10 @@ covering check has passed this cycle.
 
 ## 4. Platform sign-off
 
-| Platform | `--e2e` GO | §2a install/doctor/uninstall | §2d hooks |
-|----------|:----------:|:----------------------------:|:---------:|
-| Linux / WSL2 | ☐ | ☐ | ☐ |
-| Windows Git Bash | ☐ | ☐ | ☐ |
+| Platform | `--e2e` result | §2a install/doctor/uninstall | §2d hooks |
+|----------|:----------------------------:|:----------------------------:|:---------:|
+| Linux / WSL2 (required: exit 0 `GO`) | ☐ | ☐ | ☐ |
+| Windows Git Bash (exit 3 `PARTIAL GO` expected without codex) | ☐ | ☐ | ☐ |
 
 ---
 

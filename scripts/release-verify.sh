@@ -15,7 +15,7 @@
 #                     else claude).
 #
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
-#              2 = usage error.
+#              2 = usage error, 3 = PARTIAL GO (required phases skipped, no failures).
 set -uo pipefail
 export LC_ALL=C.UTF-8
 
@@ -63,6 +63,7 @@ PHASE_NAMES=()
 PHASE_RESULTS=()
 PHASE_NOTES=()
 FAILED=0
+REQUIRED_SKIPPED=0
 
 record() {  # record <name> <PASS|FAIL|SKIP> <note>
   PHASE_NAMES+=("$1")
@@ -122,6 +123,7 @@ fi
 section "Phase 2 — Automated test suite (run-all-tests.sh)"
 if [[ "$RUN_SUITE" -eq 0 ]]; then
   record "run-all-tests" SKIP "--no-suite requested (NOT valid for release sign-off)"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 else
   suite_log="$(mktemp)"  # registered in cleanup trap above
   if bash "$SCRIPT_DIR/run-all-tests.sh" >"$suite_log" 2>&1; then
@@ -186,20 +188,30 @@ fi
 # ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
   section "Phase 4 — Real E2E (pmctl dispatch + pr-gate)"
-  e2e_script="$SCRIPT_DIR/test-e2e.sh"
+  e2e_script="${PM_RELEASE_VERIFY_E2E_SCRIPT:-$SCRIPT_DIR/test-e2e.sh}"
   if [[ ! -x "$e2e_script" ]]; then
     record "test-e2e.sh" FAIL "not found or not executable: $e2e_script"
   else
     e2e_log="$(mktemp)"  # registered in cleanup trap above
-    if bash "$e2e_script" --adapter "$E2E_ADAPTER" >"$e2e_log" 2>&1; then
-      record "e2e dispatch+gate" PASS \
-        "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'all checks passed')"
-    else
-      record "e2e dispatch+gate" FAIL \
-        "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'test-e2e.sh failed')"
-      printf '    --- E2E failures ---\n'
-      grep -E '^\s+\[FAIL\]' "$e2e_log" | sed 's/^/    /' || true
-    fi
+    e2e_rc=0
+    bash "$e2e_script" --adapter "$E2E_ADAPTER" >"$e2e_log" 2>&1 || e2e_rc=$?
+    case "$e2e_rc" in
+      0)
+        record "e2e dispatch+gate" PASS \
+          "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'all checks passed')"
+        ;;
+      4)
+        record "e2e dispatch+gate" SKIP \
+          "pr-gate Phase C skipped (codex absent) — full sign-off requires a codex-enabled run"
+        REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
+        ;;
+      *)
+        record "e2e dispatch+gate" FAIL \
+          "$(grep -m1 'AUTOMATED VERDICT' "$e2e_log" || echo 'test-e2e.sh failed')"
+        printf '    --- E2E failures ---\n'
+        grep -E '^\s+\[FAIL\]' "$e2e_log" | sed 's/^/    /' || true
+        ;;
+    esac
     rm -f "$e2e_log"; e2e_log=""
   fi
 fi
@@ -213,18 +225,27 @@ for i in "${!PHASE_NAMES[@]}"; do
   printf '%-44s %s\n' "${PHASE_NAMES[$i]}" "${PHASE_RESULTS[$i]}"
 done
 hr
-if [[ "$FAILED" -eq 0 ]]; then
-  printf 'AUTOMATED VERDICT: GO  (%d checks, 0 failures)\n' "${#PHASE_NAMES[@]}"
-else
+if [[ "$FAILED" -gt 0 ]]; then
   printf 'AUTOMATED VERDICT: NO-GO  (%d failures)\n' "$FAILED"
+elif [[ "$REQUIRED_SKIPPED" -gt 0 ]]; then
+  printf 'AUTOMATED VERDICT: PARTIAL GO  (%d checks, 0 failures, %d required phase(s) skipped)\n' \
+    "${#PHASE_NAMES[@]}" "$REQUIRED_SKIPPED"
+else
+  printf 'AUTOMATED VERDICT: GO  (%d checks, 0 failures)\n' "${#PHASE_NAMES[@]}"
 fi
 
 if [[ "$RUN_E2E" -eq 0 ]]; then
   printf '\nNOTE: Re-run with --e2e to validate real dispatch + pr-gate (spends LLM\n'
   printf 'tokens). Required for release sign-off (see docs/RELEASE_CHECKLIST.md).\n'
+elif [[ "$REQUIRED_SKIPPED" -gt 0 ]]; then
+  printf '\nNOTE: PARTIAL GO — required phase(s) skipped. Full sign-off (exit 0) requires\n'
+  printf 'all phases to pass, including Phase C on a codex-enabled machine.\n'
+  printf 'See docs/RELEASE_CHECKLIST.md §2b.\n'
 else
   printf '\nNOTE: install/doctor/uninstall and Claude Code hook execution are still\n'
   printf 'manual. See docs/RELEASE_CHECKLIST.md §2a and §2d before tagging.\n'
 fi
 
-[[ "$FAILED" -eq 0 ]] && exit 0 || exit 1
+if [[ "$FAILED" -gt 0 ]]; then exit 1; fi
+if [[ "$REQUIRED_SKIPPED" -gt 0 ]]; then exit 3; fi
+exit 0

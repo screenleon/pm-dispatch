@@ -110,6 +110,45 @@ test_skip_gate_not_usage_error() {
     || fail "skip-gate-not-usage-error" "--skip-gate caused a parse error (exit 2)"
 }
 
+# ── Phase C skip actually reaches Phase C via pmctl/adapter stubs ─────────────
+# Phases A+B run with stubs (no tokens). --skip-gate causes Phase C to record
+# SKIP → REQUIRED_SKIPPED=1 → exit 4 (PARTIAL GO).
+
+test_skip_gate_reaches_phase_c_skip() {
+  local stubdir; stubdir=$(mktemp -d)
+
+  # Stub codex: responds to any invocation (--version check + adapter check).
+  printf '#!/usr/bin/env bash\necho "stub-codex 0.0.0"\nexit 0\n' \
+    > "$stubdir/codex"
+  chmod +x "$stubdir/codex"
+
+  # Stub pmctl: creates required trace files in --cd directory for Phase B.
+  cat > "$stubdir/pmctl" <<'PMCTL_STUB'
+#!/usr/bin/env bash
+cd_arg=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --cd) cd_arg="$2"; shift 2 ;; *) shift ;; esac
+done
+if [[ -n "$cd_arg" ]]; then
+  mkdir -p "$cd_arg/.agent-trace"
+  printf 'stub dispatch\n'    > "$cd_arg/.agent-trace/latest.last"
+  printf '{"type":"stub"}\n' > "$cd_arg/.agent-trace/latest.jsonl"
+fi
+exit 0
+PMCTL_STUB
+  chmod +x "$stubdir/pmctl"
+
+  local out rc=0
+  out=$(PATH="$stubdir:/usr/bin:/bin" PM_E2E_PMCTL="$stubdir/pmctl" \
+    bash "$E2E" --adapter codex --skip-gate 2>&1) || rc=$?
+  rm -rf "$stubdir"
+
+  [[ "$rc" -eq 4 ]] && pass "skip-gate-reaches-phase-c-exit4" \
+    || fail "skip-gate-reaches-phase-c-exit4" "exit $rc want 4 (PARTIAL GO)"
+  assert_contains     "skip-gate-records-skip" "SKIP"   "$out"
+  assert_not_contains "skip-gate-no-fail"      "[FAIL]" "$out"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -123,6 +162,7 @@ test_usage_error_exits_2
 test_missing_adapter_exits_1
 test_skip_gate_flag_accepted
 test_skip_gate_not_usage_error
+test_skip_gate_reaches_phase_c_skip
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

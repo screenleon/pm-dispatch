@@ -15,13 +15,13 @@
 #   --skip-gate    Skip Phase C (pr-gate); useful when no diff vs main exists.
 #
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
-#              2 = usage error.
+#              2 = usage error, 4 = PARTIAL GO (required phases skipped, no failures).
 set -uo pipefail
 export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PMCTL="$REPO_ROOT/cli/pmctl"
+PMCTL="${PM_E2E_PMCTL:-$REPO_ROOT/cli/pmctl}"
 
 ADAPTER="auto"
 SKIP_GATE=0
@@ -50,6 +50,7 @@ esac
 PHASE_NAMES=()
 PHASE_RESULTS=()
 FAILED=0
+REQUIRED_SKIPPED=0
 
 record() {  # record <name> <PASS|FAIL|SKIP> [note]
   PHASE_NAMES+=("$1")
@@ -162,9 +163,11 @@ section "Phase C — pr-gate mechanism check (synthetic target)"
 
 if [[ "$SKIP_GATE" -eq 1 ]]; then
   record "pr-gate smoke (codex)" SKIP "--skip-gate requested"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 elif ! command -v codex >/dev/null 2>&1; then
   record "pr-gate smoke (codex)" SKIP \
     "codex not on PATH — claude executor is handover-only (no self-contained run)"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 else
   synthetic_remote="$(mktemp -d)"
   synthetic_base="$(mktemp -d)"
@@ -249,10 +252,15 @@ for i in "${!PHASE_NAMES[@]}"; do
   printf '%-44s %s\n' "${PHASE_NAMES[$i]}" "${PHASE_RESULTS[$i]}"
 done
 hr
-if [[ "$FAILED" -eq 0 ]]; then
-  printf 'AUTOMATED VERDICT: GO  (%d checks, 0 failures)\n' "${#PHASE_NAMES[@]}"
-else
+if [[ "$FAILED" -gt 0 ]]; then
   printf 'AUTOMATED VERDICT: NO-GO  (%d failures)\n' "$FAILED"
+elif [[ "$REQUIRED_SKIPPED" -gt 0 ]]; then
+  printf 'AUTOMATED VERDICT: PARTIAL GO  (%d checks, 0 failures, %d required phase(s) skipped)\n' \
+    "${#PHASE_NAMES[@]}" "$REQUIRED_SKIPPED"
+else
+  printf 'AUTOMATED VERDICT: GO  (%d checks, 0 failures)\n' "${#PHASE_NAMES[@]}"
 fi
 
-[[ "$FAILED" -eq 0 ]] && exit 0 || exit 1
+if [[ "$FAILED" -gt 0 ]]; then exit 1; fi
+if [[ "$REQUIRED_SKIPPED" -gt 0 ]]; then exit 4; fi
+exit 0
