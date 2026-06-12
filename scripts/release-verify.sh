@@ -28,6 +28,7 @@ suite_log=""
 smoke_state=""
 smoke_err=""
 e2e_log=""
+# shellcheck disable=SC2329
 cleanup() {
   rm -f "$suite_log" "$smoke_err" "$e2e_log" 2>/dev/null || true
   if [[ -n "$smoke_state" ]]; then rm -rf "$smoke_state" 2>/dev/null || true; fi
