@@ -15,7 +15,8 @@
 #                     else claude).
 #
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
-#              2 = usage error, 3 = PARTIAL GO (required phases skipped, no failures).
+#              2 = usage error OR unsupported sign-off platform (native Windows;
+#              use WSL2), 3 = PARTIAL GO (required phases skipped, no failures).
 set -uo pipefail
 export LC_ALL=C.UTF-8
 
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       E2E_ADAPTER="$2"; shift 2
       ;;
     --help|-h)
-      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) printf 'release-verify: unknown flag %s\n' "$1" >&2; exit 2 ;;
@@ -92,6 +93,16 @@ printf 'repo:     %s\n' "$REPO_ROOT"
 printf 'platform: %s\n' "$PLATFORM"
 printf 'branch:   %s\n' "$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || echo '?')"
 printf 'commit:   %s\n' "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+
+# Native Windows Git Bash is out of scope for release sign-off; CI runs Linux
+# only. Refuse here rather than emit a pile of platform false failures. Run
+# release verification under WSL2 (treated as Linux). See docs/platform-support.md.
+if [[ "$PLATFORM" == "windows" ]]; then
+  printf '\nNative Windows (Git Bash) is not a release sign-off platform.\n' >&2
+  printf 'Platform work is deferred during core development; pm-dispatch targets Linux & WSL2.\n' >&2
+  printf 'Run release verification under WSL2 (treated as Linux). See docs/platform-support.md.\n' >&2
+  exit 2
+fi
 
 # ── Phase 1: Prerequisites ───────────────────────────────────────────────────
 section "Phase 1 — Prerequisites"

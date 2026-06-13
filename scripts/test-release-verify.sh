@@ -184,6 +184,30 @@ test_phase3_repo_local_db_smoke() {
   assert_contains "phase3-reuse-scan"       "[PASS] context reuse-scan"       "$out"
 }
 
+test_native_windows_refused() {
+  # On native Windows (Git Bash) release-verify refuses with exit 2 and a "use
+  # WSL2" message instead of running phases. Simulated via a fake `uname -s`
+  # returning a MINGW string; fails if the refusal branch is removed.
+  local bin out rc real_uname
+  bin="$(mktemp -d)"
+  real_uname="$(command -v uname)"
+  cat > "$bin/uname" <<EOF
+#!/bin/sh
+[ "\$1" = "-s" ] && echo "MINGW64_NT-10.0-19045" || exec "$real_uname" "\$@"
+EOF
+  chmod +x "$bin/uname"
+  out="$(PATH="$bin:$PATH" bash "$RV" 2>&1)"; rc=$?
+  rm -rf "$bin"
+  if [[ "$rc" -eq 2 ]]; then pass "native-windows-refused-exit2"; else fail "native-windows-refused-exit2" "exit $rc want 2"; fi
+  assert_contains "native-windows-refused-msg" "not a release sign-off platform" "$out"
+  # The refusal must happen BEFORE any phase runs — no phase banner, no phase
+  # result lines may appear (guards against the refusal being moved below Phase 1,
+  # which would reintroduce the platform false-failure noise).
+  assert_not_contains "native-windows-refused-no-phase-banner" "=== Phase" "$out"
+  assert_not_contains "native-windows-refused-no-pass-record" "[PASS]" "$out"
+  assert_not_contains "native-windows-refused-no-fail-record" "[FAIL]" "$out"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -203,6 +227,7 @@ test_e2e_delegation_required_skip
 test_no_e2e_phase4_skip_recorded
 test_phase3_external_repo_cases
 test_phase3_repo_local_db_smoke
+test_native_windows_refused
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [[ "$FAILED" -eq 0 ]]

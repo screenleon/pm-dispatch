@@ -1,8 +1,11 @@
 # Release verification checklist
 
 Run this **before tagging any release**. It is the single fixed procedure: work
-top to bottom, and only tag when every box is checked on **both Linux and
-Windows Git Bash** (macOS is out of scope — see `docs/platform-support.md`).
+top to bottom, and only tag when every box is checked on **Linux and/or WSL2**
+(WSL2 is treated as Linux). Native Windows Git Bash and macOS are **out of scope
+for release sign-off** during the core-development phase — see
+`docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
+Platform sign-off returns as a dedicated phase once the core stabilizes (CC-370).
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
 Coverage splits into three layers:
@@ -30,7 +33,9 @@ A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED
 
 ## 1. Automated verification (`release-verify.sh`)
 
-Run on **each** platform you ship to.
+Run on **Linux or WSL2** (the supported sign-off platforms). Native Windows Git
+Bash is out of scope during core development — `release-verify.sh` refuses to run
+there with a "use WSL2" notice (CC-370).
 
 ```bash
 # Linux / WSL2 — Phases 1-3 (offline, no tokens)
@@ -40,16 +45,9 @@ bash scripts/release-verify.sh
 bash scripts/release-verify.sh --e2e
 # or with explicit adapter:
 bash scripts/release-verify.sh --e2e --adapter claude
-
-# Windows Git Bash (ensure sqlite3 is installed first — see §Prerequisites below)
-bash scripts/release-verify.sh --e2e
 ```
 
-Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
-— this is expected (MSYS subprocess overhead).
-
 - [ ] **Linux / WSL2 (full sign-off)**: `release-verify.sh --e2e` exits 0 and prints `AUTOMATED VERDICT: GO` (all phases including Phase C pass).
-- [ ] **Windows Git Bash**: `release-verify.sh --e2e` exits 0 or 3. Exit 3 (`PARTIAL GO`) is expected when `codex` is not on PATH — Phase C is auto-skipped. Windows exit 3 satisfies the Windows row **only** after a codex-enabled Linux/WSL2 run (row above) has already recorded Phase C PASS.
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).
@@ -81,14 +79,12 @@ because they mutate the real `~/.claude` environment.
 ```bash
 bash install.sh --verify          # runs preflight suites, then installs
 bash scripts/install-hooks.sh     # wire hooks into ~/.claude/settings.json
-bash scripts/doctor.sh            # Linux: profile auto
-bash scripts/doctor.sh --profile minimal   # Windows Git Bash (auto false-FAILs if codex CLI present)
+bash scripts/doctor.sh            # Linux / WSL2: profile auto
 bash uninstall.sh                 # confirm clean removal, no leftover share/ dir
 ```
 
-- [ ] `install.sh --verify` completes, managed dirs/symlinks (or junctions on
-      Windows) created; `pmctl` resolvable on PATH.
-- [ ] `doctor.sh` reports **0 FAIL** (use `--profile minimal` on Windows).
+- [ ] `install.sh --verify` completes, managed dirs/symlinks created; `pmctl` resolvable on PATH.
+- [ ] `doctor.sh` reports **0 FAIL**.
 - [ ] `uninstall.sh` removes everything it installed (no dangling links, no empty
       `share/`).
 
@@ -102,8 +98,8 @@ feature branch with a one-function diff). **Phase C requires codex on PATH** —
 is not available, Phase C is auto-skipped and `release-verify.sh --e2e` exits 3 (`PARTIAL
 GO`) instead of 0 (`GO`). A `PARTIAL GO` is **not** sufficient for release sign-off.
 
-> **Coverage note**: on platforms without codex (e.g. Windows Git Bash or claude-only
-> environments), `release-verify.sh --e2e` exits 3 (`PARTIAL GO`) — it covers dispatch
+> **Coverage note**: on environments without codex (e.g. claude-only setups),
+> `release-verify.sh --e2e` exits 3 (`PARTIAL GO`) — it covers dispatch
 > (Phase B) + offline suites (Phases 1–3) but NOT pr-gate structural validation (Phase C).
 > Full release sign-off requires at least one codex-enabled Linux/WSL2 run where Phase C
 > passes and the script exits 0 (`AUTOMATED VERDICT: GO`).
@@ -171,7 +167,10 @@ covering check has passed this cycle.
 | Platform | `--e2e` result | §2a install/doctor/uninstall | §2d hooks |
 |----------|:----------------------------:|:----------------------------:|:---------:|
 | Linux / WSL2 (required: exit 0 `GO`) | ☐ | ☐ | ☐ |
-| Windows Git Bash (exit 3 `PARTIAL GO` expected without codex) | ☐ | ☐ | ☐ |
+
+> Native Windows Git Bash and macOS are out of scope for release sign-off during
+> the core-development phase (CC-370 / `docs/platform-support.md`). Platform
+> sign-off returns as a dedicated phase once the core stabilizes.
 
 ---
 

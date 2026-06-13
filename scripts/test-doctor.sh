@@ -1376,6 +1376,44 @@ case_doctor_stale_hook_sibling_prefix_warns() {
   fi
 }
 
+case_doctor_native_windows_notice() {
+  # On native Windows (Git Bash) doctor prints a "use WSL2" unsupported-platform
+  # notice in text mode and omits it in --json mode (machine output stays clean).
+  # Platform is forced via PM_DISPATCH_PLATFORM=windows (same override the
+  # auto-profile case uses); fails if the notice branch is removed.
+  local name="doctor-native-windows-notice"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-win-notice" out_text out_json path
+  write_minimal_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-win-notice" claude)"
+  out_text="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  out_json="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null || true)"
+  # Text mode must carry the notice.
+  if [[ "$out_text" != *"run under WSL2"* ]]; then
+    fail "$name" "text mode missing the native-Windows notice"
+    return
+  fi
+  # JSON mode must stay machine-clean: every non-empty line parses as JSON, so a
+  # human notice (any wording) leaking into stdout would break the parse.
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if ! jq . >/dev/null 2>&1 <<< "$line"; then
+      fail "$name" "non-JSON line leaked into --json output: $line"
+      return
+    fi
+  done <<< "$out_json"
+  pass "$name"
+}
+
 case_doctor_all_ok_exits_0
 case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
@@ -1415,5 +1453,6 @@ case_doctor_installed_copy_no_repo_json
 case_doctor_claude_config_dir
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
+case_doctor_native_windows_notice
 
 th_summary

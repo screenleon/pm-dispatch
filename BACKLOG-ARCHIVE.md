@@ -1,10 +1,10 @@
-<!-- pm-dispatch: backlog-archive 2026-06-07 -->
+<!-- pm-dispatch: backlog-archive 2026-06-13 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
 index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-07
+Last archived: 2026-06-13
 
 ---
 
@@ -2657,3 +2657,275 @@ the "manifest says junction, `-L` is false" branch.
 **See**: pr:#236
 
 ---
+## CC-368 — Windows portability remediation bundle ✅ 2026-06-13
+
+**See**: pr:#273
+
+Six MSYS/Git-Bash-on-NTFS false-failures + one real bug, fixed in one PR without changing POSIX behavior: CRLF strip in `_yaml_get`; 0700 assert → capability-probe SKIP-with-reason; partition `_portable_canonical_path` (POSIX no-op); symlink-rejection `[[ -L ]]` SKIP; `--auto-pack` work-dir canonicalization; native-jq `--arg` MSYS path-conversion guard + stdin input. POSIX partition keys unchanged. Native Windows then **deferred** during core dev → [[CC-370]].
+
+## CC-234 — memory v2: episodes + anomaly-event distillation（write-half of the memory loop；scope trimmed 2026-06-10）✅ 2026-06-11
+
+**See**: pr:#265
+
+**Problem**: The memory system is chat-derived — `episodes.jsonl` summarizes conversations. The durable *action* signal lives in `events.jsonl`, but inspection of the live stream (2026-06-10 arch review) shows it is run-FSM **lifecycle telemetry** (run.created → dispatched → verifying → completed, adapter + exit codes) — happy-path events carry almost no distillable semantics. A generic "distill all events" pass would be technically working machinery with nothing worth distilling.
+
+**Why**: Memori's insight — memory from what agents *do* — holds where the action stream actually encodes knowledge: **anomalies**. A failed dispatch, a timeout, a gate block each encode a lesson ("briefs shaped like X hang codex") that chat summaries may under-report. This is the **write side** of the v0.5.0 memory read+write loop: semantic transformation lives here in `/mem-distill`, NOT in the read-side index (CC-354 stays an anchored TOC). Scope trimmed 2026-06-10: episodes remain the primary semantic source; events contribute only their anomaly slice; the generic event-tier schema is dropped from this slice (revisit with CC-340 if a richer action stream ever materialises).
+
+**Requirement**:
+- Point `/mem-distill` at `episodes.jsonl` (primary semantic source, unchanged) plus the **anomaly slice** of `events.jsonl` only: run failures / timeouts (`exit_code != 0`, timeout kinds) and gate blocks (blocked review verdicts). Happy-path lifecycle events are explicitly out of scope.
+- Correlate an anomaly event with its episode (same session / run id) so the proposed card cites both: the episode line for the narrative, the event id for the machine evidence.
+- The existing four-tier card system is unchanged; no new card tier, no separate memory engine, no generic event-tier schema.
+- State store may be uninitialised → graceful fallback to episodes-only distillation (current behavior preserved).
+
+**Acceptance**:
+- `/mem-distill` run against a session containing **one real recorded failure** (e.g. a dispatch exit≠0 or gate block) proposes a card capturing the action-derived lesson, citing the source episode line AND event id; written only after user confirmation.
+- A session with only happy-path lifecycle events proposes **no** event-derived card (no noise from telemetry).
+- The card surfaces via the existing MEMORY.md auto-injection path (memory cards are NOT indexed into pmctl in v0.5.0 — see CC-354 scope boundary).
+- Loop-level success metric (shared with CC-354): on a later similar task, the PM cites the card / anchors directly in the brief instead of re-deriving the background.
+
+**Milestone**: v0.5.0 Phase 2 (memory read+write, write half).
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-354]] (read side — anchored knowledge index), [[CC-356]] (repo-plane wiring, same wiring-as-acceptance principle), CC-230 (events.jsonl), CC-229 (event schema), [[CC-340]] (deferred home of any future generic event-tier schema), `commands/mem-distill.md` (modification target).
+
+## CC-235 — Task lifecycle gate: tiered spec→design→plan ✅ 2026-06-11
+
+**Problem**: The spec→design→plan discipline (`/pre-impl`, the `qa_checklist` rule) is advisory prose in `agents/project-pm.md` — not enforced. But a single uniform gate would over-burden trivial tasks — a typo fix should not need a design artifact.
+
+**Why**: Enforcement should be **graded by task size**, consistent with pm-dispatch's existing tiered patterns: the pr-gate express/standard/full tiers and the sonnet-default / Opus-escalation model-tier policy. The gate's weight scales with the task.
+
+**Shipped (warning mode)**: `pmctl task dispatch` checks `size_tier` / `behavioral_units` on the task JSON at claimed→in-progress. If tier is `substantial`: warn to stderr + emit `task.lifecycle.warn` event (best-effort telemetry; non-blocking). trivial/small/unknown: silent. New task fields: `behavioral_units` (int ≥ 0), `size_tier` (trivial/small/substantial). New event kind: `task.lifecycle.warn`. Hard-fail mode deferred to v0.6.0 when sufficient real-world usage data is available. 14 new tests, 63/63 pass.
+
+**Cross-link**: CC-229 (Task schema/lifecycle), CC-022 (`/pre-impl`).
+
+**See**: pr:#266
+
+## CC-237 — context-enricher interface: context_hit_v1 + pmctl context pack ✅ 2026-06-09
+
+**Problem**: The `context-pack` abstraction (CC-232) shipped a schema (#157) but has no concrete producer. v0.5.0 makes it the single interface that fuses the repo index (CC-338), memory search, and git into one dispatch-time context-pack.
+
+**Why**: knowledge and repo are two different search planes with opposite lifecycles (curated/durable vs derived/rebuildable). They must be indexed separately but emitted through one interface so consumers (`/pm`, `/discover`, reuse-scan, `/mem-search`) read one shape. This is the spine of v0.5.0; it is also the comparison baseline for the codegraph spike (CC-209).
+
+**Requirement** (shipped 2026-06-09):
+- Extended CC-232 context-pack schema with `context_hit_v1` optional fields: `source_domain` (enum: knowledge / repo / state), `why_relevant` (string), `trust_level` (enum: high / medium / low), `refs` (string array). `schema_version` changed from `const:2` to `enum:[1,2]` for backward compat.
+- `pmctl context index / update / query` (builtin-index backend). Pack assembler (`pmctl context pack`) is CC-239.
+- FTS5 is optional; a `LIKE` / `grep` fallback is mandatory and tested (Windows Git Bash sqlite3 may lack FTS5).
+
+**Milestone**: v0.5.0 Phase 1 (P1 spine).
+
+**Priority**: P1.
+
+**Cross-link**: [[CC-232]] (schema), [[CC-338]] (repo-index backend), [[CC-239]] (consumer), [[CC-209]] (codegraph spike).
+
+**See**: pr:#254
+
+## CC-239 — reuse-scan capability ✅ 2026-06-10
+
+**Problem**: pm-dispatch carries recurring reuse debt — CC-200..204 are all "the same logic duplicated across scripts / hooks / tests". New work keeps re-creating helpers and patterns that already exist, because nothing surfaces "this already exists" before a brief is written. The maintainer asked whether a dedicated **reuse/refactor agent** should be added; it was analysed and is the wrong shape (see Why).
+
+**Why**: A dedicated reuse/refactor *agent* is not the right abstraction:
+- Subagents cannot spawn subagents, so a "refactor agent" could only be a *planner* — duplicating `project-pm`, which already owns task triage / decomposition / brief-writing.
+- pm-dispatch agents split by **cognitive mode** (plan / execute / review), not by domain. Refactor is not a new mode — it is ordinary implementation. The spike agent (CC-220) earned a dedicated agent by being a genuinely distinct mode (uncertainty reduction); refactor is not.
+- Refactor *expertise* is already placed: `architecture-reviewer` (coupling / abstraction fit), `risk-reviewer` (migration safety / reversibility) and `critic` (scope / convention drift) review every refactor PR, and `docs/dispatch-brief.md` already carries a `refactor` brief skeleton (semantic preservation, all-call-sites-updated, tests green). A refactor agent would duplicate those.
+- The v0.3.0 synthesis already concluded "no separate reuse/refactor agent" — reuse work *is* ordinary briefed implementation (`docs/architecture/v0.3.0-synthesis.md`; the CC-200..204 extraction tickets are exactly this).
+
+The genuinely-missing piece is the **front-end**: a reuse-scan that runs *before* briefing so the brief reuses rather than duplicates. That is a capability, not an agent — "split by goal, not by role".
+
+**Requirement**: a reuse-scan **capability** (a skill / context step, not an agent), invoked by `project-pm` during briefing, that queries the codebase for prior art relevant to the task — similar functions, shared helpers, existing patterns — and emits a "reuse report" the dispatch brief incorporates. It is one consumer of the `context-pack` (CC-232) / context-enricher (CC-237) infrastructure and belongs in `skills/` (CC-061). Refactor *execution* stays on the existing brief → executor → gate path — no new execution agent.
+
+*Provider dispatch architecture (tiered)*:
+- Tier 0 (baseline): `rg` / `git grep` text search + `git log --oneline` for recently-touched files — zero setup, always available
+- Tier 1 (builtin-index): `pmctl context query` via CC-338 repo-index (symbol + chunk search, FTS5/LIKE fallback) — available after first `pmctl context index`
+- Tier 2 (cross-file refs): CC-346 `file_refs` layer (import/source call graph, 5 languages) — deepens relevance ranking
+- Tier 3 (future): CC-209 codegraph — optional accelerator; same interface, richer output
+
+Each tier is a **drop-in upgrade**: the consumer (`/pm` briefing, CC-239 reuse-scan) reads the same `context_hit_v1` shape regardless of which tier produced the hit.
+
+*Output shape extensions (aligned with context_hit_v1, CC-237)*:
+- `summary` (string): one-line description of the reuse candidate ("validates brief schema fields: schema_version, goal, …")
+- `tags` (string array): searchable labels drawn from symbol kind / language / topic ("schema", "bash", "validation")
+- `why_relevant` (string): reason this hit matches the current brief (filled by Tier 1+; may be absent for Tier 0 grep hits)
+
+**Milestone**: v0.5.0 Phase 2 — the user-visible terminus of the context-pack spine; the first consumer of the repo index (CC-338) through the CC-237 interface.
+
+**Priority**: P2 — depends on CC-338 (repo index) + CC-237 (interface) landing first.
+
+**Cross-link**: CC-232 (context-pack schema), CC-237 (context-enricher baseline), CC-338 (builtin-index backend), CC-346 (cross-file refs), CC-209 (future codegraph), CC-061 (skills/), CC-200..CC-204 (the reuse debt this prevents recurring), `docs/architecture/v0.3.0-synthesis.md`.
+
+**See**: pr:#256
+
+## CC-255 — Spike infrastructure: rubric + brief template improvements ✅ 2026-06-11
+
+**See**: pr:#267
+
+**Problem**: CC-209 Phase 1 spike (PR #151) surfaced 2 spike-infrastructure gaps that caused codex to misapply the rubric:
+
+1. **Verdict rubric ambiguity on "local env" scope**: rubric RED criterion 1 read "Install fails after a reasonable attempt and the failure is not a local env issue (e.g. peerDep that the user could resolve)". Codex hit a sandbox network block, classified it as "not local env" because the rubric only enumerated peerDep as a local-env class. Reality: sandbox isolation is the same conceptual class.
+2. **Spike brief test-target ambiguity**: Phase 1 brief said "Angle A: pick one well-known symbol in pm-dispatch" — that sentence pre-committed pm-dispatch as the indexed test target. For language-aware tools (codegraph, semgrep, similar), the indexed target must match the tool's supported language set; the brief must commit to the right target, not let the executor pick.
+
+**Why**: Both gaps caused codex to issue an inaccurate verdict (`RED` when the true verdict was `AMBER`). The errors weren't fabrications — codex executed honestly — but rubric + brief ambiguity made them analytically derivable from the prompt. Future spikes will repeat these unless the infrastructure is hardened.
+
+**Requirement**:
+- **Rubric template** (`/tmp/cc<NNN>-content/verdict-rubric.md` future spikes write): RED criterion 1 enumeration expanded to "(e.g. peerDep, sandbox network isolation, missing dev dependencies)". Add a sentence: "ANY constraint of the executor's local environment (sandbox, network, missing tools) counts as local-env — not a project quality signal."
+- **Spike brief template** (in `docs/spikes/README.md` skeleton OR `docs/dispatch-brief.md`): add optional `test_target:` field to spike-brief schema. Required when the spike evaluates a language-aware tool (codegraph, AST-grep, semgrep, etc.); optional otherwise. Field commits to the representative target codebase the spike will exercise, distinct from the spike's working_dir.
+- Update `agents/project-pm.md` brief-authoring guidance: when briefing a verdict-issuing spike for a language-aware tool, require `test_target:` in the brief output.
+
+**Acceptance**:
+- `docs/spikes/README.md` skeleton updated with `test_target:` field documented.
+- `docs/dispatch-brief.md` schema adds `test_target:` as optional section.
+- Reference verdict-rubric template enumerates sandbox-block as local-env example.
+- `agents/project-pm.md` brief-authoring rules updated to require `test_target:` for language-aware-tool verdict spikes.
+- Regression: re-author CC-209 Phase 2 brief (CC-253 work) using the new template; confirm it commits to `test_target:` with a user-chosen literal path explicitly.
+
+**Priority**: P3 — process polish; affects every future spike but each individual cost is small.
+
+**Co-implementation note**: CC-255 是 CC-253 的前置條件（CC-253 brief 必須使用 CC-255 更新的 `test_target:` 欄位）。若目標 codebase 已選定，建議 CC-255 + CC-253 同一 PR 實作，好處是 CC-255 有首個真實用例驗證。若 target repo 尚未選定，則先做 CC-255，等 target ready 再開 CC-253。CC-253 landing 後，CC-209 umbrella ticket 可一併關閉（標 superseded by CC-253）。
+
+**Cross-link**: CC-209 (Phase 1 origin showing both gaps), CC-253 (Phase 2 dependent on these template improvements), `[[feedback_spike_pilot_required]]` (sibling spike-process rule), `[[feedback_spike_validation_mandatory]]` (sibling validation rule).
+
+## CC-296 — [release] v0.3.0 deprecation sunset — remove after 2 official releases ✅ 2026-06-11
+
+**See**: pr:#267
+
+**Origin (user, 2026-06-01)**: 「這次 0.3.0 的版本有些需要 deprecate 的部分，請幫我在 2 次正式版本之後開始進行移除。」v0.3.0 引入的 back-compat 面要在經過兩個正式版本（v0.3.0 + v0.4.0）後、於 **v0.5.0** 移除。
+
+**Removed**:
+1. `pmctl guard check --profile <pm|codex|claude>` alias + back-compat tests (`deprecated-profile-*` / `profile-role-mutex`) from `scripts/test-pmctl-guard.sh`.
+2. `scripts/codex-dispatch.sh` compatibility exec wrapper. All operational docs updated to `pmctl dispatch run --adapter codex`.
+
+**Cross-link**: `[[CC-291]]` (`--profile` alias origin), `[[CC-289]]` (codex-dispatch shim origin).
+
+## CC-321 — refactor: rename CLAUDE_HOOK_* env vars to PM_HOOK_* ✅ 2026-06-08
+
+**Problem**: pm-dispatch hook configuration env vars use a `CLAUDE_HOOK_` prefix (`CLAUDE_HOOK_CODEX_READ_ROOTS`, `CLAUDE_HOOK_CODEX_GUARD`, `CLAUDE_HOOK_PM_GUARD`, `CLAUDE_HOOK_REVIEWER_GUARD`, `CLAUDE_HOOK_GATE_REPO_ROOT` (deleted), `CLAUDE_HOOK_DISPATCH_ABS`, `CLAUDE_HOOK_LOG_DIR`). The prefix creates a false coupling to the Claude Code agent system — these are pm-dispatch's own config knobs and should be in the `PM_HOOK_` or `PM_DISPATCH_` namespace.
+
+**Plan**:
+1. Rename each env var to `PM_HOOK_*` equivalent across all hooks, tests, and docs.
+2. Add a shim period: if the old `CLAUDE_HOOK_*` name is set, emit a deprecation warning to stderr and honour it. Remove the shim after one release cycle.
+3. Update `scripts/install-hooks.sh`, all `test-hooks.sh` / `test-pmctl-guard.sh` references, and `docs/`.
+
+**Acceptance**: `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only the shim/deprecation-warning lines.
+
+**Scope limit**: does NOT rename `CLAUDE_HOOK_LOG_DIR` if that conflicts with Claude Code's own log dir convention — verify first.
+
+**Priority note**: breaking change; hold until CC-319/CC-320 are merged and no active PRs depend on the old names.
+
+**Result**: All 7 `CLAUDE_HOOK_*` vars renamed to `PM_HOOK_*` across 15 files (6 hook scripts, 1 adapter, 3 test scripts, README, spike doc). Backward-compat shims added in all production hooks (removed after v0.5.0). `grep -r CLAUDE_HOOK_ scripts/ adapters/ docs/` returns only shim printf lines. 427 tests, 0 failures.
+
+**Cross-link**: [[CC-319]], [[CC-320]].
+
+**See**: pr:#243
+
+---
+
+## CC-338 — lightweight built-in repo index for context-pack（Bash+SQLite，無外部依賴）✅ 2026-06-09
+
+**Renumbered**: 原 CC-328；與 PR #229 的 light-alias（已 ship，記於 MILESTONES v0.4.0 旁支修正）撞號，repo-index 改號至 CC-338。見 DECISIONS 2026-06-08。
+
+**Problem**: pm-dispatch subagent 在 dispatch 前缺乏結構化的 repo context，只能透過重複 grep/read 探索相關檔案與 symbol，造成 token 浪費與 dispatch brief context 不穩定。現有方案不足：CC-237（context-enricher interface）需要外部 rg；CC-209（codegraph evaluation）評估的是 TypeScript external tool，已獲 AMBER——pm-dispatch 的 bash/markdown stack 不在其支援範圍內。
+
+**Why**: 需要一個**內建**的 context layer，僅依賴 standard Unix toolchain（`bash / find / grep / awk / sed / sqlite3`），不引入任何需要另行安裝的 binary（如 ctags、rg、Node.js、Rust binary），在 dispatch 前產生 compact context pack（相關檔案 + approximate symbols + test hints），直接注入 dispatch brief，減少 subagent 盲目探索成本。此能力建在 v0.4.0 state-first 地基上（消費 Run/Event/trace 提供的 recently touched files、task history 等動態排序資料）；地基已落地，排入 v0.5.0 Phase 1。
+
+**Requirement**:
+
+*Phase 1 — MVP（Bash+SQLite only）*
+1. `pmctl context index --source repo`：掃描 repo 建立 SQLite index（`files` / `symbols` / `file_chunks` 三張表）
+2. `pmctl context update [path]`：增量更新（**mtime-only** 偵測變更；sha1 儲存供 debug 用，不參與 skip 判斷——content 變更但 mtime 保留時不會重新 index，此為 documented contract）
+3. symbol 提取策略：Bash + awk/sed/grep 的 regex-based approximation，支援 Shell（function）、Go（func/type/struct/interface）、Python（def/class）、TypeScript/JavaScript（function/class/const arrow）；Markdown **以單一 chunk（前 2000 bytes）儲存**（heading-based chunking 延至後續 PR）
+4. `pmctl context query "<query>"` — symbol + text 搜尋，格式對齊 `context_hit_v1`（CC-237）；`pmctl context pack` 組裝層屬 CC-239
+5. FTS5 為 optional 加速層；缺 FTS5 時 fallback 到 `LIKE` / `grep` 並納入測試（Windows Git Bash sqlite3 未必含 FTS5）
+6. 以 pm-dispatch 自身 repo 作為第一個 fixture，比較 3 個真實任務的 before/after dispatch brief
+
+*SQLite schema（最小可行）*:
+```sql
+files(id, path, language, size_bytes, mtime, sha1, indexed_at)
+symbols(id, file_id, name, kind, language, line_start, line_end, signature, backend, confidence)
+file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
+```
+
+*MVP 內建依賴*: `bash`, `find`, `grep`, `awk`, `sed`, `sqlite3`（不新增任何其他依賴）
+
+*Optional backend（Phase 2 以後）*: ctags、ffts-grep、tree-sitter — 只作為加速層，MVP 無此需求
+
+**Non-goals**:
+- 精準 AST parsing / call graph
+- LSP references / semantic embeddings
+- MCP server / daemon / web UI
+- 取代 CC-209 codegraph spike（兩者定位不同：CC-209 評估外部工具；CC-338 建內建 layer）
+- 取代 CC-237 context-enricher（CC-237 是 interface；CC-338 是其 `--source builtin-index` backend）
+- 重型 knowledge index（FTS over 全 memory）——與 `/mem-search` 重疊，延 v0.6.0
+
+**Dependencies**:
+- v0.4.0 Run/Event/trace state（CC-315 / CC-316）已穩定
+- context pack 格式對齊 CC-232 context-pack schema + `context_hit_v1`（CC-237）
+- 作為 CC-237 context-enricher 的 `--source builtin-index` backend；CC-239 reuse-scan 為第一個 consumer
+
+**Milestone**: v0.5.0 Phase 1（P1 spine）。
+
+**Priority**: P1.
+
+**Cross-link**: [[CC-237]], [[CC-209]], [[CC-232]], [[CC-239]], [[CC-315]].
+
+**See**: pr:#254
+
+---
+
+## CC-349 — repo-index: symbol index limited to code files only ✅ 2026-06-10
+
+**Problem**: `pmctl context index` 把所有 Markdown heading 當成 symbol 建索引，但 Markdown heading 不是「可複用的程式碼符號」——shell function、Python function、JS/TS export 才是。任何含有大量 heading 的 Markdown 文件（不限 pm-dispatch 的 BACKLOG/CHANGELOG）都會在 reuse-scan 中佔據大多數命中，淹沒真正的 code symbol。
+
+**Root cause**: `_ctx_extract_symbols` 的 `markdown)` case 讓 Markdown heading 和 shell function 走同一條 symbol 路徑。
+
+**Solution（語言層級，不綁特定檔名）**: 從 `_ctx_extract_symbols`（`scripts/lib/pmctl-context.sh`）移除 `markdown)` case——Markdown/YAML/JSON/純文字等文件類型只建 file_chunks index，不建 symbol。程式碼語言（shell/python/js/ts/go）保留 symbol 提取。修改範圍：約 6 行刪除，0 新增。
+
+**Expected outcome**: 任何 repo 上 reuse-scan 均以程式碼符號（函式、class、export）為主；文件標題不佔據排名。通用規則，不綁 pm-dispatch 特定檔案。
+
+**Scope**: `_ctx_extract_symbols` markdown case 刪除 + 1 回歸測試（Markdown 檔案索引後 symbols table 為 0 row，file_chunks 有 1+ row）。
+
+**Priority**: P2（直接影響 reuse-scan 核心 use case）。
+
+**Cross-link**: [[CC-338]] (repo-index indexer), [[CC-239]] (reuse-scan consumer).
+
+**See**: pr:#257
+
+---
+
+## CC-365 — context: lazy auto-build + pre-query incremental refresh ✅ 2026-06-13
+
+**See**: pr:#271
+
+`pmctl context query/pack/reuse-scan` now self-provision the repo index via `_ctx_ensure_fresh`: a missing db is auto-built when sqlite3 is available (one stderr notice), and an existing db gets an mtime-based incremental refresh before every read. Opt-outs: `PM_DISPATCH_CONTEXT_AUTOBUILD=0` / `PM_DISPATCH_CONTEXT_AUTOREFRESH=0`. The no-sqlite3 graceful-empty contract and zero-hit telemetry contract are unchanged; auto-build/refresh failures degrade to whatever the db state allows instead of failing the query.
+
+---
+
+## CC-366 — dispatch: auto-pack — reuse-scan pointer hits injected at dispatch run（opt-in） ✅ 2026-06-13
+
+**See**: pr:#271
+
+`pmctl dispatch run` gains step 3a: after brief-validate passes (and before guard), it runs reuse-scan on the brief's `goal:` and appends ≤5 pointer-only hits (`ref`/`why_relevant`/`confidence`, no chunk text) to an augmented brief copy at `<work_dir>/.pm-dispatch/ctx/packs/<run_id>.md`. The adapter argv receives the copy; guard and state transitions keep referencing the original authored brief. Activation: `--auto-pack` flag or config `dispatch.auto_pack = on` (default off; `--no-auto-pack` overrides config). Fail-open: any packing failure emits a stderr warning and proceeds with the original brief. Every auto-pack-on dispatch emits a `context.auto_packed` event (hits=0 included), making usage and hit quality measurable via `pmctl trace` — this generates the operational evidence CC-346's resume trigger requires. Design: DECISIONS 2026-06-13 `passive-context-v1-auto-pack-pointer-only-opt-in`.
+
+---
+
+## CC-367 — memory-plane hygiene: retire tool-trace hook + routing-log stub sunset ✅ 2026-06-13
+
+**See**: pr:#271
+
+`scripts/hook-tool-trace.sh` removed (write-only telemetry: zero consumers since shipping, no rotation, one forked process per tool call — violates the consumer-first principle). `scripts/hook-routing-log.sh` no-op deprecation stub removed. `install-hooks.sh` no longer registers either and now prunes both retired registrations from an existing `settings.json` on install while preserving all other entries. doctor inventories and the hooks/install/doctor test suites updated; `migrate-routing-to-events.sh` and its tests are unchanged (the migration path stays valid for old installs).
+
+---
+
+## CC-361 — context: repo-local db placement + graceful no-db degradation ✅ 2026-06-12
+
+**See**: pr:#270
+
+`_ctx_db_path()` now stores the context index at `<repo>/.pm-dispatch/ctx/context.db` instead of the global XDG path. `context index` auto-creates `.pm-dispatch/ctx/`, patches `.gitignore` on every index (idempotent; skips symlinked / hardlinked / non-regular `.gitignore` for path safety), and emits an error on mkdir failure. `query` / `pack` / `reuse-scan` return graceful empty results on missing db (acceleration path — no index = no context, not an error); `query` / `reuse-scan` still emit a zero-hit usage event in that case. Only the **DB location** ignores `PM_DISPATCH_STATE_ROOT`; context usage telemetry honors it like every other state write, and the test suite isolates all state into a throwaway root. All context unit tests pass.
+
+---
+
+## CC-363 — test: release-verify.sh Phase 3 external-repo-index smoke ✅ 2026-06-12
+
+**See**: pr:#270
+
+Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Only the context **DB location** ignores `PM_DISPATCH_STATE_ROOT` — it is always repo-local under `$REPO_ROOT/.pm-dispatch/`. Phase 3 itself redirects context usage telemetry to a throwaway `PM_DISPATCH_STATE_ROOT` (torn down before Phase 4) so the smoke never writes `context.*` events into the operator's real trace store. Operator note: indexing the real checkout leaves a repo-local derived cache at `$REPO_ROOT/.pm-dispatch/ctx/` (gitignored); `rm -rf .pm-dispatch` if a fully clean tree is required.
+

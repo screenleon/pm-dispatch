@@ -578,6 +578,17 @@ main() {
     fi
   fi
 
+  # Native Windows Git Bash is not an officially supported platform; WSL2
+  # (treated as Linux) is the supported path. Surface that up front so the checks
+  # below are not mistaken for a supported baseline; some may report
+  # platform-specific false failures. JSON mode stays clean (machine consumers
+  # parse the summary). See docs/platform-support.md.
+  if [[ "$JSON" -ne 1 && "$(detect_platform)" == "windows" ]]; then
+    printf '\nNote: native Windows (Git Bash) is not officially supported during core development.\n'
+    printf '  pm-dispatch targets Linux & WSL2; run under WSL2 (treated as Linux) for a supported setup.\n'
+    printf '  Checks below may report platform-specific false failures. See docs/platform-support.md.\n\n'
+  fi
+
   check_jq
   check_claude
   check_codex
