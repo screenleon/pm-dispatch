@@ -3151,18 +3151,33 @@ test_install_hooks_msys_native_jq_boundary() {
     printf 'SKIP: %s (no directory symlink support here)\n' "$name"
     return 0
   fi
-  # Fake jq: emulate MSYS native-jq argument conversion (\ -> /) unless disabled,
-  # then delegate to the real jq so the actual transform still runs.
+  # Fake jq: emulate a native (Windows) jq.exe under MSYS argument path conversion,
+  # modeling BOTH failure modes of the conversion dilemma, then delegate to real jq.
+  #  - conversion ON  (no guard): the printf %q escape backslash is rewritten to a
+  #    slash (Lien\ Chen -> Lien/ Chen), corrupting --arg command paths.
+  #  - conversion OFF (guard set): a POSIX-path positional INPUT FILE is not
+  #    translated to a form the native binary can open -> "Could not open file".
+  # The correct code keeps the guard (so --arg survives) AND feeds input via stdin
+  # (so there is no positional file to fail). A regression to either shape fails.
   cat > "$fake_bin/jq" <<'FAKEJQ'
 #!/usr/bin/env bash
-args=()
-for a in "$@"; do
-  if [[ -z "${MSYS2_ARG_CONV_EXCL:-}${MSYS_NO_PATHCONV:-}" ]]; then
-    a="${a//\\//}"
+conv_off=0
+[[ -n "${MSYS2_ARG_CONV_EXCL:-}${MSYS_NO_PATHCONV:-}" ]] && conv_off=1
+args=("$@")
+n=${#args[@]}
+if [[ "$conv_off" -eq 1 && "$n" -gt 0 ]]; then
+  last="${args[n-1]}"
+  if [[ "$last" == /* && -f "$last" ]]; then
+    printf 'jq: error: Could not open %s\n' "$last" >&2
+    exit 2
   fi
-  args+=("$a")
+fi
+out=()
+for a in "${args[@]}"; do
+  [[ "$conv_off" -eq 0 ]] && a="${a//\\//}"
+  out+=("$a")
 done
-exec "$REAL_JQ" "${args[@]}"
+exec "$REAL_JQ" "${out[@]}"
 FAKEJQ
   chmod +x "$fake_bin/jq"
 

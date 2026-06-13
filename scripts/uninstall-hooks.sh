@@ -81,7 +81,10 @@ repo_root_q="$(printf '%q' "$repo_root")"
 
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
 # corrupts the printf %q escaping above so the prefix match misses managed
-# entries. Disable that path conversion; no-op on Linux/macOS.
+# entries. Disabling path conversion keeps repo_root_q verbatim — but it would
+# also stop the native jq from opening a POSIX-path positional input file, so the
+# settings is fed via stdin (bash opens it) rather than as a positional argument.
+# Both env vars are no-ops on Linux/macOS.
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg repo_root "$repo_root" \
   --arg repo_root_q "$repo_root_q" \
@@ -121,7 +124,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
       .permissions.allow |= map(select(. as $e | ($managed_allow | index($e)) == null))
     else . end
   | if (.permissions.allow // [] | length) == 0 then del(.permissions.allow) else . end
-  ' "$settings" > "$tmp_new"
+  ' > "$tmp_new" < "$settings"
 
 if cmp -s "$settings" "$tmp_new"; then
   echo "uninstall-hooks: not wired, nothing to do"
