@@ -57,6 +57,16 @@ if ! declare -F pm_config_load >/dev/null 2>&1; then
   unset _pmctl_dispatch_lib_dir
 fi
 
+# Source portable.sh so --cd canonicalization (_portable_canonical_path) works
+# even when this lib is loaded standalone (e.g. unit tests); no-op in the full
+# pmctl runtime where portable.sh is already loaded.
+if ! declare -F _portable_canonical_path >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091  # dynamic path; portable.sh scanned separately
+  . "$_pmctl_dispatch_lib_dir/portable.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
 pmctl_dispatch_extract_model() {
   local model=""
   while [[ $# -gt 0 ]]; do
@@ -438,7 +448,9 @@ pmctl_dispatch_run() {
           printf 'pmctl dispatch run: missing value for --cd\n' >&2
           return 2
         fi
-        work_dir="$2"
+        # Canonicalize for internal use (pack path, reuse-scan) so C:/… and /c/…
+        # spellings compare equal; forward the original to the adapter unchanged.
+        work_dir="$(_portable_canonical_path "$2")"
         forward+=(--cd "$2")
         shift 2
         ;;

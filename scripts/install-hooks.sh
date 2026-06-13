@@ -204,7 +204,14 @@ session_cmd_q="$(printf '%q' "$session_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
 statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 
-jq \
+# MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
+# corrupts the printf %q escaping in a spaced path (Lien\ Chen → Lien/ Chen).
+# Disabling that argument path conversion keeps the escaped --arg command paths
+# verbatim — but it would also stop the native jq from opening a POSIX-path
+# positional input file, so the input settings is fed via stdin (bash opens it,
+# understanding /c/... paths) rather than as a positional argument. Both env vars
+# are no-ops on Linux/macOS where MSYS is absent.
+MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg pm "$pm_cmd_q" \
   --arg cx "$cx_cmd_q" \
   --arg cxw "$cxw_cmd_q" \
@@ -335,7 +342,7 @@ jq \
       .statusLine = {"type": "command", "command": $statusline}
     else . end
   )
-  ' "$settings" > "$tmp_new"
+  ' > "$tmp_new" < "$settings"
 
 # --- Permissions merge for reviewer subagents (CC-334) ---
 # Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)

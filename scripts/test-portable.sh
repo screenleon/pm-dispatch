@@ -1381,6 +1381,55 @@ case_portable_sha1_both_missing() {
   fi
 }
 
+# Writes a cygpath shim mimicking `cygpath -m` (POSIX /c/x and drive forms ->
+# mixed C:/x) into $1, so the MSYS-only branch of _portable_canonical_path can be
+# exercised on a POSIX host. `command -v cygpath` resolves at call time, so a
+# PATH prefix on the calling line is enough to activate it.
+_write_fake_cygpath() {
+  cat > "$1/cygpath" <<'CYG'
+#!/usr/bin/env bash
+p="${@: -1}"
+case "$p" in
+  /[A-Za-z]/*) printf '%s:/%s\n' "${p:1:1}" "${p:3}" ;;
+  [A-Za-z]:/*) printf '%s\n' "$p" ;;
+  *)           printf '%s\n' "$p" ;;
+esac
+CYG
+  chmod +x "$1/cygpath"
+}
+
+case_portable_canonical_path() {
+  local name="portable-canonical-path: POSIX no-op, drive-case fold, cygpath dialect collapse"
+  should_run "$name" || return 0
+
+  local posix dotseg drivecase stub c_slash drive_up drive_lo
+  # cygpath is absent on this host, so a POSIX absolute path is returned unchanged
+  # and dot segments collapse via _portable_normalize_path only.
+  posix="$(_portable_canonical_path "/home/user/repo")"
+  dotseg="$(_portable_canonical_path "/srv/app/./sub/../sub2")"
+  # A bare drive letter is lowercased even without cygpath (case-insensitive on Windows).
+  drivecase="$(_portable_canonical_path "C:/Users/First Last/repo")"
+
+  # With a cygpath stub, the three Windows spellings of one location collapse.
+  stub="$(mktemp -d)"
+  _write_fake_cygpath "$stub"
+  c_slash="$(PATH="$stub:$PATH" _portable_canonical_path "/c/Users/x")"
+  drive_up="$(PATH="$stub:$PATH" _portable_canonical_path "C:/Users/x")"
+  drive_lo="$(PATH="$stub:$PATH" _portable_canonical_path "c:/Users/x")"
+  rm -rf "$stub"
+
+  if [[ "$posix" == "/home/user/repo" \
+        && "$dotseg" == "/srv/app/sub2" \
+        && "$drivecase" == "c:/Users/First Last/repo" \
+        && "$c_slash" == "c:/Users/x" \
+        && "$drive_up" == "c:/Users/x" \
+        && "$drive_lo" == "c:/Users/x" ]]; then
+    pass "$name"
+  else
+    fail "$name" "posix=$posix dotseg=$dotseg drivecase=$drivecase c_slash=$c_slash drive_up=$drive_up drive_lo=$drive_lo"
+  fi
+}
+
 case_link_or_copy_symlink_success
 case_link_or_copy_post_check_reject
 case_link_or_copy_copy_fallback
@@ -1392,5 +1441,6 @@ case_link_or_copy_copy_refresh_user_modified_conflict
 case_link_or_copy_copy_refresh_dry_run
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
+case_portable_canonical_path
 
 th_summary

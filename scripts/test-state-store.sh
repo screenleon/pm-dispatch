@@ -206,7 +206,17 @@ case_state_store_init_store_root_mode() {
   #   3. Assert the store root and project dir exist with mode 0700.
   local name="state_store_init: store root and project dir are mode 0700"
   should_run "$name" || return 0
-  local store proj_dir root_mode proj_mode
+  local store proj_dir root_mode proj_mode probe
+  # NTFS/MSYS chmod is a no-op — Unix permission bits cannot be enforced there.
+  # Probe the filesystem once; if 0700 does not stick, skip rather than fail.
+  probe="$tmp_root/.perm-probe"
+  mkdir -p "$probe" 2>/dev/null && chmod 0700 "$probe" 2>/dev/null
+  if [[ "$(state_store_mode "$probe" 2>/dev/null || true)" != "700" ]]; then
+    printf 'SKIP: %s (filesystem cannot enforce Unix permissions)\n' "$name"
+    rm -rf "$probe" 2>/dev/null || true
+    return 0
+  fi
+  rm -rf "$probe" 2>/dev/null || true
   store="$tmp_root/root-mode"
   PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init >/dev/null 2>&1
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 _sw_project_dir)"
@@ -1638,6 +1648,48 @@ case_project_key_no_sha1sum() {
   fi
 }
 
+case_project_key_windows_spellings_same_partition() {
+  local name="project_key: equivalent Windows path spellings collapse to one partition"
+  should_run "$name" || return 0
+
+  local stub key_cslash key_drive_up key_drive_lo key_posix1 key_posix2
+  # cygpath shim mimicking `cygpath -m` so the MSYS dialect branch of
+  # _portable_canonical_path runs on this POSIX host. Non-git repo roots make
+  # _sw_project_key fall back to hashing the canonicalized path verbatim, which
+  # isolates the canonicalization behavior from git resolution.
+  stub="$(mktemp -d)"
+  cat > "$stub/cygpath" <<'CYG'
+#!/usr/bin/env bash
+p="${@: -1}"
+case "$p" in
+  /[A-Za-z]/*) printf '%s:/%s\n' "${p:1:1}" "${p:3}" ;;
+  [A-Za-z]:/*) printf '%s\n' "$p" ;;
+  *)           printf '%s\n' "$p" ;;
+esac
+CYG
+  chmod +x "$stub/cygpath"
+
+  key_cslash="$(PATH="$stub:$PATH" _SW_REPO_ROOT="/c/proj/app" _sw_project_key)"
+  key_drive_up="$(PATH="$stub:$PATH" _SW_REPO_ROOT="C:/proj/app" _sw_project_key)"
+  key_drive_lo="$(PATH="$stub:$PATH" _SW_REPO_ROOT="c:/proj/app" _sw_project_key)"
+  # POSIX stability: the same POSIX path hashes identically with or without
+  # cygpath present, so existing partition keys are unaffected.
+  key_posix1="$(_SW_REPO_ROOT="/home/u/proj" _sw_project_key)"
+  key_posix2="$(PATH="$stub:$PATH" _SW_REPO_ROOT="/home/u/proj" _sw_project_key)"
+  rm -rf "$stub"
+
+  if [[ "$key_cslash" =~ ^[0-9a-f]{40}$ \
+        && "$key_cslash" == "$key_drive_up" \
+        && "$key_cslash" == "$key_drive_lo" \
+        && "$key_posix1" =~ ^[0-9a-f]{40}$ \
+        && "$key_posix1" == "$key_posix2" \
+        && "$key_cslash" != "$key_posix1" ]]; then
+    pass "$name"
+  else
+    fail "$name" "cslash=$key_cslash up=$key_drive_up lo=$key_drive_lo posix1=$key_posix1 posix2=$key_posix2"
+  fi
+}
+
 case_state_store_init_mkdir_fail_loud() {
   # Verifies that layout mkdir failure propagates as non-zero rather than being silently swallowed.
   #
@@ -1829,6 +1881,7 @@ case_fsm_invalid_ok_to_dispatched
 case_fsm_invalid_verifying_to_pending
 case_project_key_shasum_fallback
 case_project_key_no_sha1sum
+case_project_key_windows_spellings_same_partition
 case_state_store_init_mkdir_fail_loud
 case_state_store_init_global_key_refused
 case_state_store_init_global_key_allowed_explicit

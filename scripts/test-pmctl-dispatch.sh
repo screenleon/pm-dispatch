@@ -374,6 +374,13 @@ case_symlinked_adapter_rejected() {
   mkdir -p "$fixture/adapters/evil"
   target="$(mktemp)"; printf '#!/usr/bin/env bash\nexit 0\n' > "$target"; chmod +x "$target"
   ln -s "$target" "$fixture/adapters/evil/dispatch.sh"   # points OUTSIDE the repo
+  # MSYS/Git-Bash without Developer Mode copies on `ln -s`; with no symlink to
+  # reject this case has nothing to assert, so skip rather than fail.
+  if [[ ! -L "$fixture/adapters/evil/dispatch.sh" ]]; then
+    printf 'SKIP: %s (ln -s did not create a symlink on this platform)\n' "$name"
+    rm -rf "$fixture"; rm -f "$target"
+    return 0
+  fi
   work="$(mktemp -d)"; git init -q "$work"
   brief="/tmp/brief-pmctl-dispatch-$$-evil.md"; printf 'schema_version: 1\n' > "$brief"; _BRIEFS+=("$brief")
   set +e
@@ -722,6 +729,45 @@ EOF
   rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part"
 }
 
+case_dispatch_cd_canonicalized_for_pack_path() {
+  local name="dispatch/--cd canonicalized for pack path; original spelling forwarded to adapter"
+  should_run "$name" || return 0
+  local work brief state_root stderr evt code pack cwd
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  stderr="$(mktemp)"
+  set +e
+  # A non-canonical --cd spelling (trailing /.): canonicalization must clean the
+  # internal pack path while the adapter still receives the original spelling.
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --adapter codex --cd "$work/." --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>"$stderr"; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // ""' 2>/dev/null || printf '')"
+  cwd="$(awk '/^  cwd:[[:space:]]/ { print $2; exit }' "$stderr")"
+  # pack path is canonical (no /./, rooted at the cleaned work dir); cwd forwarded
+  # to the adapter keeps the original /. spelling.
+  if [[ "$code" -eq 0 \
+        && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md \
+        && "$pack" != *"/./"* \
+        && "$cwd" == "$work/." ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code pack=$pack cwd=$cwd"
+  fi
+  rm -rf "$work" "$state_root"; rm -f "$stderr"
+}
+
 case_auto_pack_pack_failure_degrades_to_original_brief() {
   local name="dispatch/--auto-pack pack write failure keeps original brief"
   should_run "$name" || return 0
@@ -833,6 +879,7 @@ case_timeout_flag_beats_config_via_pmctl
 case_auto_pack_default_off_emits_no_event
 case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_hits_creates_pack_and_forwards_copy
+case_dispatch_cd_canonicalized_for_pack_path
 case_auto_pack_pack_failure_degrades_to_original_brief
 case_config_auto_pack_on_activates_without_flag
 case_no_auto_pack_overrides_config_on

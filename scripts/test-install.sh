@@ -3128,11 +3128,120 @@ test_install_hooks_spaced_repo_root() {
   pass "$name"
 }
 
+test_install_hooks_msys_native_jq_boundary() {
+  # Regression for the MSYS/native-jq argument path-conversion bug: install-hooks
+  # passes printf %q-escaped command paths as jq --arg values, and uninstall-hooks
+  # passes the escaped repo root the same way. A native jq.exe on Git-Bash rewrites
+  # the escape backslash (Lien\ Chen -> Lien/ Chen) unless the call disables MSYS
+  # argument conversion. The existing spaced-repo test uses the real (Linux) jq,
+  # which never mangles, so a mutation removing the env guards would survive it.
+  # Here a fake jq emulates the rewrite UNLESS MSYS2_ARG_CONV_EXCL/MSYS_NO_PATHCONV
+  # is set, making both guards load-bearing: install must store backslash-escaped
+  # spaces, and uninstall must still match and remove the escaped entries.
+  local name="install-hooks-msys-native-jq-boundary"
+  should_run "$name" || return 0
+  local home override spaced fake_bin real_jq
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  spaced="$tmp_root/jq boundary repo"
+  fake_bin="$tmp_root/$name-bin"
+  mkdir -p "$home" "$fake_bin"
+  real_jq="$(command -v jq)"
+  if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
+    printf 'SKIP: %s (no directory symlink support here)\n' "$name"
+    return 0
+  fi
+  # Fake jq: emulate a native (Windows) jq.exe under MSYS argument path conversion,
+  # modeling BOTH failure modes of the conversion dilemma, then delegate to real jq.
+  #  - conversion ON  (no guard): the printf %q escape backslash is rewritten to a
+  #    slash (Lien\ Chen -> Lien/ Chen), corrupting --arg command paths.
+  #  - conversion OFF (guard set): a POSIX-path positional INPUT FILE is not
+  #    translated to a form the native binary can open -> "Could not open file".
+  # The correct code keeps the guard (so --arg survives) AND feeds input via stdin
+  # (so there is no positional file to fail). A regression to either shape fails.
+  cat > "$fake_bin/jq" <<'FAKEJQ'
+#!/usr/bin/env bash
+conv_off=0
+[[ -n "${MSYS2_ARG_CONV_EXCL:-}${MSYS_NO_PATHCONV:-}" ]] && conv_off=1
+args=("$@")
+n=${#args[@]}
+if [[ "$conv_off" -eq 1 && "$n" -gt 0 ]]; then
+  last="${args[n-1]}"
+  if [[ "$last" == /* && -f "$last" ]]; then
+    printf 'jq: error: Could not open %s\n' "$last" >&2
+    exit 2
+  fi
+fi
+out=()
+for a in "${args[@]}"; do
+  [[ "$conv_off" -eq 0 ]] && a="${a//\\//}"
+  out+=("$a")
+done
+exec "$REAL_JQ" "${out[@]}"
+FAKEJQ
+  chmod +x "$fake_bin/jq"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" REAL_JQ="$real_jq" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    PATH="$fake_bin:$PATH" \
+    bash "$spaced/install.sh" --profile full >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc under the fake native-jq boundary"
+    return
+  fi
+
+  # install:211 guard — a managed command must keep backslash-escaped spaces and
+  # must NOT be slash-mangled.
+  local cmds
+  cmds="$("$real_jq" -r '
+    [ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command,
+      .statusLine.command ] | map(select(. != null)) | .[]' "$override/settings.json")"
+  if printf '%s\n' "$cmds" | grep -qF 'jq boundary repo/ '; then
+    fail "$name" "command path was slash-mangled (install jq guard not applied)"
+    return
+  fi
+  if ! printf '%s\n' "$cmds" | grep -qF 'jq\ boundary\ repo'; then
+    fail "$name" "no backslash-escaped spaced command path stored in settings.json"
+    return
+  fi
+
+  # uninstall:85 guard — uninstall must match the escaped entries (via repo_root_q)
+  # and remove every managed hook; a slash-mangled repo_root_q would miss them.
+  local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
+    | map(select(. != null))
+    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^hook-"))))
+    | length'
+  if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -lt 1 ]]; then
+    fail "$name" "no managed hooks detected pre-uninstall (fixture broken)"
+    return
+  fi
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" REAL_JQ="$real_jq" \
+    PATH="$fake_bin:$PATH" \
+    bash "$spaced/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+  local urc=$?
+  set -e
+  if [[ $urc -ne 0 ]]; then
+    fail "$name" "uninstall-hooks.sh exited $urc under the fake native-jq boundary"
+    return
+  fi
+  if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -ne 0 ]]; then
+    fail "$name" "uninstall left managed hook(s) behind (uninstall jq guard not applied — repo_root_q mismatch)"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
 test_install_claude_home_override
 test_uninstall_claude_home_override
 test_install_hooks_spaced_repo_root
+test_install_hooks_msys_native_jq_boundary
 
 th_summary
