@@ -1395,12 +1395,23 @@ case_doctor_native_windows_notice() {
   out_text="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
   out_json="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
-    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>&1 || true)"
-  if [[ "$out_text" == *"run under WSL2"* && "$out_json" != *"run under WSL2"* ]]; then
-    pass "$name"
-  else
-    fail "$name" "text-has-notice=$([[ "$out_text" == *"run under WSL2"* ]] && echo y || echo n); json-clean=$([[ "$out_json" != *"run under WSL2"* ]] && echo y || echo n)"
+    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null || true)"
+  # Text mode must carry the notice.
+  if [[ "$out_text" != *"run under WSL2"* ]]; then
+    fail "$name" "text mode missing the native-Windows notice"
+    return
   fi
+  # JSON mode must stay machine-clean: every non-empty line parses as JSON, so a
+  # human notice (any wording) leaking into stdout would break the parse.
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if ! jq . >/dev/null 2>&1 <<< "$line"; then
+      fail "$name" "non-JSON line leaked into --json output: $line"
+      return
+    fi
+  done <<< "$out_json"
+  pass "$name"
 }
 
 case_doctor_all_ok_exits_0

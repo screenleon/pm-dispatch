@@ -73,7 +73,12 @@ It also symlinks `cli/pmctl` into `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl`;
 if that bin directory is not already on PATH, the installer prints the exact
 `export PATH=...` command to add.
 
-### Windows Git Bash
+### Windows Git Bash (best-effort, not officially supported — prefer WSL2)
+
+> This walkthrough is retained for the best-effort native-Windows path, but
+> native Windows Git Bash is **not officially supported** during core development
+> (see the contract at the top of this page). It is not verified by CI or release
+> sign-off and may regress. **Run under WSL2 instead** for a supported setup.
 
 ```bash
 # Prerequisites (run in PowerShell or terminal):

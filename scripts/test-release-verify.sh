@@ -200,6 +200,12 @@ EOF
   rm -rf "$bin"
   if [[ "$rc" -eq 2 ]]; then pass "native-windows-refused-exit2"; else fail "native-windows-refused-exit2" "exit $rc want 2"; fi
   assert_contains "native-windows-refused-msg" "not a release sign-off platform" "$out"
+  # The refusal must happen BEFORE any phase runs — no phase banner, no phase
+  # result lines may appear (guards against the refusal being moved below Phase 1,
+  # which would reintroduce the platform false-failure noise).
+  assert_not_contains "native-windows-refused-no-phase-banner" "=== Phase" "$out"
+  assert_not_contains "native-windows-refused-no-pass-record" "[PASS]" "$out"
+  assert_not_contains "native-windows-refused-no-fail-record" "[FAIL]" "$out"
 }
 
 # ── Run ───────────────────────────────────────────────────────────────────────
