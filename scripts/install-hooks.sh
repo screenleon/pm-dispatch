@@ -187,15 +187,32 @@ elif [[ -n "$_current_statusline" && "$DRY_RUN" -eq 0 ]]; then
     write_statusline_chain "$_current_statusline"
 fi
 
+# Claude Code runs each hook `command` string through the shell. An unquoted
+# path with a space (e.g. a Windows home like C:/Users/First Last/) is word-split
+# and the hook fails ("No such file or directory"). Shell-escape every managed
+# command path before it is written. printf %q only adds backslashes when needed,
+# so space-free paths are stored verbatim (no churn for existing installs). The
+# escaping is transparent to the split("/")|last basename matching below — a
+# backslash-escaped space stays inside a path component, never a "/" boundary.
+# old_stop is NOT escaped: it is matched verbatim against the legacy unmanaged
+# path to remove it, so it must stay in raw (unescaped) form.
+pm_cmd_q="$(printf '%q' "$pm_cmd")"
+cx_cmd_q="$(printf '%q' "$cx_cmd")"
+cxw_cmd_q="$(printf '%q' "$cxw_cmd")"
+stop_cmd_q="$(printf '%q' "$stop_cmd")"
+session_cmd_q="$(printf '%q' "$session_cmd")"
+inject_cmd_q="$(printf '%q' "$inject_cmd")"
+statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
+
 jq \
-  --arg pm "$pm_cmd" \
-  --arg cx "$cx_cmd" \
-  --arg cxw "$cxw_cmd" \
-  --arg stop "$stop_cmd" \
+  --arg pm "$pm_cmd_q" \
+  --arg cx "$cx_cmd_q" \
+  --arg cxw "$cxw_cmd_q" \
+  --arg stop "$stop_cmd_q" \
   --arg old_stop "$old_stop_cmd" \
-  --arg session "$session_cmd" \
-  --arg inject "$inject_cmd" \
-  --arg statusline "$statusline_cmd" \
+  --arg session "$session_cmd_q" \
+  --arg inject "$inject_cmd_q" \
+  --arg statusline "$statusline_cmd_q" \
   --argjson sl_present "$_statusline_already_wired" \
   --arg profile "$PROFILE" \
   '

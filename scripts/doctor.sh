@@ -234,10 +234,16 @@ check_settings_file() {
 hook_present() {
   local basename="$1" settings="$2"
   jq -e --arg basename "$basename" '
+    # install-hooks.sh shell-escapes managed command paths (printf %q), so a repo
+    # under a path with a space stores a backslash-escaped command. Strip those
+    # shell-escape backslashes (a backslash before any non-alphanumeric char)
+    # BEFORE the Windows backslash->slash conversion, which only applies to native
+    # path separators (a backslash before a component name, i.e. alphanumeric).
     def normalize_path:
-      if test("^[A-Za-z]:[/\\\\]") then
-        "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-      else gsub("\\\\"; "/") end;
+      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      | if test("^[A-Za-z]:[/\\\\]") then
+          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+        else gsub("\\\\"; "/") end;
     def managed_hook:
       (.command? // "") as $cmd |
       ($cmd | normalize_path) as $ncmd |
@@ -263,10 +269,14 @@ stale_hook_commands() {
   jq -r --arg repo_root "$repo_root" '
     # Normalize Windows drive paths (C:/...) to POSIX form (/c/...) so that
     # comparisons work regardless of which format the shell or installer used.
+    # First strip printf %q shell-escape backslashes (a backslash before any
+    # non-alphanumeric char) so an escaped command path written for a spaced repo
+    # root compares equal to the raw repo root.
     def normalize_path:
-      if test("^[A-Za-z]:[/\\\\]") then
-        "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-      else . end;
+      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      | if test("^[A-Za-z]:[/\\\\]") then
+          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+        else . end;
     [
       ((.hooks // {}) | .PreToolUse[]?  | (.hooks // [])[]?),
       ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
