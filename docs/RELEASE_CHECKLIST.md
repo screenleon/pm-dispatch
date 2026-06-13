@@ -123,15 +123,17 @@ type once and confirm the output lands in `share/` or the trace store.
 # write-guard: attempt a write outside the allowed path — should be DENIED with exit 2
 # (trigger by asking Claude to write to /tmp/test-hook-write.txt in a Claude Code session)
 
-# routing-log: any dispatch emits a routing event; check the log file grew
-tail -f ~/.claude/.pm/share/routing.log   # open in another terminal, then run a dispatch
+# dispatch telemetry: any dispatch emits Run + Event records via pmctl (the
+# machine-written routing_log.md / routing-log hook was retired in CC-367 — events
+# now live in the trace store). Run a dispatch, then confirm the event landed:
+pmctl trace tail -n 5            # newest events; a dispatch adds run.* rows
 
 # memory-inject: start a new Claude Code session and confirm the MEMORY.md block appears
 # in the first UserPromptSubmit hook output
 ```
 
 - [ ] write-guard hook fires and blocks a write outside the pm share path (exit 2, no file created).
-- [ ] routing-log hook appends a JSON line to `share/routing.log` after a dispatch.
+- [ ] dispatch telemetry: a dispatch appends Run/Event records visible via `pmctl trace tail` (replaces the retired routing-log hook, CC-367).
 - [ ] memory-inject hook injects `=== auto-memory: MEMORY.md index ===` in the session context.
 
 ---
