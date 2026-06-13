@@ -110,6 +110,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-365 | ✅ closed 2026-06-13 | **[context: lazy auto-build + pre-query incremental refresh]** Index 目前純手動（`pmctl context index` 無任何自動觸發時機），是 passive-context 採用的第一個障礙：忘記跑 → db 缺失或過期 → query/reuse-scan 永遠空集。修法：`query`/`pack`/`reuse-scan` 進入點加 `_ctx_ensure_fresh` — db 缺失且 sqlite3 可用時自動 full build（stderr 提示）；db 存在時先跑 mtime-based incremental refresh 再查。Opt-out：`PM_DISPATCH_CONTEXT_AUTOBUILD=0` / `PM_DISPATCH_CONTEXT_AUTOREFRESH=0`。無 sqlite3 環境維持現有 graceful-empty 契約不變；zero-hit telemetry 契約不變。 **See**: pr:#271 | ops/DX | 2026-06-13 | pr:#271 | P2 | design |
 | CC-366 | ✅ closed 2026-06-13 | **[dispatch: auto-pack — reuse-scan pointer hits 注入 dispatch run（opt-in）]** Context plane 至今 ACTIVE-reflex only：docs 指示 PM 記得跑 reuse-scan，操作面零 caller（CC-346 暫停理由）。本票把消費做成 deterministic pipeline step：`pmctl dispatch run` 在 brief-validate 通過後、guard 前，以 brief `goal:` 跑 reuse-scan，把 ≤5 筆 pointer-only 命中（ref + why_relevant + confidence，不含 chunk 內文）append 成 **augmented brief 副本**（`<work_dir>/.pm-dispatch/ctx/packs/<run_id>.md`；原 brief 檔不可變動），adapter argv 改收副本；guard 與 state transitions 仍對原 brief。Opt-in：`--auto-pack` flag 或 config `dispatch.auto_pack = on`（default off）。每次 emit `context.auto_packed` event（含 hits 數、副本路徑；0-hit 也 emit）。Auto-pack 任何失敗不得 fail dispatch — 降級回原 brief + stderr 警示。打破 CC-346 的雞生蛋：自動產生 reuse-scan 操作面使用數據。 **See**: pr:#271 | ops/DX | 2026-06-13 | pr:#271 | P2 | design |
+| CC-368 | 🔵 active | **[Windows portability remediation bundle]** 六項 MSYS/Git-Bash on NTFS 假失敗/真限制的一次性修補：(1) enum-sync 假失敗（`_yaml_get` awk 輸出保留 CR）；(2) state_store 0700 斷言在 NTFS 無法強制 → 偵測能力 SKIP-with-reason；(3) partition path hash 未正規化 → 同 repo 不同路徑拼法分到不同 partition；(4) 測試 `ln -s` 在無 Developer Mode 變 copy → 對未涵蓋處以既有 `[[ -L ]]` SKIP 慣例 gate；(5) `--auto-pack` work_dir 未正規化就字串拼 pack_path；(6) `printf %q` × 原生 jq `--arg` 被 MSYS 反斜線改寫 → jq 邊界停用路徑轉換。原則：純 bug 直接修、平台限制誠實降級不 fake-pass；正規化保證 POSIX 路徑 no-op（不動已出貨 Unix key）。延伸 CC-104j（symlink SKIP）、關聯 CC-104s（cygpath 正規化）、#272（hook 跳脫）。icacls 真實 ACL → CC-369。 | ops/portability | 2026-06-13 | — | P2 | hygiene |
+| CC-369 | 🟡 deferred | **[Windows state store 真實 ACL via icacls]** CC-368 #2 在 NTFS 上以 SKIP-with-reason 處理 0700 斷言（chmod 是 no-op）；state store 目前僅靠 `%USERPROFILE%` 既有 ACL 保護。真正等價 0700 需在 Windows 用 `icacls` 限定目前使用者繼承移除 + 授權，要寫 Windows 專屬分支與測試。邊際安全收益相對 profile ACL 不高，故 deferred；待 Windows = Supported flag flip 前重新評估。 | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-367 | ✅ closed 2026-06-13 | **[memory-plane hygiene: retire tool-trace hook + routing-log stub sunset]** 兩個 write-only/死資料面收尾：(1) `hook-tool-trace.sh` 自 shipping 以來零消費者（無任何 command/skill 讀 tool-trace.jsonl）、無 rotation、每次 tool call fork 一個 process——違反「先有消費者再建資料面」原則（同 CC-346 暫停理由），移除 hook script + `install-hooks.sh` 接線 + `test-hooks.sh` 對應 cases + docs 引用。(2) `hook-routing-log.sh` no-op stub（deprecated 落日）：移除 stub + install-hooks 接線 + 殘餘 docs 引用；`migrate-routing-to-events.sh` 與其測試保留（migration 路徑仍對舊安裝有效）。 **See**: pr:#271 | ops | 2026-06-13 | pr:#271 | P3 | hygiene |
 
 ---
@@ -137,6 +139,28 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 向下相容：v1.1/v1.2 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
+
+## CC-368 — Windows portability remediation bundle
+
+**Problem**: 在 MSYS/Git-Bash on NTFS 上跑測試套件出現一批失敗，混雜兩種性質——「假失敗」（行為其實正確，只是平台表象差異）與「真限制」（Windows 物理上無 Unix 語意）。六個點：
+1. **enum-sync 假失敗**（`scripts/test-core-schemas.sh` `_yaml_get`）：`awk` 輸出保留行尾 CR，`_schema_enum` 走 `jq` 已正規化為 LF；兩邊內容相同卻因 `\r` 使 `[[ == ]]` 失敗。`.gitattributes` 已強制 yaml `eol=lf`，殘留僅在 awk 輸出端。
+2. **state_store 0700 斷言**（`scripts/test-state-store.sh:213` / `scripts/lib/state-writer.sh:117,471`）：NTFS 上 `chmod 0700` 是 no-op，斷言取得 755 → fail。物理上無法強制，需偵測能力後 SKIP-with-reason，**不得 fake-pass**。
+3. **partition path hash 未正規化**（`scripts/lib/state-writer.sh:139` `_sw_project_key`）：`git rev-parse --show-toplevel` 的 Windows 形式直接餵 `_portable_sha1`，同 repo 不同路徑拼法（`C:/` vs `/c/` vs 大小寫）hash 不同 → 分到不同 partition。
+4. **測試 `ln -s` 在無 Developer Mode 變 copy**：`scripts/test-pr-gate.sh:1985` 已有 `uname` Windows skip guard；`scripts/test-pmctl-dispatch.sh` 的 symlinked-adapter-rejection 案是未涵蓋的缺口。專案已有兩種 skip 慣例（`uname` 與建立後 `[[ -L ]]` 後檢查，見 `scripts/test-portable.sh:651`）；採後者就地 gate，不新增第三種共用 helper。延伸 CC-104j。
+5. **`--auto-pack` work_dir 未正規化**（`scripts/lib/pmctl-dispatch.sh:441,375`）：`--cd` 值未過 `_portable_normalize_path` 就字串拼 `pack_path`，C:/… vs /tmp/… 形式不一致使路徑比對/快取對不上。
+6. **`printf %q` × 原生 jq `--arg` 的 MSYS 反斜線改寫**（#272 hook 路徑跳脫）：空格家目錄經 `printf %q` 產出 `Lien\ Chen`，傳給 winget 安裝的原生 `jq.exe` 時 MSYS 的 POSIX→Windows 參數轉換把 `\` → `/`，路徑被破壞成 `C:/Users/Lien/ Chen/…`。Linux 原生 jq 無此轉換故能動，Windows Git Bash + 原生 jq 上是真 bug。
+
+**Why**: Windows 仍屬 dogfood（非 Supported），但這些是 fork 使用者首次安裝/跑測試即撞到的點。需區分修法層級：純 bug（1,3,5,6）直接修；平台限制（2,4）誠實降級不 fake-pass。正規化要保證 POSIX 絕對路徑 no-op，不動已出貨 Unix partition key（cygpath 僅存在於 MSYS，Linux/macOS 無此二進位）。
+**Requirement**: 單一 PR 一次性處理六點。(1) `_yaml_get` 輸出 strip CR；(2) 偵測 fs 是否能強制 Unix 權限（建 dir→chmod 0700→stat 不為 700 即不支援）→ `printf 'SKIP: …'` + `return 0`（沿 `scripts/test-portable.sh:651` 慣例）；(3) 新增 `_portable_canonical_path`（normalize + cygpath -m if present + 磁碟機代號小寫；POSIX no-op），`_sw_project_key` hash 前套用；(4) symlinked-adapter-rejection 案以建立後 `[[ -L ]]` 後檢查 gate，不支援符號連結時 `printf 'SKIP: …'` + `return 0`（沿 `scripts/test-portable.sh:651` 慣例）；(5) `work_dir` 在 `--cd` parse 當下過 canonical/normalize；(6) 保留 `printf %q`（它本身正確），改在**帶路徑值的 jq 呼叫邊界**停用 MSYS 參數路徑轉換（`MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1`，非 MSYS 平台 no-op）：install 主 settings 寫入（command 路徑值，`/c/…` 形式 → 會被轉換）與 uninstall 的 `repo_root_q` 比對（同為跳脫路徑值）。permissions 的 `Write(<glob>)` 值非裸路徑（`Write(` 開頭），MSYS 不轉換故不需 guard；doctor 已以 `normalize_path` 中和兩種形式故不動。Acceptance = Windows Git Bash 上對應測試 PASS 或 SKIP-with-reason，Linux/macOS 全綠且 partition key 不變；以模擬原生 jq 轉換的 fake jq 證明移除 guard 會被測試捕捉。
+**Cross-link**: 延伸 CC-104j；關聯 CC-104s（cygpath 路徑正規化）、CC-038（locking primitive，本票不動 flock production 路徑）、#272（hook 跳脫）。icacls 真實 ACL → CC-369。
+**Source**: 2026-06-13 Windows 測試套件執行回報（六項；第六項為 #272 merge 後在原生 jq 上的後續發現）。
+
+## CC-369 — Windows state store 真實 ACL via icacls（deferred）
+
+**Problem**: CC-368 #2 在 NTFS 上以 SKIP-with-reason 處理 `state_store_init` 的 0700 斷言（`chmod` 是 no-op），但這只讓測試誠實，並未在 Windows 上達成等價的「僅擁有者可存取」保護。目前 state store 落在 `%USERPROFILE%` 下，僅依賴該目錄既有的 NTFS ACL。
+**Why**: 真正等價 0700 需以 `icacls` 移除繼承並僅授權目前使用者，屬 Windows 專屬分支與測試成本。相對於 profile 目錄既有 ACL，邊際安全收益不高，且 Windows 尚非 Supported，故 deferred。
+**Requirement**: 待 Windows = Supported flag flip 前評估：`state-writer.sh` 在 Windows 偵測下以 `icacls "<store_root>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` 等價設定收斂保護，並補對應能力測試。
+**Source**: 2026-06-13 CC-368 #2 收尾時分出的 follow-up。
 
 ## CC-104o — Windows Store python3 stub (superseded by CC-104t)
 

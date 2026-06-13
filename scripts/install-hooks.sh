@@ -204,7 +204,11 @@ session_cmd_q="$(printf '%q' "$session_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
 statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 
-jq \
+# MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
+# corrupts the printf %q escaping in a spaced path (Lien\ Chen → Lien/ Chen).
+# Disable that argument path conversion so escaped command paths survive verbatim.
+# Both vars are no-ops on Linux/macOS where MSYS is absent.
+MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg pm "$pm_cmd_q" \
   --arg cx "$cx_cmd_q" \
   --arg cxw "$cxw_cmd_q" \

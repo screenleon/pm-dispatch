@@ -136,6 +136,10 @@ _sw_project_key() {
       printf 'global\n'
       return 0
     fi
+    # Canonicalize before hashing so the same repo reached via different path
+    # spellings (Windows C:/ vs /c/ vs drive-letter case) lands in one partition.
+    # POSIX paths are unchanged, so existing keys stay stable.
+    repo_root="$(_portable_canonical_path "$repo_root")"
     if ! project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null)"; then
       _sw_log_error "_sw_project_key: failed to hash repo root; falling back to global: $repo_root"
       project_key=""

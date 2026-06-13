@@ -79,7 +79,10 @@ _managed_json="$({ dispatch_allowlist_entries; printf 'Write(%s/**/.gate-results
 # position, so the escaped command's prefix equals the escaped repo_root.
 repo_root_q="$(printf '%q' "$repo_root")"
 
-jq \
+# MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
+# corrupts the printf %q escaping above so the prefix match misses managed
+# entries. Disable that path conversion; no-op on Linux/macOS.
+MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg repo_root "$repo_root" \
   --arg repo_root_q "$repo_root_q" \
   --arg chain_target "$_chain_target" \

@@ -468,6 +468,25 @@ _portable_normalize_path() {
   printf '%s\n' "$out_path"
 }
 
+# Collapse a path to one stable spelling so the same location always produces the
+# same identity (e.g. a partition hash) regardless of how the path was reached.
+# On POSIX this is a no-op beyond slash/dot-segment normalization: there is no
+# cygpath, and a POSIX absolute path has no drive letter to fold. On MSYS/Cygwin
+# the same repo can surface as C:/foo, c:/foo, or /c/foo; cygpath -m maps them to
+# one mixed form and the drive letter is lowercased so they hash identically.
+_portable_canonical_path() {
+  local path
+  path="$(_portable_normalize_path "$1")"
+  if command -v cygpath >/dev/null 2>&1; then
+    path="$(cygpath -m -- "$path" 2>/dev/null || printf '%s' "$path")"
+  fi
+  if [[ "$path" =~ ^[A-Za-z]: ]]; then
+    local drive="${path:0:1}"
+    path="${drive,,}${path:1}"
+  fi
+  printf '%s\n' "$path"
+}
+
 _portable_resolve_symlink() {
   local path="$1"
   local target

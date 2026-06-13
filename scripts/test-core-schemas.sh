@@ -50,7 +50,7 @@ _yaml_get() {
       next
     }
     found && /^[^[:space:]#][^:]*:/ { exit }
-  ' "$file"
+  ' "$file" | tr -d '\r'
 }
 
 _schema_enum() {
@@ -220,6 +220,42 @@ case_enum_sync "$CORE_DIR/schema/review.schema.json" \
   '.properties.findings.items.properties.verdict.enum' \
   "$CORE_DIR/policy/reviewer-policy.yaml" \
   "verdicts"
+
+case_enum_sync_crlf_input() {
+  # A YAML file checked out with CRLF endings (Windows core.autocrlf re-applying
+  # despite .gitattributes, or a non-git copy) must not produce a false enum-sync
+  # mismatch: _yaml_get pipes its awk output through `tr -d '\r'` so extracted
+  # values are CR-free for both the list and map-key branches.
+  #
+  # NOTE on mutation-resistance: GNU awk's [[:space:]] already strips a trailing
+  # CR inside _yaml_get's existing subs, so on a gawk host the tr stage is
+  # belt-and-suspenders and removing it would not change this result. The bug this
+  # fix targets occurs on awks whose [[:space:]] does not cover CR (some Windows
+  # MSYS/busybox builds); there this assertion fails without the tr stage. The
+  # check still guards the CR-free extraction contract on every platform.
+  #
+  # Steps:
+  #   1. Write a YAML fixture with CRLF line endings for a list and a map.
+  #   2. Extract both via _yaml_get.
+  #   3. Assert the values equal their LF form and contain no CR byte.
+  local name="enum-sync: CRLF YAML extracts CR-free values"
+  should_run "$name" || return 0
+  local tmp_yaml list_vals map_vals
+  tmp_yaml="$(mktemp)"
+  printf 'executors:\r\n  - claude\r\n  - codex\r\nstates:\r\n  pending:\r\n  done:\r\n' > "$tmp_yaml"
+  list_vals="$(_yaml_get "$tmp_yaml" "executors")"
+  map_vals="$(_yaml_get "$tmp_yaml" "states")"
+  rm -f "$tmp_yaml"
+  if [[ "$list_vals" == "$(printf 'claude\ncodex')" \
+        && "$map_vals" == "$(printf 'pending\ndone')" \
+        && "$list_vals" != *$'\r'* \
+        && "$map_vals" != *$'\r'* ]]; then
+    pass "$name"
+  else
+    fail "$name" "list=[$(printf '%s' "$list_vals" | cat -v)] map=[$(printf '%s' "$map_vals" | cat -v)]"
+  fi
+}
+case_enum_sync_crlf_input
 
 case_review_verdict_includes_approve() {
   # Verifies that review.schema.json includes 'approve' in the verdict enum,

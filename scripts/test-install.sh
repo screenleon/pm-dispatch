@@ -3128,11 +3128,105 @@ test_install_hooks_spaced_repo_root() {
   pass "$name"
 }
 
+test_install_hooks_msys_native_jq_boundary() {
+  # Regression for the MSYS/native-jq argument path-conversion bug: install-hooks
+  # passes printf %q-escaped command paths as jq --arg values, and uninstall-hooks
+  # passes the escaped repo root the same way. A native jq.exe on Git-Bash rewrites
+  # the escape backslash (Lien\ Chen -> Lien/ Chen) unless the call disables MSYS
+  # argument conversion. The existing spaced-repo test uses the real (Linux) jq,
+  # which never mangles, so a mutation removing the env guards would survive it.
+  # Here a fake jq emulates the rewrite UNLESS MSYS2_ARG_CONV_EXCL/MSYS_NO_PATHCONV
+  # is set, making both guards load-bearing: install must store backslash-escaped
+  # spaces, and uninstall must still match and remove the escaped entries.
+  local name="install-hooks-msys-native-jq-boundary"
+  should_run "$name" || return 0
+  local home override spaced fake_bin real_jq
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  spaced="$tmp_root/jq boundary repo"
+  fake_bin="$tmp_root/$name-bin"
+  mkdir -p "$home" "$fake_bin"
+  real_jq="$(command -v jq)"
+  if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
+    printf 'SKIP: %s (no directory symlink support here)\n' "$name"
+    return 0
+  fi
+  # Fake jq: emulate MSYS native-jq argument conversion (\ -> /) unless disabled,
+  # then delegate to the real jq so the actual transform still runs.
+  cat > "$fake_bin/jq" <<'FAKEJQ'
+#!/usr/bin/env bash
+args=()
+for a in "$@"; do
+  if [[ -z "${MSYS2_ARG_CONV_EXCL:-}${MSYS_NO_PATHCONV:-}" ]]; then
+    a="${a//\\//}"
+  fi
+  args+=("$a")
+done
+exec "$REAL_JQ" "${args[@]}"
+FAKEJQ
+  chmod +x "$fake_bin/jq"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" REAL_JQ="$real_jq" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    PATH="$fake_bin:$PATH" \
+    bash "$spaced/install.sh" --profile full >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc under the fake native-jq boundary"
+    return
+  fi
+
+  # install:211 guard — a managed command must keep backslash-escaped spaces and
+  # must NOT be slash-mangled.
+  local cmds
+  cmds="$("$real_jq" -r '
+    [ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command,
+      .statusLine.command ] | map(select(. != null)) | .[]' "$override/settings.json")"
+  if printf '%s\n' "$cmds" | grep -qF 'jq boundary repo/ '; then
+    fail "$name" "command path was slash-mangled (install jq guard not applied)"
+    return
+  fi
+  if ! printf '%s\n' "$cmds" | grep -qF 'jq\ boundary\ repo'; then
+    fail "$name" "no backslash-escaped spaced command path stored in settings.json"
+    return
+  fi
+
+  # uninstall:85 guard — uninstall must match the escaped entries (via repo_root_q)
+  # and remove every managed hook; a slash-mangled repo_root_q would miss them.
+  local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
+    | map(select(. != null))
+    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^hook-"))))
+    | length'
+  if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -lt 1 ]]; then
+    fail "$name" "no managed hooks detected pre-uninstall (fixture broken)"
+    return
+  fi
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" REAL_JQ="$real_jq" \
+    PATH="$fake_bin:$PATH" \
+    bash "$spaced/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+  local urc=$?
+  set -e
+  if [[ $urc -ne 0 ]]; then
+    fail "$name" "uninstall-hooks.sh exited $urc under the fake native-jq boundary"
+    return
+  fi
+  if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -ne 0 ]]; then
+    fail "$name" "uninstall left managed hook(s) behind (uninstall jq guard not applied — repo_root_q mismatch)"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
 test_install_claude_home_override
 test_uninstall_claude_home_override
 test_install_hooks_spaced_repo_root
+test_install_hooks_msys_native_jq_boundary
 
 th_summary
