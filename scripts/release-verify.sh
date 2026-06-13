@@ -15,7 +15,8 @@
 #                     else claude).
 #
 # Exit status: 0 = GO (all phases passed), 1 = NO-GO (one or more failed),
-#              2 = usage error, 3 = PARTIAL GO (required phases skipped, no failures).
+#              2 = usage error OR unsupported sign-off platform (native Windows;
+#              use WSL2), 3 = PARTIAL GO (required phases skipped, no failures).
 set -uo pipefail
 export LC_ALL=C.UTF-8
 
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       E2E_ADAPTER="$2"; shift 2
       ;;
     --help|-h)
-      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) printf 'release-verify: unknown flag %s\n' "$1" >&2; exit 2 ;;

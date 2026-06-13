@@ -4,7 +4,7 @@ Run this **before tagging any release**. It is the single fixed procedure: work
 top to bottom, and only tag when every box is checked on **Linux and/or WSL2**
 (WSL2 is treated as Linux). Native Windows Git Bash and macOS are **out of scope
 for release sign-off** during the core-development phase — see
-`docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support).
+`docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
 Platform sign-off returns as a dedicated phase once the core stabilizes (CC-370).
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
