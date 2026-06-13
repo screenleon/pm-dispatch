@@ -93,6 +93,17 @@ printf 'platform: %s\n' "$PLATFORM"
 printf 'branch:   %s\n' "$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || echo '?')"
 printf 'commit:   %s\n' "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
 
+# Native Windows Git Bash is out of scope for release sign-off during core
+# development (CC-370): platform work is deferred until the core stabilizes, and
+# CI runs Linux only. Refuse here rather than emit a pile of platform false
+# failures. Run release verification under WSL2 (treated as Linux).
+if [[ "$PLATFORM" == "windows" ]]; then
+  printf '\nNative Windows (Git Bash) is not a release sign-off platform.\n' >&2
+  printf 'Platform work is deferred during core development; pm-dispatch targets Linux & WSL2.\n' >&2
+  printf 'Run release verification under WSL2 (treated as Linux). See docs/platform-support.md.\n' >&2
+  exit 2
+fi
+
 # ── Phase 1: Prerequisites ───────────────────────────────────────────────────
 section "Phase 1 — Prerequisites"
 need() {  # need <tool> <required|optional> <version-cmd>

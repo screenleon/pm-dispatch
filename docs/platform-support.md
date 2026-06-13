@@ -1,22 +1,29 @@
 # Platform support
 
-> **Windows status**: hooks are functional on Windows Git Bash (pure bash+jq, no python3 required).
-> Windows is **experimental**: install succeeds and all hooks run, but
-> `install.sh` uses directory junctions for managed directories on Git Bash
-> so agents, commands, skills, and the pm schema auto-sync after updates.
-> Individual helper script files are still copied; re-run `bash install.sh`
-> after pulling when scripts change. `pmctl` is never copied on Windows; add
-> `<repo>/cli` to PATH manually so it can resolve repo-local libraries.
-> **WSL2 remains the recommended Windows path** (treated as Linux, first-class).
+> **Platform contract (core-development phase):** pm-dispatch officially targets
+> **Linux and WSL2** (WSL2 is treated as Linux, first-class). **Native Windows
+> Git Bash (msys2/mingw) is not officially supported** right now — CI runs Linux
+> only, and platform-hardening work is **deferred to a dedicated phase after the
+> core feature set stabilizes** (v0.5.0+) so it does not divert effort from core
+> features. **Windows users should run pm-dispatch under WSL2**, which avoids the
+> MSYS path / symlink / permission edge cases entirely. macOS is documented but
+> untested. Native Windows may be reassessed once the core stabilizes — see
+> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev) / CC-370.
+>
+> Already-shipped portability code still runs on native Windows on a best-effort
+> basis (hooks are pure bash+jq, no python3; `install.sh` uses directory junctions
+> for managed dirs and copies helper scripts — re-run `bash install.sh` after
+> pulling; `pmctl` is not copied, add `<repo>/cli` to PATH), but it is **not
+> verified by CI or release sign-off** and may regress without notice.
 
 ## Support matrix
 
 | Platform                         | Profile support      | Notes |
 | -------------------------------- | -------------------- | ----- |
 | Linux                            | **First-class**      | Full profile + minimal profile |
-| macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
 | WSL2                             | **First-class**      | Treated as Linux |
-| Windows Git Bash (`msys2/mingw`) | **Experimental**     | Hooks functional; directory junctions restore auto-sync for managed directories; add `<repo>/cli` to PATH for `pmctl`; re-run `bash install.sh` after script updates |
+| macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
+| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development (CC-370). Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
 
 ---

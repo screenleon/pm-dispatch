@@ -1,8 +1,11 @@
 # Release verification checklist
 
 Run this **before tagging any release**. It is the single fixed procedure: work
-top to bottom, and only tag when every box is checked on **both Linux and
-Windows Git Bash** (macOS is out of scope — see `docs/platform-support.md`).
+top to bottom, and only tag when every box is checked on **Linux and/or WSL2**
+(WSL2 is treated as Linux). Native Windows Git Bash and macOS are **out of scope
+for release sign-off** during the core-development phase — see
+`docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support).
+Platform sign-off returns as a dedicated phase once the core stabilizes (CC-370).
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
 Coverage splits into three layers:
@@ -30,7 +33,9 @@ A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED
 
 ## 1. Automated verification (`release-verify.sh`)
 
-Run on **each** platform you ship to.
+Run on **Linux or WSL2** (the supported sign-off platforms). Native Windows Git
+Bash is out of scope during core development — `release-verify.sh` refuses to run
+there with a "use WSL2" notice (CC-370).
 
 ```bash
 # Linux / WSL2 — Phases 1-3 (offline, no tokens)
@@ -40,16 +45,9 @@ bash scripts/release-verify.sh
 bash scripts/release-verify.sh --e2e
 # or with explicit adapter:
 bash scripts/release-verify.sh --e2e --adapter claude
-
-# Windows Git Bash (ensure sqlite3 is installed first — see §Prerequisites below)
-bash scripts/release-verify.sh --e2e
 ```
 
-Note: Phase 3 indexes the whole repo and is slow on Windows Git Bash (minutes)
-— this is expected (MSYS subprocess overhead).
-
 - [ ] **Linux / WSL2 (full sign-off)**: `release-verify.sh --e2e` exits 0 and prints `AUTOMATED VERDICT: GO` (all phases including Phase C pass).
-- [ ] **Windows Git Bash**: `release-verify.sh --e2e` exits 0 or 3. Exit 3 (`PARTIAL GO`) is expected when `codex` is not on PATH — Phase C is auto-skipped. Windows exit 3 satisfies the Windows row **only** after a codex-enabled Linux/WSL2 run (row above) has already recorded Phase C PASS.
 - [ ] No suite is silently skipped that you expected to run (the script lists
       every `SKIP`ped suite explicitly — confirm each skip is intentional, e.g.
       `test-codex-dispatch` skips when `codex` is not on PATH).

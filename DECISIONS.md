@@ -7,6 +7,18 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-13: defer-native-windows-support-during-core-dev
+
+Relates: CC-370, CC-368, CC-369, CC-038, CC-104d, CC-104e, CC-104f, CC-104g, CC-104j, CC-104k, CC-104r, CC-104s
+
+**Context**: pm-dispatch is still in active feature development (context plane, MCP, review-model, task lifecycle). Native Windows Git Bash (msys2/mingw) keeps generating a steady stream of platform-specific work: this session alone, #272 shipped green on Linux CI yet broke on Windows, and #273's first cut passed pr-gate but was still broken on native jq.exe (positional-file open failure under disabled MSYS path conversion) — caught only by a manual Windows probe. The recurring failure classes — symlink requiring Developer Mode, `flock`/`mkdir` lock semantics, `chmod 0700` being a no-op on NTFS, path-dialect normalization (`c:/` vs `C:/` vs `/c/`), CRLF, native `jq.exe` argument path conversion — each needs a platform-specific branch + skip-guard. The blocking cost is not testability (regression coverage IS achievable on Windows if we invest in it) but **focus**: handling multiple platforms concurrently diverts effort from core feature work, and CI runs Linux only so every Windows-touching change adds manual verification + gate churn.
+
+**Decision**: During core development, **pm-dispatch officially targets Linux and WSL2 only** (WSL2 treated as Linux, first-class). Native Windows Git Bash is **not officially supported** — Windows users run under WSL2, which sidesteps the MSYS edge cases entirely. Platform-hardening work (native Windows, macOS validation) is **deferred to a dedicated phase after the core feature set stabilizes** (v0.5.0+). Already-merged portability code (#272/#273 and the earlier CC-104 dogfood fixes) is **kept** — sunk cost is low and it is green — but **no new native-Windows branches are added** until the platform phase. The contract is made explicit in `docs/platform-support.md`, `README.md`, and `docs/RELEASE_CHECKLIST.md` (sign-off = Linux/WSL2 only); `doctor.sh` and `release-verify.sh` print a clear "use WSL2" notice on native Windows instead of emitting confusing platform false-failures.
+
+**Alternatives considered**: (a) Add Windows to CI and support it now — rejected: a Windows CI runner is itself platform work, and supporting a platform mid-feature-development taxes every core change (the explicit thing we want to avoid). (b) Keep "experimental" best-effort native Windows — rejected: an intermittently-broken experience is worse than a clear "use WSL2"; "supported but untested" is the trap that produced #272/#273. (c) Drop the merged portability code — rejected: no benefit (it's green and low-cost), and re-adding it later costs more than leaving it.
+
+**Constraints introduced**: the platform contract is Linux/WSL2 until the deferral is lifted; release sign-off does not accept a native-Windows run; new features need not carry native-Windows branches/skip-guards (but must not regress Linux/WSL2 or macOS-as-Linux). Revisit trigger: core feature set declared stable (target v0.5.0+), at which point CC-370 reopens the platform-support phase and the parked CC-038 / CC-104* tickets are re-triaged.
+
 ## 2026-06-13: passive-context-v1-auto-pack-pointer-only-opt-in
 
 Relates: CC-365, CC-366, CC-356, CC-346, CC-338

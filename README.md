@@ -85,7 +85,9 @@ The install destination defaults to `~/.claude`; set `CLAUDE_HOME` to install (a
 
 Idempotent — re-run safely after adding files. Per-file symlinks so other tools' agents in `~/.claude/agents/` are not clobbered. If a destination already exists and is not our symlink, it is skipped with a CONFLICT warning.
 
-On platforms without symlink support (Windows Git Bash), the installer falls back to **copy mode**: managed directories are created as directory junctions and helper scripts are copied — re-run `install.sh` after `git pull` to refresh changed copies. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
+> **Supported platforms (core-development phase):** Linux and WSL2 only (WSL2 is treated as Linux). **Native Windows Git Bash is not officially supported right now** — platform-hardening is deferred until the core stabilizes (CC-370); run under **WSL2** instead. See [`docs/platform-support.md`](docs/platform-support.md).
+
+On platforms without symlink support (e.g. native Windows Git Bash, best-effort only), the installer falls back to **copy mode**: managed directories are created as directory junctions and helper scripts are copied — re-run `install.sh` after `git pull` to refresh changed copies. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform install model.
 
 `install.sh` also makes the `pmctl` CLI discoverable. On Linux, macOS, and WSL2
 it creates a symlink from `${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl` to
