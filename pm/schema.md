@@ -7,7 +7,7 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 每個受管 repo（active product repo）在 repo root 持有：
 
-- `BACKLOG.md` — 工作集單一真理（**僅非終態條目**；終態 closed/dropped 依 §4 移至 `BACKLOG-ARCHIVE.md`）
+- `BACKLOG.md` — 工作集單一真理（**僅非終態條目**；終態 done/closed/superseded/dropped 依 §4 移至 `BACKLOG-ARCHIVE.md`）
 - `DECISIONS.md` — 已沉澱的設計決策日誌（既有檔案沿用）
 - `BACKLOG-ARCHIVE.md` — 歸檔倉，僅在膨脹政策觸發時建立
 
@@ -32,18 +32,22 @@ Canonical path: `~/github/pm-dispatch/pm/schema.md`. `~/.claude/.pm/schema.md` i
 
 ### 2.3 Status enum
 
-八個可接受 status token：
+可接受 status token（分**非終態**＝留在工作集 / **終態**＝依 §4 歸檔 兩組；本節為終態集合的單一真理，archiver 與測試須對齊）：
 
+**非終態（留在工作集）**：
 - `🔵 active` — 仍在 backlog，包含尚未開工 / 進行中 / 阻塞中（細節寫在 body）
-- `✅ closed YYYY-MM-DD` — 已 ship；依 §4 移至 `BACKLOG-ARCHIVE.md`（working-set，不留 stub）
-- `🚫 dropped YYYY-MM-DD` — 不做了；依 §4 移至 `BACKLOG-ARCHIVE.md`（如有決策，被歸檔的 body 內留 `See: DECISIONS.md`）
-- `✅ done` — **soft-close**：已完成但不需要 PR 追蹤或具體日期的項目（例：文件新增、config 設定）。body 保持 active 格式（Problem/Why/Requirement），不需折疊為 stub；不需要 `See:` 引用。
 - `⏸ deferred` — **延後**：不是不做，而是等待外部條件（依賴項、時機）再推進。body 保持 active 格式；與 `🔵 active` 的差異是「現在刻意不排程」。
 - `🟡 deferred` — **明確延後（alternate）**：`⏸ deferred` 的同義視覺變體；語義相同，validator 兩者皆接受。
 - `🟢 someday` — **有朝一日**：概念有效但優先級極低、暫無預期排程；不等外部條件，只是「未來某天再做」。
-- `⚠️ partial YYYY-MM-DD` — **部分完成**：本條目主體已 ship，但仍有 sub-items 尚未完成（見 body 說明）。body 保持 active 格式；`YYYY-MM-DD` 為首批交付日期。
+- `⚠️ partial YYYY-MM-DD` — **部分完成**：本條目主體已 ship，但仍有 sub-items 尚未完成（見 body 說明）。留在工作集直到餘項收尾。`YYYY-MM-DD` 為首批交付日期。
 
-不再使用 `todo / doing / done / blocked` 等舊四態；`doing / blocked` 屬於 active 內的暫態，記在 body。
+**終態（依 §4 移至 `BACKLOG-ARCHIVE.md`：index row + body 一併移出，不留 stub）**：
+- `✅ done [YYYY-MM-DD]` — **已完成**。日期可選（trivial / 無 PR 的項目可省）。**CC-378（2026-06-14）起為終態並歸檔**——先前「`✅ done` soft-close 留在 active」規則已退役：實務上 `done` / `superseded` 才是真正在用的關閉態，而歸檔器只掃從不被使用的 `closed` / `dropped`，導致政策從不觸發、完成票堆積在工作集。
+- `✅ closed YYYY-MM-DD` — 已 ship 的 PR-backed 變體（日期必填）；與 `✅ done` 同為終態，二者擇一即可（`done` 為預設、較輕量）。
+- `🟢 superseded YYYY-MM-DD` — **被後繼票取代**（工作改在 successor 進行，本票不再各自推進）；被歸檔的 body 內留 `Superseded by [[CC-NNN]]` 指向 successor。注意 emoji 與 `🟢 someday` 同形但活性相反——終態票歸檔後即離開工作集，board 上殘留的 `🟢` 只應是 someday。
+- `🚫 dropped YYYY-MM-DD` — 不做了；如有決策，被歸檔的 body 內留 `See: DECISIONS.md`。
+
+不再使用 `todo / doing / blocked` 等舊狀態字；`doing / blocked` 屬於 active 內的暫態，記在 body。
 
 ### 2.4 索引 table
 
@@ -190,11 +194,11 @@ working-set 模型（§4）下，closed / dropped 條目會被移出 BACKLOG.md�
 
 ## 4. 檔案膨脹政策（working-set 模型）
 
-BACKLOG.md 是**工作集**，不是歷史帳本：只承載非終態條目（active / deferred / someday / ⚠️ partial / `✅ done` soft-close）。終態條目（`✅ closed YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`）整個移出至 `BACKLOG-ARCHIVE.md`。
+BACKLOG.md 是**工作集**，不是歷史帳本：只承載非終態條目（active / deferred / someday / ⚠️ partial）。終態條目（`✅ done [YYYY-MM-DD]` / `✅ closed YYYY-MM-DD` / `🟢 superseded YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`）整個移出至 `BACKLOG-ARCHIVE.md`。
 
 - **觸發**：行數 > 500 **或** 終態條目佔比 > 50%。working-set 模型下，定期執行 archive 後兩者都不應再被觸發；觸發代表久未歸檔。
 - **歸檔動作**（`scripts/archive-closed-backlog.sh`）：對每個終態條目，**index row 與 body section 同時移出** BACKLOG.md；body 整段 append 到 `BACKLOG-ARCHIVE.md`。**不留 `**See**:` stub** —— row 已移除，原位指標失去意義。
-- **終態判定以 index table 的 Status 欄為準**（§6.1 唯一真理）。`✅ done` soft-close（§2.3，無日期）不是終態，不歸檔。
+- **終態判定以 index table 的 Status 欄為準**（§6.1 唯一真理）。終態集合 = `✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`（CC-378 起 `done` 與 `superseded` 納入）。非終態（active / deferred / someday / `⚠️ partial`）不歸檔。
 - **查詢已關閉條目**：grep `BACKLOG-ARCHIVE.md` 的 body heading（含 id / title / status / date）；完整 index-row metadata（area / refs / priority 等）保留在 git history。
 - **向後相容**：既有 `**See**:` archive-backed stub（§2.6）仍為合法輸入；下次 archive run 會一併清掉（row 為終態 → 移除；該 stub 的 heading 已存在於 archive → body 不重複 append）。跨 repo 尚未遷移者不受影響——validator 對「條目缺席」與「留 stub」皆通過。
 - BACKLOG-ARCHIVE.md 與 DECISIONS.md 不歸檔（決策不過期）。
@@ -227,9 +231,9 @@ PM agent 讀 backlog 時：
 3. 在 body 區尾端追加三層段落。
 4. 兩處同一 commit / 同一 write 必須一起更新。
 
-狀態變更（active → closed/dropped）—— working-set 模型（§4）：
+狀態變更（active → 終態）—— working-set 模型（§4）：
 
-1. 更新 index Status 欄為 `✅ closed YYYY-MM-DD` 或 `🚫 dropped YYYY-MM-DD`。
+1. 更新 index Status 欄為終態：`✅ done [YYYY-MM-DD]` / `✅ closed YYYY-MM-DD` / `🟢 superseded YYYY-MM-DD` / `🚫 dropped YYYY-MM-DD`。
 2. 執行 `scripts/archive-closed-backlog.sh`：該條目的 **index row + body 一併移出** BACKLOG.md、body append 至 BACKLOG-ARCHIVE.md，**不留 stub**。若有對應 DECISIONS entry，把 `**See**: DECISIONS.md#...` 行留在被歸檔的 body 內。
 3. 結果：BACKLOG.md 不再含該條目。
 4. 過渡相容：若暫不歸檔，可依 §2.6 在原位留一個 stub 讓 validator 通過（下次 archive run 會清掉）；但預設應 close + archive 同步完成於同一變更。

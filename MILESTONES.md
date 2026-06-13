@@ -9,6 +9,55 @@
 
 ---
 
+## v0.6.0 — executor abstraction（runtime 解耦合；規劃中 2026-06-14）
+
+**主題**：把 dispatch / guard / 安裝三條路徑上「綁定特定 executor」的最後硬編碼收乾淨，讓 pm-dispatch 真正 **executor-agnostic**。一句話驗收標準：**「新增第三個 executor = 放 `adapters/<name>/` + 一份 manifest，核心零改動」**——router 自動路由、guard 自動套對、install 自動接線。並用 **opencode + Google Antigravity（`agy`）兩個真 adapter** 落地當抽象的驗收（N≥2 才算抽象成立，不是僥倖）。Umbrella epic：[[CC-333]]（runtime 解耦合）。
+
+> **設計依據（本 session 2026-06-13/14 分析）**：dispatch 接縫（`pmctl dispatch run --adapter <name>`）其實已乾淨——上層只認 adapter 名字，輸出契約是 `.agent-trace/latest.last`。殘留耦合集中在一個**隱藏屬性**：adapter 的 **runner-kind**（`cli-subprocess` thin-dispatch/hook-gated vs `host-native` self-exec/harness-gated），目前被隱式寫死三遍（`executor-router.sh` case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）。v0.6.0 = 把 runner-kind 宣告一次在 `adapter.yaml`，router / guard / install 全部由它衍生。
+
+> **Scope 取捨**：依本 repo「thin vertical slice、≤1 PR/feature」慣例分階段，每階段可獨立 ship。Phase 2/3 動 allowlist 與 guard 安全邊界，**硬 gate**（security-reviewer + risk-reviewer，不可 PM 自我 override，見 [[gate-clear-all-on-block]]）。**保守退路**：若 Phase 1+2（manifest + router）落地後評估 guard 收口風險過高，Phase 3 可單獨延 v0.7.0，但 manifest 欄位（CC-372）會懸空一版——故預設走完整版。
+
+### Phase 1 — manifest runner-kind 地基（P2；純加法，先行）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-372 | `adapter.yaml` 加 `runner_kind` + 衍生旗標（`dispatch_route`/`write_guard_mode`/`needs_bash_guard`）；codex/claude 回填行為不變 | 🔵 |
+
+### Phase 2 — router 資料驅動（P2；security/risk gate）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-373 | `executor-router.sh` 拔除 `codex\|claude` enum，改讀 manifest；allowlist = 有合法 manifest 的 adapter；泛化/移除 `dispatch_via_codex`。**吸收 CC-360** | 🔵 |
+
+### Phase 3 — guard wrapper 收口 + 安裝接線（P2-P3；security/risk gate）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-374 | hook-guard wrapper 收成 role-參數化、委派 `pmctl guard check`；行為由 manifest 衍生。**吸收 CC-066/CC-062，收尾 CC-307**。紅線：bash-guard 由 `needs_bash_guard` 決定、live-hook bit 由 manifest 明宣告 | 🔵 |
+| CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | 🔵 |
+
+### Phase 4 — 真 adapter 驗收（P2；抽象的證明）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟） | 🔵 |
+| CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini** | 🔵 |
+
+### Phase 5 — deprecation 清掃（P2）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-335 | deprecated surface 移除 sweep；其中 `--profile` alias 與 `codex-dispatch.sh` shim 為 runtime-coupling cruft，與本 milestone 同期最自然 | 🔵 |
+
+### 延後至 v0.7.0+（明確排除於 v0.6.0）
+
+- **CC-216 MCP server**——「通用橋」邏輯上是 executor 抽象之後的下一層，且為重型 net-new surface（Node/Python server + `pmctl --json`），不符 thin-slice。**2026-06-13 user 拍板 defer。** 預定 v0.7.0 主題。
+- **CC-333 七層耦合中的 1/4/7**（memory 路徑 / 安裝路徑 / reviewer memory 讀取）——本版聚焦 dispatch+guard+install 的 executor 抽象；memory/install-target 軸（含 [[CC-104m]] 多目標投影）留待後續。
+- **CC-358 / CC-359**（runner telemetry / worktree batch dispatch）——建在抽象之上的能力層，抽象穩定後再做。
+- **完整 knowledge index（CC-340）**——延續 v0.5.0 的 v0.6.0+ 排除，與 executor 抽象無關，獨立排程。
+
+---
+
 ## v0.5.0 — local context substrate（本地 context 地基；規劃中）
 
 **主題**：把 v0.4.0 的 state-first substrate 升級為 **dispatch 前可用的 context**——以「**雙索引 + 單一 context-pack 介面**」的形狀，讓 PM 在派工前同時拿到「**為什麼**」（第二大腦：memory / backlog / decisions）、「**在哪改、可重用什麼**」（repo index：files / symbols / helpers / tests）、與「**最近發生什麼**」（state/event 作 ranking signal）。這是 v0.4.0「無使用者可見賣點」之後的第一個能力層。
