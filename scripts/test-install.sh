@@ -3007,10 +3007,132 @@ test_uninstall_claude_home_override() {
   pass "$name"
 }
 
+test_install_hooks_spaced_repo_root() {
+  # Regression: a repo checked out under a path containing a space (e.g. a Windows
+  # home like C:/Users/First Last/) must still produce RUNNABLE hooks. Claude Code
+  # runs each hook `command` through the shell; an unquoted spaced path is word-
+  # split and fails ("No such file or directory"). install-hooks.sh shell-escapes
+  # the command paths so they survive; doctor must recognise the escaped form as
+  # the current checkout (not flag a spurious "different checkout").
+  local name="install-hooks-spaced-repo-root"
+  should_run "$name" || return 0
+  local home override spaced
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  spaced="$tmp_root/repo with space"
+  mkdir -p "$home"
+  # Symlink the checkout under a spaced path and drive install/doctor/uninstall
+  # THROUGH it, so every script self-derives the same spaced repo_root — exactly
+  # how a real checkout under "C:/Users/First Last/" behaves. (Do not pass
+  # PM_DISPATCH_REPO: install-hooks honors it but uninstall-hooks does not, so an
+  # override here would make the two disagree and mask a removal failure.)
+  if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
+    printf '  (skip) %s — no directory symlink support here\n' "$name"
+    return 0
+  fi
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$spaced/install.sh" --profile full >/dev/null 2>&1
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    fail "$name" "install.sh exited $rc with a spaced repo root"
+    return
+  fi
+
+  # Every managed hook command must be runnable through `bash -c` (the way Claude
+  # Code invokes it) without word-splitting the spaced path.
+  local cmd broken=0
+  while IFS= read -r cmd; do
+    [[ -n "$cmd" ]] || continue
+    local out
+    # The hook itself may exit non-zero (e.g. a write-guard deny); we only care
+    # that the spaced command path was NOT word-split into a missing file.
+    out="$(bash -c "$cmd" </dev/null 2>&1 || true)"
+    if printf '%s' "$out" | grep -q "No such file or directory"; then
+      broken=$((broken + 1))
+      fail "$name" "hook command word-split on space: [$cmd]"
+      return
+    fi
+  done < <(jq -r '
+      [ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command,
+        .statusLine.command ]
+      | map(select(. != null)) | .[]' "$override/settings.json")
+
+  if [[ "$broken" -ne 0 ]]; then
+    fail "$name" "$broken managed hook(s) unrunnable under a spaced repo root"
+    return
+  fi
+
+  # doctor must not report the correctly-wired escaped hooks as a foreign checkout.
+  local doc
+  doc="$(CLAUDE_CONFIG_DIR="$override" \
+        bash "$spaced/scripts/doctor.sh" --repo "$spaced" 2>&1 || true)"
+  if printf '%s' "$doc" | grep -qi "different checkout"; then
+    fail "$name" "doctor flagged escaped spaced-repo hooks as a different checkout"
+    return
+  fi
+  if ! printf '%s' "$doc" | grep -qE "hook\(s\) present|hooks present"; then
+    fail "$name" "doctor did not recognise the managed hooks under a spaced repo root"
+    return
+  fi
+
+  # Count managed hooks structurally (parent dir "scripts" + "hook-" basename) so
+  # the assertion is immune to shell-escape backslashes in the command string —
+  # a raw grep for the spaced path text would miss escaped leftovers.
+  local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
+    | map(select(. != null))
+    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^hook-"))))
+    | length'
+  local managed_before
+  managed_before="$(jq "$managed_q" "$override/settings.json")"
+  if [[ "${managed_before:-0}" -lt 1 ]]; then
+    fail "$name" "no managed hooks detected pre-uninstall (test fixture broken)"
+    return
+  fi
+
+  # Uninstall (driven through the same spaced checkout) must remove every escaped
+  # managed command, drop the escaped statusLine, and leave UNRELATED hooks alone.
+  # Plant a foreign hook first so its survival proves the removal is scoped.
+  local sentinel="/usr/bin/true"
+  local planted
+  planted="$(jq --arg s "$sentinel" '
+      .hooks.PreToolUse += [{"matcher":"Edit|Write","hooks":[{"type":"command","command":$s}]}]
+    ' "$override/settings.json")"
+  printf '%s\n' "$planted" > "$override/settings.json"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" \
+    bash "$spaced/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+  local urc=$?
+  set -e
+  if [[ $urc -ne 0 ]]; then
+    fail "$name" "uninstall-hooks.sh exited $urc against a spaced-repo install"
+    return
+  fi
+  # No managed (escaped) hook command or statusLine may survive.
+  local managed_after
+  managed_after="$(jq "$managed_q" "$override/settings.json")"
+  if [[ "${managed_after:-1}" -ne 0 ]]; then
+    fail "$name" "uninstall left $managed_after escaped managed hook(s) behind (in_repo did not match escaped prefix)"
+    return
+  fi
+  # The unrelated hook must be preserved.
+  if ! grep -q "$sentinel" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "uninstall removed an unrelated (foreign) hook — removal not scoped to managed paths"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
 test_install_claude_home_override
 test_uninstall_claude_home_override
+test_install_hooks_spaced_repo_root
 
 th_summary

@@ -72,11 +72,23 @@ fi
 # for other tools after uninstall.
 _managed_json="$({ dispatch_allowlist_entries; printf 'Write(%s/**/.gate-results/**)\nBash(pmctl guard check:*)\nBash(mkdir -p:*)\n' "$_gate_ws"; } | jq -Rn '[inputs]')"
 
+# install-hooks.sh shell-escapes managed command paths (printf %q) so a repo
+# checked out under a path with a space still produces a runnable hook. Match
+# BOTH forms here: $repo_root (legacy unescaped installs) and its escaped prefix
+# (current installs). printf %q escapes each char identically regardless of
+# position, so the escaped command's prefix equals the escaped repo_root.
+repo_root_q="$(printf '%q' "$repo_root")"
+
 jq \
   --arg repo_root "$repo_root" \
+  --arg repo_root_q "$repo_root_q" \
   --arg chain_target "$_chain_target" \
   --argjson managed_allow "$_managed_json" \
   '
+  # An entry belongs to this install if its command starts with the repo root in
+  # either raw or shell-escaped form.
+  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/"));
+
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
   reduce $event_types[] as $et (
@@ -85,7 +97,7 @@ jq \
       .hooks[$et] |= map(
         if (.hooks | type) == "array" then
           .hooks |= map(select(
-            ((.command // "") | startswith($repo_root + "/")) | not
+            (.command | in_repo) | not
           ))
         else . end
       ) |
@@ -94,7 +106,7 @@ jq \
     else . end
   ) |
   # Remove statusLine if it points into this repo.
-  (if ((.statusLine.command // "") | startswith($repo_root + "/")) then
+  (if (.statusLine.command | in_repo) then
     if $chain_target != "" then
       .statusLine = {"type": "command", "command": $chain_target}
     else
