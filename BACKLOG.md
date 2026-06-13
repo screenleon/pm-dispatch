@@ -99,6 +99,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-369 | 🟡 deferred | **[Windows state store 真實 ACL via icacls]** CC-368 #2 在 NTFS 上以 SKIP-with-reason 處理 0700 斷言（chmod 是 no-op）；state store 目前僅靠 `%USERPROFILE%` 既有 ACL 保護。真正等價 0700 需在 Windows 用 `icacls` 限定目前使用者繼承移除 + 授權，要寫 Windows 專屬分支與測試。邊際安全收益相對 profile ACL 不高，故 deferred；gated behind [[CC-370]] 平台階段。 | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
+| CC-371 | 🟡 deferred | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-hooks.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
 
 ---
 
@@ -125,6 +126,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 向下相容：v1.1/v1.2 file 中缺此兩欄的列只 emit 警告（不阻斷 gate）。
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
+
+## CC-371 — uninstall: prune empty `~/.claude/adapters/` dir
+
+**Problem**: `uninstall.sh` (via `uninstall-hooks.sh`) prunes the managed parent dirs `agents/`, `commands/`, `skills/`, `scripts/`, and `share/` once empty, but the prune list omits `adapters/`. After the `adapters/claude` + `adapters/codex` symlinks are removed, an empty `~/.claude/adapters/` directory is left behind.
+**Why**: Cosmetic only — the directory is empty, there are no dangling symlinks, and nothing functional remains. The `docs/RELEASE_CHECKLIST.md` §2a "no leftover dir" intent (which it states explicitly for `share/`) is not fully met.
+**Requirement**: Add `adapters` to the empty-dir prune list in the uninstall path so a clean uninstall leaves no managed parent dirs; extend the uninstall regression coverage with a leftover-dir assertion (no managed parent dir survives a full uninstall).
+**Source**: surfaced during v0.5.0 release §2a manual verification (2026-06-13); `~/.claude/adapters/` observed empty after `uninstall.sh`, hand-cleaned to restore the test environment.
 
 ## CC-370 — native Windows support deferred to post-core platform phase
 
