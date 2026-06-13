@@ -1,10 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-06-13 -->
+<!-- pm-dispatch: backlog-archive 2026-06-14 -->
 # pm-dispatch backlog — archive
 
-Terminal (`✅ closed` / `🚫 dropped`) tickets archived from BACKLOG.md — both the
-index row and the body section (pm/schema.md §4 working-set model; CC-049, CC-279/280).
+Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
+BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
+working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-13
+Last archived: 2026-06-14
 
 ---
 
@@ -2928,4 +2929,424 @@ file_chunks(id, file_id, heading, line_start, line_end, text, sha1)
 **See**: pr:#270
 
 Phase 3 now runs four additional cases: `external-repo-index` (index a temp repo with dummy files), `external-repo-db-location` (assert `.pm-dispatch/ctx/context.db` inside target repo), `external-repo-query` (query returns hits), `context-no-db-graceful` (reuse-scan on repo with no index exits 0 with empty YAML). Only the context **DB location** ignores `PM_DISPATCH_STATE_ROOT` — it is always repo-local under `$REPO_ROOT/.pm-dispatch/`. Phase 3 itself redirects context usage telemetry to a throwaway `PM_DISPATCH_STATE_ROOT` (torn down before Phase 4) so the smoke never writes `context.*` events into the operator's real trace store. Operator note: indexing the real checkout leaves a repo-local derived cache at `$REPO_ROOT/.pm-dispatch/ctx/` (gitignored); `rm -rf .pm-dispatch` if a fully clean tree is required.
+
+## CC-378 — hygiene: backlog close-state taxonomy 正規化 + archive sweep ✅ done 2026-06-14
+
+**Problem**: 歸檔器 `archive-closed-backlog.sh` 只認 `✅ closed` / `🚫 dropped` 為 terminal，但實務上使用的關閉態是 `✅ done`（14）與 `🟢 superseded`（6），closed/dropped 各 0。結果 `--dry-run` 長期回 0、歸檔政策從不觸發，20+ 完成票堆在工作集。並有兩組 emoji 碰撞：`✅ closed` vs `✅ done`（同形、都「完成」），`🟢 someday`（active）vs `🟢 superseded`（terminal）。
+
+**Decision**: 終態 = `done` / `closed` / `superseded` / `dropped`；非終態 = active / deferred / someday / `⚠️ partial`。`✅ done` 升為終態+可歸檔（退役「soft-close 留在 active」規則）。emoji 碰撞由「終態票歸檔後即離開 board」自然化解，不硬改 emoji。
+
+**Change**: `archive-closed-backlog.sh` terminal predicate 改為精確 token/date 形式（含 `done`/`superseded`；前綴比對會誤收 `✅ done-ish` 等近似字串）+ header 指向 §2.3 為單一真理；`test-archive-closed-backlog.sh` 把 `case_soft_close_done_kept` 翻轉為 `case_done_and_superseded_archived`，並補 malformed near-miss 負向 case（驗 `🟢 someday`／近似字串不被掃，14/14 綠）；`pm/schema.md` §1/§2.3/§4/§5；BACKLOG legend + BACKLOG-ARCHIVE 前言重分組。跑一次 sweep：14 done + 6 superseded（含本票）移入 `BACKLOG-ARCHIVE.md`。
+
+**See**: DECISIONS.md 2026-06-14 backlog-close-state-taxonomy-normalization。
+
+---
+
+## CC-104o — Windows Store python3 stub (superseded by CC-104t)
+
+**See**: CC-104t
+
+## CC-062 — codex-bash-guard policy test matrix 🟢 superseded 2026-06-14
+
+**Superseded by [[CC-374]]**（v0.6.0 hook-guard wrapper 收口）：allow/deny JSON fixtures 是 guard 收口的驗證底座（policy 從「聰明 shell parser」變「可驗證 matrix」），併入 CC-374；原始範圍保留為 CC-374 sub-scope。
+
+**Problem**: `hook-codex-bash-guard.sh` 的允許/拒絕邏輯非常複雜（newline 檢查、quote 檢查、shell metacharacters、background mode、git form allowlist、read path allowlist）。目前有 test-hooks.sh 的整合測試，但沒有結構化的 per-rule fixtures；policy 改動的影響面不透明。
+**Why**: shell-based policy parser 有兩種失效模式：過度阻擋合法工作流，以及漏過某些 bypass。只有可讀的 allow/deny test matrix 能讓安全 policy 從「很聰明」變「可驗證」。
+**Requirement**: 建立 `tests/policy/codex-bash-guard/` 目錄，以 JSON fixtures（每個 fixture 含 `input`、`expected: allow|deny`、`reason`）描述每條規則的 allow 和 deny case；`scripts/test-codex-bash-guard.sh` 讀 fixtures 執行；CI 加入此 job。
+
+## CC-066 — [P2] Declarative policy.yml for hook allowlist 🟢 superseded 2026-06-14
+
+**Superseded by [[CC-374]]**（v0.6.0 hook-guard wrapper 收口）：把 hook allowlist 從 shell logic 抽成宣告式 policy 是 guard 收口的一部分，併入 CC-374；原始範圍保留為 CC-374 sub-scope。
+
+**Problem**: `hook-codex-bash-guard.sh` 的 git allowlist、read path allowlist、shell metacharacter blocklist 等 policy 直接寫在 shell script 邏輯中；per-repo override 不可能，policy 審計需要讀 shell code。
+**Why**: policy-as-code 優於 policy-in-code：可 diff、可 review、可 override、可 lint。CC-204（hook framework reuse）完成後這條的實作成本大幅下降。
+**Requirement**: `config/policy.yml`（repo 級預設）+ `~/.pm-dispatch/policy.yml`（user override）定義 git allowlist / read roots / metachar blocklist；hook 腳本 load + merge policy；CC-062 test matrix 讀 policy fixtures。依賴 CC-062、CC-204。
+
+## CC-215 — pmctl — core CLI entrypoint ✅ 2026-06-09
+
+**See**: pr:#252 (final slice); pr:#171, pr:#242 (prior slices)
+
+**Status (2026-06-09)**: All planned pmctl state-ops shipped. **Shipped (PR #171)**: `adapter generate` + `dispatch run`. **Shipped (PR #242)**: `task list/show/create/update` + `decision add`. **Shipped (PR #252)**: `task claim/dispatch/status/review` + `safe bash` + `task.claimed/task.dispatched/task.reviewed` event kinds. `backlog view/sync` via CC-287, `guard check` via CC-288/CC-291, `trace` via CC-315 (stale references in body below).
+
+**Milestone (2026-06-08)**: the genuinely-remaining pmctl state-ops — `task claim/dispatch/status/review` + `safe-bash` — are targeted for **v0.5.0 Phase 2** so the `⚠️ partial` does not float indefinitely. `pmctl validate` is split out as its own active ticket (CC-341).
+
+**Problem**: pm-dispatch has no language-agnostic runtime binary. All orchestration logic is
+reached through Claude-specific hooks and commands, preventing non-Claude CLIs from accessing
+the same PM capabilities without duplicating logic.
+
+**Why**: `pmctl` as a standalone binary makes pm-dispatch a proper tool layer: Claude hooks,
+Codex wrappers, and MCP server all become thin callers into one well-defined CLI interface.
+Guard logic and dispatch state move from Claude-only paths into `pmctl` so any CLI without hook
+support can call `pmctl guard check` or `pmctl safe-bash`.
+
+**Requirement** (full surface — all subcommands now shipped across PRs #171/#242/#252):
+- Implement `cli/pmctl` with subcommand interface:
+  - ✅ `pmctl task list/show/create/update` (PR #242)
+  - ✅ `pmctl decision add` (PR #242)
+  - ✅ `pmctl task claim|dispatch|status|review` (PR #252)
+  - ✅ `pmctl validate brief` (PR #252, see CC-341)
+  - ✅ `pmctl safe bash` (PR #252)
+  - ✅ `pmctl backlog sync` (via CC-287)
+  - ✅ `pmctl trace tail` (via CC-315)
+  - ✅ `pmctl guard check --event <pre-write|pre-bash|post-task> --file/--command <val>` (via CC-288/CC-291)
+  - ✅ `pmctl adapter generate <claude|codex|antigravity|opencode>` (PR #171)
+- Claude adapter: `/pm task-123` → `pmctl task dispatch task-123 --agent claude`
+- Guard logic migrates from Claude-only hooks into `pmctl` so hook is just a thin caller.
+- `pmctl adapter generate` produces per-CLI config from core agent definitions.
+
+**Depends on**: CC-211 (core layer extracted first).
+
+**Complements**: CC-211 (architecture), CC-216 (MCP server wraps pmctl).
+
+**Priority**: P1 within CC-211 roadmap. Evaluate at v0.3.0.
+
+## CC-228 — BACKLOG validator-debt cleanup ✅ 2026-06-08
+
+**See**: Superseded by CC-277 (pr:#183). `pm/scripts/validate.sh` now exits 0 on main with no E-codes — verified 2026-06-08. CC-228 described a real debt that CC-277 fully resolved in v0.3.0 BACKLOG Hygiene Track.
+
+**Original problem**: `pm/scripts/validate.sh` exits 1 on `main` with ~31 pre-existing E-codes, none introduced by recent PRs. An always-red validator provides no signal — a real new error would be invisible.
+
+**Why**: The debt accumulated as the schema tightened (CC-030 / CC-052 / CC-067) faster than existing rows were migrated.
+
+**Requirement** (resolve per error class, dry-run `validate.sh` after each, target exit 0):
+1. `E-INDEX-MISMATCH` — CC-104d/e/f/g/j/k/m/r/s have index rows but no body section. Add stub sections or drop the index rows (they were Windows-dogfood sub-items, mostly folded into shipped PRs).
+2. `E-AREA-ENUM` — CC-052/060/104v/203/204 etc. use slash-combined or non-enum areas (`arch`, `config`, `schema`, `ops`, `hook`). Widen the `area` enum (adding `arch`/`ops` is additive and fixes the most rows) or rewrite the rows.
+3. `E-REFS-PREFIX` — CC-059/060/061/064/066 carry bare `CC-NNN` refs; the Refs column requires a prefix. Move ticket cross-links into the section body.
+
+**Priority**: P2 — not blocking, but should land before v0.3.0 M1 tightens the schema further.
+
+**Cross-link**: surfaced during CC-222 close-out 2026-05-22.
+
+## CC-272 — docs: executor contract cleanup bundle ✅ 2026-06-08
+
+**Result**: `docs/dispatch-brief.md` 新增 §Commit delegation rule（含反例 + 正例）；§Style notes 補 commit 禁止條目。`docs/executor-contract.md` 新增 §Async dispatch behavior（sync vs async 判斷規則、per-scenario table 拆分 primary Bash 路徑 vs Agent fallback、diagnosis 指引）。新增 `pmctl gate run` 子命令（`cli/pmctl` + `scripts/lib/pmctl-gate.sh`）使 gate 走統一 pmctl 介面而非直呼腳本；`commands/pr-gate.md` Step 1/2 同步更新。消除 false partial 噪音來源，確立 pmctl 為 gate 唯一 public 介面。
+
+**See**: pr:#245
+
+兩個 executor 文件噪音問題合併成一個 docs PR：
+
+### Part A — brief template: omit commit block; document main-thread commit delegation
+
+**Problem**: Every brief ends with a `git add + git commit` block that `hook-codex-bash-guard` blocks. The executor marks the commit step as failed and reports `status: partial` in the output summary — even when all code changes are correct. The main thread must manually stage and commit after every dispatch. The brief template implicitly encourages adding a commit block, creating a permanent noise signal.
+
+**Options**:
+- **A (preferred)**: Remove the commit block from the brief template and document in `docs/dispatch-brief.md` that commit is always delegated to the main thread. Update `self_verify` template to stop including `git commit` as a success criterion.
+- **B**: Add `git add` + `git commit` (without destructive flags) to `hook-codex-bash-guard` allowlist. Requires security review of hook policy (`[[CC-066]]`).
+- **C**: `scripts/codex-dispatch.sh` reads a `.commit-msg` file written by the executor and performs the commit on its behalf; executor stays sandboxed.
+
+**Impact**: Every dispatch shows false `status: partial`; creates a recurring manual step the main thread must remember.
+
+**See**: issue:#173 (Pattern 3)
+
+### Part B — run_in_background default async escalation (absorbed from CC-268)
+
+**Problem**: Agent tool called without `run_in_background:true` may silently promote the subagent to async mode and return `Async agent launched successfully` instead of blocking. Observed with `codex-executor` (~3m45s async without the flag). Docs say "Claude decides" but give no criteria; callers cannot reliably predict whether the dispatch blocks the main thread.
+
+**Proposed fix**: Document in `docs/executor-contract.md` which subagent types always run async, and whether/when the default blocks.
+
+**See**: issue:#166
+
+**Cross-link**: `[[CC-066]]` (declarative policy.yml for hook allowlist — relevant if Option B chosen for Part A)
+
+**Priority**: P2 — Part A affects every dispatch; Option A is pure documentation with immediate noise reduction.
+
+---
+
+## CC-307 — [arch] pm role cross-runtime — guard 已 runtime-agnostic，但文件與 alias 仍暗示 pm = claude-only 🟢 superseded 2026-06-14
+
+**Superseded by [[CC-374]]**（v0.6.0 hook-guard wrapper 收口）：移除「pm = claude-only」殘留（`--profile pm` 的 runtime=claude hardcode、`pmctl-guard.sh` 的「currently claude-only」說明、補 codex-as-pm dispatch smoke test）併入 CC-374；原始範圍保留為 CC-374 sub-scope。
+
+**Problem**: CC-291 的兩軸設計（role ⊥ runtime）要求 pm guard policy 不能綁 runtime。`hook-pm-write-guard.sh` 已 runtime-agnostic ✓，`--role pm --runtime codex` CLI 路徑已可呼叫 ✓，但以下三點仍讓人誤以為 pm=claude-only 是設計決定：
+
+1. **deprecated `--profile pm` alias** hardcode `runtime="claude"`（`scripts/lib/pmctl-guard.sh`）
+2. **說明文字** 說「currently claude-only; no codex-as-pm」，未分清「guard 設計」與「現有部署」
+3. **無 codex-as-pm end-to-end test** — 沒有驗證 `pmctl dispatch run --adapter codex` 配合 pm-role brief 可成功 dispatch
+
+**Why it matters**: 若下一個 PM runtime（如 Gemini CLI / OpenCode）出現，工程師會誤以為 pm 不能跨 runtime 而重複發明輪子，而非直接走 `--role pm --runtime <new>` 路徑。兩軸設計的可擴展性在這裡被文件化的 false constraint 遮蔽。
+
+**Fix scope**:
+1. **alias** — `--profile` alias 已由 CC-296 移除，此項目已完成。
+2. **說明文字** — 把「pm only ever runs on claude; no codex-as-pm」改為「pm guard policy is runtime-agnostic; claude is the currently deployed pm runtime, but other runtimes are supported by design」（`scripts/lib/pmctl-guard.sh`）
+3. **integration test** — `scripts/test-pmctl-guard.sh` 加一個 smoke test: `pmctl guard check --role pm --runtime codex --event pre-write --file /tmp/brief-task.md` 確認 guard 路徑通（已有 claude 版，補 codex 版對稱）
+
+**Acceptance**: 文件改完後，讀程式碼的工程師應能明確看出「pm role 是 runtime-agnostic 的設計，目前只有 claude 部署，但 codex-as-pm 不需改 guard 就能支援」。
+
+**Cross-link**: `[[CC-291]]`（two-axis design），`[[CC-296]]`（alias sunset），`[[CC-215]]`（pmctl dispatch run）。
+
+---
+
+## CC-343 — skill: /discover — milestone seeder + opportunity scanner ✅ 2026-06-09
+
+**See**: pr:#251
+
+**Renumbered**: 原 CC-330；與 BACKLOG-ARCHIVE 已關閉的 state_store_init mkdir-failure 票（✅ 2026-06-05）撞號，未開工的 /discover 改號至 CC-343。撞號由 ticket-id lint 偵測，見 DECISIONS 2026-06-08。
+
+**Problem**: project-pm 是**收斂模式**（reactive：收到任務 → 分解 → 派工），沒有內建的**發散模式**（proactive：讀 backlog + 近況 → 生成機會清單）。每次 milestone 規劃都靠對話即興，缺少系統性的「現在最值得做什麼」掃描。
+
+**Why**: Brainstorm / ideation 的正確形狀是利用 PM 的既有 context（memory、DECISIONS、MILESTONES），而非隔離的新 agent。隔離反而要重新推導所有設計決策。正確形狀是：一個 **skill** 切換 PM 到發散模式，結構化地生成機會清單。
+
+**Requirement**:
+- `commands/discover.md` — `/discover [theme]` skill 定義：
+  - 以指定 theme（可選）或預設「當前 repo 最高槓桿改善點」為提示
+  - 讀取：backlog（`🟢 someday` + `⏸ deferred` 項目）+ DECISIONS + MILESTONES（next milestone 範圍）+ `git log --oneline -30`
+  - 輸出：5–10 個機會項目，每項含 `{title, problem_in_one_line, why_now, estimated_size: XS/S/M/L}`，按槓桿高低排序
+  - 不產出 dispatch brief，不承諾任何實作——純探索輸出
+- 典型用法：`/discover v0.5.0 themes`、`/discover dispatch pipeline improvements`、`/discover`（全域）
+- 結果由使用者決定是否轉為正式 ticket 或 milestone
+
+**Non-goals**:
+- 不取代 `/pm`（project-pm 收斂模式仍是主路徑）
+- 不自動建立 ticket（由使用者判斷後手動開）
+- 不是 standalone agent（PM 已有所需 context，不需要隔離）
+
+**Relationship**:
+- 使用 PM 發散模式消費 backlog + MILESTONES
+- 未來可以接 CC-338 context index 強化 codebase 相關機會的偵測精度
+
+**Milestone**: `🟢 someday` — 實作成本 XS（只需一個 commands/discover.md），可提前於其他 someday 項目。
+
+**Cross-link**: [[CC-220]], [[CC-239]], [[CC-237]], [[CC-338]].
+
+---
+
+## CC-350 — bug: pmctl gate run SIGPIPE×pipefail — stdout pipe → 0-byte result + false-success exit 0 ✅ 2026-06-10
+
+**Problem**: `scripts/pr-gate.sh` 在 dispatch reviewer 之前會 `printf` 多行 banner 到 stdout。當下游 consumer（`head -N`、`grep -q` 等早期關閉的 pipe）讀完後關閉 pipe，下一個 `printf` 寫入已關閉的 pipe → SIGPIPE；腳本 `set -o pipefail` 讓主流程在 dispatch 之前中斷；結果檔停在 `touch` 建立的 0 bytes；shell 對整條 pipeline 回報的 exit code 是最後一段（`head`）的 exit 0 → 整體誤報成功。false-success 比 false-failure 危險：自動化 caller（含 AI agent、CI）把空結果當成 gate 通過。
+
+**Evidence**: issue:#255 記錄了 7 次相同 branch gate run：接 `| head` 全部 0-byte + exit 0；無 pipe 全部正常產出。
+
+**Fix options（擇一或併用）**:
+1. **結果完整性把關**：main 結尾在回報前驗證 OUTPUT_FILE 非空且含 `^Final: (GO|NO-GO)$`；不滿足則 exit 非 0。確保 0-byte 永遠不會誤報成功。
+2. **stdout 容錯**：banner/progress 的 `printf` 對 SIGPIPE 容錯（`trap '' PIPE` 或 `|| true`），讓下游關 pipe 不中斷 gate 主流程。
+3. **文件警告**：README / `pmctl gate run -h` 明示不得 pipe gate stdout；截斷輸出請用 `> file` 或讀 `.gate-results/`。
+
+**Priority**: P2 — false-success 對自動化 caller 是靜默安全漏洞。
+
+**Resolution**: 採 option 2（stdout 容錯）為主。第一次嘗試（`trap '' PIPE`）在 `set -e` 下不足——EPIPE 讓 `printf` 回傳非零，`set -e` 仍在 dispatch 前中止。完整修法兩處：(1) `say()` helper 包裝所有進度輸出（`printf … 2>/dev/null || true`），訊號 + set-e 雙重容錯；(2) sequential 與 synthesis 的 foreground `eval` 改 `>&2`，避免 dispatch 子程序繼承已關閉的 consumer pipe 而提前死亡。既有 per-route result-integrity 檢查維持為 exit code 權威。回歸測試 `test_piped_stdout_does_not_abort_gate`（接 `head -n1` 斷言結果檔完整）。
+
+**See**: pr:#258, issue:#255
+
+---
+
+## CC-351 — codex-executor: brief schema validation must fail-fast before any file reads ✅ 2026-06-10
+
+**Problem**: codex-executor 收到非 YAML brief（缺 schema_version/goal/files/self_verify 欄位）時行為不一致——同一 session、相同格式的兩個 brief，一個立即 REJECT，另一個進入無效 loop：讀 brief、嘗試 Bash edit（被 hook 擋）、循環找 Codex dispatch 路徑，耗費大量 token 後被外部 TaskStop 終止。行為分歧根因不明（可能是 session-state 差異或 prompt 快取邊界）。
+
+**Requirement**: `agents/codex-executor.md` 的執行協議應把 brief schema validation 移到 **所有 file reads 之前的第一步**：若 brief 缺少必填欄位或無法解析為 YAML frontmatter，立即 REJECT 並輸出明確錯誤訊息，無論 dispatch 上下文或 session 狀態為何。
+
+**Acceptance**:
+1. 以純 Markdown prose brief（無 `schema_version`）dispatch codex-executor → 立即 REJECT，不讀任何 target file
+2. REJECT 訊息含缺少的欄位名稱
+3. 行為在同 session 多次 dispatch 下一致（不因快取狀態改變）
+
+**Priority**: P2 — 每次格式錯誤 brief 都可能耗費數千 token；行為不可預測加劇除錯難度。
+
+**Scope note (planning 2026-06-10)**: fix 對稱套用到**兩個 Agent fallback executor**。codex-executor 的 §0 gate 走 `pmctl dispatch run`（codex-bash-guard 擋 `bash` verb，無法直接呼叫 brief-validate），靠 `pmctl-dispatch.sh` 第 3 步 brief-validate 在 spawn codex 前 REJECT；claude-executor 的 §0 gate **直接** `bash scripts/brief-validate.sh <brief>`（claude 無 verb guard），exit 1 即 REJECT 且不讀 target file。兩者收斂到同一支 `scripts/brief-validate.sh`、同一 REJECT 訊息格式。兩檔都補回漏列的 `schema_version`。正規路徑（兩個 adapter 皆走 pmctl）本已有確定性 gate，僅 Agent fallback 需 prompt 硬化。
+
+**Cross-link**: [[CC-045]] (brief timeout heuristic), [[CC-272]] (executor contract docs), [[CC-353]] (executor dispatch 統一，同 PR).
+
+**See**: pr:#259, issue:#217
+
+---
+
+## CC-353 — unify executor dispatch: claude-executor symmetric to codex-executor ✅ 2026-06-10
+
+**Problem**: 兩個 executor 的文件結構不對稱，難維護。`codex-executor.md` 已是完整的「pmctl 主路 + N-condition fallback allowlist + caller decision checklist」結構（lifecycle-leak 警告、§When NOT to use 5-condition 表、10-item checklist）；`claude-executor.md` 的 §When NOT to use 只是簡單 bullet list，沒有對稱的 fallback 結構。心智模型雙軌，每次改 executor 契約都要分別理解兩套敘述。
+
+**Insight（planning 2026-06-10）**: claude 的「pmctl 優先」其實已是現行設計——`commands/pm.md` Route B 主路即 `pmctl dispatch run --adapter claude`，`Agent(claude-executor)` 已被文件化為「`claude --print` 不可用時」的窄 fallback。但 `Agent(claude-executor)` 不是純 legacy，有兩個真實職責：(1) 無 `claude` CLI 的主機上的 host-independent 逃生口（pmctl 路要 spawn 外部 `claude --print` binary，無 CLI 即失敗）；(2) `pr-gate` Route B 的 reviewer fan-out（in-session 並行 spawn，本來就該用 Agent）。因此**完全砍掉 Agent 路會損失能力 + 逼 pr-gate 重寫**——決議採對稱窄 fallback，不砍。
+
+**Requirement**:
+1. `agents/claude-executor.md` 重構成與 `agents/codex-executor.md` 鏡像的結構：頂部 lifecycle/fallback 框架、§When NOT to use 改成 N-condition fallback allowlist 表 + caller decision checklist。
+2. 明定 `pmctl dispatch run --adapter claude` 為唯一文件化的檔案式主路；`Agent(claude-executor)` 為窄 fallback，條件清楚列出：①無 `claude` CLI ②main-thread context 壓力 ③sync sequencing ④pr-gate reviewer fan-out（標為**正當用途、非 fallback**，避免被誤砍）。
+3. 窄幅對齊 `docs/dispatch-brief.md §Fallback`（claude fallback 表對稱於 codex）；如 `docs/executor-contract.md` 有不對稱敘述一併校準。
+
+**Acceptance**:
+1. `claude-executor.md` 與 `codex-executor.md` 的 fallback 段結構鏡像（同樣的 allowlist 表 + checklist 形狀）
+2. 文件明確標示 pmctl 為主路、Agent 為窄 fallback，且 pr-gate fan-out 不被列為「不要用」
+3. `bash scripts/lint-agents.sh` exit 0
+
+**Effort**: prose-only，無 code 變更。
+
+**Priority**: P2 — 維護性債；統一心智模型降低 executor 契約後續修改成本。
+
+**Cross-link**: [[CC-351]] (fail-fast 驗證，同 PR 同 branch), [[CC-272]] (executor contract docs), [[CC-266]] (claude adapter).
+
+**See**: pr:#259
+
+---
+
+## CC-334 — install: install-hooks.sh 安裝時自動 merge permissions.allow ✅ 2026-06-08
+
+**Problem**: pr-gate 的 `--executor claude` 路由會透過 Agent tool 派生 reviewer subagents（Claude Code harness agents）。這些 subagents 需要明確的 `permissions.allow` 條目才能寫入 `.gate-results/` 並執行 `pmctl guard check`。現行 `install-hooks.sh` 只在 `~/.claude/settings.json` 寫入 hooks（PreToolUse/PostToolUse 條目），完全沒有補 `permissions.allow`，導致**安裝後 `/pr-gate` 仍無法正常運作**——需要使用者自行發現問題並手動補。對使用者而言等同工具無用。
+
+**Root cause**: install-hooks.sh 的設計只考慮到 hooks 安裝，沒有考慮到 permissions 是同樣重要的執行前提。
+
+**Required permissions** (reviewer subagents 需要):
+- `Write(<workspace>/**/.gate-results/**)` — 寫 gate 結果
+- `Bash(pmctl guard check:*)` — 執行 guard check
+- `Bash(mkdir -p:*)` — 建目錄
+
+**Design: 動態推算 workspace 路徑**
+
+使用者的 repo 根目錄因人而異（`~/github/`, `~/projects/`, `~/code/` 等），不能 hardcode。策略：
+
+1. **在安裝時偵測 workspace root**：取 pm-dispatch 安裝目錄的 **parent**（即 `dirname "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"`）。如果使用者的 repos 都在同一資料夾，這個 parent 就是 workspace root。
+2. **產生 glob**：`<workspace_root>/**/.gate-results/**`（例如 `/home/user/github/**/.gate-results/**`）。
+3. **Fallback**：若偵測失敗（非 git repo、或 parent == HOME），改用 `$HOME/**/.gate-results/**`——仍然安全（限制在 `.gate-results` 子目錄）。
+4. **Idempotent merge**：用 jq 讀現有 `permissions.allow` 陣列，若條目已存在則跳過，否則 append；避免重複安裝造成重複條目。
+
+**Acceptance**:
+- `bash install.sh` 完成後，`jq '.permissions.allow' ~/.claude/settings.json` 包含正確的 Write glob 和兩個 Bash 條目。
+- 重複執行 `install.sh` 不重複寫入（idempotent）。
+- 在 `/home/user/github/` 和 `/home/user/projects/` 兩種佈局下，glob 路徑都正確對應。
+- 若 jq 不存在或 settings.json 格式損毀，印出清楚錯誤，不靜默失敗。
+
+**Implementation location**: `scripts/install-hooks.sh` 尾段，在 hooks 安裝成功後執行；或抽為獨立函式 `install_permissions()`。
+
+**Self-verify**:
+- `cmd: "jq -e '.permissions.allow | map(select(test(\".gate-results\"))) | length > 0' ~/.claude/settings.json"`
+- `cmd: "bash scripts/install-hooks.sh && bash scripts/install-hooks.sh; jq '.permissions.allow | length' ~/.claude/settings.json | diff - <(jq '.permissions.allow | length' ~/.claude/settings.json)"`（重複安裝長度不變）
+
+**Cross-link**: [[CC-321]]（PM_HOOK 重命名，同一 install UX 修復脈絡）。
+
+**Result**: `install-hooks.sh` 安裝後自動 idempotent merge 三個 reviewer permissions.allow 條目（Write glob、pmctl guard check、mkdir -p）。workspace root 從 pm-dispatch repo parent 動態推算，git 失敗或 parent==HOME 時 fallback 到 $HOME。`uninstall-hooks.sh` 同步移除這三個 managed entries。workspace 偵測邏輯抽出至 `scripts/lib/gate-workspace.sh` 供 install/uninstall 共用。9 個 gate-perms 測試案例，83 tests passed。
+
+**See**: pr:#244
+
+---
+
+## CC-336 — dx: deprecated warnings + executor docs preferred path update ✅ 2026-06-08
+
+三個變更確保呼叫舊路徑時有明確提示，且 agent/command 文件反映正確的 preferred path：
+
+1. **`scripts/codex-dispatch.sh`** — 加 stderr `[deprecated]` 三行 warning，任何直接呼叫都能看到。
+2. **`commands/pm.md`** — `executor: codex` 的 primary route label 從 `scripts/codex-dispatch.sh` 改為 `pmctl dispatch run --adapter codex`。
+3. **`agents/codex-executor.md`** — Step 2 Bash 模板改為 `pmctl dispatch run --adapter codex ...`；Job 步驟和 §When NOT to use this agent 同步更新。
+
+**Root cause**: PM 主線程 dispatch 時看到的 agent 文件仍指向 `codex-dispatch.sh`，導致 agent 讀到舊 instruction 後繼續走 deprecated 路徑（blocking main thread）。
+
+**See**: pr:#246
+
+---
+
+## CC-337 — portability: Windows Git Bash skip-guards + doctor.sh auto-profile fix ✅ 2026-06-08
+
+Windows v0.4.0 dogfood 發現三類問題，分 P1/P2/P3 修：
+
+**P1 — `scripts/doctor.sh` auto-profile false FAIL**（release blocker）
+
+`detect_hook_profile()` 的 `auto` case 只看 `codex_available`，不看平台。Windows Git Bash 若 PATH 有 codex CLI → 判定 `full` → 期待 codex hooks → FAIL。但 `install-hooks.sh` 在 Windows 正確安裝 `minimal`。
+
+Fix：在 `check_hooks()` 的 `detect_hook_profile()` inner logic 中，先 `detect_platform == windows` → 強制 `_want_full=0`，再才看 `codex_available`。
+
+**P2 — 測試套件缺 Windows skip-guards**（Windows CI 失敗）
+
+| 套件 | 問題 | 修法 |
+|---|---|---|
+| `test-pr-gate-profile` | `create_runner` 用 `ln -sf` 建 system binary stubs | suite-level skip on windows |
+| `test-claude-executor` case 5 | `ln -sfn` + `-L` check 在 MSYS 失敗 | case-level skip on windows |
+| `test-dispatch-post-verify` 4 cases | `ln -sfn`/`ln -s` symlink security tests | case-level skip on windows |
+
+**P3 — `uninstall.sh` 空目錄清理回饋**（UX）
+
+pruning loop 改為：先 `-d` 判斷是否存在，成功 `rmdir` 後印 `pruned <dir>`，靜默略過非空目錄。
+
+**See**: pr:#247
+
+
+## CC-339 — lint: prevent duplicate CC id with divergent title ✅ 2026-06-08
+
+**Problem**: The same CC id can silently map to two different tickets. CC-328 was assigned to the shipped light-alias work (#229, recorded in MILESTONES v0.4.0 旁支修正), then reused by the repo symbol-index ticket (#235) — only caught by manual reading during v0.5.0 planning. A knowledge/repo search index makes this worse: a recalled CC id that resolves to two meanings poisons the context-pack.
+
+**Why**: canonical ticket metadata must be clean before it backs a search index. A divergent-title collision is mechanically detectable; relying on a human to notice it is the failure mode that produced this ticket.
+
+**Requirement**: add a validator rule (in `pm/scripts/validate.sh` or a sibling wired into `lint.yml`) that asserts one CC id never maps to two different titles across the BACKLOG active body and MILESTONES tables. Emit an E-code on collision. The CC-328 → CC-338 renumber (DECISIONS 2026-06-08) is the first fixture.
+
+**Amendment (DECISIONS 2026-06-08)**: the literal "compare title *strings* across BACKLOG/MILESTONES" above proved unworkable — all title surfaces are free-form and legitimately divergent (EN title vs ZH description; one id repeated per milestone). The shipped invariant is the string-comparison-free equivalent: one id never both **open on the active board** and **closed in the archive** (cross-lifecycle collision). This narrower-but-mechanical scope is intentional, not drift — see the Result note below and DECISIONS.
+
+**Milestone**: v0.5.0 Phase 0 follow-up (hygiene; not blocking the spine).
+
+**Priority**: P3.
+
+**Result**: Shipped as `pm/scripts/lint-ticket-ids.sh` (sibling, not folded into `validate.sh`), wired into `lint.yml` as the `lint-ticket-ids` job. The literal "compare title strings across BACKLOG/MILESTONES" framing was unworkable (all title surfaces are free-form and legitimately divergent — EN title vs ZH description, ids repeated per-version), so the invariant was reinterpreted as a string-comparison-free **cross-lifecycle collision**: no id may be open (non-stub) on the active board while also closed in the archive. On first run it caught two pre-existing collisions — `debt-auditor` (CC-329) and `/discover` (CC-330) reusing closed archive ids — both renumbered to [[CC-342]] / [[CC-343]] in this PR. See DECISIONS 2026-06-08.
+
+**Cross-link**: [[CC-338]] (renumber that motivated this), [[CC-342]], [[CC-343]] (collisions caught), [[CC-237]].
+
+**See**: pr:#250
+
+## CC-354 — anchored knowledge index + retrieval reflex ✅ 2026-06-10
+
+**See**: pr:#263
+
+Shipped per-format chunking (markdown heading-split / txt+yaml+json 40-line window), `--domain knowledge|repo` filtering, and the `docs/context-retrieval.md` query-before-grep contract. HTML is not scanned; semantic HTML chunking deferred to CC-355.
+
+## CC-356 — wiring: context pack / reuse-scan 接進 dispatch 流程 + 使用可觀測 ✅ 2026-06-10
+
+**See**: pr:#264
+
+**Problem**: `pmctl context pack` 與 `pmctl context reuse-scan`（CC-239, #256）ship 後**操作面零 caller**——`agents/`、`skills/`、`commands/`、操作 docs（dispatch-brief.md 等）沒有任何一處指示在 brief 撰寫流程中呼叫它們（grep 驗證 2026-06-10，僅 architecture 規劃文件提及）。repo plane 正在重演 2026-06-10 重定錨對 memory 診斷的同一種病：能力存在但工作流不變，dispatch 行為沒有任何改變。
+
+**Why**: pm-dispatch 的價值主張是「減少 main thread 重新解釋背景、減少付費模型浪費」。索引只有在 brief 撰寫流程實際引用它的輸出時才兌現這個價值。本票把「接線即驗收」原則落到 repo plane（CC-354 已涵蓋 knowledge plane 的 query-before-grep reflex）：工具被叫、輸出進 brief、使用次數可量測。這也是 CC-346 是否恢復的證據來源——先觀察 reuse-scan 實際使用，再決定要不要給它加 ref 資料層。
+
+**Requirement**:
+- **接線（platform-neutral，與 CC-354 同紀律）**：在中立 docs 契約（`docs/dispatch-brief.md` 或 CC-354 新立的 retrieval 契約文件）加入 brief-authoring 步驟——撰寫 `files:` / `context:` 前先跑 `pmctl context reuse-scan`（或對已知 term 跑 `context pack`）取 prior-art anchors；`agents/project-pm.md` 與 `skills/dispatch-brief/SKILL.md` 各放指標（不含票號，遵守 no-CC-in-operational-files 規則）。不寫 CLAUDE.md。
+- **Brief 噪音上限**：`reuse_candidates` 輸出設 hit 上限（建議 ≤5）+ PM 人工篩選步驟；未經篩選不得整段貼進 brief（防 stop-word 抽詞噪音變成付費 executor 的 token 成本）。
+- **使用可觀測**：`pmctl context query` / `reuse-scan` 每次呼叫 emit 一筆 event（既有 state-writer 機制，無新基建），使「索引被用了幾次」可由 `pmctl trace --kind` 查出。
+- 不改 index 機制本身；純接線 + 可觀測。schema delta：`event.schema.json` 新增 `context.queried`、`context.reuse_scanned` event kinds 及 `context` subject_type。
+
+**Acceptance**:
+- 中立 docs 契約含 brief-authoring 的 reuse-scan / pack 步驟；`agents/project-pm.md` + `skills/dispatch-brief/SKILL.md` 有指標；CLAUDE.md 無新增。
+- `reuse_candidates` 上限生效（fixture 驗證超量截斷）。
+- `pmctl context query` / `reuse-scan` 呼叫後 `pmctl trace` 可查到對應 event（含 query term 與 hit 數）。
+- **End-to-end**：一份真實 dispatch brief 的 `context:` 含 index-derived anchors（reuse candidate 或 section ref），且該次查詢在 trace 中可回溯。
+- Loop-level success metric（與 CC-354 / CC-234 共用）：後續類似任務中，PM 直接引用 anchor 組 brief，main thread 不再重新推論背景。
+
+**Non-goals**: 不動 ranking / 抽詞演算法（觀察使用後再評估）；不做 CC-346 ref 資料層（本票的使用證據是其 resume trigger）；不索引新資料來源。
+
+**Milestone**: v0.5.0 Phase 2（與 CC-354 / CC-234 同屬 memory/context loop 的接線驗收）。
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-239]] (the shipped, unwired capability), [[CC-354]] (knowledge-plane reflex counterpart), [[CC-234]] (write side), [[CC-346]] (resume trigger depends on this ticket's usage evidence), [[CC-237]] (context_hit_v1), `docs/dispatch-brief.md` + `skills/dispatch-brief/SKILL.md` + `agents/project-pm.md` (modification targets).
+
+## CC-341 — pmctl validate: wire handover-validate framework into pmctl ✅ 2026-06-09
+
+**See**: pr:#252
+
+**Problem**: The handover-validator framework (CC-202) was extracted and shipped via PR #170, but the `pmctl validate` subcommand that exposes it was deferred ("→ pmctl validate 串接移 M3") and never landed. MILESTONES v0.5.0 was pointing at the **closed** CC-202 for this remaining wiring, leaving it without an active ticket — surfaced during v0.5.0 follow-up review 2026-06-08.
+
+**Why**: CC-202 is closed (framework done); reusing a closed id for open work is the same divergent-reference hazard the CC-328 → CC-338 renumber fixed. The remaining wiring deserves its own active id.
+
+**Shipped**: `scripts/lib/pmctl-validate.sh` with `pmctl_validate_brief` + `validate/brief` case in `cli/pmctl` + 6-case test suite (`test-pmctl-validate.sh`). Exit-code contract: 0 = valid, 1 = invalid block/metadata, 2 = usage error. Read-only by design (like `pmctl guard check`) — no events written; callers use the exit code to gate dispatch.
+
+**Milestone**: v0.5.0 Phase 2.
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-202]] (framework, closed), [[CC-215]] (pmctl subcommand surface), [[CC-237]].
+
+## CC-360 — pr-gate Route B: migrate executor:claude to pmctl dispatch run 🟢 superseded 2026-06-14
+
+**Superseded by [[CC-373]]**（v0.6.0 executor-router 資料驅動）：claude route 與 codex 對齊由 CC-373 的 manifest `dispatch_route` 自然得出；`pr-gate.sh` 端改呼叫 `pmctl dispatch run --adapter claude` 併入 CC-373 處理。原始範圍保留為 CC-373 sub-scope。
+
+**Problem**: `scripts/pr-gate.sh --executor claude` 輸出 `pr-gate-handover_v1` block，由 `/pr-gate` skill 在 main thread fan-out `Agent(claude-executor)` per reviewer。Route A（codex）則在 `pr-gate.sh` 內直接呼叫 `pmctl dispatch run --adapter codex`。兩條路架構不對稱，skill 端的 fan-out 邏輯增加維護負擔，且與「pmctl 統一派發介面」方向矛盾。
+
+**現況限制（本票未完成前持續存在）**: `scripts/test-e2e.sh` Phase C（pr-gate 結構驗證）固定使用 `--executor codex`，因為 claude route 是 handover-only，在 bash shell 環境下無法自行完成 review 並寫入結果檔。沒有 codex 的環境 Phase C 會自動 SKIP。這是已知架構缺口，不是 bug。
+
+**Why**: `adapters/claude/dispatch.sh` 已建立，`pmctl dispatch run --adapter claude` 介面已穩定。現在可以讓 claude 路徑與 codex 路徑對稱，由 `pr-gate.sh` 直接派發，不需要 skill 介入 orchestration。完成後 `test-e2e.sh --adapter claude` 即可完整跑完 Phase B + Phase C，解除 codex 依賴。
+
+**Requirement**:
+- `executor-router.sh`：`dispatch_route_for "claude"` 回傳 `main_thread_bash_background`（與 codex 相同）；新增 `dispatch_via_claude()` 與 `dispatch_via_codex()` 對稱
+- `pr-gate.sh`：claude 路徑改為直接呼叫 `pmctl dispatch run --adapter claude --brief-file <path>`；移除 handover block 輸出邏輯
+- `scripts/test-e2e.sh`：Phase C 的 codex-only 限制解除，改為使用 `--adapter` 參數所指定的 executor
+- `commands/pr-gate.md`：Route B 說明更新，移除 fan-out 步驟；`pr-gate-handover_v1` block 相關說明移除或保留為 legacy-only note
+- `scripts/test-pr-gate-profile.sh`：executor-claude-* 測試全面改寫
+
+## CC-362 — feat: add release verification scripts ✅ 2026-06-12
+
+**Done**: Added four release-verification scripts: `release-verify.sh` (four-phase runner — offline prereqs, 54 suites, context smoke, live dispatch + pr-gate), `test-e2e.sh` (live dispatch + pr-gate smoke), `test-release-verify.sh` (unit tests for the runner), and `test-e2e-script.sh` (unit tests for the e2e script). PARTIAL GO exit 3/4 distinguishes an offline-only run from a full release sign-off.
+
+**See**: pr:#268
+
+---
 

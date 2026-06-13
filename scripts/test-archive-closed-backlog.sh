@@ -2,11 +2,14 @@
 # Regression tests for scripts/archive-closed-backlog.sh.
 #
 # Contract under test (pm-schema §4 "working-set" model):
-#   A terminal ticket — index status `✅ closed YYYY-MM-DD` or
-#   `🚫 dropped YYYY-MM-DD` — is moved OUT of BACKLOG.md entirely: its index
-#   row is dropped AND its body section is moved to BACKLOG-ARCHIVE.md, with NO
-#   `**See**:` stub left behind. Non-terminal rows/bodies and `✅ done`
-#   soft-closes are untouched.
+#   A terminal ticket — index status `✅ done` (dated or not), `✅ closed
+#   YYYY-MM-DD`, `🟢 superseded YYYY-MM-DD`, or `🚫 dropped YYYY-MM-DD` — is
+#   moved OUT of BACKLOG.md entirely: its index row is dropped AND its body
+#   section is moved to BACKLOG-ARCHIVE.md, with NO `**See**:` stub left
+#   behind. Non-terminal rows/bodies (`🔵 active`, `🟡`/`⏸ deferred`,
+#   `🟢 someday`, `⚠️ partial`) are untouched. (CC-378: `✅ done` and
+#   `🟢 superseded` became terminal — the prior soft-close-stays-active rule
+#   was retired.)
 
 set -euo pipefail
 export LC_ALL=C.UTF-8
@@ -454,13 +457,15 @@ EOF
   pass "$name"
 }
 
-case_soft_close_done_kept() {
-  # `✅ done` (no date) is a soft-close (§2.3): its body stays in active format.
-  # It is NOT terminal and must be left untouched.
-  local name="archive-soft-close-done-kept"
+case_done_and_superseded_archived() {
+  # CC-378: `✅ done` (dated or not) and `🟢 superseded YYYY-MM-DD` are terminal
+  # and must be archived — index row dropped, body moved to BACKLOG-ARCHIVE.md.
+  # `🟢 someday` (active) is left untouched (guards the 🟢 someday↔superseded
+  # collision: same emoji, opposite liveness).
+  local name="archive-done-and-superseded"
   should_run "$name" || return 0
 
-  local repo="$tmp_root/soft-done"
+  local repo="$tmp_root/done-superseded"
   setup_repo "$repo"
   write_archive "$repo"
   cat > "$repo/BACKLOG.md" <<'EOF'
@@ -470,12 +475,110 @@ case_soft_close_done_kept() {
 | ID | Status | Desc | area | Created | Refs | Pri | Epic |
 |---|---|---|---|---|---|---|---|
 | CC-060 | ✅ done | soft close | ops | 2026-05-01 | — | — | — |
+| CC-061 | 🟢 superseded 2026-06-14 | replaced | ops | 2026-05-01 | — | — | — |
+| CC-062 | 🟢 someday | live idea | ops | 2026-05-01 | — | — | — |
+| CC-063 | ✅ done 2026-06-14 | dated done | ops | 2026-05-01 | pr:#9 | — | — |
 
 ## CC-060 — soft close ✅ done
 
 **Problem**: completed, no PR tracking needed
 
-**Why**: stays in active format per §2.3
+## CC-061 — replaced 🟢 superseded 2026-06-14
+
+**Superseded by [[CC-999]]**: work moved.
+
+## CC-062 — live idea 🟢 someday
+
+**Problem**: still open
+
+## CC-063 — dated done ✅ done 2026-06-14
+
+**Problem**: shipped with a date
+
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(run_archiver "$repo" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "script exited $rc: $output"
+    return
+  fi
+  if [[ "$output" != *"Archived 3 ticket(s)"* ]]; then
+    fail "$name" "expected 3 archived (undated done + dated done + superseded): $output"
+    return
+  fi
+  # done + superseded gone from BACKLOG; someday preserved.
+  if grep -q '^## CC-060 ' "$repo/BACKLOG.md" || grep -qE '^\| CC-060 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "✅ done CC-060 should be archived out of BACKLOG"
+    return
+  fi
+  if grep -q '^## CC-061 ' "$repo/BACKLOG.md" || grep -qE '^\| CC-061 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "🟢 superseded CC-061 should be archived out of BACKLOG"
+    return
+  fi
+  if ! grep -qE '^\| CC-062 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "🟢 someday CC-062 (active) must be preserved"
+    return
+  fi
+  # dated `✅ done YYYY-MM-DD` is terminal too (optional-date branch).
+  if grep -q '^## CC-063 ' "$repo/BACKLOG.md" || grep -qE '^\| CC-063 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "dated ✅ done CC-063 should be archived out of BACKLOG"
+    return
+  fi
+  # bodies landed in the archive.
+  if ! grep -q '^## CC-060 ' "$repo/BACKLOG-ARCHIVE.md" || ! grep -q '^## CC-061 ' "$repo/BACKLOG-ARCHIVE.md" || ! grep -q '^## CC-063 ' "$repo/BACKLOG-ARCHIVE.md"; then
+    fail "$name" "done/superseded/dated-done bodies not appended to archive"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_malformed_status_not_archived() {
+  # CC-378 gate fix: the terminal predicate matches EXACT token/date forms only.
+  # Malformed near-miss statuses must NOT be silently archived (no prefix
+  # over-match): `done`-prefixed non-tokens, `superseded`-prefixed non-tokens,
+  # undated `superseded` (date required), and structurally-bad dates.
+  local name="archive-malformed-status-not-archived"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/malformed-status"
+  setup_repo "$repo"
+  write_archive "$repo"
+  cat > "$repo/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-070 | ✅ done-ish | near-miss done suffix | ops | 2026-05-01 | — | — | — |
+| CC-071 | 🟢 supersededsoon | near-miss superseded suffix | ops | 2026-05-01 | — | — | — |
+| CC-072 | ✅ donezo | near-miss done token | ops | 2026-05-01 | — | — | — |
+| CC-073 | 🟢 superseded | superseded missing required date | ops | 2026-05-01 | — | — | — |
+| CC-074 | ✅ done 2026-6-14 | done with non-YYYY-MM-DD date | ops | 2026-05-01 | — | — | — |
+
+## CC-070 — near-miss done suffix ✅ done-ish
+
+**Problem**: malformed
+
+## CC-071 — near-miss superseded suffix 🟢 supersededsoon
+
+**Problem**: malformed
+
+## CC-072 — near-miss done token ✅ donezo
+
+**Problem**: malformed
+
+## CC-073 — superseded missing required date 🟢 superseded
+
+**Problem**: malformed
+
+## CC-074 — done with non-YYYY-MM-DD date ✅ done 2026-6-14
+
+**Problem**: malformed
 
 EOF
   cp "$repo/BACKLOG.md" "$repo/BACKLOG.before"
@@ -490,11 +593,11 @@ EOF
     return
   fi
   if [[ "$output" != *"Archived 0 ticket(s)"* ]]; then
-    fail "$name" "soft-close ✅ done should not be archived: $output"
+    fail "$name" "malformed near-miss statuses must not be archived: $output"
     return
   fi
   if ! cmp -s "$repo/BACKLOG.before" "$repo/BACKLOG.md"; then
-    fail "$name" "✅ done ticket was modified"
+    fail "$name" "BACKLOG was modified — a malformed status was archived"
     return
   fi
 
@@ -777,7 +880,8 @@ case_no_terminal_sections
 case_suffixed_and_multiprefix_ids
 case_index_row_removed
 case_cc283_sentinel_regression
-case_soft_close_done_kept
+case_done_and_superseded_archived
+case_malformed_status_not_archived
 case_legacy_stub_sweep
 case_recovery_partial_write
 case_orphan_terminal_row_warns
