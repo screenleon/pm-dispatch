@@ -80,12 +80,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-369 | 🟡 deferred | **[Windows state store 真實 ACL via icacls]** CC-368 #2 在 NTFS 上以 SKIP-with-reason 處理 0700 斷言（chmod 是 no-op）；state store 目前僅靠 `%USERPROFILE%` 既有 ACL 保護。真正等價 0700 需在 Windows 用 `icacls` 限定目前使用者繼承移除 + 授權，要寫 Windows 專屬分支與測試。邊際安全收益相對 profile ACL 不高，故 deferred；gated behind [[CC-370]] 平台階段。 | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-371 | 🟡 deferred | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-hooks.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
-| CC-372 | ✅ done 2026-06-14 | **[arch: adapter runner-kind manifest field]** `adapter.yaml` 新增 `runner_kind`（`cli-subprocess`=thin-dispatch/hook-gated，如 codex；`host-native`=self-exec/harness-gated，如 claude-as-host）+ 衍生能力旗標（`dispatch_route`、`write_guard_mode`=hook\|cli-only、`needs_bash_guard`）。把目前隱式寫死三遍（executor-router case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）的執行拓樸，收斂成單一 manifest 宣告，由 [[CC-373]]/[[CC-374]]/[[CC-375]] 衍生。純加法、低風險、v0.6.0 地基。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:TBD | P2 | design |
+| CC-372 | ✅ done | **[arch: adapter runner-kind manifest field]** `adapter.yaml` 新增 `runner_kind`（`cli-subprocess`=thin-dispatch/hook-gated，如 codex；`host-native`=self-exec/harness-gated，如 claude-as-host）+ 衍生能力旗標（`dispatch_route`、`write_guard_mode`=hook\|cli-only、`needs_bash_guard`）。把目前隱式寫死三遍（executor-router case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）的執行拓樸，收斂成單一 manifest 宣告，由 [[CC-373]]/[[CC-374]]/[[CC-375]] 衍生。純加法、低風險、v0.6.0 地基。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:TBD | P2 | design |
 | CC-373 | 🔵 active | **[arch: executor-router 資料驅動 — 拔除 codex\|claude 硬編碼]** `scripts/lib/executor-router.sh` 的 `resolve_executor`/`dispatch_route_for` 目前以 `codex\|claude` enum 寫死、`dispatch_via_codex` 為 codex 專屬。改讀已註冊 adapter 的 [[CC-372]] manifest：route 由 `dispatch_route` 衍生，allowlist = 「磁碟上有合法 manifest 的 adapter」；泛化／移除 `dispatch_via_codex`。**吸收 [[CC-360]]**（claude route 對齊）。Security/risk gate：allowlist 信任邊界從程式碼常數移到 manifest，必守 strict-identifier ＋ manifest schema 驗證 fail-closed。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-374 | 🔵 active | **[arch: hook-guard wrapper 收口 — role-參數化 + 委派 pmctl guard check]** `hook-codex-write-guard.sh`/`hook-claude-write-guard.sh` 剝掉執行器名後 ~95% 重複，且各自重做 path policy 而非呼叫核心；guard 決策存在兩份（CLI 核心 + wrapper shell）。收成單一 role-參數化 wrapper，決策一律委派回 `pmctl guard check`；wrapper 行為（live-hook vs cli-only、是否套 bash-guard）由 [[CC-372]] manifest 衍生。**吸收 [[CC-066]]**（policy.yml）、**[[CC-062]]**（policy test matrix）、**收尾 [[CC-307]]**（pm cross-runtime 文件/alias）。不可壓平兩個真不對稱：`hook-codex-bash-guard.sh`(447 行) 由 `needs_bash_guard` 決定套不套；live-hook bit 必由 manifest 明宣告，非靠檔案存在隱式表示。Security/risk gate。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/security | 2026-06-13 | — | P2 | design |
 | CC-375 | 🔵 active | **[install: hook 接線由 manifest 能力旗標衍生]** `install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 對「哪些 hook 該接進 settings.json」目前逐 executor 寫死。改由 [[CC-372]] manifest 的 `write_guard_mode`/`needs_bash_guard` 衍生接線清單，使新 adapter 安裝零核心改動。釘死 install/uninstall/doctor 三方一致（呼應 [[CC-368]] 三方漂移教訓）。相依 [[CC-374]]。umbrella [[CC-333]]。 | arch/install | 2026-06-13 | — | P3 | hygiene |
 | CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-377 | 🔵 active | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
+| CC-379 | ✅ done | **[fix: pr-gate 生成的 brief 過不了 brief-validate.sh — claude gate route 全壞]** `scripts/pr-gate.sh` 三處 brief 模板（combined / parallel-reviewer / synthesis）的 `self_verify` 用自訂鍵（`file-exists:`/`has-conclusion:`）而無 `- cmd:` 機檢項，且 combined brief 的 `acceptance:` 縮排 2 空格被解析為 `self_verify` 子鍵——任一都讓 `brief-validate.sh`（CC-351 起為 executor 第一動作）REJECT，reviewer 未跑即停。修：`acceptance` 退回 column-0；`file-exists:` → `- cmd: "test -f …"`（機檢，post-verify 真執行）。stub 化的 gate 測試從未對生成 brief 跑真 `brief-validate`，故漏網。補三條回歸（每種 brief 各一，CC-372 claude gate 時發現）。 | ops/test | 2026-06-14 | pr:TBD | P2 | hygiene |
 
 ---
 
@@ -115,7 +116,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
-## CC-372 — arch: adapter runner-kind manifest field ✅ done 2026-06-14
+## CC-372 — arch: adapter runner-kind manifest field ✅ 2026-06-14
 
 **Problem**: 一個 adapter 的「執行拓樸」——是 `cli-subprocess`（thin dispatcher，bash/write 經 pm-dispatch hook 把關，如 codex）還是 `host-native`（self-executor，編輯交給 host harness 的 permission，如 Claude 當主線程時的 Agent()）——目前**隱式寫死三遍**：(a) `executor-router.sh` 的 `dispatch_route_for` case；(b) 哪些 `hook-*-guard.sh` 檔存在、以及 `install-hooks.sh` 把哪幾支接進 settings.json；(c) 每個 guard 腳本 header 的 threat-model 敘述。三者要靠人手對齊，新增 executor 時極易漂移。
 
@@ -134,6 +135,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Change**: 新增 `scripts/lib/runner-kind.sh`（`runner_kind_valid`/`runner_kind_default_flag`/`runner_kind_resolve_flag`/`runner_kind_manifest_field`）；回填 `adapters/codex/adapter.yaml`（`cli-subprocess`）、`adapters/claude/adapter.yaml`（`host-native`）；`pmctl adapter generate` 模板新增 `runner_kind`（必填 8→9）；`scripts/test-runner-kind.sh`（31 cases）+ 註冊進 `run-all-tests.sh`；`test-pmctl-adapter-generate.sh` 欄位數斷言 8→9。codex/claude dispatch/guard 行為位元不變。
 
 **Dependencies**: 無（v0.6.0 地基，先行）。umbrella [[CC-333]]。
+
+**See**: DECISIONS.md 2026-06-14 v0.6.0-theme-executor-abstraction；umbrella [[CC-333]]。
+
+---
+
+## CC-379 — fix: pr-gate 生成的 brief 過不了 brief-validate.sh ✅ 2026-06-14
+
+**Problem**: 用 `--executor claude` 跑 pr-gate 時，reviewer executor 的第一動作 `scripts/brief-validate.sh`（CC-351）直接 REJECT 生成的 brief，review 從未執行。兩個獨立缺陷：(a) combined brief 的 `acceptance:` 縮排 2 空格，被 `self_verify:` block 吃成子鍵 → 「missing field 'acceptance'」；(b) 三處 brief 模板的 `self_verify` 只用自訂敘述鍵（`file-exists:`/`has-conclusion:`/`frontmatter-final-parity:`），無任何 `- cmd:` 機檢項 → 「file-writing brief self_verify has no 'cmd:' entry」。即整條 claude gate route 的 brief 必被擋。
+
+**Root cause / 漏網**: `scripts/test-pr-gate.sh` 以 stub executor（`CODEX_GATE_*`）攔截 dispatch，從不對「生成的 brief」跑真正的 `brief-validate.sh`，所以 schema 漂移無人察覺。codex route 真實 dispatch 會在 preflight 跑 brief-validate，但實務上少有人跑真 gate 故未爆。
+
+**Change**: `pr-gate.sh` — `acceptance:` 退回 column-0（與其餘兩處模板一致）；三處 `self_verify` 的 `- file-exists: <out>` → `- cmd: "test -f <out>"`（機檢，`dispatch-post-verify.sh` 會真執行，較原敘述更強）。`test-pr-gate.sh` 補三條回歸：對 combined / parallel-reviewer / synthesis 三種生成 brief 各跑一次 `brief-validate.sh` 斷言 exit 0（先紅後綠驗證）。pr-gate 88 綠（+3）、brief-validate 32 綠、post-verify 44 綠。
+
+**Discovered**: CC-372 以 claude executor 跑 pr-gate 時。
+
+**See**: 與 [[CC-351]]（brief-validate 為 executor 第一動作）契約對齊。
 
 ---
 

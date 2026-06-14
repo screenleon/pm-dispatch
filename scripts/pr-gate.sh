@@ -703,11 +703,11 @@ output_format: |
   (b) at least one reviewer returned advise|block-soft.
 
 self_verify:
-  - file-exists: ${OUTPUT_FILE}
+  - cmd: "test -f ${OUTPUT_FILE}"
   - has-conclusion: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
 
-  acceptance:
+acceptance:
   - ${OUTPUT_FILE} exists with a verdict section for each of the ${NUM_REVIEWERS} reviewers
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 BRIEF_EOF
@@ -845,7 +845,7 @@ output_format: |
   Verdict: {approve | advise | block-soft | block}. {One-sentence rationale.}
 
 self_verify:
-  - file-exists: ${REVIEWER_OUTPUT}
+  - cmd: "test -f ${REVIEWER_OUTPUT}"
 
 acceptance:
   - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
@@ -1116,7 +1116,7 @@ output_format: |
   Rationale: {1-2 sentences explaining the final verdict}
 
 self_verify:
-  - file-exists: ${OUTPUT_FILE}
+  - cmd: "test -f ${OUTPUT_FILE}"
   - has-final: grep -cE '^Final: (GO|NO-GO)\$' ${OUTPUT_FILE} should be exactly 1
   - frontmatter-final-parity: the value after \`final:\` in the YAML frontmatter MUST equal the value after \`Final:\` in Gate Conclusion (case-sensitive)
   - all-reviewers-present: output must contain a section header for each of: ${REVIEWER_DISPLAY}
