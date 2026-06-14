@@ -351,16 +351,29 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 
+# pmctl is installed as a symlink under the bin dir; an in-session reviewer
+# subagent whose PATH lacks that dir invokes pmctl by absolute path. Allow the
+# bare, absolute, and tilde forms of the guard check so the call is permitted
+# however pmctl resolves (mirrors the dispatch.sh abs+tilde discipline).
+_pmctl_bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
+_pmctl_guard_abs="Bash(${_pmctl_bin_dir}/pmctl guard check:*)"
+_pmctl_guard_tilde=""
+[[ "${_pmctl_bin_dir#"$HOME/"}" != "$_pmctl_bin_dir" ]] && \
+  _pmctl_guard_tilde="Bash(~/${_pmctl_bin_dir#"$HOME/"}/pmctl guard check:*)"
+
 _tmp_perms="$(mktemp)"
 trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
 if ! jq \
   --arg write_perm "Write(${_gate_glob})" \
   --arg bash_guard "Bash(pmctl guard check:*)" \
+  --arg bash_guard_abs "$_pmctl_guard_abs" \
+  --arg bash_guard_tilde "$_pmctl_guard_tilde" \
   --arg bash_mkdir "Bash(mkdir -p:*)" \
   '
   .permissions //= {} |
   .permissions.allow //= [] |
-  ([$write_perm, $bash_guard, $bash_mkdir]) as $required |
+  ([$write_perm, $bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
+    | map(select(. != ""))) as $required |
   .permissions.allow |= (
     . as $existing |
     . + ($required | map(select(. as $p | ($existing | map(select(. == $p)) | length) == 0)))

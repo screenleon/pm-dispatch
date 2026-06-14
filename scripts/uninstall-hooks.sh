@@ -66,11 +66,23 @@ if command -v gate_workspace_root >/dev/null 2>&1; then
 else
   _gate_ws="${PM_DISPATCH_GATE_WORKSPACE:-$HOME}"
 fi
-# The three reviewer permission entries are managed install artifacts: they are
-# added by install-hooks.sh and removed here. Bash(pmctl guard check:*) and
-# Bash(mkdir -p:*) are treated as pm-dispatch-owned; re-add manually if needed
-# for other tools after uninstall.
-_managed_json="$({ dispatch_allowlist_entries; printf 'Write(%s/**/.gate-results/**)\nBash(pmctl guard check:*)\nBash(mkdir -p:*)\n' "$_gate_ws"; } | jq -Rn '[inputs]')"
+# The reviewer permission entries are managed install artifacts: they are added
+# by install-hooks.sh and removed here. Write(.gate-results), Bash(mkdir -p:*),
+# and the pmctl guard-check forms are treated as pm-dispatch-owned; re-add
+# manually if needed for other tools after uninstall. The guard check is
+# allow-listed in bare, absolute, and tilde forms (mirror install-hooks.sh: an
+# in-session reviewer subagent may invoke pmctl by absolute path when its PATH
+# lacks the bin dir) — remove all three.
+_pmctl_bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
+_managed_json="$({
+  dispatch_allowlist_entries
+  printf 'Write(%s/**/.gate-results/**)\n' "$_gate_ws"
+  printf 'Bash(pmctl guard check:*)\n'
+  printf 'Bash(%s/pmctl guard check:*)\n' "$_pmctl_bin_dir"
+  [[ "${_pmctl_bin_dir#"$HOME/"}" != "$_pmctl_bin_dir" ]] && \
+    printf 'Bash(~/%s/pmctl guard check:*)\n' "${_pmctl_bin_dir#"$HOME/"}"
+  printf 'Bash(mkdir -p:*)\n'
+} | jq -Rn '[inputs]')"
 
 # install-hooks.sh shell-escapes managed command paths (printf %q) so a repo
 # checked out under a path with a space still produces a runnable hook. Match

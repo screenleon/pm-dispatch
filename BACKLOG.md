@@ -87,6 +87,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-377 | 🔵 active | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-379 | ✅ done | **[fix: pr-gate 生成的 brief 過不了 brief-validate.sh — claude gate route 全壞]** `scripts/pr-gate.sh` 三處 brief 模板（combined / parallel-reviewer / synthesis）的 `self_verify` 用自訂鍵（`file-exists:`/`has-conclusion:`）而無 `- cmd:` 機檢項，且 combined brief 的 `acceptance:` 縮排 2 空格被解析為 `self_verify` 子鍵——任一都讓 `brief-validate.sh`（CC-351 起為 executor 第一動作）REJECT，reviewer 未跑即停。修：`acceptance` 退回 column-0；`file-exists:` → `- cmd: "test -f …"`（機檢，post-verify 真執行）。stub 化的 gate 測試從未對生成 brief 跑真 `brief-validate`，故漏網。補三條回歸（每種 brief 各一，CC-372 claude gate 時發現）。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
+| CC-380 | ✅ done | **[fix: gate reviewer 的 `pmctl guard check` 允許項只有 bare 形式 — 缺絕對/tilde]** in-session claude reviewer subagent 的乾淨 PATH 不含 `~/.local/bin`，故以絕對路徑叫 `pmctl guard check`，但 `install-hooks.sh`（CC-334）只寫 bare `Bash(pmctl guard check:*)`，背景 agent 又不能跳互動詢問 → 一律 DENY，結果檔寫不出（同 [[CC-291]] tilde-vs-absolute 類）。修：`install-hooks.sh` 改為寫入 bare + 絕對（`${PMCTL_BIN_DIR:-$HOME/.local/bin}`）+ tilde 三形式；`uninstall-hooks.sh` 鏡像移除三形式（install/uninstall 對稱，呼應 [[CC-368]] 三方漂移教訓）；`test-install.sh` 三條 CC-334 case 補 abs+tilde 斷言（HOME 釘進 fixture）。CC-372 claude gate 時發現。 | ops/install | 2026-06-14 | pr:#277 | P2 | hygiene |
 
 ---
 
@@ -151,6 +152,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Discovered**: CC-372 以 claude executor 跑 pr-gate 時。
 
 **See**: 與 [[CC-351]]（brief-validate 為 executor 第一動作）契約對齊。
+
+---
+
+## CC-380 — fix: gate reviewer 的 `pmctl guard check` 允許項缺絕對/tilde 形式 ✅ 2026-06-14
+
+**Problem**: `pmctl gate run --executor claude` 的 reviewer 是 in-session `Agent(claude-executor)`（pr-gate Route B）。它的乾淨 PATH（`/usr/local/sbin:…:/bin`）不含 `~/.local/bin`，所以 bare `pmctl` 找不到、改以絕對路徑 `/home/<user>/.local/bin/pmctl guard check` 呼叫。但 `install-hooks.sh`（CC-334）只把 **bare** 形式 `Bash(pmctl guard check:*)` 寫進 `permissions.allow`，沒有絕對/tilde 形式；背景 subagent 又無法跳互動式權限詢問 → 沒命中 allow-list 一律自動 DENY。reviewer 正確拒絕繞過被 mandate 的 guard，於是 `.gate-results/*.md` 寫不出（0 bytes）。與 [[CC-291]] 修過的 tilde-vs-absolute dispatch 缺口同類。
+
+**Root cause**: guard 拓樸不對稱（[[guard-role-runtime]] / runner_kind）——codex 的 write/bash guard 由 settings.json 的 PreToolUse **hook 自動執行**（codex 從不主動呼叫 `pmctl guard check`，故不經權限層）；claude self-executes、`write_guard_mode=cli-only`、無活 hook，reviewer brief 要求它**自己呼叫** `pmctl guard check`——那個主動呼叫才會撞權限層。所以「claude 寫不出、codex 可以」正是 runner_kind 那張表的真實後果。
+
+**Change**: `install-hooks.sh` 由單一 bare 形式改寫為 bare + 絕對（`${PMCTL_BIN_DIR:-$HOME/.local/bin}/pmctl`）+ tilde 三形式（空 tilde——bin dir 不在 HOME 下時——以 `map(select(. != ""))` 濾除）。`uninstall-hooks.sh` 鏡像移除三形式（install/uninstall 必對稱，[[CC-368]] 三方漂移教訓）。`test-install.sh` 三條 CC-334 case（fresh / idempotent / uninstall-removes）把 `HOME` 釘進 fixture 並補 abs+tilde 斷言。install 85 / hooks 301 / doctor 40 綠。手改 `~/.claude/settings.json` 已退回，改由 `install-hooks.sh` 寫入驗證（machine-state 單一寫入者）。
+
+**Non-goals**: `doctor.sh` 目前不驗證 CC-334 reviewer perms（既有缺口，非本票造成）——若要 doctor 也檢這三形式，另開票。
+
+**Discovered**: CC-372 以 claude executor 跑 pr-gate 時（[[claude-gate-route-guard-gap]]）。
+
+**See**: 同類 [[CC-291]]（tilde-vs-absolute）、[[CC-334]]（reviewer perms 來源）、[[CC-368]]（install/uninstall/doctor 一致）。
 
 ---
 
