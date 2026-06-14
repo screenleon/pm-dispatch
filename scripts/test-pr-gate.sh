@@ -270,6 +270,14 @@ case "$effective_mode" in
 esac
 STUB_EOF
   chmod +x "$dir/adapters/codex/dispatch.sh"
+
+  # claude adapter stub: same behavior as the codex stub (parses --brief-file,
+  # writes a stub result to the brief's `- new:` path, honors CODEX_GATE_STUB_*).
+  # The claude route dispatches a real subprocess now (CC-383), so explicit
+  # --executor claude tests need an adapter stub just like codex.
+  mkdir -p "$dir/adapters/claude"
+  cp "$dir/adapters/codex/dispatch.sh" "$dir/adapters/claude/dispatch.sh"
+  chmod +x "$dir/adapters/claude/dispatch.sh"
 }
 
 create_agents() {
@@ -608,59 +616,41 @@ test_output_directory_created() {
   pass "$name"
 }
 
-test_output_file_pre_created_before_handover() {
-  # Verifies that the gate output file exists on disk at the moment the
-  # pr-gate-handover_v1 'output_file:' line is emitted to stdout, so a
-  # background claude-executor subagent can Edit (not Write) the file.
-  # Steps:
-  #   1. Create a test repo (express tier, docs change) + runner + agents
-  #   2. Run pr-gate --executor claude, streaming stdout through a named pipe
-  #   3. When the 'output_file: <path>' handover line is observed in real-time,
-  #      assert -f "$path" at that exact moment
-  #   4. Assert gate exits 0 and the handover line was observed
-  local name="output-file-pre-created-before-handover"
+test_claude_executor_dispatches_subprocess() {
+  # CC-383: --executor claude now dispatches an INDEPENDENT subprocess (headless
+  # `claude --print` via adapters/claude/dispatch.sh) and integrity-checks the
+  # result in-process -- the agent_executor/handover route is retired. Verifies
+  # the gate runs the claude adapter, materializes the result file, and exits 0
+  # on a GO result (no pr-gate-handover_v1 block is emitted).
+  local name="claude-executor-dispatches-subprocess"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" pipe="$dir/gate.pipe"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
 
-  mkfifo "$pipe"
-  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" --base main --executor claude \
-    > "$pipe" 2>"$err" &
-  local gate_pid=$!
-
-  local file_existed_at_handover=false observed_handover=false result_path=""
-  while IFS= read -r line; do
-    printf '%s\n' "$line" >> "$out"
-    if [[ "$line" == *"output_file: "* ]]; then
-      observed_handover=true
-      result_path="${line#*output_file: }"
-      [[ -f "$result_path" ]] && file_existed_at_handover=true
-    fi
-  done < "$pipe"
-
   set +e
-  wait "$gate_pid"
+  HOME="$home" "$runner/pr-gate.sh" --cd "$repo" --base main --executor claude \
+    --output "$result" > "$out" 2>"$err"
   local code=$?
   set -e
-  rm -f "$pipe"
 
   if [[ "$code" -ne 0 ]]; then
     fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
     return
   fi
-  if [[ "$observed_handover" != "true" ]]; then
-    fail "$name" "no 'output_file:' line was emitted in the handover block"
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "claude route did not materialize the result file (handover not retired?)"
     return
   fi
-  if [[ "$file_existed_at_handover" != "true" ]]; then
-    fail "$name" "output file did not exist when 'output_file: $result_path' was emitted"
+  if grep -q 'pr-gate-handover_v1' "$out"; then
+    fail "$name" "claude route still emitted a handover block -- should dispatch a subprocess"
     return
   fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
   pass "$name"
 }
 
@@ -2238,7 +2228,7 @@ run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
-run_test test_output_file_pre_created_before_handover
+run_test test_claude_executor_dispatches_subprocess
 run_test test_standard_tier_detection
 run_test test_full_tier_line_count
 run_test test_full_tier_sensitive_file
@@ -3480,9 +3470,31 @@ test_relative_output_normalized_to_absolute() {
   pass "$name"
 }
 
+test_inline_fallback_matches_lib() {
+  # CC-382/CC-383: pr-gate.sh carries an inline copy of gate_result_verify for
+  # copy-mode (run standalone without scripts/lib/). It MUST stay identical
+  # (modulo indentation) to scripts/lib/gate-result-verify.sh, or a drifted copy
+  # silently diverges the gate's integrity contract. This guard fails on any drift.
+  local name="inline-fallback-matches-lib"
+  should_run "$name" || return 0
+  local lib_body inline_body
+  lib_body="$(awk '/^gate_result_verify\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$REPO_ROOT/scripts/lib/gate-result-verify.sh" | sed 's/^[[:space:]]*//')"
+  inline_body="$(awk '/gate_result_verify\(\) \{/{f=1} f{print} f&&/^  \}$/{exit}' "$REPO_ROOT/scripts/pr-gate.sh" | sed 's/^[[:space:]]*//')"
+  if [[ -z "$lib_body" || -z "$inline_body" ]]; then
+    fail "$name" "could not extract gate_result_verify from lib and/or pr-gate.sh inline fallback"
+    return
+  fi
+  if [[ "$lib_body" == "$inline_body" ]]; then
+    pass "$name"
+  else
+    fail "$name" "inline gate_result_verify in pr-gate.sh drifted from scripts/lib/gate-result-verify.sh -- keep them in sync"
+  fi
+}
+
 run_test test_seq_brief_has_reviewer_guard_constraint
 run_test test_parallel_reviewer_brief_has_guard_constraint
 run_test test_relative_output_normalized_to_absolute
+run_test test_inline_fallback_matches_lib
 run_test test_brief_major_suggests_full
 run_test test_brief_minor_express_suggests_standard
 run_test test_brief_explicit_tier_suppresses_advisory

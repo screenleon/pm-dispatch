@@ -34,34 +34,6 @@ extract_result_path() {
   awk -F'result: ' '/^result: /{path=$2} END{print path}' "$1"
 }
 
-extract_handover_block() {
-  local out="$1"
-  awk '
-    /^```pr-gate-handover_v1$/ {in_block=1; next}
-    in_block && /^```$/ {in_block=0; exit}
-    in_block {print}
-  ' "$out"
-}
-
-assert_fence_shape() {
-  local name="$1" file="$2"
-  local open_line close_line
-  open_line=$(awk '/^```pr-gate-handover_v1$/ {print NR; exit}' "$file" || true)
-  if [[ -z "$open_line" ]]; then
-    fail "$name" "missing opening fence"
-    return 1
-  fi
-  close_line=$(awk -v open="$open_line" 'NR>open && $0 == "```" {print NR; exit}' "$file" || true)
-  if [[ -z "$close_line" ]]; then
-    fail "$name" "missing closing fence"
-    return 1
-  fi
-  if (( close_line <= open_line )); then
-    fail "$name" "closing fence before opening"
-    return 1
-  fi
-}
-
 create_runner() {
   local dir="$1"
   mkdir -p "$dir"
@@ -122,6 +94,57 @@ fi
 exit 0
 STUB_EOF
   chmod +x "$dir/adapters/codex/dispatch.sh"
+
+  # claude adapter stub (CC-383): claude now dispatches a real subprocess too.
+  # Same result-writing behavior as the codex stub, but keyed on a SEPARATE
+  # called-marker (CLAUDE_GATE_STUB_CALLED_MARKER) so a test can assert the
+  # claude route does NOT invoke the codex adapter.
+  mkdir -p "$dir/adapters/claude"
+  cat > "$dir/adapters/claude/dispatch.sh" <<'CLAUDE_STUB_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+brief_file=""
+MODE="${CLAUDE_GATE_STUB_MODE:-success}"
+MARKER="${CLAUDE_GATE_STUB_CALLED_MARKER:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --brief-file) brief_file="$2"; shift 2 ;;
+    --cd|--timeout|--model|--isolation) shift 2 ;;
+    *) shift ;;
+  esac
+  :
+done
+
+[[ -n "$MARKER" ]] && printf 'called\n' > "$MARKER"
+printf 'DISPATCH_STUB:%s\n' "$MODE"
+
+if [[ "$MODE" == "exit99" ]]; then
+  exit 99
+fi
+
+if [[ -z "$brief_file" ]]; then
+  exit 0
+fi
+
+output_path=""
+if [[ -f "$brief_file" ]]; then
+output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | awk '{print $NF}' || true)
+fi
+
+if [[ -n "$output_path" ]]; then
+  mkdir -p "$(dirname "$output_path")"
+  if [[ "$brief_file" == *-synthesis.md ]]; then
+    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n# PR-Gate Result — stub tier\n**Date**: 2026-05-17\n**Reviewers**: stub\n**Not reviewed**: none\n\n## cross-check\nnone\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n' > "$output_path"
+  else
+    printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: standard\nmode: sequential\nmost_severe: advise\nreviewers:\n  critic: advise\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n\n## stub-reviewer — advise\nVerdict: advise. Stub output.\nFinal: GO\n' > "$output_path"
+  fi
+fi
+
+exit 0
+CLAUDE_STUB_EOF
+  chmod +x "$dir/adapters/claude/dispatch.sh"
 }
 
 create_agents() {
@@ -208,12 +231,16 @@ test_executor_codex_flag_explicit_keeps_behavior() {
   pass "$name"
 }
 
-test_executor_claude_sequential_emits_single_brief_handover() {
-  local name="executor-claude-sequential-emits-single-brief-handover"
+test_executor_claude_sequential_dispatches_subprocess() {
+  # CC-383: --executor claude dispatches an independent subprocess (headless
+  # `claude --print` via the claude adapter), writes the result in-process, and
+  # emits NO pr-gate-handover_v1 block. Single-session dispatch chatter lands on
+  # stderr (CC-350), like codex.
+  local name="executor-claude-sequential-dispatches-subprocess"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
-  local handover reviewers synthesis result
+  local result
   mkdir -p "$dir"
 
   create_runner "$runner"
@@ -228,38 +255,27 @@ test_executor_claude_sequential_emits_single_brief_handover() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
-  assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
-  assert_contains "$name" "$out" "reviewer_name: combined" || return
-  assert_contains "$name" "$out" ".gate-briefs/pr-gate-" || return
-  assert_not_contains "$name" "$out" "-combined.md" || return
-
-  handover=$(extract_handover_block "$out")
-  reviewers=$(printf '%s' "$handover" | grep -c '^- role: reviewer$')
-  synthesis=$(printf '%s' "$handover" | grep -c '^- role: synthesis$')
-  if [[ "$reviewers" -ne 1 ]]; then
-    fail "$name" "expected 1 reviewer entry, got $reviewers"
-    return
-  fi
-  if [[ "$synthesis" -ne 0 ]]; then
-    fail "$name" "did not expect synthesis entry in sequential mode"
-    return
-  fi
+  assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
+  assert_contains "$name" "$err" "DISPATCH_STUB:success" || return
 
   result=$(extract_result_path "$out")
-  if [[ -z "$result" ]]; then
-    fail "$name" "missing result path footer"
+  if [[ -z "$result" || ! -s "$result" ]]; then
+    fail "$name" "claude route did not materialize the result file"
     return
   fi
+  assert_contains "$name" "$result" "Final: GO" || return
   pass "$name"
 }
 
-test_executor_claude_parallel_emits_multi_brief_handover() {
-  local name="executor-claude-parallel-emits-multi-brief-handover"
+test_executor_claude_parallel_dispatches_subprocess() {
+  # CC-383: parallel --executor claude dispatches one subprocess per reviewer
+  # plus a synthesis subprocess, materializes the consolidated result, and emits
+  # NO handover block.
+  local name="executor-claude-parallel-dispatches-subprocess"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err"
-  local handover reviewers synthesis
+  local result
   mkdir -p "$dir"
 
   create_runner "$runner"
@@ -271,24 +287,17 @@ test_executor_claude_parallel_emits_multi_brief_handover() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
+    fail "$name" "exit $code, expected 0; stderr: $(tail -3 "$err" 2>/dev/null)"
     return
   fi
+  assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
 
-  handover=$(extract_handover_block "$out")
-  reviewers=$(printf '%s' "$handover" | grep -c '^- role: reviewer$')
-  synthesis=$(printf '%s' "$handover" | grep -c '^- role: synthesis$')
-  if [[ "$reviewers" -ne 2 ]]; then
-    fail "$name" "expected 2 reviewer entries, got $reviewers"
+  result=$(extract_result_path "$out")
+  if [[ -z "$result" || ! -s "$result" ]]; then
+    fail "$name" "claude parallel route did not materialize the consolidated result"
     return
   fi
-  if [[ "$synthesis" -ne 1 ]]; then
-    fail "$name" "expected 1 synthesis entry, got $synthesis"
-    return
-  fi
-  assert_contains "$name" "$out" "reviewer_name: critic" || return
-  assert_contains "$name" "$out" "reviewer_name: qa-tester" || return
-  assert_contains "$name" "$out" ".gate-briefs/pr-gate-" || return
+  assert_contains "$name" "$result" "Final: GO" || return
   pass "$name"
 }
 
@@ -344,8 +353,10 @@ test_executor_auto_without_codex() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  # auto-detect picks claude when no codex binary is on PATH; claude now
+  # dispatches a subprocess (no handover) and materializes the result.
+  assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
+  assert_contains "$name" "$err" "DISPATCH_STUB:success" || return
   pass "$name"
 }
 
@@ -436,48 +447,25 @@ STUB_EOF
     return
   fi
   if [[ -f "$marker" ]]; then
-    fail "$name" "adapter dispatch was called in claude mode"
+    fail "$name" "codex adapter was invoked on the claude route"
     return
   fi
-  assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
+  local result
+  result=$(extract_result_path "$out")
+  if [[ -z "$result" || ! -s "$result" ]]; then
+    fail "$name" "claude route did not materialize the result file"
+    return
+  fi
+  assert_not_contains "$name" "$out" '```pr-gate-handover_v1' || return
   pass "$name"
 }
 
-test_pr_gate_handover_fence_shape() {
-  local name="pr-gate-handover-fence-shape"
-  local dir="$TMP_ROOT/$name"
-  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err"
-  mkdir -p "$dir"
-
-  create_runner "$runner"
-  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-  create_repo "$repo"
-
-  set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" "$runner" --executor claude --base main
-  local code=$?
-  set -e
-  if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0"
-    return
-  fi
-  assert_fence_shape "$name" "$out" || return
-  pass "$name"
-}
-
-test_executor_claude_post_gate_hook_not_invoked() {
-  # Verifies that .pm-dispatch/post-gate.sh is NOT run when --executor claude is used.
-  # On the claude route pr-gate.sh emits a handover block and exits; reviewers run
-  # outside the script, so post-gate cannot fire at true gate completion here.
-  #
-  # Steps:
-  #   1. Create repo with an executable post-gate.sh that writes a marker.
-  #   2. Run gate with --executor claude --base main.
-  #   3. Assert gate exits 0 and handover block is present.
-  #   4. Assert marker does NOT exist (hook body was not called).
-  #   5. Assert stderr contains the executor-route notice.
-  local name="executor-claude-post-gate-hook-not-invoked"
+test_executor_claude_post_gate_hook_skipped_without_allow_hooks() {
+  # CC-383: claude now completes the gate in-process like codex, so post-gate is
+  # the SAME success-only hook for both executors -- skipped (with a warning)
+  # unless --allow-hooks is passed. Verifies the hook body does NOT run on the
+  # claude route without --allow-hooks.
+  local name="executor-claude-post-gate-hook-skipped-without-allow-hooks"
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
   local out="$dir/out" err="$dir/err" hook_marker="$dir/hook.marker"
@@ -501,21 +489,19 @@ test_executor_claude_post_gate_hook_not_invoked() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_contains "$name" "$out" '```pr-gate-handover_v1' || return
   if [[ -f "$hook_marker" ]]; then
-    fail "$name" "post-gate hook ran on --executor claude (must not run inside script)"
+    fail "$name" "post-gate hook ran without --allow-hooks"
     return
   fi
-  assert_contains "$name" "$err" "will not run on --executor claude" || return
+  assert_contains "$name" "$err" "pass --allow-hooks" || return
   pass "$name"
 }
 
-test_commands_pr_gate_md_has_both_routes() {
-  local name="commands-pr-gate-md-has-both-routes"
+test_commands_pr_gate_md_documents_executors() {
+  local name="commands-pr-gate-md-documents-executors"
   local target="$REPO_ROOT/commands/pr-gate.md"
-  assert_contains "$name" "$target" "## Route A" || return
-  assert_contains "$name" "$target" "## Route B" || return
-  assert_contains "$name" "$target" 'pr-gate-handover_v1' || return
+  assert_contains "$name" "$target" "codex" || return
+  assert_contains "$name" "$target" "claude" || return
   pass "$name"
 }
 
@@ -537,15 +523,14 @@ if [[ "$_PGP_PLATFORM" == "windows" ]]; then
 fi
 
 run_case "executor-codex-flag-explicit-keeps-behavior" test_executor_codex_flag_explicit_keeps_behavior
-run_case "executor-claude-sequential-emits-single-brief-handover" test_executor_claude_sequential_emits_single_brief_handover
-run_case "executor-claude-parallel-emits-multi-brief-handover" test_executor_claude_parallel_emits_multi_brief_handover
+run_case "executor-claude-sequential-dispatches-subprocess" test_executor_claude_sequential_dispatches_subprocess
+run_case "executor-claude-parallel-dispatches-subprocess" test_executor_claude_parallel_dispatches_subprocess
 run_case "executor-auto-with-codex" test_executor_auto_with_codex
 run_case "executor-auto-without-codex" test_executor_auto_without_codex
 run_case "no-lib-copy-mode-uses-inline-executor-fallback" test_no_lib_copy_mode_uses_inline_executor_fallback
-run_case "executor-claude-post-gate-hook-not-invoked" test_executor_claude_post_gate_hook_not_invoked
+run_case "executor-claude-post-gate-hook-skipped-without-allow-hooks" test_executor_claude_post_gate_hook_skipped_without_allow_hooks
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
-run_case "pr-gate-handover-fence-shape" test_pr_gate_handover_fence_shape
-run_case "commands-pr-gate-md-has-both-routes" test_commands_pr_gate_md_has_both_routes
+run_case "commands-pr-gate-md-documents-executors" test_commands_pr_gate_md_documents_executors
 
 th_summary
