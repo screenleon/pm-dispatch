@@ -22,6 +22,8 @@ make_fixture_repo() {
   # flow (CC-289), so the fixture must carry them to exercise that route.
   cp "$REPO_ROOT/scripts/lib/pmctl-dispatch.sh" "$repo/scripts/lib/pmctl-dispatch.sh"
   cp "$REPO_ROOT/scripts/lib/executor-router.sh" "$repo/scripts/lib/executor-router.sh"
+  # executor-router.sh sources runner-kind.sh for manifest-derived routing (CC-373).
+  cp "$REPO_ROOT/scripts/lib/runner-kind.sh" "$repo/scripts/lib/runner-kind.sh"
   chmod +x "$repo/cli/pmctl"
 
   {

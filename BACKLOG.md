@@ -81,7 +81,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-371 | 🟡 deferred | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-hooks.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
 | CC-372 | ✅ done | **[arch: adapter runner-kind manifest field]** `adapter.yaml` 新增 `runner_kind`（`cli-subprocess`=thin-dispatch/hook-gated，如 codex；`host-native`=self-exec/harness-gated，如 claude-as-host）+ 衍生能力旗標（`dispatch_route`、`write_guard_mode`=hook\|cli-only、`needs_bash_guard`）。把目前隱式寫死三遍（executor-router case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）的執行拓樸，收斂成單一 manifest 宣告，由 [[CC-373]]/[[CC-374]]/[[CC-375]] 衍生。純加法、低風險、v0.6.0 地基。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:#277 | P2 | design |
-| CC-373 | 🔵 active | **[arch: executor-router 資料驅動 — 拔除 codex\|claude 硬編碼]** `scripts/lib/executor-router.sh` 的 `resolve_executor`/`dispatch_route_for` 目前以 `codex\|claude` enum 寫死、`dispatch_via_codex` 為 codex 專屬。改讀已註冊 adapter 的 [[CC-372]] manifest：route 由 `dispatch_route` 衍生，allowlist = 「磁碟上有合法 manifest 的 adapter」；泛化／移除 `dispatch_via_codex`。**吸收 [[CC-360]]**（claude route 對齊）。Security/risk gate：allowlist 信任邊界從程式碼常數移到 manifest，必守 strict-identifier ＋ manifest schema 驗證 fail-closed。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
+| CC-373 | ✅ done | **[arch: executor-router 資料驅動 — 拔除 codex\|claude 硬編碼]** `scripts/lib/executor-router.sh` 的 `resolve_executor`/`dispatch_route_for` 改讀 on-disk [[CC-372]] manifest：route 由 `runner_kind` 經 `runner_kind_resolve_flag` 衍生（吃 `dispatch_route` override），allowlist = 「`adapters/<name>/adapter.yaml` 可讀、非 symlink、宣告合法 `runner_kind`」。`dispatch_via_codex`/`_claude` 泛化成單一 `dispatch_via <executor>`（依驗證過的名字解析 `adapters/<executor>/dispatch.sh`，`--sandbox`/`--approval` 只對 cli-subprocess 轉發；兩具名函式留為薄 shim）；pr-gate 三處呼叫點改用 generic。信任邊界從程式碼常數移到 manifest，fail-closed（strict bare-identifier 擋 traversal、缺/壞 manifest、壞 runner_kind 皆拒）。吸收 [[CC-360]]。Defer→[[CC-376]]：`--sandbox`/`--approval` 收進統一 `--isolation` 契約。+10 test（含零核心改動驗收、override、fail-closed、traversal）。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:#279 | P2 | design |
 | CC-374 | 🔵 active | **[arch: hook-guard wrapper 收口 — role-參數化 + 委派 pmctl guard check]** `hook-codex-write-guard.sh`/`hook-claude-write-guard.sh` 剝掉執行器名後 ~95% 重複，且各自重做 path policy 而非呼叫核心；guard 決策存在兩份（CLI 核心 + wrapper shell）。收成單一 role-參數化 wrapper，決策一律委派回 `pmctl guard check`；wrapper 行為（live-hook vs cli-only、是否套 bash-guard）由 [[CC-372]] manifest 衍生。**吸收 [[CC-066]]**（policy.yml）、**[[CC-062]]**（policy test matrix）、**收尾 [[CC-307]]**（pm cross-runtime 文件/alias）。不可壓平兩個真不對稱：`hook-codex-bash-guard.sh`(447 行) 由 `needs_bash_guard` 決定套不套；live-hook bit 必由 manifest 明宣告，非靠檔案存在隱式表示。Security/risk gate。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/security | 2026-06-13 | — | P2 | design |
 | CC-375 | 🔵 active | **[install: hook 接線由 manifest 能力旗標衍生]** `install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 對「哪些 hook 該接進 settings.json」目前逐 executor 寫死。改由 [[CC-372]] manifest 的 `write_guard_mode`/`needs_bash_guard` 衍生接線清單，使新 adapter 安裝零核心改動。釘死 install/uninstall/doctor 三方一致（呼應 [[CC-368]] 三方漂移教訓）。相依 [[CC-374]]。umbrella [[CC-333]]。 | arch/install | 2026-06-13 | — | P3 | hygiene |
 | CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
@@ -224,7 +224,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-373 — arch: executor-router 資料驅動 🔵 active
+## CC-373 — arch: executor-router 資料驅動 ✅ 2026-06-14
+
+**Done**: `resolve_executor`/`dispatch_route_for` 改讀 on-disk manifest（`_er_adapter_manifest` strict-name + 非 symlink + 可讀 → `runner_kind_manifest_field`/`runner_kind_valid`），route 由 `runner_kind_resolve_flag <kind> dispatch_route <override>` 衍生（[[CC-372]] 單一映射表）。allowlist = 「有合法 manifest 的 adapter」，fail-closed。`dispatch_via_codex`/`_claude` 泛化成 `dispatch_via <executor> …`（依名字解析 `adapters/<executor>/dispatch.sh`；`--sandbox`/`--approval` 只對 `cli-subprocess` 轉發、host-native 丟；兩具名函式留薄 shim）。`pr-gate.sh` 三處 `dispatch_via_"$EXECUTOR"` → generic `dispatch_via "$EXECUTOR"`；copy-mode inline fallback 因無 `adapters/` 樹保留硬編碼 codex|claude（標註為刻意降級鏡像）。`pmctl-adapter` 產生器的「register in dispatch_route_for」指引改為「宣告合法 runner_kind 即可路由」。+10 `test-executor-router` cases。
+
+**驗收**: fixture adapter（drop 目錄 + manifest）即可路由，無 `executor-router.sh` 改動——[[CC-376]]/[[CC-377]] 真 adapter 的抽象成敗驗收點。
+
+**Deferred → [[CC-376]]**: `--sandbox`/`--approval`（codex-native）收進統一 `--isolation` 契約；目前由 `runner_kind == cli-subprocess` 衍生轉發，對兩個真 adapter 正確，opencode 的 flag 面由其 dispatch.sh adapter-local 決定（不需核心改動，保住驗收）。
+
+**See**: [[CC-372]]（runner_kind 表）、吸收 [[CC-360]]（claude route 對齊）、[[guard-role-runtime]]（route 值在 pmctl-dispatch 僅作 allowlist+log，不驅動執行分支——故 claude 角色歧義不需在本票於 manifest 解）。
+
+<details><summary>原始 scoping</summary>
 
 **Problem**: `scripts/lib/executor-router.sh` 是 dispatch 抽象的最後一道硬編碼牆。`resolve_executor` 的 case 只收 `codex|claude|auto`、`dispatch_route_for` 只認 `codex`/`claude` 兩個寫死 route，`dispatch_via_codex` 是 codex 專屬 helper。`pmctl dispatch run --adapter <name>` 上層已經完全按名字泛用（header 不變式：唯一 executor 身分是 adapter 名字字串），但 router 仍以兩個常數 enum 把關——掉一個合法 `adapters/<name>/` 進去，router 不認得就 fail-closed 擋掉。
 
@@ -239,6 +249,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Security/risk gate（hard）**: allowlist 的信任邊界從「程式碼常數」放寬到「磁碟上的 manifest 內容」。必守：adapter 名 strict-identifier `^[a-z][a-z0-9_-]*$`（已有，續守）、manifest schema 驗證、路徑不可逃逸 `adapters/`。過 security-reviewer + risk-reviewer。
 
 **Dependencies**: [[CC-372]]。umbrella [[CC-333]]。
+
+</details>
 
 ---
 
