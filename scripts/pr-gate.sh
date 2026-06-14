@@ -117,6 +117,58 @@ while [[ -L "$_self" ]]; do
   [[ "$_self" == /* ]] || _self="$_self_dir/$_self"
 done
 SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+GATE_RESULT_VERIFY_PATH="$SCRIPT_DIR/lib/gate-result-verify.sh"
+if [[ -r "$GATE_RESULT_VERIFY_PATH" ]]; then
+  # shellcheck source=scripts/lib/gate-result-verify.sh
+  . "$GATE_RESULT_VERIFY_PATH"
+else
+  # Inline fallback for copy-mode (pr-gate.sh run standalone without scripts/lib/).
+  # MUST stay in sync with scripts/lib/gate-result-verify.sh; the copy-mode
+  # regression test exercises this path.
+  gate_result_verify() {
+    local result_file=${1-} expected_final=${2-} route_label=${3-gate}
+    local final_count frontmatter_final body_final
+
+    [[ $# -ge 1 && $# -le 3 ]] || {
+      printf 'gate-result-verify: gate_result_verify expects <result_file> [expected_final] [route_label]\n' >&2
+      return 2
+    }
+
+    if [[ ! -s "$result_file" ]]; then
+      printf 'Error: %s did not produce the result file: %s\n' "$route_label" "$result_file" >&2
+      printf 'Gate aborted -- the executor session may have exited 0 without writing a verdict.\n' >&2
+      return 1
+    fi
+
+    final_count=$(grep -cE '^Final: (GO|NO-GO)$' "$result_file" || true)
+    if [[ "$final_count" -ne 1 ]]; then
+      printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d): %s\n' \
+        "$final_count" "$result_file" >&2
+      return 1
+    fi
+
+    frontmatter_final=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$result_file")
+    if [[ -z "$frontmatter_final" ]]; then
+      printf 'Error: gate result YAML frontmatter missing required field: final: (%s)\n' "$result_file" >&2
+      return 1
+    fi
+
+    body_final=$(grep -E '^Final: (GO|NO-GO)$' "$result_file" | awk '{print $2}')
+    if [[ "$frontmatter_final" != "$body_final" ]]; then
+      printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in gate result: %s\n' \
+        "$frontmatter_final" "$body_final" "$result_file" >&2
+      return 1
+    fi
+
+    if [[ -n "$expected_final" && "$body_final" != "$expected_final" ]]; then
+      printf 'Error: %s verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated: %s\n' \
+        "$route_label" "$body_final" "$expected_final" "$result_file" >&2
+      return 1
+    fi
+
+    return 0
+  }
+fi
 EXECUTOR_ROUTER_PATH="$SCRIPT_DIR/lib/executor-router.sh"
 if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   # shellcheck source=scripts/lib/executor-router.sh
@@ -448,6 +500,14 @@ BRIEF_DIR="$WORK_DIR/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
+# Normalize to an absolute path. The reviewer write-guard (hook-reviewer-write-guard.sh)
+# requires an absolute file_path, and the pr-gate-handover_v1 schema mandates an absolute
+# output_file. A relative --output (or a relative --cd default) would otherwise be embedded
+# verbatim into the reviewer brief's `pmctl guard check` constraint, making the guard exit
+# nonzero and the reviewer abort the write -- the 0-byte-result failure mode, for any executor.
+# Ordering dependency: this relies on the earlier `cd "$WORK_DIR"` having already run, so $PWD
+# here IS the absolute working dir and a relative OUTPUT_FILE resolves to an absolute path under it.
+[[ "$OUTPUT_FILE" = /* ]] || OUTPUT_FILE="$PWD/$OUTPUT_FILE"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 touch "$OUTPUT_FILE"
 
@@ -722,29 +782,11 @@ BRIEF_EOF
     # checks could fire (CC-350). Parallel reviewers already redirect to a log.
     eval "$CODEX_DISPATCH_CMD" >&2
 
-    # Validate sequential output: must exist, be non-empty, contain exactly one
-    # Final: GO|NO-GO line. Mirrors the parallel synthesis validation.
-    if [[ ! -s "$OUTPUT_FILE" ]]; then
-      printf 'Error: sequential gate did not produce the result file: %s\n' "$OUTPUT_FILE" >&2
-      printf 'Gate aborted -- codex session may have exited 0 without completing.\n' >&2
-      exit 1
-    fi
-    SEQ_FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
-    if [[ "$SEQ_FINAL_COUNT" -ne 1 ]]; then
-      printf 'Error: gate result file must contain exactly one %s: GO/NO-GO line (found %d).\n' "Final" "$SEQ_FINAL_COUNT" >&2
-      exit 1
-    fi
-    SEQ_FRONTMATTER_FINAL=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$OUTPUT_FILE")
-    if [[ -z "$SEQ_FRONTMATTER_FINAL" ]]; then
-      printf 'Error: gate result YAML frontmatter missing required field: final:\n' >&2
-      exit 1
-    fi
-    SEQ_BODY_FINAL=$(grep -E '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" | awk '{print $2}')
-    if [[ "$SEQ_FRONTMATTER_FINAL" != "$SEQ_BODY_FINAL" ]]; then
-      printf 'Error: frontmatter final: (%s) does not match body Final: (%s) in sequential gate result.\n' \
-        "$SEQ_FRONTMATTER_FINAL" "$SEQ_BODY_FINAL" >&2
-      exit 1
-    fi
+    # Validate single-session output via the shared contract (must exist, be
+    # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
+    # frontmatter final: field). Same checks the parallel synthesis route and
+    # `pmctl gate verify` enforce.
+    gate_result_verify "$OUTPUT_FILE" "" "sequential gate" || exit 1
   else
     add_pr_gate_handover_entry reviewer combined "$BRIEF_FILE" "$OUTPUT_FILE"
   fi
@@ -1135,35 +1177,11 @@ SBRIEF_P2
   # consumer pipe would kill synthesis before the result file is written (CC-350).
   eval "$CODEX_DISPATCH_CMD" >&2
 
-  # Validate synthesis output: must exist, be non-empty, contain exactly one
-  # Final: GO|NO-GO line, and match the shell-computed verdict.
-  # Multiple or conflicting Final: lines indicate a manipulated/corrupt artifact.
-  if [[ ! -s "$OUTPUT_FILE" ]]; then
-    printf 'Error: PM synthesis did not produce the gate result file: %s\n' "$OUTPUT_FILE" >&2
-    printf 'Gate aborted -- synthesis session may have exited 0 without completing.\n' >&2
-    exit 1
-  fi
-  FINAL_COUNT=$(grep -cE '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" || true)
-  if [[ "$FINAL_COUNT" -ne 1 ]]; then
-    printf 'Error: gate result file must contain exactly one Final: GO/NO-GO line (found %d).\n' "$FINAL_COUNT" >&2
-    exit 1
-  fi
-  SYNTHESIS_FINAL=$(grep -E '^Final: (GO|NO-GO)$' "$OUTPUT_FILE" | awk '{print $2}')
-  if [[ "$SYNTHESIS_FINAL" != "$SHELL_FINAL" ]]; then
-    printf 'Error: synthesis verdict (%s) contradicts shell-computed verdict (%s) -- gate result may have been manipulated.\n' \
-      "$SYNTHESIS_FINAL" "$SHELL_FINAL" >&2
-    exit 1
-  fi
-  FRONTMATTER_FINAL=$(awk 'BEGIN{s=0} /^---$/ { if (s == 0) { s=1; next } else if (s == 1) { exit } } s && $1 == "final:" { print $2; exit }' "$OUTPUT_FILE")
-  if [[ -z "$FRONTMATTER_FINAL" ]]; then
-    printf 'Error: gate result frontmatter final missing: cannot verify shell/Synthesis parity.\n' >&2
-    exit 1
-  fi
-  if [[ "$FRONTMATTER_FINAL" != "$SHELL_FINAL" ]]; then
-    printf 'Error: frontmatter final (%s) does not match shell-computed verdict (%s).\n' \
-      "$FRONTMATTER_FINAL" "$SHELL_FINAL" >&2
-    exit 1
-  fi
+  # Validate synthesis output via the shared contract, pinned to the
+  # shell-computed verdict: a synthesis that contradicts SHELL_FINAL (in either
+  # the body Final: line or the frontmatter final: field) indicates a
+  # manipulated/corrupt artifact and aborts the gate.
+  gate_result_verify "$OUTPUT_FILE" "$SHELL_FINAL" "PM synthesis" || exit 1
 
   # Verify reviewer artifact files were not modified by synthesis.
   # These are gitignored and not covered by the tracked-file hash above.
@@ -1229,6 +1247,15 @@ fi
 # ── Print result path for caller ─────────────────────────────────────────────
 emit_pr_gate_handover_block
 say '\nresult: %s\n' "$OUTPUT_FILE"
+
+# The codex route integrity-checks the result in-process (gate_result_verify
+# above). The claude route writes the result out-of-process after the handover,
+# so the orchestrating host confirms it the same way -- making the host-native
+# result trackable via pmctl, symmetric to the codex route.
+if [[ "$EXECUTOR" == "claude" ]]; then
+  say 'after the handover route writes the result, confirm it with:\n'
+  say '  pmctl gate verify %s\n' "$OUTPUT_FILE"
+fi
 
 _FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
 if [[ "$EXECUTOR" != "claude" && "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then

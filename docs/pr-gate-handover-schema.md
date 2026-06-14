@@ -47,6 +47,12 @@ Required keys by role:
 - The caller must then dispatch the `role: synthesis` Agent when present.
 - The caller must continue writing final output to the shared `output_file` path
   that the gate script also prints as `result:`.
+- After the route writes `output_file`, the caller must confirm it with
+  `pmctl gate verify <output_file>` (exit 0 = structurally valid result). The
+  codex route runs this same contract in-process after its dispatch; the claude
+  route's write happens out-of-process, so this explicit verify is what makes
+  the host-native result trackable and is the gate's authority on whether a
+  result was actually produced. The gate script prints the exact command to run.
 
 Implementation reference: `commands/pr-gate.md` and `scripts/pr-gate.sh`.
 

@@ -3445,8 +3445,44 @@ BRIEF_EOF
   pass "$name"
 }
 
+test_relative_output_normalized_to_absolute() {
+  # Regression: a relative --output must be normalized to an absolute path before
+  # it is embedded in the reviewer brief's `pmctl guard check ... --file` constraint
+  # (and the `- new:` target). The reviewer write-guard requires an absolute
+  # file_path; a relative one makes the guard exit nonzero and the reviewer abort
+  # the write -- the 0-byte-result failure mode, for any executor.
+  local name="relative-output-normalized-to-absolute"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential --output sub/rel-result.md
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (relative --output should be normalized, not abort the gate)"
+    return
+  fi
+  # The guard-check constraint must carry the absolute, repo-rooted output path.
+  assert_file_contains "$name" "$brief" "--file $repo/sub/rel-result.md" || return
+  # And must NOT carry the bare relative form that the write-guard would reject.
+  if grep -qE -- '--file sub/rel-result\.md' "$brief"; then
+    fail "$name" "brief embeds a relative --file path; the reviewer write-guard would reject it"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_seq_brief_has_reviewer_guard_constraint
 run_test test_parallel_reviewer_brief_has_guard_constraint
+run_test test_relative_output_normalized_to_absolute
 run_test test_brief_major_suggests_full
 run_test test_brief_minor_express_suggests_standard
 run_test test_brief_explicit_tier_suppresses_advisory

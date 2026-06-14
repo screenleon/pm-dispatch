@@ -29,6 +29,7 @@ SUITE_NAMES=(
   test-claude-dispatch
   test-layer-boundaries
   test-executor-router
+  test-runner-kind
   test-pmctl-adapter-generate
   test-pr-gate
   test-setup-project
@@ -109,6 +110,7 @@ suite_path() {
     test-claude-dispatch) printf 'scripts/test-claude-dispatch.sh\n' ;;
     test-layer-boundaries) printf 'scripts/test-layer-boundaries.sh\n' ;;
     test-executor-router) printf 'scripts/test-executor-router.sh\n' ;;
+    test-runner-kind) printf 'scripts/test-runner-kind.sh\n' ;;
     test-pmctl-adapter-generate) printf 'scripts/test-pmctl-adapter-generate.sh\n' ;;
     test-pr-gate) printf 'scripts/test-pr-gate.sh\n' ;;
     test-setup-project) printf 'scripts/test-setup-project.sh\n' ;;

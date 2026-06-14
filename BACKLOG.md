@@ -89,6 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-379 | ✅ done | **[fix: pr-gate 生成的 brief 過不了 brief-validate.sh — claude gate route 全壞]** `scripts/pr-gate.sh` 三處 brief 模板（combined / parallel-reviewer / synthesis）的 `self_verify` 用自訂鍵（`file-exists:`/`has-conclusion:`）而無 `- cmd:` 機檢項，且 combined brief 的 `acceptance:` 縮排 2 空格被解析為 `self_verify` 子鍵——任一都讓 `brief-validate.sh`（CC-351 起為 executor 第一動作）REJECT，reviewer 未跑即停。修：`acceptance` 退回 column-0；`file-exists:` → `- cmd: "test -f …"`（機檢，post-verify 真執行）。stub 化的 gate 測試從未對生成 brief 跑真 `brief-validate`，故漏網。補三條回歸（每種 brief 各一，CC-372 claude gate 時發現）。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-380 | ✅ done | **[fix: gate reviewer 的 `pmctl guard check` 允許項只有 bare 形式 — 缺絕對/tilde]** in-session claude reviewer subagent 的乾淨 PATH 不含 `~/.local/bin`，故以絕對路徑叫 `pmctl guard check`，但 `install-hooks.sh`（CC-334）只寫 bare `Bash(pmctl guard check:*)`，背景 agent 又不能跳互動詢問 → 一律 DENY，結果檔寫不出（同 [[CC-291]] tilde-vs-absolute 類）。修：`install-hooks.sh` 改為寫入 bare + 絕對（`${PMCTL_BIN_DIR:-$HOME/.local/bin}`）+ tilde 三形式；`uninstall-hooks.sh` 鏡像移除三形式（install/uninstall 對稱，呼應 [[CC-368]] 三方漂移教訓）；`test-install.sh` 三條 CC-334 case 補 abs+tilde 斷言（HOME 釘進 fixture）。CC-372 claude gate 時發現。 | ops/install | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-381 | 🟡 deferred | **[arch: install host-PM-aware — 每個可當主 PM 的 host runtime 都對應寫入設定，不只 claude]** `install.sh`/`install-hooks.sh` 目前寫死 claude harness（`~/.claude/settings.json` 的 hook 接線＋permissions allow-list＋statusline＋agents/commands 介面）——只有「claude 當 host PM」時才正確。codex（或未來 host）當主 PM 時設定面不同（`~/.codex/`、AGENTS.md、自有 sandbox/permission 模型，無 `~/.claude` PreToolUse hook），[[CC-334]]/[[CC-380]] 寫進 `~/.claude` 的 guard/權限接線在 codex-host 下完全不生效 → codex-PM 安裝拿不到任何 gate/guard plumbing。這是 [[CC-333]] 硬耦合 **layer 4（install 路徑）+ layer 3/5（hook 機制/設定格式）**，且是「誰當 host PM」這條軸，與 [[CC-373]]/[[CC-374]]（PM→executor 軸）正交。要求：install 變 host-PM-aware，對每個支援的 host runtime 由 manifest（關聯 [[CC-372]] runner_kind、[[CC-375]] manifest 衍生接線）衍生該 host 的等價設定（hook/guard、allow-list 或 sandbox policy、PM 介面），每 host 維持 install/uninstall/doctor 三方一致（[[CC-368]]）。排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後。umbrella [[CC-333]]。 | arch/install | 2026-06-14 | — | P2 | design |
+| CC-382 | ✅ done | **[fix+feat: pr-gate 相對 `--output` → 兩 executor 皆產空結果；新增 `pmctl gate verify` 讓 claude host-native 結果可追蹤]** 相對 `--output`（或相對 `--cd` 預設）被原樣寫進 reviewer brief 的 `pmctl guard check … --file` 約束與 `pr-gate-handover_v1` 的 `output_file`，但 reviewer write-guard 要求絕對路徑、handover schema 也要求絕對 `output_file` → guard 退非零、reviewer 中止寫入 → 0-byte 結果但 gate 回報成功，**codex 與 claude handover 兩條路皆中**（先前誤判為 claude 專屬）。修：`OUTPUT_FILE` 在組 brief 前正規化為絕對（對 `$PWD`＝`cd "$WORK_DIR"` 後的工作目錄）。同時把完整性檢查抽成單一真相來源 `scripts/lib/gate-result-verify.sh`（非空／恰一條純文字 `Final:`／frontmatter `final:` 與 body 一致／可選釘住 shell 算出的 verdict），由 codex 同步路線、parallel synthesis、與新增 `pmctl gate verify <file>` 共用；`pr-gate.sh` 保留 inline fallback 供 copy-mode（沿用 [[CC-291]] executor-router 慣例）。`pmctl gate verify` 給 claude host-native（handover 在 pr-gate.sh 之外寫檔）與 codex 同等的寫後檢查，讓結果可被 pmctl 確認追蹤，**不改 claude 運作模式**。順帶把 [[CC-372]] 漏鏡像的 `test-runner-kind` 補進 `test-run-all-tests.sh`（55 vs 54 count drift；非 CI job 故 CI 未受影響）。+1 pr-gate 回歸、+5 pmctl-gate 案例；codex gate GO/approve、claude gate GO/advise 雙路驗證。CC-372 claude gate 收尾時發現。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
 
 ---
 
@@ -189,6 +190,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Sequencing**: 排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後；可能落在 v0.7.0（與 [[CC-333]] layer 1/7、MCP 同期評估）。
 
 **See**: [[CC-333]] umbrella（layer 4 install-path）、關聯 [[CC-380]]（暴露 install 的 claude-host 中心性）、[[guard-role-runtime]]（role×runtime 兩軸）、[[CC-375]]（manifest 衍生接線）。
+
+---
+
+## CC-382 — fix+feat: pr-gate 相對 `--output` 產生空結果 + `pmctl gate verify` ✅ 2026-06-14
+
+**Problem**: 以相對 `--output`（或相對 `--cd` 預設）跑 `pmctl gate run` 時，`OUTPUT_FILE` 保持相對路徑並被原樣寫進 reviewer brief 的 `pmctl guard check … --file` 約束、`- new:`、`Only write` 與 `pr-gate-handover_v1` 的 `output_file`。reviewer write-guard（`hook-reviewer-write-guard.sh`）要求**絕對** `file_path`，handover schema 也要求絕對 `output_file` → guard 退非零、reviewer 依硬約束中止寫入 → 0-byte 結果，但 gate 回報成功（silent false-success）。**codex 與 claude handover 兩條路皆中**——先前因只在 claude 路觀察到而誤判為 claude 專屬（[[claude-gate-route-guard-gap]]）；以 codex 重跑同一相對 `--output` 指令同樣產空檔，才定位到是共用根因。
+
+**Root cause**: `OUTPUT_FILE` 只有在省略 `--output` 時才是絕對（預設 `$WORK_DIR/.gate-results/…`）；使用者傳相對 `--output` 時未正規化。先前所有實際呼叫都用預設（已絕對）路徑，故漏網。
+
+**Change**: (1) `pr-gate.sh` 在組 brief 前把 `OUTPUT_FILE` 正規化為絕對（`[[ $OUTPUT_FILE = /* ]] || OUTPUT_FILE="$PWD/$OUTPUT_FILE"`；`$PWD`＝`cd "$WORK_DIR"` 後的工作目錄）。(2) 完整性檢查（非空／恰一條純文字 `Final:`／frontmatter `final:` 與 body 一致／可選釘住 shell verdict）抽成單一真相來源 `scripts/lib/gate-result-verify.sh`，由 codex 同步路線、parallel synthesis、與新增 `pmctl gate verify <file>` 共用；`pr-gate.sh` 保留 source-if-present-else-inline 的 fallback 供 copy-mode（沿用 executor-router 慣例，copy-mode 測試實際走到 inline 版）。(3) 新增 `pmctl gate verify`（exit 0 有效／1 無效／2 用法錯）→ 給 claude host-native（handover 在 pr-gate.sh 之外寫檔）與 codex 同等的寫後檢查，結果可被 pmctl 確認追蹤，**不改 claude 運作模式**。(4) handover schema 文件補上「寫完用 `pmctl gate verify` 確認」。(5) 順帶把 [[CC-372]] 漏鏡像的 `test-runner-kind` 補進 `test-run-all-tests.sh`（55 vs 54 count drift；非 CI job）。
+
+**Verification**: +1 `relative-output-normalized-to-absolute` pr-gate 回歸（斷言生成 brief 帶絕對 guard 路徑）、+5 `pmctl gate verify` 案例。test-pr-gate 89/0、test-pmctl-gate 10/0、test-run-all-tests 14/0、全本機套件綠。以相對 `--output` 重跑：codex gate 產 6481B 結果（GO/approve、`pmctl gate verify` OK）、claude gate（host handover）產 3806B 結果（GO/advise、verify OK）——即先前產 0-byte 的同一指令現在雙路皆寫出可驗證結果。
+
+**Discovered**: CC-372 以 claude/codex executor 收尾 pr-gate 時。
+
+**See**: 同家族 [[CC-379]]（brief-validate）、[[CC-380]]（guard allow-list）；[[guard-role-runtime]]（codex hook-auto vs claude cli-only 的寫後檢查不對稱）；[[CC-372]]（runner_kind）。
 
 ---
 

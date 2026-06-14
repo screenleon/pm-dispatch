@@ -96,6 +96,7 @@ jobs:
           scandir: ./scripts
           ignore_names: >-
             executor-router.sh
+            gate-result-verify.sh
             pmctl-adapter.sh
             pmctl-backlog.sh
             pmctl-fs.sh
