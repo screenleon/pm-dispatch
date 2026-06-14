@@ -173,15 +173,15 @@ fi
 
 # Behavior: adapter.yaml contains the expected top-level contract fields
 # Steps: generate codex and compare adapter.yaml field order and count
-if should_run "adapter.yaml has 8 fields"; then
-  name="adapter.yaml has 8 fields"
+if should_run "adapter.yaml has 9 fields"; then
+  name="adapter.yaml has 9 fields"
   repo="$tmp_root/$name"
   make_fixture_repo "$repo"
   run_pmctl "$repo" adapter generate codex >/dev/null
   fields="$(awk -F: '/^[a-z_]+:/ { print $1 }' "$repo/adapters/codex/adapter.yaml")"
-  expected=$'schema_version\nadapter_name\nexecutor\ncli_binary\nisolation_map_ref\nrunner_ref\ndispatch_contract\ngenerated_files'
+  expected=$'schema_version\nadapter_name\nexecutor\ncli_binary\nisolation_map_ref\nrunner_ref\ndispatch_contract\nrunner_kind\ngenerated_files'
   count="$(printf '%s\n' "$fields" | wc -l | tr -d ' ')"
-  if [[ "$count" == "8" && "$fields" == "$expected" ]]; then
+  if [[ "$count" == "9" && "$fields" == "$expected" ]]; then
     pass "$name"
   else
     fail "$name" "count=$count fields=$fields"

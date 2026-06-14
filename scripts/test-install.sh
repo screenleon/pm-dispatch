@@ -1033,12 +1033,14 @@ test_install_hooks_gate_perms_fresh() {
   mkdir -p "$home/.claude" "$ws"
   printf '{"hooks":{}}\n' > "$settings"
 
-  CLAUDE_HOME="$home/.claude" \
+  HOME="$home" CLAUDE_HOME="$home/.claude" \
     PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+      "Bash($home/.local/bin/pmctl guard check:*)" \
+      "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if ! jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
       fail "$name" "missing permissions.allow entry: $entry"
       return
@@ -1057,14 +1059,16 @@ test_install_hooks_gate_perms_idempotent() {
   mkdir -p "$home/.claude" "$ws"
   printf '{"hooks":{}}\n' > "$settings"
 
-  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
-  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
   local count
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+      "Bash($home/.local/bin/pmctl guard check:*)" \
+      "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     count="$(jq -r --arg e "$entry" '[.permissions.allow[]? | select(. == $e)] | length' "$settings")"
     if [[ "$count" != "1" ]]; then
       fail "$name" "expected 1 copy of '$entry', got $count"
@@ -1222,7 +1226,7 @@ test_install_hooks_gate_perms_uninstall_removes() {
   printf '{"hooks":{},"permissions":{"allow":["Bash(git log:*)"]}}\n' > "$settings"
 
   # Install
-  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
@@ -1232,10 +1236,12 @@ test_install_hooks_gate_perms_uninstall_removes() {
   fi
 
   # Uninstall
-  CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
+  HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
     bash "$REPO_ROOT/scripts/uninstall-hooks.sh" >/dev/null 2>&1
 
-  for entry in "$write_entry" "Bash(pmctl guard check:*)" "Bash(mkdir -p:*)"; do
+  for entry in "$write_entry" "Bash(pmctl guard check:*)" \
+      "Bash($home/.local/bin/pmctl guard check:*)" \
+      "Bash(~/.local/bin/pmctl guard check:*)" "Bash(mkdir -p:*)"; do
     if jq -e --arg e "$entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
       fail "$name" "entry should be removed after uninstall: $entry"
       return

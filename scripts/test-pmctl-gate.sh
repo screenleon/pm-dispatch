@@ -185,10 +185,115 @@ case_pmctl_routing() {
   fi
 }
 
+# Write a structurally valid pr_gate_result_v1 file. Optional overrides:
+#   $2 body Final: value (default GO)   $3 frontmatter final: value (default = $2)
+_mk_gate_result() {
+  local path="$1" body_final="${2:-GO}" fm_final="${3:-${2:-GO}}"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<RESULT
+---
+gate_result_version: pr_gate_result_v1
+final: ${fm_final}
+tier: express
+mode: sequential
+most_severe: approve
+---
+
+# PR-Gate Result
+
+## stub-reviewer -- approve
+- ok
+
+## Gate Conclusion
+Final: ${body_final}
+RESULT
+}
+
+# ---- 6: gate verify accepts a structurally valid result ----------------------
+case_verify_valid() {
+  local name="gate/verify: valid result exits 0"
+  should_run "$name" || return 0
+  local result="$tmp_root/v6/result.md"
+  _mk_gate_result "$result" GO
+  local out code
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"gate result OK"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 7: gate verify rejects an empty (0-byte) result -------------------------
+case_verify_empty() {
+  # The exact failure mode pmctl gate verify exists to catch: a session that
+  # exited 0 without writing a verdict.
+  local name="gate/verify: empty result exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v7/result.md"
+  mkdir -p "$(dirname "$result")"; : > "$result"
+  local out code
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 ]] && [[ "$out" == *"did not produce the result file"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 8: gate verify rejects a result with no Final line ----------------------
+case_verify_no_final() {
+  local name="gate/verify: result without a Final line exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v8/result.md"
+  mkdir -p "$(dirname "$result")"
+  printf 'no verdict here\n' > "$result"
+  local out code
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 ]] && [[ "$out" == *"must contain exactly one Final"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 9: gate verify rejects frontmatter/body Final disagreement --------------
+case_verify_parity_mismatch() {
+  local name="gate/verify: frontmatter/body Final mismatch exits 1"
+  should_run "$name" || return 0
+  local result="$tmp_root/v9/result.md"
+  _mk_gate_result "$result" GO NO-GO   # body GO, frontmatter NO-GO
+  local out code
+  set +e; out="$("$PMCTL" gate verify "$result" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 1 ]] && [[ "$out" == *"does not match body Final"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 10: gate verify with no file argument is a usage error ------------------
+case_verify_usage() {
+  local name="gate/verify: missing file argument exits 2"
+  should_run "$name" || return 0
+  local out code
+  set +e; out="$("$PMCTL" gate verify 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"usage: pmctl gate verify"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script
 case_pmctl_routing
+case_verify_valid
+case_verify_empty
+case_verify_no_final
+case_verify_parity_mismatch
+case_verify_usage
 
 th_summary

@@ -55,8 +55,8 @@ pmctl_adapter_generate() {
 # adapter.yaml - AUTHORED manifest for adapters/$name/.
 # This file is the source of truth. Do not add it to generated_files.
 # pmctl regeneration must not edit this file.
-# Required fields (8): schema_version, adapter_name, executor, cli_binary,
-#   isolation_map_ref, runner_ref, dispatch_contract, generated_files
+# Required fields (9): schema_version, adapter_name, executor, cli_binary,
+#   isolation_map_ref, runner_ref, dispatch_contract, runner_kind, generated_files
 # Edit this file to configure the adapter; regenerate the other files with:
 #   pmctl adapter generate $name  (will refuse to overwrite existing adapter)
 schema_version: 1
@@ -66,6 +66,13 @@ cli_binary: $name
 isolation_map_ref: ./isolation-map.yaml
 runner_ref: ./run.sh
 dispatch_contract: dispatch_handover_v1
+# runner_kind classifies execution topology; dispatch_route / write_guard_mode /
+# needs_bash_guard derive from it (scripts/lib/runner-kind.sh). Default to
+# cli-subprocess (a subprocess CLI executor); set host-native only if this
+# executor IS the running host and self-executes its own edits. To deviate from
+# the runner-kind default for one flag, add that flag here as an explicit
+# override (e.g. needs_bash_guard: false).
+runner_kind: cli-subprocess
 generated_files:
   - isolation-map.yaml
   - dispatch.sh

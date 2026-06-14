@@ -26,6 +26,7 @@ SUITE_NAMES=(
   test-claude-dispatch
   test-layer-boundaries
   test-executor-router
+  test-runner-kind
   test-pmctl-adapter-generate
   test-pr-gate
   test-setup-project
@@ -83,6 +84,7 @@ declare -A SUITE_PATHS=(
   [test-claude-dispatch]="scripts/test-claude-dispatch.sh"
   [test-layer-boundaries]="scripts/test-layer-boundaries.sh"
   [test-executor-router]="scripts/test-executor-router.sh"
+  [test-runner-kind]="scripts/test-runner-kind.sh"
   [test-pmctl-adapter-generate]="scripts/test-pmctl-adapter-generate.sh"
   [test-pr-gate]="scripts/test-pr-gate.sh"
   [test-setup-project]="scripts/test-setup-project.sh"

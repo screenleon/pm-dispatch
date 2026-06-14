@@ -717,6 +717,109 @@ test_sequential_flag_produces_combined_brief() {
   pass "$name"
 }
 
+test_sequential_combined_brief_validates() {
+  # Regression: the full-tier sequential combined brief must satisfy
+  # brief-validate.sh. The brief is the dispatch contract the reviewer executor
+  # validates first; a top-level key indented into a preceding block (e.g.
+  # acceptance nested under self_verify) is parsed as a child, so the executor
+  # REJECTs the brief and no review runs.
+  local name="sequential-combined-brief-validates"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exit $code, expected 0"
+    return
+  fi
+  set +e
+  local vout vcode
+  vout="$("$REPO_ROOT/scripts/brief-validate.sh" "$brief" 2>&1)"
+  vcode=$?
+  set -e
+  if [[ "$vcode" -ne 0 ]]; then
+    fail "$name" "brief-validate rejected generated brief (exit $vcode): $vout"
+    return
+  fi
+  pass "$name"
+}
+
+test_parallel_reviewer_brief_validates() {
+  # Regression: each parallel per-reviewer brief must satisfy brief-validate.sh
+  # (same dispatch contract the reviewer executor validates first).
+  local name="parallel-reviewer-brief-validates"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" reviewer_brief="$dir/reviewer-brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_REVIEWER_BRIEF="$reviewer_brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exit $code, expected 0"
+    return
+  fi
+  set +e
+  local vout vcode
+  vout="$("$REPO_ROOT/scripts/brief-validate.sh" "$reviewer_brief" 2>&1)"
+  vcode=$?
+  set -e
+  if [[ "$vcode" -ne 0 ]]; then
+    fail "$name" "brief-validate rejected reviewer brief (exit $vcode): $vout"
+    return
+  fi
+  pass "$name"
+}
+
+test_parallel_synthesis_brief_validates() {
+  # Regression: the parallel synthesis brief must satisfy brief-validate.sh.
+  # In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
+  local name="parallel-synthesis-brief-validates"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exit $code, expected 0"
+    return
+  fi
+  set +e
+  local vout vcode
+  vout="$("$REPO_ROOT/scripts/brief-validate.sh" "$brief" 2>&1)"
+  vcode=$?
+  set -e
+  if [[ "$vcode" -ne 0 ]]; then
+    fail "$name" "brief-validate rejected synthesis brief (exit $vcode): $vout"
+    return
+  fi
+  pass "$name"
+}
+
 test_failed_reviewer_aborts_gate() {
   # Verifies that when reviewer dispatches fail the gate exits non-zero and
   # prints an error — synthesis must not run on incomplete reviewer data.
@@ -2145,6 +2248,9 @@ run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_sequential_flag_produces_combined_brief
+run_test test_sequential_combined_brief_validates
+run_test test_parallel_reviewer_brief_validates
+run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
 run_test test_gate_result_final_line_back_compat
 run_test test_frontmatter_escalation_parity
@@ -3339,8 +3445,44 @@ BRIEF_EOF
   pass "$name"
 }
 
+test_relative_output_normalized_to_absolute() {
+  # Regression: a relative --output must be normalized to an absolute path before
+  # it is embedded in the reviewer brief's `pmctl guard check ... --file` constraint
+  # (and the `- new:` target). The reviewer write-guard requires an absolute
+  # file_path; a relative one makes the guard exit nonzero and the reviewer abort
+  # the write -- the 0-byte-result failure mode, for any executor.
+  local name="relative-output-normalized-to-absolute"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --sequential --output sub/rel-result.md
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (relative --output should be normalized, not abort the gate)"
+    return
+  fi
+  # The guard-check constraint must carry the absolute, repo-rooted output path.
+  assert_file_contains "$name" "$brief" "--file $repo/sub/rel-result.md" || return
+  # And must NOT carry the bare relative form that the write-guard would reject.
+  if grep -qE -- '--file sub/rel-result\.md' "$brief"; then
+    fail "$name" "brief embeds a relative --file path; the reviewer write-guard would reject it"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_seq_brief_has_reviewer_guard_constraint
 run_test test_parallel_reviewer_brief_has_guard_constraint
+run_test test_relative_output_normalized_to_absolute
 run_test test_brief_major_suggests_full
 run_test test_brief_minor_express_suggests_standard
 run_test test_brief_explicit_tier_suppresses_advisory
