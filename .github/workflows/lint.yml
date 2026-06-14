@@ -105,8 +105,7 @@ jobs:
             codex-dispatch.sh
             codex-watch.sh
             hook-codex-bash-guard.sh
-            hook-codex-write-guard.sh
-            hook-claude-write-guard.sh
+            hook-executor-write-guard.sh
             hook-inject-memory.sh
             hook-log-claude-usage.sh
             hook-pm-write-guard.sh
