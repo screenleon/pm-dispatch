@@ -115,31 +115,20 @@ After firing, reply with one short status line, e.g.:
 
 Do not poll, sleep, or call `BashOutput` immediately.
 
-## Route A — `executor: codex` (default for full profile)
+## Executor routes — both dispatch an independent subprocess
 
-This is the current codex-dispatch primary path. Gate writes one brief per dispatch,
-invokes `pmctl dispatch run --adapter codex`, and waits for `result: <path>` in stdout.
+Both `--executor codex` and `--executor claude` dispatch an INDEPENDENT executor
+subprocess, integrity-check the result in-process, and print `result: <path>`.
+There is no handover/fan-out path — the skill just reads the result file.
 
-- Dispatch shape: one Bash route per codex session.
-- Completion handling: open the result file directly from the footer path.
-- Failure surface: codex session exit non-zero or result validation failure.
+- **`executor: codex`** (default for full profile when codex is on PATH): gate
+  writes one brief per dispatch and invokes the codex adapter (`codex exec`).
+- **`executor: claude`**: identical flow, dispatching the headless claude adapter
+  (`claude --print`, an independent process) instead. Default model is the claude
+  adapter's pinned default (sonnet); override with `--model <id>`.
 
-The command shape is stable and already implemented by `scripts/pr-gate.sh`.
-
-## Route B — `executor: claude` (main-thread fan-out path)
-
-This route does **not** invoke `pmctl dispatch run --adapter codex` at any point.
-
-- Dispatch shape: `scripts/pr-gate.sh` writes a `pr-gate-handover_v1` fenced block
-  listing reviewer briefs and output files.
-- Completion handling: this skill parses that block and fans out one Agent call
-  per `role: reviewer` entry and one final Agent call for the synthesis entry
-  when present. See fan-out rules below.
-- Failure surface: block parser failure, malformed entry, or a missing `output_file`
-  path; treat as partial/fail and stop fan-out.
-
-`scripts/pr-gate.sh` does not mutate working tree directly on this path; the
-calling skill owns execution orchestration.
+`scripts/pr-gate.sh` owns dispatch + result verification for both; the calling
+skill does not fan out reviewers or parse any handover block.
 
 ## Step 3 - Receive completion and relay the result
 
@@ -150,24 +139,11 @@ When the background Bash completion notification arrives:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. If exit code is non-zero, surface a brief failure summary (exit code + last ~20
    lines of stdout).
-4. If stdout contains a `pr-gate-handover_v1` block, follow the claude fan-out path:
-   - Parse the block entries with the parser used for handover metadata.
-   - Fan out every `role: reviewer` entry in a single message — one
-     `Agent(subagent_type: "claude-executor", prompt: "<brief_file>", run_in_background: true)`
-     per entry — so reviewers run detached without blocking the main thread.
-     The reviewer brief's constraints already include an explicit
-     `pmctl guard check --role reviewer --runtime claude --event pre-write`
-     call: the executor enforces the guard before writing.
-   - When every reviewer background agent has reported completion, read each
-     entry's `<output_file>`.
-   - If a synthesis entry exists, run one final `Agent(subagent_type:
-     "claude-executor", run_in_background: true)`; read `result_file` once its
-     completion notification arrives.
-   - Relay `result_file`.
-5. If no handover block is present, this is Route A: read `result_file` directly.
-6. Prepend `PR-gate complete.` to completion relay and include the full gate
+4. Read `result_file` directly (both executor routes write it in-process). To
+   re-confirm out of band, run `pmctl gate verify "$result_file"` (exit 0 = valid).
+5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
-7. On failure, avoid collapsing findings; relay the actual stderr summary and
+6. On failure, avoid collapsing findings; relay the actual stderr summary and
    exit 0 from `/pm` only if needed by the conversation protocol.
 
 ## Local verification after gate findings

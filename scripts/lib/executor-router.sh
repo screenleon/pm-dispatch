@@ -106,6 +106,47 @@ dispatch_via_codex() {
   printf '\n'
 }
 
+# dispatch_via_claude <brief_file> <working_dir> <model> <sandbox> <approval> <timeout> [isolation_level]
+# Symmetric to dispatch_via_codex: prints a safely-quoted command string that runs the headless
+# claude adapter (`claude --print`) as an INDEPENDENT subprocess. The <sandbox> and <approval>
+# args are accepted only for signature parity with dispatch_via_codex (so call sites can stay
+# uniform); they are NOT forwarded -- the claude adapter has no sandbox/approval equivalents
+# (docs/executor-contract.md). The caller owns when/how to execute the printed command.
+dispatch_via_claude() {
+  local brief_file=${1-}
+  local working_dir=${2-}
+  local model=${3-}
+  local _sandbox=${4-}   # parity only -- not forwarded (claude has no sandbox flag)
+  local _approval=${5-}  # parity only -- not forwarded (claude has no approval flag)
+  local timeout=${6-}
+  local isolation_level=${7-}
+  local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/claude/dispatch.sh"
+  local -a cmd
+  local arg
+  local first=1
+
+  [[ $# -eq 6 || $# -eq 7 ]] || {
+    printf 'executor-router: dispatch_via_claude expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+    return 2
+  }
+
+  cmd=(bash "$dispatch_script" --cd "$working_dir" --timeout "$timeout" --brief-file "$brief_file")
+  if [[ -n "$model" && "$model" != "default" ]]; then
+    cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --timeout "$timeout" --brief-file "$brief_file")
+  fi
+  [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+
+  for arg in "${cmd[@]}"; do
+    if [[ "$first" -eq 1 ]]; then
+      first=0
+    else
+      printf ' '
+    fi
+    executor_router_safe_argv "$arg"
+  done
+  printf '\n'
+}
+
 unset _EXECUTOR_ROUTER_SELF _EXECUTOR_ROUTER_DIR
 
 export EXECUTOR_ROUTER_LIB_DIR
@@ -116,3 +157,4 @@ export -f resolve_executor
 export -f dispatch_route_for
 export -f executor_router_safe_argv
 export -f dispatch_via_codex
+export -f dispatch_via_claude

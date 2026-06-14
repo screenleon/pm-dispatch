@@ -1,7 +1,14 @@
 # pr-gate-handover_v1 schema
 
-This schema is only used by `scripts/pr-gate.sh` when the selected executor is
-`claude`. It is intentionally separate from `dispatch_handover_v1`.
+> **DEPRECATED (CC-383).** `pmctl gate run --executor claude` no longer emits this
+> block. The claude executor now dispatches an independent headless `claude --print`
+> subprocess (`adapters/claude/dispatch.sh`) and writes the result in-process,
+> symmetric to codex — there is no handover/fan-out. `scripts/pr-gate.sh` no longer
+> produces a `pr-gate-handover_v1` block for any executor. This document is retained
+> for historical reference only; the schema below describes the retired behavior.
+
+This schema was used by `scripts/pr-gate.sh` when the selected executor was
+`claude` (pre-CC-383). It is intentionally separate from `dispatch_handover_v1`.
 
 - Envelope fence: ```pr-gate-handover_v1
 - Purpose: instruct the main-thread orchestrator to fan out one or more
@@ -33,11 +40,13 @@ Required keys by role:
   - one `role: reviewer` entry per selected reviewer
   - exactly one trailing `role: synthesis` entry.
 
-## Output contract
+## Output contract (historical — retired in CC-383)
 
-- The gate script always prints the handover block on stdout when running in
-  claude mode.
-- The caller must parse the block and dispatch one
+The behavior below describes the pre-CC-383 handover route and no longer occurs;
+`scripts/pr-gate.sh` does not print a handover block for any executor.
+
+- The gate script printed the handover block on stdout when running in claude mode.
+- The caller parsed the block and dispatched one
   `Agent(subagent_type: "claude-executor")` call for every `role: reviewer`
   entry, passing `brief_file` as the call prompt. The reviewer brief already
   contains an explicit `pmctl guard check --role reviewer --runtime claude

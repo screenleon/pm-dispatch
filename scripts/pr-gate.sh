@@ -48,6 +48,8 @@ say() { printf "$@" 2>/dev/null || true; }
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
+#   --model <id>         dispatch model (default: "default" → adapter's pinned default,
+#                        e.g. codex gpt-5.5 / claude sonnet; pass a concrete id to override)
 #   --isolation <level>  isolation level: none|read-only|workspace-write|workspace-network|sandboxed
 #   --timeout <secs>     dispatch timeout per session (default: 1200)
 #   --parallel           multi-session: one dispatch per reviewer + synthesis (higher token cost)
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --base)       BASE_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
+    --model)      DISPATCH_MODEL="$2";     shift 2;;
     --isolation)  DISPATCH_ISOLATION="$2"; shift 2;;
     --timeout)    TIMEOUT="$2";            shift 2;;
     --parallel)   SEQUENTIAL=false;        shift;;
@@ -98,7 +101,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
+      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -260,6 +263,44 @@ else
     done
     printf '\n'
   }
+
+  # Inline fallback mirror of dispatch_via_claude (see scripts/lib/executor-router.sh).
+  # sandbox/approval are accepted for signature parity but not forwarded -- claude has no
+  # equivalents; the claude adapter runs headless `claude --print` as an independent subprocess.
+  dispatch_via_claude() {
+    local brief_file=${1-}
+    local working_dir=${2-}
+    local model=${3-}
+    local _sandbox=${4-}
+    local _approval=${5-}
+    local timeout=${6-}
+    local isolation_level=${7-}
+    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/claude/dispatch.sh"
+    local -a cmd
+    local arg
+    local first=1
+
+    [[ $# -eq 6 || $# -eq 7 ]] || {
+      printf 'executor-router: dispatch_via_claude expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+      return 2
+    }
+
+    cmd=(bash "$dispatch_script" --cd "$working_dir" --timeout "$timeout" --brief-file "$brief_file")
+    if [[ -n "$model" && "$model" != "default" ]]; then
+      cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --timeout "$timeout" --brief-file "$brief_file")
+    fi
+    [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+
+    for arg in "${cmd[@]}"; do
+      if [[ "$first" -eq 1 ]]; then
+        first=0
+      else
+        printf ' '
+      fi
+      executor_router_safe_argv "$arg"
+    done
+    printf '\n'
+  }
 fi
 
 case "$EXECUTOR_OPTION" in
@@ -295,6 +336,13 @@ if [[ -n "$DISPATCH_ISOLATION" ]]; then
 fi
 
 EXECUTOR="$(resolve_executor "$EXECUTOR_OPTION")" || exit 2
+
+# Every supported executor now dispatches an INDEPENDENT subprocess (codex `codex
+# exec`, claude headless `claude --print`) and writes the result in-process, which
+# the gate then integrity-checks. This flag is the seam where a future
+# non-subprocess (e.g. host-handover) executor would branch; both current
+# executors take the subprocess path.
+EXECUTOR_IS_SUBPROCESS=true
 
 unset _self _self_dir EXECUTOR_ROUTER_PATH
 
@@ -514,7 +562,8 @@ touch "$OUTPUT_FILE"
 # Track all brief files for EXIT cleanup
 BRIEF_FILES=()
 cleanup_briefs() {
-  [[ "${EXECUTOR:-}" == "codex" ]] || return 0
+  # Every executor now dispatches a subprocess (codex `codex exec`, claude headless
+  # `claude --print`), so generated briefs are always transient and cleaned on exit.
   for bf in "${BRIEF_FILES[@]:-}"; do
     rm -f "$bf"
   done
@@ -522,16 +571,7 @@ cleanup_briefs() {
 trap cleanup_briefs EXIT
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
-[[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$SYNTHESIS_BRIEF")
-
-PR_GATE_HANDOVER_ENTRIES=()
-add_pr_gate_handover_entry() {
-  local role="$1" reviewer_name="$2" brief_file="$3" output_file="$4"
-  PR_GATE_HANDOVER_ENTRIES+=("- role: $role")
-  [[ -n "$reviewer_name" ]] && PR_GATE_HANDOVER_ENTRIES+=("  reviewer_name: $reviewer_name")
-  PR_GATE_HANDOVER_ENTRIES+=("  brief_file: $brief_file")
-  PR_GATE_HANDOVER_ENTRIES+=("  output_file: $output_file")
-}
+BRIEF_FILES+=("$SYNTHESIS_BRIEF")
 
 # Build a compact index of verified reference files (agents/, commands/, docs/, skills/)
 # for injection into gate brief preambles (CC-208). Reviewers may cite docs/sections
@@ -547,17 +587,6 @@ _build_repo_ref_index() {
   printf '%s' "$out"
 }
 
-emit_pr_gate_handover_block() {
-  local out
-  if [[ "${EXECUTOR:-}" != "claude" || "${#PR_GATE_HANDOVER_ENTRIES[@]}" -eq 0 ]]; then
-    return
-  fi
-  say '```pr-gate-handover_v1\n'
-  for out in "${PR_GATE_HANDOVER_ENTRIES[@]}"; do
-    say '%s\n' "$out"
-  done
-  say '```\n'
-}
 
 # ── Find adjacent test files not in the diff ─────────────────────────────────
 # For each changed source file, locate its companion test file if it exists and
@@ -651,7 +680,7 @@ if [[ "$SEQUENTIAL" == "true" ]]; then
   done
 
   BRIEF_FILE="$BRIEF_DIR/pr-gate-${TIMESTAMP}.md"
-  [[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$BRIEF_FILE")
+  BRIEF_FILES+=("$BRIEF_FILE")
 
   cat > "$BRIEF_FILE" << BRIEF_EOF
 schema_version: 1
@@ -772,24 +801,23 @@ acceptance:
   - "Final: GO" or "Final: NO-GO" is present in Gate Conclusion (plain text, no markdown emphasis)
 BRIEF_EOF
 
-  if [[ "$EXECUTOR" == "codex" ]]; then
-    CODEX_DISPATCH_CMD="$(dispatch_via_codex "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-    # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
-    # not gate data (the verdict lands in the result file). If it inherited our
-    # stdout and a consumer closed that pipe (`gate run | head`), the child's
-    # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
-    # nonzero before writing the result, killing the gate before its integrity
-    # checks could fire (CC-350). Parallel reviewers already redirect to a log.
-    eval "$CODEX_DISPATCH_CMD" >&2
+  # Every executor dispatches an independent subprocess (codex `codex exec`, claude
+  # headless `claude --print`). dispatch_via_<executor> share one signature, so the
+  # call site is uniform; sandbox/approval are ignored by adapters that lack them.
+  DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
+  # not gate data (the verdict lands in the result file). If it inherited our
+  # stdout and a consumer closed that pipe (`gate run | head`), the child's
+  # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
+  # nonzero before writing the result, killing the gate before its integrity
+  # checks could fire (CC-350). Parallel reviewers already redirect to a log.
+  eval "$DISPATCH_CMD" >&2
 
-    # Validate single-session output via the shared contract (must exist, be
-    # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
-    # frontmatter final: field). Same checks the parallel synthesis route and
-    # `pmctl gate verify` enforce.
-    gate_result_verify "$OUTPUT_FILE" "" "sequential gate" || exit 1
-  else
-    add_pr_gate_handover_entry reviewer combined "$BRIEF_FILE" "$OUTPUT_FILE"
-  fi
+  # Validate single-session output via the shared contract (must exist, be
+  # non-empty, carry exactly one Final: GO|NO-GO line that agrees with the
+  # frontmatter final: field). Same checks the parallel synthesis route and
+  # `pmctl gate verify` enforce.
+  gate_result_verify "$OUTPUT_FILE" "" "sequential gate" || exit 1
 
 else
 
@@ -833,7 +861,7 @@ else
     REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
     DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
-    [[ "$EXECUTOR" == "codex" ]] && BRIEF_FILES+=("$REVIEWER_BRIEF")
+    BRIEF_FILES+=("$REVIEWER_BRIEF")
     REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")
     REVIEWER_NAMES+=("$r")
 
@@ -893,18 +921,15 @@ acceptance:
   - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
 RBRIEF_EOF
 
-    if [[ "$EXECUTOR" == "codex" ]]; then
-      CODEX_DISPATCH_CMD="$(dispatch_via_codex "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-      eval "$CODEX_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
-      DISPATCH_PIDS+=($!)
-      say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
-    else
-      add_pr_gate_handover_entry reviewer "$r" "$REVIEWER_BRIEF" "$REVIEWER_OUTPUT"
-      say '  [parallel] queued reviewer %s (claude handover)\n' "$r"
-    fi
+    REVIEWER_DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+    eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
+    DISPATCH_PIDS+=($!)
+    say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
   done
 
-  if [[ "$EXECUTOR" == "codex" ]]; then
+  # Subprocess executors launched the reviewers as background children above;
+  # wait for them, validate each output, then synthesize (all in-process).
+  if [[ "$EXECUTOR_IS_SUBPROCESS" == true ]]; then
     say '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
     # Wait for all reviewer sessions. Any non-zero exit aborts the gate -- an
@@ -1170,12 +1195,12 @@ acceptance:
 SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
-  CODEX_DISPATCH_CMD="$(dispatch_via_codex "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  SYNTHESIS_DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
   # Diagnostic chatter to stderr, not our (possibly piped-closed) stdout -- see
   # the sequential dispatch above. Synthesis runs in the foreground like the
   # sequential route, so without this a closed `gate run --parallel | head`
   # consumer pipe would kill synthesis before the result file is written (CC-350).
-  eval "$CODEX_DISPATCH_CMD" >&2
+  eval "$SYNTHESIS_DISPATCH_CMD" >&2
 
   # Validate synthesis output via the shared contract, pinned to the
   # shell-computed verdict: a synthesis that contradicts SHELL_FINAL (in either
@@ -1207,23 +1232,16 @@ SBRIEF_P2
     printf 'Error: synthesis session modified working tree -- possible prompt injection.\n' >&2
     exit 1
   fi
-  else
-    add_pr_gate_handover_entry synthesis "" "$SYNTHESIS_BRIEF" "$OUTPUT_FILE"
   fi
 
 fi
 
 # ── Post-gate hook ─────────────────────────────────────────────────────────
-# On the claude executor route this script is a handover producer only; reviewers
-# run outside this script, so post-gate cannot fire at true gate completion here.
-# On the codex route, post-gate runs only when --allow-hooks is set AND the
-# gate result is GO -- it is a success-only side-effect hook, not a teardown hook.
+# Both executors complete the gate in-process now, so post-gate fires at true
+# gate completion regardless of executor. It runs only when --allow-hooks is set
+# AND the gate result is GO -- a success-only side-effect hook, not a teardown hook.
 _POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
-if [[ "$EXECUTOR" == "claude" ]]; then
-  if [[ -f "$_POST_GATE_HOOK" ]]; then
-    printf 'Notice: .pm-dispatch/post-gate.sh is present but will not run on --executor claude -- reviewers execute outside this script on that route\n' >&2
-  fi
-elif [[ "$ALLOW_HOOKS" != "true" ]]; then
+if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
     printf 'Warning: .pm-dispatch/post-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
   fi
@@ -1245,19 +1263,12 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────
-emit_pr_gate_handover_block
+# The result was written by the dispatched subprocess and already integrity-checked
+# in-process (gate_result_verify above). `pmctl gate verify "$OUTPUT_FILE"` re-runs
+# the same contract on demand for callers that want to re-confirm out of band.
 say '\nresult: %s\n' "$OUTPUT_FILE"
 
-# The codex route integrity-checks the result in-process (gate_result_verify
-# above). The claude route writes the result out-of-process after the handover,
-# so the orchestrating host confirms it the same way -- making the host-native
-# result trackable via pmctl, symmetric to the codex route.
-if [[ "$EXECUTOR" == "claude" ]]; then
-  say 'after the handover route writes the result, confirm it with:\n'
-  say '  pmctl gate verify %s\n' "$OUTPUT_FILE"
-fi
-
 _FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
-if [[ "$EXECUTOR" != "claude" && "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then
+if [[ "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then
   exit 1
 fi
