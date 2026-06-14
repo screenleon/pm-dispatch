@@ -109,7 +109,7 @@ section "Phase B — Real dispatch (output-contract validation)"
 smoke_dir="$(mktemp -d)"
 printf 'E2E-SMOKE-INPUT\n' > "$smoke_dir/smoke-input.txt"
 
-# Guard requires /tmp/brief-*.md (hook-claude-write-guard.sh pattern check).
+# Guard requires /tmp/brief-*.md (hook-executor-write-guard.sh pattern check).
 brief_file="$(mktemp /tmp/brief-XXXXXX.md)"
 cat > "$brief_file" <<EOF
 schema_version: 1

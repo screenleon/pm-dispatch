@@ -141,8 +141,9 @@ pmctl_guard_check() {
 
   # Runtime validation differs by role:
   #   executor — open-ended bare identifier: adding a runtime is an adapter concern
-  #     (drop in adapters/<runtime>/ + hook-<runtime>-write-guard.sh); an unregistered
-  #     but valid runtime fails closed at the hook -x check, so we don't allowlist here.
+  #     (drop in adapters/<runtime>/); the unified hook-executor-write-guard.sh fails
+  #     closed (deny) when driven via the CLI for a runtime with no valid manifest, so
+  #     we don't allowlist here.
   #   pm / reviewer — fixed hook (runtime does not select a hook); validate against the
   #     known enum so bogus values are rejected at the CLI boundary rather than silently
   #     accepted. A future non-codex/claude runtime must be explicitly added here.
@@ -224,9 +225,11 @@ pmctl_guard_check() {
           hook="hook-reviewer-write-guard.sh"
           ;;
         executor)
-          # [role-based] runtime-matched by convention: adding a runtime only requires
-          # dropping in adapters/<runtime>/ + hook-<runtime>-write-guard.sh.
-          hook="hook-${runtime}-write-guard.sh"
+          # [role-based] ONE unified wrapper across all executor runtimes (CC-374).
+          # It derives the runtime from agent_type (<runtime>-executor) and reads the
+          # runtime's write_guard_mode from its manifest, so adding a runtime only
+          # requires dropping in adapters/<runtime>/ — no new guard file.
+          hook="hook-executor-write-guard.sh"
           ;;
       esac
       ;;
@@ -304,5 +307,9 @@ pmctl_guard_check() {
     }
   fi
 
-  printf '%s' "$json" | "$hook_path"
+  # PM_GUARD_CHECK_CLI marks the CLI-driven invocation so the unified executor
+  # write-guard enforces regardless of write_guard_mode. Absent (a live PreToolUse
+  # firing), a cli-only runtime's hook no-ops instead (CC-374). Harmless to the
+  # pm/reviewer/bash hooks, which ignore it.
+  printf '%s' "$json" | PM_GUARD_CHECK_CLI=1 "$hook_path"
 }

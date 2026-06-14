@@ -44,6 +44,9 @@ _TI_PLATFORM="$(detect_platform)"
 _ti_is_windows() { [[ "$_TI_PLATFORM" == "windows" ]]; }
 _TI_RETIRED_TRACE="hook-tool-""trace.sh"
 _TI_RETIRED_ROUTING="hook-routing-""log.sh"
+# Retired by the CC-374 executor write-guard collapse (split with concat so the
+# doctor hook-inventory parity scanner does not count it as a current managed hook).
+_TI_RETIRED_CODEX_WRITE="hook-codex-write-""guard.sh"
 
 # Directory containing jq. Tests that constrain PATH (e.g. to inject a fake
 # powershell.exe) must keep jq reachable so install.sh's jq preflight passes;
@@ -752,7 +755,7 @@ test_install_sh_wires_hooks() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -782,7 +785,7 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
@@ -805,7 +808,7 @@ test_install_sh_profile_full_wires_codex_hooks() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   pass "$name"
 }
 
@@ -1292,7 +1295,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   pass "$name"
 }
 
@@ -1332,7 +1335,7 @@ test_install_hooks_windows_profile_minimal_silent() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   pass "$name"
 }
 
@@ -1349,11 +1352,11 @@ test_install_hooks_profile_downgrade_removes_codex() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   # The non-codex managed hooks must still be present after downgrade.
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
@@ -1381,7 +1384,7 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   pass "$name"
 }
 
@@ -1414,7 +1417,7 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   pass "$name"
 }
@@ -1453,7 +1456,7 @@ test_install_hooks_platform_linux_explicit() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   pass "$name"
 }
 
@@ -1553,7 +1556,7 @@ test_install_sh_wires_hooks_no_settings() {
   fi
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1573,7 +1576,7 @@ test_hooks_install_uninstall_lifecycle() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1583,7 +1586,7 @@ test_hooks_install_uninstall_lifecycle() {
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1657,7 +1660,7 @@ test_install_hooks_prunes_retired_hooks() {
   "hooks": {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/$_TI_RETIRED_CODEX_WRITE"}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-bash-guard.sh"}]},
       {"matcher": "*", "hooks": [{"type": "command", "command": "$_tt_cmd"}]}
     ],
@@ -1680,8 +1683,11 @@ JSON
 
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
+  # CC-374: the retired per-runtime codex write-guard is pruned and replaced by the
+  # unified executor write-guard (re)added below.
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_CODEX_WRITE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
@@ -1711,7 +1717,7 @@ test_install_hooks_updates_stale_paths_after_rename() {
   "hooks": {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-executor-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
     ],
     "Stop": [
@@ -1730,7 +1736,7 @@ JSON
 
   # Each hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
-  for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
+  for hook in hook-pm-write-guard.sh hook-executor-write-guard.sh hook-codex-bash-guard.sh \
               hook-log-claude-usage.sh hook-session-summary.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     local count
@@ -1824,7 +1830,7 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
   "hooks": {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-executor-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
     ],
     "Stop": [
@@ -1850,7 +1856,7 @@ JSON
   local settings="$home/.claude/settings.json"
 
   # All managed hook basenames must be gone
-  for hook in hook-pm-write-guard.sh hook-codex-write-guard.sh hook-codex-bash-guard.sh \
+  for hook in hook-pm-write-guard.sh hook-executor-write-guard.sh hook-codex-bash-guard.sh \
               hook-log-claude-usage.sh hook-session-summary.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
