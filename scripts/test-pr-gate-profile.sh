@@ -414,7 +414,10 @@ test_executor_invalid_value_rejected() {
     fail "$name" "expected non-zero exit"
     return
   fi
-  assert_contains "$name" "$err" "Error: --executor must be one of: codex | claude | auto" || return
+  # Validation is delegated to resolve_executor (CC-373): unknown names are
+  # rejected fail-closed. The "unknown executor: <name>" substring is emitted by
+  # both the data-driven lib and the copy-mode inline fallback.
+  assert_contains "$name" "$err" "unknown executor: invalid" || return
   pass "$name"
 }
 

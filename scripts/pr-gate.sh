@@ -178,6 +178,11 @@ if [[ -r "$EXECUTOR_ROUTER_PATH" ]]; then
   . "$EXECUTOR_ROUTER_PATH"
   EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
 else
+  # DEGRADED copy-mode fallback (no scripts/lib/ alongside this script). It
+  # INTENTIONALLY diverges from the data-driven lib (scripts/lib/executor-router.sh):
+  # copy-mode has no adapters/ manifest tree to read, so routing is hardcoded to the
+  # two built-in executors (codex|claude). The lib is the data-driven authority; this
+  # block only needs to keep the gate runnable standalone for those two.
   EXECUTOR_ROUTER_SCRIPT_DIR="$SCRIPT_DIR"
 
   detect_executor_auto() {
@@ -229,66 +234,42 @@ else
     printf '%q' "$value"
   }
 
-  dispatch_via_codex() {
-    local brief_file=${1-}
-    local working_dir=${2-}
-    local model=${3-}
-    local sandbox=${4-}
-    local approval=${5-}
-    local timeout=${6-}
-    local isolation_level=${7-}
-    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/codex/dispatch.sh"
+  # Generic dispatcher mirroring the lib's dispatch_via, hardcoded to the two
+  # built-in executors. codex (cli-subprocess) forwards --sandbox/--approval;
+  # claude (host-native, headless `claude --print`) drops them.
+  dispatch_via() {
+    local executor=${1-}
+    local brief_file=${2-}
+    local working_dir=${3-}
+    local model=${4-}
+    local sandbox=${5-}
+    local approval=${6-}
+    local timeout=${7-}
+    local isolation_level=${8-}
     local -a cmd
     local arg
     local first=1
 
-    [[ $# -eq 6 || $# -eq 7 ]] || {
-      printf 'executor-router: dispatch_via_codex expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
+    [[ $# -eq 7 || $# -eq 8 ]] || {
+      printf 'executor-router: dispatch_via expects executor, brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
       return 2
     }
 
-    cmd=(bash "$dispatch_script" --cd "$working_dir" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
-    if [[ -n "$model" && "$model" != "default" ]]; then
-      cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --sandbox "$sandbox" --approval "$approval" --timeout "$timeout" --brief-file "$brief_file")
+    case "$executor" in
+      codex|claude) ;;
+      *)
+        printf 'executor-router: %s is not a routable executor (copy-mode supports codex|claude only)\n' "$executor" >&2
+        return 2
+        ;;
+    esac
+
+    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/$executor/dispatch.sh"
+    cmd=(bash "$dispatch_script" --cd "$working_dir")
+    [[ -n "$model" && "$model" != "default" ]] && cmd+=(--model "$model")
+    if [[ "$executor" == "codex" ]]; then
+      cmd+=(--sandbox "$sandbox" --approval "$approval")
     fi
-    [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
-
-    for arg in "${cmd[@]}"; do
-      if [[ "$first" -eq 1 ]]; then
-        first=0
-      else
-        printf ' '
-      fi
-      executor_router_safe_argv "$arg"
-    done
-    printf '\n'
-  }
-
-  # Inline fallback mirror of dispatch_via_claude (see scripts/lib/executor-router.sh).
-  # sandbox/approval are accepted for signature parity but not forwarded -- claude has no
-  # equivalents; the claude adapter runs headless `claude --print` as an independent subprocess.
-  dispatch_via_claude() {
-    local brief_file=${1-}
-    local working_dir=${2-}
-    local model=${3-}
-    local _sandbox=${4-}
-    local _approval=${5-}
-    local timeout=${6-}
-    local isolation_level=${7-}
-    local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/claude/dispatch.sh"
-    local -a cmd
-    local arg
-    local first=1
-
-    [[ $# -eq 6 || $# -eq 7 ]] || {
-      printf 'executor-router: dispatch_via_claude expects brief_file, working_dir, model, sandbox, approval, timeout[, isolation_level]\n' >&2
-      return 2
-    }
-
-    cmd=(bash "$dispatch_script" --cd "$working_dir" --timeout "$timeout" --brief-file "$brief_file")
-    if [[ -n "$model" && "$model" != "default" ]]; then
-      cmd=(bash "$dispatch_script" --cd "$working_dir" --model "$model" --timeout "$timeout" --brief-file "$brief_file")
-    fi
+    cmd+=(--timeout "$timeout" --brief-file "$brief_file")
     [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
 
     for arg in "${cmd[@]}"; do
@@ -303,13 +284,11 @@ else
   }
 fi
 
-case "$EXECUTOR_OPTION" in
-  auto|codex|claude) ;;
-  *)
-    printf "Error: --executor must be one of: codex | claude | auto (got: %s)\n" "$EXECUTOR_OPTION" >&2
-    exit 2
-    ;;
-esac
+# Executor-name validation is delegated to resolve_executor (below): it is the
+# single, data-driven authority — `auto` autodetects and any other value must be a
+# routable adapter (a valid on-disk manifest), fail-closed on unknown. A hardcoded
+# auto|codex|claude pre-check here would re-introduce the very enum CC-373 removed,
+# silently rejecting a manifest-only adapter before resolve_executor is reached.
 
 _validate_isolation_level() {
   local level="$1" policy_file="$2"
@@ -751,7 +730,7 @@ output_format: |
     reason: []
   ---
 
-  # PR-Gate Result -- ${TIER} tier (codex mode)
+  # PR-Gate Result -- ${TIER} tier (${EXECUTOR} mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
   **Not reviewed**: ${SKIPPED_DISPLAY}
@@ -802,9 +781,10 @@ acceptance:
 BRIEF_EOF
 
   # Every executor dispatches an independent subprocess (codex `codex exec`, claude
-  # headless `claude --print`). dispatch_via_<executor> share one signature, so the
-  # call site is uniform; sandbox/approval are ignored by adapters that lack them.
-  DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  # headless `claude --print`). The generic dispatch_via takes the executor name as
+  # its first arg, so the call site is uniform; sandbox/approval are forwarded only
+  # to adapters whose runner_kind accepts them.
+  DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$BRIEF_FILE" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
   # Send the dispatch child's stdout to our stderr: it is diagnostic chatter,
   # not gate data (the verdict lands in the result file). If it inherited our
   # stdout and a consumer closed that pipe (`gate run | head`), the child's
@@ -921,7 +901,7 @@ acceptance:
   - ${REVIEWER_OUTPUT} exists with at least one findings line and an explicit Verdict line
 RBRIEF_EOF
 
-    REVIEWER_DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+    REVIEWER_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$REVIEWER_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
     eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
     DISPATCH_PIDS+=($!)
     say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
@@ -1135,7 +1115,7 @@ output_format: |
     reason: []
   ---
 
-  # PR-Gate Result -- ${TIER} tier (parallel codex mode)
+  # PR-Gate Result -- ${TIER} tier (parallel ${EXECUTOR} mode)
   **Date**: $(date '+%Y-%m-%d')
   **Reviewers**: ${REVIEWER_DISPLAY}
   **Not reviewed**: ${SKIPPED_DISPLAY}
@@ -1195,7 +1175,7 @@ acceptance:
 SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
-  SYNTHESIS_DISPATCH_CMD="$(dispatch_via_"$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
+  SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
   # Diagnostic chatter to stderr, not our (possibly piped-closed) stdout -- see
   # the sequential dispatch above. Synthesis runs in the foreground like the
   # sequential route, so without this a closed `gate run --parallel | head`

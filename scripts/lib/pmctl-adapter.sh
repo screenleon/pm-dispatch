@@ -127,8 +127,9 @@ EOF
 #   1. invoke the target executor against the brief, and
 #   2. write the output contract — $WORK_DIR/.agent-trace/latest.last (the final
 #      message) — so dispatch-post-verify.sh can read it.
-# To activate the adapter you must also register its name in the dispatch
-# allowlist (scripts/lib/executor-router.sh dispatch_route_for).
+# The adapter is routable as soon as adapter.yaml declares a valid runner_kind:
+# the dispatch allowlist is derived from on-disk manifests (CC-373), so no edit to
+# scripts/lib/executor-router.sh is required.
 # See adapters/codex/dispatch.sh for a reference implementation.
 set -euo pipefail
 echo "adapter dispatch.sh stub: not yet wired to an executor — implement me" >&2
@@ -151,7 +152,9 @@ To activate this adapter:
 
 \`\`\`bash
 # 1. implement adapters/$name/dispatch.sh (wire your executor)
-# 2. register "$name" in the dispatch allowlist (scripts/lib/executor-router.sh dispatch_route_for)
+# This adapter is already routable: the dispatch allowlist is derived from on-disk
+# manifests, so a valid runner_kind in adapter.yaml is all that registers it — no
+# edit to scripts/lib/executor-router.sh is needed.
 bash "adapters/$name/run.sh" "\$@"
 \`\`\`
 
