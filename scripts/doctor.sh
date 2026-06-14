@@ -296,7 +296,7 @@ stale_hook_commands() {
           "hook-inject-memory.sh",
           "hook-save-rate-limits.sh",
           "hook-codex-bash-guard.sh",
-          "hook-codex-write-guard.sh"
+          "hook-executor-write-guard.sh"
         )) and
         ($ncmd | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
@@ -343,7 +343,7 @@ check_hooks() {
     profile="full"
     hooks+=(
       hook-codex-bash-guard.sh
-      hook-codex-write-guard.sh
+      hook-executor-write-guard.sh
     )
   else
     profile="minimal"
@@ -432,7 +432,7 @@ check_scripts_executable() {
     hook-pm-write-guard.sh
     hook-reviewer-write-guard.sh
     hook-codex-bash-guard.sh
-    hook-codex-write-guard.sh
+    hook-executor-write-guard.sh
     hook-log-claude-usage.sh
     hook-session-summary.sh
     hook-inject-memory.sh

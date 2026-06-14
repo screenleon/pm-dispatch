@@ -89,14 +89,23 @@ Note: codex profile — `adapters/codex/dispatch.sh` (invoked through `pmctl dis
 
 ## Guard enforcement
 
-Guard policy (what a role may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`hook-pm-write-guard.sh`, `hook-codex-write-guard.sh`, `hook-claude-write-guard.sh`, `hook-codex-bash-guard.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --role <pm|executor|reviewer> [--runtime <codex|claude>] --file/--command <val>`. Guard keys on the **role** (runtime-agnostic for `pm`; the `--runtime` axis is consulted only where a role's policy differs by runtime, e.g. `executor/pre-bash`); dispatch supplies the runtime via its `--adapter` (CC-291). For `executor`, the pre-write hook is selected by runtime convention (`hook-<runtime>-write-guard.sh`) — so the role-level write policy is one rule while the physical hook stays identity-matched, and adding a runtime needs no guard edit. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
+Guard policy (what a role may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`hook-pm-write-guard.sh`, `hook-executor-write-guard.sh`, `hook-reviewer-write-guard.sh`, `hook-codex-bash-guard.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --role <pm|executor|reviewer> [--runtime <codex|claude>] --file/--command <val>`. Guard keys on the **role** (runtime-agnostic for `pm`; the `--runtime` axis is consulted only where a role's policy differs by runtime, e.g. `executor/pre-bash`); dispatch supplies the runtime via its `--adapter` (CC-291). For `executor`, ONE unified `hook-executor-write-guard.sh` covers every runtime (CC-374): it derives the runtime from `agent_type` (`<runtime>-executor`) and reads that runtime's `write_guard_mode` from its adapter manifest (CC-372). The role-level write policy is one shared rule, so adding a runtime needs no guard edit. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
+
+The **live-hook vs CLI-only** behavior is declared by the manifest's `write_guard_mode`, not inferred from which files exist:
+
+| `write_guard_mode` | runner_kind | Wrapper behavior |
+|---|---|---|
+| `hook` | `cli-subprocess` (e.g. codex) | Thin dispatcher gated by a **live PreToolUse hook** — enforced on every `Edit`/`Write`, whether fired live or via `pmctl guard check`. |
+| `cli-only` | `host-native` (e.g. claude-as-host) | SELF-EXECUTES work-dir edits under the host harness, so a live hook must NOT gate it: the unified wrapper **no-ops when fired live** and enforces the brief-location policy only when driven by `pmctl guard check` (which sets `PM_GUARD_CHECK_CLI`). |
+
+When the CLI drives the wrapper for a runtime with no valid adapter manifest, it **fails closed** (deny); a missing/non-executable hook file likewise fails closed at the `pmctl guard check` `-x` check.
 
 The **trigger** is asymmetric by capability, not by policy:
 
 | Host | Guard trigger |
 |---|---|
 | Claude | PreToolUse auto-hook fires before each `Edit`/`Write`/`Bash`; enforcement is automatic and cannot be skipped by the agent. |
-| Non-Claude (e.g. codex-as-PM) | The host has no PreToolUse equivalent, so it MUST call `pmctl guard check` explicitly before the action and honor a non-zero exit as a deny. |
+| Non-Claude (e.g. codex-as-PM) | pm-dispatch does not yet wire native hooks for a non-Claude host, so today it MUST call `pmctl guard check` explicitly before the action and honor a non-zero exit as a deny. (Some non-Claude hosts have their own — possibly partial — hook mechanism, e.g. Codex's emerging hooks; wiring guard enforcement into each host's native interception point, rather than relying on the explicit-call fallback, is tracked by CC-381.) |
 
 This asymmetry is inherent to the host's CLI capabilities — both paths evaluate the same policy. The **`--role`** selects the policy because each role has a different allow-list (pm pre-write → memory dir only; executor pre-write → `/tmp/brief-*.md` only); the **`--runtime`** axis refines it only where a role's policy genuinely differs by runtime (e.g. `executor/pre-bash`, which only codex registers). Claude PreToolUse hooks may later shell to `pmctl guard check` to collapse to a single source, but today they remain the policy source the CLI composes.
 

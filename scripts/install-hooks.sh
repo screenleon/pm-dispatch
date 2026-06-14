@@ -4,7 +4,7 @@
 #
 # Wires:
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
-#   - matcher "Edit|Write" → scripts/hook-codex-write-guard.sh
+#   - matcher "Edit|Write" → scripts/hook-executor-write-guard.sh
 #   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
@@ -32,7 +32,7 @@
 #   `command -v codex` succeeds  → profile=full
 #   otherwise                     → profile=minimal
 # Minimal profile skips registering hook-codex-bash-guard.sh and
-# hook-codex-write-guard.sh in settings.json. Other hooks (pm-write-guard,
+# hook-executor-write-guard.sh in settings.json. Other hooks (pm-write-guard,
 # session-summary, inject-memory, save-rate-limits) stay wired in both profiles.
 
 set -euo pipefail
@@ -124,7 +124,7 @@ fi
 
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
 cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
-cxw_cmd="$repo_root/scripts/hook-codex-write-guard.sh"
+exw_cmd="$repo_root/scripts/hook-executor-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
@@ -150,11 +150,11 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$cxw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$exw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $cx_cmd" >&2
-  echo "  $cxw_cmd" >&2
+  echo "  $exw_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -198,7 +198,7 @@ fi
 # path to remove it, so it must stay in raw (unescaped) form.
 pm_cmd_q="$(printf '%q' "$pm_cmd")"
 cx_cmd_q="$(printf '%q' "$cx_cmd")"
-cxw_cmd_q="$(printf '%q' "$cxw_cmd")"
+exw_cmd_q="$(printf '%q' "$exw_cmd")"
 stop_cmd_q="$(printf '%q' "$stop_cmd")"
 session_cmd_q="$(printf '%q' "$session_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
@@ -214,7 +214,7 @@ statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg pm "$pm_cmd_q" \
   --arg cx "$cx_cmd_q" \
-  --arg cxw "$cxw_cmd_q" \
+  --arg exw "$exw_cmd_q" \
   --arg stop "$stop_cmd_q" \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd_q" \
@@ -237,10 +237,18 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
-  # Prune retired managed hooks from existing installs.
+  # Prune retired managed hooks from existing installs. Includes the per-runtime
+  # executor write-guards retired by the CC-374 collapse (the former codex-write
+  # guard was wired live; the claude-write one never was, pruned defensively) — the
+  # unified hook-executor-write-guard.sh is (re)added below. Basenames are split
+  # with string concat so the doctor hook-inventory parity scanner does not count
+  # these retired names as current managed hooks.
   .hooks.PreToolUse |= map(
     .hooks |= map(select(
-      ((.command | split("/") | last) == ("hook-tool-" + "trace.sh") and (.command | split("/") | .[-2]) == "scripts") | not
+      ( ((.command | split("/") | last) == ("hook-tool-" + "trace.sh")) or
+        ((.command | split("/") | last) == ("hook-codex-write" + "-guard.sh")) or
+        ((.command | split("/") | last) == ("hook-claude-write" + "-guard.sh")) )
+      and ((.command | split("/") | .[-2]) == "scripts") | not
     ))
   ) |
   .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
@@ -254,7 +262,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
   ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cxw_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $exw_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
@@ -264,7 +272,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     .hooks |= map(
       if   ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
       elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
-      elif ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cxw
+      elif ((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $exw
       else . end
     )
   ) |
@@ -297,7 +305,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
         .hooks |= map(select(
           (
             ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") or
-            ((.command | split("/") | last) == ($cxw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
+            ((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
           ) | not
         ))
       ) |
@@ -312,10 +320,10 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
       }]
     else . end
   ) |
-  ( if $cxw_present == 0 and $profile == "full" then
+  ( if $exw_present == 0 and $profile == "full" then
       .hooks.PreToolUse += [{
         "matcher": "Edit|Write",
-        "hooks": [{"type": "command", "command": $cxw}]
+        "hooks": [{"type": "command", "command": $exw}]
       }]
     else . end
   ) |

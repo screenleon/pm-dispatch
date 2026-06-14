@@ -664,7 +664,7 @@ Failing any check wastes the agent invocation before a single tool call is made.
 Commit is always delegated to the main thread after dispatch-post-verify succeeds. This is a structural rule, not a style preference:
 
 - `hook-codex-bash-guard.sh` blocks `git commit` inside the executor sandbox. Any brief that includes a commit step will cause the executor to report `status: partial` — even when every code change landed correctly. This is a false partial that pollutes the signal.
-- `hook-claude-write-guard.sh` prevents `claude-executor` from committing to the repo outside its allowed write surface.
+- `hook-executor-write-guard.sh` (the unified executor write-guard) prevents an executor from writing to the repo outside its allowed brief-file surface at dispatch time.
 - The main thread is always the commit authority: it runs `git diff`, reviews changes, and commits when satisfied.
 
 **What to write instead:**

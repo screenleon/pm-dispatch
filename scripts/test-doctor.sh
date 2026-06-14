@@ -102,7 +102,7 @@ write_stale_path_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-executor-write-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
@@ -128,7 +128,7 @@ write_sibling_prefix_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-codex-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-executor-write-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
@@ -154,7 +154,7 @@ write_full_settings() {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-codex-bash-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-codex-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-executor-write-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
@@ -1281,7 +1281,7 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-write-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/scripts/hook-codex-bash-guard.sh"}]},\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-executor-write-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.

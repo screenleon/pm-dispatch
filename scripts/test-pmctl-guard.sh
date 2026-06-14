@@ -48,7 +48,7 @@ _tpg_needs_symlink() {
 
 PMCTL="$REPO_ROOT/cli/pmctl"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
-CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
+EXWHOOK="$SCRIPT_DIR/hook-executor-write-guard.sh"
 CXBHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 
 # Sandbox audit logs + pin codex read roots so path-based cases are deterministic
@@ -97,17 +97,16 @@ if should_run "claude-prewrite-allow"; then
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
 
-# Fail-OPEN regression (CC-291): the executor pre-write policy is byte-identical
-# across codex/claude, but each hook self-gates on HK_AGENT_TYPE — so a claude
-# pre-write MUST be driven through hook-claude-write-guard with the claude
-# identity. Driving the codex hook with a claude identity would no-op (exit 0 =
-# ALLOW). Assert a non-brief claude pre-write DENIES (exit 2) AND is handled by
-# the runtime-matched claude hook (not the codex one).
+# Fail-OPEN regression (CC-291/CC-374): the unified executor write-guard derives
+# the runtime from agent_type (<runtime>-executor) and self-gates on it. pmctl
+# drives it with PM_GUARD_CHECK_CLI set, so the brief-location policy IS enforced
+# for claude (cli-only runtime) — a non-brief claude pre-write must DENY (exit 2),
+# handled by the unified hook, not silently allowed.
 if should_run "claude-prewrite-nonbrief-deny"; then
   name="claude-prewrite-nonbrief-deny"
   run_guard --event pre-write --role executor --runtime claude --file "$HOME/not-a-brief.md"
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-claude-write-guard"; then
+    assert_string_contains "$name" "$GUARD_OUT" "hook-executor-write-guard"; then
     pass "$name"
   fi
 fi
@@ -265,12 +264,13 @@ fi
 
 if should_run "unknown-runtime-fails-closed"; then
   # A well-formed but UNREGISTERED runtime is not allowlisted away (adding a
-  # runtime is an adapter concern, CC-291); it fails closed at the hook -x check
-  # because scripts/hook-bogus-write-guard.sh does not exist.
+  # runtime is an adapter concern, CC-291). The unified executor write-guard
+  # (CC-374) is driven for every executor runtime, so it fails closed in the CLI
+  # path: with no valid adapters/bogus/adapter.yaml manifest it denies (exit 2).
   name="unknown-runtime-fails-closed"
   run_guard --event pre-write --role executor --runtime bogus --file /tmp/brief-x.md
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "guard hook not executable"; then
+    assert_string_contains "$name" "$GUARD_OUT" "unregistered runtime"; then
     pass "$name"
   fi
 fi
@@ -426,8 +426,8 @@ if should_run "hook-not-executable"; then
   name="hook-not-executable"
   fake_root="$PM_HOOK_LOG_DIR/fake-root"
   mkdir -p "$fake_root/scripts"
-  : > "$fake_root/scripts/hook-codex-write-guard.sh"
-  chmod -x "$fake_root/scripts/hook-codex-write-guard.sh"
+  : > "$fake_root/scripts/hook-executor-write-guard.sh"
+  chmod -x "$fake_root/scripts/hook-executor-write-guard.sh"
   set +e
   out="$(pmctl_guard_check "$fake_root" --event pre-write --role executor --runtime codex --file /tmp/brief-x.md 2>&1)"
   st=$?
@@ -461,7 +461,7 @@ if should_run "codex-prewrite-deny"; then
   name="codex-prewrite-deny"
   run_guard --event pre-write --role executor --runtime codex --file /etc/passwd
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-codex-write-guard"; then
+    assert_string_contains "$name" "$GUARD_OUT" "hook-executor-write-guard"; then
     pass "$name"
   fi
 fi
@@ -600,11 +600,11 @@ r2_equiv() {
   fi
 }
 
-r2_equiv "r2-equiv-codex-write-allow" "$CXWHOOK" \
+r2_equiv "r2-equiv-codex-write-allow" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-eq.md"}}' \
   --event pre-write --role executor --runtime codex --file /tmp/brief-eq.md
 
-r2_equiv "r2-equiv-codex-write-deny" "$CXWHOOK" \
+r2_equiv "r2-equiv-codex-write-deny" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
   --event pre-write --role executor --runtime codex --file /etc/passwd
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression suite for hook-pm-write-guard.sh, hook-codex-bash-guard.sh,
-# hook-codex-write-guard.sh, and hook-reviewer-write-guard.sh.
+# hook-executor-write-guard.sh, and hook-reviewer-write-guard.sh.
 # Note: hook-reviewer-write-guard.sh is the policy-backing script for
 # `pmctl guard check --role reviewer`; it is NOT a PreToolUse hook.
 # Its pmctl integration is covered by test-pmctl-guard.sh.
@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 RWHOOK="$SCRIPT_DIR/hook-reviewer-write-guard.sh"
 CXHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
-CXWHOOK="$SCRIPT_DIR/hook-codex-write-guard.sh"
+EXWHOOK="$SCRIPT_DIR/hook-executor-write-guard.sh"
 STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
@@ -232,101 +232,176 @@ assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 # =============================================================================
 
 echo
-$LIST || echo "== hook-codex-write-guard =="
+$LIST || echo "== hook-executor-write-guard (codex, hook-gated) =="
 truncate_log
 
 # --- happy path: Write/Edit to /tmp/brief-*.md ---
-run_case "cxw: Write /tmp/brief-task.md → allow" 0 "$CXWHOOK" \
+run_case "exw: Write /tmp/brief-task.md → allow" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}'
 
-run_case "cxw: Write /tmp/brief-seed-postal-fix.md → allow" 0 "$CXWHOOK" \
+run_case "exw: Write /tmp/brief-seed-postal-fix.md → allow" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-seed-postal-fix.md"}}'
 
-run_case "cxw: Edit /tmp/brief-task.md → allow" 0 "$CXWHOOK" \
+run_case "exw: Edit /tmp/brief-task.md → allow" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/tmp/brief-task.md"}}'
 
 # --- denied: source tree / home dir ---
-run_case "cxw: Write source file → deny" 2 "$CXWHOOK" \
+run_case "exw: Write source file → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/backend/seeds/100_demo_content.sql"}}'
 
-run_case "cxw: Edit source file → deny" 2 "$CXWHOOK" \
+run_case "exw: Edit source file → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/pm-dispatch/agents/codex-executor.md"}}'
 
-run_case "cxw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$CXWHOOK" \
+run_case "exw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/other.md"}}'
 
-run_case "cxw: Write /tmp/brief-task.txt (not .md) → deny" 2 "$CXWHOOK" \
+run_case "exw: Write /tmp/brief-task.txt (not .md) → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.txt"}}'
 
-run_case "cxw: Write /tmp/brief- (no suffix) → deny" 2 "$CXWHOOK" \
+run_case "exw: Write /tmp/brief- (no suffix) → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-"}}'
 
-run_case "cxw: Write /etc/passwd → deny" 2 "$CXWHOOK" \
+run_case "exw: Write /etc/passwd → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
 # --- traversal: /tmp/brief-../../../etc/passwd.md normalizes outside /tmp ---
-run_case "cxw: Write path traversal via brief prefix → deny" 2 "$CXWHOOK" \
+run_case "exw: Write path traversal via brief prefix → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-/../etc/shadow.md"}}'
 
 # --- no-op for other agents ---
-run_case "cxw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$CXWHOOK" \
+run_case "exw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$EXWHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/whatever.md"}}'
 
-run_case "cxw: critic Write anywhere → no-op" 0 "$CXWHOOK" \
+run_case "exw: critic Write anywhere → no-op" 0 "$EXWHOOK" \
   '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
-run_case "cxw: main thread (no agent_type) Write → no-op" 0 "$CXWHOOK" \
+run_case "exw: main thread (no agent_type) Write → no-op" 0 "$EXWHOOK" \
   '{"tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
-run_case "cxw: codex-executor Bash → no-op (matcher would not fire it)" 0 "$CXWHOOK" \
+run_case "exw: codex-executor Bash → no-op (matcher would not fire it)" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}'
 
 # --- edge cases ---
-run_case "cxw: empty file_path → deny" 2 "$CXWHOOK" \
+run_case "exw: empty file_path → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":""}}'
 
-run_case "cxw: relative file_path → deny" 2 "$CXWHOOK" \
+run_case "exw: relative file_path → deny" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"brief-task.md"}}'
 
-run_case "cxw: malformed JSON → deny" 2 "$CXWHOOK" \
+run_case "exw: malformed JSON → deny" 2 "$EXWHOOK" \
   'not-json'
 
 # --- symlink attack: /tmp/brief-*.md exists as a symlink to a protected path ---
-_cxw_symlink_target="$(mktemp)"
-_cxw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
-ln -s "$_cxw_symlink_target" "$_cxw_symlink_brief" 2>/dev/null || true
+_exw_symlink_target="$(mktemp)"
+_exw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
+ln -s "$_exw_symlink_target" "$_exw_symlink_brief" 2>/dev/null || true
 # Platforms without real symlink support (e.g. Git-Bash/MSYS without Developer
 # Mode) silently copy on `ln -s`, so the symlink-attack vector cannot be staged
 # here. Skip rather than false-fail — the guard's [[ -L ]] check is unchanged.
-if [[ -L "$_cxw_symlink_brief" ]]; then
-  run_case "cxw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$CXWHOOK" \
-    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_cxw_symlink_brief\"}}"
+if [[ -L "$_exw_symlink_brief" ]]; then
+  run_case "exw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$EXWHOOK" \
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_exw_symlink_brief\"}}"
 else
-  $LIST || printf '  SKIP  cxw: Write to existing symlink /tmp/brief-*.md → deny (no real symlink support)\n'
+  $LIST || printf '  SKIP  exw: Write to existing symlink /tmp/brief-*.md → deny (no real symlink support)\n'
 fi
-rm -f "$_cxw_symlink_brief" "$_cxw_symlink_target"
-unset _cxw_symlink_target _cxw_symlink_brief
+rm -f "$_exw_symlink_brief" "$_exw_symlink_target"
+unset _exw_symlink_target _exw_symlink_brief
 
 # --- bypass ---
-run_case_env "cxw: bypass via PM_HOOK_CODEX_WRITE_GUARD=off" 0 "PM_HOOK_CODEX_WRITE_GUARD=off" "$CXWHOOK" \
+run_case_env "exw: bypass via PM_HOOK_CODEX_WRITE_GUARD=off" 0 "PM_HOOK_CODEX_WRITE_GUARD=off" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions ---
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$CXWHOOK" >/dev/null 2>&1
-assert_log "cxw: audit log contains allow line" "decision=allow"
-assert_log "cxw: allow line records agent=codex-executor" "agent=codex-executor"
-assert_log "cxw: allow line records tool=Write" "tool=Write"
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: audit log contains allow line" "decision=allow"
+assert_log "exw: allow line records agent=codex-executor" "agent=codex-executor"
+assert_log "exw: allow line records tool=Write" "tool=Write"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$CXWHOOK" >/dev/null 2>&1
-assert_log "cxw: audit log contains deny line" "decision=deny"
-assert_log "cxw: deny line records agent=codex-executor" "agent=codex-executor"
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: audit log contains deny line" "decision=deny"
+assert_log "exw: deny line records agent=codex-executor" "agent=codex-executor"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$CXWHOOK" >/dev/null 2>&1
-assert_log "cxw: audit log contains bypass line" "decision=bypass"
-assert_log "cxw: bypass line records agent=codex-executor" "agent=codex-executor"
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: audit log contains bypass line" "decision=bypass"
+assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor"
+
+# =============================================================================
+# executor-write-guard — runtime asymmetry (CC-374): live-hook vs cli-only
+# =============================================================================
+# write_guard_mode is read from each runtime's adapter manifest:
+#   codex  = cli-subprocess → hook     → enforced whether fired live or via CLI
+#   claude = host-native    → cli-only → no-op when fired LIVE (self-exec edits
+#                                         under the host harness), enforced only
+#                                         when driven by pmctl guard check
+#                                         (PM_GUARD_CHECK_CLI set).
+
+echo
+$LIST || echo "== hook-executor-write-guard (runtime asymmetry) =="
+truncate_log
+
+# LIVE PreToolUse context (no PM_GUARD_CHECK_CLI): claude self-executes its
+# work-dir edits, so the live hook MUST no-op — even for a path the brief policy
+# would otherwise reject. Blocking these would deny claude-executor's real work.
+run_case "exw: claude-executor LIVE Write source file → no-op (self-exec)" 0 "$EXWHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
+run_case "exw: claude-executor LIVE Write /etc/passwd → no-op (self-exec)" 0 "$EXWHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# CLI-driven context (PM_GUARD_CHECK_CLI=1, set by pmctl guard check): the
+# brief-location policy IS enforced for claude, identically to codex.
+run_case_env "exw: claude-executor CLI Write /tmp/brief-x.md → allow" 0 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
+run_case_env "exw: claude-executor CLI Write /etc/passwd → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# codex (write_guard_mode=hook) enforces even in the LIVE context — confirms the
+# asymmetry is driven by the manifest, not by which context fired the hook.
+run_case "exw: codex-executor LIVE Write /etc/passwd → deny (hook-gated)" 2 "$EXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# Unregistered runtime: fail-closed (deny) under the CLI, no-op when fired live so
+# a live hook never blocks an agent whose runtime it cannot resolve.
+run_case_env "exw: unregistered runtime CLI → deny (fail-closed)" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"bogus-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
+run_case "exw: unregistered runtime LIVE → no-op" 0 "$EXWHOOK" \
+  '{"agent_type":"bogus-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
+
+# --- claude bypass (per-runtime env, derived as PM_HOOK_<RUNTIME>_WRITE_GUARD) ---
+# The bypass env name is derived from the runtime, so the claude path exercises a
+# distinct branch from the codex bypass above. Under the CLI-driven context the
+# brief policy would deny /etc/passwd; the bypass must short-circuit to allow (0).
+if should_run "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off"; then
+  _exw_claude_bypass_exit=$(printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
+    | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CLAUDE_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1; echo $?)
+  if [[ "$_exw_claude_bypass_exit" == "0" ]]; then
+    pass "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off"
+  else
+    fail "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off" "expected exit 0, got $_exw_claude_bypass_exit"
+  fi
+  unset _exw_claude_bypass_exit
+fi
+
+# --- claude audit-log content (CLI-driven; mirrors the codex audit block) ---
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' \
+  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: claude audit log contains allow line" "decision=allow"
+assert_log "exw: claude allow line records agent=claude-executor" "agent=claude-executor"
+
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
+  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: claude audit log contains deny line" "decision=deny"
+assert_log "exw: claude deny line records agent=claude-executor" "agent=claude-executor"
+
+$LIST || truncate_log
+$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
+  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CLAUDE_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+assert_log "exw: claude audit log contains bypass line" "decision=bypass"
+assert_log "exw: claude bypass line records agent=claude-executor" "agent=claude-executor"
 
 # =============================================================================
 # reviewer-write-guard

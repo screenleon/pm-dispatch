@@ -82,7 +82,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-371 | 🟡 deferred | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-hooks.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
 | CC-372 | ✅ done | **[arch: adapter runner-kind manifest field]** `adapter.yaml` 新增 `runner_kind`（`cli-subprocess`=thin-dispatch/hook-gated，如 codex；`host-native`=self-exec/harness-gated，如 claude-as-host）+ 衍生能力旗標（`dispatch_route`、`write_guard_mode`=hook\|cli-only、`needs_bash_guard`）。把目前隱式寫死三遍（executor-router case ／哪些 hook 檔存在＋settings 接線 ／每個 guard 的 threat-model）的執行拓樸，收斂成單一 manifest 宣告，由 [[CC-373]]/[[CC-374]]/[[CC-375]] 衍生。純加法、低風險、v0.6.0 地基。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:#277 | P2 | design |
 | CC-373 | ✅ done | **[arch: executor-router 資料驅動 — 拔除 codex\|claude 硬編碼]** `scripts/lib/executor-router.sh` 的 `resolve_executor`/`dispatch_route_for` 改讀 on-disk [[CC-372]] manifest：route 由 `runner_kind` 經 `runner_kind_resolve_flag` 衍生（吃 `dispatch_route` override），allowlist = 「`adapters/<name>/adapter.yaml` 可讀、非 symlink、宣告合法 `runner_kind`」。`dispatch_via_codex`/`_claude` 泛化成單一 `dispatch_via <executor>`（依驗證過的名字解析 `adapters/<executor>/dispatch.sh`，`--sandbox`/`--approval` 只對 cli-subprocess 轉發；兩具名函式留為薄 shim）；pr-gate 三處呼叫點改用 generic。信任邊界從程式碼常數移到 manifest，fail-closed（strict bare-identifier 擋 traversal、缺/壞 manifest、壞 runner_kind 皆拒）。吸收 [[CC-360]]。Defer→[[CC-376]]：`--sandbox`/`--approval` 收進統一 `--isolation` 契約。+10 test（含零核心改動驗收、override、fail-closed、traversal）。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:#279 | P2 | design |
-| CC-374 | 🔵 active | **[arch: hook-guard wrapper 收口 — role-參數化 + 委派 pmctl guard check]** `hook-codex-write-guard.sh`/`hook-claude-write-guard.sh` 剝掉執行器名後 ~95% 重複，且各自重做 path policy 而非呼叫核心；guard 決策存在兩份（CLI 核心 + wrapper shell）。收成單一 role-參數化 wrapper，決策一律委派回 `pmctl guard check`；wrapper 行為（live-hook vs cli-only、是否套 bash-guard）由 [[CC-372]] manifest 衍生。**吸收 [[CC-066]]**（policy.yml）、**[[CC-062]]**（policy test matrix）、**收尾 [[CC-307]]**（pm cross-runtime 文件/alias）。不可壓平兩個真不對稱：`hook-codex-bash-guard.sh`(447 行) 由 `needs_bash_guard` 決定套不套；live-hook bit 必由 manifest 明宣告，非靠檔案存在隱式表示。Security/risk gate。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/security | 2026-06-13 | — | P2 | design |
+| CC-374 | ✅ done | **[arch: hook-guard wrapper 收口 — role-參數化 + 委派 pmctl guard check]** codex-write/claude-write（~95% 重複、byte-identical brief-path policy）收成單一 `hook-executor-write-guard.sh`：由 `agent_type`(`<runtime>-executor`) 衍生 runtime、讀 manifest `write_guard_mode`([[CC-372]])。live-hook vs cli-only 由 manifest **明宣告**（`hook`=live PreToolUse 強制；`cli-only`=fired-live 時 no-op、僅 `pmctl guard check`（設 `PM_GUARD_CHECK_CLI`）強制）。`pmctl-guard.sh` 對每個 executor runtime 解析統一 wrapper、CLI 路徑無合法 manifest 即 fail-closed。install/uninstall/doctor 改接統一 hook + 升級時 prune 退場的 per-runtime write-guard。`hook-codex-bash-guard.sh` 不動（真 codex-only，`needs_bash_guard`）。**[[CC-066]] 由 collapse 實質達成**（單一 policy）。drop deprecated `CLAUDE_HOOK_*_WRITE_GUARD` env shim。+13 guard 測試。**[[CC-062]] deferred**（bash-guard 測試矩陣，bash-guard 未收口）；**[[CC-307]] 仍開**（pm cross-runtime / codex-as-pm smoke test 受阻於 [[CC-381]]，re-link）。Security/risk gate. 相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/security | 2026-06-13 | pr:#280 | P2 | design |
 | CC-375 | 🔵 active | **[install: hook 接線由 manifest 能力旗標衍生]** `install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 對「哪些 hook 該接進 settings.json」目前逐 executor 寫死。改由 [[CC-372]] manifest 的 `write_guard_mode`/`needs_bash_guard` 衍生接線清單，使新 adapter 安裝零核心改動。釘死 install/uninstall/doctor 三方一致（呼應 [[CC-368]] 三方漂移教訓）。相依 [[CC-374]]。umbrella [[CC-333]]。 | arch/install | 2026-06-13 | — | P3 | hygiene |
 | CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-377 | 🔵 active | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
@@ -91,6 +91,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-381 | 🟡 deferred | **[arch: install host-PM-aware — 每個可當主 PM 的 host runtime 都對應寫入設定，不只 claude]** `install.sh`/`install-hooks.sh` 目前寫死 claude harness（`~/.claude/settings.json` 的 hook 接線＋permissions allow-list＋statusline＋agents/commands 介面）——只有「claude 當 host PM」時才正確。codex（或未來 host）當主 PM 時設定面不同（`~/.codex/`、AGENTS.md、自有 sandbox/permission 模型，無 `~/.claude` PreToolUse hook），[[CC-334]]/[[CC-380]] 寫進 `~/.claude` 的 guard/權限接線在 codex-host 下完全不生效 → codex-PM 安裝拿不到任何 gate/guard plumbing。這是 [[CC-333]] 硬耦合 **layer 4（install 路徑）+ layer 3/5（hook 機制/設定格式）**，且是「誰當 host PM」這條軸，與 [[CC-373]]/[[CC-374]]（PM→executor 軸）正交。要求：install 變 host-PM-aware，對每個支援的 host runtime 由 manifest（關聯 [[CC-372]] runner_kind、[[CC-375]] manifest 衍生接線）衍生該 host 的等價設定（hook/guard、allow-list 或 sandbox policy、PM 介面），每 host 維持 install/uninstall/doctor 三方一致（[[CC-368]]）。排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後。umbrella [[CC-333]]。 | arch/install | 2026-06-14 | — | P2 | design |
 | CC-382 | ✅ done | **[fix+feat: pr-gate 相對 `--output` → 兩 executor 皆產空結果；新增 `pmctl gate verify` 讓 claude host-native 結果可追蹤]** 相對 `--output`（或相對 `--cd` 預設）被原樣寫進 reviewer brief 的 `pmctl guard check … --file` 約束與 `pr-gate-handover_v1` 的 `output_file`，但 reviewer write-guard 要求絕對路徑、handover schema 也要求絕對 `output_file` → guard 退非零、reviewer 中止寫入 → 0-byte 結果但 gate 回報成功，**codex 與 claude handover 兩條路皆中**（先前誤判為 claude 專屬）。修：`OUTPUT_FILE` 在組 brief 前正規化為絕對（對 `$PWD`＝`cd "$WORK_DIR"` 後的工作目錄）。同時把完整性檢查抽成單一真相來源 `scripts/lib/gate-result-verify.sh`（非空／恰一條純文字 `Final:`／frontmatter `final:` 與 body 一致／可選釘住 shell 算出的 verdict），由 codex 同步路線、parallel synthesis、與新增 `pmctl gate verify <file>` 共用；`pr-gate.sh` 保留 inline fallback 供 copy-mode（沿用 [[CC-291]] executor-router 慣例）。`pmctl gate verify` 給 claude host-native（handover 在 pr-gate.sh 之外寫檔）與 codex 同等的寫後檢查，讓結果可被 pmctl 確認追蹤，**不改 claude 運作模式**。順帶把 [[CC-372]] 漏鏡像的 `test-runner-kind` 補進 `test-run-all-tests.sh`（55 vs 54 count drift；非 CI job 故 CI 未受影響）。+1 pr-gate 回歸、+5 pmctl-gate 案例；codex gate GO/approve、claude gate GO/advise 雙路驗證。CC-372 claude gate 收尾時發現。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-383 | ✅ done | **[arch: `pmctl gate --executor claude` 改走獨立 headless `claude --print`，退場 agent_executor handover]** 目前 `pmctl gate run --executor claude` 走 `agent_executor`：pr-gate.sh 印 `pr-gate-handover_v1` 交棒給 host，由 host(互動 session)或其 spawn 的 `Agent(claude-executor)` 子代理審查——前者是自我審查、後者撞子代理權限層([[claude-gate-route-guard-gap]])。改為:claude executor 預設**同步派發獨立 headless `claude --print` 子程序**(`adapters/claude/dispatch.sh`,已證實可獨立自跑 guard-check + 寫可驗證結果),對稱 codex 的 `dispatch_via_codex`,跑完用 `gate_result_verify`(CC-382)驗證。新增 `dispatch_via_claude`(executor-router);pr-gate 諸多 `EXECUTOR==codex` 分支推廣為「subprocess 派發 vs 退場的 handover」。退場 `emit_pr_gate_handover_block`/`add_pr_gate_handover_entry`/`pr-gate-handover_v1` schema 對 claude executor 的使用 + 改 claude gate 測試(現斷言 handover)。runner_kind 框架:claude **當 host PM 時 host-native、當被派發 executor 時 cli-subprocess(headless)**,兩角色解析不同 dispatch_route([[guard-role-runtime]]、關聯 [[CC-373]]/[[CC-374]])。model:預設 adapter pinned(`claude-sonnet-4-6`)、可由使用者 `--model` 覆寫(透出到 gate;協調 review-model CC-323..327)。順帶補 inline-fallback vs lib 的 CI sha256 parity guard(CC-382 三方 reviewer 點到)。umbrella [[CC-333]]。 | arch/portability | 2026-06-14 | pr:#278 | P2 | design |
+| CC-384 | 🟢 someday | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `hook-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。 | arch/portability | 2026-06-14 | — | P3 | design |
 
 ---
 
@@ -184,7 +185,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - install 變 host-PM-aware：對每個支援當 PM 的 host runtime，由 manifest 衍生該 host 的等價設定 target＋format（hook/guard 接線、allow-list 或 sandbox/approval policy、PM 命令介面），而非寫死 `~/.claude/`。
 - 與 [[CC-372]] runner_kind ＋ [[CC-375]]（manifest 衍生接線）對齊：host 的「設定面在哪、長怎樣」應是 manifest 宣告，不是程式碼常數。
 - 每個 host 維持 install / uninstall / doctor 三方一致（[[CC-368]] 教訓），並各自有回歸測試。
-- 釐清跨 host 的 guard 落點：claude-host 走 `~/.claude` PreToolUse hook；codex-host 需把對應 guard 放進 codex 的攔截點（或退回 cli-only 由 `pmctl guard check` 撐）。
+- 釐清跨 host 的 guard 落點：claude-host 走 `~/.claude` PreToolUse hook；codex-host 需把對應 guard 放進 codex 的攔截點（或退回 cli-only 由 `pmctl guard check` 撐）。**Update 2026-06-14（user）**：Codex 現在已有 hook 機制（可能不完全）——所以 codex-host 不必只能走 cli-only fallback，可評估把 write/bash guard 接進 codex 原生 hook（對齊 [[CC-372]] `write_guard_mode=hook`），是本票把 install 變 host-aware 時要勘的能力。`docs/executor-contract.md` 已不再斷言「非 Claude host 無 PreToolUse 等價」。
 
 **Non-goals**: 不是 executor 軸（[[CC-373]]/[[CC-374]] 已涵蓋 PM→codex/claude/opencode/agy 的 dispatch）；本票只管「host PM runtime 的安裝設定面」。不在本票決定 codex-host 的最終 hook 機制細節——先把 install 的 host 分派抽象出來。
 
@@ -224,6 +225,25 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
+## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）🟢 someday
+
+**Problem（user 2026-06-14）**: `scripts/hook-*.sh`（8 檔）、`scripts/lib/hook-framework.sh`、`hk_*`/`HK_*` 函式與變數、`PM_HOOK_*` env 都沿用 Claude 平台的「hook」術語。但它們本質是 **PreToolUse 協定的策略腳本**：輸入是 PreToolUse 形狀的 JSON、輸出是 exit code，可由 (a) Claude 活 PreToolUse 觸發，**或** (b) `pmctl guard check` 合成同樣的 JSON 餵入。後者（尤其 [[CC-374]] 收口後 claude 的 cli-only 路徑）**根本不是平台 hook**，只是被餵合成輸入的策略評估器——「hook」對這一半名實不符。
+
+**Why**: 這是 [[CC-333]] layer 2（hook 機制）/ layer 6（術語）的硬耦合：Claude 平台詞漏進想做 runtime-agnostic 的核心。對齊 runner_kind/manifest 之後，命名也應該中性化。
+
+**Requirement**:
+- `hook-*.sh` → 平台中性 `guard-*`（如 `guard-executor-write.sh`、`guard-pm-write.sh`、`guard-codex-bash.sh`）；`hook-framework.sh` → `guard-framework.sh`；`hk_*`/`HK_*` → `g_*`/`G_*`（或等價）；`PM_HOOK_*` env 評估是否改名（保 deprecated alias）。
+- **保留** settings.json 的 `PreToolUse` 鍵——那是 Claude 平台自有、不可改；被接進去的腳本對 Claude 而言確實是 hook。
+- 三方一致：install/uninstall/doctor 接線 + doctor parity scanner + 測試 + 文件同步改。
+
+**Non-goals / 切割**: 純命名/機械改動，**不可**與 guard 行為/安全邊界票混在同一 PR（會污染 security review）。獨立 PR。
+
+**Sequencing**: 排在真 adapter [[CC-376]]/[[CC-377]] 之後；可與 [[CC-335]] deprecation 清掃同期評估。
+
+**See**: [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。
+
+---
+
 ## CC-373 — arch: executor-router 資料驅動 ✅ 2026-06-14
 
 **Done**: `resolve_executor`/`dispatch_route_for` 改讀 on-disk manifest（`_er_adapter_manifest` strict-name + 非 symlink + 可讀 → `runner_kind_manifest_field`/`runner_kind_valid`），route 由 `runner_kind_resolve_flag <kind> dispatch_route <override>` 衍生（[[CC-372]] 單一映射表）。allowlist = 「有合法 manifest 的 adapter」，fail-closed。`dispatch_via_codex`/`_claude` 泛化成 `dispatch_via <executor> …`（依名字解析 `adapters/<executor>/dispatch.sh`；`--sandbox`/`--approval` 只對 `cli-subprocess` 轉發、host-native 丟；兩具名函式留薄 shim）。`pr-gate.sh` 三處 `dispatch_via_"$EXECUTOR"` → generic `dispatch_via "$EXECUTOR"`；copy-mode inline fallback 因無 `adapters/` 樹保留硬編碼 codex|claude（標註為刻意降級鏡像）。`pmctl-adapter` 產生器的「register in dispatch_route_for」指引改為「宣告合法 runner_kind 即可路由」。+10 `test-executor-router` cases。
@@ -254,7 +274,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-374 — arch: hook-guard wrapper 收口 🔵 active
+## CC-374 — arch: hook-guard wrapper 收口 ✅ 2026-06-14
+
+**Done**: codex-write/claude-write → 單一 `scripts/hook-executor-write-guard.sh`：read JSON → 由 `agent_type`(`<runtime>-executor`) 取 runtime → strict-name + 非 symlink manifest → `runner_kind`→`write_guard_mode`([[CC-372]] `runner-kind.sh`)。**live-hook vs cli-only 由 manifest 明宣告**（紅線2）：`PM_GUARD_CHECK_CLI`（`pmctl-guard.sh` 驅動 hook 時設）缺席=live context → `write_guard_mode != hook` 時 no-op（claude self-exec 不被 live hook 擋）；CLI 一律強制。CLI 路徑無合法 manifest=fail-closed(deny)，live=no-op。`pmctl-guard.sh` executor pre-write 改解析統一 wrapper。install/uninstall/doctor 改接 + install prune 退場的 per-runtime write-guard（concat 避開 doctor parity scanner）。`hook-codex-bash-guard.sh` 不動（紅線1，`needs_bash_guard`）。drop deprecated `CLAUDE_HOOK_*_WRITE_GUARD` shim（過 v0.5.0）。docs/executor-contract + dispatch-brief 更新。+13 測試（test-hooks runtime-asymmetry block、test-pmctl-guard、test-install prune）。
+
+**[[CC-066]]**：collapse 本身=單一 policy 不再 per-runtime 複製，實質達成宣告式精神（未另抽 policy.yml）。**[[CC-062]] deferred**：bash-guard 未在本票收口（紅線1），其 test matrix 隨之延後。**[[CC-307]] 仍開、re-link [[CC-381]]**：pm 確實 claude-only 是**現況非殘留**（codex-as-pm 不存在），其 codex-as-pm smoke test 受阻於 [[CC-381]]（host-PM-aware）；`pmctl-guard.sh` 的 "claude-only" 註記為準確現況，未刪。
+
+**No-hook 處理（user 提問釐清 2026-06-14）**：三層皆 fail-closed — hook 檔缺/不可執行→`pmctl guard check` `-x` deny；runtime 無 manifest→CLI deny / live no-op；host 無 hook 機制→cli-only 靠 dispatch flow 主動呼叫（doc 載）。**Codex 現已有 hook 機制（可能不完全，user）**→ doc 不再斷言「非 Claude host 無 PreToolUse 等價」；codex-host 接原生 hook 的能力勘查歸 [[CC-381]]。
+
+**See**: [[CC-372]]（runner_kind/write_guard_mode 衍生表）、[[guard-role-runtime]]（codex hook-auto vs claude cli-only）、[[CC-375]]（install 接線由 manifest 衍生，下一張）、[[CC-381]]（host-PM-aware；codex 原生 hook）、umbrella [[CC-333]]。
+
+<details><summary>原始 scoping</summary>
 
 **Problem**: guard 核心 `pmctl guard check --event --role --runtime`（[[CC-291]] 兩軸）已是對的；但外圈 5 個 `scripts/hook-*-guard.sh` wrapper **沒走核心**，各自 source `hook-framework.sh`、各自 `hk_deny_message()`、各自做 path allow/deny。guard 決策因此存在兩份。`hook-codex-write-guard.sh` 與 `hook-claude-write-guard.sh` 實測剝掉執行器名後 ~95% 一模一樣，差異只有 env var 名、log 路徑、字串，加一個真語意差（見下）。
 
@@ -272,6 +302,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Security/risk gate（hard）**: 動的是安全邊界，過 security-reviewer + risk-reviewer。
 
 **Dependencies**: [[CC-372]]。關聯 [[CC-258]]（pm-write-guard policy revision）。umbrella [[CC-333]]。
+
+</details>
 
 ---
 

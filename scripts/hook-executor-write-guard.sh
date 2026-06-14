@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Unified PreToolUse / pmctl-guard-check guard for the executor role's brief-file
+# write, across ALL executor runtimes (codex, claude, …). Collapses the former
+# per-runtime hook-codex-write-guard.sh + hook-claude-write-guard.sh, which carried
+# a byte-identical brief-path policy.
+#
+# Threat model: an executor must never write arbitrary source or config files. The
+# only legitimate Write/Edit at dispatch time is creating the brief at
+# /tmp/brief-<task>.md before invoking the adapter.
+#   Allowed:  /tmp/brief-<anything>.md
+#   Denied:   everything else (source tree, home dir, /etc, …).
+#
+# The runtime is derived from the agent_type (<runtime>-executor), and the policy
+# is one shared rule — so adding an executor runtime needs no new guard file.
+#
+# Live-hook vs CLI-only (the security-relevant asymmetry):
+#   - A `cli-subprocess` runtime (write_guard_mode=hook, e.g. codex) is a thin
+#     dispatcher gated by a LIVE PreToolUse hook — enforce on every Write/Edit.
+#   - A `host-native` runtime (write_guard_mode=cli-only, e.g. claude-as-host)
+#     SELF-EXECUTES its work-dir edits under the host harness; a live PreToolUse
+#     hook must NOT gate those. So when this wrapper fires LIVE for a cli-only
+#     runtime it no-ops; the brief-location check is still enforced when driven by
+#     `pmctl guard check` (which sets PM_GUARD_CHECK_CLI). The mode is read from
+#     the adapter manifest (write_guard_mode), never inferred from file existence.
+#
+# Wired into settings.json as a PreToolUse hook with matcher "Edit|Write" for
+# hook-mode runtimes; no-op for any non-executor agent.
+#
+# Bypass: set PM_HOOK_<RUNTIME>_WRITE_GUARD=off in the environment (logged), e.g.
+# PM_HOOK_CODEX_WRITE_GUARD=off.
+#
+# Audit: every evaluated firing (allow / deny / bypass) is appended to
+# $PM_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+
+set -euo pipefail
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+_REPO_ROOT="$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/portable.sh
+. "$_SCRIPT_DIR/lib/portable.sh"
+# shellcheck source=scripts/lib/runner-kind.sh
+. "$_SCRIPT_DIR/lib/runner-kind.sh"
+
+# Deprecated-name compat shim for PM_HOOK_LOG_DIR, kept in step with the peer
+# guard scripts (pm/reviewer) until the cross-script deprecation sweep retires it
+# everywhere at once. The per-runtime CLAUDE_HOOK_*_WRITE_GUARD shims are NOT
+# carried over — they are dropped with the collapse.
+[[ -z "${PM_HOOK_LOG_DIR:-}" && -n "${CLAUDE_HOOK_LOG_DIR:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2; PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
+
+HOOK_NAME="hook-executor-write-guard"
+LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+LOG_FILE="$LOG_DIR/hooks.log"
+HK_BYPASS_ENV=""   # set per-runtime after agent_type is known
+# shellcheck source=scripts/lib/hook-framework.sh
+. "$_SCRIPT_DIR/lib/hook-framework.sh"
+
+# ---------- helpers ----------
+
+hk_deny_message() {
+  local reason="$1"
+  cat >&2 <<EOF
+${RUNTIME:-executor}-executor: blocked by $HOOK_NAME — $reason
+
+  attempted: $HK_TOOL_NAME on ${file_path:-(empty)}
+  allowed:   /tmp/brief-<task>.md
+
+Executor Write/Edit is restricted to brief temp files at dispatch time.
+Write the brief to /tmp/brief-<task>.md, then dispatch via
+pmctl dispatch run --adapter ${RUNTIME:-<runtime>}.
+
+Bypass for one turn: set ${HK_BYPASS_ENV:-PM_HOOK_<RUNTIME>_WRITE_GUARD}=off (logged).
+EOF
+}
+
+# refuse <reason> — fail closed under pmctl guard check (return 2 / deny), but
+# no-op (exit 0) when fired as a LIVE PreToolUse hook so an unrelated agent or an
+# unregistered runtime is never blocked by a live hook it does not own.
+refuse() {
+  local reason="$1"
+  if [[ -n "${PM_GUARD_CHECK_CLI:-}" ]]; then
+    hk_deny "$reason" "${file_path:-}"
+  fi
+  exit 0
+}
+
+# ---------- preflight ----------
+
+hk_require_jq
+hk_require_realpath
+
+# ---------- parse input ----------
+
+hk_read_json
+
+# No-op for any caller that is not an <runtime>-executor on Edit/Write.
+[[ "$HK_AGENT_TYPE" == *-executor ]] || exit 0
+[[ "$HK_TOOL_NAME" == "Edit" || "$HK_TOOL_NAME" == "Write" ]] || exit 0
+
+RUNTIME="${HK_AGENT_TYPE%-executor}"
+[[ "$RUNTIME" =~ ^[a-z][a-z0-9_-]*$ ]] || exit 0
+
+# Resolve the runtime's write-guard mode from its adapter manifest. The
+# strict-identifier check above keeps RUNTIME safe to interpolate into the path.
+manifest="$_REPO_ROOT/adapters/$RUNTIME/adapter.yaml"
+[[ -f "$manifest" && ! -L "$manifest" ]] || refuse "unregistered runtime: $RUNTIME (no valid adapter manifest)"
+runner_kind="$(runner_kind_manifest_field "$manifest" runner_kind)" || refuse "cannot read runner_kind for runtime: $RUNTIME"
+runner_kind_valid "$runner_kind" || refuse "invalid runner_kind for runtime $RUNTIME: $runner_kind"
+# runner_kind_resolve_flag's 3rd arg is the OVERRIDE candidate: the manifest's
+# explicit write_guard_mode field if present (may be empty), else the resolver
+# falls back to the runner_kind-derived default for that flag.
+write_guard_mode="$(runner_kind_resolve_flag "$runner_kind" write_guard_mode "$(runner_kind_manifest_field "$manifest" write_guard_mode)")" || refuse "cannot resolve write_guard_mode for runtime: $RUNTIME"
+
+# Live PreToolUse context (no PM_GUARD_CHECK_CLI marker): a cli-only runtime
+# self-executes under the host harness, so a live hook must not gate it.
+if [[ -z "${PM_GUARD_CHECK_CLI:-}" && "$write_guard_mode" != "hook" ]]; then
+  exit 0
+fi
+
+# Per-runtime bypass env (PM_HOOK_<RUNTIME>_WRITE_GUARD; '-' → '_' for validity).
+_bypass_suffix="${RUNTIME^^}"
+HK_BYPASS_ENV="PM_HOOK_${_bypass_suffix//-/_}_WRITE_GUARD"
+
+file_path="$(hk_jq '.tool_input.file_path // ""')" || {
+  hk_audit deny "jq failed on tool_input.file_path" ""
+  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
+  exit 2
+}
+HK_TARGET="$file_path"
+
+# Bypass AFTER parse so the audit line records the actual call being bypassed.
+hk_check_bypass "$HK_BYPASS_ENV"
+
+hk_validate_path "$file_path"
+abs_path="$HK_ABS_PATH"
+
+# Pattern check: must match /tmp/brief-<something>.md
+case "$abs_path" in
+  /tmp/brief-*.md) ;;
+  *) hk_deny "path outside allowed brief pattern (resolved to $abs_path)" "$file_path" ;;
+esac
+
+# Reject existing symlinks — a symlink at /tmp/brief-task.md pointing to a source
+# or config file would pass the pattern check but redirect the write to the
+# symlink target, bypassing the guard's intent.
+if [[ -L "$abs_path" ]]; then
+  hk_deny "brief path is an existing symlink (symlink attack vector: $abs_path)" "$file_path"
+fi
+
+# Verify the parent directory resolves to /tmp (guards against /tmp itself being a
+# symlink or path traversal via dirname).
+if ! [[ -d "$(dirname "$abs_path")" ]]; then
+  hk_deny "parent directory does not exist (resolved to $(dirname "$abs_path"))" "$file_path"
+fi
+real_parent="$(realpath_m "$(dirname "$abs_path")" 2>/dev/null)" || {
+  hk_deny "realpath of parent directory failed" "$file_path"
+}
+[[ "$real_parent" == "/tmp" ]] || hk_deny "parent directory resolves outside /tmp (got: $real_parent)" "$file_path"
+
+hk_allow "brief temp file" "$file_path"
