@@ -133,6 +133,7 @@ jobs:
             test-commands-runner.sh
             test-dispatch-handover.sh
             test-executor-router.sh
+            test-runner-kind.sh
             test-pmctl-adapter-generate.sh
             test-pmctl-backlog.sh
             test-pmctl-guard.sh

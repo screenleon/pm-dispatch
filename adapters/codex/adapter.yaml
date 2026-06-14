@@ -1,0 +1,17 @@
+# adapter.yaml - AUTHORED manifest for adapters/codex/.
+# This file is the source of truth. The codex adapter is hand-authored (it
+# predates `pmctl adapter generate`), so nothing here is regenerated:
+# generated_files is empty and pmctl must not edit this file.
+schema_version: 1
+adapter_name: codex
+executor: codex
+cli_binary: codex
+isolation_map_ref: ./isolation-map.yaml
+runner_ref: ./dispatch.sh
+dispatch_contract: dispatch_handover_v1
+# runner_kind classifies the execution topology; dispatch_route /
+# write_guard_mode / needs_bash_guard derive from it (scripts/lib/runner-kind.sh).
+# codex is a thin subprocess dispatcher driven on the main thread and gated by
+# live PreToolUse hooks (write guard + the codex-only bash guard).
+runner_kind: cli-subprocess
+generated_files: []
