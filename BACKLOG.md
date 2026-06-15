@@ -169,6 +169,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-383]]、[[CC-386]]。umbrella [[CC-333]]。
 
+**See**: pr:#287
+
 ---
 
 ## CC-390 — infra: codex dispatch trace-capture 強化 🔵 active
