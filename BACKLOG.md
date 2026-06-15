@@ -326,7 +326,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Done（CC-385a 縮範圍後）**: `install-hooks.sh` 改為掃 `adapters/*/adapter.yaml`，對每個 `needs_bash_guard=true` adapter 從 `adapters/<name>/bash-guard.sh` 接線（manifest-derived，`runner-kind.sh` 衍生）；退場 `hook-executor-write-guard.sh` 與 `hook-codex-bash-guard.sh`（scripts/ 形式）的 PreToolUse 接線（prune 進 jq retired 清單）。`doctor.sh` 同步：新增 `adapter_bg_present()`、stale 偵測擴展到 adapters/ 樹、`check_hooks()` 走 manifest 掃描。`hook-codex-bash-guard.sh` 加 symlink 解析（從 `adapters/codex/bash-guard.sh` 呼叫時正確找 `scripts/lib/`）。51 個 hooks 測試全過。三方一致（install/uninstall/doctor）。
 
-**See**: [[CC-374]]（前置）、[[CC-385a]]（spike，決定縮範圍）。pr:#TBD
+**See**: [[CC-374]]（前置）、[[CC-385a]]（spike，決定縮範圍）。pr:#281
 
 ---
 

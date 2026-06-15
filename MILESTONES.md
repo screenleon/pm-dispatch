@@ -38,7 +38,7 @@
 | CC-380 | gate reviewer 的 `pmctl guard check` allowlist 缺絕對/tilde 形式 → 背景 reviewer subagent 一律 DENY 修復 | ✅ pr:#277 |
 | CC-382 | pr-gate `--output` 相對路徑 → 兩 executor 皆產空結果；抽 `gate-result-verify.sh` + 新增 `pmctl gate verify` | ✅ pr:#277 |
 | CC-383 | `pmctl gate --executor claude` 改走獨立 headless subprocess；退場 handover；`dispatch_via_claude` 對稱 codex | ✅ pr:#278 |
-| CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | ✅ pr:#TBD |
+| CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | ✅ pr:#281 |
 
 ### Phase 4 — 真 adapter 驗收（P2；抽象的證明）
 
