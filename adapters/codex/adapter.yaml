@@ -19,4 +19,11 @@ dispatch_contract: dispatch_handover_v1
 # default (hook) to cli-only; the bash guard remains (codex dispatches Bash).
 runner_kind: cli-subprocess
 write_guard_mode: cli-only
+# terminal_event: the JSONL event `.type` that marks a semantically complete run.
+# `codex exec --json` emits a single `turn.completed` event at the end of a
+# finished turn; post-verify asserts at least one trace record matches
+# `.type == "turn.completed"` (semantic check, layered on the structural trace
+# integrity check). pmctl dispatch run reads this field and threads it to
+# dispatch-post-verify.sh as --terminal-event. See docs/executor-contract.md.
+terminal_event: turn.completed
 generated_files: []

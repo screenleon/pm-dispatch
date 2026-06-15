@@ -162,21 +162,60 @@ check_jq() {
   fi
 }
 
+# Best-effort, non-interactive auth probe for a non-interactive executor.
+# Returns 0 (authed) when a known credential file or an API-key/OAuth env var is
+# present, 1 (unauthed) otherwise. Heuristic by design — it never runs the CLI
+# (which could hang or incur cost) and never reads secret contents; it only tests
+# for the existence of well-known credential locations. On hosts that store
+# credentials elsewhere (e.g. macOS Keychain) this can false-negative; the
+# supported platform (Linux/WSL2) uses files, and the dispatch-time semantic
+# terminal-event check is the authoritative backstop (an unauthed run emits no
+# terminal event → post-verify fails). See docs/executor-contract.md.
+executor_authed() {
+  local executor="$1"
+  case "$executor" in
+    codex)
+      [[ -n "${OPENAI_API_KEY:-}" ]] && return 0
+      [[ -s "${HOME}/.codex/auth.json" ]] && return 0
+      ;;
+    claude)
+      [[ -n "${ANTHROPIC_API_KEY:-}" ]] && return 0
+      [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && return 0
+      [[ -s "${HOME}/.claude/.credentials.json" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
 check_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    emit_check claude ok "claude available"
-  else
+  if ! command -v claude >/dev/null 2>&1; then
     emit_check claude warn "claude not found — hooks in settings.json work independently of the claude binary" \
       "Install Claude Code: https://docs.anthropic.com/claude-code"
+    return
+  fi
+  # Binary present: an unauthenticated executor must fail loud, not silently
+  # produce a broken trace at dispatch time.
+  if executor_authed claude; then
+    emit_check claude ok "claude available and authenticated"
+  else
+    emit_check claude fail "claude present but not authenticated — dispatch would fail (no result event)" \
+      "Run 'claude' once to log in, or export ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
   fi
 }
 
 check_codex() {
-  if codex_available; then
-    emit_check codex ok "codex available"
-  else
+  if ! codex_available; then
     emit_check codex warn "codex not found — full-profile adapter bash guards (adapters/codex/bash-guard.sh etc.) will be skipped; minimal profile active" \
       "Install Codex CLI for full-profile hooks (optional)"
+    return
+  fi
+  # Binary present: an unauthenticated executor must fail loud, not silently
+  # produce a broken trace at dispatch time.
+  if executor_authed codex; then
+    emit_check codex ok "codex available and authenticated"
+  else
+    emit_check codex fail "codex present but not authenticated — dispatch would fail (no turn.completed event)" \
+      "Run 'codex login' to authenticate, or export OPENAI_API_KEY"
   fi
 }
 

@@ -514,6 +514,50 @@ case_footer_trace_threaded_to_post_verify() {
   rm -rf "$work" "$bindir"
 }
 
+# ---- 18c: manifest terminal_event is threaded to post-verify ----
+# Proves pmctl reads `terminal_event` from adapters/codex/adapter.yaml and passes
+# it to post-verify as --terminal-event. Distinguishing signal: the fake codex
+# emits a structurally-valid but NON-terminal trace (turn.started only, no
+# turn.completed). With the manifest value threaded, post-verify's semantic check
+# fires and FAILS (dispatch returns 1, output names the missing turn.completed);
+# had pmctl NOT threaded it, the trace would pass structure-only and dispatch
+# would return 0. So a non-zero exit + the missing-terminal-event message is proof
+# the manifest field was read and threaded.
+_install_fake_codex_non_terminal() {
+  local bindir="$1"
+  cat > "$bindir/codex" <<'FAKEOF'
+#!/usr/bin/env bash
+_last=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
+done
+[[ -n "$_last" ]] && printf 'dispatch complete (fake codex)\n' > "$_last"
+printf '%s\n' '{"type":"turn.started"}'
+exit 0
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
+case_manifest_terminal_event_threaded() {
+  local name="dispatch/cc389 — manifest terminal_event threaded to post-verify"
+  should_run "$name" || return 0
+  local work brief bindir out code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex_non_terminal "$bindir"
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  # Non-terminal trace + threaded --terminal-event turn.completed → semantic FAIL.
+  if [[ "$code" -eq 1 ]] \
+     && grep -q 'no "turn.completed" terminal event' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code tail=$(tail -5 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ---- 19: adapter exit code propagated through tee stdout capture (CC-305 path) ----
 # pmctl now runs the adapter via `bash adapter | tee tmpfile` and reads exit code
 # from PIPESTATUS[0].  Verify the non-zero exit still reaches the caller verbatim.
@@ -919,6 +963,7 @@ case_missing_brief_file
 case_symlinked_adapter_rejected
 case_stale_latest_symlink_avoidance
 case_footer_trace_threaded_to_post_verify
+case_manifest_terminal_event_threaded
 case_footer_exit_propagated_through_tee
 case_config_timeout_exported_to_adapter
 case_config_model_exported_to_adapter

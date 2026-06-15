@@ -9,6 +9,16 @@ DOCTOR="$REPO_ROOT/scripts/doctor.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# check_codex/check_claude FAIL when an executor CLI is present but
+# unauthenticated. The many stub-claude/codex tests below model a HEALTHY
+# environment, where executors are authenticated — so export dummy API keys at
+# file scope to satisfy the auth probe's env-var branch (the probe never reads the
+# value, only its presence). Tests that specifically exercise the UNAUTHED path
+# clear these vars inline. Tests that build a PATH without claude/codex are
+# unaffected (binary-absent stays WARN regardless of auth).
+export OPENAI_API_KEY="dummy-test-key"
+export ANTHROPIC_API_KEY="dummy-test-key"
+
 # Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
 # Mode copies on `ln -s`, so a pmctl symlink to cli/pmctl becomes a copy that
 # doctor (correctly) cannot verify — making an all-OK scenario unreachable.
@@ -240,6 +250,72 @@ case_doctor_all_ok_exits_0() {
   ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-all-ok/pmctl"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+# Write non-empty executor credential files under a test HOME so the auth probe's
+# credential-file branch resolves to authenticated.
+write_executor_creds() {
+  local home_dir="$1"
+  mkdir -p "$home_dir/.codex" "$home_dir/.claude"
+  printf '{"token":"dummy"}\n' > "$home_dir/.codex/auth.json"
+  printf '{"token":"dummy"}\n' > "$home_dir/.claude/.credentials.json"
+}
+
+case_doctor_executor_unauthed_fails() {
+  # An executor CLI present on PATH but with NO detectable credentials
+  # (no env var, no credential file) must FAIL loud — not silently report OK.
+  #
+  # Steps:
+  #   1. Write full healthy settings/memory/manifest.
+  #   2. Stub claude+codex; clear auth env vars and use a HOME with no cred files.
+  #   3. Assert exit 1 and a [FAIL] naming each unauthenticated executor.
+  local name="doctor-executor-unauthed-fails"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-unauthed" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-unauthed" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -eq 1 \
+     && "$out" == *"claude present but not authenticated"* \
+     && "$out" == *"codex present but not authenticated"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_doctor_executor_authed_via_credfile_ok() {
+  # The auth probe accepts a credential FILE (not just an env var). With
+  # env vars cleared but credential files present, executors are authenticated.
+  #
+  # Steps:
+  #   1. Write full healthy settings/memory/manifest + pmctl symlink + cred files.
+  #   2. Stub claude+codex; clear auth env vars (so only the file branch can pass).
+  #   3. Assert exit 0, 0 FAIL, 0 WARN.
+  local name="doctor-executor-authed-via-credfile-ok"
+  should_run "$name" || return 0
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-authed-credfile" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  write_executor_creds "$home"
+  path="$(make_stub_bin "$tmp_root/bin-authed-credfile" claude codex)"
+  ln -sf "$REPO_ROOT/cli/pmctl" "$tmp_root/bin-authed-credfile/pmctl"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"0 FAIL"* && "$out" == *"0 WARN"* ]]; then
     pass "$name"
   else
@@ -1412,6 +1488,8 @@ case_doctor_native_windows_notice() {
 }
 
 case_doctor_all_ok_exits_0
+case_doctor_executor_unauthed_fails
+case_doctor_executor_authed_via_credfile_ok
 case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
 case_doctor_settings_missing_exits_1

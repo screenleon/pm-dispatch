@@ -1327,6 +1327,126 @@ case_trace_jsonl_override_ok() {
   pass "$name"
 }
 
+# With --terminal-event, a trace carrying the declared completion event
+# (codex turn.completed) passes the semantic check on top of structural integrity.
+# Steps:
+# 1. Create a valid latest.last and a codex trace ending in turn.completed.
+# 2. Run dispatch-post-verify.sh with --terminal-event turn.completed.
+# 3. Assert exit 0 and the semantic PASS line.
+case_terminal_event_present_passes() {
+  local name="terminal-event-present-passes"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}
+{"type":"turn.completed"}'
+
+  run_validator rc out "$work_dir" --terminal-event turn.completed
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace semantically complete" || return 0
+  pass "$name"
+}
+
+# The semantic check is adapter-agnostic by declared value. claude's
+# `terminal_event` is `result`; a claude single-object trace carries .type=result.
+# Steps:
+# 1. Create a valid latest.last and a claude-shape single result object.
+# 2. Run dispatch-post-verify.sh with --terminal-event result.
+# 3. Assert exit 0 and the semantic PASS line.
+case_terminal_event_claude_result_passes() {
+  local name="terminal-event-claude-result-passes"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+
+  run_validator rc out "$work_dir" --terminal-event result
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace semantically complete" || return 0
+  pass "$name"
+}
+
+# The keystone case: with --terminal-event, a structurally whole but NON-terminal
+# trace (stops at turn.started, no completion event — the auth-rejected /
+# silently-killed signature) FAILS the semantic check. This is what the prior
+# structure-only verifier could not catch.
+# Steps:
+# 1. Create a valid latest.last and a one-event trace with no terminal marker.
+# 2. Run dispatch-post-verify.sh with --terminal-event turn.completed.
+# 3. Assert exit 1 and the missing-terminal-event FAIL message.
+case_terminal_event_missing_fails() {
+  local name="terminal-event-missing-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}'
+
+  run_validator rc out "$work_dir" --terminal-event turn.completed
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" 'no "turn.completed" terminal event' || return 0
+  pass "$name"
+}
+
+# Back-compat — WITHOUT --terminal-event, the same non-terminal trace stays
+# structure-only (no semantic check runs). Complements the structure-only lock
+# case_trace_jsonl_non_terminal_passes_structurally; here we additionally assert
+# the semantic line is absent, proving the flag gates the new behavior.
+# Steps:
+# 1. Create a valid latest.last and a non-terminal trace.
+# 2. Run dispatch-post-verify.sh positionally (no --terminal-event).
+# 3. Assert exit 0, structural PASS present, semantic line absent.
+case_terminal_event_absent_flag_structure_only() {
+  local name="terminal-event-absent-flag-structure-only"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}'
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace structurally complete" || return 0
+  if [[ "$out" == *"semantically complete"* || "$out" == *"terminal event"* ]]; then
+    fail "$name" "unexpected semantic terminal-event check ran without --terminal-event: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+# A structurally broken trace short-circuits BEFORE the semantic check,
+# so a truncated trace fails on structure and never false-reports a missing
+# terminal event (constraint: semantic layered on top, structure FAIL wins).
+# Steps:
+# 1. Create a valid latest.last and a truncated trace.
+# 2. Run dispatch-post-verify.sh with --terminal-event turn.completed.
+# 3. Assert exit 1, the truncation FAIL message, and no terminal-event line.
+case_terminal_event_structural_fail_short_circuits() {
+  local name="terminal-event-structural-fail-short-circuits"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}
+{"type":"turn.compl'
+
+  run_validator rc out "$work_dir" --terminal-event turn.completed
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "trace truncated" || return 0
+  if [[ "$out" == *"terminal event"* ]]; then
+    fail "$name" "semantic check ran despite structural failure: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_selfverify_pass
@@ -1341,6 +1461,11 @@ case_trace_jsonl_default_absent_tolerated
 case_trace_jsonl_override_outside_rejected
 case_trace_jsonl_symlink_outside_rejected
 case_trace_jsonl_override_ok
+case_terminal_event_present_passes
+case_terminal_event_claude_result_passes
+case_terminal_event_missing_fails
+case_terminal_event_absent_flag_structure_only
+case_terminal_event_structural_fail_short_circuits
 case_fail_no_trace_dir
 case_fail_no_latest_last
 case_fail_empty_latest_last
