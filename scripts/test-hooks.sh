@@ -341,7 +341,9 @@ assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor
 # executor-write-guard — runtime asymmetry (CC-374): live-hook vs cli-only
 # =============================================================================
 # write_guard_mode is read from each runtime's adapter manifest:
-#   codex  = cli-subprocess → hook     → enforced whether fired live or via CLI
+#   codex  = cli-subprocess → cli-only → no-op when fired LIVE (independent subprocess;
+#                                         PM session hooks don't govern codex writes),
+#                                         enforced only via PM_GUARD_CHECK_CLI
 #   claude = host-native    → cli-only → no-op when fired LIVE (self-exec edits
 #                                         under the host harness), enforced only
 #                                         when driven by pmctl guard check
@@ -1191,6 +1193,22 @@ run_case "cx: run_in_background:1 (numeric) → allow (only boolean true denied)
 # check (and indeed by the entire hook — it no-ops for other agent types).
 run_case "cx: main thread (no agent_type) with run_in_background:true → no-op allow" 0 "$CXHOOK" \
   '{"tool_name":"Bash","tool_input":{"command":"git status","run_in_background":true}}'
+
+# --- adapter symlink invocation: adapters/codex/bash-guard.sh → scripts/hook-codex-bash-guard.sh ---
+# Exercises the symlink-resolution branch added in hook-codex-bash-guard.sh so the
+# guard can locate scripts/lib/ when invoked through the adapter symlink path.
+CXHOOK_SYMLINK="$REPO_ROOT/adapters/codex/bash-guard.sh"
+if [[ -x "$CXHOOK_SYMLINK" ]]; then
+  run_case "cx (symlink): dispatch → allow" 0 "$CXHOOK_SYMLINK" \
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd $REPO_ROOT --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
+  run_case "cx (symlink): SOLO ; → deny" 2 "$CXHOOK_SYMLINK" \
+    '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":";"}}'
+  run_case "cx (symlink): git status → allow" 0 "$CXHOOK_SYMLINK" \
+    '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}'
+else
+  $LIST || printf '  SKIP  cx (symlink): adapters/codex/bash-guard.sh not executable — skipping symlink tests\n'
+fi
+unset CXHOOK_SYMLINK
 
 # =============================================================================
 # hook-log-claude-usage
