@@ -232,7 +232,9 @@ assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 # =============================================================================
 
 echo
-$LIST || echo "== hook-executor-write-guard (codex, hook-gated) =="
+$LIST || echo "== hook-executor-write-guard (codex, cli-only) =="
+# codex write_guard_mode=cli-only (CC-375/CC-385a): live hook no-ops; enforcement
+# only via PM_GUARD_CHECK_CLI=1 (set by pmctl guard check).
 truncate_log
 
 # --- happy path: Write/Edit to /tmp/brief-*.md ---
@@ -245,27 +247,34 @@ run_case "exw: Write /tmp/brief-seed-postal-fix.md → allow" 0 "$EXWHOOK" \
 run_case "exw: Edit /tmp/brief-task.md → allow" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/tmp/brief-task.md"}}'
 
-# --- denied: source tree / home dir ---
-run_case "exw: Write source file → deny" 2 "$EXWHOOK" \
+# --- LIVE context (no PM_GUARD_CHECK_CLI): cli-only mode no-ops all codex writes ---
+run_case "exw: codex-executor LIVE Write source file → no-op (cli-only)" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/backend/seeds/100_demo_content.sql"}}'
 
-run_case "exw: Edit source file → deny" 2 "$EXWHOOK" \
+run_case "exw: codex-executor LIVE Write /etc/passwd → no-op (cli-only)" 0 "$EXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+
+# --- CLI enforcement (PM_GUARD_CHECK_CLI=1): policy applies ---
+run_case_env "exw: Write source file → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/backend/seeds/100_demo_content.sql"}}'
+
+run_case_env "exw: Edit source file → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Edit","tool_input":{"file_path":"/home/example/github/pm-dispatch/agents/codex-executor.md"}}'
 
-run_case "exw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "$EXWHOOK" \
+run_case_env "exw: Write /tmp/other.md (not brief-prefixed) → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/other.md"}}'
 
-run_case "exw: Write /tmp/brief-task.txt (not .md) → deny" 2 "$EXWHOOK" \
+run_case_env "exw: Write /tmp/brief-task.txt (not .md) → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.txt"}}'
 
-run_case "exw: Write /tmp/brief- (no suffix) → deny" 2 "$EXWHOOK" \
+run_case_env "exw: Write /tmp/brief- (no suffix) → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-"}}'
 
-run_case "exw: Write /etc/passwd → deny" 2 "$EXWHOOK" \
+run_case_env "exw: Write /etc/passwd → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
 # --- traversal: /tmp/brief-../../../etc/passwd.md normalizes outside /tmp ---
-run_case "exw: Write path traversal via brief prefix → deny" 2 "$EXWHOOK" \
+run_case_env "exw: Write path traversal via brief prefix → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-/../etc/shadow.md"}}'
 
 # --- no-op for other agents ---
@@ -282,10 +291,10 @@ run_case "exw: codex-executor Bash → no-op (matcher would not fire it)" 0 "$EX
   '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"ls /tmp"}}'
 
 # --- edge cases ---
-run_case "exw: empty file_path → deny" 2 "$EXWHOOK" \
+run_case_env "exw: empty file_path → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":""}}'
 
-run_case "exw: relative file_path → deny" 2 "$EXWHOOK" \
+run_case_env "exw: relative file_path → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"brief-task.md"}}'
 
 run_case "exw: malformed JSON → deny" 2 "$EXWHOOK" \
@@ -299,7 +308,7 @@ ln -s "$_exw_symlink_target" "$_exw_symlink_brief" 2>/dev/null || true
 # Mode) silently copy on `ln -s`, so the symlink-attack vector cannot be staged
 # here. Skip rather than false-fail — the guard's [[ -L ]] check is unchanged.
 if [[ -L "$_exw_symlink_brief" ]]; then
-  run_case "exw: Write to existing symlink /tmp/brief-*.md → deny" 2 "$EXWHOOK" \
+  run_case_env "exw: Write to existing symlink /tmp/brief-*.md → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
     "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_exw_symlink_brief\"}}"
 else
   $LIST || printf '  SKIP  exw: Write to existing symlink /tmp/brief-*.md → deny (no real symlink support)\n'
@@ -311,20 +320,20 @@ unset _exw_symlink_target _exw_symlink_brief
 run_case_env "exw: bypass via PM_HOOK_CODEX_WRITE_GUARD=off" 0 "PM_HOOK_CODEX_WRITE_GUARD=off" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
-# --- audit-log content assertions ---
+# --- audit-log content assertions (CLI-driven; enforcement only under PM_GUARD_CHECK_CLI) ---
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains allow line" "decision=allow"
 assert_log "exw: allow line records agent=codex-executor" "agent=codex-executor"
 assert_log "exw: allow line records tool=Write" "tool=Write"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains deny line" "decision=deny"
 assert_log "exw: deny line records agent=codex-executor" "agent=codex-executor"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains bypass line" "decision=bypass"
 assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -357,9 +366,9 @@ run_case_env "exw: claude-executor CLI Write /tmp/brief-x.md → allow" 0 "PM_GU
 run_case_env "exw: claude-executor CLI Write /etc/passwd → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
-# codex (write_guard_mode=hook) enforces even in the LIVE context — confirms the
-# asymmetry is driven by the manifest, not by which context fired the hook.
-run_case "exw: codex-executor LIVE Write /etc/passwd → deny (hook-gated)" 2 "$EXWHOOK" \
+# codex (write_guard_mode=cli-only as of CC-375/CC-385a) is also no-op in the
+# LIVE context — same as claude; enforcement only via PM_GUARD_CHECK_CLI.
+run_case "exw: codex-executor LIVE Write /etc/passwd → no-op (cli-only)" 0 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
 # Unregistered runtime: fail-closed (deny) under the CLI, no-op when fired live so
