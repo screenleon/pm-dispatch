@@ -40,14 +40,25 @@
 | CC-383 | `pmctl gate --executor claude` 改走獨立 headless subprocess；退場 handover；`dispatch_via_claude` 對稱 codex | ✅ pr:#278 |
 | CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | ✅ pr:#281 |
 
-### Phase 4 — 真 adapter 驗收（P2；抽象的證明）
+### Phase 4 — dispatch-model 統一：Model B 全面上路（P2；[[CC-385]] 決策落地）
+
+> 採用 Model B（pmctl 落地 brief → executor 獨立子程序消費）為**唯一** dispatch 主路（spike [[CC-385]] / [[CC-385a]]，DECISIONS 2026-06-15）。定序紅線：先建可信驗證（CC-386）才退場舊路（CC-387）——任何時刻 guard 不得在 migration 中途被弱化（fail-closed）。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟） | 🔵 |
+| CC-386 | pmctl post-verify 成為 executor 結果唯一驗證者（exit code + trace 完整性 + self_verify 實跑）。**keystone，先行** | 🔵 |
+| CC-387 | codex 子代理自寫 brief 路退場；`pmctl dispatch run` 為唯一 codex routine 路；live-hook routine 全 no-op。相依 CC-386 | 🔵 |
+| CC-388 | claude adapter 作為一般 implementation executor（非僅 gate route）；與 codex 對稱。相依 CC-383/CC-386 | 🔵 |
+| CC-389 | non-interactive executor 契約 spec（auth 前提 + fail-loud + 唯一輸出/驗證 + fallback policy）；CC-376/377 落地基準 | 🔵 |
+
+### Phase 5 — 真 adapter 驗收（P2；抽象的證明）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟）。以 CC-389 契約為基準 | 🔵 |
 | CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini** | 🔵 |
 
-### Phase 5 — deprecation 清掃（P2）
+### Phase 6 — deprecation 清掃（P2）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
