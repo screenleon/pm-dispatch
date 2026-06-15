@@ -59,6 +59,15 @@ write_latest_last() {
   printf '%s\n' "$content" > "$work_dir/.agent-trace/latest.last"
 }
 
+# CC-386: write a latest.jsonl trace (the JSONL event stream pmctl post-verify
+# integrity-checks). content is written verbatim so a test can supply a complete
+# stream, a truncated one, or an empty file.
+write_latest_jsonl() {
+  local work_dir="$1" content="$2"
+  mkdir -p "$work_dir/.agent-trace"
+  printf '%s\n' "$content" > "$work_dir/.agent-trace/latest.jsonl"
+}
+
 # Write a per-run (non-latest.*) trace file and echo its absolute path — used to
 # exercise the --last/--stderr override flags the /pm footer route relies on.
 write_named_trace() {
@@ -1078,9 +1087,260 @@ case_flag_base_fallback_unavailable() {
   pass "$name"
 }
 
+# CC-386: a present, structurally complete latest.jsonl passes the trace-integrity
+# check (positional caller, default latest.jsonl path).
+# Steps:
+# 1. Create a valid latest.last plus a complete JSONL trace.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 0 and the trace-integrity PASS line.
+case_trace_jsonl_valid_complete_passes() {
+  local name="trace-jsonl-valid-complete-passes"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}
+{"type":"turn.completed"}'
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace structurally complete" || return 0
+  pass "$name"
+}
+
+# CC-386: the integrity check is adapter-agnostic. codex emits a multi-line JSONL
+# event stream; claude (`claude -p --output-format json`) emits a single, NON-
+# streamed JSON object. `jq empty` parses both, so a complete claude single-object
+# trace passes the same structural check.
+# Steps:
+# 1. Create a valid latest.last plus a claude-shape single JSON object trace.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 0 and the trace-integrity PASS line.
+case_trace_jsonl_claude_single_object_passes() {
+  local name="trace-jsonl-claude-single-object-passes"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace structurally complete" || return 0
+  pass "$name"
+}
+
+# CC-386: a truncated latest.jsonl (partial trailing JSON — the orphan/SIGKILL
+# signature) fails even though latest.last is non-empty.
+# Steps:
+# 1. Create a valid latest.last plus a JSONL trace whose last record is truncated.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 1 and the truncation FAIL message.
+case_trace_jsonl_truncated_fails() {
+  local name="trace-jsonl-truncated-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}
+{"type":"turn.compl'
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "trace truncated" || return 0
+  pass "$name"
+}
+
+# CC-386 (scope lock): a parseable trace with NO terminal completion event
+# (no codex `turn.completed`, no claude `result`) PASSES structural integrity by
+# design. CC-386 verifies STRUCTURE (>= 1 parsed JSON value); per-adapter SEMANTIC
+# terminal-event validation is explicitly deferred to CC-389. This test locks that
+# boundary so the descope is intentional and visible, not an accident.
+# Steps:
+# 1. Create a valid latest.last and a one-event trace with no terminal marker.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 0 and the structural PASS line.
+case_trace_jsonl_non_terminal_passes_structurally() {
+  local name="trace-jsonl-non-terminal-passes-structurally"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  write_latest_jsonl "$work_dir" '{"type":"turn.started"}'
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace structurally complete" || return 0
+  pass "$name"
+}
+
+# CC-386 (gate fix): a non-empty but WHITESPACE-ONLY latest.jsonl must fail. `jq
+# empty` alone would pass it (whitespace is valid jq input with zero values), a
+# silent false-success; the value-count check requires >= 1 parsed JSON value.
+# Steps:
+# 1. Create a valid latest.last and a latest.jsonl containing only newlines.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 1 and the no-JSON-value FAIL message.
+case_trace_jsonl_whitespace_only_fails() {
+  local name="trace-jsonl-whitespace-only-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  mkdir -p "$work_dir/.agent-trace"
+  printf '\n\n' > "$work_dir/.agent-trace/latest.jsonl"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "no JSON value" || return 0
+  pass "$name"
+}
+
+# CC-386: a present-but-empty latest.jsonl fails the integrity check.
+# Steps:
+# 1. Create a valid latest.last and an empty latest.jsonl.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 1 and the empty-trace FAIL message.
+case_trace_jsonl_empty_fails() {
+  local name="trace-jsonl-empty-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  mkdir -p "$work_dir/.agent-trace"
+  touch "$work_dir/.agent-trace/latest.jsonl"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "trace is empty" || return 0
+  pass "$name"
+}
+
+# CC-386: an explicit --jsonl whose file is absent is fail-closed (mirrors the
+# supplied --stderr contract; every real pmctl dispatch supplies --jsonl).
+# Steps:
+# 1. Create a valid latest.last but no per-run jsonl.
+# 2. Run dispatch-post-verify.sh with --jsonl pointing at a missing file.
+# 3. Assert exit 1 and the supplied-not-found FAIL message.
+case_trace_jsonl_supplied_missing_fails() {
+  local name="trace-jsonl-supplied-missing-fails"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --jsonl "$work_dir/.agent-trace/nope.jsonl"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "supplied --jsonl not found" || return 0
+  pass "$name"
+}
+
+# CC-386: a positional caller with no latest.jsonl is tolerated (back-compat with
+# legacy callers and trace-less fixtures); the .last contract still governs.
+# Steps:
+# 1. Create only a valid latest.last (no jsonl).
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 0 and the integrity SKIP note.
+case_trace_jsonl_default_absent_tolerated() {
+  local name="trace-jsonl-default-absent-tolerated"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "SKIP: no latest.jsonl" || return 0
+  pass "$name"
+}
+
+# CC-386: an explicit --jsonl resolving outside .agent-trace is rejected (the same
+# containment guard latest.last gets).
+# Steps:
+# 1. Create a valid latest.last and a jsonl file outside the work dir.
+# 2. Run dispatch-post-verify.sh with --jsonl pointing at the external file.
+# 3. Assert exit 1 and the outside-.agent-trace rejection.
+case_trace_jsonl_override_outside_rejected() {
+  local name="trace-jsonl-override-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  printf '{"type":"turn.completed"}\n' > "$tmpdir/$name.outside.jsonl"
+
+  run_validator rc out "$work_dir" --jsonl "$tmpdir/$name.outside.jsonl"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "latest.jsonl path is outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# CC-386: a latest.jsonl symlink pointing outside .agent-trace is rejected.
+# Steps:
+# 1. Create a valid latest.last and an external jsonl, symlink latest.jsonl to it.
+# 2. Run dispatch-post-verify.sh positionally.
+# 3. Assert exit 1 and the outside-.agent-trace rejection.
+case_trace_jsonl_symlink_outside_rejected() {
+  local name="trace-jsonl-symlink-outside-rejected"
+  should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -sfn has no real-symlink support on Windows MSYS"; then return 0; fi
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  mkdir -p "$work_dir/.agent-trace"
+  printf '{"type":"turn.completed"}\n' > "$tmpdir/$name.external.jsonl"
+  ln -sfn "$tmpdir/$name.external.jsonl" "$work_dir/.agent-trace/latest.jsonl"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "latest.jsonl path is outside .agent-trace" || return 0
+  pass "$name"
+}
+
+# CC-386: an explicit per-run --jsonl inside .agent-trace passes (the footer route
+# pmctl dispatch run uses, where latest.* is not written).
+# Steps:
+# 1. Create a valid latest.last and a per-run codex-77.jsonl inside .agent-trace.
+# 2. Run dispatch-post-verify.sh with --jsonl pointing at the per-run file.
+# 3. Assert exit 0 and the trace-integrity PASS line.
+case_trace_jsonl_override_ok() {
+  local name="trace-jsonl-override-ok"
+  should_run "$name" || return 0
+  local work_dir out rc jpath
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+  jpath="$(write_named_trace "$work_dir" "codex-77.jsonl" '{"type":"turn.completed"}')"
+
+  run_validator rc out "$work_dir" --jsonl "$jpath"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "PASS: trace structurally complete" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_selfverify_pass
+case_trace_jsonl_valid_complete_passes
+case_trace_jsonl_claude_single_object_passes
+case_trace_jsonl_truncated_fails
+case_trace_jsonl_whitespace_only_fails
+case_trace_jsonl_non_terminal_passes_structurally
+case_trace_jsonl_empty_fails
+case_trace_jsonl_supplied_missing_fails
+case_trace_jsonl_default_absent_tolerated
+case_trace_jsonl_override_outside_rejected
+case_trace_jsonl_symlink_outside_rejected
+case_trace_jsonl_override_ok
 case_fail_no_trace_dir
 case_fail_no_latest_last
 case_fail_empty_latest_last

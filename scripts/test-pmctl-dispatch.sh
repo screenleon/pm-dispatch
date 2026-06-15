@@ -465,6 +465,55 @@ case_stale_latest_symlink_avoidance() {
   rm -rf "$work" "$bindir"
 }
 
+# ---- 18b: CC-386 — footer `trace:` is threaded to post-verify as --jsonl ----
+# Proves pmctl parses the adapter footer `trace:` line and passes the per-run
+# JSONL path to post-verify (not the shared latest.jsonl). Distinguishing signal:
+# the trace-integrity PASS line names the per-run codex-<ts>.jsonl path; had pmctl
+# not threaded it, post-verify would fall back to the latest.jsonl default. The
+# fake codex re-points latest.jsonl mid-run (same race shape as case 18) so a
+# latest.jsonl reader would not get this run's trace.
+_install_fake_codex_stale_jsonl_symlink() {
+  local bindir="$1"
+  cat > "$bindir/codex" <<'FAKEOF'
+#!/usr/bin/env bash
+_last=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
+done
+[[ -n "$_last" ]] && printf 'dispatch complete (fake codex)\n' > "$_last"
+if [[ -n "$_last" ]]; then
+  _trace="$(dirname "$_last")"
+  printf '{"type":"turn.compl\n' > "$_trace/wrong.jsonl"
+  ln -sfn "wrong.jsonl" "$_trace/latest.jsonl"
+fi
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+exit 0
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
+case_footer_trace_threaded_to_post_verify() {
+  local name="dispatch/cc386 — footer trace: threaded to post-verify as --jsonl"
+  should_run "$name" || return 0
+  local work brief bindir out code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex_stale_jsonl_symlink "$bindir"
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  # The trace-integrity PASS line must reference the per-run codex-<ts>.jsonl
+  # (from the footer), proving --jsonl was threaded; overall post-verify is OK.
+  if [[ "$code" -eq 0 ]] \
+     && grep -qE 'PASS: trace structurally complete.*codex-[0-9].*\.jsonl' <<<"$out" \
+     && grep -q '^OK' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code tail=$(tail -5 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ---- 19: adapter exit code propagated through tee stdout capture (CC-305 path) ----
 # pmctl now runs the adapter via `bash adapter | tee tmpfile` and reads exit code
 # from PIPESTATUS[0].  Verify the non-zero exit still reaches the caller verbatim.
@@ -869,6 +918,7 @@ case_missing_cd
 case_missing_brief_file
 case_symlinked_adapter_rejected
 case_stale_latest_symlink_avoidance
+case_footer_trace_threaded_to_post_verify
 case_footer_exit_propagated_through_tee
 case_config_timeout_exported_to_adapter
 case_config_model_exported_to_adapter

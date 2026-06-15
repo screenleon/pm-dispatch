@@ -648,8 +648,9 @@ pmctl_dispatch_run() {
   # "model:  <value>" overrides the pmctl-extracted model with the adapter's
   # effective model (e.g. codex always resolves its built-in "default" alias
   # even when no --model or config default is supplied).
-  local _run_last="" _run_stderr="" _run_model=""
+  local _run_last="" _run_trace="" _run_stderr="" _run_model=""
   _run_last="$(grep -m1 '^last:' "$_footer_tmp" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_trace="$(grep -m1 '^trace:' "$_footer_tmp" | sed 's/^trace:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_stderr="$(grep -m1 '^stderr:' "$_footer_tmp" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   _run_model="$(grep -m1 '^model:' "$_footer_tmp" | sed 's/^model:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
   [[ -n "$_run_model" ]] && _dispatch_model="$_run_model"
@@ -678,6 +679,7 @@ pmctl_dispatch_run() {
   #    a print-cmd adapter or a future adapter that omits the footer).
   local -a _pv_args=("$work_dir" "$brief_file")
   [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
+  [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
   if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2

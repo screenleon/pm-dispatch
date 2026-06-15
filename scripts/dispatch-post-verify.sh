@@ -7,16 +7,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/portable.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>]\n' "$0" >&2
 }
 
-# Path resolution is the only thing the flags change: --last/--stderr override
-# the default latest.* symlinks with per-run explicit paths (e.g. parsed from the
-# dispatch footer by the /pm main-thread route, where latest.* would race across
-# concurrent dispatches). Absent flags, behavior is identical to the positional
-# <work_dir> [brief_file] form used by `pmctl dispatch run` and codex-executor.
+# Path resolution is the only thing the flags change: --last/--jsonl/--stderr
+# override the default latest.* symlinks with per-run explicit paths (e.g. parsed
+# from the dispatch footer by the /pm main-thread route, where latest.* would race
+# across concurrent dispatches). Absent flags, behavior is identical to the
+# positional <work_dir> [brief_file] form used by `pmctl dispatch run` and
+# codex-executor.
 BRIEF_FILE=""
 LAST_OVERRIDE=""
+JSONL_OVERRIDE=""
 STDERR_OVERRIDE=""
 BASE_OVERRIDE=""
 positional=()
@@ -36,6 +38,7 @@ need_val() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --last)       need_val --last "${2:-}";       LAST_OVERRIDE="$2";   shift 2 ;;
+    --jsonl)      need_val --jsonl "${2:-}";      JSONL_OVERRIDE="$2";  shift 2 ;;
     --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
     --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
     --base)       need_val --base "${2:-}";       BASE_OVERRIDE="$2";   shift 2 ;;
@@ -67,6 +70,7 @@ fi
 
 TRACE_DIR="$WORK_DIR/.agent-trace"
 LATEST_LAST="${LAST_OVERRIDE:-$TRACE_DIR/latest.last}"
+LATEST_JSONL="${JSONL_OVERRIDE:-$TRACE_DIR/latest.jsonl}"
 LATEST_STDERR="${STDERR_OVERRIDE:-$TRACE_DIR/latest.stderr}"
 
 if [[ ! -d "$TRACE_DIR" ]]; then
@@ -102,6 +106,19 @@ if [[ -L "$LATEST_LAST" || -n "$LAST_OVERRIDE" ]]; then
   if [[ -z "$LAST_RESOLVED" || "${LAST_RESOLVED#"$TRACE_ABS/"}" == "$LAST_RESOLVED" ]]; then
     printf 'FAILED: latest.last path is outside .agent-trace: %s\n' "$LAST_RESOLVED"
     exit 1
+  fi
+fi
+
+# Same containment guard for the JSONL trace when it is a symlink or a
+# flag-supplied --jsonl override (applied only when the path exists; a missing
+# supplied --jsonl is handled fail-closed in the integrity section below).
+if [[ -e "$LATEST_JSONL" || -L "$LATEST_JSONL" ]]; then
+  if [[ -L "$LATEST_JSONL" || -n "$JSONL_OVERRIDE" ]]; then
+    JSONL_RESOLVED="$(realpath_m "$LATEST_JSONL" 2>/dev/null || true)"
+    if [[ -z "$JSONL_RESOLVED" || "${JSONL_RESOLVED#"$TRACE_ABS/"}" == "$JSONL_RESOLVED" ]]; then
+      printf 'FAILED: latest.jsonl path is outside .agent-trace: %s\n' "$JSONL_RESOLVED"
+      exit 1
+    fi
   fi
 fi
 
@@ -166,6 +183,53 @@ if [[ -n "$EXECUTOR_STATUS" ]]; then
   done <<< "$EXECUTOR_STATUS"
   FAILED=1
 fi
+
+# CC-386: trace integrity. The executor's own .last/`status:` line is its
+# self-report; the JSONL event stream is independent proof the run actually ran to
+# completion. A run can exit 0 yet leave a truncated/orphaned trace (e.g. a
+# background job SIGKILLed mid-write, the orphan signature documented in
+# codex-executor.md): the .last contract alone cannot tell that from a clean
+# finish. So when a trace is present we require it to be structurally whole — fully
+# parseable as a JSON stream — which catches a partial trailing record (the
+# truncation signature). Semantic completion markers differ per adapter (codex's
+# `turn.completed` event vs claude's single `.result` object); declaring and
+# checking those per-adapter is CC-389's non-interactive-executor contract, not
+# this structural keystone.
+#
+# Severity mirrors latest.stderr: an explicit --jsonl (parsed from the adapter
+# footer by `pmctl dispatch run`, which every real dispatch supplies) is
+# fail-closed — a missing one means a broken footer parse or a lost artifact. The
+# positional default (latest.jsonl) stays optional, so legacy positional callers
+# and trace-less fixtures are tolerated; when it exists it is still checked.
+printf '=== Trace integrity (latest.jsonl) ===\n'
+if [[ -n "$JSONL_OVERRIDE" && ! -e "$LATEST_JSONL" ]]; then
+  printf '  FAIL: supplied --jsonl not found: %s\n' "$JSONL_OVERRIDE"
+  FAILED=1
+elif [[ -e "$LATEST_JSONL" ]]; then
+  if [[ ! -s "$LATEST_JSONL" ]]; then
+    printf '  FAIL: trace is empty: %s\n' "$LATEST_JSONL"
+    FAILED=1
+  else
+    # Proof of completeness must be that at least one JSON value actually parsed —
+    # NOT just a non-zero file plus a clean `jq empty`, which also succeeds on a
+    # whitespace-only file (a silent false-success). Count values by streaming
+    # `inputs` (no slurp, so a large trace is not held in memory): a truncated or
+    # malformed trace aborts the parse mid-stream → no count emitted; a
+    # whitespace-only trace yields 0; a real codex JSONL stream or claude single
+    # object yields >= 1. jq is a hard adapter dependency, so its absence also
+    # leaves the count empty and fails closed.
+    _jsonl_count="$(jq -n 'reduce inputs as $i (0; . + 1)' "$LATEST_JSONL" 2>/dev/null || true)"
+    if [[ "$_jsonl_count" =~ ^[0-9]+$ && "$_jsonl_count" -gt 0 ]]; then
+      printf '  PASS: trace structurally complete (%s JSON record(s)): %s\n' "$_jsonl_count" "$LATEST_JSONL"
+    else
+      printf '  FAIL: trace truncated, malformed, or has no JSON value (incomplete run): %s\n' "$LATEST_JSONL"
+      FAILED=1
+    fi
+  fi
+else
+  printf '  SKIP: no latest.jsonl (positional/legacy caller); .last contract governs\n'
+fi
+printf '\n'
 
 # CC-318: a self_verify item is one of two kinds.
 #   - Machine-executable check: the structured `- cmd: "<bash>"` form. post-verify
