@@ -87,6 +87,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | 🔵 active | **[infra: codex dispatch trace-capture 強化 — trace 不依賴繼承 FD 跨 sandbox 存活]** codex 0.139.0 在 session 冷啟動最初 1–2 次 dispatch 偶發 trace-capture flake：wrapper 把 codex stdout 經**繼承 FD** 重導向到 `<work_dir>/.agent-trace/<ts>.jsonl`，該檔在 codex sandbox 邊界偶失（`.last` 由 codex 依路徑自開故存活、`.jsonl` 與 run-time stderr 經繼承 FD 偶失）。8 次 run 證**非確定性**、且 **fail-closed 安全**（trace 缺→post-verify 正確判 FAIL、不誤判 PASS）。`workspace-write` 與 `sandboxed` isolation 實 map 到同一 codex 指令（皆 `--sandbox workspace-write`、無 override）。候選修法：trace 寫 `<work_dir>` 外（XDG state／temp），或經 wrapper 控制的 pipe（tee）而非繼承 FD，使 trace 不跨 codex sandbox 邊界。**需可穩定複現才能驗證修法**。發現於 [[CC-387]] 真實驗收。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-384 | 🟢 someday | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `hook-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。 | arch/portability | 2026-06-14 | — | P3 | design |
 | CC-391 | 🔵 active | **[arch(spike): detached-supervised dispatch — executor lifecycle ownership 軸]** Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已使 executor 成獨立子程序、由 pmctl 三重機檢驗證，但派發仍 **foreground-sync**：`pmctl dispatch run` 阻塞、in-process 驗證、main 持有生命週期。本 spike（決策-only）決定是否新增一條與 [[CC-372]] `runner_kind` **正交**的 **lifecycle ownership** 軸：main 只建 run + `setsid`/`nohup` 起 detached supervisor → supervisor 持有 executor、跑 post-verify（重用 [[CC-386]]/[[CC-389]]）、寫 durable run-state（[[CC-225]]）、append events.jsonl（[[CC-211]] FSM）、best-effort 通知 listener（durable-outbox 為 load-bearing、fifo/socket 選配）。**定位修正**：lifecycle 是派發當下選擇（`pmctl dispatch run --lifecycle foreground\|detached` + config 預設），**非 manifest 欄位**；可 detach 資格由 runner_kind（headless-CLI Model B）推導，host-native 不可 detach。不加 `lifecycle_mode` 欄位、不動 schema 改名（避與 [[CC-384]] 撞）。收 [[CC-238]]（fan-out 無 timeout/attribution = 缺 supervisor 症狀）。排 v0.6.0 Phase 7（[[CC-376]]/[[CC-377]] 之後）。umbrella [[CC-333]]。 | arch | 2026-06-15 | — | P2 | design |
+| CC-392 | 🔵 active | **[arch: claude adapter runner_kind 分類漂移 — manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`]** `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`（註解：claude-as-host self-exec、harness-gated），但自 [[CC-383]]（gate route）+ [[CC-388]]（一般 implementation）後 `adapters/claude/dispatch.sh` 實際是 `CMD=(claude -p --output-format stream-json …)` 的 **headless 獨立子程序**（由 `pmctl dispatch run --adapter claude` 驅動，行為上是 cli-subprocess / Model B）。manifest 與行為不一致、註解過時。今日尚未弄壞 dispatch（[[CC-373]]：`dispatch_route` 僅 allowlist+log-label、不驅動 exec 分支；write_guard_mode 對 host-native 與 cli-only 恰好同值 → 對的結論、錯的理由），但讓 `runner_kind` 成為不可信謂詞——[[CC-391]] 的 detach 資格推導因此卡住（spike partial-adopt 前提 1）。**決策**：claude 有兩執行模式（canonical headless `claude --print` vs same-host `Agent(claude-executor)` 優化路）——是把 canonical 定為 `cli-subprocess`（＋override `write_guard_mode: cli-only`、`needs_bash_guard: false` 保持行為 byte-identical，比照 codex override 慣例），還是引入「host-native fallback + cli-subprocess canonical」的表達。[[CC-373]] 曾明確 defer 此 claude 角色歧義，[[CC-391]] 強制它收斂。驗收：manifest 反映 canonical route、三衍生旗標解析後行為不變、加回歸測試。相依/關聯 [[CC-391]]、[[CC-373]]、[[CC-383]]、[[CC-388]]、[[guard-role-runtime]]。排 v0.6.0 Phase 7（[[CC-391]] detach 落地前置）。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
 
 ---
 
@@ -267,12 +268,33 @@ pmctl runs / pmctl dispatch wait <id> / pmctl inbox  # reattach：新的 main �
 **Non-goals**: 不在本票實作 supervisor；不改 Model B（CC-385..389）已上線行為；不解 [[CC-381]] host-PM install 軸（那是「誰當 host PM」軸，與本「executor 啟動後生命週期」軸亦正交）。
 
 **Spike outcome（2026-06-15，codex 深入分析）**: 詳見 `docs/spikes/CC-391-detached-supervised-dispatch-scope.md`。判定 **partial-adopt** — 採納 lifecycle 為新派發軸、detached supervisor 為長期形狀，但「使用者可見 detached 派發」延後到兩個前提解決後：
-1. **detach 資格不能單靠 runner_kind 推導**：`adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但 `adapters/claude/dispatch.sh` 實際跑 headless `claude --print`（CC-383/388 後的漂移）→ `runner_kind == cli-subprocess` 不是可信的資格謂詞。須先釐清 claude 分類（host-native vs cli-subprocess，或 claude-as-host / headless 兩 profile），或由「實際 adapter route/primitive」算資格＋測試。**新拆子票 candidate**。
+1. **detach 資格不能單靠 runner_kind 推導**：`adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但 `adapters/claude/dispatch.sh` 實際跑 headless `claude --print`（CC-383/388 後的漂移）→ `runner_kind == cli-subprocess` 不是可信的資格謂詞。須先釐清 claude 分類（host-native vs cli-subprocess，或 claude-as-host / headless 兩 profile），或由「實際 adapter route/primitive」算資格＋測試。→ 已拆 [[CC-392]]（detach 落地前置）。
 2. **footer/durable artifact 先行**：(a) 現行 `_footer_tmp` 為 `mktemp` parse 後即刪（`pmctl-dispatch.sh`）→ detached supervisor 崩潰會丟失 CC-305 防競態的 per-run footer handoff，須在 verify 前把 footer 持久化到 run 目錄；(b) state store 在 `~/.local/share/pm-dispatch/state`（user data），但 [[CC-225]] 要 repo-tracked `.gate-results/`-style → durable-outbox **不等於 events.jsonl**，須獨立 repo-local result/outbox artifact 為 load-bearing、再 mirror 到 state store。
 
 遷移 fail-closed 順序（spike D7）：保持預設 foreground → 抽 executor tail（行為不變）→ foreground 模式先加 footer/result/outbox 持久化並驗 CC-305 仍成立 → supervisor foreground test 模式 → `--lifecycle detached` opt-in（ineligible adapter 啟動前拒絕）→ 才接 `setsid`/`nohup` + `dispatch wait`。紅線：不加 manifest `lifecycle_mode`；不讓 fifo/socket 成 load-bearing；supervisor 不得收未過 preflight 的 raw brief/adapter path。
 
 **See**: [[CC-333]] umbrella、[[v0.6.0-planning]]、MILESTONES.md v0.6.0 Phase 7、`docs/spikes/CC-391-detached-supervised-dispatch-scope.md`。
+
+---
+
+## CC-392 — arch: claude adapter runner_kind 分類漂移 🔵 active
+
+**Problem**: `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`（`adapters/claude/adapter.yaml:16`，註解述「claude-as-host self-executes its own edits gated by the host harness」），但自 [[CC-383]]（gate route 改走獨立 headless）+ [[CC-388]]（一般 implementation 對稱 codex）後，`adapters/claude/dispatch.sh` 實際是 `CMD=(claude -p --output-format stream-json …)`（`adapters/claude/dispatch.sh:5`、`:229`）的 **headless 獨立子程序**，由 `pmctl dispatch run --adapter claude` 驅動——行為上是 cli-subprocess / Model B。manifest 宣告與實際行為不一致，且 manifest 註解過時。發現於 [[CC-391]] 的 codex 深入分析（`docs/spikes/CC-391-*.md`，spike partial-adopt 前提 1）。
+
+**Why now / 影響**: 今日尚未弄壞 dispatch——[[CC-373]] 的去風險結論是 `dispatch_route` 在 `pmctl-dispatch` 僅作 allowlist（zero/non-zero）+ log label、**不驅動 exec 分支**；而 `write_guard_mode` 對 `host-native` 與「`cli-subprocess` + cli-only override」恰好同值（cli-only），所以是「對的結論、錯的理由」。真正的問題是 `runner_kind` 因此成為**不可信謂詞**：任何由它衍生的判斷都不能盡信。具體卡點是 [[CC-391]] 的 **detach 資格推導**（「headless-CLI Model B executor 可 detach、host-native 不可」）——若照 manifest，claude 會被誤判為不可 detach，但它實際就是 headless subprocess。
+
+**Decision needed**: claude 有兩執行模式——canonical headless `claude --print`（`pmctl dispatch run`，executor-contract 文件化主路）與 same-host `Agent(claude-executor)` 優化路。兩條路徑：
+- (A) 把 canonical 定為 `runner_kind: cli-subprocess`，並 override `write_guard_mode: cli-only` + `needs_bash_guard: false` 以保持行為 byte-identical（比照 codex 用 per-flag override 偏離 runner-kind 預設的慣例，見 `scripts/lib/runner-kind.sh` override seam）。same-host Agent 路降為文件化 fallback。
+- (B) 引入可表達「host-native fallback + cli-subprocess canonical」的機制（較重，可能踩 schema 改名，與 [[CC-384]] 衝突——不偏好）。
+**傾向 (A)**：canonical route 就是 headless，manifest 應反映 canonical；[[CC-373]] 當時明確 defer 此 claude 角色歧義（因 dispatch 不靠它），[[CC-391]] 強制它收斂。
+
+**Requirement**: manifest 的 `runner_kind`（＋必要 override）反映 canonical headless 路；`runner_kind_resolve_flag` 解析後三衍生旗標（`dispatch_route`/`write_guard_mode`/`needs_bash_guard`）對 claude 的**有效值與行為 byte-identical**（不得弱化 guard）；更新過時註解；加回歸測試鎖定（manifest 一致性 + 衍生旗標值）。**紅線**：這是 guard 安全邊界相關，security/risk hard gate；不得在 migration 中途弱化 claude 的 write guard。
+
+**Dependencies / 關聯**: [[CC-391]]（detach 資格前置——本票須先收斂）、[[CC-373]]（曾 defer 此歧義）、[[CC-383]]/[[CC-388]]（造成漂移的兩 PR）、[[guard-role-runtime]]（role×runtime 兩軸）、[[CC-372]]（runner_kind manifest）。
+
+**Priority**: P2 — `runner_kind` 可信度 + [[CC-391]] detach 落地前置；排 v0.6.0 Phase 7。
+
+**See**: `docs/spikes/CC-391-detached-supervised-dispatch-scope.md`（Open questions：claude 最終分類）、umbrella [[CC-333]]。
 
 ---
 
