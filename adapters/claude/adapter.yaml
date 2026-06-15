@@ -14,4 +14,12 @@ dispatch_contract: dispatch_handover_v1
 # claude-as-host self-executes its own edits gated by the host harness, so its
 # write guard is CLI-only (not a live PreToolUse hook) and no bash guard applies.
 runner_kind: host-native
+# terminal_event: the JSONL event `.type` that marks a semantically complete run.
+# `claude -p --output-format json` emits a single object with `.type == "result"`;
+# a future stream-json mode ends with a trailing `type==result` event — both
+# satisfy `.type == "result"`. post-verify asserts at least one trace record
+# matches it (semantic check, layered on the structural trace integrity check).
+# pmctl dispatch run reads this field and threads it to dispatch-post-verify.sh as
+# --terminal-event. See docs/executor-contract.md.
+terminal_event: result
 generated_files: []

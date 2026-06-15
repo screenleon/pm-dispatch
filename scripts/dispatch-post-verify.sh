@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/portable.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
 }
 
 # Path resolution is the only thing the flags change: --last/--jsonl/--stderr
@@ -21,6 +21,7 @@ LAST_OVERRIDE=""
 JSONL_OVERRIDE=""
 STDERR_OVERRIDE=""
 BASE_OVERRIDE=""
+TERMINAL_EVENT=""
 positional=()
 
 # A value-taking flag must be followed by a real value — not end-of-args and not
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
     --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
     --base)       need_val --base "${2:-}";       BASE_OVERRIDE="$2";   shift 2 ;;
+    --terminal-event) need_val --terminal-event "${2:-}"; TERMINAL_EVENT="$2"; shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
     -*)           usage; exit 2 ;;
     *)            positional+=("$1"); shift ;;
@@ -192,9 +194,10 @@ fi
 # finish. So when a trace is present we require it to be structurally whole — fully
 # parseable as a JSON stream — which catches a partial trailing record (the
 # truncation signature). Semantic completion markers differ per adapter (codex's
-# `turn.completed` event vs claude's single `.result` object); declaring and
-# checking those per-adapter is CC-389's non-interactive-executor contract, not
-# this structural keystone.
+# `turn.completed` event vs claude's single `result` object); those are checked
+# separately below as the semantic terminal-event step (declared per adapter in
+# adapter.yaml, threaded in via --terminal-event), layered on top of this
+# adapter-agnostic structural keystone.
 #
 # Severity mirrors latest.stderr: an explicit --jsonl (parsed from the adapter
 # footer by `pmctl dispatch run`, which every real dispatch supplies) is
@@ -221,6 +224,30 @@ elif [[ -e "$LATEST_JSONL" ]]; then
     _jsonl_count="$(jq -n 'reduce inputs as $i (0; . + 1)' "$LATEST_JSONL" 2>/dev/null || true)"
     if [[ "$_jsonl_count" =~ ^[0-9]+$ && "$_jsonl_count" -gt 0 ]]; then
       printf '  PASS: trace structurally complete (%s JSON record(s)): %s\n' "$_jsonl_count" "$LATEST_JSONL"
+      # Semantic terminal-event check, layered ON TOP of the structural keystone
+      # above. Structural integrity proves the trace is whole; it does
+      # NOT prove the run reached a successful end (a structurally valid trace can
+      # stop at turn.started, e.g. an auth-rejected or silently-killed run). Each
+      # adapter DECLARES its semantic completion marker as `terminal_event` in
+      # adapter.yaml (codex: turn.completed, claude: result); pmctl dispatch run
+      # reads it and threads it here via --terminal-event. We assert at least one
+      # record carries that `.type`. The marker is data-driven (no hard-coded
+      # adapter knowledge here) but the predicate SHAPE is fixed to `.type == $ev`
+      # with the value injected via --arg, so adapter.yaml can never inject an
+      # arbitrary jq filter. Flag-gated: positional/legacy callers pass no
+      # --terminal-event and stay structure-only (back-compat, mirrors the --jsonl
+      # severity split). Counted by the same streaming `inputs` reduction as the
+      # structural check, so jq absence / a parse abort leaves the count empty and
+      # fails closed.
+      if [[ -n "$TERMINAL_EVENT" ]]; then
+        _term_count="$(jq -n --arg ev "$TERMINAL_EVENT" 'reduce inputs as $i (0; . + (if ($i.type? == $ev) then 1 else 0 end))' "$LATEST_JSONL" 2>/dev/null || true)"
+        if [[ "$_term_count" =~ ^[0-9]+$ && "$_term_count" -gt 0 ]]; then
+          printf '  PASS: trace semantically complete (%s "%s" terminal event(s)): %s\n' "$_term_count" "$TERMINAL_EVENT" "$LATEST_JSONL"
+        else
+          printf '  FAIL: trace has no "%s" terminal event (run did not signal completion): %s\n' "$TERMINAL_EVENT" "$LATEST_JSONL"
+          FAILED=1
+        fi
+      fi
     else
       printf '  FAIL: trace truncated, malformed, or has no JSON value (incomplete run): %s\n' "$LATEST_JSONL"
       FAILED=1

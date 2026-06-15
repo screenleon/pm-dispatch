@@ -677,10 +677,28 @@ pmctl_dispatch_run() {
   #    footer) so post-verify never reads latest.*, eliminating the CC-305 race.
   #    Falls back to latest.* defaults when footer parsing found nothing (e.g.,
   #    a print-cmd adapter or a future adapter that omits the footer).
+  # Read the adapter's declared semantic terminal_event from its manifest and
+  # thread it to post-verify, which asserts the trace carries at least one such
+  # event (semantic completion, layered on the structural integrity check). Read
+  # via the canonical manifest-field helper; sourced defensively so a missing lib
+  # or absent field leaves the value empty and post-verify stays structure-only
+  # (back-compat) rather than aborting dispatch.
+  local _terminal_event="" _adapter_manifest="$repo_root/adapters/$adapter/adapter.yaml"
+  if [[ -f "$_adapter_manifest" ]]; then
+    if ! declare -F runner_kind_manifest_field >/dev/null 2>&1; then
+      # shellcheck disable=SC1091  # dynamic repo root path.
+      . "$repo_root/scripts/lib/runner-kind.sh" 2>/dev/null || true
+    fi
+    if declare -F runner_kind_manifest_field >/dev/null 2>&1; then
+      _terminal_event="$(runner_kind_manifest_field "$_adapter_manifest" terminal_event 2>/dev/null || true)"
+    fi
+  fi
+
   local -a _pv_args=("$work_dir" "$brief_file")
   [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
   [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
+  [[ -n "$_terminal_event" ]] && _pv_args+=(--terminal-event "$_terminal_event")
   if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \

@@ -75,6 +75,34 @@ exit:   <integer-exit-code>
 
 Note: codex profile — `adapters/codex/dispatch.sh` (invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `agents/claude-executor.md` Write trace step satisfies this contract. `pmctl dispatch run` captures the adapter stdout footer and passes the explicit per-run `last:` and `stderr:` paths to `dispatch-post-verify.sh` via `--last`/`--stderr` flags; those per-run paths are the load-bearing input to Phase 3. `latest.last` and `latest.stderr` are updated by the adapter for human observation only and are not read by post-verify when explicit paths are present.
 
+## Non-interactive executor contract (Model B)
+
+Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief and the executor runs as an **independent subprocess** that consumes it (DECISIONS.md 2026-06-15, spike CC-385/CC-385a). Every Model B executor — codex, claude, and future third-party adapters (opencode, antigravity) — MUST satisfy the following common contract. This is the baseline a new adapter is measured against; each requirement maps to an adapter self-check or a `doctor` check.
+
+1. **Brief is pmctl-landed.** The brief body is written to a file by trusted code (`pmctl`, or PM via `Write` to `/tmp/brief-*.md`) and passed to the adapter with `--brief-file`. An executor subagent does **not** self-write its own brief on the main route; that path is a fallback only (see 5).
+
+2. **Executor is an independent subprocess driven by a headless CLI.** The adapter invokes the executor's headless CLI (`codex exec`, `claude --print`, …) as a child process. There is no in-process agent on the main route.
+
+3. **Auth precondition is pre-login; unauthenticated runs fail loud.** The executor CLI MUST already be authenticated before dispatch (interactive login, API key, or OAuth token) — pm-dispatch never authenticates on the executor's behalf. An unauthenticated executor MUST fail loudly, never silently report success. Two enforcement layers:
+   - **Proactive:** `doctor.sh` probes each present executor CLI for credentials (best-effort, non-interactive: checks well-known credential files and API-key/OAuth env vars without running the CLI or reading secret contents) and emits a **FAIL** when the binary is present but no credentials are detected. Heuristic — on hosts that store credentials outside these locations (e.g. macOS Keychain) it can false-negative; the supported platform (Linux/WSL2) uses files.
+   - **Authoritative (dispatch-time):** an unauthenticated run produces no semantic terminal event, so the post-verify terminal-event check (see 4) fails the run regardless of the proactive probe.
+
+4. **Output contract + triple-machine-check verification.** The load-bearing outputs are `<work_dir>/.agent-trace/latest.last` (per-run `<executor>-<ts>.last`, the final-message artifact) and the `<executor>-<ts>.jsonl` event stream (load-bearing for machine verification — the structural and terminal-event checks below run against it); both are surfaced via the stdout footer. `pmctl` is the **sole result verifier** — the executor's natural-language conclusion is a self-report, never the verdict. Verification is three machine checks:
+   - (a) **exit code** — a non-zero adapter exit short-circuits to `failed` (no post-verify).
+   - (b) **trace structural integrity** (CC-386) — `latest.jsonl` must parse as a JSON stream with at least one value (catches truncated/orphaned traces); adapter-agnostic.
+   - (c) **semantic terminal event** (CC-389) — the adapter DECLARES its completion marker as `terminal_event` in `adapter.yaml` (the JSONL event `.type` emitted at the end of a finished run); `pmctl dispatch run` reads it and passes `--terminal-event <type>` to `dispatch-post-verify.sh`, which asserts at least one trace record carries that `.type`. A structurally-whole trace that never reached completion (e.g. stops at `turn.started`) passes (b) but fails (c). The predicate shape is fixed to `.type == <declared value>` (the value is injected, never an arbitrary jq filter from the manifest). Flag-gated: positional/legacy callers that pass no `--terminal-event` stay structure-only (back-compat).
+
+   | Executor | `terminal_event` | Trace shape |
+   |---|---|---|
+   | codex | `turn.completed` | `codex exec --json` emits one `turn.completed` event at end of turn |
+   | claude | `result` | `claude -p --output-format json` emits one `{"type":"result",…}` object; stream-json (CC-388) ends with a trailing `type==result` event |
+
+5. **Fallback policy — no headless CLI → subagent path.** A runtime with **no** headless CLI cannot run Model B; it falls back to the subagent (Agent-spawn) route, which exists solely for that case and is gated by the live PreToolUse write hook. This fallback is **explicit, not the default** — every runtime with a CLI uses the subprocess route.
+
+6. **Output format prefers streaming.** When an executor CLI supports both a streaming (per-event JSONL) and a single-blob output mode, the adapter selects streaming so the trace can be confirmed event-by-event. (claude lands this in CC-388 via `--output-format stream-json`; codex `--json` is already a per-event stream.)
+
+`model` alias and `isolation_level` translation follow the existing adapter convention (each adapter's `isolation-map.yaml` and the shared model-alias table); they are not redefined here.
+
 ## Executor profiles
 
 | Aspect | codex profile | claude profile |
