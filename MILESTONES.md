@@ -64,12 +64,47 @@
 |----|------|------|
 | CC-335 | deprecated surface 移除 sweep；其中 `--profile` alias 與 `codex-dispatch.sh` shim 為 runtime-coupling cruft，與本 milestone 同期最自然 | 🔵 |
 
+### Phase 7 — executor lifecycle ownership（P2；executor 抽象的完成式）
+
+> **為什麼在 v0.6.0 而非 v0.7.0（2026-06-15 user 校準）**：`host-native` 把 executor 綁死在 host harness，detached-supervised 把它解開——**這正是本 milestone「runtime 解耦合」主題的完成式**，不是下一版新題目；且 [[CC-391]] 是 [[CC-385]]（Model B 決策，Phase 4）的直接續集，分跨兩版會把 dispatch-model 故事打碎。thin-slice 是**每個 PR** 的紀律、非每個 milestone；Phase 7 三薄片各自可獨立 ship。
+>
+> **排序紅線**：Phase 7 實作必須排在 **Phase 5（真 adapter CC-376/377）之後**——先在 N≥2 adapter 下證明 executor 抽象，再加 lifecycle 層，避免 supervisor 契約被 codex/claude 特例帶歪。**逃生口**（沿用 Phase 3 寫法）：若 v0.6.0 收尾時 Phase 7 未及，可單獨延 v0.6.x 點版或 v0.7.0，但預設留在 v0.6.0。
+>
+> **設計依據**：Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已交付 brief-可信落地 + executor-獨立子程序 + pmctl-三重機檢驗證；但派發仍 **foreground-sync**（`pmctl dispatch run` 阻塞、in-process 驗證、main 持有生命週期）。缺的是 process 生命週期擁有權、durable 結果、listener 通知。這不是 [[CC-372]] runner_kind（怎麼**到達** executor），而是 **lifecycle ownership**（啟動後**誰持有**）——正交新軸。**定位紅線**：lifecycle 是**派發當下的選擇**（`pmctl dispatch run --lifecycle foreground\|detached` + config 預設），**非 manifest 欄位**；可 detach 資格由 runner_kind（headless-CLI Model B）推導，`host-native` 不可 detach；不引入 `lifecycle_mode`/schema 改名（避與 [[CC-384]] 撞）。verify 層直接重用 [[CC-386]]/[[CC-389]]，durable substrate 重用 [[CC-211]]；真正 net-new 只有 detached supervisor 與 notify channel。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-391 | **(7a 決策-only，先行)** detached-supervised dispatch 建模決策：lifecycle 作派發旗標非 manifest 欄位、supervisor 元件邊界、durable-outbox 為 load-bearing、foreground→detached 遷移順序（fail-closed 不弱化）、一次真實 detached 派發等價證明 | 🔵 |
+| CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ⏸ |
+| CC-391 落地子票 | **(7c net-new 核心，Phase 5 後)** `pmctl dispatch start`（setsid/nohup detached supervisor）+ `pmctl dispatch wait`/`pmctl inbox`（reattach）+ durable-outbox notify channel；重用 [[CC-386]]/[[CC-389]] post-verify。**spike 決策後再開正式子票號** | — |
+| CC-238 | **(7c)** pr-gate fan-out 無 timeout / 弱 attribution = 缺 supervisor 症狀；以通用 supervisor timeout + per-child attribution 收掉（非在 `pr-gate.sh` 做一次性 timeout） | ⏸ |
+
 ### 延後至 v0.7.0+（明確排除於 v0.6.0）
 
-- **CC-216 MCP server**——「通用橋」邏輯上是 executor 抽象之後的下一層，且為重型 net-new surface（Node/Python server + `pmctl --json`），不符 thin-slice。**2026-06-13 user 拍板 defer。** 預定 v0.7.0 主題。
-- **CC-333 七層耦合中的 1/4/7**（memory 路徑 / 安裝路徑 / reviewer memory 讀取）——本版聚焦 dispatch+guard+install 的 executor 抽象；memory/install-target 軸（含 [[CC-104m]] 多目標投影）留待後續。
+- **CC-216 MCP server**——「通用橋」邏輯上是 executor 抽象＋lifecycle 之後的下一層，且為重型 net-new surface（Node/Python server + `pmctl --json`），不符 thin-slice。**2026-06-13 user 拍板 defer。** v0.7.0 headline，見下方 v0.7.0 區段。
+- **CC-333 七層耦合中的 1/4/7**（memory 路徑 / 安裝路徑 / reviewer memory 讀取）——本版聚焦 dispatch+guard+install+lifecycle 的 executor 抽象；memory/install-target 軸（含 [[CC-104m]] 多目標投影）留待後續。
 - **CC-358 / CC-359**（runner telemetry / worktree batch dispatch）——建在抽象之上的能力層，抽象穩定後再做。
 - **完整 knowledge index（CC-340）**——延續 v0.5.0 的 v0.6.0+ 排除，與 executor 抽象無關，獨立排程。
+
+---
+
+## v0.7.0 — 通用橋 MCP server（規劃中 2026-06-15）
+
+**主題**：executor 抽象（v0.6.0 dispatch/guard/install + lifecycle）穩定後的下一層——**MCP 通用橋**，讓任意 MCP-aware host 透過單一協定使用 pm-dispatch，不必逐工具接線。
+
+> **為什麼排在 v0.6.0 之後**：MCP 必須包**穩定的** pmctl 與**已收口的 executor 抽象**（含 lifecycle）。v0.6.0 把 executor 變成資料驅動、生命週期獨立的 supervised worker 後，MCP 才有穩定的下層可包。重型 net-new surface（Node/Python server + `pmctl --json`），不符 v0.6.0 thin-slice。**2026-06-13 user 拍板從 v0.6.0 defer。**
+
+### Phase 1 — MCP server + `pmctl --json`（P2）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-216 | `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；thin Node/Python wrapper over pmctl subprocesses（避免邏輯重複），或 spec 穩定後 native bash MCP server。相依 [[CC-211]]、[[CC-215]]（pmctl 穩定先於包裝）、v0.6.0 executor 抽象＋lifecycle | ⏸ |
+
+### 待後續 / 與本版正交
+
+- **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
+- **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程；可與 MCP 同期評估。
+- **完整 knowledge index（CC-340）**——standalone FTS + embeddings 重型版，與 executor 抽象無關，獨立排程。
 
 ---
 
