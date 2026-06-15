@@ -4,8 +4,7 @@
 #
 # Wires:
 #   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
-#   - matcher "Edit|Write" → scripts/hook-executor-write-guard.sh
-#   - matcher "Bash"       → scripts/hook-codex-bash-guard.sh
+#   - matcher "Bash"       → adapters/<name>/bash-guard.sh  (manifest-derived; needs_bash_guard=true)
 #   - Stop                 → scripts/hook-log-claude-usage.sh
 #   - Stop                 → scripts/hook-session-summary.sh
 #   - UserPromptSubmit     → scripts/hook-inject-memory.sh
@@ -31,9 +30,10 @@
 # Profile auto-detection (when --profile omitted):
 #   `command -v codex` succeeds  → profile=full
 #   otherwise                     → profile=minimal
-# Minimal profile skips registering hook-codex-bash-guard.sh and
-# hook-executor-write-guard.sh in settings.json. Other hooks (pm-write-guard,
-# session-summary, inject-memory, save-rate-limits) stay wired in both profiles.
+# Minimal profile skips registering adapter bash guards (adapters/<name>/bash-guard.sh
+# derived from adapter manifests with needs_bash_guard=true). Other hooks
+# (pm-write-guard, session-summary, inject-memory, save-rate-limits) stay wired in
+# both profiles.
 
 set -euo pipefail
 
@@ -123,14 +123,45 @@ if [ ! -f "$settings" ]; then
 fi
 
 pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
-cx_cmd="$repo_root/scripts/hook-codex-bash-guard.sh"
-exw_cmd="$repo_root/scripts/hook-executor-write-guard.sh"
 stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/hook-session-summary.sh"
 inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
+
+# shellcheck source=scripts/lib/runner-kind.sh
+. "$repo_root/scripts/lib/runner-kind.sh"
+
+# Scan adapters/ manifests and collect bash-guard command paths for adapters
+# where needs_bash_guard resolves to true. Builds _bash_guard_cmds[] (absolute
+# paths) and _bg_json (JSON array of printf-%q-escaped paths for jq).
+_bash_guard_cmds=()
+for _manifest in "$repo_root"/adapters/*/adapter.yaml; do
+  [[ -f "$_manifest" ]] || continue
+  _adapter_dir="$(dirname "$_manifest")"
+  _adapter_name="$(basename "$_adapter_dir")"
+  _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
+  [[ -n "$_rk" ]] || continue
+  _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+  _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
+  if [[ "$_nbg" == "true" ]]; then
+    _guard_file="$_adapter_dir/bash-guard.sh"
+    [[ -x "$_guard_file" ]] || {
+      echo "install-hooks: adapter '$_adapter_name' needs_bash_guard=true but bash-guard.sh missing or not executable: $_guard_file" >&2
+      exit 2
+    }
+    _bash_guard_cmds+=("$_guard_file")
+  fi
+done
+if [[ ${#_bash_guard_cmds[@]} -eq 0 ]]; then
+  _bg_json='[]'
+else
+  _bg_json="$(
+    for _bg_cmd in "${_bash_guard_cmds[@]}"; do printf '%q\n' "$_bg_cmd"; done \
+    | jq -Rs 'split("\n") | map(select(. != ""))'
+  )"
+fi
 
 write_statusline_chain() {
   local first_cmd="$1"
@@ -150,11 +181,9 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$cx_cmd" ] || [ ! -x "$exw_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-hooks: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
-  echo "  $cx_cmd" >&2
-  echo "  $exw_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
@@ -197,8 +226,6 @@ fi
 # old_stop is NOT escaped: it is matched verbatim against the legacy unmanaged
 # path to remove it, so it must stay in raw (unescaped) form.
 pm_cmd_q="$(printf '%q' "$pm_cmd")"
-cx_cmd_q="$(printf '%q' "$cx_cmd")"
-exw_cmd_q="$(printf '%q' "$exw_cmd")"
 stop_cmd_q="$(printf '%q' "$stop_cmd")"
 session_cmd_q="$(printf '%q' "$session_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
@@ -213,14 +240,13 @@ statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 # are no-ops on Linux/macOS where MSYS is absent.
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg pm "$pm_cmd_q" \
-  --arg cx "$cx_cmd_q" \
-  --arg exw "$exw_cmd_q" \
   --arg stop "$stop_cmd_q" \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd_q" \
   --arg inject "$inject_cmd_q" \
   --arg statusline "$statusline_cmd_q" \
   --argjson sl_present "$_statusline_already_wired" \
+  --argjson bg_guards "$_bg_json" \
   --arg profile "$PROFILE" \
   '
   # Ensure .hooks.PreToolUse exists as an array.
@@ -238,16 +264,17 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
   # Prune retired managed hooks from existing installs. Includes the per-runtime
-  # executor write-guards retired by the CC-374 collapse (the former codex-write
-  # guard was wired live; the claude-write one never was, pruned defensively) — the
-  # unified hook-executor-write-guard.sh is (re)added below. Basenames are split
-  # with string concat so the doctor hook-inventory parity scanner does not count
-  # these retired names as current managed hooks.
+  # executor write-guards retired by CC-374 collapse and the scripts/-based bash
+  # guards retired by CC-375 (now manifest-driven from adapters/). Basenames are
+  # split with string concat so the doctor hook-inventory parity scanner does not
+  # count these retired names as current managed hooks.
   .hooks.PreToolUse |= map(
     .hooks |= map(select(
       ( ((.command | split("/") | last) == ("hook-tool-" + "trace.sh")) or
         ((.command | split("/") | last) == ("hook-codex-write" + "-guard.sh")) or
-        ((.command | split("/") | last) == ("hook-claude-write" + "-guard.sh")) )
+        ((.command | split("/") | last) == ("hook-claude-write" + "-guard.sh")) or
+        ((.command | split("/") | last) == ("hook-executor-write-" + "guard.sh")) or
+        ((.command | split("/") | last) == ("hook-codex-bash-" + "guard.sh")) )
       and ((.command | split("/") | .[-2]) == "scripts") | not
     ))
   ) |
@@ -260,20 +287,29 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.PostToolUse |= map(select((.hooks | length) > 0)) |
 
   # Helper: an entry already exists if any matcher block has a managed hook with the same command basename.
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $cx_present |
-  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $exw_present |
-  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop    | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
+  ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($pm | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $pm_present |
+  ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
 
   # Refresh stale command paths for managed hooks (scripts/<basename> path shape).
   .hooks.PreToolUse |= map(
     .hooks |= map(
-      if   ((.command | split("/") | last) == ($pm  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
-      elif ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $cx
-      elif ((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $exw
+      if ((.command | split("/") | last) == ($pm | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $pm
       else . end
+    )
+  ) |
+  # Refresh stale adapter bash-guard paths (adapters/<name>/bash-guard.sh shape).
+  reduce $bg_guards[] as $bg_cmd (
+    .;
+    .hooks.PreToolUse |= map(
+      .hooks |= map(
+        if ((.command | split("/") | last) == ($bg_cmd | split("/") | last)
+            and (.command | split("/") | .[-2]) == ($bg_cmd | split("/") | .[-2])
+            and (.command | split("/") | .[-3]) == "adapters") then
+          .command = $bg_cmd
+        else . end
+      )
     )
   ) |
   .hooks.Stop |= map(
@@ -295,18 +331,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     else . end
   ) |
 
-  # Profile downgrade: when --profile minimal, REMOVE managed codex guards
-  # if they were previously installed. The basename + "scripts" parent
-  # match is the same shape used elsewhere in this file to identify
-  # managed entries; out-of-scope codex hooks installed via other means
-  # are left untouched.
+  # Profile downgrade: when --profile minimal, REMOVE managed adapter bash guards
+  # if they were previously installed. Identified by basename == "bash-guard.sh"
+  # under an adapters/ tree (.[-3] == "adapters"); out-of-scope hooks are left
+  # untouched.
   ( if $profile == "minimal" then
       .hooks.PreToolUse |= map(
         .hooks |= map(select(
-          (
-            ((.command | split("/") | last) == ($cx  | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") or
-            ((.command | split("/") | last) == ($exw | split("/") | last) and (.command | split("/") | .[-2]) == "scripts")
-          ) | not
+          ((.command | split("/") | last) == "bash-guard.sh"
+           and (.command | split("/") | .[-3]) == "adapters") | not
         ))
       ) |
       .hooks.PreToolUse |= map(select((.hooks | length) > 0))
@@ -320,18 +353,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
       }]
     else . end
   ) |
-  ( if $exw_present == 0 and $profile == "full" then
-      .hooks.PreToolUse += [{
-        "matcher": "Edit|Write",
-        "hooks": [{"type": "command", "command": $exw}]
-      }]
-    else . end
-  ) |
-  ( if $cx_present == 0 and $profile == "full" then
-      .hooks.PreToolUse += [{
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": $cx}]
-      }]
+  # Wire adapter bash guards (full profile only). Each entry uses "Bash" matcher.
+  ( if $profile == "full" then
+      reduce $bg_guards[] as $bg_cmd (
+        .;
+        ( [ .hooks.PreToolUse[]? | (.hooks // [])[]? | select(.command == $bg_cmd) ] | length ) as $bg_present |
+        if $bg_present == 0 then
+          .hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $bg_cmd}]}]
+        else . end
+      )
     else . end
   ) |
   ( if $stop_present == 0 then

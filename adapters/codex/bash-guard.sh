@@ -1,0 +1,1 @@
+../../scripts/hook-codex-bash-guard.sh

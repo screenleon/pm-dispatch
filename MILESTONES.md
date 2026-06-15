@@ -21,20 +21,24 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-372 | `adapter.yaml` 加 `runner_kind` + 衍生旗標（`dispatch_route`/`write_guard_mode`/`needs_bash_guard`）；codex/claude 回填行為不變 | 🔵 |
+| CC-372 | `adapter.yaml` 加 `runner_kind` + 衍生旗標（`dispatch_route`/`write_guard_mode`/`needs_bash_guard`）；codex/claude 回填行為不變 | ✅ pr:#277 |
 
 ### Phase 2 — router 資料驅動（P2；security/risk gate）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-373 | `executor-router.sh` 拔除 `codex\|claude` enum，改讀 manifest；allowlist = 有合法 manifest 的 adapter；泛化/移除 `dispatch_via_codex`。**吸收 CC-360** | 🔵 |
+| CC-373 | `executor-router.sh` 拔除 `codex\|claude` enum，改讀 manifest；allowlist = 有合法 manifest 的 adapter；泛化/移除 `dispatch_via_codex`。**吸收 CC-360** | ✅ pr:#279 |
 
 ### Phase 3 — guard wrapper 收口 + 安裝接線（P2-P3；security/risk gate）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-374 | hook-guard wrapper 收成 role-參數化、委派 `pmctl guard check`；行為由 manifest 衍生。**吸收 CC-066/CC-062，收尾 CC-307**。紅線：bash-guard 由 `needs_bash_guard` 決定、live-hook bit 由 manifest 明宣告 | 🔵 |
-| CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | 🔵 |
+| CC-374 | hook-guard wrapper 收成 role-參數化、委派 `pmctl guard check`；行為由 manifest 衍生。**吸收 CC-066/CC-062，收尾 CC-307**。紅線：bash-guard 由 `needs_bash_guard` 決定、live-hook bit 由 manifest 明宣告 | ✅ pr:#280 |
+| CC-379 | pr-gate 生成 brief 過不了 brief-validate（`self_verify` 格式、`acceptance` 縮排）→ claude gate route 全壞修復 | ✅ pr:#277 |
+| CC-380 | gate reviewer 的 `pmctl guard check` allowlist 缺絕對/tilde 形式 → 背景 reviewer subagent 一律 DENY 修復 | ✅ pr:#277 |
+| CC-382 | pr-gate `--output` 相對路徑 → 兩 executor 皆產空結果；抽 `gate-result-verify.sh` + 新增 `pmctl gate verify` | ✅ pr:#277 |
+| CC-383 | `pmctl gate --executor claude` 改走獨立 headless subprocess；退場 handover；`dispatch_via_claude` 對稱 codex | ✅ pr:#278 |
+| CC-375 | install/uninstall/doctor 的 hook 接線由 manifest 能力旗標衍生；三方一致性回歸（呼應 CC-368） | ✅ pr:#281 |
 
 ### Phase 4 — 真 adapter 驗收（P2；抽象的證明）
 

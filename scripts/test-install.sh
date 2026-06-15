@@ -754,8 +754,7 @@ test_install_sh_wires_hooks() {
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -769,7 +768,7 @@ test_install_sh_wires_hooks() {
 }
 
 test_install_sh_profile_minimal_skips_codex_hooks() {
-  # Proves --profile minimal does NOT wire the two codex-* guards but keeps
+  # Proves --profile minimal does NOT wire adapter bash guards but keeps
   # the other managed hooks (pm-write-guard, log-usage, inject-memory,
   # save-rate-limits).
   local name="install-sh-profile-minimal-skips-codex-hooks"
@@ -785,7 +784,7 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
@@ -793,10 +792,10 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
 
 test_install_sh_profile_full_wires_codex_hooks() {
   # Proves --profile full explicitly wires every managed hook, including
-  # the two codex-* guards (regardless of whether codex is on PATH).
+  # adapter bash guards (adapters/<name>/bash-guard.sh, manifest-derived).
   local name="install-sh-profile-full-wires-codex-hooks"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
+  if _ti_skip_win "$name" "asserts adapter bash guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -807,8 +806,7 @@ test_install_sh_profile_full_wires_codex_hooks() {
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1295,7 +1293,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1341,22 +1339,21 @@ test_install_hooks_windows_profile_minimal_silent() {
 
 test_install_hooks_profile_downgrade_removes_codex() {
   # Proves that running install-hooks.sh with --profile full and then again
-  # with --profile minimal converges to the minimal hook set — codex guards
-  # installed by the first run must be removed by the second run.
+  # with --profile minimal converges to the minimal hook set — adapter bash
+  # guards installed by the first run must be removed by the second run.
   local name="install-hooks-profile-downgrade-removes-codex"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
+  if _ti_skip_win "$name" "asserts adapter bash guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   # The non-codex managed hooks must still be present after downgrade.
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
@@ -1383,8 +1380,7 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   HOME="$home" PATH="$stub_bin:$PATH" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1417,7 +1413,7 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   pass "$name"
 }
@@ -1455,8 +1451,7 @@ test_install_hooks_platform_linux_explicit() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform linux --profile full > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1555,8 +1550,7 @@ test_install_sh_wires_hooks_no_settings() {
     return
   fi
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1568,15 +1562,14 @@ test_install_sh_wires_hooks_no_settings() {
 test_hooks_install_uninstall_lifecycle() {
   local name="hooks-install-uninstall-lifecycle"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
+  if _ti_skip_win "$name" "asserts adapter bash guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1585,8 +1578,8 @@ test_hooks_install_uninstall_lifecycle() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1683,12 +1676,11 @@ JSON
 
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  # CC-374: the retired per-runtime codex write-guard is pruned and replaced by the
-  # unified executor write-guard (re)added below.
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_CODEX_WRITE" || return
+  # CC-375: hook-codex-bash-guard.sh (scripts/ form) is pruned; adapter form is added.
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
@@ -1710,15 +1702,15 @@ test_install_hooks_updates_stale_paths_after_rename() {
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
-  # Simulate settings.json left over from old repo path
+  # Simulate settings.json left over from old repo path (cx/exw in scripts/ form are
+  # now retired; they get pruned by install-hooks.sh and the adapter form is re-added).
   cat > "$home/.claude/settings.json" <<'JSON'
 {
   "permissions": {},
   "hooks": {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-executor-write-guard.sh"}]},
-      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
+      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/adapters/codex/bash-guard.sh"}]}
     ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
@@ -1734,10 +1726,9 @@ JSON
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  # Each hook basename must appear exactly once (no duplicates)
+  # Each managed hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
-  for hook in hook-pm-write-guard.sh hook-executor-write-guard.sh hook-codex-bash-guard.sh \
-              hook-log-claude-usage.sh hook-session-summary.sh \
+  for hook in hook-pm-write-guard.sh hook-log-claude-usage.sh hook-session-summary.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     local count
     count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
@@ -1746,6 +1737,13 @@ JSON
       return
     fi
   done
+  # bash-guard.sh appears once in adapter form
+  local bg_count
+  bg_count=$(grep -o "bash-guard.sh" "$settings" | wc -l | tr -d ' ')
+  if [[ "$bg_count" -ne 1 ]]; then
+    fail "$name" "bash-guard.sh appears $bg_count times in settings.json (want 1)"
+    return
+  fi
 
   # Old path must be gone; current repo path must be present
   if grep -q "/fake/old-repo/" "$settings"; then
@@ -1753,6 +1751,7 @@ JSON
     return
   fi
   assert_file_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$settings" "$REPO_ROOT/adapters/codex/bash-guard.sh" || return
 
   pass "$name"
 }
@@ -1830,8 +1829,7 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
   "hooks": {
     "PreToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-executor-write-guard.sh"}]},
-      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-codex-bash-guard.sh"}]}
+      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/adapters/codex/bash-guard.sh"}]}
     ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
@@ -1855,15 +1853,19 @@ JSON
 
   local settings="$home/.claude/settings.json"
 
-  # All managed hook basenames must be gone
-  for hook in hook-pm-write-guard.sh hook-executor-write-guard.sh hook-codex-bash-guard.sh \
-              hook-log-claude-usage.sh hook-session-summary.sh \
+  # All managed hook basenames must be gone after uninstall
+  for hook in hook-pm-write-guard.sh hook-log-claude-usage.sh hook-session-summary.sh \
               hook-inject-memory.sh hook-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
       return
     fi
   done
+  # adapter bash guard must also be gone
+  if grep -q "bash-guard.sh" "$settings"; then
+    fail "$name" "bash-guard.sh still present in settings.json after uninstall"
+    return
+  fi
 
   # No /fake/old-repo/ paths should remain
   if grep -q "/fake/old-repo/" "$settings"; then
