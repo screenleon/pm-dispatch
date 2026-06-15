@@ -13,15 +13,19 @@
 # The runtime is derived from the agent_type (<runtime>-executor), and the policy
 # is one shared rule — so adding an executor runtime needs no new guard file.
 #
-# Live-hook vs CLI-only (the security-relevant asymmetry):
-#   - A `cli-subprocess` runtime (write_guard_mode=hook, e.g. codex) is a thin
-#     dispatcher gated by a LIVE PreToolUse hook — enforce on every Write/Edit.
-#   - A `host-native` runtime (write_guard_mode=cli-only, e.g. claude-as-host)
-#     SELF-EXECUTES its work-dir edits under the host harness; a live PreToolUse
-#     hook must NOT gate those. So when this wrapper fires LIVE for a cli-only
-#     runtime it no-ops; the brief-location check is still enforced when driven by
-#     `pmctl guard check` (which sets PM_GUARD_CHECK_CLI). The mode is read from
-#     the adapter manifest (write_guard_mode), never inferred from file existence.
+# Live-hook vs CLI-only (the security-relevant asymmetry) — keyed on the resolved
+# write_guard_mode, read from the adapter manifest, never inferred from file
+# existence:
+#   - write_guard_mode=hook: a thin dispatcher whose executor subagent self-writes
+#     its brief via the host Write tool — gated by a LIVE PreToolUse hook, enforced
+#     on every Write/Edit. No shipped adapter is in this class today (reserved for
+#     a no-headless-CLI fallback runtime).
+#   - write_guard_mode=cli-only (both shipped adapters, codex and claude): the
+#     brief is pmctl-landed and the executor runs as an independent headless
+#     subprocess (or, for a host-native runtime, self-executes under the host
+#     harness) — a live PreToolUse hook must NOT gate those. So when this wrapper
+#     fires LIVE for a cli-only runtime it no-ops; the brief-location check is
+#     still enforced when driven by `pmctl guard check` (PM_GUARD_CHECK_CLI set).
 #
 # Wired into settings.json as a PreToolUse hook with matcher "Edit|Write" for
 # hook-mode runtimes; no-op for any non-executor agent.

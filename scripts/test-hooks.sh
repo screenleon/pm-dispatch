@@ -355,9 +355,11 @@ assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor
 #   codex  = cli-subprocess → cli-only → no-op when fired LIVE (independent subprocess;
 #                                         PM session hooks don't govern codex writes),
 #                                         enforced only via PM_GUARD_CHECK_CLI
-#   claude = host-native    → cli-only → no-op when fired LIVE (self-exec edits
-#                                         under the host harness), enforced only
-#                                         when driven by pmctl guard check
+#   claude = cli-subprocess → cli-only → no-op when fired LIVE (canonical headless
+#                              (override)  `claude --print` subprocess consumes a
+#                                         pmctl-landed brief; no self-write via a
+#                                         live host Write), enforced only when
+#                                         driven by pmctl guard check
 #                                         (PM_GUARD_CHECK_CLI set).
 
 echo

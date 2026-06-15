@@ -219,9 +219,12 @@ else
       return 2
     }
 
+    # Both built-in executors run as headless CLI subprocesses (cli-subprocess);
+    # claude's canonical route is `claude --print` driven by pmctl dispatch run,
+    # not Agent-spawn. Mirrors the data-driven lib resolving both to this route.
     case "$executor" in
       codex) printf 'main_thread_bash_background\n' ;;
-      claude) printf 'agent_executor\n' ;;
+      claude) printf 'main_thread_bash_background\n' ;;
       *)
         printf 'executor-router: unknown executor: %s (expected codex or claude)\n' "$executor" >&2
         return 2
@@ -235,8 +238,9 @@ else
   }
 
   # Generic dispatcher mirroring the lib's dispatch_via, hardcoded to the two
-  # built-in executors. codex (cli-subprocess) forwards --sandbox/--approval;
-  # claude (host-native, headless `claude --print`) drops them.
+  # built-in executors. Only codex is sent --sandbox/--approval; claude (headless
+  # `claude --print`) accepts but ignores them as no-ops, so copy-mode omits them
+  # — a deliberate simplification of the lib's per-runner-kind rule.
   dispatch_via() {
     local executor=${1-}
     local brief_file=${2-}

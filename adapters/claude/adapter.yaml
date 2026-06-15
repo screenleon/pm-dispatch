@@ -11,9 +11,23 @@ runner_ref: ./dispatch.sh
 dispatch_contract: dispatch_handover_v1
 # runner_kind classifies the execution topology; dispatch_route /
 # write_guard_mode / needs_bash_guard derive from it (scripts/lib/runner-kind.sh).
-# claude-as-host self-executes its own edits gated by the host harness, so its
-# write guard is CLI-only (not a live PreToolUse hook) and no bash guard applies.
-runner_kind: host-native
+# The canonical claude executor is headless `claude --print` driven by
+# `pmctl dispatch run --adapter claude` — an independent CLI subprocess
+# (host-independent, so codex-as-PM can drive it), hence runner_kind is
+# cli-subprocess. Two flags are overridden off the cli-subprocess defaults to
+# match claude's actual surface:
+#   write_guard_mode: cli-only   — the brief is pmctl-landed; no executor subagent
+#                                  self-writes a brief via a live host Write, so a
+#                                  live PreToolUse hook must not gate it.
+#   needs_bash_guard: false      — claude governs its own command execution via
+#                                  --permission-mode; pm-dispatch registers no
+#                                  executor bash policy for claude.
+# dispatch_route is left to derive to main_thread_bash_background, reflecting the
+# headless-subprocess route. The same-host Agent(claude-executor) path is a
+# documented fallback, not this manifest's canonical route.
+runner_kind: cli-subprocess
+write_guard_mode: cli-only
+needs_bash_guard: false
 # terminal_event: the JSONL event `.type` that marks a semantically complete run.
 # `claude -p --output-format stream-json --verbose` emits a JSONL event stream;
 # the terminal event has `.type == "result"`. post-verify asserts at least one

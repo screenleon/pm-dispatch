@@ -47,7 +47,7 @@ assert_emits "default/cli/route"      "main_thread_bash_background" runner_kind_
 assert_emits "default/cli/guardmode"  "hook"                        runner_kind_default_flag cli-subprocess write_guard_mode
 assert_emits "default/cli/bashguard"  "true"                        runner_kind_default_flag cli-subprocess needs_bash_guard
 
-# --- default mapping: host-native (claude topology) -------------------------
+# --- default mapping: host-native (self-exec host topology) -----------------
 assert_emits "default/host/route"     "agent_executor"             runner_kind_default_flag host-native dispatch_route
 assert_emits "default/host/guardmode" "cli-only"                   runner_kind_default_flag host-native write_guard_mode
 assert_emits "default/host/bashguard" "false"                      runner_kind_default_flag host-native needs_bash_guard
@@ -80,7 +80,7 @@ assert_rejects "resolve/bad-route"      runner_kind_resolve_flag cli-subprocess 
 # --- manifest field reader --------------------------------------------------
 assert_emits "manifest/read-codex" "cli-subprocess" \
   runner_kind_manifest_field "$REPO_ROOT/adapters/codex/adapter.yaml" runner_kind
-assert_emits "manifest/read-claude" "host-native" \
+assert_emits "manifest/read-claude" "cli-subprocess" \
   runner_kind_manifest_field "$REPO_ROOT/adapters/claude/adapter.yaml" runner_kind
 # absent key prints nothing and exits 0 (caller falls back to a default)
 assert_emits "manifest/absent-key" "" \
@@ -88,17 +88,33 @@ assert_emits "manifest/absent-key" "" \
 
 # --- backfilled manifests must declare the kind that matches their topology --
 assert_file_matches "manifest/codex-kind"  "$REPO_ROOT/adapters/codex/adapter.yaml"  "^runner_kind:[[:space:]]*cli-subprocess" && pass "manifest/codex-kind"
-assert_file_matches "manifest/claude-kind" "$REPO_ROOT/adapters/claude/adapter.yaml" "^runner_kind:[[:space:]]*host-native" && pass "manifest/claude-kind"
+assert_file_matches "manifest/claude-kind" "$REPO_ROOT/adapters/claude/adapter.yaml" "^runner_kind:[[:space:]]*cli-subprocess" && pass "manifest/claude-kind"
+
+# --- claude derived-flag regression: canonical headless route is cli-subprocess
+#     with two overrides off its defaults (write_guard_mode cli-only,
+#     needs_bash_guard false). Locks the resolved flags so a manifest drift back
+#     to host-native, or a dropped override, fails here. The guard mode MUST stay
+#     cli-only (no live PreToolUse hook over a pmctl-landed brief); the bash guard
+#     MUST stay off (claude self-governs via --permission-mode).
+assert_file_matches "manifest/claude-guardmode" "$REPO_ROOT/adapters/claude/adapter.yaml" "^write_guard_mode:[[:space:]]*cli-only" && pass "manifest/claude-guardmode"
+assert_file_matches "manifest/claude-bashguard" "$REPO_ROOT/adapters/claude/adapter.yaml" "^needs_bash_guard:[[:space:]]*false" && pass "manifest/claude-bashguard"
 
 # --- end-to-end: read a real manifest, derive its full flag set -------------
 # Mirrors how the host PM (claude OR codex) will resolve any executor's topology
-# from the manifest alone — no PM-host assumption baked in.
+# from the manifest alone — no PM-host assumption baked in. Both shipped adapters
+# are cli-subprocess; claude reaches cli-only / no-bash-guard via per-flag
+# overrides (the asymmetry seam), not via a distinct runner_kind.
 for adapter in codex claude; do
   kind="$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" runner_kind)"
-  route="$(runner_kind_resolve_flag "$kind" dispatch_route "")"
+  route="$(runner_kind_resolve_flag "$kind" dispatch_route \
+            "$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" dispatch_route)")"
+  guardmode="$(runner_kind_resolve_flag "$kind" write_guard_mode \
+            "$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" write_guard_mode)")"
+  bashguard="$(runner_kind_resolve_flag "$kind" needs_bash_guard \
+            "$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" needs_bash_guard)")"
   case "$adapter" in
-    codex)  [[ "$route" == "main_thread_bash_background" ]] && pass "e2e/$adapter-route" || fail "e2e/$adapter-route" "got $route" ;;
-    claude) [[ "$route" == "agent_executor" ]]              && pass "e2e/$adapter-route" || fail "e2e/$adapter-route" "got $route" ;;
+    codex)  { [[ "$route" == "main_thread_bash_background" && "$guardmode" == "cli-only" && "$bashguard" == "true"  ]] && pass "e2e/$adapter-flags"; } || fail "e2e/$adapter-flags" "route=$route guard=$guardmode bash=$bashguard" ;;
+    claude) { [[ "$route" == "main_thread_bash_background" && "$guardmode" == "cli-only" && "$bashguard" == "false" ]] && pass "e2e/$adapter-flags"; } || fail "e2e/$adapter-flags" "route=$route guard=$guardmode bash=$bashguard" ;;
   esac
 done
 
