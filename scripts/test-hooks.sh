@@ -1200,7 +1200,7 @@ run_case "cx: main thread (no agent_type) with run_in_background:true → no-op 
 CXHOOK_SYMLINK="$REPO_ROOT/adapters/codex/bash-guard.sh"
 if [[ -x "$CXHOOK_SYMLINK" ]]; then
   run_case "cx (symlink): dispatch → allow" 0 "$CXHOOK_SYMLINK" \
-    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd $REPO_ROOT --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd /tmp --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
   run_case "cx (symlink): SOLO ; → deny" 2 "$CXHOOK_SYMLINK" \
     '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":";"}}'
   run_case "cx (symlink): git status → allow" 0 "$CXHOOK_SYMLINK" \
@@ -1217,7 +1217,7 @@ exec /usr/bin/readlink "$@"
 SHIM
   chmod +x "$_cx_shim_dir/readlink"
   run_case_env "cx (symlink, no-readlink-f): dispatch → allow" 0 "PATH=$_cx_shim_dir:$PATH" "$CXHOOK_SYMLINK" \
-    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd $REPO_ROOT --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd /tmp --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
   run_case_env "cx (symlink, no-readlink-f): SOLO ; → deny" 2 "PATH=$_cx_shim_dir:$PATH" "$CXHOOK_SYMLINK" \
     '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":";"}}'
   rm -rf "$_cx_shim_dir"

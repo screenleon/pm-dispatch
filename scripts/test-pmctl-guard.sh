@@ -604,9 +604,21 @@ r2_equiv "r2-equiv-codex-write-allow" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-eq.md"}}' \
   --event pre-write --role executor --runtime codex --file /tmp/brief-eq.md
 
-r2_equiv "r2-equiv-codex-write-deny" "$EXWHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
-  --event pre-write --role executor --runtime codex --file /etc/passwd
+# codex write-deny: write_guard_mode=cli-only — live hook no-ops (exit 0);
+# pmctl guard check (CLI path, PM_GUARD_CHECK_CLI=1) enforces (exit 2).
+_rw_json='{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
+if should_run "r2-equiv-codex-write-deny-live"; then
+  _rw_live=$(printf '%s' "$_rw_json" | "$EXWHOOK" >/dev/null 2>&1; echo $?)
+  [[ "$_rw_live" == "0" ]] && pass "r2-equiv-codex-write-deny-live" \
+    || fail "r2-equiv-codex-write-deny-live" "expected 0 (live no-op, cli-only mode), got $_rw_live"
+fi
+if should_run "r2-equiv-codex-write-deny-cli"; then
+  _rw_cli=$(bash "$PMCTL" guard check --event pre-write --role executor --runtime codex \
+    --file /etc/passwd >/dev/null 2>&1; echo $?)
+  [[ "$_rw_cli" == "2" ]] && pass "r2-equiv-codex-write-deny-cli" \
+    || fail "r2-equiv-codex-write-deny-cli" "expected 2 (CLI enforce), got $_rw_cli"
+fi
+unset _rw_json _rw_live _rw_cli
 
 r2_equiv "r2-equiv-pm-write-allow" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$MEM_PATH\"}}" \
