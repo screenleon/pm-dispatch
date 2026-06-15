@@ -685,8 +685,10 @@ pmctl_dispatch_run() {
   # (back-compat) rather than aborting dispatch.
   local _terminal_event="" _adapter_manifest="$repo_root/adapters/$adapter/adapter.yaml"
   if [[ -f "$_adapter_manifest" ]]; then
-    declare -F runner_kind_manifest_field >/dev/null 2>&1 || \
+    if ! declare -F runner_kind_manifest_field >/dev/null 2>&1; then
+      # shellcheck disable=SC1091  # dynamic repo root path.
       . "$repo_root/scripts/lib/runner-kind.sh" 2>/dev/null || true
+    fi
     if declare -F runner_kind_manifest_field >/dev/null 2>&1; then
       _terminal_event="$(runner_kind_manifest_field "$_adapter_manifest" terminal_event 2>/dev/null || true)"
     fi
