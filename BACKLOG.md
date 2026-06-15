@@ -86,6 +86,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-388 | ✅ done | **[arch: claude adapter 作為一般 implementation executor，非僅 gate route]** [[CC-383]] 已證 claude 獨立 headless `claude --print` 於 **gate route**。本票驗證並補齊 `pmctl dispatch run --adapter claude` 用於**一般 implementation brief**（非 gate）：一次真實 dispatch run，輸出契約 `.agent-trace/latest.last` 與 [[CC-386]] post-verify 對齊，確認 claude 與 codex 在 implementation 軸對稱。切換至 `--output-format stream-json --verbose`（JSONL 事件串流，對稱 codex），`.last` 提取從終止 `type==result` 事件取 `.result`。相依 [[CC-383]]、[[CC-386]]。umbrella [[CC-333]]。**See**: pr:#287 | arch/portability | 2026-06-15 | pr:#287 | P2 | design |
 | CC-390 | 🔵 active | **[infra: codex dispatch trace-capture 強化 — trace 不依賴繼承 FD 跨 sandbox 存活]** codex 0.139.0 在 session 冷啟動最初 1–2 次 dispatch 偶發 trace-capture flake：wrapper 把 codex stdout 經**繼承 FD** 重導向到 `<work_dir>/.agent-trace/<ts>.jsonl`，該檔在 codex sandbox 邊界偶失（`.last` 由 codex 依路徑自開故存活、`.jsonl` 與 run-time stderr 經繼承 FD 偶失）。8 次 run 證**非確定性**、且 **fail-closed 安全**（trace 缺→post-verify 正確判 FAIL、不誤判 PASS）。`workspace-write` 與 `sandboxed` isolation 實 map 到同一 codex 指令（皆 `--sandbox workspace-write`、無 override）。候選修法：trace 寫 `<work_dir>` 外（XDG state／temp），或經 wrapper 控制的 pipe（tee）而非繼承 FD，使 trace 不跨 codex sandbox 邊界。**需可穩定複現才能驗證修法**。發現於 [[CC-387]] 真實驗收。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-384 | 🟢 someday | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `hook-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。 | arch/portability | 2026-06-14 | — | P3 | design |
+| CC-391 | 🔵 active | **[arch(spike): detached-supervised dispatch — executor lifecycle ownership 軸]** Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已使 executor 成獨立子程序、由 pmctl 三重機檢驗證，但派發仍 **foreground-sync**：`pmctl dispatch run` 阻塞、in-process 驗證、main 持有生命週期。本 spike（決策-only）決定是否新增一條與 [[CC-372]] `runner_kind` **正交**的 **lifecycle ownership** 軸：main 只建 run + `setsid`/`nohup` 起 detached supervisor → supervisor 持有 executor、跑 post-verify（重用 [[CC-386]]/[[CC-389]]）、寫 durable run-state（[[CC-225]]）、append events.jsonl（[[CC-211]] FSM）、best-effort 通知 listener（durable-outbox 為 load-bearing、fifo/socket 選配）。**定位修正**：lifecycle 是派發當下選擇（`pmctl dispatch run --lifecycle foreground\|detached` + config 預設），**非 manifest 欄位**；可 detach 資格由 runner_kind（headless-CLI Model B）推導，host-native 不可 detach。不加 `lifecycle_mode` 欄位、不動 schema 改名（避與 [[CC-384]] 撞）。收 [[CC-238]]（fan-out 無 timeout/attribution = 缺 supervisor 症狀）。排 v0.6.0 Phase 7（[[CC-376]]/[[CC-377]] 之後）。umbrella [[CC-333]]。 | arch | 2026-06-15 | — | P2 | design |
+| CC-392 | 🔵 active | **[arch: claude adapter runner_kind 分類漂移 — manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`]** `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`（註解：claude-as-host self-exec、harness-gated），但自 [[CC-383]]（gate route）+ [[CC-388]]（一般 implementation）後 `adapters/claude/dispatch.sh` 實際是 `CMD=(claude -p --output-format stream-json …)` 的 **headless 獨立子程序**（由 `pmctl dispatch run --adapter claude` 驅動，行為上是 cli-subprocess / Model B）。manifest 與行為不一致、註解過時。今日尚未弄壞 dispatch（[[CC-373]]：`dispatch_route` 僅 allowlist+log-label、不驅動 exec 分支；write_guard_mode 對 host-native 與 cli-only 恰好同值 → 對的結論、錯的理由），但讓 `runner_kind` 成為不可信謂詞——[[CC-391]] 的 detach 資格推導因此卡住（spike partial-adopt 前提 1）。**決策**：claude 有兩執行模式（canonical headless `claude --print` vs same-host `Agent(claude-executor)` 優化路）——是把 canonical 定為 `cli-subprocess`（＋override `write_guard_mode: cli-only`、`needs_bash_guard: false` 保持行為 byte-identical，比照 codex override 慣例），還是引入「host-native fallback + cli-subprocess canonical」的表達。[[CC-373]] 曾明確 defer 此 claude 角色歧義，[[CC-391]] 強制它收斂。驗收：manifest 反映 canonical route、三衍生旗標解析後行為不變、加回歸測試。相依/關聯 [[CC-391]]、[[CC-373]]、[[CC-383]]、[[CC-388]]、[[guard-role-runtime]]。排 v0.6.0 Phase 7（[[CC-391]] detach 落地前置）。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
 
 ---
 
@@ -213,6 +215,86 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **驗收**: 同 [[CC-376]]——零核心改動即可落地。
 
 **Dependencies**: [[CC-373]]、[[CC-374]]。建議排在 [[CC-376]] 之後（第一個 adapter 若暴露抽象缺口，先補再上第二個）。umbrella [[CC-333]]。
+
+---
+
+## CC-391 — arch(spike): detached-supervised dispatch — executor lifecycle ownership 軸 🔵 active
+
+**Type**: design spike（決策-only；本票不實作）
+**Status**: open — pending decision
+**Relates**: [[CC-333]]（runtime 解耦 umbrella）、[[CC-385]]（Model B 決策 — 前置）、[[CC-386]]/[[CC-389]]（pmctl 三重機檢 = 驗證層，重用）、[[CC-211]]/[[CC-216]]（run-FSM + events.jsonl + MCP task 抽象 = durable substrate）、[[CC-225]]（durable result 記錄）、[[CC-238]]（fan-out hardening = 症狀）、[[CC-273]]（lifecycle *hook event* spec — 正交、勿混）、[[CC-376]]/[[CC-377]]（真 adapter — 排序前置）
+
+**Problem / why now**: Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已交付四件事中的兩件半——brief 由可信代碼落地、executor 為獨立子程序、結果由 `pmctl` 三重機檢驗證（exit + 結構完整性 + 語意終止事件）。但派發本身仍是 **foreground-sync**：`pmctl dispatch run` 阻塞、在 process 內跑 post-verify、**main thread 是生命週期擁有者**。缺的是：(1) 啟動後誰持有 executor 生命週期、main 死了能否續活；(2) 結果如何 durable 化；(3) listener 還活著時如何通知。這三題不是「pm-dispatch 怎麼到達 executor」（[[CC-372]] runner_kind 解的），而是「executor 啟動後誰持有它的生命週期」——是一條**正交的新軸**。
+
+**The axis（user 2026-06-15 分析）**:
+
+```
+runner_kind     executor 怎麼被呼叫？        cli-subprocess / host-native / future mcp-tool
+lifecycle       啟動後誰持有/等待/收尾？      foreground-sync / detached-supervised
+notify          完成怎麼提醒活著的主線程？     durable-outbox(load-bearing) / fifo|socket(選配)
+verify          誰判定結果可信？              pmctl-post-verify（= CC-386/389，已是現貨）
+```
+
+**定位修正（與初版 user 寫法的差異，spike 要拍板）**: `runner_kind` 是 executor 的**內在屬性**（有沒有 CLI、是不是 host）；foreground vs detached 是**派發當下呼叫者的選擇**，不是 executor 屬性——同一個 codex 可前景派發（盯著看）或 detached 派發（射後不理）。因此：
+- lifecycle **不作 manifest 欄位**，作派發旗標 `pmctl dispatch run --lifecycle <foreground|detached>` + `dispatch.lifecycle` config 預設（detached 證實前預設 foreground）。
+- 可 detach 之**資格**由現有資訊推導（Model B headless-CLI executor 才可 detach；`host-native` 的 claude-as-host **不可** detach，因為它本身就是 main thread）——不需新欄位。
+- 不引入 `lifecycle_mode`/`invoke_kind`/`guard_mode` 的 `schema_version: 2` 改名（會與 [[CC-384]] `hook-*`→`guard-*` 正面對撞）；manifest 詞彙整理集中到未來單一 schema bump，且須先值得。
+
+**The new component — supervisor（監工）**:
+
+```
+pmctl dispatch start         # main：建 run 紀錄、落地 brief、setsid/nohup 起 supervisor、回 run-id、可離場
+  └─ supervisor（detached）  # 持有 executor child；main 死也活（真 detach，非 run_in_background）
+       ├─ 跑 executor
+       ├─ post-verify        # 重用 CC-386/389
+       ├─ 寫 durable run-state + result artifact   # = CC-225（復活並擴大到所有 executor）
+       ├─ append events.jsonl（run FSM）           # = CC-211 substrate
+       └─ best-effort 通知 listener                # = notify 軸（唯一真正新做的 channel）
+pmctl runs / pmctl dispatch wait <id> / pmctl inbox  # reattach：新的 main 撈回結果
+```
+
+機制紅線：(1) **真 detach** 需 `setsid`/`nohup`——今天的 `run_in_background:true` child 仍在 session process group，session 死會 SIGHUP；(2) **notify** 以 **durable outbox/inbox 為 load-bearing**（死後存活、source of truth），live 通知（fifo/socket）僅 best-effort 疊加，永不 load-bearing。
+
+**重用、不重開**:
+- [[CC-225]]（claude-executor result observability）= durable-state 半，已 specced → 復活並**擴大到所有 executor**，作本軸的 durable 記錄。
+- [[CC-238]]（pr-gate fan-out：無 timeout、attribution 弱、無測試）= **缺 supervisor 的症狀**；supervisor 的 timeout + per-child attribution 收掉它。
+- [[CC-273]]（unified lifecycle *hook event* spec）= **不同軸**（tool-step hook 事件，非 process 生命週期）；保持分開、互連。
+- [[CC-211]]/[[CC-216]] = supervisor 寫入的底層；不另開 store。
+
+**Acceptance（spike 須輸出）**: 一個決策 **adopt / partial-adopt / defer**；若 adopt 另附——(1) detach 機制（setsid/nohup）與孤兒回收策略；(2) durable run-state 的 schema 與落點（對齊 [[CC-211]] FSM 與 [[CC-225]] `.gate-results/`-style）；(3) notify 的 outbox 契約與 `pmctl inbox`/`dispatch wait` 介面；(4) foreground→detached 遷移順序（任一時刻 guard fail-closed 不弱化）；(5) 一次真實 detached 派發證明結果與 foreground 等價。
+
+**Sequencing**: 排 **v0.6.0 Phase 7**（executor 抽象的完成式），於真 adapter [[CC-376]]/[[CC-377]]（Phase 5）落地後——先在 N≥2 adapter 下證明 executor 抽象，再加 lifecycle 層，避免 supervisor 契約被 codex/claude 特例帶歪；屆時亦摸清 [[CC-381]]（host-PM-aware install）可一起設計通知。**理由**：`host-native` 把 executor 綁死在 host harness，detached-supervised 把它解開，正是 v0.6.0「runtime 解耦合」主題的完成式，且本票是 [[CC-385]] Model B 決策的直接續集，不宜分跨兩版。**逃生口**：若 v0.6.0 收尾時 Phase 7 未及，可單獨延 v0.6.x/v0.7.0（沿用 Phase 3 寫法），預設留 v0.6.0。**例外前拉**：若 [[CC-376]] 過程真的需要 durable result 記錄，只前拉 [[CC-225]] 的 durable-outbox 薄片，不前拉整個 supervisor。
+
+**Non-goals**: 不在本票實作 supervisor；不改 Model B（CC-385..389）已上線行為；不解 [[CC-381]] host-PM install 軸（那是「誰當 host PM」軸，與本「executor 啟動後生命週期」軸亦正交）。
+
+**Spike outcome（2026-06-15，codex 深入分析）**: 詳見 `docs/spikes/CC-391-detached-supervised-dispatch-scope.md`。判定 **partial-adopt** — 採納 lifecycle 為新派發軸、detached supervisor 為長期形狀，但「使用者可見 detached 派發」延後到兩個前提解決後：
+1. **detach 資格不能單靠 runner_kind 推導**：`adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但 `adapters/claude/dispatch.sh` 實際跑 headless `claude --print`（CC-383/388 後的漂移）→ `runner_kind == cli-subprocess` 不是可信的資格謂詞。須先釐清 claude 分類（host-native vs cli-subprocess，或 claude-as-host / headless 兩 profile），或由「實際 adapter route/primitive」算資格＋測試。→ 已拆 [[CC-392]]（detach 落地前置）。
+2. **footer/durable artifact 先行**：(a) 現行 `_footer_tmp` 為 `mktemp` parse 後即刪（`pmctl-dispatch.sh`）→ detached supervisor 崩潰會丟失 CC-305 防競態的 per-run footer handoff，須在 verify 前把 footer 持久化到 run 目錄；(b) state store 在 `~/.local/share/pm-dispatch/state`（user data），但 [[CC-225]] 要 repo-tracked `.gate-results/`-style → durable-outbox **不等於 events.jsonl**，須獨立 repo-local result/outbox artifact 為 load-bearing、再 mirror 到 state store。
+
+遷移 fail-closed 順序（spike D7）：保持預設 foreground → 抽 executor tail（行為不變）→ foreground 模式先加 footer/result/outbox 持久化並驗 CC-305 仍成立 → supervisor foreground test 模式 → `--lifecycle detached` opt-in（ineligible adapter 啟動前拒絕）→ 才接 `setsid`/`nohup` + `dispatch wait`。紅線：不加 manifest `lifecycle_mode`；不讓 fifo/socket 成 load-bearing；supervisor 不得收未過 preflight 的 raw brief/adapter path。
+
+**See**: [[CC-333]] umbrella、[[v0.6.0-planning]]、MILESTONES.md v0.6.0 Phase 7、`docs/spikes/CC-391-detached-supervised-dispatch-scope.md`。
+
+---
+
+## CC-392 — arch: claude adapter runner_kind 分類漂移 🔵 active
+
+**Problem**: `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`（`adapters/claude/adapter.yaml:16`，註解述「claude-as-host self-executes its own edits gated by the host harness」），但自 [[CC-383]]（gate route 改走獨立 headless）+ [[CC-388]]（一般 implementation 對稱 codex）後，`adapters/claude/dispatch.sh` 實際是 `CMD=(claude -p --output-format stream-json …)`（`adapters/claude/dispatch.sh:5`、`:229`）的 **headless 獨立子程序**，由 `pmctl dispatch run --adapter claude` 驅動——行為上是 cli-subprocess / Model B。manifest 宣告與實際行為不一致，且 manifest 註解過時。發現於 [[CC-391]] 的 codex 深入分析（`docs/spikes/CC-391-*.md`，spike partial-adopt 前提 1）。
+
+**Why now / 影響**: 今日尚未弄壞 dispatch——[[CC-373]] 的去風險結論是 `dispatch_route` 在 `pmctl-dispatch` 僅作 allowlist（zero/non-zero）+ log label、**不驅動 exec 分支**；而 `write_guard_mode` 對 `host-native` 與「`cli-subprocess` + cli-only override」恰好同值（cli-only），所以是「對的結論、錯的理由」。真正的問題是 `runner_kind` 因此成為**不可信謂詞**：任何由它衍生的判斷都不能盡信。具體卡點是 [[CC-391]] 的 **detach 資格推導**（「headless-CLI Model B executor 可 detach、host-native 不可」）——若照 manifest，claude 會被誤判為不可 detach，但它實際就是 headless subprocess。
+
+**Decision needed**: claude 有兩執行模式——canonical headless `claude --print`（`pmctl dispatch run`，executor-contract 文件化主路）與 same-host `Agent(claude-executor)` 優化路。兩條路徑：
+- (A) 把 canonical 定為 `runner_kind: cli-subprocess`，並 override `write_guard_mode: cli-only` + `needs_bash_guard: false` 以保持行為 byte-identical（比照 codex 用 per-flag override 偏離 runner-kind 預設的慣例，見 `scripts/lib/runner-kind.sh` override seam）。same-host Agent 路降為文件化 fallback。
+- (B) 引入可表達「host-native fallback + cli-subprocess canonical」的機制（較重，可能踩 schema 改名，與 [[CC-384]] 衝突——不偏好）。
+**傾向 (A)**：canonical route 就是 headless，manifest 應反映 canonical；[[CC-373]] 當時明確 defer 此 claude 角色歧義（因 dispatch 不靠它），[[CC-391]] 強制它收斂。
+
+**Requirement**: manifest 的 `runner_kind`（＋必要 override）反映 canonical headless 路；`runner_kind_resolve_flag` 解析後三衍生旗標（`dispatch_route`/`write_guard_mode`/`needs_bash_guard`）對 claude 的**有效值與行為 byte-identical**（不得弱化 guard）；更新過時註解；加回歸測試鎖定（manifest 一致性 + 衍生旗標值）。**紅線**：這是 guard 安全邊界相關，security/risk hard gate；不得在 migration 中途弱化 claude 的 write guard。
+
+**Dependencies / 關聯**: [[CC-391]]（detach 資格前置——本票須先收斂）、[[CC-373]]（曾 defer 此歧義）、[[CC-383]]/[[CC-388]]（造成漂移的兩 PR）、[[guard-role-runtime]]（role×runtime 兩軸）、[[CC-372]]（runner_kind manifest）。
+
+**Priority**: P2 — `runner_kind` 可信度 + [[CC-391]] detach 落地前置；排 v0.6.0 Phase 7。
+
+**See**: `docs/spikes/CC-391-detached-supervised-dispatch-scope.md`（Open questions：claude 最終分類）、umbrella [[CC-333]]。
 
 ---
 
@@ -625,13 +707,13 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Why**: Raised from gate-20260522-145444 (CC-058 gating). The observability gap was observed during the CC-058 session: claude-executor tasks ran but their outputs were opaque to the main thread with no git-diffable artifact. This blocks the CC-211/CC-216 MCP architecture extraction.
 
-**Requirement**: After a claude-executor task completes, the main thread should write the brief path, result summary, and exit status to a repo-tracked directory (format consistent with `.gate-results/`). This serves as the prerequisite for the MCP task abstraction in CC-211/CC-216.
+**Requirement**: After an executor task completes, the durable record — brief path, result summary, exit status, and post-verify verdict — must be written to a repo-tracked directory (format consistent with `.gate-results/`). **Scope broadened (2026-06-15)**: originally framed for `claude-executor`, but under Model B (CC-385..389) every executor now runs as an independent subprocess, so this is the **all-executor durable run-state** record, not a claude-specific one. It is the **durable-state half** of the detached-supervised dispatch axis ([[CC-391]]): the supervisor writes this record so a main thread that exited (or a fresh one) can recover the outcome. Prerequisite for the MCP task abstraction in CC-211/CC-216.
 
-**Dependencies**: CC-211 (MCP architecture design), CC-058 (doctor.sh merge — prerequisite)
+**Dependencies**: [[CC-211]] (MCP architecture / run-FSM substrate), [[CC-391]] (lifecycle spike — consumer of this record), CC-058 (doctor.sh merge — prerequisite)
 
-**Priority**: P3 — design prerequisite; not blocking current workflows.
+**Priority**: P3 — design prerequisite; not blocking current workflows. May be pulled forward as a thin durable-outbox slice if [[CC-376]] (opencode adapter) needs it (see [[CC-391]] sequencing).
 
-**Cross-link**: CC-211 (MCP architecture), CC-216 (task abstraction)
+**Cross-link**: [[CC-391]] (detached-supervised dispatch), [[CC-211]] (run-FSM), [[CC-216]] (task abstraction)
 
 ## CC-227 — refactor: extract yaml-frontmatter lib + shared validation helpers（deferred；吸收 CC-226）
 
@@ -681,7 +763,9 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P3 — advisory follow-up; the CC-217 GO was not blocked on it.
 
-**Cross-link**: CC-217 (origin), `commands/pr-gate.md` Route B.
+**Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance. Sequence (c) test coverage with that work rather than building a one-off timeout in `pr-gate.sh`.
+
+**Cross-link**: [[CC-391]] (supervisor — general fix), CC-217 (origin), `commands/pr-gate.md` Route B.
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
 
@@ -848,7 +932,9 @@ This makes directory creation the mutex.
 
 **When to activate**: When a **second** hook point is requested (not gate). Design cost before that point exceeds the benefit.
 
-**Cross-link**: `[[CC-206]]` (first hook point — gate pre/post)
+**Distinct from [[CC-391]]**: this ticket is about *tool-step lifecycle hook events* (pre/post-gate, pre/post-dispatch call sites in scripts) — a user-extensibility seam. [[CC-391]] is about *process lifecycle ownership* (who owns the executor subprocess after launch, durable result, notification). Same word "lifecycle", orthogonal concerns; do not merge.
+
+**Cross-link**: `[[CC-206]]` (first hook point — gate pre/post), [[CC-391]] (process lifecycle — distinct axis)
 
 **Priority**: P3 — no current requirement; activate when second hook point emerges.
 
