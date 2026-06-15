@@ -40,9 +40,20 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # Resolve symlink so we find the real scripts/ directory (e.g., when invoked
 # via adapters/<name>/bash-guard.sh).
 if [[ -L "${BASH_SOURCE[0]}" ]]; then
-  _real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || readlink "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
-  _SCRIPT_DIR="$(cd "$(dirname "$_real")" 2>/dev/null && pwd || printf '%s' "$_SCRIPT_DIR")"
-  unset _real
+  _symlink_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  _real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)"
+  if [[ -z "$_real" ]]; then
+    _target="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null)"
+    if [[ -n "$_target" ]]; then
+      case "$_target" in
+        /*)   _real="$_target" ;;
+        */*)  _real="$(cd "$_symlink_dir/${_target%/*}" 2>/dev/null && pwd)/${_target##*/}" ;;
+        *)    _real="$_symlink_dir/$_target" ;;
+      esac
+    fi
+  fi
+  [[ -n "${_real:-}" ]] && _SCRIPT_DIR="$(cd "$(dirname "$_real")" 2>/dev/null && pwd || printf '%s' "$_SCRIPT_DIR")"
+  unset _real _symlink_dir _target
 fi
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"

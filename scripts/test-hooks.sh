@@ -1205,6 +1205,23 @@ if [[ -x "$CXHOOK_SYMLINK" ]]; then
     '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":";"}}'
   run_case "cx (symlink): git status → allow" 0 "$CXHOOK_SYMLINK" \
     '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}'
+
+  # Simulate platforms without readlink -f (macOS/BSD-style): shim readlink to
+  # reject -f so the relative-target fallback path in hook-codex-bash-guard.sh
+  # is forced to resolve the symlink target from the symlink's own directory.
+  _cx_shim_dir="$(mktemp -d)"
+  cat > "$_cx_shim_dir/readlink" <<'SHIM'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-f" ]]; then exit 1; fi
+exec /usr/bin/readlink "$@"
+SHIM
+  chmod +x "$_cx_shim_dir/readlink"
+  run_case_env "cx (symlink, no-readlink-f): dispatch → allow" 0 "PATH=$_cx_shim_dir:$PATH" "$CXHOOK_SYMLINK" \
+    "{\"agent_type\":\"codex-executor\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$dispatch_abs --cd $REPO_ROOT --brief-file $DISPATCH_TEST_BRIEF\",\"run_in_background\":false}}"
+  run_case_env "cx (symlink, no-readlink-f): SOLO ; → deny" 2 "PATH=$_cx_shim_dir:$PATH" "$CXHOOK_SYMLINK" \
+    '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":";"}}'
+  rm -rf "$_cx_shim_dir"
+  unset _cx_shim_dir
 else
   $LIST || printf '  SKIP  cx (symlink): adapters/codex/bash-guard.sh not executable — skipping symlink tests\n'
 fi
