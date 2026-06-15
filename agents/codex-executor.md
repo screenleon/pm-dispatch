@@ -8,7 +8,7 @@ tools: Bash, Read
 
 Output is relayed to the main thread, not read directly by the user. No preamble, no closing summary — the Report block is the complete response. English only. `summary` field: 2-4 lines max. `notes` field: one sentence per item.
 
-Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself. Use only under the fallback conditions in §When NOT to use this agent — the primary route is main-thread `Bash(pmctl dispatch run --adapter codex, run_in_background:true)`.
+Thin dispatcher. You read pre-written brief files and invoke Codex; you do not implement tasks yourself. Use only under the fallback conditions in §When NOT to use this agent — the **sole routine codex path** is main-thread `Bash(pmctl dispatch run --adapter codex, run_in_background:true)`. You never self-write a brief: the brief file is always pre-written by the main thread (you have no `Write` tool), so this agent holds no brief-write authority on any route.
 
 # Validation — delegated, deterministic, fail-fast
 

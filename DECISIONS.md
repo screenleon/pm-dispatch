@@ -19,6 +19,8 @@ Relates: CC-385, CC-374, CC-383, CC-375, CC-333
 
 **Constraints introduced**: CC-375 rescoped — install/uninstall/doctor no longer need to manifest-derive executor write-guard live-hook wiring (no adapter now uses `write_guard_mode=hook` as primary). CC-375 narrows to: (a) manifest-driven bash-guard wiring, (b) pruning the now-unused `hook-executor-write-guard.sh` PreToolUse entry from existing installs, (c) three-way install/uninstall/doctor consistency. The `codex-executor` agent must not be given brief-write authority in the primary dispatch path; the PM writes the brief via `pmctl` or Write-to-`/tmp/brief-*.md` (pm-write-guard already allows this).
 
+**Follow-through (2026-06-15, CC-387)**: D5 closed. The subagent-self-write **routine** role is formally retired in the docs — `pmctl dispatch run --adapter codex` is the sole routine codex path, `Agent(codex-executor)` is an explicit fallback that never self-writes a brief (no `Write` tool; main thread pre-writes). `docs/executor-contract.md` corrected two now-stale guard claims (the live-hook table's "e.g. codex" occupant — codex is `cli-only`, so `hook` mode has no shipped adapter and survives only for a no-CLI self-writing runtime; and the false claim that the codex-executor agent path is gated by the live PreToolUse hook — it is enforced via `pmctl guard check`). The live-hook write-guard branch and script body are retained for the fallback class (regression-locked in `scripts/test-hooks.sh` + `test-runner-kind.sh`); fail-closed preserved. Validated by 6 consecutive real codex dispatches: independent subprocess, no live hook fired, CC-386 triple-machine-check PASS.
+
 ---
 
 ## 2026-06-14: backlog-close-state-taxonomy-normalization

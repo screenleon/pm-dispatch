@@ -235,6 +235,17 @@ echo
 $LIST || echo "== hook-executor-write-guard (codex, cli-only) =="
 # codex write_guard_mode=cli-only (CC-375/CC-385a): live hook no-ops; enforcement
 # only via PM_GUARD_CHECK_CLI=1 (set by pmctl guard check).
+#
+# REGRESSION LOCK — the surviving hook-mode (write_guard_mode=hook) branch:
+# codex routes its brief through pmctl (no subagent self-writes a brief), so its
+# manifest overrides to cli-only and the live PreToolUse branch no-ops below. No
+# SHIPPED adapter is hook-mode today, so no integration case here drives the live
+# enforce path — but it is NOT dead code. It survives for the no-CLI self-writing
+# fallback class (a runtime whose executor subagent authors its own brief via the
+# host Write tool). The hook's `write_guard_mode != "hook"` live-no-op condition
+# must therefore stay; its complement (hook-mode → live-enforce) is unit-locked by
+# test-runner-kind.sh ("default/cli/guardmode" → hook). Do not simplify the branch
+# away on the assumption that "every executor is cli-only".
 truncate_log
 
 # --- happy path: Write/Edit to /tmp/brief-*.md ---
