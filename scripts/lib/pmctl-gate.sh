@@ -29,10 +29,9 @@ pmctl_gate_run() {
 # pmctl gate verify <result_file>
 # Confirm a gate result file is structurally complete using the SAME contract
 # the synchronous gate route enforces in-process (gate_result_verify). This is
-# how the claude host-native route -- where the result is written by the
-# orchestrating host after the handover, outside pr-gate.sh -- becomes
-# confirmable/trackable via pmctl, symmetric to the codex route's built-in
-# post-dispatch check. Exit 0 = valid; 1 = invalid (diagnostic on stderr);
+# how an out-of-process gate result -- one written outside pr-gate.sh's own
+# in-process check -- becomes confirmable/trackable via pmctl, symmetric to the
+# codex route's built-in post-dispatch check. Exit 0 = valid; 1 = invalid (diagnostic on stderr);
 # 2 = usage/library error.
 pmctl_gate_verify() {
   local repo_root="$1"; shift

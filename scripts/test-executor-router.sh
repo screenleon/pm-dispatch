@@ -93,7 +93,10 @@ if should_run "dispatch_route_for: codex and claude routes"; then
   # to the expected routes — not a pure unit test of the case logic.
   codex_route="$(dispatch_route_for codex)"
   claude_route="$(dispatch_route_for claude)"
-  if [[ "$codex_route" == "main_thread_bash_background" && "$claude_route" == "agent_executor" ]]; then
+  # Both shipped adapters are cli-subprocess (canonical headless route), so both
+  # resolve to main_thread_bash_background; claude reaches cli-only / no-bash-guard
+  # via per-flag overrides, not a distinct route.
+  if [[ "$codex_route" == "main_thread_bash_background" && "$claude_route" == "main_thread_bash_background" ]]; then
     pass "dispatch_route_for: codex and claude routes"
   else
     fail "dispatch_route_for: codex and claude routes" "codex=$codex_route claude=$claude_route"

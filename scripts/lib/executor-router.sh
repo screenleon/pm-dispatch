@@ -134,10 +134,11 @@ executor_router_safe_argv() {
 # when/how to execute it (foreground/background, redirection). Universal flags
 # (--cd / --model / --timeout / --brief-file / --isolation) are always forwarded.
 # The codex-native --sandbox / --approval flags are forwarded only for
-# cli-subprocess runner-kinds (those run the executor as a sandboxed subprocess);
-# host-native executors (e.g. claude-as-host self-exec) have no subprocess
-# sandbox/approval surface and drop them. NOTE: the sandbox/approval flag surface
-# is provisional — CC-376 folds it into the unified --isolation contract.
+# cli-subprocess runner-kinds (those run the executor as a sandboxed subprocess).
+# Both shipped adapters are cli-subprocess; claude accepts but ignores these flags
+# as no-ops (it self-governs via --permission-mode). A host-native runner-kind has
+# no subprocess sandbox/approval surface and drops them. NOTE: the sandbox/approval
+# flag surface is provisional — it will fold into the unified --isolation contract.
 dispatch_via() {
   local executor=${1-}
   local brief_file=${2-}
