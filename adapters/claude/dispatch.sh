@@ -23,7 +23,7 @@
 # ignored as no-ops, per docs/executor-contract.md (claude has no equivalents).
 #
 # Outputs (the contract pmctl/post-verify read — only latest.last is load-bearing):
-#   .agent-trace/claude-<ts>.jsonl   full claude --output-format json stdout
+#   .agent-trace/claude-<ts>.jsonl   full claude --output-format stream-json JSONL event stream
 #   .agent-trace/claude-<ts>.last    final agent message (JSON .result)
 #   .agent-trace/claude-<ts>.stderr  wrapper banner + claude stderr (forensic log)
 #   .agent-trace/latest.{jsonl,last,stderr}  symlinks → most recent
@@ -228,7 +228,8 @@ fi
 
 CMD=(claude -p
   --permission-mode "$PERMISSION_MODE"
-  --output-format json
+  --output-format stream-json
+  --verbose
 )
 [[ -n "$MODEL" ]] && CMD+=(--model "$MODEL")
 
@@ -263,8 +264,8 @@ _refresh_latest_pointers() {
 }
 _refresh_latest_pointers
 
-# Run claude in the work dir; brief is delivered on stdin as the prompt. JSON
-# stdout → TRACE (.jsonl); claude stderr → STDERR_LOG. Bounded by timeout.
+# Run claude in the work dir; brief is delivered on stdin as the prompt. JSONL
+# event stream stdout → TRACE (.jsonl); claude stderr → STDERR_LOG. Bounded by timeout.
 set +e
 if [[ "$TIMEOUT" -gt 0 ]]; then
   printf '%s' "$BRIEF" | ( cd "$WORK_DIR" && timeout --foreground --kill-after=15 "$TIMEOUT" "${CMD[@]}" ) >"$TRACE" 2>>"$STDERR_LOG"
@@ -275,14 +276,19 @@ EXIT=$?
 set -e
 
 # Extract the final agent message (.result) into the output contract (.last).
+# stream-json emits JSONL: one event per line; the terminal event has .type=="result".
+# Use -re so jq exits 1 for a null/absent .result — triggering the raw fallback —
+# rather than writing a bare newline that would pass -s but carry no content.
 # This is the ONLY load-bearing artifact pmctl/post-verify read.
 if [[ -s "$TRACE" ]]; then
-  if ! jq -r '.result // ""' "$TRACE" > "$LAST" 2>/dev/null; then
-    # Non-JSON or parse failure: fall back to raw stdout so post-verify has input.
+  if ! jq -re 'select(.type == "result") | .result' "$TRACE" > "$LAST" 2>/dev/null \
+     || [[ ! -s "$LAST" ]]; then
+    # Parse failure, null result, or no result event: fall back to raw stdout.
     cp -- "$TRACE" "$LAST" 2>/dev/null || true
   fi
   # A claude is_error:true downgrades a 0 exit to failure so post-verify/state agree.
-  if [[ "$EXIT" -eq 0 ]] && [[ "$(jq -r '.is_error // false' "$TRACE" 2>/dev/null)" == "true" ]]; then
+  if [[ "$EXIT" -eq 0 ]] && \
+     [[ "$(jq -r 'select(.type == "result") | .is_error // false' "$TRACE" 2>/dev/null | tail -1)" == "true" ]]; then
     EXIT=1
   fi
 fi
@@ -293,7 +299,7 @@ _refresh_latest_pointers
 
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
-  _CLAUDE_TOKENS=$(jq -r '((.usage.input_tokens // 0) + (.usage.output_tokens // 0))' "$TRACE" 2>/dev/null || echo 0)
+  _CLAUDE_TOKENS=$(jq -r 'select(.type == "result") | ((.usage.input_tokens // 0) + (.usage.output_tokens // 0))' "$TRACE" 2>/dev/null | tail -1 || echo 0)
   if [[ "$_CLAUDE_TOKENS" =~ ^[0-9]+$ && "$_CLAUDE_TOKENS" -gt 0 ]]; then
     _NOTE="auto: $(basename "$WORK_DIR")"
     bash "${HOME}/.claude/scripts/log-usage.sh" "claude_dispatch" "$_CLAUDE_TOKENS" "$_NOTE" "" "claude" 2>>"$STDERR_LOG" || \

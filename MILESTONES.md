@@ -48,7 +48,7 @@
 |----|------|------|
 | CC-386 | pmctl post-verify 成為 executor 結果唯一驗證者（exit code + trace 完整性 + self_verify 實跑）。**keystone，先行** | ✅ |
 | CC-387 | codex 子代理自寫 brief 路退場；`pmctl dispatch run` 為唯一 codex routine 路；live-hook routine 全 no-op。相依 CC-386 | ✅ |
-| CC-388 | claude adapter 作為一般 implementation executor（非僅 gate route）；與 codex 對稱。相依 CC-383/CC-386 | 🔵 |
+| CC-388 | claude adapter 作為一般 implementation executor（非僅 gate route）；與 codex 對稱。切換至 stream-json JSONL。相依 CC-383/CC-386 | ✅ |
 | CC-389 | non-interactive executor 契約 spec（auth 前提 + fail-loud + 唯一輸出/驗證 + fallback policy）；CC-376/377 落地基準；per-adapter 語意終止事件驗證（unblock CC-387） | ✅ |
 
 ### Phase 5 — 真 adapter 驗收（P2；抽象的證明）

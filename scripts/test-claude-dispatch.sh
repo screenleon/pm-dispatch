@@ -21,13 +21,16 @@ SNAP_DIR="$(dirname "$(mktemp -u -t claude-dispatch.XXXXXX)")"
 SNAP_RE="exec [^ ]*claude-dispatch\.[A-Za-z0-9]+/claude-dispatch\.sh"
 
 # Fake claude honoring the output contract: drains the prompt on stdin and emits
-# one --output-format json object. $1 overrides is_error, $2 overrides exit code.
+# stream-json JSONL events matching --output-format stream-json --verbose.
+# $1 overrides is_error, $2 overrides exit code.
 _install_fake_claude() {
   local bindir="$1" is_error="${2:-false}" code="${3:-0}"
   cat > "$bindir/claude" <<FAKEOF
 #!/usr/bin/env bash
 cat >/dev/null   # drain the prompt on stdin
-printf '%s\n' '{"result":"work done\ntest -f x: pass","is_error":$is_error,"usage":{"input_tokens":100,"output_tokens":50},"session_id":"fake","num_turns":1}'
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake","model":"claude-test"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"work done"}]},"session_id":"fake"}'
+printf '%s\n' '{"type":"result","subtype":"success","result":"work done\ntest -f x: pass","is_error":$is_error,"usage":{"input_tokens":100,"output_tokens":50},"session_id":"fake","num_turns":1}'
 exit $code
 FAKEOF
   chmod +x "$bindir/claude"
@@ -82,7 +85,7 @@ case_print_cmd_default() {
   local work brief out
   work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
   out="$("$DISPATCH" --cd "$work" --brief-file "$brief" --print-cmd 2>/dev/null)"
-  if [[ "$out" == *"--permission-mode acceptEdits"* && "$out" == *"--output-format json"* ]]; then
+  if [[ "$out" == *"--permission-mode acceptEdits"* && "$out" == *"--output-format stream-json"* && "$out" == *"--verbose"* ]]; then
     pass "$name"; else fail "$name" "out=$out"; fi
   rm -rf "$work"; rm -f "$brief"
 }
@@ -419,6 +422,34 @@ RESOLVER_TEST
   fi
 }
 
+# ---- 19: no result event in JSONL → fallback to raw trace copy ----
+# stream-json output with no type==result event (e.g. truncated run or non-standard
+# executor output) must fall back to copying the raw TRACE to .last so post-verify
+# has some input rather than an empty file. Verifies the jq -re fallback path.
+case_no_result_event_fallback() {
+  local name="dispatch/no result event in JSONL falls back to raw trace"; should_run "$name" || return 0
+  local bin work brief code last
+  bin="$(mktemp -d)"
+  cat > "$bin/claude" <<'FAKEOF'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant"},"session_id":"fake"}'
+exit 0
+FAKEOF
+  chmod +x "$bin/claude"
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e; PATH="$bin:$PATH" "$DISPATCH" --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?; set -e
+  last="$work/.agent-trace/latest.last"
+  # Fallback: .last should contain the raw trace (JSONL lines), not be empty.
+  if [[ "$code" -eq 0 && -s "$last" ]] && grep -q '"type":"system"' "$last"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code last_size=$(wc -c < "$last" 2>/dev/null || echo missing)"
+  fi
+  rm -rf "$bin" "$work"; rm -f "$brief"
+}
+
 case_codex_flags_noop
 case_config_timeout_env_overrides
 case_state_store_no_direct_run_row_claude
@@ -432,5 +463,6 @@ case_model_alias_unknown_passthrough
 case_model_no_flag_resolves_default
 case_model_pm_cfg_default_model
 case_model_alias_malformed_tsv_warns
+case_no_result_event_fallback
 
 th_summary
