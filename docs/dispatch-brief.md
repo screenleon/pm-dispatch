@@ -379,7 +379,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 
 ## Main-thread dispatch via dispatch_handover_v1
 
-`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter codex` in the background. `Agent(codex-executor)` remains available only for the fallback cases below.
+`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter codex` in the background. This is the **sole routine codex path** — no subagent ever holds brief-write authority on it. `Agent(codex-executor)` is a **fallback only** (the cases below); even there the main thread pre-writes the brief — codex-executor has no `Write` tool — so no subagent self-writes a brief on any codex route.
 
 ```dispatch_handover_v1
 handover_version: 2
