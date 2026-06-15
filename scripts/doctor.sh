@@ -47,6 +47,14 @@ else
   _MEMORY_DIR_AVAILABLE=0
 fi
 
+if [[ -f "$SCRIPT_DIR/lib/runner-kind.sh" ]]; then
+  # shellcheck source=scripts/lib/runner-kind.sh
+  . "$SCRIPT_DIR/lib/runner-kind.sh"
+  _RUNNER_KIND_AVAILABLE=1
+else
+  _RUNNER_KIND_AVAILABLE=0
+fi
+
 JSON=0
 QUIET=0
 COLOR=0
@@ -167,7 +175,7 @@ check_codex() {
   if codex_available; then
     emit_check codex ok "codex available"
   else
-    emit_check codex warn "codex not found — full-profile hooks (hook-codex-bash-guard.sh etc.) will be skipped; minimal profile active" \
+    emit_check codex warn "codex not found — full-profile adapter bash guards (adapters/codex/bash-guard.sh etc.) will be skipped; minimal profile active" \
       "Install Codex CLI for full-profile hooks (optional)"
   fi
 }
@@ -264,6 +272,26 @@ hook_present() {
   ' "$settings" >/dev/null 2>&1
 }
 
+adapter_bg_present() {
+  local adapter_name="$1" settings="$2"
+  jq -e --arg adapter_name "$adapter_name" '
+    def normalize_path:
+      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      | if test("^[A-Za-z]:[/\\\\]") then
+          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
+        else gsub("\\\\"; "/") end;
+    def managed_bg_hook:
+      (.command? // "") as $cmd |
+      ($cmd | normalize_path) as $ncmd |
+      (($ncmd | split("/") | last) == "bash-guard.sh"
+       and ($ncmd | split("/") | .[-2]) == $adapter_name
+       and ($ncmd | split("/") | .[-3]) == "adapters");
+    ([
+      ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_bg_hook))
+    ] | length > 0)
+  ' "$settings" >/dev/null 2>&1
+}
+
 stale_hook_commands() {
   local settings="$1" repo_root="$2"
   jq -r --arg repo_root "$repo_root" '
@@ -288,16 +316,22 @@ stale_hook_commands() {
         (.command? // "") as $cmd |
         ($cmd | normalize_path) as $ncmd |
         ($ncmd | length) > 0 and
-        ($ncmd | split("/") | .[-2]) == "scripts" and
-        (($ncmd | split("/") | last) | IN(
-          "hook-pm-write-guard.sh",
-          "hook-log-claude-usage.sh",
-          "hook-session-summary.sh",
-          "hook-inject-memory.sh",
-          "hook-save-rate-limits.sh",
-          "hook-codex-bash-guard.sh",
-          "hook-executor-write-guard.sh"
-        )) and
+        (
+          (
+            ($ncmd | split("/") | .[-2]) == "scripts" and
+            (($ncmd | split("/") | last) | IN(
+              "hook-pm-write-guard.sh",
+              "hook-log-claude-usage.sh",
+              "hook-session-summary.sh",
+              "hook-inject-memory.sh",
+              "hook-save-rate-limits.sh"
+            ))
+          ) or
+          (
+            ($ncmd | split("/") | last) == "bash-guard.sh" and
+            ($ncmd | split("/") | .[-3]) == "adapters"
+          )
+        ) and
         ($ncmd | startswith(($repo_root | normalize_path) + "/") | not)
       ) | .command)
     | unique[]
@@ -339,12 +373,24 @@ check_hooks() {
                _want_full=0
              fi ;;
   esac
+
+  # Collect adapter bash guards from manifests (full profile only).
+  local -a _adapter_bg_names=()
+  if [[ "$_want_full" -eq 1 && "$_RUNNER_KIND_AVAILABLE" -eq 1 ]]; then
+    local _manifest _adapter_name _rk _nbg_override _nbg
+    for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
+      [[ -f "$_manifest" ]] || continue
+      _adapter_name="$(basename "$(dirname "$_manifest")")"
+      _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
+      [[ -n "$_rk" ]] || continue
+      _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+      _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
+      [[ "$_nbg" == "true" ]] && _adapter_bg_names+=("$_adapter_name")
+    done
+  fi
+
   if [[ "$_want_full" -eq 1 ]]; then
     profile="full"
-    hooks+=(
-      hook-codex-bash-guard.sh
-      hook-executor-write-guard.sh
-    )
   else
     profile="minimal"
   fi
@@ -356,6 +402,14 @@ check_hooks() {
       missing+=("$hook")
     fi
   done
+  if [[ "$_want_full" -eq 1 ]]; then
+    local _aname
+    for _aname in "${_adapter_bg_names[@]+"${_adapter_bg_names[@]}"}"; do
+      if ! adapter_bg_present "$_aname" "$settings"; then
+        missing+=("adapters/$_aname/bash-guard.sh")
+      fi
+    done
+  fi
 
   # Compute stale list before emitting any status so we emit a single line.
   local -a _stale=()
@@ -366,6 +420,10 @@ check_hooks() {
     done < <(stale_hook_commands "$settings" "$REPO_ROOT")
   fi
 
+  local _total_hooks=${#hooks[@]}
+  if [[ "$_want_full" -eq 1 ]]; then
+    _total_hooks=$(( _total_hooks + ${#_adapter_bg_names[@]} ))
+  fi
   if [[ "${#missing[@]}" -gt 0 ]]; then
     emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-hooks.sh'"
   elif [[ "${#_stale[@]}" -gt 0 ]]; then
@@ -373,7 +431,7 @@ check_hooks() {
       "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
       "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
   else
-    emit_check hooks ok "${#hooks[@]} hooks present ($profile profile)"
+    emit_check hooks ok "$_total_hooks hooks present ($profile profile)"
   fi
 }
 
@@ -431,8 +489,6 @@ check_scripts_executable() {
   local -a scripts=(
     hook-pm-write-guard.sh
     hook-reviewer-write-guard.sh
-    hook-codex-bash-guard.sh
-    hook-executor-write-guard.sh
     hook-log-claude-usage.sh
     hook-session-summary.sh
     hook-inject-memory.sh

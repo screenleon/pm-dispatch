@@ -7,6 +7,20 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-15: dispatch-model-B-primary-codex-write-guard-cli-only
+
+Relates: CC-385, CC-374, CC-383, CC-375, CC-333
+
+**Context**: The executor write guard had an asymmetry consolidated but not resolved by CC-374: codex used `write_guard_mode=hook` (live PreToolUse) because the `codex-executor` subagent self-authored the brief; claude used `cli-only` since CC-383. The live hook existed solely because the subagent held brief-write authority. CC-385 proposed retiring the subagent brief-authoring path in favour of "trusted code (pmctl) authors the brief → executor consumes as independent subprocess" (Model B). A feasibility spike (CC-385a, 2026-06-15) ran a real end-to-end dispatch: PM authored a valid brief, called `pmctl dispatch run --adapter codex --brief-file /tmp/brief-CC385a.md --cd /tmp/CC385a-workdir`, codex ran as an independent subprocess (exit 0), self-verify passed. No subagent involved; no live hook fired; pre-existing codex auth sufficed (D3 confirmed).
+
+**Decision**: Adopt Model B as primary for codex. `adapters/codex/adapter.yaml` gains `write_guard_mode: cli-only` override, making codex symmetric with claude. The live `hook-executor-write-guard.sh` PreToolUse wiring becomes a no-op for all current adapters; it will be retired (unregistered from settings.json) as part of CC-375, which is now rescoped. The `codex-executor` subagent path is retained as a narrow fallback (no standalone codex CLI / no-CLI runtime); its live-hook write-guard fires only in that path. `dispatch-route-primary` preference is updated to make `pmctl dispatch run` the stated default.
+
+**Alternatives considered**: Keep `write_guard_mode=hook` for codex and proceed with full manifest-driven live-hook wiring (original CC-375 scope). Rejected: live hook was the only thing preventing Model B; spike proved Model B is already operational. Continuing with Model A adds wiring complexity for a security control that protects against a threat model (executor subagent self-writing brief) that is no longer the primary path.
+
+**Constraints introduced**: CC-375 rescoped — install/uninstall/doctor no longer need to manifest-derive executor write-guard live-hook wiring (no adapter now uses `write_guard_mode=hook` as primary). CC-375 narrows to: (a) manifest-driven bash-guard wiring, (b) pruning the now-unused `hook-executor-write-guard.sh` PreToolUse entry from existing installs, (c) three-way install/uninstall/doctor consistency. The `codex-executor` agent must not be given brief-write authority in the primary dispatch path; the PM writes the brief via `pmctl` or Write-to-`/tmp/brief-*.md` (pm-write-guard already allows this).
+
+---
+
 ## 2026-06-14: backlog-close-state-taxonomy-normalization
 
 Closes: BACKLOG.md#CC-378

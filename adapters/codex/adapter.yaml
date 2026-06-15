@@ -11,7 +11,12 @@ runner_ref: ./dispatch.sh
 dispatch_contract: dispatch_handover_v1
 # runner_kind classifies the execution topology; dispatch_route /
 # write_guard_mode / needs_bash_guard derive from it (scripts/lib/runner-kind.sh).
-# codex is a thin subprocess dispatcher driven on the main thread and gated by
-# live PreToolUse hooks (write guard + the codex-only bash guard).
+# codex runs as an independent headless subprocess driven by pmctl dispatch run;
+# the PM authors the brief (via pmctl or Write to /tmp/brief-*.md) and passes it
+# in — no executor subagent self-writes a brief, so no live PreToolUse write guard
+# is needed. Spike CC-385a (2026-06-15) confirmed Model B (pmctl-authored brief +
+# independent subprocess) works end-to-end. write_guard_mode overrides cli-subprocess
+# default (hook) to cli-only; the bash guard remains (codex dispatches Bash).
 runner_kind: cli-subprocess
+write_guard_mode: cli-only
 generated_files: []

@@ -37,6 +37,13 @@
 set -uo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# Resolve symlink so we find the real scripts/ directory (e.g., when invoked
+# via adapters/<name>/bash-guard.sh).
+if [[ -L "${BASH_SOURCE[0]}" ]]; then
+  _real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || readlink "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  _SCRIPT_DIR="$(cd "$(dirname "$_real")" 2>/dev/null && pwd || printf '%s' "$_SCRIPT_DIR")"
+  unset _real
+fi
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
