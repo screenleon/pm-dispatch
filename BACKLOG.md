@@ -68,7 +68,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-346 | ⏸ deferred | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。**Paused 2026-06-10（arch review）**：reuse-scan 本身尚無任何操作面 caller——給沒人用的工具加深資料層是加倍下注未驗證假設。Resume trigger：reuse-scan 輸出（經 CC-356 接線）實際進過 ≥2 份真 brief，且觀察到缺 ref 資料確為瓶頸；屆時先只做 Phase a（bash source）。 | ops | 2026-06-09 | — | P3 | design |
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
-| CC-333 | 🔵 active | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]（v0.6.0 umbrella epic）** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。**v0.6.0 執行子票**：[[CC-372]]（runner-kind manifest）→ [[CC-373]]（router 資料驅動）→ [[CC-374]]/[[CC-375]]（guard 收口＋安裝接線）→ [[CC-376]]/[[CC-377]]（opencode/antigravity 真 adapter 驗收）＋ [[CC-335]]（deprecation 清掃）。見 MILESTONES.md v0.6.0。 | arch | 2026-06-07 | — | P2 | design |
+| CC-333 | 🔵 active | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]（v0.6.0 umbrella epic）** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。**v0.6.0 執行子票**：[[CC-372]]（runner-kind manifest）→ [[CC-373]]（router 資料驅動）→ [[CC-374]]/[[CC-375]]（guard 收口＋安裝接線）→ [[CC-386]]/[[CC-387]]/[[CC-388]]/[[CC-389]]（dispatch-model 統一 Model B 全面上路，[[CC-385]] 決策）→ [[CC-376]]/[[CC-377]]（opencode/antigravity 真 adapter 驗收）＋ [[CC-335]]（deprecation 清掃）。見 MILESTONES.md v0.6.0。 | arch | 2026-06-07 | — | P2 | design |
 | CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
 | CC-340 | 🟢 someday | **[knowledge index: heavy remainder after CC-354 — standalone FTS + embeddings]** The usable anchored-TOC slice (in-repo knowledge-doc section indexing) is pulled forward to CC-354 (v0.5.0). CC-340 is now the heavy remainder, symmetric to the repo index CC-338: out-of-repo memory cards + wiki + episodes (low-trust) indexing, standalone full-text ranking, embeddings, and richer trust-tier weighting — deferred to v0.6.0, overlapping /mem-search. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
@@ -84,14 +84,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-373 | ✅ done | **[arch: executor-router 資料驅動 — 拔除 codex\|claude 硬編碼]** `scripts/lib/executor-router.sh` 的 `resolve_executor`/`dispatch_route_for` 改讀 on-disk [[CC-372]] manifest：route 由 `runner_kind` 經 `runner_kind_resolve_flag` 衍生（吃 `dispatch_route` override），allowlist = 「`adapters/<name>/adapter.yaml` 可讀、非 symlink、宣告合法 `runner_kind`」。`dispatch_via_codex`/`_claude` 泛化成單一 `dispatch_via <executor>`（依驗證過的名字解析 `adapters/<executor>/dispatch.sh`，`--sandbox`/`--approval` 只對 cli-subprocess 轉發；兩具名函式留為薄 shim）；pr-gate 三處呼叫點改用 generic。信任邊界從程式碼常數移到 manifest，fail-closed（strict bare-identifier 擋 traversal、缺/壞 manifest、壞 runner_kind 皆拒）。吸收 [[CC-360]]。Defer→[[CC-376]]：`--sandbox`/`--approval` 收進統一 `--isolation` 契約。+10 test（含零核心改動驗收、override、fail-closed、traversal）。相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | pr:#279 | P2 | design |
 | CC-374 | ✅ done | **[arch: hook-guard wrapper 收口 — role-參數化 + 委派 pmctl guard check]** codex-write/claude-write（~95% 重複、byte-identical brief-path policy）收成單一 `hook-executor-write-guard.sh`：由 `agent_type`(`<runtime>-executor`) 衍生 runtime、讀 manifest `write_guard_mode`([[CC-372]])。live-hook vs cli-only 由 manifest **明宣告**（`hook`=live PreToolUse 強制；`cli-only`=fired-live 時 no-op、僅 `pmctl guard check`（設 `PM_GUARD_CHECK_CLI`）強制）。`pmctl-guard.sh` 對每個 executor runtime 解析統一 wrapper、CLI 路徑無合法 manifest 即 fail-closed。install/uninstall/doctor 改接統一 hook + 升級時 prune 退場的 per-runtime write-guard。`hook-codex-bash-guard.sh` 不動（真 codex-only，`needs_bash_guard`）。**[[CC-066]] 由 collapse 實質達成**（單一 policy）。drop deprecated `CLAUDE_HOOK_*_WRITE_GUARD` env shim。+13 guard 測試。**[[CC-062]] deferred**（bash-guard 測試矩陣，bash-guard 未收口）；**[[CC-307]] 仍開**（pm cross-runtime / codex-as-pm smoke test 受阻於 [[CC-381]]，re-link）。Security/risk gate. 相依 [[CC-372]]。umbrella [[CC-333]]。 | arch/security | 2026-06-13 | pr:#280 | P2 | design |
 | CC-375 | ✅ done | **[install: hook 接線由 manifest 能力旗標衍生（CC-385a 縮範圍）]** `install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 對「哪些 hook 該接進 settings.json」目前逐 executor 寫死。**Rescoped after CC-385a spike (2026-06-15)**：codex 已宣告 `write_guard_mode: cli-only`，所有 adapter 現為 cli-only，不再需要 manifest-drive executor live write-guard 接線。縮範圍為：(a) manifest-driven **bash-guard** 接線（`needs_bash_guard=true` + `adapters/<name>/bash-guard.sh`）；(b) 從 existing installs **prune `hook-executor-write-guard.sh`** PreToolUse entry（live hook 成 no-op，退場以保持三方一致）；(c) doctor 一致性。釘死 install/uninstall/doctor 三方一致（呼應 [[CC-368]]）。相依 [[CC-374]]、[[CC-385a]]。umbrella [[CC-333]]。**See**: pr:#281 | arch/install | 2026-06-13 | pr:#281 | P3 | hygiene |
-| CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
-| CC-377 | 🔵 active | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
+| CC-376 | 🔵 active | **[adapter: opencode executor]** 新增 `adapters/opencode/`（dispatch.sh + adapter.yaml + isolation-map.yaml），以 `pmctl dispatch run --adapter opencode` 為唯一文件化主路；宣告 [[CC-372]] `runner_kind`，map opencode 的 sandbox/permission/model-alias 至統一 isolation 契約，輸出統一 `.agent-trace/latest.last`。**抽象的驗收證明**：落地若需改 router/guard 核心，代表 [[CC-373]]/[[CC-374]] 抽象未竟。相依 [[CC-373]]、[[CC-374]]、[[CC-389]]（non-interactive 契約基準）。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
+| CC-377 | 🔵 active | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]、[[CC-389]]（non-interactive 契約基準）。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
 | CC-379 | ✅ done | **[fix: pr-gate 生成的 brief 過不了 brief-validate.sh — claude gate route 全壞]** `scripts/pr-gate.sh` 三處 brief 模板（combined / parallel-reviewer / synthesis）的 `self_verify` 用自訂鍵（`file-exists:`/`has-conclusion:`）而無 `- cmd:` 機檢項，且 combined brief 的 `acceptance:` 縮排 2 空格被解析為 `self_verify` 子鍵——任一都讓 `brief-validate.sh`（CC-351 起為 executor 第一動作）REJECT，reviewer 未跑即停。修：`acceptance` 退回 column-0；`file-exists:` → `- cmd: "test -f …"`（機檢，post-verify 真執行）。stub 化的 gate 測試從未對生成 brief 跑真 `brief-validate`，故漏網。補三條回歸（每種 brief 各一，CC-372 claude gate 時發現）。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-380 | ✅ done | **[fix: gate reviewer 的 `pmctl guard check` 允許項只有 bare 形式 — 缺絕對/tilde]** in-session claude reviewer subagent 的乾淨 PATH 不含 `~/.local/bin`，故以絕對路徑叫 `pmctl guard check`，但 `install-hooks.sh`（CC-334）只寫 bare `Bash(pmctl guard check:*)`，背景 agent 又不能跳互動詢問 → 一律 DENY，結果檔寫不出（同 [[CC-291]] tilde-vs-absolute 類）。修：`install-hooks.sh` 改為寫入 bare + 絕對（`${PMCTL_BIN_DIR:-$HOME/.local/bin}`）+ tilde 三形式；`uninstall-hooks.sh` 鏡像移除三形式（install/uninstall 對稱，呼應 [[CC-368]] 三方漂移教訓）；`test-install.sh` 三條 CC-334 case 補 abs+tilde 斷言（HOME 釘進 fixture）。CC-372 claude gate 時發現。 | ops/install | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-381 | 🟡 deferred | **[arch: install host-PM-aware — 每個可當主 PM 的 host runtime 都對應寫入設定，不只 claude]** `install.sh`/`install-hooks.sh` 目前寫死 claude harness（`~/.claude/settings.json` 的 hook 接線＋permissions allow-list＋statusline＋agents/commands 介面）——只有「claude 當 host PM」時才正確。codex（或未來 host）當主 PM 時設定面不同（`~/.codex/`、AGENTS.md、自有 sandbox/permission 模型，無 `~/.claude` PreToolUse hook），[[CC-334]]/[[CC-380]] 寫進 `~/.claude` 的 guard/權限接線在 codex-host 下完全不生效 → codex-PM 安裝拿不到任何 gate/guard plumbing。這是 [[CC-333]] 硬耦合 **layer 4（install 路徑）+ layer 3/5（hook 機制/設定格式）**，且是「誰當 host PM」這條軸，與 [[CC-373]]/[[CC-374]]（PM→executor 軸）正交。要求：install 變 host-PM-aware，對每個支援的 host runtime 由 manifest（關聯 [[CC-372]] runner_kind、[[CC-375]] manifest 衍生接線）衍生該 host 的等價設定（hook/guard、allow-list 或 sandbox policy、PM 介面），每 host 維持 install/uninstall/doctor 三方一致（[[CC-368]]）。排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後。umbrella [[CC-333]]。 | arch/install | 2026-06-14 | — | P2 | design |
 | CC-382 | ✅ done | **[fix+feat: pr-gate 相對 `--output` → 兩 executor 皆產空結果；新增 `pmctl gate verify` 讓 claude host-native 結果可追蹤]** 相對 `--output`（或相對 `--cd` 預設）被原樣寫進 reviewer brief 的 `pmctl guard check … --file` 約束與 `pr-gate-handover_v1` 的 `output_file`，但 reviewer write-guard 要求絕對路徑、handover schema 也要求絕對 `output_file` → guard 退非零、reviewer 中止寫入 → 0-byte 結果但 gate 回報成功，**codex 與 claude handover 兩條路皆中**（先前誤判為 claude 專屬）。修：`OUTPUT_FILE` 在組 brief 前正規化為絕對（對 `$PWD`＝`cd "$WORK_DIR"` 後的工作目錄）。同時把完整性檢查抽成單一真相來源 `scripts/lib/gate-result-verify.sh`（非空／恰一條純文字 `Final:`／frontmatter `final:` 與 body 一致／可選釘住 shell 算出的 verdict），由 codex 同步路線、parallel synthesis、與新增 `pmctl gate verify <file>` 共用；`pr-gate.sh` 保留 inline fallback 供 copy-mode（沿用 [[CC-291]] executor-router 慣例）。`pmctl gate verify` 給 claude host-native（handover 在 pr-gate.sh 之外寫檔）與 codex 同等的寫後檢查，讓結果可被 pmctl 確認追蹤，**不改 claude 運作模式**。順帶把 [[CC-372]] 漏鏡像的 `test-runner-kind` 補進 `test-run-all-tests.sh`（55 vs 54 count drift；非 CI job 故 CI 未受影響）。+1 pr-gate 回歸、+5 pmctl-gate 案例；codex gate GO/approve、claude gate GO/advise 雙路驗證。CC-372 claude gate 收尾時發現。 | ops/test | 2026-06-14 | pr:#277 | P2 | hygiene |
 | CC-383 | ✅ done | **[arch: `pmctl gate --executor claude` 改走獨立 headless `claude --print`，退場 agent_executor handover]** 目前 `pmctl gate run --executor claude` 走 `agent_executor`：pr-gate.sh 印 `pr-gate-handover_v1` 交棒給 host，由 host(互動 session)或其 spawn 的 `Agent(claude-executor)` 子代理審查——前者是自我審查、後者撞子代理權限層([[claude-gate-route-guard-gap]])。改為:claude executor 預設**同步派發獨立 headless `claude --print` 子程序**(`adapters/claude/dispatch.sh`,已證實可獨立自跑 guard-check + 寫可驗證結果),對稱 codex 的 `dispatch_via_codex`,跑完用 `gate_result_verify`(CC-382)驗證。新增 `dispatch_via_claude`(executor-router);pr-gate 諸多 `EXECUTOR==codex` 分支推廣為「subprocess 派發 vs 退場的 handover」。退場 `emit_pr_gate_handover_block`/`add_pr_gate_handover_entry`/`pr-gate-handover_v1` schema 對 claude executor 的使用 + 改 claude gate 測試(現斷言 handover)。runner_kind 框架:claude **當 host PM 時 host-native、當被派發 executor 時 cli-subprocess(headless)**,兩角色解析不同 dispatch_route([[guard-role-runtime]]、關聯 [[CC-373]]/[[CC-374]])。model:預設 adapter pinned(`claude-sonnet-4-6`)、可由使用者 `--model` 覆寫(透出到 gate;協調 review-model CC-323..327)。順帶補 inline-fallback vs lib 的 CI sha256 parity guard(CC-382 三方 reviewer 點到)。umbrella [[CC-333]]。 | arch/portability | 2026-06-14 | pr:#278 | P2 | design |
-| CC-385 | 🔵 active | **[spike: dispatch 模型統一 — brief 由可信代碼落地、executor 一律獨立子程序消費]** **CC-385a spike 已完成（2026-06-15）**：PM 直呼 `pmctl dispatch run --adapter codex` 不走 subagent、codex 作為獨立 subprocess exit 0、self-verify pass。D1（PM 寫 brief → /tmp/brief-*.md OK）、D3（pre-authed OK）已解。D4 決策：subagent 路保留為 fallback（no-CLI runtime），`pmctl dispatch run` 為 primary（更新 dispatch-route-primary DECISIONS）。D5 guard collapse：codex `write_guard_mode: cli-only` 已落地於 adapter.yaml。D2（context-pack）延後。**決策記於 DECISIONS.md 2026-06-15**。剩餘工作：CC-375 prune live write-guard hook（install/uninstall/doctor 三方一致）、update codex-executor.md dispatch section、update `dispatch-route-primary` DECISIONS entry。Scope: `docs/spikes/CC-385-dispatch-model-unification-scope.md`。 | arch/portability | 2026-06-14 | — | P2 | spike |
+| CC-385 | ✅ done | **[spike: dispatch 模型統一 — brief 由可信代碼落地、executor 一律獨立子程序消費]** Spike 決策完成：採 Model B（pmctl 落地 brief → executor 獨立子程序消費）為主路。[[CC-385a]] 真實驗證 `pmctl dispatch run --adapter codex` 獨立子程序 exit 0、self-verify pass；D1（pmctl 落地 brief）、D3（pre-authed）、D4（subagent 保留為無-CLI fallback）、D5（codex `write_guard_mode: cli-only` 已落地）皆解，D2（context-pack）延後 [[CC-366]]。決策記於 DECISIONS.md 2026-06-15。統一**實作**拆為 [[CC-386]]（post-verify 唯一驗證者）、[[CC-387]]（codex subagent 退場）、[[CC-388]]（claude 一般 executor）、[[CC-389]]（non-interactive 契約）。Scope: `docs/spikes/CC-385-dispatch-model-unification-scope.md`。**See**: pr:#283 | arch/portability | 2026-06-14 | pr:#283 | P2 | spike |
+| CC-386 | 🔵 active | **[arch: pmctl post-verify 成為 executor 結果的唯一驗證者]** executor 全面轉獨立子程序（Model B，[[CC-385]] 決策）後，結果可信度不能再倚賴 executor 的自然語言結論。強化 `pmctl dispatch run` 的 post-verify 為三重機檢：(1) executor process exit code；(2) trace 完整性（`.agent-trace/latest.last` 非空、JSONL 收尾有 `turn.completed`、無 orphan 或截斷）；(3) `self_verify` 的 `- cmd:` 實跑全綠。三者皆過才判 PASS；exit 0 但 trace 殘缺判 FAIL 並透出。所有 executor 獨立後信任的基石，須先於退場任何舊路（fail-closed）。對齊既有真相來源 [[CC-382]]（`gate-result-verify.sh`）不重造。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
+| CC-387 | 🔵 active | **[arch: codex 子代理自寫 brief 路退場 — pmctl dispatch run 為唯一 codex routine 路]** [[CC-385a]] 已證 `pmctl dispatch run --adapter codex` 獨立子程序 exit 0。本票定其為 codex **唯一** routine 路：`Agent(codex-executor)` 自寫 brief 降為「無 headless CLI runtime」明示 fallback（codex 有 CLI 故實質退役）；同步 `agents/codex-executor.md`、`skills/dispatch-brief`、`agents/project-pm.md` 的 dispatch 敘述不再呈現 subagent 自寫為一般路。退場後確認 `hook-executor-write-guard.sh` live 分支只在 fallback 觸發、routine 路全 no-op，文件化並保持 fail-closed（收尾 [[CC-385]] D5）。相依 [[CC-386]]（先有可信驗證才退舊路）、[[CC-375]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
+| CC-388 | 🔵 active | **[arch: claude adapter 作為一般 implementation executor，非僅 gate route]** [[CC-383]] 已證 claude 獨立 headless `claude --print` 於 **gate route**。本票驗證並補齊 `pmctl dispatch run --adapter claude` 用於**一般 implementation brief**（非 gate）：一次真實 dispatch run，輸出契約 `.agent-trace/latest.last` 與 [[CC-386]] post-verify 對齊，確認 claude 與 codex 在 implementation 軸對稱。相依 [[CC-383]]、[[CC-386]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
+| CC-389 | 🔵 active | **[arch: non-interactive executor 契約 spec — auth 前提 + fail-loud + 唯一輸出與驗證]** 釘死所有 Model B executor 的共同契約：brief 由 pmctl 落地、executor 為獨立子程序、需 headless CLI、**auth 前提為預先登入**、未登入則 fail-loud（doctor 加 per-executor auth 探測、不靜默）、輸出為 `.agent-trace/latest.last`、驗證走 [[CC-386]] 三重機檢。無 headless CLI 的 runtime 則 fallback 為 subagent 路（live-hook guard 唯一存活理由）。本契約為 [[CC-376]]、[[CC-377]] 第三方 adapter 落地基準（N≥2 驗收）。相依 [[CC-386]]。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P2 | design |
 | CC-384 | 🟢 someday | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `hook-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。 | arch/portability | 2026-06-14 | — | P3 | design |
 
 ---
@@ -226,7 +230,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-385 — spike: dispatch 模型統一（brief 由可信代碼落地、executor 獨立子程序消費）🟢 someday
+## CC-385 — spike: dispatch 模型統一（brief 由可信代碼落地、executor 獨立子程序消費）✅ 2026-06-15
 
 **完整 scope 在 `docs/spikes/CC-385-dispatch-model-unification-scope.md`**（含兩模型優缺點對照、user 框定、待解 D1–D5、驗收）。
 
@@ -236,7 +240,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **待解**: D1 brief 由誰落地（不可 PM 經 Write，撞 pm-write-guard → pmctl）、D2 context-pack 進 brief、D3 executor 獨立 auth 前提與失敗模式、D4 是否全退子代理路（牴觸 [[dispatch-route-primary]]，或保留為無-CLI runtime 的 fallback）、D5 guard collapse 順序保持 fail-closed。
 
-**See**: [[CC-374]]（地基：write_guard_mode 已 manifest 化）、[[CC-383]]（claude 已此模型）、[[CC-366]]（auto-pack）、[[dispatch-route-primary]]、umbrella [[CC-333]]。
+**Resolution (2026-06-15)**: 採用 Model B 為主路。[[CC-385a]] 真實 e2e 驗證 `pmctl dispatch run --adapter codex` 獨立子程序 exit 0、self-verify pass、無 subagent、無 live hook 觸發、既有 codex auth 足夠。D1 = pmctl 落地 brief；D3 = 預先登入前提確認、未登入 fail-loud（細化於 [[CC-389]]）；D4 = subagent 路保留為無-CLI runtime 明示 fallback、`pmctl dispatch run` 為文件化主路；D5 = codex `write_guard_mode: cli-only` 已落地 `adapters/codex/adapter.yaml`、live-hook 對所有現行 adapter 成 no-op；D2（context-pack）延後 [[CC-366]]。統一**實作**拆為 [[CC-386]]（post-verify 唯一驗證者，keystone）、[[CC-387]]（codex subagent 退場）、[[CC-388]]（claude 一般 executor）、[[CC-389]]（non-interactive 契約）。
+
+**See**: DECISIONS.md 2026-06-15 dispatch-model-B-primary-codex-write-guard-cli-only、[[CC-374]]（地基：write_guard_mode manifest 化）、[[CC-383]]（claude 已此模型）、[[CC-366]]（auto-pack）、umbrella [[CC-333]]。pr:#283
 
 ---
 
@@ -327,6 +333,73 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Done（CC-385a 縮範圍後）**: `install-hooks.sh` 改為掃 `adapters/*/adapter.yaml`，對每個 `needs_bash_guard=true` adapter 從 `adapters/<name>/bash-guard.sh` 接線（manifest-derived，`runner-kind.sh` 衍生）；退場 `hook-executor-write-guard.sh` 與 `hook-codex-bash-guard.sh`（scripts/ 形式）的 PreToolUse 接線（prune 進 jq retired 清單）。`doctor.sh` 同步：新增 `adapter_bg_present()`、stale 偵測擴展到 adapters/ 樹、`check_hooks()` 走 manifest 掃描。`hook-codex-bash-guard.sh` 加 symlink 解析（從 `adapters/codex/bash-guard.sh` 呼叫時正確找 `scripts/lib/`）。51 個 hooks 測試全過。三方一致（install/uninstall/doctor）。
 
 **See**: [[CC-374]]（前置）、[[CC-385a]]（spike，決定縮範圍）。pr:#281
+
+---
+
+## CC-386 — arch: pmctl post-verify 成為 executor 結果的唯一驗證者 🔵 active
+
+**Problem / 目標**: executor 全面轉獨立子程序（Model B，[[CC-385]] 決策）後，結果可信度不能再倚賴 executor 自報的自然語言結論——獨立子程序可能 exit 0 卻中途截斷、trace 不完整、或 self_verify 從未真跑。pmctl 必須成為唯一的結果裁決者。
+
+**Requirement**:
+- `pmctl dispatch run` 的 post-verify 強化為三重機檢，全過才判 PASS：
+  - (1) executor process **exit code** 為 0。
+  - (2) **trace 完整性**：`.agent-trace/latest.last` 非空、JSONL 收尾有 `turn.completed`（或 adapter 宣告的等價終止事件）、無 orphan 或截斷。
+  - (3) **self_verify 的 `- cmd:` 實跑**全綠（沿用 [[feedback_self_verify_format]]：機檢項 post-verify 真執行）。
+- exit 0 但 trace 殘缺（如背景 orphan、JSONL 中斷）→ 判 **FAIL** 並透出明確訊息，不得靜默成功。
+- 對齊既有真相來源 [[CC-382]] `scripts/lib/gate-result-verify.sh`（gate 結果完整性檢查）——抽共用、不重造兩套。
+- 測試矩陣涵蓋：完整 trace PASS、exit≠0 FAIL、exit 0+截斷 trace FAIL、self_verify cmd 失敗 FAIL、空 `.last` FAIL。
+
+**驗收**: 一次真實 dispatch run 的 trace 被三重機檢判定；人為截斷 trace 後同一 run 由 PASS 翻 FAIL。
+
+**Dependencies**: [[CC-382]]（gate-result-verify 既有真相來源）。所有後續退場票（[[CC-387]]）的前置——先有可信驗證才退舊路。umbrella [[CC-333]]。
+
+---
+
+## CC-387 — arch: codex 子代理自寫 brief 路退場 🔵 active
+
+**Problem / 目標**: live-hook write-guard 存在的唯一原因是 `codex-executor` 子代理用 host Write 自寫 brief。[[CC-385a]] 已證 `pmctl dispatch run --adapter codex` 獨立子程序 exit 0。把 pmctl 路定為 codex **唯一** routine 路後，codex 不再有任何 routine 路持有 brief-write authority，live-hook 對 routine 全成 no-op。
+
+**Requirement**:
+- `pmctl dispatch run --adapter codex` 為 codex 唯一文件化 routine 路；`Agent(codex-executor)` 自寫 brief 降為「無 headless CLI runtime」明示 fallback（codex 有 CLI 故實質退役）。
+- 同步操作文件不再呈現 subagent 自寫為一般路：`agents/codex-executor.md`（§Dispatch / §When NOT to use）、`skills/dispatch-brief`、`agents/project-pm.md` dispatch 段。
+- 退場後確認 `hook-executor-write-guard.sh` live 分支只在明示 fallback 觸發、routine 路全 no-op，文件化並保持 **fail-closed**（cli-only 路徑無合法 manifest 仍拒）——收尾 [[CC-385]] D5。
+- 不刪 `hook-executor-write-guard.sh` 腳本本體（fallback 仍需）；只退場其 routine 角色。
+
+**驗收**: codex routine dispatch 走 pmctl、無 live hook 觸發、[[CC-386]] post-verify 判 PASS；fallback 路仍由 live-hook 把關（保留回歸）。
+
+**Dependencies**: [[CC-386]]（先有可信驗證才退舊路）、[[CC-375]]（hook 接線已 manifest 化）。umbrella [[CC-333]]。
+
+---
+
+## CC-388 — arch: claude adapter 作為一般 implementation executor 🔵 active
+
+**Problem / 目標**: [[CC-383]] 證明了 claude 獨立 headless `claude --print` 於 **gate route**，但「一般 implementation 派發」軸尚未驗證對稱。Model B 全面上路要求 `pmctl dispatch run --adapter claude` 能跑一般 implementation brief，非僅 gate 特例。
+
+**Requirement**:
+- 驗證並補齊 `pmctl dispatch run --adapter claude --brief-file … --cd …` 用於一般 implementation brief（含 file-writing brief）。
+- 輸出契約 `.agent-trace/latest.last` 與 [[CC-386]] post-verify 對齊；claude 與 codex 在 implementation 軸的 dispatch/verify 路徑對稱。
+- 釐清 claude 被派發為 executor 時的 isolation/permission（對比其當 host PM 時的 host-native 角色，[[guard-role-runtime]]）。
+
+**驗收**: 一次真實 `pmctl dispatch run --adapter claude` implementation run，產出檔案、self_verify 通過、[[CC-386]] 三重機檢判 PASS。
+
+**Dependencies**: [[CC-383]]、[[CC-386]]。umbrella [[CC-333]]。
+
+---
+
+## CC-389 — arch: non-interactive executor 契約 spec 🔵 active
+
+**Problem / 目標**: Model B 全面上路後，所有 executor 共享同一隱性契約，但它尚未被寫成單一可依循的 spec。第三方 adapter（[[CC-376]]/[[CC-377]]）需要一份明確基準，否則每個 adapter 各自詮釋「怎樣算正確落地」。
+
+**Requirement**: 一份 `docs/` 契約文件釘死 Model B executor 的共同要求：
+- brief 由 **pmctl 落地**（非 agent 經 Write）、executor 為**獨立子程序**、需 **headless CLI**。
+- **auth 前提為預先登入**；未登入則 **fail-loud**（不靜默成功）；`doctor` 加 per-executor auth 探測。
+- 輸出契約 = `.agent-trace/latest.last`；結果驗證 = [[CC-386]] 三重機檢（pmctl 為唯一裁決者）。
+- **fallback policy**：無 headless CLI 的 runtime → subagent 路（live-hook guard 唯一存活理由），明示而非預設。
+- model-alias、isolation 翻譯沿用既有 adapter 慣例（[[CC-292]]）。
+
+**驗收**: [[CC-376]]/[[CC-377]] 落地以本契約為基準；契約所列每條要求都有對應的 adapter 自檢或 doctor 檢查。
+
+**Dependencies**: [[CC-386]]（驗證機制）。為 [[CC-376]]/[[CC-377]] 前置基準。umbrella [[CC-333]]。
 
 ---
 
