@@ -56,7 +56,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟）。以 CC-389 契約為基準 | ✅ pr:#290 |
-| CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini** | 🔵 |
+| CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini**。**🟡 DEFERRED — 待 agy 版本更新（spike 2026-06-16）**：agy **有免費額度**（成本非阻因），暫緩純因 **headless CLI 尚未成熟**——1.0.8 無結構化輸出 / 無語意終止事件 / headless 不穩 → 無 machine 契約可建乾淨 adapter（`docs/spikes/CC-377-agy-headless-feasibility.md`）。**agy 仍為首選第二 adapter**，resume = 較新 agy 出可用 headless stream-json。**escape-hatch**：N≥2 暫未由 agy 達成，opencode 為唯一獨立第三方 adapter。**牽動 Phase 7 排序紅線**（lifecycle 須 N≥2 後）→ 待 maintainer 定奪是否以 opencode 單一獨立 adapter 視為抽象已證、或等 agy 成熟（2026-06 免費 CLI 池枯竭，傾向等 agy） | 🟡 |
 
 ### Phase 6 — deprecation 清掃（P2）
 
