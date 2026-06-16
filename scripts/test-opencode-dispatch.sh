@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DISPATCH="$REPO_ROOT/adapters/opencode/dispatch.sh"
+PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
@@ -177,7 +178,7 @@ case_happy_path() {
   PATH="$bindir:$PATH" "$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
-    --timeout 60 >/dev/null 2>&1
+    --timeout 120 >/dev/null 2>&1
   set -e
   last="$(cat "$work/.agent-trace/latest.last" 2>/dev/null || true)"
   if [[ "$last" == "hello from opencode" ]]; then pass "$name"
@@ -380,6 +381,24 @@ case_last_scoped_to_winning_attempt() {
   rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
 }
 
+# Behavior: --timeout below 120s (and non-zero) is rejected with exit 2.
+# Steps:
+#   1. Run dispatch.sh with --model and --timeout 60.
+#   2. Assert non-zero exit.
+case_timeout_too_low_rejected() {
+  local name="arg/--timeout below 120s is rejected"; should_run "$name" || return 0
+  local work bf rc
+  work="$(mktemp -d)"; bf="$(_mk_brief)"
+  rc=0
+  "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --timeout 60 >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then pass "$name"
+  else fail "$name" "expected non-zero exit for --timeout 60, got 0"; fi
+  rm -rf "$work"; rm -f "$bf"
+}
+
 # Behavior: --sandbox and --approval emit a deprecation warning but do not crash.
 # Steps:
 #   1. Run dispatch.sh with --sandbox and --approval flags plus --print-cmd.
@@ -455,10 +474,41 @@ case_all_attempts_failed() {
   PATH="$bindir:$PATH" "$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
-    --timeout 60 >/dev/null 2>&1 || rc=$?
+    --timeout 120 >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then pass "$name"
   else fail "$name" "expected non-zero exit when all attempts fail, got 0"; fi
   rm -rf "$bindir" "$work"; rm -f "$bf"
+}
+
+# Behavior: pmctl dispatch run --adapter opencode routes through the opencode adapter,
+# records executor:"opencode" in the Run state row, and creates latest.last.
+# Steps:
+#   1. git-init a workdir; install fake opencode that succeeds.
+#   2. Run pmctl dispatch run --adapter opencode with a fresh state store.
+#   3. Assert runs.jsonl row has executor:"opencode", state:"ok", and latest.last exists.
+case_pmctl_route() {
+  local name="pmctl-route/pmctl dispatch run --adapter opencode records Run row"; should_run "$name" || return 0
+  local store bindir work bf runs_file executor state exit_code
+  store="$(mktemp -d)"; bindir="$(mktemp -d)"; work="$(mktemp -d)"
+  bf="$(mktemp /tmp/brief-oc-pmctl-XXXXXX.md)"
+  git -C "$work" init -q
+  printf 'schema_version: 1\nworking_dir: %s\ngoal: pmctl opencode route test\nfiles:\n  - read: %s/README\nacceptance:\n  - dispatch exits 0\n' \
+    "$work" "$work" > "$bf"
+  _fake_opencode_success "$bindir" "pmctl route ok"
+  PM_DISPATCH_STATE_ROOT="$store" PATH="$bindir:$PATH" \
+    "$PMCTL" dispatch run --adapter opencode \
+    --cd "$work" --brief-file "$bf" >/dev/null 2>&1 || true
+  runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
+  executor="$(jq -r '.executor' "$runs_file" 2>/dev/null | tail -1 || true)"
+  state="$(jq -r '.state' "$runs_file" 2>/dev/null | tail -1 || true)"
+  exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
+  if [[ "$executor" == "opencode" && "$state" == "ok" && "$exit_code" == "0" ]] \
+     && [[ -s "$work/.agent-trace/latest.last" ]]; then
+    pass "$name"
+  else
+    fail "$name" "executor=$executor state=$state exit=$exit_code last=$(ls "$work/.agent-trace/latest.last" 2>/dev/null || echo missing)"
+  fi
+  rm -rf "$store" "$bindir" "$work"; rm -f "$bf"
 }
 
 # Behavior: After a successful dispatch, latest.last and latest.jsonl symlinks are created.
@@ -475,7 +525,7 @@ case_latest_symlinks_created() {
   PATH="$bindir:$PATH" "$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
-    --timeout 60 >/dev/null 2>&1
+    --timeout 120 >/dev/null 2>&1
   set -e
   if [[ -L "$work/.agent-trace/latest.last" ]] && [[ -L "$work/.agent-trace/latest.jsonl" ]]; then
     pass "$name"
@@ -502,6 +552,8 @@ case_last_scoped_to_winning_attempt
 case_nonzero_exit_fallback
 case_missing_terminal_fallback
 case_all_attempts_failed
+case_pmctl_route
+case_timeout_too_low_rejected
 case_legacy_flags_warn
 case_latest_symlinks_created
 

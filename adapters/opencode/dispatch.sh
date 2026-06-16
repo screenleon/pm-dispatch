@@ -319,7 +319,14 @@ _refresh_latest_pointers
 # ── Per-attempt timeout ───────────────────────────────────────────────────────
 # Distribute budget evenly across the fallback chain so a single hanging model
 # cannot exhaust the full timeout. Floor at 120s per attempt.
+# Reject positive totals below 120s: they cannot complete even one attempt and
+# would silently run far longer than requested after the floor is applied.
 _chain_len=${#MODELS_TO_TRY[@]}
+if [[ "$TIMEOUT" -gt 0 && "$TIMEOUT" -lt 120 ]]; then
+  printf '[%s] opencode-dispatch: --timeout %ds is below the 120s per-attempt minimum; use 0 (no limit) or >= 120\n' \
+    "$(date -Is)" "$TIMEOUT" | tee -a "$STDERR_LOG" >&2
+  exit 2
+fi
 _attempt_timeout=$(( TIMEOUT / _chain_len ))
 if [[ "$_attempt_timeout" -lt 120 ]]; then
   _attempt_timeout=120
@@ -337,7 +344,10 @@ for _model in "${MODELS_TO_TRY[@]}"; do
 
   # Record trace byte-offset before this attempt so health checks are scoped
   # to only the current attempt's output, not the cumulative trace.
-  _trace_offset=$(wc -c < "$TRACE" 2>/dev/null || echo 0)
+  # Guard with -f to avoid a false stderr line when the trace file doesn't
+  # exist yet (first attempt before any opencode run has written to it).
+  _trace_offset=0
+  [[ -f "$TRACE" ]] && _trace_offset=$(wc -c < "$TRACE" 2>/dev/null || echo 0)
 
   {
     echo "[$(date -Is)] opencode-dispatch attempt ${_attempt}/${_chain_len}: model=${_model} timeout=${_attempt_timeout}s"

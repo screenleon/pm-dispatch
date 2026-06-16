@@ -287,7 +287,7 @@ Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processe
 - A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
 - Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.
 
-Works for any executor (codex or claude). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
+Works for any executor (codex, claude, or opencode). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 

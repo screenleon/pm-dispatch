@@ -11,8 +11,15 @@
 # Supported isolation levels (source of truth: core/policy/isolation-level.yaml):
 #   none            – no isolation; full machine access
 #                     → --dangerously-skip-permissions
-#   workspace-write – write within project working dir (opencode default)
-#                     → no extra CLI flag needed; opencode prompts on edit by default
+#   workspace-write – host-managed isolation (opencode default permission behavior)
+#                     → no extra CLI flag needed; opencode prompts on edit by default.
+#                     NOTICE: pm-dispatch does NOT enforce the workspace boundary here.
+#                     Actual blast radius depends on the user's opencode host config
+#                     (~/.config/opencode/opencode.json). Operators must ensure their
+#                     opencode installation is configured appropriately. Using this
+#                     level implies acknowledgment that enforcement is host-managed,
+#                     not pm-dispatch-managed. See adapters/opencode/dispatch.sh
+#                     isolation override recorded 2026-06-16.
 #
 # Unsupported levels (NOT listed here → dispatch.sh rejects with exit 2):
 #   read-only       – opencode has no CLI flag to enforce read-only access;
