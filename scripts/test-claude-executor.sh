@@ -39,7 +39,7 @@ claude_metadata_validates() {
 
   local metadata
   metadata=$(cat <<META
-handover_version: 2
+handover_version: 3
 executor: claude
 dispatch_route: main_thread_bash_background
 working_dir: $tmp_root

@@ -146,7 +146,7 @@ Never emit metadata values containing forbidden shell characters: single quote, 
 The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
 
 ```dispatch_handover_v1
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}

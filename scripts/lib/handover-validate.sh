@@ -127,7 +127,7 @@ handover_validate_handover_version() {
   local value=${1-}
 
   handover_validate_metadata_value handover_version "$value" || return 1
-  [[ "$value" == "2" ]] || handover_reject handover_version "only version 2 is accepted"
+  [[ "$value" == "3" ]] || handover_reject handover_version "only version 3 is accepted"
 }
 
 handover_validate_executor() {

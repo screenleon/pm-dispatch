@@ -511,7 +511,7 @@ case_handover_schema_oneOf_instance_semantics() {
     return
   fi
   local schema_file="$CORE_DIR/schema/handover.schema.json"
-  local base='{"handover_version":2,"executor":"codex","dispatch_route":"agent_executor","working_dir":"/tmp/t","brief_file":"/tmp/b.md","timeout":120,"model":"default","fallback_allowed":false'
+  local base='{"handover_version":3,"executor":"codex","dispatch_route":"agent_executor","working_dir":"/tmp/t","brief_file":"/tmp/b.md","timeout":120,"model":"default","fallback_allowed":false'
   local tmpdir; tmpdir="$(mktemp -d)"
 
   # canonical-only: must be valid

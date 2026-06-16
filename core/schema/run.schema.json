@@ -9,7 +9,7 @@
       "pattern": "^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$"
     },
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "task_id": {
       "type": "string",
