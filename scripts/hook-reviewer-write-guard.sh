@@ -32,10 +32,6 @@ _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
-# Deprecated-name compat shims — remove after v0.5.0
-[[ -z "${PM_HOOK_LOG_DIR:-}"         && -n "${CLAUDE_HOOK_LOG_DIR:-}"         ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;          PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
-[[ -z "${PM_HOOK_REVIEWER_GUARD:-}"  && -n "${CLAUDE_HOOK_REVIEWER_GUARD:-}"  ]] && { printf '[pm-dispatch] CLAUDE_HOOK_REVIEWER_GUARD deprecated; use PM_HOOK_REVIEWER_GUARD\n' >&2; PM_HOOK_REVIEWER_GUARD="${CLAUDE_HOOK_REVIEWER_GUARD}"; }
-
 HOOK_NAME="hook-reviewer-write-guard"
 LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"

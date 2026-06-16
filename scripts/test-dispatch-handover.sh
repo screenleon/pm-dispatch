@@ -35,11 +35,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
 brief_file: $brief_file
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 1200
 model: default
-skip_git_check: false
 fallback_allowed: true
 EOF
 }
@@ -58,11 +56,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
 brief_file: $brief_file
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 1200
 model: default
-skip_git_check: false
 fallback_allowed: true
 ---
 working_dir: $work_dir
@@ -506,70 +502,6 @@ dispatch_route_unknown_value_rejects_case() {
   expect_reject dispatch_route handover_validate_dispatch_route mystery_route
 }
 
-# Behavior: workspace-write sandbox is accepted.
-# Steps:
-#   1. Validate sandbox workspace-write.
-#   2. Assert validation succeeds.
-sandbox_workspace_write_accepts_case() {
-  handover_validate_sandbox workspace-write >/dev/null 2>&1
-}
-
-# Behavior: read-only sandbox is accepted.
-# Steps:
-#   1. Validate sandbox read-only.
-#   2. Assert validation succeeds.
-sandbox_read_only_accepts_case() {
-  handover_validate_sandbox read-only >/dev/null 2>&1
-}
-
-# Behavior: danger-full-access sandbox is rejected by the bash route.
-# Steps:
-#   1. Validate sandbox danger-full-access.
-#   2. Assert the reject audit names sandbox.
-sandbox_danger_full_access_rejects_case() {
-  expect_reject_reason sandbox "not supported by bash route" handover_validate_sandbox danger-full-access
-}
-
-# Behavior: approval never is accepted.
-# Steps:
-#   1. Validate approval never.
-#   2. Assert validation succeeds.
-approval_never_accepts_case() {
-  handover_validate_approval never >/dev/null 2>&1
-}
-
-# Behavior: approval on-failure is rejected by the bash route.
-# Steps:
-#   1. Validate approval on-failure.
-#   2. Assert the reject audit names approval.
-approval_on_failure_rejects_case() {
-  expect_reject_reason approval "not supported by bash route" handover_validate_approval on-failure
-}
-
-# Behavior: approval on-request is rejected by the bash route (use Agent(codex-executor) fallback).
-# Steps:
-#   1. Validate approval on-request.
-#   2. Assert the reject audit names approval.
-approval_on_request_rejects_case() {
-  expect_reject_reason approval "not supported by bash route" handover_validate_approval on-request
-}
-
-# Behavior: skip_git_check false is accepted.
-# Steps:
-#   1. Validate skip_git_check false.
-#   2. Assert validation succeeds.
-skip_git_check_false_accepts_case() {
-  handover_validate_skip_git_check false >/dev/null 2>&1
-}
-
-# Behavior: skip_git_check true is rejected by the bash route (use Agent(codex-executor) fallback).
-# Steps:
-#   1. Validate skip_git_check true.
-#   2. Assert the reject audit names skip_git_check.
-skip_git_check_true_rejects_case() {
-  expect_reject_reason skip_git_check "not supported by bash route" handover_validate_skip_git_check true
-}
-
 # Behavior: isolation_level workspace-write is accepted.
 # Steps:
 #   1. Validate isolation_level workspace-write.
@@ -727,10 +659,10 @@ fallback_allowed: true"
   ! handover_validate_required_fields "$block" >/dev/null 2>&1
 }
 
-# Behavior: Handover block mixing isolation_level with legacy sandbox field is rejected.
+# Behavior: Handover block carrying the removed legacy sandbox field is rejected (v0.6.0 CC-335).
 # Steps:
-#   1. Build metadata with both isolation_level and sandbox present.
-#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+#   1. Build metadata with isolation_level plus the removed legacy sandbox field.
+#   2. Assert handover_validate_all_metadata rejects naming the removed sandbox field.
 all_metadata_mixed_isolation_and_sandbox_rejects_case() {
   local block
   block="handover_version: 3
@@ -743,13 +675,13 @@ sandbox: workspace-write
 timeout: 1200
 model: default
 fallback_allowed: true"
-  expect_reject isolation_level handover_validate_all_metadata "$block"
+  expect_reject_reason sandbox "legacy field removed in v0.6.0" handover_validate_all_metadata "$block"
 }
 
-# Behavior: Handover block mixing isolation_level with legacy approval field is rejected.
+# Behavior: Handover block carrying the removed legacy approval field is rejected (v0.6.0 CC-335).
 # Steps:
-#   1. Build metadata with both isolation_level and approval present.
-#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+#   1. Build metadata with isolation_level plus the removed legacy approval field.
+#   2. Assert handover_validate_all_metadata rejects naming the removed approval field.
 all_metadata_mixed_isolation_and_approval_rejects_case() {
   local block
   block="handover_version: 3
@@ -762,13 +694,13 @@ approval: never
 timeout: 1200
 model: default
 fallback_allowed: true"
-  expect_reject isolation_level handover_validate_all_metadata "$block"
+  expect_reject_reason approval "legacy field removed in v0.6.0" handover_validate_all_metadata "$block"
 }
 
-# Behavior: Handover block mixing isolation_level with legacy skip_git_check field is rejected.
+# Behavior: Handover block carrying the removed legacy skip_git_check field is rejected (v0.6.0 CC-335).
 # Steps:
-#   1. Build metadata with both isolation_level and skip_git_check present.
-#   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
+#   1. Build metadata with isolation_level plus the removed legacy skip_git_check field.
+#   2. Assert handover_validate_all_metadata rejects naming the removed skip_git_check field.
 all_metadata_mixed_isolation_and_skip_git_check_rejects_case() {
   local block
   block="handover_version: 3
@@ -781,7 +713,7 @@ skip_git_check: false
 timeout: 1200
 model: default
 fallback_allowed: true"
-  expect_reject isolation_level handover_validate_all_metadata "$block"
+  expect_reject_reason skip_git_check "legacy field removed in v0.6.0" handover_validate_all_metadata "$block"
 }
 
 # Behavior: Timeout 1200 is accepted.
@@ -976,10 +908,10 @@ all_metadata_valid_accepts_case() {
 
 # Behavior: Composite metadata with one invalid field returns that field's reject reason.
 # Steps:
-#   1. Build metadata with sandbox danger-full-access.
-#   2. Assert handover_validate_all_metadata rejects and names sandbox.
+#   1. Build metadata with an unknown isolation_level value.
+#   2. Assert handover_validate_all_metadata rejects and names isolation_level.
 all_metadata_invalid_field_rejects_case() {
-  expect_reject sandbox handover_validate_all_metadata "$(metadata_fixture "$REPO_ROOT" /tmp/brief-invalid-composite.md | sed 's/^sandbox: .*/sandbox: danger-full-access/')"
+  expect_reject isolation_level handover_validate_all_metadata "$(metadata_fixture "$REPO_ROOT" /tmp/brief-invalid-composite.md | sed 's/^isolation_level: .*/isolation_level: bogus-level/')"
 }
 
 # Behavior: Required-field validation accepts complete metadata.
@@ -1106,14 +1038,6 @@ run_case "handover/executor opencode accepts" executor_opencode_accepts_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case
-run_case "handover/sandbox workspace-write accepts" sandbox_workspace_write_accepts_case
-run_case "handover/sandbox read-only accepts" sandbox_read_only_accepts_case
-run_case "handover/sandbox danger-full-access rejects" sandbox_danger_full_access_rejects_case
-run_case "handover/approval never accepts" approval_never_accepts_case
-run_case "handover/approval on-failure rejects" approval_on_failure_rejects_case
-run_case "handover/approval on-request rejects" approval_on_request_rejects_case
-run_case "handover/skip_git_check false accepts" skip_git_check_false_accepts_case
-run_case "handover/skip_git_check true rejects" skip_git_check_true_rejects_case
 run_case "handover/timeout 1200 accepts" timeout_1200_accepts_case
 run_case "handover/timeout below min rejects" timeout_below_minimum_rejects_case
 run_case "handover/timeout above max rejects" timeout_above_maximum_rejects_case

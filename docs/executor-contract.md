@@ -21,7 +21,7 @@ Executor-agnostic metadata (must be interpreted by all concrete profiles):
 Executor-specific metadata subsets:
 
 - `isolation_level` (canonical, M3+): abstract isolation intent; adapter layer translates to executor-native flags. Values: `none | read-only | workspace-write | workspace-network | sandboxed`. Source of truth: `core/policy/isolation-level.yaml`. Note: `none` is not accepted on `main_thread_bash_background` route (maps to `danger-full-access`).
-- `sandbox`, `approval`, `skip_git_check` (legacy, backward-compat): codex-profile-only native flags. Accepted when `isolation_level` is absent (pre-M3 briefs). New briefs must use `isolation_level` instead; mixing both is rejected.
+- `sandbox`, `approval`, `skip_git_check` (legacy): removed in v0.6.0 (CC-335). A brief carrying any of them is rejected; use `isolation_level` instead.
 - `claude` profile: use `isolation_level: workspace-write` (or appropriate level); the adapter layer handles translation and the agent itself ignores isolation metadata.
 
 Executors should ignore unrecognized metadata keys unless they are intentionally documented for that profile.

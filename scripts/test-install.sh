@@ -546,7 +546,7 @@ test_install_manifest_atomic() {
       done
     done
   fi
-  for script in token-usage.sh log-usage.sh pr-gate.sh codex-dispatch.sh setup-project.sh patch-gitignore.sh doctor.sh; do
+  for script in token-usage.sh log-usage.sh pr-gate.sh setup-project.sh patch-gitignore.sh doctor.sh; do
     [[ -e "$REPO_ROOT/scripts/$script" ]] && expected_entries=$((expected_entries + 1))
   done
   [[ -d "$REPO_ROOT/pm" ]] && expected_entries=$((expected_entries + 1))
@@ -816,11 +816,6 @@ dispatch_allowlist_entries_for_home() {
   local home="$1"
   local f rel
 
-  f="$REPO_ROOT/scripts/codex-dispatch.sh"
-  if [[ -f "$f" ]]; then
-    rel="${f#"$home/"}"
-    printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-  fi
   for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
     [[ -f "$f" ]] || continue
     rel="${f#"$home/"}"

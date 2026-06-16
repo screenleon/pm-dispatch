@@ -58,12 +58,6 @@ fi
 # shellcheck source=scripts/lib/portable.sh
 . "$_SCRIPT_DIR/lib/portable.sh"
 
-# Deprecated-name compat shims — remove after v0.5.0
-[[ -z "${PM_HOOK_LOG_DIR:-}"          && -n "${CLAUDE_HOOK_LOG_DIR:-}"          ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2;          PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
-[[ -z "${PM_HOOK_CODEX_GUARD:-}"      && -n "${CLAUDE_HOOK_CODEX_GUARD:-}"      ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_GUARD deprecated; use PM_HOOK_CODEX_GUARD\n' >&2;      PM_HOOK_CODEX_GUARD="${CLAUDE_HOOK_CODEX_GUARD}"; }
-[[ -z "${PM_HOOK_CODEX_READ_ROOTS:-}" && -n "${CLAUDE_HOOK_CODEX_READ_ROOTS:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_READ_ROOTS deprecated; use PM_HOOK_CODEX_READ_ROOTS\n' >&2; PM_HOOK_CODEX_READ_ROOTS="${CLAUDE_HOOK_CODEX_READ_ROOTS}"; }
-[[ -z "${PM_HOOK_DISPATCH_ABS:-}"     && -n "${CLAUDE_HOOK_DISPATCH_ABS:-}"     ]] && { printf '[pm-dispatch] CLAUDE_HOOK_DISPATCH_ABS deprecated; use PM_HOOK_DISPATCH_ABS\n' >&2;     PM_HOOK_DISPATCH_ABS="${CLAUDE_HOOK_DISPATCH_ABS}"; }
-
 HOOK_NAME="hook-codex-bash-guard"
 LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"

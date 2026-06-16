@@ -22,11 +22,6 @@ else
   # copy-mode fallback: scan adapters dynamically so removal stays concrete
   dispatch_allowlist_entries() {
     local f rel
-    f="$REPO_ROOT/scripts/codex-dispatch.sh"
-    if [[ -f "$f" ]]; then
-      rel="${f#"$HOME/"}"
-      printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-    fi
     for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
       [[ -f "$f" ]] || continue
       rel="${f#"$HOME/"}"

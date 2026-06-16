@@ -915,8 +915,8 @@ case_runs_append_read_only_fails_loudly() {
 case_codex_dispatch_state_store_self_contained() {
   # Verifies that the state-writer source guard in the adapter uses 2>/dev/null || true
   # so dispatch is functional even when state-writer.sh is absent.
-  # scripts/codex-dispatch.sh is now a thin exec shim; the state-store block lives in
-  # adapters/codex/dispatch.sh.
+  # The state-store block lives in adapters/codex/dispatch.sh (the legacy
+  # scripts/codex-dispatch.sh shim was removed in the v0.3.0 sunset).
   #
   # Steps:
   #   1. Run bash -n on adapters/codex/dispatch.sh to verify syntax.

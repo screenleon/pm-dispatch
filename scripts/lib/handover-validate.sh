@@ -226,28 +226,6 @@ handover_validate_brief_file() {
   [[ ! -L "$value" ]] || handover_reject brief_file "symlink path is not allowed"
 }
 
-handover_validate_sandbox() {
-  local value=${1-}
-
-  handover_validate_metadata_value sandbox "$value" || return 1
-  case "$value" in
-    workspace-write|read-only) return 0 ;;
-    danger-full-access) handover_reject sandbox "danger-full-access not supported by bash route; use executor fallback" ;;
-    *) handover_reject sandbox "unsupported sandbox value" ;;
-  esac
-}
-
-handover_validate_approval() {
-  local value=${1-}
-
-  handover_validate_metadata_value approval "$value" || return 1
-  case "$value" in
-    never) return 0 ;;
-    on-failure|on-request|untrusted) handover_reject approval "approval value not supported by bash route; use executor fallback" ;;
-    *) handover_reject approval "unsupported approval value" ;;
-  esac
-}
-
 handover_validate_timeout() {
   local value=${1-}
 
@@ -267,17 +245,6 @@ handover_validate_model() {
   # metacharacters and the value is separately screened for forbidden chars by
   # handover_validate_metadata_value above. Max 64 chars to cover provider-prefix IDs.
   [[ "$value" == "default" || "$value" =~ ^[a-z][a-z0-9./_-]{0,63}$ ]] || handover_reject model "unsupported model name shape"
-}
-
-handover_validate_skip_git_check() {
-  local value=${1-}
-
-  handover_validate_metadata_value skip_git_check "$value" || return 1
-  case "$value" in
-    false) return 0 ;;
-    true) handover_reject skip_git_check "skip_git_check:true not supported by bash route; use executor fallback" ;;
-    *) handover_reject skip_git_check "must be false by default" ;;
-  esac
 }
 
 handover_validate_isolation_level() {
@@ -316,17 +283,9 @@ handover_validate_fallback_allowed() {
 handover_validate_required_fields() {
   local metadata=${1-}
   local field
-  for field in handover_version executor dispatch_route working_dir brief_file timeout model fallback_allowed; do
+  for field in handover_version executor dispatch_route working_dir brief_file timeout model fallback_allowed isolation_level; do
     handover_get_field "$metadata" "$field" >/dev/null || return 1
   done
-  # Accept isolation_level (new canonical form) OR the legacy native trio
-  local _iso_check
-  _iso_check="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_check=""
-  if [[ -z "$_iso_check" ]]; then
-    for field in sandbox approval skip_git_check; do
-      handover_get_field "$metadata" "$field" >/dev/null || return 1
-    done
-  fi
 }
 
 handover_validate_all_metadata() {
@@ -346,40 +305,33 @@ handover_validate_all_metadata() {
   value="$(handover_get_field "$metadata" brief_file)" || return 1
   handover_validate_brief_file "$value" || return 1
 
-  # Validate isolation_level (canonical) OR legacy native trio (backward compat).
-  # Mixing both is rejected to enforce clear migration path.
-  local _iso_val
-  _iso_val="$(handover_get_field "$metadata" isolation_level 2>/dev/null)" || _iso_val=""
-  if [[ -n "$_iso_val" ]]; then
-    # Reject if any legacy field is also present alongside isolation_level
-    local _lf _legacy_val
-    for _lf in sandbox approval skip_git_check; do
-      _legacy_val="$(handover_get_field "$metadata" "$_lf" 2>/dev/null)" || _legacy_val=""
-      if [[ -n "$_legacy_val" ]]; then
-        handover_reject isolation_level "cannot mix isolation_level with legacy sandbox/approval/skip_git_check fields; use isolation_level only" || return 1
-      fi
-    done
-    handover_validate_isolation_level "$_iso_val" || return 1
-    # isolation_level:none maps to danger-full-access in the Codex adapter.
-    # The Bash dispatch route does not support full-access for codex; reject it so
-    # PM-authored codex briefs cannot reach danger-full-access through unattended dispatch.
-    # Exception: opencode is a cli-subprocess on the bash route and explicitly supports
-    # isolation_level:none (→ --dangerously-skip-permissions); allow it.
-    if [[ "$_iso_val" == "none" ]]; then
-      local _route _exec
-      _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
-      _exec="$(handover_get_field "$metadata" executor 2>/dev/null)" || _exec=""
-      if [[ "$_route" == "main_thread_bash_background" && "$_exec" != "opencode" ]]; then
-        handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
-      fi
+  # isolation_level is the canonical (and only) isolation field. The legacy
+  # native trio (sandbox/approval/skip_git_check) was removed in v0.6.0 (CC-335);
+  # reject briefs that still carry it so the migration error is explicit rather
+  # than a silently-ignored field.
+  local _lf _legacy_val
+  for _lf in sandbox approval skip_git_check; do
+    _legacy_val="$(handover_get_field "$metadata" "$_lf" 2>/dev/null)" || _legacy_val=""
+    if [[ -n "$_legacy_val" ]]; then
+      handover_reject "$_lf" "legacy field removed in v0.6.0; use isolation_level instead" || return 1
     fi
-  else
-    value="$(handover_get_field "$metadata" sandbox)" || return 1
-    handover_validate_sandbox "$value" || return 1
-    value="$(handover_get_field "$metadata" approval)" || return 1
-    handover_validate_approval "$value" || return 1
-    value="$(handover_get_field "$metadata" skip_git_check)" || return 1
-    handover_validate_skip_git_check "$value" || return 1
+  done
+
+  local _iso_val
+  _iso_val="$(handover_get_field "$metadata" isolation_level)" || return 1
+  handover_validate_isolation_level "$_iso_val" || return 1
+  # isolation_level:none maps to danger-full-access in the Codex adapter.
+  # The Bash dispatch route does not support full-access for codex; reject it so
+  # PM-authored codex briefs cannot reach danger-full-access through unattended dispatch.
+  # Exception: opencode is a cli-subprocess on the bash route and explicitly supports
+  # isolation_level:none (→ --dangerously-skip-permissions); allow it.
+  if [[ "$_iso_val" == "none" ]]; then
+    local _route _exec
+    _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
+    _exec="$(handover_get_field "$metadata" executor 2>/dev/null)" || _exec=""
+    if [[ "$_route" == "main_thread_bash_background" && "$_exec" != "opencode" ]]; then
+      handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
+    fi
   fi
 
   value="$(handover_get_field "$metadata" timeout)" || return 1
@@ -424,11 +376,8 @@ export -f handover_validate_executor
 export -f handover_validate_dispatch_route
 export -f handover_validate_working_dir
 export -f handover_validate_brief_file
-export -f handover_validate_sandbox
-export -f handover_validate_approval
 export -f handover_validate_timeout
 export -f handover_validate_model
-export -f handover_validate_skip_git_check
 export -f handover_validate_isolation_level
 export -f handover_validate_fallback_allowed
 export -f handover_validate_required_fields

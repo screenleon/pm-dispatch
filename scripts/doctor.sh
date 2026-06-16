@@ -500,13 +500,6 @@ check_dispatch_allowlist() {
   else
     # copy-mode fallback: lib/ absent, inline scan
     local f rel
-    f="$REPO_ROOT/scripts/codex-dispatch.sh"
-    if [[ -f "$f" ]]; then
-      any=1; rel="${f#"$HOME/"}"
-      jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-        "$settings" >/dev/null 2>&1 || all_ok=0
-    fi
     for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
       [[ -f "$f" ]] || continue
       any=1; rel="${f#"$HOME/"}"

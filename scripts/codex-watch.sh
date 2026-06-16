@@ -24,7 +24,7 @@ done
 TRACE="$WORK_DIR/.agent-trace/latest.jsonl"
 if [[ ! -e "$TRACE" ]]; then
   echo "no trace yet at $TRACE" >&2
-  echo "(run codex-dispatch.sh first, or wait for the trace symlink to appear)" >&2
+  echo "(run pmctl dispatch run --adapter codex first, or wait for the trace symlink to appear)" >&2
   exit 1
 fi
 
