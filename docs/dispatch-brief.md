@@ -269,6 +269,9 @@ pmctl dispatch run --adapter codex --cd <work_dir> --brief-file <brief-file>
 
 # claude profile:
 # dispatch via Agent(claude-executor)
+
+# opencode profile:
+pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
 ```
 
 Invoke in background from the main thread. Wait for completion notification.

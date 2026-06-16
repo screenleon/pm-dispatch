@@ -70,6 +70,55 @@ FAKEOF
   chmod +x "$bindir/opencode"
 }
 
+# Install a fake opencode: first call → exits non-zero (no JSONL), second call → success.
+_fake_opencode_nonzero_fallback() {
+  local bindir="$1" counter="$2" success_text="${3:-nonzero fallback success}"
+  cat > "$bindir/opencode" <<FAKEOF
+#!/usr/bin/env bash
+_n=0
+[[ -f "$counter" ]] && _n=\$(cat "$counter")
+_n=\$(( _n + 1 ))
+printf '%d' "\$_n" > "$counter"
+if [[ "\$_n" -eq 1 ]]; then
+  exit 1
+fi
+printf '%s\n' '{"type":"text","part":{"text":"$success_text"}}'
+printf '%s\n' '{"type":"step_finish","part":{"reason":"stop","tokens":{}}}'
+exit 0
+FAKEOF
+  chmod +x "$bindir/opencode"
+}
+
+# Install a fake opencode: first call → exits 0 but emits no step_finish, second call → success.
+_fake_opencode_no_terminal() {
+  local bindir="$1" counter="$2" success_text="${3:-terminal fallback success}"
+  cat > "$bindir/opencode" <<FAKEOF
+#!/usr/bin/env bash
+_n=0
+[[ -f "$counter" ]] && _n=\$(cat "$counter")
+_n=\$(( _n + 1 ))
+printf '%d' "\$_n" > "$counter"
+if [[ "\$_n" -eq 1 ]]; then
+  printf '%s\n' '{"type":"text","part":{"text":"no terminal"}}'
+  exit 0
+fi
+printf '%s\n' '{"type":"text","part":{"text":"$success_text"}}'
+printf '%s\n' '{"type":"step_finish","part":{"reason":"stop","tokens":{}}}'
+exit 0
+FAKEOF
+  chmod +x "$bindir/opencode"
+}
+
+# Install a fake opencode that always exits non-zero (all attempts fail).
+_fake_opencode_always_fail() {
+  local bindir="$1"
+  cat > "$bindir/opencode" <<FAKEOF
+#!/usr/bin/env bash
+exit 1
+FAKEOF
+  chmod +x "$bindir/opencode"
+}
+
 _mk_brief() {
   local bf; bf="$(mktemp /tmp/brief-oc-test-XXXXXX.md)"
   printf 'Do the task.\n' > "$bf"
@@ -350,6 +399,68 @@ case_legacy_flags_warn() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: Non-zero exit on attempt 1 causes fallback to attempt 2 which succeeds.
+# Steps:
+#   1. Install fake opencode: attempt 1 exits 1 (no JSONL), attempt 2 emits text + step_finish.
+#   2. Run dispatch.sh without --model (uses fallback chain).
+#   3. Assert exit 0 and latest.last contains the attempt 2 response.
+case_nonzero_exit_fallback() {
+  local name="fallback/non-zero exit on attempt 1 → attempt 2 succeeds"; should_run "$name" || return 0
+  local bindir work bf counter rc last
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  counter="$(mktemp)"
+  _fake_opencode_nonzero_fallback "$bindir" "$counter" "nonzero fallback success"
+  rc=0
+  PATH="$bindir:$PATH" "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --timeout 120 >/dev/null 2>&1 || rc=$?
+  last="$(cat "$work/.agent-trace/latest.last" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 ]] && [[ "$last" == "nonzero fallback success" ]]; then pass "$name"
+  else fail "$name" "rc=$rc last=$(printf '%s' "$last" | head -c 60)"; fi
+  rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
+}
+
+# Behavior: Missing step_finish on attempt 1 causes fallback to attempt 2 which succeeds.
+# Steps:
+#   1. Install fake opencode: attempt 1 exits 0 but emits no step_finish, attempt 2 succeeds.
+#   2. Run dispatch.sh without --model (uses fallback chain).
+#   3. Assert exit 0 and latest.last contains the attempt 2 response.
+case_missing_terminal_fallback() {
+  local name="fallback/missing step_finish on attempt 1 → attempt 2 succeeds"; should_run "$name" || return 0
+  local bindir work bf counter rc last
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  counter="$(mktemp)"
+  _fake_opencode_no_terminal "$bindir" "$counter" "terminal fallback success"
+  rc=0
+  PATH="$bindir:$PATH" "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --timeout 120 >/dev/null 2>&1 || rc=$?
+  last="$(cat "$work/.agent-trace/latest.last" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 ]] && [[ "$last" == "terminal fallback success" ]]; then pass "$name"
+  else fail "$name" "rc=$rc last=$(printf '%s' "$last" | head -c 60)"; fi
+  rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
+}
+
+# Behavior: All models fail → dispatch exits non-zero.
+# Steps:
+#   1. Install fake opencode that always exits 1.
+#   2. Run dispatch.sh with a single explicit --model (1-model chain, no fallback).
+#   3. Assert non-zero exit.
+case_all_attempts_failed() {
+  local name="fallback/all attempts fail → dispatch exits non-zero"; should_run "$name" || return 0
+  local bindir work bf rc
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  _fake_opencode_always_fail "$bindir"
+  rc=0
+  PATH="$bindir:$PATH" "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --timeout 60 >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then pass "$name"
+  else fail "$name" "expected non-zero exit when all attempts fail, got 0"; fi
+  rm -rf "$bindir" "$work"; rm -f "$bf"
+}
+
 # Behavior: After a successful dispatch, latest.last and latest.jsonl symlinks are created.
 # Steps:
 #   1. Install fake opencode that succeeds.
@@ -388,6 +499,9 @@ case_alias_default
 case_alias_unknown_passthrough
 case_session_error_fallback
 case_last_scoped_to_winning_attempt
+case_nonzero_exit_fallback
+case_missing_terminal_fallback
+case_all_attempts_failed
 case_legacy_flags_warn
 case_latest_symlinks_created
 
