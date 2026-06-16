@@ -17,6 +17,7 @@
 # fallback_chain in adapter.yaml. Override per-host via
 # ~/.pm-dispatch/config `dispatch.default_model`.
 default	opencode/nemotron-3-ultra-free	normal
+light	opencode/deepseek-v4-flash-free	normal
 nemotron	opencode/nemotron-3-ultra-free	normal
 deepseek	opencode/deepseek-v4-flash-free	normal
 mimo	opencode/mimo-v2.5-free	normal

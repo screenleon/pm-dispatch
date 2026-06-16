@@ -150,13 +150,17 @@ _resolve_isolation() {
     printf 'opencode-dispatch: error: adapters/opencode/isolation-map.yaml not found\n' >&2
     return 1
   fi
-  local _in=0 _line _cur
+  local _in=0 _found=0 _line _cur
   NATIVE_FLAGS=()
   while IFS= read -r _line || [[ -n "$_line" ]]; do
     _line="${_line%$'\r'}"
     if [[ "$_line" =~ ^[[:space:]]{2}([a-z-]+):[[:space:]]*$ ]]; then
       _cur="${BASH_REMATCH[1]}"
-      [[ "$_cur" == "$level" ]] && _in=1 || _in=0
+      if [[ "$_cur" == "$level" ]]; then
+        _in=1; _found=1
+      else
+        _in=0
+      fi
       continue
     fi
     [[ "$_in" -eq 0 ]] && continue
@@ -167,8 +171,12 @@ _resolve_isolation() {
       NATIVE_FLAGS+=("${BASH_REMATCH[1]}")
     fi
   done < "$map"
-  # An empty NATIVE_FLAGS is valid for most levels; only error if level not found.
-  # Detect "level not found" by checking if the section header was ever matched.
+  # An empty NATIVE_FLAGS is valid for recognized levels (e.g. workspace-write).
+  # Fail closed when the level is not found in isolation-map.yaml at all.
+  if [[ "$_found" -eq 0 ]]; then
+    printf 'opencode-dispatch: error: unknown isolation level %q (not in %s)\n' "$level" "$map" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -396,13 +404,19 @@ done
 #   {"type":"step_finish","part":{"reason":"stop","tokens":{...}},...}  -- terminal
 # The response text lives in `text` type events (.part.text), NOT in step_finish.
 # Collect all text events' .part.text and join them; fallback to last JSONL line.
+#
+# On success, scope to the winning attempt's byte range to prevent failed-attempt
+# text from contaminating the final artifact. On total failure use the full trace
+# for best-effort forensic extraction.
 if [[ -s "$TRACE" ]]; then
-  if ! grep '^{' "$TRACE" 2>/dev/null | \
+  _extract_offset=0
+  [[ "$EXIT" -eq 0 ]] && _extract_offset="${_trace_offset:-0}"
+  if ! _trace_slice "$TRACE" "$_extract_offset" | grep '^{' 2>/dev/null | \
        jq -re '[select(.type == "text") | .part.text // empty] | join("")' \
        > "$LAST" 2>/dev/null \
      || [[ ! -s "$LAST" ]]; then
-    # Fallback: last non-empty JSON line of trace
-    grep '^{' "$TRACE" 2>/dev/null | tail -1 > "$LAST" || true
+    # Fallback: last non-empty JSON line of the scoped slice
+    _trace_slice "$TRACE" "$_extract_offset" | grep '^{' 2>/dev/null | tail -1 > "$LAST" || true
   fi
 fi
 
