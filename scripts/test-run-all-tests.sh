@@ -27,6 +27,7 @@ SUITE_NAMES=(
   test-codex-dispatch
   test-pmctl-dispatch
   test-claude-dispatch
+  test-opencode-dispatch
   test-layer-boundaries
   test-executor-router
   test-runner-kind
@@ -108,6 +109,7 @@ suite_path() {
     test-codex-dispatch) printf 'scripts/test-codex-dispatch.sh\n' ;;
     test-pmctl-dispatch) printf 'scripts/test-pmctl-dispatch.sh\n' ;;
     test-claude-dispatch) printf 'scripts/test-claude-dispatch.sh\n' ;;
+    test-opencode-dispatch) printf 'scripts/test-opencode-dispatch.sh\n' ;;
     test-layer-boundaries) printf 'scripts/test-layer-boundaries.sh\n' ;;
     test-executor-router) printf 'scripts/test-executor-router.sh\n' ;;
     test-runner-kind) printf 'scripts/test-runner-kind.sh\n' ;;

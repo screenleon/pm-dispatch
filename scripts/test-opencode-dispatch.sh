@@ -27,19 +27,8 @@ FAKEOF
   chmod +x "$bindir/opencode"
 }
 
-# Install a fake opencode that emits session.error and exits 0 (opencode bug pattern).
-_fake_opencode_session_error() {
-  local bindir="$1"
-  cat > "$bindir/opencode" <<'FAKEOF'
-#!/usr/bin/env bash
-printf '%s\n' '{"type":"session.error","content":"API quota exceeded"}'
-exit 0
-FAKEOF
-  chmod +x "$bindir/opencode"
-}
-
-# Install a fake opencode that uses a counter file: first call → session.error,
-# subsequent calls → success. Counter file path is embedded at install time.
+# Install a fake opencode: first call → session.error, subsequent calls → success.
+# Counter file path is embedded at install time.
 _fake_opencode_fallback() {
   local bindir="$1" counter="$2" success_text="${3:-fallback success}"
   cat > "$bindir/opencode" <<FAKEOF
@@ -59,7 +48,7 @@ FAKEOF
   chmod +x "$bindir/opencode"
 }
 
-# Install a fake opencode: first call emits text THEN session.error (tests scoping),
+# Install a fake opencode: first call emits text THEN session.error (tests .last scoping),
 # second call emits different text + step_finish.
 _fake_opencode_scope_test() {
   local bindir="$1" counter="$2"
@@ -89,12 +78,20 @@ _mk_brief() {
 
 # ── Test cases ────────────────────────────────────────────────────────────────
 
+# Behavior: --help exits 0 without invoking opencode.
+# Steps:
+#   1. Run dispatch.sh --help.
+#   2. Assert exit code 0.
 case_help() {
   local name="arg/--help exits 0"; should_run "$name" || return 0
   if "$DISPATCH" --help >/dev/null 2>&1; then pass "$name"
   else fail "$name" "expected exit 0"; fi
 }
 
+# Behavior: Missing --cd causes an immediate exit 2 before any opencode invocation.
+# Steps:
+#   1. Run dispatch.sh with --brief-file but no --cd.
+#   2. Assert non-zero exit.
 case_missing_cd() {
   local name="arg/missing --cd exits non-zero"; should_run "$name" || return 0
   local bf; bf="$(_mk_brief)"
@@ -104,6 +101,10 @@ case_missing_cd() {
   rm -f "$bf"
 }
 
+# Behavior: Missing --brief-file causes an immediate exit 2.
+# Steps:
+#   1. Run dispatch.sh with --cd but no --brief-file.
+#   2. Assert non-zero exit.
 case_missing_brief_file() {
   local name="arg/missing --brief-file exits non-zero"; should_run "$name" || return 0
   local work; work="$(mktemp -d)"
@@ -113,6 +114,11 @@ case_missing_brief_file() {
   rm -rf "$work"
 }
 
+# Behavior: Successful dispatch writes response text to latest.last.
+# Steps:
+#   1. Install fake opencode that emits text + step_finish.
+#   2. Run dispatch.sh with --model and --brief-file.
+#   3. Assert latest.last contains the expected response text.
 case_happy_path() {
   local name="dispatch/happy path — latest.last contains response"; should_run "$name" || return 0
   local bindir work bf last
@@ -130,6 +136,11 @@ case_happy_path() {
   rm -rf "$bindir" "$work"; rm -f "$bf"
 }
 
+# Behavior: --print-cmd prints MODELS_TO_TRY and exits 0 without invoking opencode.
+# Steps:
+#   1. Run dispatch.sh with --print-cmd.
+#   2. Assert output contains MODELS_TO_TRY.
+#   3. Assert exit 0.
 case_print_cmd() {
   local name="arg/--print-cmd prints MODELS_TO_TRY and exits 0"; should_run "$name" || return 0
   local work bf out
@@ -143,6 +154,10 @@ case_print_cmd() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: isolation:none maps to --dangerously-skip-permissions native flag.
+# Steps:
+#   1. Run dispatch.sh with --isolation none and --print-cmd.
+#   2. Assert output contains --dangerously-skip-permissions.
 case_isolation_none() {
   local name="isolation/none maps to --dangerously-skip-permissions"; should_run "$name" || return 0
   local work bf out
@@ -156,6 +171,10 @@ case_isolation_none() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: isolation:workspace-write maps to empty native flags (opencode default behavior).
+# Steps:
+#   1. Run dispatch.sh with --isolation workspace-write and --print-cmd.
+#   2. Assert output does NOT contain --dangerously-skip-permissions.
 case_isolation_workspace_write_no_flags() {
   local name="isolation/workspace-write maps to empty native flags"; should_run "$name" || return 0
   local work bf out
@@ -164,13 +183,16 @@ case_isolation_workspace_write_no_flags() {
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
     --isolation workspace-write --print-cmd 2>&1 || true)"
-  # NATIVE_FLAGS should be empty (no --dangerously-skip-permissions)
   if echo "$out" | grep -q "dangerously-skip-permissions"; then
     fail "$name" "workspace-write should not add --dangerously-skip-permissions"
   else pass "$name"; fi
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: Unknown isolation level causes exit 2 (fail-closed).
+# Steps:
+#   1. Run dispatch.sh with --isolation not-a-real-level.
+#   2. Assert non-zero exit.
 case_unknown_isolation() {
   local name="isolation/unknown level exits non-zero (fail-closed)"; should_run "$name" || return 0
   local work bf
@@ -184,6 +206,44 @@ case_unknown_isolation() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: read-only isolation is rejected (not supported — no CLI enforcement).
+# Steps:
+#   1. Run dispatch.sh with --isolation read-only.
+#   2. Assert non-zero exit.
+case_isolation_read_only_rejected() {
+  local name="isolation/read-only is rejected (unsupported by opencode adapter)"; should_run "$name" || return 0
+  local work bf
+  work="$(mktemp -d)"; bf="$(_mk_brief)"
+  if "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --isolation read-only >/dev/null 2>&1; then
+    fail "$name" "expected non-zero exit for read-only isolation"
+  else pass "$name"; fi
+  rm -rf "$work"; rm -f "$bf"
+}
+
+# Behavior: sandboxed isolation is rejected (not supported — no ephemeral sandbox).
+# Steps:
+#   1. Run dispatch.sh with --isolation sandboxed.
+#   2. Assert non-zero exit.
+case_isolation_sandboxed_rejected() {
+  local name="isolation/sandboxed is rejected (unsupported by opencode adapter)"; should_run "$name" || return 0
+  local work bf
+  work="$(mktemp -d)"; bf="$(_mk_brief)"
+  if "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --isolation sandboxed >/dev/null 2>&1; then
+    fail "$name" "expected non-zero exit for sandboxed isolation"
+  else pass "$name"; fi
+  rm -rf "$work"; rm -f "$bf"
+}
+
+# Behavior: --model light resolves to the deepseek flash wire id via alias table.
+# Steps:
+#   1. Run dispatch.sh with --model light and --print-cmd.
+#   2. Assert MODELS_TO_TRY contains a deepseek wire id.
 case_alias_light() {
   local name="alias/light resolves to deepseek wire id"; should_run "$name" || return 0
   local work bf out
@@ -196,6 +256,10 @@ case_alias_light() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: --model default resolves to the nemotron wire id via alias table.
+# Steps:
+#   1. Run dispatch.sh with --model default and --print-cmd.
+#   2. Assert MODELS_TO_TRY contains a nemotron wire id.
 case_alias_default() {
   local name="alias/default resolves to nemotron wire id"; should_run "$name" || return 0
   local work bf out
@@ -208,6 +272,10 @@ case_alias_default() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: An unknown alias is passed through as-is to the opencode CLI.
+# Steps:
+#   1. Run dispatch.sh with --model set to a raw wire id not in the alias table.
+#   2. Assert MODELS_TO_TRY contains that exact wire id unchanged.
 case_alias_unknown_passthrough() {
   local name="alias/unknown alias passed through unchanged"; should_run "$name" || return 0
   local work bf out
@@ -221,6 +289,11 @@ case_alias_unknown_passthrough() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: session.error on attempt 1 causes fallback to attempt 2 which succeeds.
+# Steps:
+#   1. Install fake opencode with counter: attempt 1 → session.error, attempt 2 → success.
+#   2. Run dispatch.sh without --model (uses fallback chain from adapter.yaml).
+#   3. Assert exit 0 and latest.last contains the attempt 2 response.
 case_session_error_fallback() {
   local name="fallback/session.error on attempt 1 → attempt 2 succeeds"; should_run "$name" || return 0
   local bindir work bf counter rc last
@@ -237,6 +310,11 @@ case_session_error_fallback() {
   rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
 }
 
+# Behavior: latest.last contains only text from the winning attempt, not from failed attempts.
+# Steps:
+#   1. Install fake opencode: attempt 1 emits text then session.error, attempt 2 emits different text.
+#   2. Run dispatch.sh without --model.
+#   3. Assert latest.last equals attempt 2 text and does not contain attempt 1 text.
 case_last_scoped_to_winning_attempt() {
   local name="fallback/latest.last contains only winning attempt text"; should_run "$name" || return 0
   local bindir work bf counter last
@@ -253,6 +331,11 @@ case_last_scoped_to_winning_attempt() {
   rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
 }
 
+# Behavior: --sandbox and --approval emit a deprecation warning but do not crash.
+# Steps:
+#   1. Run dispatch.sh with --sandbox and --approval flags plus --print-cmd.
+#   2. Assert stderr contains "warning".
+#   3. Assert no crash (command exits non-fatal).
 case_legacy_flags_warn() {
   local name="compat/--sandbox and --approval warn but don't crash"; should_run "$name" || return 0
   local work bf err
@@ -267,6 +350,11 @@ case_legacy_flags_warn() {
   rm -rf "$work"; rm -f "$bf"
 }
 
+# Behavior: After a successful dispatch, latest.last and latest.jsonl symlinks are created.
+# Steps:
+#   1. Install fake opencode that succeeds.
+#   2. Run dispatch.sh with --model.
+#   3. Assert .agent-trace/latest.last and latest.jsonl are symbolic links.
 case_latest_symlinks_created() {
   local name="artifact/latest.last and latest.jsonl symlinks created on success"; should_run "$name" || return 0
   local bindir work bf
@@ -293,6 +381,8 @@ case_print_cmd
 case_isolation_none
 case_isolation_workspace_write_no_flags
 case_unknown_isolation
+case_isolation_read_only_rejected
+case_isolation_sandboxed_rejected
 case_alias_light
 case_alias_default
 case_alias_unknown_passthrough

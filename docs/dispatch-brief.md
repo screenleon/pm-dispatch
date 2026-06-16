@@ -31,7 +31,7 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` and `workspace-write` (others are rejected at dispatch time). The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
 
 ## Required fields
 
@@ -419,7 +419,7 @@ Metadata fields:
 | Field | Required | Notes |
 |---|---|---|
 | `handover_version` | yes | Currently `3`; bump on shape change. |
-| `executor` | yes | Closed enum. Currently only `codex`; main-thread dispatch uses this field to choose the executor-specific dispatcher. |
+| `executor` | yes | Closed enum: `codex`, `claude`, `opencode`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |

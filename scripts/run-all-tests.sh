@@ -24,6 +24,7 @@ SUITE_NAMES=(
   test-codex-dispatch
   test-pmctl-dispatch
   test-claude-dispatch
+  test-opencode-dispatch
   test-layer-boundaries
   test-executor-router
   test-runner-kind
@@ -82,6 +83,7 @@ declare -A SUITE_PATHS=(
   [test-codex-dispatch]="scripts/test-codex-dispatch.sh"
   [test-pmctl-dispatch]="scripts/test-pmctl-dispatch.sh"
   [test-claude-dispatch]="scripts/test-claude-dispatch.sh"
+  [test-opencode-dispatch]="scripts/test-opencode-dispatch.sh"
   [test-layer-boundaries]="scripts/test-layer-boundaries.sh"
   [test-executor-router]="scripts/test-executor-router.sh"
   [test-runner-kind]="scripts/test-runner-kind.sh"
