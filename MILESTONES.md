@@ -56,7 +56,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟）。以 CC-389 契約為基準 | ✅ pr:#290 |
-| CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini** | 🔵 |
+| CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini**。**🟡 DEFERRED — 待 agy 版本更新（spike 2026-06-16）**：agy **有免費額度**（成本非阻因），暫緩純因 **headless CLI 尚未成熟**——1.0.8 無結構化輸出 / 無語意終止事件 / headless 不穩 → 無 machine 契約可建乾淨 adapter（`docs/spikes/CC-377-agy-headless-feasibility.md`）。**agy 仍為首選第二 adapter**，resume = 較新 agy 出可用 headless stream-json。**escape-hatch**：N≥2 暫未由 agy 達成，opencode 為唯一獨立第三方 adapter。**牽動 Phase 7 排序紅線**（lifecycle 須 N≥2 後）→ 待 maintainer 定奪是否以 opencode 單一獨立 adapter 視為抽象已證、或等 agy 成熟（2026-06 免費 CLI 池枯竭，傾向等 agy） | 🟡 |
 
 ### Phase 6 — deprecation 清掃（P2）
 
@@ -74,8 +74,8 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-391 | **(7a 決策-only，先行)** detached-supervised dispatch 建模決策：lifecycle 作派發旗標非 manifest 欄位、supervisor 元件邊界、durable-outbox 為 load-bearing、foreground→detached 遷移順序（fail-closed 不弱化）、一次真實 detached 派發等價證明。**codex spike = partial-adopt**（`docs/spikes/CC-391-*.md`） | 🔵 |
-| CC-392 | **(7a 前置)** claude adapter `runner_kind` 分類漂移修正——manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`（[[CC-383]]/[[CC-388]] 後）→ `runner_kind` 不可信、卡住 [[CC-391]] detach 資格推導。傾向定 canonical 為 `cli-subprocess`＋override 保行為不變；security/risk hard gate（不弱化 claude write guard） | 🔵 |
+| CC-391 | **(7a 決策-only，先行)** detached-supervised dispatch 建模決策：lifecycle 作派發旗標非 manifest 欄位、supervisor 元件邊界、durable-outbox 為 load-bearing、foreground→detached 遷移順序（fail-closed 不弱化）、一次真實 detached 派發等價證明。**codex spike = partial-adopt**（`docs/spikes/CC-391-*.md`） | ✅ pr:#288 |
+| CC-392 | **(7a 前置)** claude adapter `runner_kind` 分類漂移修正——manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`（[[CC-383]]/[[CC-388]] 後）→ `runner_kind` 不可信、卡住 [[CC-391]] detach 資格推導。傾向定 canonical 為 `cli-subprocess`＋override 保行為不變；security/risk hard gate（不弱化 claude write guard） | ✅ pr:#289 |
 | CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ⏸ |
 | CC-391 落地子票 | **(7c net-new 核心，Phase 5 後)** `pmctl dispatch start`（setsid/nohup detached supervisor）+ `pmctl dispatch wait`/`pmctl inbox`（reattach）+ durable-outbox notify channel；重用 [[CC-386]]/[[CC-389]] post-verify。**spike 決策後再開正式子票號** | — |
 | CC-238 | **(7c)** pr-gate fan-out 無 timeout / 弱 attribution = 缺 supervisor 症狀；以通用 supervisor timeout + per-child attribution 收掉（非在 `pr-gate.sh` 做一次性 timeout） | ⏸ |
