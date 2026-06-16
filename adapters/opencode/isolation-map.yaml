@@ -1,0 +1,34 @@
+# adapters/opencode/isolation-map.yaml
+#
+# RUNTIME adapter map — hand-authored, consumed by adapters/opencode/dispatch.sh.
+# Format: native_flags (flat list of CLI flags appended to `opencode run`).
+#
+# opencode's CLI permission model is coarse: the only CLI flag is
+# --dangerously-skip-permissions (all prompts auto-approved). Fine-grained
+# control (edit/bash allow/deny rules) lives in ~/.config/opencode/opencode.json
+# and is the user's responsibility (auth/permission separation of concerns).
+#
+# Semantic definitions (source of truth: core/policy/isolation-level.yaml):
+#   none            – no isolation; full machine access
+#                     → --dangerously-skip-permissions
+#   read-only       – read files only; no writes
+#                     → no CLI flag; user must configure opencode.json
+#   workspace-write – write within project working dir (default)
+#                     → no CLI flag; opencode's ask-by-default behavior
+#   workspace-network – workspace-write + network access
+#                     → no CLI flag; network is always available in opencode
+#   sandboxed       – best-effort; opencode has no true ephemeral sandbox
+#                     → no CLI flag; same as workspace-write in practice
+
+mappings:
+  none:
+    native_flags:
+      - '--dangerously-skip-permissions'
+  read-only:
+    native_flags: []
+  workspace-write:
+    native_flags: []
+  workspace-network:
+    native_flags: []
+  sandboxed:
+    native_flags: []

@@ -1,0 +1,35 @@
+# adapter.yaml - AUTHORED manifest for adapters/opencode/.
+# This file is the source of truth. Hand-authored; nothing here is regenerated:
+# generated_files is empty and pmctl must not edit this file.
+schema_version: 1
+adapter_name: opencode
+executor: opencode
+cli_binary: opencode
+isolation_map_ref: ./isolation-map.yaml
+runner_ref: ./dispatch.sh
+dispatch_contract: dispatch_handover_v1
+# runner_kind: opencode runs as an independent headless subprocess driven by
+# pmctl dispatch run. The brief is authored by pmctl and passed as a CLI
+# argument to `opencode run`; no executor subagent self-writes a brief, so no
+# live PreToolUse write guard is needed.
+runner_kind: cli-subprocess
+write_guard_mode: cli-only
+# opencode's permission system is config-managed via ~/.config/opencode/opencode.json
+# (user responsibility); no pm-dispatch bash-guard hook integration point exists.
+needs_bash_guard: false
+# terminal_event: opencode --format json emits JSONL; the terminal event type
+# is "step_finish". post-verify asserts at least one trace record matches it.
+# Known issue: opencode may exit before emitting step_finish (upstream bug);
+# missing terminal event → post-verify correctly fails (fail-closed).
+terminal_event: step_finish
+# fallback_chain: model priority list consumed ONLY by dispatch.sh.
+# Applied when --model is not specified. Wire IDs use the opencode provider
+# prefix (opencode/ = OpenCode Zen free tier). Order = priority.
+# When --model is explicitly set, the chain is ignored.
+fallback_chain:
+  - opencode/nemotron-3-super
+  - opencode/deepseek-v4-flash-free
+  - opencode/qwen3.6-plus-free
+  - opencode/minimax-m2.5-free
+  - opencode/big-pickle
+generated_files: []

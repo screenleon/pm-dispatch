@@ -1,0 +1,24 @@
+# pm-facing_alias	wire_model_id	reasoning_effort
+# Schema: PM-facing alias, wire-format model id, reasoning effort.
+# This file is the opencode-executor alias table.
+#
+# Columns must be tab-separated.
+#
+# Wire IDs use the opencode provider prefix (opencode/ = OpenCode Zen free
+# tier). Unknown aliases are passed through as-is to the opencode CLI —
+# any raw wire ID (e.g. opencode/big-pickle, openrouter/nvidia/...) works
+# without needing an entry here.
+#
+# reasoning_effort is recorded for future use; opencode does not currently
+# expose a reasoning-effort flag, so it is informational only.
+#
+# Default model: pm-dispatch pins Nemotron 3 Super Free as the primary
+# dispatcher model when no --model is given. This is also the head of the
+# fallback_chain in adapter.yaml. Override per-host via
+# ~/.pm-dispatch/config `dispatch.default_model`.
+default	opencode/nemotron-3-super	normal
+nemotron	opencode/nemotron-3-super	normal
+deepseek	opencode/deepseek-v4-flash-free	normal
+qwen	opencode/qwen3.6-plus-free	normal
+minimax	opencode/minimax-m2.5-free	normal
+bigpickle	opencode/big-pickle	normal

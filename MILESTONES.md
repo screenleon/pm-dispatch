@@ -55,7 +55,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟）。以 CC-389 契約為基準 | 🔵 |
+| CC-376 | opencode executor adapter（第一個第三方 adapter；落地若需改核心 = 抽象未竟）。以 CC-389 契約為基準 | ✅ pr:#TBD |
 | CC-377 | Google Antigravity `agy` executor adapter（第二個；驗 N≥2）。**注意 Gemini CLI 已棄用，目標是 antigravity 非 gemini** | 🔵 |
 
 ### Phase 6 — deprecation 清掃（P2）
