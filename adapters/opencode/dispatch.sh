@@ -322,16 +322,20 @@ _refresh_latest_pointers
 # Reject positive totals below 120s: they cannot complete even one attempt and
 # would silently run far longer than requested after the floor is applied.
 _chain_len=${#MODELS_TO_TRY[@]}
-if [[ "$TIMEOUT" -gt 0 && "$TIMEOUT" -lt 120 ]]; then
-  printf '[%s] opencode-dispatch: --timeout %ds is below the 120s per-attempt minimum; use 0 (no limit) or >= 120\n' \
-    "$(date -Is)" "$TIMEOUT" | tee -a "$STDERR_LOG" >&2
-  exit 2
-fi
-_attempt_timeout=$(( TIMEOUT / _chain_len ))
-if [[ "$_attempt_timeout" -lt 120 ]]; then
-  _attempt_timeout=120
-  printf '[%s] opencode-dispatch: per-attempt timeout floored at 120s (requested %ds across %d models); total may exceed --timeout\n' \
-    "$(date -Is)" "$TIMEOUT" "$_chain_len" | tee -a "$STDERR_LOG" >&2
+# TIMEOUT=0 means no limit; skip all budget math for zero.
+_attempt_timeout=0
+if [[ "$TIMEOUT" -gt 0 ]]; then
+  if [[ "$TIMEOUT" -lt 120 ]]; then
+    printf '[%s] opencode-dispatch: --timeout %ds is below the 120s per-attempt minimum; use 0 (no limit) or >= 120\n' \
+      "$(date -Is)" "$TIMEOUT" | tee -a "$STDERR_LOG" >&2
+    exit 2
+  fi
+  _attempt_timeout=$(( TIMEOUT / _chain_len ))
+  if [[ "$_attempt_timeout" -lt 120 ]]; then
+    _attempt_timeout=120
+    printf '[%s] opencode-dispatch: per-attempt timeout floored at 120s (requested %ds across %d models); total may exceed --timeout\n' \
+      "$(date -Is)" "$TIMEOUT" "$_chain_len" | tee -a "$STDERR_LOG" >&2
+  fi
 fi
 
 # ── Fallback dispatch loop ────────────────────────────────────────────────────

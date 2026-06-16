@@ -655,6 +655,25 @@ fallback_allowed: true"
   expect_reject isolation_level handover_validate_all_metadata "$block"
 }
 
+# Behavior: opencode handover with isolation_level:none on main_thread_bash_background is accepted.
+# Steps:
+#   1. Build metadata with executor:opencode, isolation_level:none, dispatch_route:main_thread_bash_background.
+#   2. Assert handover_validate_all_metadata succeeds (opencode cli-subprocess is exempt from
+#      the codex-specific danger-full-access bash-route block).
+all_metadata_opencode_isolation_none_bash_route_accepts_case() {
+  local block
+  block="handover_version: 3
+executor: opencode
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-opencode-none.md
+isolation_level: none
+timeout: 1200
+model: default
+fallback_allowed: true"
+  handover_validate_all_metadata "$block" >/dev/null 2>&1
+}
+
 # Behavior: Handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
 # Steps:
 #   1. Build a metadata block with isolation_level workspace-write, no sandbox/approval/skip_git_check.
@@ -1127,6 +1146,7 @@ run_case "handover/isolation_level read-only accepts" isolation_level_read_only_
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
 run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
 run_case "handover/all metadata isolation none bash route rejects" all_metadata_isolation_none_bash_route_rejects_case
+run_case "handover/all metadata opencode isolation none bash route accepts" all_metadata_opencode_isolation_none_bash_route_accepts_case
 run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
 run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case

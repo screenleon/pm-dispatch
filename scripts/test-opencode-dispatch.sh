@@ -381,6 +381,27 @@ case_last_scoped_to_winning_attempt() {
   rm -rf "$bindir" "$work"; rm -f "$bf" "$counter"
 }
 
+# Behavior: --timeout 0 means no timeout; dispatch completes normally.
+# Steps:
+#   1. Install fake opencode that succeeds.
+#   2. Run dispatch.sh with --timeout 0.
+#   3. Assert exit 0 and latest.last contains response.
+case_timeout_zero_no_limit() {
+  local name="arg/--timeout 0 is unlimited (no floor applied)"; should_run "$name" || return 0
+  local bindir work bf last rc
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  _fake_opencode_success "$bindir" "timeout zero ok"
+  rc=0
+  PATH="$bindir:$PATH" "$DISPATCH" \
+    --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free \
+    --timeout 0 >/dev/null 2>&1 || rc=$?
+  last="$(cat "$work/.agent-trace/latest.last" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 ]] && [[ "$last" == "timeout zero ok" ]]; then pass "$name"
+  else fail "$name" "rc=$rc last=$(printf '%s' "$last" | head -c 40)"; fi
+  rm -rf "$bindir" "$work"; rm -f "$bf"
+}
+
 # Behavior: --timeout below 120s (and non-zero) is rejected with exit 2.
 # Steps:
 #   1. Run dispatch.sh with --model and --timeout 60.
@@ -553,6 +574,7 @@ case_nonzero_exit_fallback
 case_missing_terminal_fallback
 case_all_attempts_failed
 case_pmctl_route
+case_timeout_zero_no_limit
 case_timeout_too_low_rejected
 case_legacy_flags_warn
 case_latest_symlinks_created

@@ -361,12 +361,15 @@ handover_validate_all_metadata() {
     done
     handover_validate_isolation_level "$_iso_val" || return 1
     # isolation_level:none maps to danger-full-access in the Codex adapter.
-    # The Bash dispatch route does not support full-access; reject it here so
-    # PM-authored briefs cannot reach danger-full-access through unattended dispatch.
+    # The Bash dispatch route does not support full-access for codex; reject it so
+    # PM-authored codex briefs cannot reach danger-full-access through unattended dispatch.
+    # Exception: opencode is a cli-subprocess on the bash route and explicitly supports
+    # isolation_level:none (→ --dangerously-skip-permissions); allow it.
     if [[ "$_iso_val" == "none" ]]; then
-      local _route
+      local _route _exec
       _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
-      if [[ "$_route" == "main_thread_bash_background" ]]; then
+      _exec="$(handover_get_field "$metadata" executor 2>/dev/null)" || _exec=""
+      if [[ "$_route" == "main_thread_bash_background" && "$_exec" != "opencode" ]]; then
         handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
       fi
     fi
