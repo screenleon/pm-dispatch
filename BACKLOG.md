@@ -69,7 +69,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
 | CC-333 | 🔵 active | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]（v0.6.0 umbrella epic）** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。**v0.6.0 執行子票**：[[CC-372]]（runner-kind manifest）→ [[CC-373]]（router 資料驅動）→ [[CC-374]]/[[CC-375]]（guard 收口＋安裝接線）→ [[CC-386]]/[[CC-387]]/[[CC-388]]/[[CC-389]]（dispatch-model 統一 Model B 全面上路，[[CC-385]] 決策）→ [[CC-376]]/[[CC-377]]（opencode/antigravity 真 adapter 驗收）＋ [[CC-335]]（deprecation 清掃）。見 MILESTONES.md v0.6.0。 | arch | 2026-06-07 | — | P2 | design |
-| CC-335 | 🟢 someday | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。已知項目：(1) `bash scripts/pr-gate.sh` 直呼腳本 → 改用 `pmctl gate run`（deprecated v0.4.0）；(2) `scripts/codex-dispatch.sh` shim → 改用 `pmctl dispatch run --adapter codex`（deprecated pre-v0.4.0，warning 已加 CC-336）；(3) `--profile` flag in `pmctl guard check` → 改用 `--role` + `--runtime`（deprecated pre-v0.4.0）；(4) `sandbox`/`approval`/`skip_git_check` legacy metadata fields → 改用 `isolation_level`（deprecated pre-v0.4.0）。每個項目需補 deprecation warning（stderr）再刪除實作。 | release | 2026-06-08 | — | P2 | — |
+| CC-335 | ✅ done | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。實況分三類：handover legacy trio（sandbox/approval/skip_git_check）＋ CLAUDE_HOOK_* shims 真實移除（含 JSON schema 收斂）；codex-dispatch.sh shim 早於 v0.3.0 sunset 刪除，本次清 dead-code 殘留；pr-gate.sh 直呼降級為文件 deprecation（standalone 為官方 fallback，不刪檔）；guard --profile 早已移除。**See**: pr:#292 | release | 2026-06-16 | pr:#292 | P2 | — |
 | CC-340 | 🟢 someday | **[knowledge index: heavy remainder after CC-354 — standalone FTS + embeddings]** The usable anchored-TOC slice (in-repo knowledge-doc section indexing) is pulled forward to CC-354 (v0.5.0). CC-340 is now the heavy remainder, symmetric to the repo index CC-338: out-of-repo memory cards + wiki + episodes (low-trust) indexing, standalone full-text ranking, embeddings, and richer trust-tier weighting — deferred to v0.6.0, overlapping /mem-search. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
@@ -89,6 +89,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-391 | ✅ done | **[arch(spike): detached-supervised dispatch — executor lifecycle ownership 軸]** Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已使 executor 成獨立子程序、由 pmctl 三重機檢驗證，但派發仍 **foreground-sync**：`pmctl dispatch run` 阻塞、in-process 驗證、main 持有生命週期。本 spike（決策-only）決定是否新增一條與 [[CC-372]] `runner_kind` **正交**的 **lifecycle ownership** 軸：main 只建 run + `setsid`/`nohup` 起 detached supervisor → supervisor 持有 executor、跑 post-verify（重用 [[CC-386]]/[[CC-389]]）、寫 durable run-state（[[CC-225]]）、append events.jsonl（[[CC-211]] FSM）、best-effort 通知 listener（durable-outbox 為 load-bearing、fifo/socket 選配）。**定位修正**：lifecycle 是派發當下選擇（`pmctl dispatch run --lifecycle foreground\|detached` + config 預設），**非 manifest 欄位**；可 detach 資格由 runner_kind（headless-CLI Model B）推導，host-native 不可 detach。不加 `lifecycle_mode` 欄位、不動 schema 改名（避與 [[CC-384]] 撞）。收 [[CC-238]]（fan-out 無 timeout/attribution = 缺 supervisor 症狀）。排 v0.6.0 Phase 7（[[CC-376]]/[[CC-377]] 之後）。umbrella [[CC-333]]。**See**: pr:#288 | arch | 2026-06-15 | pr:#288 | P2 | design |
 | CC-392 | ✅ done | **[arch: claude adapter runner_kind 分類漂移 — manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`]** `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但自 [[CC-383]]/[[CC-388]] 後 `adapters/claude/dispatch.sh` 實際是 headless `claude --print` 獨立子程序（行為上 cli-subprocess / Model B），讓 `runner_kind` 成為不可信謂詞、卡住 [[CC-391]] detach 資格推導。修法：`runner_kind: cli-subprocess` ＋ override `write_guard_mode: cli-only`、`needs_bash_guard: false`（三衍生旗標解析後行為 byte-identical；`dispatch_route` derive 至 main_thread_bash_background 僅 label，不驅動 exec 分支）；同步刷新 `executor-contract.md` profiles/guard 表與相關 code comment 過時的 host-native 措辭；加回歸鎖定。pr-gate standard = GO。關聯 [[CC-391]]、[[CC-373]]、[[CC-383]]、[[CC-388]]、[[guard-role-runtime]]。**See**: pr:#289 | arch/portability | 2026-06-15 | pr:#289 | P2 | design |
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
+| CC-394 | 🟢 someday | **[arch: 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode）]** Model B 後 claude 主路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]）；`Agent(claude-executor)` 已降級為「Claude 當 PM host 且 `claude` CLI 不在 PATH」的窄 fallback。它**不補任何能力缺口**（adapter 做同樣的事，與 codex-executor 的 danger-full-access 缺口不同），且持續課維護稅——[[CC-335]] 即因 trio 引用藏在此檔連兩輪 gate NO-GO。opencode（[[CC-376]]）已是 adapter-only、無 Agent，為目標形狀。退場範圍：刪 agent 檔＋guard role-model 的 executor(claude) 慣例分支＋install/uninstall 接線＋test-pmctl-guard/test-install/test-hook-framework 相關案例＋文件收斂（commands/pm.md Route B、executor-contract profiles、dispatch-brief fallback）。決策前置：確認無「Claude 為 host 但 claude CLI 缺席仍需跑 claude brief」的真實環境（傾向 fail-loud 而非默默降級）；保留 same-host 免 spawn 子程序的最佳化為唯一反論。umbrella [[CC-333]]（in-session Agent executor 層）。先於 [[CC-395]]。 | arch/portability | 2026-06-16 | — | P2 | design |
+| CC-395 | 🟢 someday | **[arch: 退場 `agents/codex-executor.md` + 決定 danger-full-access 去留]** 對稱 [[CC-394]]，但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的唯一逃生口，且是刻意安全閘——`handover-validate.sh` hard-reject full-access 於 `main_thread_bash_background`（避免無人值守背景 dispatch 摸到 full-access），只允許經 `agent_executor` route（人為明示 spawn）。退場前必須先拍板 full-access 去留：(a) 直接砍掉能力（fail-loud，最統一）；或 (b) 搬進 codex adapter 並設安全閘（專屬 route／明示確認旗標），不經 Agent 也能達成——重新開啟當初用 Agent 擋住的安全邊界設計。決策後才談退 agent 檔＋guard＋install＋test＋文件。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | — | P3 | design |
 
 ---
 
@@ -176,6 +178,44 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Sequencing**: 排 v0.6.0（executor 抽象在 N≥2 = [[CC-376]]+[[CC-377]] 證明成立）**之後**；自然歸宿與 [[CC-216]]（v0.7.0 MCP 通用橋）同層同期——兩者都讓任意 host 透過穩定、平台中立契約共用單一 pm-dispatch。
 
 **See**: `docs/notes/portable-skill-substrate.md`（完整 session synthesis）、umbrella [[CC-333]]。
+
+---
+
+## CC-394 — arch: 退場 agents/claude-executor.md（claude 收斂為 adapter-only）🟢 someday
+
+**Problem**: Model B（[[CC-385]]）後，claude 的 canonical 執行路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]/[[CC-392]]）。`Agent(claude-executor)` 已被 DECISIONS 2026-06-13 明訂降級為「Claude 當 PM host 時的 same-host 最佳化」，pm.md Route B 進一步把它收成「`claude` CLI 不在 PATH 時」的窄 fallback。
+
+**Why 退場**:
+1. **零能力缺口** — claude-executor 與 claude adapter 做完全一樣的事，唯一觸發是「binary 缺席」；對比 codex-executor 補的是 bash route 拒絕的 `danger-full-access`（真功能）。
+2. **這正是 [[CC-333]] 要拆的耦合** — `Agent()`-spawn = Claude-runtime 專屬執行模型；Model B/adapter 的重點就是讓執行成為與 host 無關的 CLI 子程序。
+3. **持續維護稅** — [[CC-335]] 即因 trio 引用藏在此檔導致 gate 連兩輪 NO-GO；每次契約改動都要維持此檔一致。
+4. **目標形狀已存在** — opencode（[[CC-376]]）就是 adapter-only、無 Agent；本票讓 claude 對齊它。
+
+**決策前置**: 確認無「Claude 為 host、但 `claude` CLI 二進位缺席、卻仍需執行 claude brief」的真實環境（repo 哲學 [[CC-389]] 傾向 fail-loud 而非默默降級）。唯一反論 = 重視 same-host 免 spawn 子程序的最佳化（DECISIONS:245）；若採納則改為「保留但文件收斂成單一觸發條件」。
+
+**退場 checklist**: 刪 `agents/claude-executor.md`；`pmctl-guard.sh` 的 `executor(claude)` 慣例分支；`install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 相關接線；`test-pmctl-guard.sh`/`test-install.sh`/`test-hook-framework.sh` 案例；文件收斂（`commands/pm.md` Route B、`docs/executor-contract.md` profiles、`docs/dispatch-brief.md` §Fallback）。
+
+**Sequencing**: 機械性、零能力損失，可先於 [[CC-395]]。umbrella [[CC-333]]（in-session Agent executor 層）。
+
+**See**: [[CC-395]]（codex 對稱退場）、[[CC-333]]、[[CC-388]]、[[CC-376]]。
+
+---
+
+## CC-395 — arch: 退場 agents/codex-executor.md + 決定 danger-full-access 去留 🟢 someday
+
+**Problem**: 對稱 [[CC-394]]，把 codex 也收斂為 adapter-only。但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的**唯一逃生口**。
+
+**安全脈絡**: `handover-validate.sh` 刻意 hard-reject `isolation_level: none` 於 `main_thread_bash_background`（理由：PM 自寫的 codex brief 不可透過無人值守背景 dispatch 摸到 full-access），唯一合法途徑是切 `agent_executor` route = `Agent(codex-executor)`（需人為明示 spawn）。所以這個 Agent fallback 同時是能力出口**也是**安全閘。
+
+**決策前置（退 agent 之前必須先拍板）**:
+- **(a) 砍掉 full-access 能力** — fail-loud「不支援」，最統一，但失去一個可能在用的能力。
+- **(b) 搬進 codex adapter 加安全閘** — 專屬 dispatch route／明示確認旗標，不經 Agent 也能達成 full-access；正確解耦，但重新開啟當初用 Agent 擋住的安全邊界設計，工作量與 security review 風險較高。
+
+**退場 checklist**（決策後）: 同 [[CC-394]] 形狀（agent 檔＋guard＋install＋test＋文件），外加 full-access 路徑的新實作/移除與 security/risk hard gate。
+
+**Sequencing**: 排在 [[CC-394]] 之後（claude 先收乾淨，codex 待 full-access 決策）。umbrella [[CC-333]]。
+
+**See**: [[CC-394]]（claude 對稱、先行）、[[CC-333]]、[[CC-387]]（codex routine self-write 退場、fallback 保留的前一步）、[[CC-391]]（無 Agent 後 lifecycle 簡化）。
 
 ---
 
@@ -1351,27 +1391,29 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ---
 
-## CC-335 — release: deprecated surface registry + v0.6.0 removal sweep 🟢 someday
+## CC-335 — release: deprecated surface registry + v0.6.0 removal sweep ✅ 2026-06-16
+
+**See**: pr:#292
 
 > **v0.6.0 Phase 4**：本票即 v0.6.0「executor abstraction」milestone 的 deprecation 清掃階段。其中 `--profile` alias（→ `--role`+`--runtime`）與 `codex-dispatch.sh` shim（→ `pmctl dispatch run --adapter codex`）正是 runtime-coupling cruft，與 [[CC-373]]/[[CC-374]] 抽象收口同期最自然。見 MILESTONES v0.6.0。
 
 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。每個項目在移除前需先補 stderr deprecation warning（讓使用者有遷移週期）。
 
-### Deprecated surfaces
+### Deprecated surfaces（v0.6.0 sweep 結果）
 
-| Surface | Deprecated since | Replacement | Removal target |
-|---|---|---|---|
-| `bash scripts/pr-gate.sh` 直呼腳本 | v0.4.0 | `pmctl gate run` | v0.6.0 |
-| `scripts/codex-dispatch.sh` shim（legacy callers） | pre-v0.4.0 | `pmctl dispatch run --adapter codex` | v0.6.0 |
-| `--profile <pm\|codex\|claude>` flag in `pmctl guard check` | pre-v0.4.0 | `--role` + `--runtime` flags | v0.6.0 |
-| `sandbox` / `approval` / `skip_git_check` legacy metadata fields | pre-v0.4.0 | `isolation_level` field | v0.6.0 |
-| `CLAUDE_HOOK_*` env vars（shims） | v0.4.0（CC-321） | `PM_HOOK_*` | v0.5.0 |
+| Surface | Deprecated since | Replacement | Removal target | 狀態 |
+|---|---|---|---|---|
+| `bash scripts/pr-gate.sh` 直呼腳本 | v0.4.0 | `pmctl gate run` | doc-only | ✅ **降級為文件 deprecation**：pr-gate.sh 是 gate 實作本體（`pmctl-gate.sh` 以 `exec` 呼叫），且 standalone/copy-mode 是官方支援的 fallback；不刪檔、不加 runtime warning，僅文件建議 `pmctl gate run`。 |
+| `scripts/codex-dispatch.sh` shim（legacy callers） | pre-v0.4.0 | `pmctl dispatch run --adapter codex` | v0.6.0 | ✅ shim 檔早於 v0.3.0 sunset（CC-296）刪除；本次清掃 allowlist/doctor/uninstall 內守衛永不存在檔的 dead-code 與殘留 stale 註解。 |
+| `--profile <pm\|codex\|claude>` flag in `pmctl guard check` | pre-v0.4.0 | `--role` + `--runtime` flags | v0.6.0 | ✅ guard check 早已只接受 `--role`/`--runtime`；無殘留 shim（install/doctor 的 `--profile minimal\|full` 為不同 surface，非本票）。 |
+| `sandbox` / `approval` / `skip_git_check` legacy metadata fields | pre-v0.4.0 | `isolation_level` field | v0.6.0 | ✅ **移除**：`handover-validate.sh` 刪除三個驗證函式、isolation_level 改必填、trio 欄位出現即 reject 並給遷移訊息；codex adapter 原生 `--sandbox/--approval`（isolation_level 翻譯目標）保留。 |
+| `CLAUDE_HOOK_*` env vars（shims） | v0.4.0（CC-321） | `PM_HOOK_*` | v0.5.0 | ✅ **移除**：5 個 `hook-*.sh` 內 9 行向後相容 shim 全刪（0 測試依賴）。 |
 
-### Work items
+### Work items（已完成）
 
-1. 每個 deprecated surface 在主路徑補 `printf '[deprecated] ...\n' >&2` warning。
-2. 確認現有測試不依賴 deprecated 路徑（或加 `--legacy` flag 測試 warning 本身）。
-3. v0.6.0 移除實作、刪除 shim files、清理文件。
+1. ✅ trio / CLAUDE_HOOK_* 在 v0.5.0 前已有 stderr deprecation warning，遷移週期已過。
+2. ✅ 移除實作後全測試套件綠燈（trio fixture 轉 isolation_level、刪 trio 函式測試、加 trio-rejected 測試）。
+3. ✅ 清理文件（dispatch-brief.md / executor-contract.md）與 dead-code 殘留。
 
 ### How to add a new deprecated surface
 

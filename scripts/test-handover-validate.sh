@@ -22,11 +22,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
 brief_file: $brief_file
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 1200
 model: default
-skip_git_check: false
 fallback_allowed: true
 EOF
 }

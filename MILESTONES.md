@@ -62,7 +62,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-335 | deprecated surface 移除 sweep；其中 `--profile` alias 與 `codex-dispatch.sh` shim 為 runtime-coupling cruft，與本 milestone 同期最自然 | 🔵 |
+| CC-335 | deprecated surface 移除 sweep：handover legacy trio（sandbox/approval/skip_git_check）＋ CLAUDE_HOOK_* shims 移除；codex-dispatch.sh shim 殘留 dead-code 清理；pr-gate.sh 直呼降級為文件 deprecation（standalone 為官方 fallback，不刪檔） | ✅ |
 
 ### Phase 7 — executor lifecycle ownership（P2；executor 抽象的完成式）
 
@@ -109,7 +109,7 @@
 
 ---
 
-## v0.5.0 — local context substrate（本地 context 地基；規劃中）
+## v0.5.0 — local context substrate（本地 context 地基；released 2026-06-13）
 
 **主題**：把 v0.4.0 的 state-first substrate 升級為 **dispatch 前可用的 context**——以「**雙索引 + 單一 context-pack 介面**」的形狀，讓 PM 在派工前同時拿到「**為什麼**」（第二大腦：memory / backlog / decisions）、「**在哪改、可重用什麼**」（repo index：files / symbols / helpers / tests）、與「**最近發生什麼**」（state/event 作 ranking signal）。這是 v0.4.0「無使用者可見賣點」之後的第一個能力層。
 

@@ -31,7 +31,7 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). `isolation_level:` is required. The legacy fields `sandbox`, `approval`, and `skip_git_check` were removed in v0.6.0 (CC-335); a brief that still carries any of them is rejected with a migration error.
 
 ## Required fields
 
@@ -87,8 +87,7 @@ Use as needed; not all briefs require all of them.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
-- **`isolation_level`** — use for new briefs: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none` (requires `agent_executor` dispatch route). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`.
-- **`sandbox`** / **`approval`** (legacy) — backward-compat only; accepted when `isolation_level` is absent; new briefs must use `isolation_level`.
+- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none` (requires `agent_executor` dispatch route). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
@@ -426,13 +425,10 @@ Metadata fields:
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
-| `isolation_level` | yes (new) | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. Cannot be mixed with legacy `sandbox`/`approval`/`skip_git_check`. |
+| `isolation_level` | yes | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. The legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected. |
 | `timeout` | yes | Seconds; `1200` default. Passed through to the executor adapter. For `opencode`, must be 0 (no limit) or ≥ 120 (per-attempt floor). |
 | `model` | yes | `default` or an executor-specific model wire-id. For `opencode`, aliases like `light`/`default` are resolved by the adapter. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
-| `sandbox` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
-| `approval` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `never`. |
-| `skip_git_check` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `false`. |
 | `snapshot_file` | no | Absolute path to a PM-generated context snapshot; if present, PM uses it for orientation. PM re-derives security-sensitive fields (current branch, HEAD SHA) from git — see `agents/project-pm.md` `## Snapshot ingestion`. |
 
 ### Env / config precedence
@@ -501,8 +497,6 @@ Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `
 Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch <executor> for <slug>")
 ```
 
-When dispatching a legacy brief that has `sandbox:` instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`.
-
 Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
 
 `handover_validate_all_metadata` applies these field validators:
@@ -512,10 +506,7 @@ Before constructing this Bash command, the dispatcher MUST source `scripts/lib/h
 - `handover_validate_dispatch_route`
 - `handover_validate_working_dir`
 - `handover_validate_brief_file`
-- `handover_validate_isolation_level` (when `isolation_level:` present) **OR** the legacy trio below (when absent):
-  - `handover_validate_sandbox`
-  - `handover_validate_approval`
-  - `handover_validate_skip_git_check`
+- `handover_validate_isolation_level` (required; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 (CC-335) and are rejected if present)
 - `handover_validate_timeout`
 - `handover_validate_model`
 - `handover_validate_fallback_allowed`
@@ -536,26 +527,25 @@ executor: claude
 dispatch_route: mystery_route
 working_dir: relative/path
 brief_file: /etc/passwd
-sandbox: danger-full-access
-approval: on-request
+isolation_level: danger-full-access
 timeout: 3601
 model: Codex_Spark!
-skip_git_check: true
+sandbox: workspace-write
 fallback_allowed: maybe
 ```
 
-Each example above must reject before command construction through the corresponding field validator.
+Each example above must reject before command construction: the control fields (`dispatch_route`, `working_dir`, `brief_file`, `isolation_level`, `timeout`, `model`, `fallback_allowed`) reject through their field validators, while the `sandbox` line rejects through the removed-legacy-field check (no `handover_validate_sandbox` validator exists anymore — the field was removed in v0.6.0, see CC-335).
 
 Argument order is stable:
 
 1. `pmctl dispatch run --adapter codex`
 2. `--cd <safe working_dir>`
 3. `--model <safe model>` only if `model` is not `default`
-4. `--isolation <safe isolation_level>` (canonical) OR `--sandbox <safe sandbox> --approval <safe approval>` (legacy fallback when `isolation_level` is absent)
+4. `--isolation <safe isolation_level>`
 5. `--timeout <safe timeout>`
 6. `--brief-file <safe brief_file>`
 
-The Bash route never emits `--skip-git-check`. Validator hard-rejects `skip_git_check: true`; callers needing this flag must use the Agent(codex-executor) fallback.
+The Bash route never grants full access unattended: `isolation_level: none` (which maps to danger-full-access) is hard-rejected on `main_thread_bash_background` for every executor except opencode. Callers needing full access must use the Agent(codex-executor) fallback.
 
 Quoting and command-shape rules:
 
@@ -603,7 +593,7 @@ Use `Agent(codex-executor)` only for this fallback allowlist:
 | Main-thread context is near-full. | The fallback moves validation, trace-reading, and result verification out of the main thread when the conversation window is the limiting factor. |
 | Sync workflow must remain serialized. | Some composed flows need foreground sequencing and artifact validation rather than an asynchronous completion notification. |
 | Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or an unavailable Bash tool means the documented primary route cannot run. |
-| Brief requires skip_git_check: true, sandbox: danger-full-access, or approval other than never. | Bash route validator hard-rejects these values with no override channel; the Agent route accepts them via codex-executor's documented override flags. |
+| Brief requires full access (`isolation_level: none` → danger-full-access). | Bash route validator hard-rejects full access on `main_thread_bash_background` (except opencode) with no override channel; the Agent route accepts it via codex-executor's documented override flags. |
 | User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
 
 When using fallback, set `dispatch_route: agent_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.

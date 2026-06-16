@@ -47,15 +47,11 @@ If the path is present but the file does not exist, STOP:
 5. Verify acceptance criteria one by one. Use `Bash` for `grep` / `test` / `git status` style assertions.
 6. Write trace (see # Write trace below) — MUST complete before final output. Then report back in the shape in # Report.
 
-# Metadata fields ignored by claude
+# Isolation metadata
 
-The brief's metadata header (`dispatch_handover_v1`) carries fields that are **codex-specific** and are accepted-but-ignored by claude for schema stability:
+The brief's metadata header (`dispatch_handover_v1`) carries a single required `isolation_level:` field (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`). The claude adapter translates it to `--permission-mode`; claude otherwise runs inside the Claude Code harness's existing tool boundaries and permission prompts, so for claude most levels collapse to the same harness-governed behavior.
 
-- `sandbox` — codex sandbox model; claude runs inside the Claude Code harness's existing tool boundaries
-- `approval` — codex CLI approval policy; claude uses the harness's permission prompts
-- `skip_git_check` — codex pre-flight; claude does not have an equivalent guard
-
-For canonical no-op values, briefs targeting claude should set `sandbox: workspace-write`, `approval: never`, `skip_git_check: false`. Do not warn about these values being unused — the schema requires them.
+The legacy `sandbox` / `approval` / `skip_git_check` fields were removed — the validator rejects any brief that still carries them, so a claude brief must use `isolation_level:` only.
 
 # Verify
 
@@ -123,7 +119,7 @@ Never appropriate for this agent regardless of route:
 
 - **Planning or design questions** — use `project-pm` or answer in the main thread instead.
 - **Open-ended exploration** — claude-executor follows a brief contract; if the goal isn't expressible as `goal` + `files` + `acceptance` + `self_verify`, the brief isn't ready.
-- **Codex-specific briefs** — if the brief uses any codex-only feature beyond the three ignored metadata fields (e.g. expects `--skip-git-check: true` semantics, or relies on codex sandbox isolation), route to codex-executor instead via the `codex` install profile.
+- **Codex-specific briefs** — if the brief relies on a codex-only capability (e.g. `isolation_level: none` → danger-full-access, or codex's native sandbox isolation), route to codex-executor instead via the `codex` install profile.
 
 Caller decision checklist:
 

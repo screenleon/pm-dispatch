@@ -62,11 +62,6 @@ add_dispatch_allowlist() {
   local f rel allow_json
   allow_json="$(
     {
-      f="$REPO_ROOT/scripts/codex-dispatch.sh"
-      if [[ -f "$f" ]]; then
-        rel="${f#"$home_dir/"}"
-        printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
-      fi
       for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
         [[ -f "$f" ]] || continue
         rel="${f#"$home_dir/"}"
@@ -1361,8 +1356,6 @@ case_doctor_claude_config_dir() {
   local _allow_json _f
   _allow_json="$(
     {
-      _f="$REPO_ROOT/scripts/codex-dispatch.sh"
-      [[ -f "$_f" ]] && printf 'Bash(%s:*)\n' "$_f"
       for _f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
         [[ -f "$_f" ]] && printf 'Bash(%s:*)\n' "$_f"
       done

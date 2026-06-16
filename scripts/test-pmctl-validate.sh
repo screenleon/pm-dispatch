@@ -27,11 +27,9 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
 brief_file: /tmp/brief-pmctl-validate-test.md
-sandbox: workspace-write
-approval: never
+isolation_level: workspace-write
 timeout: 600
 model: default
-skip_git_check: false
 fallback_allowed: true
 ---
 working_dir: $body_wd

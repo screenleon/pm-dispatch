@@ -45,12 +45,6 @@ _REPO_ROOT="$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/runner-kind.sh
 . "$_SCRIPT_DIR/lib/runner-kind.sh"
 
-# Deprecated-name compat shim for PM_HOOK_LOG_DIR, kept in step with the peer
-# guard scripts (pm/reviewer) until the cross-script deprecation sweep retires it
-# everywhere at once. The per-runtime CLAUDE_HOOK_*_WRITE_GUARD shims are NOT
-# carried over — they are dropped with the collapse.
-[[ -z "${PM_HOOK_LOG_DIR:-}" && -n "${CLAUDE_HOOK_LOG_DIR:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2; PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
-
 HOOK_NAME="hook-executor-write-guard"
 LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"

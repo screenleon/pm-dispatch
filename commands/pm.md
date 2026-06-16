@@ -29,7 +29,7 @@ The abstract contract both routes implement is documented in `docs/executor-cont
 Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-Omit `--model <safe model>` when `model: default`. When the handover block uses the legacy `sandbox:` field instead of `isolation_level:`, pass `--sandbox <safe sandbox> --approval <safe approval>` — pmctl forwards them opaquely to the adapter. New briefs must use `isolation_level:`. Never emit `--skip-git-check`; callers needing that flag must use the `Agent(codex-executor)` fallback. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
+Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. A brief needing full access (`isolation_level: none` → danger-full-access) must use the `Agent(codex-executor)` fallback. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
 
 Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback.
 
@@ -39,7 +39,7 @@ Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-br
 Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter claude --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch claude for <slug>")
 ```
 
-Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an external CLI subprocess; host-independent (codex-as-PM can drive it). Completion handling is identical to Route A — same Bash footer format, same post-verify flow. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`; legacy `--sandbox`/`--approval` flags are forwarded as no-ops. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL from dispatch-post-verify.sh.
+Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an external CLI subprocess; host-independent (codex-as-PM can drive it). Completion handling is identical to Route A — same Bash footer format, same post-verify flow. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL from dispatch-post-verify.sh.
 
 Use `Agent(claude-executor)` only when headless `claude --print` is unavailable (e.g. `claude` CLI not in PATH) — per the fallback allowlist in `docs/dispatch-brief.md` §Fallback. See `agents/claude-executor.md` for the Agent fallback contract and `docs/executor-contract.md` for the profile comparison.
 

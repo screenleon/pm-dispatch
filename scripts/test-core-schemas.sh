@@ -448,63 +448,45 @@ case_enum_sync "$CORE_DIR/schema/handover.schema.json" \
   "$CORE_DIR/policy/isolation-level.yaml" \
   "values"
 
-# handover schema oneOf encodes canonical (isolation_level) vs legacy (sandbox+approval+skip_git_check)
-case_handover_schema_oneOf_canonical_and_legacy() {
-  local name="handover.schema.json: oneOf has canonical isolation_level branch and legacy sandbox branch"
+# handover schema requires isolation_level and no longer declares the legacy trio
+# (removed in v0.6.0). additionalProperties:false rejects any carried legacy field.
+case_handover_schema_requires_isolation_level() {
+  local name="handover.schema.json: isolation_level required, legacy trio removed"
   should_run "$name" || return 0
   local schema_file="$CORE_DIR/schema/handover.schema.json"
   if [[ ! -f "$schema_file" ]]; then
     fail "$name" "missing: $schema_file"; return
   fi
-  # Verify oneOf exists with at least 2 branches
-  local one_of_len
-  one_of_len="$(jq '.oneOf | length' "$schema_file" 2>/dev/null)"
-  if [[ "$one_of_len" -lt 2 ]]; then
-    fail "$name" "oneOf must have at least 2 branches, got: $one_of_len"; return
+  # isolation_level must be in the top-level required array
+  local iso_required
+  iso_required="$(jq '[ .required[] | select(. == "isolation_level") ] | length' "$schema_file" 2>/dev/null)"
+  if [[ "$iso_required" -lt 1 ]]; then
+    fail "$name" "isolation_level must be in the required array"; return
   fi
-  # Verify isolation_level branch exists
-  local has_iso_branch
-  has_iso_branch="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["isolation_level"])) ] | length' "$schema_file" 2>/dev/null)"
-  if [[ "$has_iso_branch" -lt 1 ]]; then
-    fail "$name" "oneOf missing isolation_level required branch"; return
+  # No oneOf legacy/canonical split remains
+  local has_one_of
+  has_one_of="$(jq 'has("oneOf")' "$schema_file" 2>/dev/null)"
+  if [[ "$has_one_of" != "false" ]]; then
+    fail "$name" "oneOf must be removed (isolation_level is now unconditionally required)"; return
   fi
-  # Verify legacy branch exists
-  local has_legacy_branch
-  has_legacy_branch="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["sandbox","approval","skip_git_check"])) ] | length' "$schema_file" 2>/dev/null)"
-  if [[ "$has_legacy_branch" -lt 1 ]]; then
-    fail "$name" "oneOf missing legacy sandbox/approval/skip_git_check required branch"; return
+  # The legacy trio properties must be gone, and additionalProperties must be false
+  # so a brief carrying them is rejected.
+  local legacy_props add_props
+  legacy_props="$(jq '[ .properties | keys[] | select(. == "sandbox" or . == "approval" or . == "skip_git_check") ] | length' "$schema_file" 2>/dev/null)"
+  add_props="$(jq '.additionalProperties' "$schema_file" 2>/dev/null)"
+  if [[ "$legacy_props" -ne 0 ]]; then
+    fail "$name" "legacy sandbox/approval/skip_git_check properties must be removed, found: $legacy_props"; return
   fi
-  pass "$name"
-}
-case_handover_schema_oneOf_canonical_and_legacy
-
-# handover schema oneOf branches carry 'not' constraints that prevent mixing
-case_handover_schema_oneOf_not_constraints() {
-  local name="handover.schema.json: oneOf branches have not-constraints preventing canonical/legacy mixing"
-  should_run "$name" || return 0
-  local schema_file="$CORE_DIR/schema/handover.schema.json"
-  if [[ ! -f "$schema_file" ]]; then
-    fail "$name" "missing: $schema_file"; return
-  fi
-  # Canonical branch must have a 'not' that excludes at least one legacy field
-  local canonical_not_len
-  canonical_not_len="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["isolation_level"])) | .not ] | map(select(. != null)) | length' "$schema_file" 2>/dev/null)"
-  if [[ "$canonical_not_len" -lt 1 ]]; then
-    fail "$name" "canonical oneOf branch is missing a 'not' constraint to exclude legacy fields"; return
-  fi
-  # Legacy branch must have a 'not' that excludes isolation_level
-  local legacy_not_excl_iso
-  legacy_not_excl_iso="$(jq '[ .oneOf[] | select(.required != null) | select(.required | contains(["sandbox","approval","skip_git_check"])) | .not | select(. != null) | .. | objects | select(.required != null) | select(.required | contains(["isolation_level"])) ] | length' "$schema_file" 2>/dev/null)"
-  if [[ "$legacy_not_excl_iso" -lt 1 ]]; then
-    fail "$name" "legacy oneOf branch is missing a 'not' that excludes isolation_level"; return
+  if [[ "$add_props" != "false" ]]; then
+    fail "$name" "additionalProperties must be false so legacy fields are rejected"; return
   fi
   pass "$name"
 }
-case_handover_schema_oneOf_not_constraints
+case_handover_schema_requires_isolation_level
 
-# handover schema oneOf instance semantics: canonical-only valid, legacy-only valid, mixed invalid
-case_handover_schema_oneOf_instance_semantics() {
-  local name="handover.schema.json: oneOf instance semantics"
+# handover schema instance semantics: isolation_level required; legacy trio rejected.
+case_handover_schema_instance_semantics() {
+  local name="handover.schema.json: instance semantics (isolation_level required, legacy rejected)"
   should_run "$name" || return 0
   if ! command -v jsonschema >/dev/null 2>&1; then
     pass "$name (skip: jsonschema not available)"
@@ -514,40 +496,34 @@ case_handover_schema_oneOf_instance_semantics() {
   local base='{"handover_version":3,"executor":"codex","dispatch_route":"agent_executor","working_dir":"/tmp/t","brief_file":"/tmp/b.md","timeout":120,"model":"default","fallback_allowed":false'
   local tmpdir; tmpdir="$(mktemp -d)"
 
-  # canonical-only: must be valid
+  # canonical (isolation_level only): must be valid
   printf '%s,"isolation_level":"workspace-write"}' "$base" > "$tmpdir/canonical.json"
   if ! jsonschema -i "$tmpdir/canonical.json" "$schema_file" >/dev/null 2>&1; then
-    fail "$name" "canonical-only (isolation_level only) must be valid"; rm -rf "$tmpdir"; return
+    fail "$name" "canonical (isolation_level only) must be valid"; rm -rf "$tmpdir"; return
   fi
 
-  # legacy-only: must be valid
+  # legacy-only: must now be INVALID (additionalProperties:false + missing isolation_level)
   printf '%s,"sandbox":"workspace-write","approval":"never","skip_git_check":false}' "$base" > "$tmpdir/legacy.json"
-  if ! jsonschema -i "$tmpdir/legacy.json" "$schema_file" >/dev/null 2>&1; then
-    fail "$name" "legacy-only (sandbox+approval+skip_git_check) must be valid"; rm -rf "$tmpdir"; return
+  if jsonschema -i "$tmpdir/legacy.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "legacy-only (sandbox+approval+skip_git_check) must be invalid"; rm -rf "$tmpdir"; return
   fi
 
-  # missing-both: must be invalid (no oneOf branch satisfied)
+  # missing isolation_level: must be invalid
   printf '%s}' "$base" > "$tmpdir/missing.json"
   if jsonschema -i "$tmpdir/missing.json" "$schema_file" >/dev/null 2>&1; then
-    fail "$name" "missing-both (no isolation metadata) must be invalid"; rm -rf "$tmpdir"; return
+    fail "$name" "missing isolation_level must be invalid"; rm -rf "$tmpdir"; return
   fi
 
-  # mixed (isolation_level + full legacy trio): must be invalid
-  printf '%s,"isolation_level":"workspace-write","sandbox":"workspace-write","approval":"never","skip_git_check":false}' "$base" > "$tmpdir/mixed.json"
-  if jsonschema -i "$tmpdir/mixed.json" "$schema_file" >/dev/null 2>&1; then
-    fail "$name" "mixed canonical+legacy must be invalid"; rm -rf "$tmpdir"; return
-  fi
-
-  # partial-mix (isolation_level + single legacy field): must be invalid
-  printf '%s,"isolation_level":"workspace-write","sandbox":"workspace-write"}' "$base" > "$tmpdir/partial.json"
-  if jsonschema -i "$tmpdir/partial.json" "$schema_file" >/dev/null 2>&1; then
-    fail "$name" "partial-mix (isolation_level + sandbox) must be invalid"; rm -rf "$tmpdir"; return
+  # isolation_level + a carried legacy field: must be invalid (additionalProperties:false)
+  printf '%s,"isolation_level":"workspace-write","sandbox":"workspace-write"}' "$base" > "$tmpdir/carried.json"
+  if jsonschema -i "$tmpdir/carried.json" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "isolation_level + carried legacy field must be invalid"; rm -rf "$tmpdir"; return
   fi
 
   rm -rf "$tmpdir"
   pass "$name"
 }
-case_handover_schema_oneOf_instance_semantics
+case_handover_schema_instance_semantics
 
 # 6. Adapter parity tests
 case_isolation_level_adapter_parity

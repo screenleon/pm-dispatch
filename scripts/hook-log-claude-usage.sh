@@ -34,8 +34,6 @@ if [[ -f "$_tracker" && -n "${session_id:-}" ]]; then
 fi
 [[ "${_tokens_to_log:-0}" -gt 0 ]] || exit 0
 
-# Deprecated-name compat shim — remove after v0.5.0
-[[ -z "${PM_HOOK_LOG_DIR:-}" && -n "${CLAUDE_HOOK_LOG_DIR:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_LOG_DIR deprecated; use PM_HOOK_LOG_DIR\n' >&2; PM_HOOK_LOG_DIR="${CLAUDE_HOOK_LOG_DIR}"; }
 _log_file="${PM_HOOK_LOG_DIR:+${PM_HOOK_LOG_DIR}/hooks.log}"
 _log_file="${_log_file:-${HOME}/.claude/logs/hooks.log}"
 mkdir -p "$(dirname "$_log_file")"
