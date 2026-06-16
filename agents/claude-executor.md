@@ -123,7 +123,7 @@ Never appropriate for this agent regardless of route:
 
 - **Planning or design questions** — use `project-pm` or answer in the main thread instead.
 - **Open-ended exploration** — claude-executor follows a brief contract; if the goal isn't expressible as `goal` + `files` + `acceptance` + `self_verify`, the brief isn't ready.
-- **Codex-specific briefs** — if the brief uses any codex-only feature beyond the three ignored metadata fields (e.g. expects `--skip-git-check: true` semantics, or relies on codex sandbox isolation), route to codex-executor instead via the `codex` install profile.
+- **Codex-specific briefs** — if the brief relies on a codex-only capability (e.g. `isolation_level: none` → danger-full-access, or codex's native sandbox isolation), route to codex-executor instead via the `codex` install profile.
 
 Caller decision checklist:
 

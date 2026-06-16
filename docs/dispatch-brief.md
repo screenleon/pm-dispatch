@@ -534,7 +534,7 @@ sandbox: workspace-write
 fallback_allowed: maybe
 ```
 
-Each example above must reject before command construction through the corresponding field validator (the `sandbox` line rejects as a removed legacy field — see CC-335).
+Each example above must reject before command construction: the control fields (`dispatch_route`, `working_dir`, `brief_file`, `isolation_level`, `timeout`, `model`, `fallback_allowed`) reject through their field validators, while the `sandbox` line rejects through the removed-legacy-field check (no `handover_validate_sandbox` validator exists anymore — the field was removed in v0.6.0, see CC-335).
 
 Argument order is stable:
 
