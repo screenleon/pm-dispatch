@@ -9,29 +9,22 @@
 # and is the user's responsibility (auth/permission separation of concerns).
 #
 # Supported isolation levels (source of truth: core/policy/isolation-level.yaml):
-#   none            – no isolation; full machine access
+#   none            – no isolation; full machine access (user explicitly opts out
+#                     of all permission prompts)
 #                     → --dangerously-skip-permissions
-#   workspace-write – host-managed isolation (opencode default permission behavior)
-#                     → no extra CLI flag needed; opencode prompts on edit by default.
-#                     NOTICE: pm-dispatch does NOT enforce the workspace boundary here.
-#                     Actual blast radius depends on the user's opencode host config
-#                     (~/.config/opencode/opencode.json). Operators must ensure their
-#                     opencode installation is configured appropriately. Using this
-#                     level implies acknowledgment that enforcement is host-managed,
-#                     not pm-dispatch-managed. See adapters/opencode/dispatch.sh
-#                     isolation override recorded 2026-06-16.
 #
 # Unsupported levels (NOT listed here → dispatch.sh rejects with exit 2):
-#   read-only       – opencode has no CLI flag to enforce read-only access;
-#                     requires host-level opencode.json configuration outside
-#                     pm-dispatch control. Use workspace-write + host config.
-#   workspace-network – network access is always on in opencode; this level
-#                     cannot be meaningfully distinguished from workspace-write.
+#   workspace-write – opencode has no CLI flag to enforce a workspace boundary;
+#                     enforcement would require host-level opencode.json config
+#                     outside pm-dispatch control, which cannot be verified at
+#                     dispatch time. Use isolation_level: none if you need
+#                     fully unattended operation and have configured opencode's
+#                     permission rules in ~/.config/opencode/opencode.json.
+#   read-only       – opencode has no CLI flag to enforce read-only access.
+#   workspace-network – network access is always on in opencode.
 #   sandboxed       – opencode has no ephemeral sandbox mechanism.
 
 mappings:
   none:
     native_flags:
       - '--dangerously-skip-permissions'
-  workspace-write:
-    native_flags: []

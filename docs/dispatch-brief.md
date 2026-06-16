@@ -427,8 +427,8 @@ Metadata fields:
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `isolation_level` | yes (new) | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. Cannot be mixed with legacy `sandbox`/`approval`/`skip_git_check`. |
-| `timeout` | yes | `1200` fallback after `CODEX_DISPATCH_TIMEOUT` and config; public env fallback chain below. |
-| `model` | yes | `default` or a specific Codex model name. |
+| `timeout` | yes | Seconds; `1200` default. Passed through to the executor adapter. For `opencode`, must be 0 (no limit) or ≥ 120 (per-attempt floor). |
+| `model` | yes | `default` or an executor-specific model wire-id. For `opencode`, aliases like `light`/`default` are resolved by the adapter. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
 | `sandbox` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
 | `approval` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `never`. |
@@ -495,10 +495,10 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 `default` is applied when `PM_CFG_DEFAULT_MODEL` is set or when `--model default` is given explicitly; omitting `--model` with no config default delegates to the claude CLI built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
-Direct Bash dispatch shape:
+Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `opencode`):
 
 ```text
-Bash(command: "pmctl dispatch run --adapter codex --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch <executor> for <slug>")
 ```
 
 When dispatching a legacy brief that has `sandbox:` instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`.

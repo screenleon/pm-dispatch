@@ -221,21 +221,21 @@ case_isolation_none() {
   rm -rf "$work"; rm -f "$bf"
 }
 
-# Behavior: isolation:workspace-write maps to empty native flags (opencode default behavior).
+# Behavior: isolation:workspace-write is rejected (not enforceable by opencode CLI).
 # Steps:
-#   1. Run dispatch.sh with --isolation workspace-write and --print-cmd.
-#   2. Assert output does NOT contain --dangerously-skip-permissions.
-case_isolation_workspace_write_no_flags() {
-  local name="isolation/workspace-write maps to empty native flags"; should_run "$name" || return 0
-  local work bf out
+#   1. Run dispatch.sh with --isolation workspace-write.
+#   2. Assert non-zero exit (same as other unsupported levels).
+case_isolation_workspace_write_rejected() {
+  local name="isolation/workspace-write is rejected (not enforceable)"; should_run "$name" || return 0
+  local work bf rc
   work="$(mktemp -d)"; bf="$(_mk_brief)"
-  out="$("$DISPATCH" \
+  rc=0
+  "$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model opencode/nemotron-3-ultra-free \
-    --isolation workspace-write --print-cmd 2>&1 || true)"
-  if echo "$out" | grep -q "dangerously-skip-permissions"; then
-    fail "$name" "workspace-write should not add --dangerously-skip-permissions"
-  else pass "$name"; fi
+    --isolation workspace-write >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then pass "$name"
+  else fail "$name" "workspace-write should be rejected (unsupported by opencode adapter)"; fi
   rm -rf "$work"; rm -f "$bf"
 }
 
@@ -540,7 +540,7 @@ case_missing_brief_file
 case_happy_path
 case_print_cmd
 case_isolation_none
-case_isolation_workspace_write_no_flags
+case_isolation_workspace_write_rejected
 case_unknown_isolation
 case_isolation_read_only_rejected
 case_isolation_sandboxed_rejected
