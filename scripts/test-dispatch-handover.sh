@@ -914,6 +914,15 @@ model_dotted_wire_ids_accept_case() {
     && handover_validate_model default >/dev/null 2>&1
 }
 
+# Behavior: opencode slash-form wire IDs are accepted.
+# Steps:
+#   1. Validate opencode/big-pickle and openrouter/custom/model.
+#   2. Assert both succeed.
+model_opencode_wire_id_accepts_case() {
+  handover_validate_model opencode/big-pickle >/dev/null 2>&1 \
+    && handover_validate_model openrouter/custom/model >/dev/null 2>&1
+}
+
 # Behavior: Bad model name shapes are rejected.
 # Steps:
 #   1. Validate a model with uppercase and punctuation.
@@ -1102,6 +1111,7 @@ run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case
 run_case "handover/model default accepts" model_default_accepts_case
 run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
 run_case "handover/model dotted wire ids accept" model_dotted_wire_ids_accept_case
+run_case "handover/model opencode slash wire id accepts" model_opencode_wire_id_accepts_case
 run_case "handover/model bad shape rejects" model_bad_shape_rejects_case
 run_case "handover/fallback_allowed true accepts" fallback_allowed_true_accepts_case
 run_case "handover/fallback_allowed invalid rejects" fallback_allowed_invalid_rejects_case

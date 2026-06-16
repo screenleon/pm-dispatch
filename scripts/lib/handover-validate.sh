@@ -261,11 +261,12 @@ handover_validate_model() {
   local value=${1-}
 
   handover_validate_metadata_value model "$value" || return 1
-  # Allow `.` so dotted wire/model ids (e.g. gpt-5.5, gpt-5.4) — which now appear
-  # in share/model-aliases.tsv as valid PM-facing values — pass validation. Dots
-  # are not shell metacharacters and the value is separately screened for
-  # forbidden chars by handover_validate_metadata_value above.
-  [[ "$value" == "default" || "$value" =~ ^[a-z][a-z0-9.-]{0,30}$ ]] || handover_reject model "unsupported model name shape"
+  # Allow `.`, `/`, and `_` so dotted wire/model ids (e.g. gpt-5.5), Codex IDs
+  # (e.g. codex-spark), and slash-form opencode wire IDs (e.g. opencode/big-pickle,
+  # openrouter/custom/model) all pass validation. These chars are not shell
+  # metacharacters and the value is separately screened for forbidden chars by
+  # handover_validate_metadata_value above. Max 64 chars to cover provider-prefix IDs.
+  [[ "$value" == "default" || "$value" =~ ^[a-z][a-z0-9./_-]{0,63}$ ]] || handover_reject model "unsupported model name shape"
 }
 
 handover_validate_skip_git_check() {
