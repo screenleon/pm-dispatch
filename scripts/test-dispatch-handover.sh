@@ -716,6 +716,50 @@ fallback_allowed: true"
   expect_reject_reason skip_git_check "legacy field removed in v0.6.0" handover_validate_all_metadata "$block"
 }
 
+# Behavior: A legacy-only (pre-M3) brief with the trio and NO isolation_level is
+# rejected with the migration message, not a generic missing-isolation_level error.
+# Steps:
+#   1. Build metadata with sandbox/approval/skip_git_check and no isolation_level.
+#   2. Assert handover_validate_all_metadata rejects naming a removed legacy field
+#      with the v0.6.0 migration message.
+all_metadata_legacy_only_rejects_with_migration_message_case() {
+  local block
+  block="handover_version: 3
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-legacy-only.md
+sandbox: workspace-write
+approval: never
+skip_git_check: false
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject_reason sandbox "legacy field removed in v0.6.0" handover_validate_all_metadata "$block"
+}
+
+# Behavior: A present-but-empty legacy key (`sandbox: ` with an empty value) is
+# rejected by field-key presence, not only on a non-empty value.
+# Steps:
+#   1. Build metadata with isolation_level plus an empty `sandbox: ` key. The
+#      empty value is produced via ${_empty} so the source line carries no
+#      trailing whitespace while the runtime line is `sandbox: ` (colon-space).
+#   2. Assert handover_validate_required_fields rejects naming sandbox.
+required_fields_empty_legacy_key_rejects_case() {
+  local block _empty=""
+  block="handover_version: 3
+executor: codex
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-empty-legacy.md
+isolation_level: workspace-write
+sandbox: ${_empty}
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject_reason sandbox "legacy field removed in v0.6.0" handover_validate_required_fields "$block"
+}
+
 # Behavior: Timeout 1200 is accepted.
 # Steps:
 #   1. Validate timeout 1200.
@@ -1077,6 +1121,8 @@ run_case "handover/required fields missing both isolation and sandbox rejects" r
 run_case "handover/all metadata mixed isolation and sandbox rejects" all_metadata_mixed_isolation_and_sandbox_rejects_case
 run_case "handover/all metadata mixed isolation and approval rejects" all_metadata_mixed_isolation_and_approval_rejects_case
 run_case "handover/all metadata mixed isolation and skip_git_check rejects" all_metadata_mixed_isolation_and_skip_git_check_rejects_case
+run_case "handover/all metadata legacy-only rejects with migration message" all_metadata_legacy_only_rejects_with_migration_message_case
+run_case "handover/required fields empty legacy key rejects" required_fields_empty_legacy_key_rejects_case
 run_case "handover/working_dir match accepts" working_dir_match_accepts_case
 run_case "handover/working_dir mismatch helper rejects" working_dir_match_mismatch_rejects_case
 run_case "handover/extract block present echoes content" extract_block_present_echoes_content_case

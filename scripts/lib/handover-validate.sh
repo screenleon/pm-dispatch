@@ -283,6 +283,16 @@ handover_validate_fallback_allowed() {
 handover_validate_required_fields() {
   local metadata=${1-}
   local field
+  # The legacy isolation trio was removed in v0.6.0 (CC-335). Reject a brief that
+  # still carries ANY of them BEFORE the isolation_level requirement fires below,
+  # so a legacy-only (pre-M3) brief gets the explicit migration message instead of
+  # a generic "missing isolation_level" error. Presence is detected by field key
+  # (a present-but-empty value still counts), not by a non-empty value.
+  for field in sandbox approval skip_git_check; do
+    if handover_get_field "$metadata" "$field" >/dev/null 2>&1; then
+      handover_reject "$field" "legacy field removed in v0.6.0; use isolation_level instead" || return 1
+    fi
+  done
   for field in handover_version executor dispatch_route working_dir brief_file timeout model fallback_allowed isolation_level; do
     handover_get_field "$metadata" "$field" >/dev/null || return 1
   done
@@ -307,16 +317,8 @@ handover_validate_all_metadata() {
 
   # isolation_level is the canonical (and only) isolation field. The legacy
   # native trio (sandbox/approval/skip_git_check) was removed in v0.6.0 (CC-335);
-  # reject briefs that still carry it so the migration error is explicit rather
-  # than a silently-ignored field.
-  local _lf _legacy_val
-  for _lf in sandbox approval skip_git_check; do
-    _legacy_val="$(handover_get_field "$metadata" "$_lf" 2>/dev/null)" || _legacy_val=""
-    if [[ -n "$_legacy_val" ]]; then
-      handover_reject "$_lf" "legacy field removed in v0.6.0; use isolation_level instead" || return 1
-    fi
-  done
-
+  # handover_validate_required_fields (already run above) rejects any brief still
+  # carrying it with the migration message, before the isolation_level requirement.
   local _iso_val
   _iso_val="$(handover_get_field "$metadata" isolation_level)" || return 1
   handover_validate_isolation_level "$_iso_val" || return 1
