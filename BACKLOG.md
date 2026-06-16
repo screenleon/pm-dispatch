@@ -204,7 +204,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-373]]、[[CC-374]]。umbrella [[CC-333]]。
 
-**See**: pr:#TBD
+**See**: pr:#290
 
 ---
 
