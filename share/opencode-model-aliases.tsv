@@ -16,9 +16,9 @@
 # dispatcher model when no --model is given. This is also the head of the
 # fallback_chain in adapter.yaml. Override per-host via
 # ~/.pm-dispatch/config `dispatch.default_model`.
-default	    opencode/nemotron-3-ultra-free	normal
+default	opencode/nemotron-3-ultra-free	normal
 nemotron	opencode/nemotron-3-ultra-free	normal
 deepseek	opencode/deepseek-v4-flash-free	normal
-mimo	    opencode/mimo-v2.5-free	        normal
-north	    opencode/north-mini-code-free	normal
-bigpickle	opencode/big-pickle	            normal
+mimo	opencode/mimo-v2.5-free	normal
+north	opencode/north-mini-code-free	normal
+bigpickle	opencode/big-pickle	normal

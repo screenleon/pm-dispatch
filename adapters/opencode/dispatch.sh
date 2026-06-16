@@ -190,8 +190,10 @@ while [[ $# -gt 0 ]]; do
     --timeout)   TIMEOUT="$2"; shift 2;;
     --print-cmd) PRINT_CMD=1; shift;;
     --brief-file) BRIEF_FILE="$2"; shift 2;;
-    # Codex/claude-only flags accepted as no-ops
-    --sandbox|--approval) shift 2;;
+    # Codex/claude-only flags: accepted but not supported; warn so callers notice.
+    --sandbox|--approval)
+      printf 'opencode-dispatch: warning: %s is not supported by the opencode adapter and will be ignored\n' "$1" >&2
+      shift 2;;
     --skip-git-check) shift;;
     -h|--help)
       sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
@@ -265,18 +267,30 @@ _refresh_latest_pointers() {
 
 # ── JSONL health checks ───────────────────────────────────────────────────────
 # opencode exits 0 even on API errors; scan JSONL to compensate.
+#
+# _trace_slice: emit only the bytes from $offset onward so health checks are
+# scoped to the current fallback attempt rather than the cumulative trace.
+_trace_slice() {
+  local trace="$1" offset="${2:-0}"
+  if [[ "$offset" -gt 0 ]]; then
+    tail -c +"$((offset + 1))" "$trace"
+  else
+    cat "$trace"
+  fi
+}
+
 _has_terminal_event() {
-  local trace="$1"
+  local trace="$1" offset="${2:-0}"
   [[ -s "$trace" ]] || return 1
   # opencode writes both human-readable error logs and JSONL to stdout;
   # grep for lines starting with '{' to skip non-JSON log lines before jq.
-  grep '^{' "$trace" 2>/dev/null | jq -e 'select(.type == "step_finish")' >/dev/null 2>&1
+  _trace_slice "$trace" "$offset" | grep '^{' 2>/dev/null | jq -e 'select(.type == "step_finish")' >/dev/null 2>&1
 }
 
 _has_session_error() {
-  local trace="$1"
+  local trace="$1" offset="${2:-0}"
   [[ -s "$trace" ]] || return 1
-  grep '^{' "$trace" 2>/dev/null | jq -e 'select(.type == "session.error")' >/dev/null 2>&1
+  _trace_slice "$trace" "$offset" | grep '^{' 2>/dev/null | jq -e 'select(.type == "session.error")' >/dev/null 2>&1
 }
 
 # ── Wrapper banner ────────────────────────────────────────────────────────────
@@ -297,7 +311,11 @@ _refresh_latest_pointers
 # cannot exhaust the full timeout. Floor at 120s per attempt.
 _chain_len=${#MODELS_TO_TRY[@]}
 _attempt_timeout=$(( TIMEOUT / _chain_len ))
-[[ "$_attempt_timeout" -lt 120 ]] && _attempt_timeout=120
+if [[ "$_attempt_timeout" -lt 120 ]]; then
+  _attempt_timeout=120
+  printf '[%s] opencode-dispatch: per-attempt timeout floored at 120s (requested %ds across %d models); total may exceed --timeout\n' \
+    "$(date -Is)" "$TIMEOUT" "$_chain_len" | tee -a "$STDERR_LOG" >&2
+fi
 
 # ── Fallback dispatch loop ────────────────────────────────────────────────────
 EXIT=1
@@ -306,6 +324,10 @@ _attempt=0
 
 for _model in "${MODELS_TO_TRY[@]}"; do
   (( _attempt++ )) || true
+
+  # Record trace byte-offset before this attempt so health checks are scoped
+  # to only the current attempt's output, not the cumulative trace.
+  _trace_offset=$(wc -c < "$TRACE" 2>/dev/null || echo 0)
 
   {
     echo "[$(date -Is)] opencode-dispatch attempt ${_attempt}/${_chain_len}: model=${_model} timeout=${_attempt_timeout}s"
@@ -342,7 +364,7 @@ for _model in "${MODELS_TO_TRY[@]}"; do
   fi
 
   # Compensate for opencode exit-0-on-error bug
-  if _has_session_error "$TRACE"; then
+  if _has_session_error "$TRACE" "$_trace_offset"; then
     printf '[%s] opencode-dispatch: attempt %d detected session.error in trace, trying next model\n' \
       "$(date -Is)" "$_attempt" | tee -a "$STDERR_LOG" >&2
     continue
@@ -354,7 +376,7 @@ for _model in "${MODELS_TO_TRY[@]}"; do
     continue
   fi
 
-  if ! _has_terminal_event "$TRACE"; then
+  if ! _has_terminal_event "$TRACE" "$_trace_offset"; then
     printf '[%s] opencode-dispatch: attempt %d missing step_finish event (upstream bug), trying next model\n' \
       "$(date -Is)" "$_attempt" | tee -a "$STDERR_LOG" >&2
     continue
