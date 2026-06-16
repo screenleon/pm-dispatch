@@ -27,9 +27,9 @@ terminal_event: step_finish
 # prefix (opencode/ = OpenCode Zen free tier). Order = priority.
 # When --model is explicitly set, the chain is ignored.
 fallback_chain:
-  - opencode/nemotron-3-super
+  - opencode/nemotron-3-ultra-free
   - opencode/deepseek-v4-flash-free
-  - opencode/qwen3.6-plus-free
-  - opencode/minimax-m2.5-free
+  - opencode/mimo-v2.5-free
+  - opencode/north-mini-code-free
   - opencode/big-pickle
 generated_files: []

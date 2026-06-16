@@ -16,7 +16,7 @@
       "pattern": "^[A-Z]{1,4}-[0-9]+[a-z]?$"
     },
     "executor": {
-      "enum": ["codex", "claude"],
+      "enum": ["codex", "claude", "opencode"],
       "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
     },
     "dispatch_route": {

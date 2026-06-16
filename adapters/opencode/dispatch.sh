@@ -268,13 +268,15 @@ _refresh_latest_pointers() {
 _has_terminal_event() {
   local trace="$1"
   [[ -s "$trace" ]] || return 1
-  jq -e 'select(.type == "step_finish")' "$trace" >/dev/null 2>&1
+  # opencode writes both human-readable error logs and JSONL to stdout;
+  # grep for lines starting with '{' to skip non-JSON log lines before jq.
+  grep '^{' "$trace" 2>/dev/null | jq -e 'select(.type == "step_finish")' >/dev/null 2>&1
 }
 
 _has_session_error() {
   local trace="$1"
   [[ -s "$trace" ]] || return 1
-  jq -e 'select(.type == "session.error")' "$trace" >/dev/null 2>&1
+  grep '^{' "$trace" 2>/dev/null | jq -e 'select(.type == "session.error")' >/dev/null 2>&1
 }
 
 # ── Wrapper banner ────────────────────────────────────────────────────────────
@@ -323,9 +325,12 @@ for _model in "${MODELS_TO_TRY[@]}"; do
 
   set +e
   if [[ "$_attempt_timeout" -gt 0 ]]; then
-    timeout --foreground --kill-after=15 "$_attempt_timeout" "${_CMD[@]}" >>"$TRACE" 2>>"$STDERR_LOG"
+    # Redirect stdin from /dev/null: opencode reads stdin by default and will
+    # hang indefinitely when stdin is connected to a socket (non-interactive
+    # context). This must be the first redirect so opencode sees no stdin.
+    timeout --foreground --kill-after=15 "$_attempt_timeout" "${_CMD[@]}" </dev/null >>"$TRACE" 2>>"$STDERR_LOG"
   else
-    "${_CMD[@]}" >>"$TRACE" 2>>"$STDERR_LOG"
+    "${_CMD[@]}" </dev/null >>"$TRACE" 2>>"$STDERR_LOG"
   fi
   _RUN_EXIT=$?
   set -e
@@ -363,14 +368,19 @@ for _model in "${MODELS_TO_TRY[@]}"; do
   break
 done
 
-# ── Extract .last from step_finish event ──────────────────────────────────────
-# Tries common field names; falls back to last non-empty trace line.
+# ── Extract .last from accumulated text events ────────────────────────────────
+# opencode JSONL structure (confirmed empirically):
+#   {"type":"text","part":{"text":"<response>"},...}  -- one or more per turn
+#   {"type":"step_finish","part":{"reason":"stop","tokens":{...}},...}  -- terminal
+# The response text lives in `text` type events (.part.text), NOT in step_finish.
+# Collect all text events' .part.text and join them; fallback to last JSONL line.
 if [[ -s "$TRACE" ]]; then
-  if ! jq -re 'select(.type == "step_finish") | .output // .content // .text // .message | strings' \
-       "$TRACE" 2>/dev/null | tail -1 > "$LAST" \
+  if ! grep '^{' "$TRACE" 2>/dev/null | \
+       jq -re '[select(.type == "text") | .part.text // empty] | join("")' \
+       > "$LAST" 2>/dev/null \
      || [[ ! -s "$LAST" ]]; then
-    # Field name unknown or empty: fall back to raw last non-empty trace line
-    grep -v '^$' "$TRACE" 2>/dev/null | tail -1 > "$LAST" || true
+    # Fallback: last non-empty JSON line of trace
+    grep '^{' "$TRACE" 2>/dev/null | tail -1 > "$LAST" || true
   fi
 fi
 
@@ -382,8 +392,9 @@ _refresh_latest_pointers
   echo "[$(date -Is)] opencode-dispatch finished"
   echo "  exit:     $EXIT"
   echo "  model:    ${USED_MODEL:-<none succeeded>}"
-  [[ "$EXIT" -ne 0 && "$_attempt" -ge "$_chain_len" ]] && \
+  if [[ "$EXIT" -ne 0 && "$_attempt" -ge "$_chain_len" ]]; then
     echo "  note:     all ${_chain_len} models in fallback chain failed"
+  fi
 } | tee -a "$STDERR_LOG" >&2
 
 echo "---"

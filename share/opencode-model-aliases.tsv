@@ -12,13 +12,13 @@
 # reasoning_effort is recorded for future use; opencode does not currently
 # expose a reasoning-effort flag, so it is informational only.
 #
-# Default model: pm-dispatch pins Nemotron 3 Super Free as the primary
+# Default model: pm-dispatch pins Nemotron 3 Ultra Free as the primary
 # dispatcher model when no --model is given. This is also the head of the
 # fallback_chain in adapter.yaml. Override per-host via
 # ~/.pm-dispatch/config `dispatch.default_model`.
-default	opencode/nemotron-3-super	normal
-nemotron	opencode/nemotron-3-super	normal
+default	    opencode/nemotron-3-ultra-free	normal
+nemotron	opencode/nemotron-3-ultra-free	normal
 deepseek	opencode/deepseek-v4-flash-free	normal
-qwen	opencode/qwen3.6-plus-free	normal
-minimax	opencode/minimax-m2.5-free	normal
-bigpickle	opencode/big-pickle	normal
+mimo	    opencode/mimo-v2.5-free	        normal
+north	    opencode/north-mini-code-free	normal
+bigpickle	opencode/big-pickle	            normal
