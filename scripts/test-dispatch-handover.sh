@@ -472,6 +472,16 @@ executor_claude_accepts_case() {
   expect_code_without_token "$want_code" "$want_token" handover_validate_executor claude
 }
 
+# Behavior: Executor opencode is accepted.
+# Steps:
+#   1. Validate executor opencode.
+#   2. Assert validation succeeds.
+executor_opencode_accepts_case() {
+  local want_code=0
+  local want_token=E-HANDOVER-INVALID
+  expect_code_without_token "$want_code" "$want_token" handover_validate_executor opencode
+}
+
 # Behavior: The main-thread Bash dispatch route is accepted.
 # Steps:
 #   1. Validate main_thread_bash_background.
@@ -1064,6 +1074,7 @@ run_case "handover/executor missing rejects" executor_missing_rejects_case
 run_case "handover/executor unknown rejects" executor_unknown_rejects_case
 run_case "handover/executor codex accepts" executor_codex_accepts_case
 run_case "handover/executor claude accepts" executor_claude_accepts_case
+run_case "handover/executor opencode accepts" executor_opencode_accepts_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case

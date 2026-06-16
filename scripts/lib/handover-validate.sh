@@ -135,7 +135,7 @@ handover_validate_executor() {
 
   handover_validate_metadata_value executor "$value" || return 1
   case "$value" in
-    codex|claude) return 0 ;;
+    codex|claude|opencode) return 0 ;;
     *) handover_reject executor "unknown executor" ;;
   esac
 }

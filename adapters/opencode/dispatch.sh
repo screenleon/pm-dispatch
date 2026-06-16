@@ -177,6 +177,14 @@ _resolve_isolation() {
     printf 'opencode-dispatch: error: unknown isolation level %q (not in %s)\n' "$level" "$map" >&2
     return 1
   fi
+  # Warn for levels that map to no native flags and are not enforced by the CLI.
+  # opencode has no built-in read-only/sandbox flag; enforcement depends on
+  # ~/.config/opencode/opencode.json (user responsibility).
+  case "$level" in
+    read-only|workspace-network|sandboxed)
+      printf 'opencode-dispatch: warning: isolation level %q maps to no CLI flag; enforcement depends on opencode.json (user config)\n' "$level" >&2
+      ;;
+  esac
   return 0
 }
 
