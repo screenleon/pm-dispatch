@@ -89,6 +89,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-391 | ✅ done | **[arch(spike): detached-supervised dispatch — executor lifecycle ownership 軸]** Model B（[[CC-385]]/[[CC-386]]..[[CC-389]]）已使 executor 成獨立子程序、由 pmctl 三重機檢驗證，但派發仍 **foreground-sync**：`pmctl dispatch run` 阻塞、in-process 驗證、main 持有生命週期。本 spike（決策-only）決定是否新增一條與 [[CC-372]] `runner_kind` **正交**的 **lifecycle ownership** 軸：main 只建 run + `setsid`/`nohup` 起 detached supervisor → supervisor 持有 executor、跑 post-verify（重用 [[CC-386]]/[[CC-389]]）、寫 durable run-state（[[CC-225]]）、append events.jsonl（[[CC-211]] FSM）、best-effort 通知 listener（durable-outbox 為 load-bearing、fifo/socket 選配）。**定位修正**：lifecycle 是派發當下選擇（`pmctl dispatch run --lifecycle foreground\|detached` + config 預設），**非 manifest 欄位**；可 detach 資格由 runner_kind（headless-CLI Model B）推導，host-native 不可 detach。不加 `lifecycle_mode` 欄位、不動 schema 改名（避與 [[CC-384]] 撞）。收 [[CC-238]]（fan-out 無 timeout/attribution = 缺 supervisor 症狀）。排 v0.6.0 Phase 7（[[CC-376]]/[[CC-377]] 之後）。umbrella [[CC-333]]。**See**: pr:#288 | arch | 2026-06-15 | pr:#288 | P2 | design |
 | CC-392 | ✅ done | **[arch: claude adapter runner_kind 分類漂移 — manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`]** `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但自 [[CC-383]]/[[CC-388]] 後 `adapters/claude/dispatch.sh` 實際是 headless `claude --print` 獨立子程序（行為上 cli-subprocess / Model B），讓 `runner_kind` 成為不可信謂詞、卡住 [[CC-391]] detach 資格推導。修法：`runner_kind: cli-subprocess` ＋ override `write_guard_mode: cli-only`、`needs_bash_guard: false`（三衍生旗標解析後行為 byte-identical；`dispatch_route` derive 至 main_thread_bash_background 僅 label，不驅動 exec 分支）；同步刷新 `executor-contract.md` profiles/guard 表與相關 code comment 過時的 host-native 措辭；加回歸鎖定。pr-gate standard = GO。關聯 [[CC-391]]、[[CC-373]]、[[CC-383]]、[[CC-388]]、[[guard-role-runtime]]。**See**: pr:#289 | arch/portability | 2026-06-15 | pr:#289 | P2 | design |
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
+| CC-394 | 🟢 someday | **[arch: 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode）]** Model B 後 claude 主路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]）；`Agent(claude-executor)` 已降級為「Claude 當 PM host 且 `claude` CLI 不在 PATH」的窄 fallback。它**不補任何能力缺口**（adapter 做同樣的事，與 codex-executor 的 danger-full-access 缺口不同），且持續課維護稅——[[CC-335]] 即因 trio 引用藏在此檔連兩輪 gate NO-GO。opencode（[[CC-376]]）已是 adapter-only、無 Agent，為目標形狀。退場範圍：刪 agent 檔＋guard role-model 的 executor(claude) 慣例分支＋install/uninstall 接線＋test-pmctl-guard/test-install/test-hook-framework 相關案例＋文件收斂（commands/pm.md Route B、executor-contract profiles、dispatch-brief fallback）。決策前置：確認無「Claude 為 host 但 claude CLI 缺席仍需跑 claude brief」的真實環境（傾向 fail-loud 而非默默降級）；保留 same-host 免 spawn 子程序的最佳化為唯一反論。umbrella [[CC-333]]（in-session Agent executor 層）。先於 [[CC-395]]。 | arch/portability | 2026-06-16 | — | P2 | design |
+| CC-395 | 🟢 someday | **[arch: 退場 `agents/codex-executor.md` + 決定 danger-full-access 去留]** 對稱 [[CC-394]]，但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的唯一逃生口，且是刻意安全閘——`handover-validate.sh` hard-reject full-access 於 `main_thread_bash_background`（避免無人值守背景 dispatch 摸到 full-access），只允許經 `agent_executor` route（人為明示 spawn）。退場前必須先拍板 full-access 去留：(a) 直接砍掉能力（fail-loud，最統一）；或 (b) 搬進 codex adapter 並設安全閘（專屬 route／明示確認旗標），不經 Agent 也能達成——重新開啟當初用 Agent 擋住的安全邊界設計。決策後才談退 agent 檔＋guard＋install＋test＋文件。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | — | P3 | design |
 
 ---
 
@@ -176,6 +178,44 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Sequencing**: 排 v0.6.0（executor 抽象在 N≥2 = [[CC-376]]+[[CC-377]] 證明成立）**之後**；自然歸宿與 [[CC-216]]（v0.7.0 MCP 通用橋）同層同期——兩者都讓任意 host 透過穩定、平台中立契約共用單一 pm-dispatch。
 
 **See**: `docs/notes/portable-skill-substrate.md`（完整 session synthesis）、umbrella [[CC-333]]。
+
+---
+
+## CC-394 — arch: 退場 agents/claude-executor.md（claude 收斂為 adapter-only）🟢 someday
+
+**Problem**: Model B（[[CC-385]]）後，claude 的 canonical 執行路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]/[[CC-392]]）。`Agent(claude-executor)` 已被 DECISIONS 2026-06-13 明訂降級為「Claude 當 PM host 時的 same-host 最佳化」，pm.md Route B 進一步把它收成「`claude` CLI 不在 PATH 時」的窄 fallback。
+
+**Why 退場**:
+1. **零能力缺口** — claude-executor 與 claude adapter 做完全一樣的事，唯一觸發是「binary 缺席」；對比 codex-executor 補的是 bash route 拒絕的 `danger-full-access`（真功能）。
+2. **這正是 [[CC-333]] 要拆的耦合** — `Agent()`-spawn = Claude-runtime 專屬執行模型；Model B/adapter 的重點就是讓執行成為與 host 無關的 CLI 子程序。
+3. **持續維護稅** — [[CC-335]] 即因 trio 引用藏在此檔導致 gate 連兩輪 NO-GO；每次契約改動都要維持此檔一致。
+4. **目標形狀已存在** — opencode（[[CC-376]]）就是 adapter-only、無 Agent；本票讓 claude 對齊它。
+
+**決策前置**: 確認無「Claude 為 host、但 `claude` CLI 二進位缺席、卻仍需執行 claude brief」的真實環境（repo 哲學 [[CC-389]] 傾向 fail-loud 而非默默降級）。唯一反論 = 重視 same-host 免 spawn 子程序的最佳化（DECISIONS:245）；若採納則改為「保留但文件收斂成單一觸發條件」。
+
+**退場 checklist**: 刪 `agents/claude-executor.md`；`pmctl-guard.sh` 的 `executor(claude)` 慣例分支；`install-hooks.sh`/`uninstall-hooks.sh`/`doctor.sh` 相關接線；`test-pmctl-guard.sh`/`test-install.sh`/`test-hook-framework.sh` 案例；文件收斂（`commands/pm.md` Route B、`docs/executor-contract.md` profiles、`docs/dispatch-brief.md` §Fallback）。
+
+**Sequencing**: 機械性、零能力損失，可先於 [[CC-395]]。umbrella [[CC-333]]（in-session Agent executor 層）。
+
+**See**: [[CC-395]]（codex 對稱退場）、[[CC-333]]、[[CC-388]]、[[CC-376]]。
+
+---
+
+## CC-395 — arch: 退場 agents/codex-executor.md + 決定 danger-full-access 去留 🟢 someday
+
+**Problem**: 對稱 [[CC-394]]，把 codex 也收斂為 adapter-only。但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的**唯一逃生口**。
+
+**安全脈絡**: `handover-validate.sh` 刻意 hard-reject `isolation_level: none` 於 `main_thread_bash_background`（理由：PM 自寫的 codex brief 不可透過無人值守背景 dispatch 摸到 full-access），唯一合法途徑是切 `agent_executor` route = `Agent(codex-executor)`（需人為明示 spawn）。所以這個 Agent fallback 同時是能力出口**也是**安全閘。
+
+**決策前置（退 agent 之前必須先拍板）**:
+- **(a) 砍掉 full-access 能力** — fail-loud「不支援」，最統一，但失去一個可能在用的能力。
+- **(b) 搬進 codex adapter 加安全閘** — 專屬 dispatch route／明示確認旗標，不經 Agent 也能達成 full-access；正確解耦，但重新開啟當初用 Agent 擋住的安全邊界設計，工作量與 security review 風險較高。
+
+**退場 checklist**（決策後）: 同 [[CC-394]] 形狀（agent 檔＋guard＋install＋test＋文件），外加 full-access 路徑的新實作/移除與 security/risk hard gate。
+
+**Sequencing**: 排在 [[CC-394]] 之後（claude 先收乾淨，codex 待 full-access 決策）。umbrella [[CC-333]]。
+
+**See**: [[CC-394]]（claude 對稱、先行）、[[CC-333]]、[[CC-387]]（codex routine self-write 退場、fallback 保留的前一步）、[[CC-391]]（無 Agent 後 lifecycle 簡化）。
 
 ---
 
