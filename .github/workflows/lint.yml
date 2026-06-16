@@ -127,6 +127,7 @@ jobs:
             test-codex-dispatch.sh
             test-pmctl-dispatch.sh
             test-claude-dispatch.sh
+            test-opencode-dispatch.sh
             test-layer-boundaries.sh
             test-core-schemas.sh
             test-commands.sh
