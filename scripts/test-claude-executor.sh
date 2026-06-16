@@ -5,7 +5,7 @@
 # only available inside Claude Code's tool surface. This test asserts the
 # format-level prerequisites for a claude dispatch:
 #   - the brief schema validator accepts a representative claude metadata
-#     header (executor: claude + canonical no-op codex fields)
+#     header (executor: claude + the required isolation_level field)
 #   - the brief body's self_verify commands can be shell-executed and exit 0
 #     against a trivial goal
 #   - no repo files leak into git status; no ~/.claude/ touched
