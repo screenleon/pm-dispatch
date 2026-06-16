@@ -99,7 +99,7 @@ Record the split decision in project memory and surface it to the user. Never le
 
 ## Executor selection
 
-PM writes briefs against the abstract contract in `docs/executor-contract.md`, while still using this file as the concrete schema for brief fields. Two executor profiles are implemented today: `codex` (full profile; runs briefs via the Codex CLI) and `claude` (minimal profile; runs briefs via the `claude-executor` subagent using main-thread Claude tools). The default is set at install time via `./install.sh --profile minimal|full` and auto-detected from `command -v codex` when unset. PM may override per-brief by setting `executor:` in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags at dispatch time. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted by the validator for backward compatibility with pre-M3 briefs but must not appear in new PM-authored briefs.
+PM writes briefs against the abstract contract in `docs/executor-contract.md`, while still using this file as the concrete schema for brief fields. Three executor profiles are implemented today: `codex` (full profile; runs briefs via the Codex CLI), `claude` (minimal profile; runs briefs via the `claude-executor` subagent using main-thread Claude tools), and `opencode` (headless subprocess; runs briefs via the OpenCode CLI with a free-model fallback chain). The default is set at install time via `./install.sh --profile minimal|full` and auto-detected from `command -v codex` when unset. PM may override per-brief by setting `executor:` in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags at dispatch time — note that `opencode` only supports `none` (others are rejected at dispatch). The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted by the validator for backward compatibility with pre-M3 briefs but must not appear in new PM-authored briefs.
 
 ## Writing a brief for codex-executor
 
@@ -146,7 +146,7 @@ Never emit metadata values containing forbidden shell characters: single quote, 
 The handover extraction and validation contract is covered by `scripts/test-dispatch-handover.sh`; keep PM metadata compatible with that harness.
 
 ```dispatch_handover_v1
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}

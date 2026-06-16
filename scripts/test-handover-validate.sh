@@ -17,7 +17,7 @@ metadata_fixture() {
   local brief_file=${2:-/tmp/brief-handover-validate-test.md}
 
   cat <<EOF
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
@@ -32,9 +32,9 @@ EOF
 }
 
 if should_run "handover_extract_block: extracts dispatch fenced block"; then
-  input=$'before\n```dispatch_handover_v1\nhandover_version: 2\n---\ngoal: ok\n```\nafter'
+  input=$'before\n```dispatch_handover_v1\nhandover_version: 3\n---\ngoal: ok\n```\nafter'
   block="$(handover_extract_block "$input")"
-  if [[ "$block" == $'handover_version: 2\n---\ngoal: ok' ]]; then
+  if [[ "$block" == $'handover_version: 3\n---\ngoal: ok' ]]; then
     pass "handover_extract_block: extracts dispatch fenced block"
   else
     fail "handover_extract_block: extracts dispatch fenced block" "unexpected block: $block"
@@ -52,7 +52,7 @@ if should_run "handover_extract_fenced_block: extracts pr-gate handover fence"; 
 fi
 
 if should_run "handover_extract_block: rejects unterminated fence"; then
-  input=$'```dispatch_handover_v1\nhandover_version: 2\n'
+  input=$'```dispatch_handover_v1\nhandover_version: 3\n'
   if ! handover_extract_block "$input" >/dev/null 2>&1; then
     pass "handover_extract_block: rejects unterminated fence"
   else

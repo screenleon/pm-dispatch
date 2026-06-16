@@ -31,7 +31,7 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex` and `claude`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags. The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). The legacy fields `sandbox`, `approval`, and `skip_git_check` are still accepted for backward compatibility with pre-M3 briefs but must not appear alongside `isolation_level:` in the same block.
 
 ## Required fields
 
@@ -269,6 +269,9 @@ pmctl dispatch run --adapter codex --cd <work_dir> --brief-file <brief-file>
 
 # claude profile:
 # dispatch via Agent(claude-executor)
+
+# opencode profile:
+pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
 ```
 
 Invoke in background from the main thread. Wait for completion notification.
@@ -284,7 +287,7 @@ Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processe
 - A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
 - Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.
 
-Works for any executor (codex or claude). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
+Works for any executor (codex, claude, or opencode). Exits 0 = ok (no executed check failed); exits 1 = partial/failed. **Write any check you want machine-verified as `- cmd: "..."`.**
 
 > **Note**: The `/pm` command implements the same verification inline via its manual completion-handling steps (steps 2–8 in the main-thread protocol); `dispatch-post-verify.sh` provides the same checks as a standalone shell tool for automation, re-checks, and CI use.
 
@@ -382,7 +385,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 `project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter codex` in the background. This is the **sole routine codex path** — no subagent ever holds brief-write authority on it. `Agent(codex-executor)` is a **fallback only** (the cases below); even there the main thread pre-writes the brief — codex-executor has no `Write` tool — so no subagent self-writes a brief on any codex route.
 
 ```dispatch_handover_v1
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: ${PM_DISPATCH_REPO}
@@ -418,14 +421,14 @@ Metadata fields:
 
 | Field | Required | Notes |
 |---|---|---|
-| `handover_version` | yes | Currently `2`; bump on shape change. |
-| `executor` | yes | Closed enum. Currently only `codex`; main-thread dispatch uses this field to choose the executor-specific dispatcher. |
+| `handover_version` | yes | Currently `3`; bump on shape change. |
+| `executor` | yes | Closed enum: `codex`, `claude`, `opencode`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
 | `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `isolation_level` | yes (new) | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. Cannot be mixed with legacy `sandbox`/`approval`/`skip_git_check`. |
-| `timeout` | yes | `1200` fallback after `CODEX_DISPATCH_TIMEOUT` and config; public env fallback chain below. |
-| `model` | yes | `default` or a specific Codex model name. |
+| `timeout` | yes | Seconds; `1200` default. Passed through to the executor adapter. For `opencode`, must be 0 (no limit) or ≥ 120 (per-attempt floor). |
+| `model` | yes | `default` or an executor-specific model wire-id. For `opencode`, aliases like `light`/`default` are resolved by the adapter. |
 | `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
 | `sandbox` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `workspace-write` or `read-only`; `danger-full-access` requires Agent(codex-executor) fallback. |
 | `approval` | backward-compat | Legacy field accepted when `isolation_level` is absent. Bash route accepts only `never`. |
@@ -492,10 +495,10 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 `default` is applied when `PM_CFG_DEFAULT_MODEL` is set or when `--model default` is given explicitly; omitting `--model` with no config default delegates to the claude CLI built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
-Direct Bash dispatch shape:
+Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `opencode`):
 
 ```text
-Bash(command: "pmctl dispatch run --adapter codex --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch <executor> for <slug>")
 ```
 
 When dispatching a legacy brief that has `sandbox:` instead of `isolation_level:`, use `--sandbox <safe sandbox> --approval <safe approval>` in place of `--isolation <safe isolation_level>`.
@@ -528,7 +531,7 @@ Reject this before command construction because `working_dir` contains shell met
 Control-field reject examples:
 
 ```text
-handover_version: 2
+handover_version: 3
 executor: claude
 dispatch_route: mystery_route
 working_dir: relative/path

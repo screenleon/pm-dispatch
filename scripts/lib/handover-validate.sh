@@ -127,7 +127,7 @@ handover_validate_handover_version() {
   local value=${1-}
 
   handover_validate_metadata_value handover_version "$value" || return 1
-  [[ "$value" == "2" ]] || handover_reject handover_version "only version 2 is accepted"
+  [[ "$value" == "3" ]] || handover_reject handover_version "only version 3 is accepted"
 }
 
 handover_validate_executor() {
@@ -135,7 +135,7 @@ handover_validate_executor() {
 
   handover_validate_metadata_value executor "$value" || return 1
   case "$value" in
-    codex|claude) return 0 ;;
+    codex|claude|opencode) return 0 ;;
     *) handover_reject executor "unknown executor" ;;
   esac
 }
@@ -261,11 +261,12 @@ handover_validate_model() {
   local value=${1-}
 
   handover_validate_metadata_value model "$value" || return 1
-  # Allow `.` so dotted wire/model ids (e.g. gpt-5.5, gpt-5.4) — which now appear
-  # in share/model-aliases.tsv as valid PM-facing values — pass validation. Dots
-  # are not shell metacharacters and the value is separately screened for
-  # forbidden chars by handover_validate_metadata_value above.
-  [[ "$value" == "default" || "$value" =~ ^[a-z][a-z0-9.-]{0,30}$ ]] || handover_reject model "unsupported model name shape"
+  # Allow `.`, `/`, and `_` so dotted wire/model ids (e.g. gpt-5.5), Codex IDs
+  # (e.g. codex-spark), and slash-form opencode wire IDs (e.g. opencode/big-pickle,
+  # openrouter/custom/model) all pass validation. These chars are not shell
+  # metacharacters and the value is separately screened for forbidden chars by
+  # handover_validate_metadata_value above. Max 64 chars to cover provider-prefix IDs.
+  [[ "$value" == "default" || "$value" =~ ^[a-z][a-z0-9./_-]{0,63}$ ]] || handover_reject model "unsupported model name shape"
 }
 
 handover_validate_skip_git_check() {
@@ -360,12 +361,15 @@ handover_validate_all_metadata() {
     done
     handover_validate_isolation_level "$_iso_val" || return 1
     # isolation_level:none maps to danger-full-access in the Codex adapter.
-    # The Bash dispatch route does not support full-access; reject it here so
-    # PM-authored briefs cannot reach danger-full-access through unattended dispatch.
+    # The Bash dispatch route does not support full-access for codex; reject it so
+    # PM-authored codex briefs cannot reach danger-full-access through unattended dispatch.
+    # Exception: opencode is a cli-subprocess on the bash route and explicitly supports
+    # isolation_level:none (→ --dangerously-skip-permissions); allow it.
     if [[ "$_iso_val" == "none" ]]; then
-      local _route
+      local _route _exec
       _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
-      if [[ "$_route" == "main_thread_bash_background" ]]; then
+      _exec="$(handover_get_field "$metadata" executor 2>/dev/null)" || _exec=""
+      if [[ "$_route" == "main_thread_bash_background" && "$_exec" != "opencode" ]]; then
         handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
       fi
     fi

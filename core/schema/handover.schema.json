@@ -32,10 +32,10 @@
   ],
   "properties": {
     "handover_version": {
-      "const": 2
+      "const": 3
     },
     "executor": {
-      "enum": ["codex", "claude"],
+      "enum": ["codex", "claude", "opencode"],
       "description": "Editing source-of-truth: core/policy/executor-enum.yaml. Keep in sync."
     },
     "dispatch_route": {

@@ -39,7 +39,7 @@ run_json() {
   jq -cn \
     --arg id "$id" \
     --arg created_ts "2026-06-06T00:00:${sec}Z" \
-    '{schema_version:1,id:$id,task_id:"TASK-1",executor:"codex",state:"ok",working_dir:"/tmp/test",trace_path:"/tmp/test.jsonl",exit_code:0,created_ts:$created_ts}'
+    '{schema_version:2,id:$id,task_id:"TASK-1",executor:"codex",state:"ok",working_dir:"/tmp/test",trace_path:"/tmp/test.jsonl",exit_code:0,created_ts:$created_ts}'
 }
 
 append_event_n() {

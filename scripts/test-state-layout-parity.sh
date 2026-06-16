@@ -87,7 +87,7 @@ make_writer_store() {
   git -C "$repo" init -q
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" state_store_init
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" runs_append \
-    '{"schema_version":1,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
+    '{"schema_version":2,"id":"run-20260101T000000Z-abcdef","task_id":"CC-230","executor":"codex","state":"ok","working_dir":"/tmp/test","trace_path":"/tmp/test.jsonl","exit_code":0,"created_ts":"2026-01-01T00:00:00Z"}'
   PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$repo" events_append \
     '{"schema_version":1,"id":"evt-20260101T000000Z-abcdef","kind":"run.completed","subject_type":"run","subject_id":"run-20260101T000000Z-abcdef","ts":"2026-01-01T00:00:00Z","payload":{"run_id":"run-20260101T000000Z-abcdef","state":"ok","from_state":"verifying","to_state":"ok"}}'
 }
@@ -201,8 +201,24 @@ case_archive_patterns_match_layout() {
   pass "$name"
 }
 
+case_sw_build_run_json_emits_current_schema_version() {
+  local name="sw_build_run_json emits schema_version matching run.schema.json"
+  should_run "$name" || return 0
+  local schema="$REPO_ROOT/core/schema/run.schema.json"
+  local expected_version actual_version row
+  expected_version="$(jq -r '.properties.schema_version.const // empty' "$schema" 2>/dev/null || true)"
+  if [[ -z "$expected_version" ]]; then
+    fail "$name" "could not read schema_version const from $schema"; return
+  fi
+  row="$(sw_build_run_json codex 0 ok default /tmp/b.md /tmp/wd /tmp/t.jsonl "" "CC-1" 2>/dev/null || true)"
+  actual_version="$(jq -r '.schema_version // empty' <<< "$row" 2>/dev/null || true)"
+  if [[ "$actual_version" == "$expected_version" ]]; then pass "$name"
+  else fail "$name" "writer emits schema_version=$actual_version, schema expects $expected_version"; fi
+}
+
 case_project_subdirs_match_layout
 case_active_files_and_locks_match_layout
 case_archive_patterns_match_layout
+case_sw_build_run_json_emits_current_schema_version
 
 th_summary

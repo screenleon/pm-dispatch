@@ -30,7 +30,7 @@ metadata_fixture() {
   local brief_file=${2:-/tmp/brief-pm-dispatch-test.md}
 
   cat <<EOF
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
@@ -53,7 +53,7 @@ write_valid_handover() {
 PM summary outside fence.
 
 \`\`\`dispatch_handover_v1
-handover_version: 2
+handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $work_dir
@@ -422,14 +422,14 @@ handover_version_one_rejects_case() {
   expect_code_token "$want_code" "$want_token" handover_validate_handover_version 1
 }
 
-# Behavior: Handover version 2 is accepted.
+# Behavior: Handover version 3 is accepted.
 # Steps:
-#   1. Validate handover_version value 2.
+#   1. Validate handover_version value 3.
 #   2. Assert validation succeeds.
-handover_version_two_accepts_case() {
+handover_version_three_accepts_case() {
   local want_code=0
   local want_token=E-HANDOVER-INVALID
-  expect_code_without_token "$want_code" "$want_token" handover_validate_handover_version 2
+  expect_code_without_token "$want_code" "$want_token" handover_validate_handover_version 3
 }
 
 # Behavior: Executor metadata is required.
@@ -470,6 +470,16 @@ executor_claude_accepts_case() {
   local want_code=0
   local want_token=E-HANDOVER-INVALID
   expect_code_without_token "$want_code" "$want_token" handover_validate_executor claude
+}
+
+# Behavior: Executor opencode is accepted.
+# Steps:
+#   1. Validate executor opencode.
+#   2. Assert validation succeeds.
+executor_opencode_accepts_case() {
+  local want_code=0
+  local want_token=E-HANDOVER-INVALID
+  expect_code_without_token "$want_code" "$want_token" handover_validate_executor opencode
 }
 
 # Behavior: The main-thread Bash dispatch route is accepted.
@@ -614,7 +624,7 @@ isolation_level_unknown_rejects_case() {
 #   2. Assert handover_validate_all_metadata rejects and the audit names isolation_level.
 all_metadata_invalid_isolation_level_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -633,7 +643,7 @@ fallback_allowed: true"
 #      is not supported on the Bash route; the Agent fallback route must be used instead.
 all_metadata_isolation_none_bash_route_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -645,13 +655,32 @@ fallback_allowed: true"
   expect_reject isolation_level handover_validate_all_metadata "$block"
 }
 
+# Behavior: opencode handover with isolation_level:none on main_thread_bash_background is accepted.
+# Steps:
+#   1. Build metadata with executor:opencode, isolation_level:none, dispatch_route:main_thread_bash_background.
+#   2. Assert handover_validate_all_metadata succeeds (opencode cli-subprocess is exempt from
+#      the codex-specific danger-full-access bash-route block).
+all_metadata_opencode_isolation_none_bash_route_accepts_case() {
+  local block
+  block="handover_version: 3
+executor: opencode
+dispatch_route: main_thread_bash_background
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-opencode-none.md
+isolation_level: none
+timeout: 1200
+model: default
+fallback_allowed: true"
+  handover_validate_all_metadata "$block" >/dev/null 2>&1
+}
+
 # Behavior: Handover block with isolation_level and no sandbox/approval/skip_git_check passes full validation.
 # Steps:
 #   1. Build a metadata block with isolation_level workspace-write, no sandbox/approval/skip_git_check.
 #   2. Assert handover_validate_all_metadata succeeds.
 all_metadata_with_isolation_level_accepts_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -669,7 +698,7 @@ fallback_allowed: true"
 #   2. Assert handover_validate_required_fields succeeds.
 required_fields_with_isolation_level_accepts_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -687,7 +716,7 @@ fallback_allowed: true"
 #   2. Assert handover_validate_required_fields rejects.
 required_fields_missing_both_isolation_and_sandbox_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -704,7 +733,7 @@ fallback_allowed: true"
 #   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
 all_metadata_mixed_isolation_and_sandbox_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -723,7 +752,7 @@ fallback_allowed: true"
 #   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
 all_metadata_mixed_isolation_and_approval_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -742,7 +771,7 @@ fallback_allowed: true"
 #   2. Assert handover_validate_all_metadata rejects with mixed-fields error.
 all_metadata_mixed_isolation_and_skip_git_check_rejects_case() {
   local block
-  block="handover_version: 2
+  block="handover_version: 3
 executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
@@ -904,6 +933,15 @@ model_dotted_wire_ids_accept_case() {
     && handover_validate_model default >/dev/null 2>&1
 }
 
+# Behavior: opencode slash-form wire IDs are accepted.
+# Steps:
+#   1. Validate opencode/big-pickle and openrouter/custom/model.
+#   2. Assert both succeed.
+model_opencode_wire_id_accepts_case() {
+  handover_validate_model opencode/big-pickle >/dev/null 2>&1 \
+    && handover_validate_model openrouter/custom/model >/dev/null 2>&1
+}
+
 # Behavior: Bad model name shapes are rejected.
 # Steps:
 #   1. Validate a model with uppercase and punctuation.
@@ -982,9 +1020,9 @@ working_dir_match_mismatch_rejects_case() {
 #   2. Assert the block includes metadata and excludes surrounding prose.
 extract_block_present_echoes_content_case() {
   local input block
-  input=$'before\n```dispatch_handover_v1\nhandover_version: 2\n---\ngoal: x\n```\nafter'
+  input=$'before\n```dispatch_handover_v1\nhandover_version: 3\n---\ngoal: x\n```\nafter'
   block="$(handover_extract_block "$input")" || return 1
-  grep -q '^handover_version: 2$' <<<"$block" || return 1
+  grep -q '^handover_version: 3$' <<<"$block" || return 1
   grep -q '^goal: x$' <<<"$block" || return 1
   ! grep -q '^before$' <<<"$block" && ! grep -q '^after$' <<<"$block"
 }
@@ -1003,7 +1041,7 @@ extract_block_missing_rejects_case() {
 #   2. Assert extraction fails with an audit message mentioning unterminated.
 extract_block_unterminated_fence_rejects_case() {
   local input output
-  input=$'```dispatch_handover_v1\nhandover_version: 2\n---\ngoal: x'
+  input=$'```dispatch_handover_v1\nhandover_version: 3\n---\ngoal: x'
   if output="$(printf '%s\n' "$input" | handover_extract_block 2>&1 >/dev/null)"; then
     return 1
   fi
@@ -1016,7 +1054,7 @@ extract_block_unterminated_fence_rejects_case() {
 #   1. Extract metadata from a block with no standalone --- line.
 #   2. Assert extraction fails.
 extract_metadata_missing_separator_rejects_case() {
-  ! handover_extract_metadata $'handover_version: 2\ngoal: x' >/dev/null 2>&1
+  ! handover_extract_metadata $'handover_version: 3\ngoal: x' >/dev/null 2>&1
 }
 
 # Behavior: Body extraction rejects blocks without a standalone separator.
@@ -1024,7 +1062,7 @@ extract_metadata_missing_separator_rejects_case() {
 #   1. Extract body from a block with no standalone --- line.
 #   2. Assert extraction fails.
 extract_body_missing_separator_rejects_case() {
-  ! handover_extract_body $'handover_version: 2\ngoal: x' >/dev/null 2>&1
+  ! handover_extract_body $'handover_version: 3\ngoal: x' >/dev/null 2>&1
 }
 
 # Behavior: Metadata and body extraction can round-trip a block around the separator.
@@ -1059,11 +1097,12 @@ run_case "handover/metadata LF injection rejects" metadata_value_lf_injection_re
 run_case "handover/metadata full denylist rejects" metadata_value_full_denylist_rejects_case
 run_case "handover/metadata wrong arity rejects" metadata_value_wrong_arity_rejects_case
 run_case "handover/version one rejects" handover_version_one_rejects_case
-run_case "handover/version two accepts" handover_version_two_accepts_case
+run_case "handover/version three accepts" handover_version_three_accepts_case
 run_case "handover/executor missing rejects" executor_missing_rejects_case
 run_case "handover/executor unknown rejects" executor_unknown_rejects_case
 run_case "handover/executor codex accepts" executor_codex_accepts_case
 run_case "handover/executor claude accepts" executor_claude_accepts_case
+run_case "handover/executor opencode accepts" executor_opencode_accepts_case
 run_case "handover/dispatch route bash accepts" dispatch_route_bash_accepts_case
 run_case "handover/dispatch route agent accepts" dispatch_route_agent_accepts_case
 run_case "handover/dispatch route unknown rejects" dispatch_route_unknown_value_rejects_case
@@ -1091,6 +1130,7 @@ run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case
 run_case "handover/model default accepts" model_default_accepts_case
 run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
 run_case "handover/model dotted wire ids accept" model_dotted_wire_ids_accept_case
+run_case "handover/model opencode slash wire id accepts" model_opencode_wire_id_accepts_case
 run_case "handover/model bad shape rejects" model_bad_shape_rejects_case
 run_case "handover/fallback_allowed true accepts" fallback_allowed_true_accepts_case
 run_case "handover/fallback_allowed invalid rejects" fallback_allowed_invalid_rejects_case
@@ -1106,6 +1146,7 @@ run_case "handover/isolation_level read-only accepts" isolation_level_read_only_
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
 run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
 run_case "handover/all metadata isolation none bash route rejects" all_metadata_isolation_none_bash_route_rejects_case
+run_case "handover/all metadata opencode isolation none bash route accepts" all_metadata_opencode_isolation_none_bash_route_accepts_case
 run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case
 run_case "handover/required fields missing both isolation and sandbox rejects" required_fields_missing_both_isolation_and_sandbox_rejects_case
