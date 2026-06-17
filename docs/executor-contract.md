@@ -75,6 +75,14 @@ exit:   <integer-exit-code>
 
 Note: codex profile — `adapters/codex/dispatch.sh` (invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `adapters/claude/dispatch.sh` writes the trace via the headless `claude --print` subprocess. `pmctl dispatch run` captures the adapter stdout footer and passes the explicit per-run `last:` and `stderr:` paths to `dispatch-post-verify.sh` via `--last`/`--stderr` flags; those per-run paths are the load-bearing input to Phase 3. `latest.last` and `latest.stderr` are updated by the adapter for human observation only and are not read by post-verify when explicit paths are present.
 
+### Durable dispatch record
+
+After `pmctl dispatch run` reaches a terminal foreground state (`ok` or `failed`), it writes a repo-local record at `<work_dir>/.dispatch-results/<run_id>.md` (CC-225). This record is keyed by the same `run_id` used in the state store, but it is a standalone artifact: it does not add fields to `runs.jsonl` and does not change `core/schema/run.schema.json`.
+
+The record contains YAML frontmatter with machine-readable summary fields (`run_id`, optional `task_id`, `executor`, `model`, `brief_file`, `working_dir`, `exit_code`, `final_state`, `verify_summary`, per-run trace paths, `created_ts`, and `finished_ts`) plus a short human-readable body. For successful adapter exits, `verify_summary` is the captured stdout from `dispatch-post-verify.sh`; for adapter non-zero exits that short-circuit before post-verify, it is a short adapter-exit verdict.
+
+`.dispatch-results/` is intentionally gitignored like `.gate-results/` and `.agent-trace/`: it is durable for local recovery across threads or shell sessions, not a committed project artifact. Record writes are best-effort observability. If writing the markdown file fails, `pmctl dispatch run` logs a warning to stderr and preserves the original dispatch exit code.
+
 ## Non-interactive executor contract (Model B)
 
 Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief and the executor runs as an **independent subprocess** that consumes it (DECISIONS.md 2026-06-15, spike CC-385/CC-385a). Every Model B executor — codex, claude, and future third-party adapters (opencode, antigravity) — MUST satisfy the following common contract. This is the baseline a new adapter is measured against; each requirement maps to an adapter self-check or a `doctor` check.

@@ -26,6 +26,7 @@ SUITE_NAMES=(
   test-pm-scripts
   test-codex-dispatch
   test-pmctl-dispatch
+  test-dispatch-record
   test-claude-dispatch
   test-opencode-dispatch
   test-layer-boundaries
@@ -107,6 +108,7 @@ suite_path() {
     test-pm-scripts) printf 'pm/scripts/test/run-tests.sh\n' ;;
     test-codex-dispatch) printf 'scripts/test-codex-dispatch.sh\n' ;;
     test-pmctl-dispatch) printf 'scripts/test-pmctl-dispatch.sh\n' ;;
+    test-dispatch-record) printf 'scripts/test-dispatch-record.sh\n' ;;
     test-claude-dispatch) printf 'scripts/test-claude-dispatch.sh\n' ;;
     test-opencode-dispatch) printf 'scripts/test-opencode-dispatch.sh\n' ;;
     test-layer-boundaries) printf 'scripts/test-layer-boundaries.sh\n' ;;

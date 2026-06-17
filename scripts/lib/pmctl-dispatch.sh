@@ -67,6 +67,13 @@ if ! declare -F _portable_canonical_path >/dev/null 2>&1; then
   unset _pmctl_dispatch_lib_dir
 fi
 
+if ! declare -F dispatch_record_write >/dev/null 2>&1; then
+  _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091  # dynamic path; dispatch-record.sh scanned separately
+  . "$_pmctl_dispatch_lib_dir/dispatch-record.sh" 2>/dev/null || true
+  unset _pmctl_dispatch_lib_dir
+fi
+
 pmctl_dispatch_extract_model() {
   local model=""
   while [[ $# -gt 0 ]]; do
@@ -206,6 +213,30 @@ pmctl_dispatch_write_transition() {
     "$brief_file" "$work_dir" "$trace_path" "$run_id" "$created_ts" "$op_id" || return $?
   pmctl_dispatch_write_event "$repo_root" "$work_dir" "$event_kind" "$run_id" \
     "$state" "$exit_code" "$adapter" "$note" "$op_id" "$from_state" || return $?
+}
+
+pmctl_dispatch_write_record_soft() {
+  local run_id="${1:-}" adapter="${2:-}" model="${3:-}" brief_file="${4:-}" work_dir="${5:-}"
+  local exit_code="${6:-}" final_state="${7:-}" verify_summary="${8:-}"
+  local last_path="${9:-}" trace_path="${10:-}" stderr_path="${11:-}"
+  local created_ts="${12:-}" finished_ts="${13:-}"
+  local task_id=""
+
+  if declare -F sw_extract_task_id >/dev/null 2>&1; then
+    task_id="$(sw_extract_task_id "$brief_file" "" 2>/dev/null || true)"
+    [[ "$task_id" == "UNKN-0" ]] && task_id=""
+  fi
+
+  if ! declare -F dispatch_record_write >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: failed to write dispatch record for %s (writer unavailable)\n' "$run_id" >&2
+    return 0
+  fi
+  if ! dispatch_record_write "$run_id" "$task_id" "$adapter" "$model" "$brief_file" \
+    "$work_dir" "$exit_code" "$final_state" "$verify_summary" "$last_path" \
+    "$trace_path" "$stderr_path" "$created_ts" "$finished_ts"; then
+    printf 'pmctl dispatch run: failed to write dispatch record for %s\n' "$run_id" >&2
+  fi
+  return 0
 }
 
 pmctl_dispatch_extract_goal() {
@@ -677,6 +708,9 @@ pmctl_dispatch_run() {
   if [[ "$exit_code" -ne 0 ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+      "$work_dir" "$exit_code" "failed" "adapter exited before post-verify (exit $exit_code)" \
+      "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
     return "$exit_code"
   fi
 
@@ -706,15 +740,28 @@ pmctl_dispatch_run() {
   [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
   [[ -n "$_terminal_event" ]] && _pv_args+=(--terminal-event "$_terminal_event")
-  if ! bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}"; then
+  local _pv_out="" _pv_rc=0
+  if _pv_out="$(bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}")"; then
+    _pv_rc=0
+  else
+    _pv_rc=$?
+  fi
+  printf '%s\n' "$_pv_out"
+  if [[ "$_pv_rc" -ne 0 ]]; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+      "$work_dir" 1 "failed" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
+      "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
     return 1
   fi
 
   pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
     "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+  pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+    "$work_dir" "$exit_code" "ok" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
+    "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
 
   return "$exit_code"
 }
