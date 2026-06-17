@@ -4,6 +4,7 @@
 .agent-trace/
 .gate-briefs/
 .gate-results/
+.dispatch-results/
 pm/.agent-trace/
 pm/rollup/PORTFOLIO.md
 pm/rollup/.PORTFOLIO.md.*

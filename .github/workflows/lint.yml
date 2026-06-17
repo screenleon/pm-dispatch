@@ -126,6 +126,7 @@ jobs:
             test-check-docs-freshness.sh
             test-codex-dispatch.sh
             test-pmctl-dispatch.sh
+            test-dispatch-record.sh
             test-claude-dispatch.sh
             test-opencode-dispatch.sh
             test-layer-boundaries.sh
