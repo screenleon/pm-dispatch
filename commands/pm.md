@@ -41,11 +41,9 @@ Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter claude 
 
 Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an external CLI subprocess; host-independent (codex-as-PM can drive it). Completion handling is identical to Route A — same Bash footer format, same post-verify flow. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL from dispatch-post-verify.sh.
 
-Use `Agent(claude-executor)` only when headless `claude --print` is unavailable (e.g. `claude` CLI not in PATH) — per the fallback allowlist in `docs/dispatch-brief.md` §Fallback. See `agents/claude-executor.md` for the Agent fallback contract and `docs/executor-contract.md` for the profile comparison.
-
 ### Choosing the route
 
-`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same Bash dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. If fallback to an Agent is needed (CLI unavailable), say why in one sentence before dispatching `Agent(codex-executor)` or `Agent(claude-executor)` per `docs/dispatch-brief.md` §Fallback.
+`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same Bash dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. If fallback to an Agent is needed (CLI unavailable), say why in one sentence before dispatching `Agent(codex-executor)` per `docs/dispatch-brief.md` §Fallback.
 
 Main-thread completion handling for both routes — codex and claude now share the same Bash dispatch shape (steps 1–3 and 5–7 are tool-call orchestration only the main thread can do; the verification body in step 4 is the shared, tested `scripts/dispatch-post-verify.sh`, not re-implemented prose):
 

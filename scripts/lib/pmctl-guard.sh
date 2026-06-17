@@ -17,7 +17,7 @@
 # Two orthogonal axes (CC-291) — keep them distinct:
 #   * ROLE (`--role pm|executor|…`) — what the agent IS. guard cares about role.
 #     `pm` is runtime-agnostic (codex-as-PM and claude-as-PM share one policy).
-#     `executor` is the role shared by codex-executor and claude-executor.
+#     `executor` is the role shared by all executor runtimes (codex, claude, opencode, …).
 #   * RUNTIME (`--runtime codex|claude`) — which CLI executes the role. dispatch
 #     cares about runtime (it is the `--adapter`). guard only consults runtime
 #     where a role's policy genuinely differs by runtime (see the registry).
@@ -27,8 +27,8 @@
 #
 # Fail-closed: a guard must never report success without evaluating a policy.
 # Any recognized cell that has no registered policy — e.g. `pm/pre-bash`
-# (project-pm never runs Bash), `executor(claude)/pre-bash` (claude-executor
-# self-executes under harness perms), or the reserved-but-unimplemented
+# (project-pm never runs Bash), `executor(claude)/pre-bash` (claude headless
+# subprocess governs its own Bash via --permission-mode; no pm-dispatch bash policy), or the reserved-but-unimplemented
 # `post-task` event — returns a non-zero deny, NOT a silent allow. A success exit
 # from this surface always means "a policy ran and permitted the action".
 #

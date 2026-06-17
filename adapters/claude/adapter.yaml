@@ -22,9 +22,6 @@ dispatch_contract: dispatch_handover_v1
 #   needs_bash_guard: false      — claude governs its own command execution via
 #                                  --permission-mode; pm-dispatch registers no
 #                                  executor bash policy for claude.
-# dispatch_route is left to derive to main_thread_bash_background, reflecting the
-# headless-subprocess route. The same-host Agent(claude-executor) path is a
-# documented fallback, not this manifest's canonical route.
 runner_kind: cli-subprocess
 write_guard_mode: cli-only
 needs_bash_guard: false

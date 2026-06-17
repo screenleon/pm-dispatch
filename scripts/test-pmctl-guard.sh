@@ -112,8 +112,8 @@ if should_run "claude-prewrite-nonbrief-deny"; then
 fi
 
 if should_run "claude-prebash-fail-closed"; then
-  # claude-executor self-executes under harness/--permission-mode; no pre-bash
-  # policy is registered in the dispatch guard → fail closed (exit 3).
+  # claude headless subprocess governs its own Bash via --permission-mode;
+  # pm-dispatch registers no bash policy for the claude runtime.
   name="claude-prebash-fail-closed"
   run_guard --event pre-bash --role executor --runtime claude --command "ls"
   if assert_exit "$name" "$GUARD_EXIT" "3" &&

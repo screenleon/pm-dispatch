@@ -1,8 +1,8 @@
 # Dispatch brief schema
 
-The canonical structure for any brief dispatched to an executor (`codex-executor` via `pmctl dispatch run --adapter codex` or Agent fallback, or `claude-executor` via Agent).
+The canonical structure for any brief dispatched to an executor (`codex-executor` via `pmctl dispatch run --adapter codex` or Agent fallback, or claude via `adapters/claude/dispatch.sh` → headless `claude --print`).
 
-Both executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
+Executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
 
 ## When to dispatch vs. handle inline
@@ -267,7 +267,7 @@ Exit codes: `0` = valid handover block (metadata and body consistent); `1` = inv
 pmctl dispatch run --adapter codex --cd <work_dir> --brief-file <brief-file>
 
 # claude profile:
-# dispatch via Agent(claude-executor)
+pmctl dispatch run --adapter claude --cd <work_dir> --brief-file <brief-file>
 
 # opencode profile:
 pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
@@ -598,19 +598,7 @@ Use `Agent(codex-executor)` only for this fallback allowlist:
 
 When using fallback, set `dispatch_route: agent_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
 
-#### claude executor fallback (symmetric)
-
-The `executor: claude` profile follows the same shape: the canonical route is main-thread `pmctl dispatch run --adapter claude` → headless `claude --print`, and `Agent(claude-executor)` is the narrow fallback / sanctioned in-session route. The conditions differ only where the executors differ:
-
-| Condition | Rationale |
-|---|---|
-| Headless `claude --print` unavailable (e.g. `claude` CLI not in PATH). | The canonical route spawns the external `claude` binary; without it, the in-session Agent is the only host-independent way to run a claude brief. This is the primary reason the claude Agent route exists. |
-| Main-thread context is near-full. | Execution, self-verify, and trace-writing move out of the main thread when the window is the limiting factor. |
-| Sync workflow must remain serialized. | Foreground sequencing + inline artifact validation instead of an asynchronous completion notification. |
-| `/pr-gate` reviewer fan-out (**sanctioned, not a fallback**). | `pr-gate` orchestrates parallel `Agent(claude-executor)` reviewers itself — the intended in-session model. Do not hand-roll claude-executor review dispatches outside pr-gate. |
-| User explicitly requests claude-executor. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
-
-Authoritative per-executor checklists live in `agents/codex-executor.md` and `agents/claude-executor.md` §When NOT to use this agent; both delegate brief schema validation to `scripts/brief-validate.sh` (codex via the `pmctl dispatch run` pre-flight, claude via a direct call — see each agent's §Validation).
+The authoritative codex fallback checklist lives in `agents/codex-executor.md` §When NOT to use this agent; it delegates brief schema validation to `scripts/brief-validate.sh` via the `pmctl dispatch run` pre-flight.
 
 ## Dispatching a brief
 

@@ -61,7 +61,7 @@ When `conceptual_map` is absent, the architecture-reviewer falls back to diff in
 
 **When**: at the end of every executor run; the executor itself evaluates `self_verify` before declaring done.
 
-**Mechanism**: the `self_verify:` block in a dispatch brief contains one or more postcondition checks. Items tagged `cmd:` are shell commands the executor runs; a non-zero exit means the task is *not* done, regardless of what the diff looks like. The outer `codex-executor` (or `claude-executor`) then re-checks `acceptance:` from outside the subagent.
+**Mechanism**: the `self_verify:` block in a dispatch brief contains one or more postcondition checks. Items tagged `cmd:` are shell commands the executor runs; a non-zero exit means the task is *not* done, regardless of what the diff looks like. The outer dispatcher then re-checks `acceptance:` from outside the executor.
 
 ```
 self_verify:
