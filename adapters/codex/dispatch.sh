@@ -28,8 +28,10 @@
 # multiline briefs are much easier to get wrong inline.
 #
 # Defaults:
-#   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
-#   --isolation empty            (none | read-only | workspace-write | workspace-network | sandboxed)
+#   --sandbox  workspace-write   (read-only | workspace-write; danger-full-access
+#                                 is REJECTED — codex full access is retired)
+#   --isolation empty            (read-only | workspace-write | workspace-network |
+#                                 sandboxed; `none` is REJECTED for codex)
 #   --approval never             (never | on-failure | on-request | untrusted)
 #   --timeout  precedence (via pmctl): --timeout flag (wins) > CODEX_DISPATCH_TIMEOUT env >
 #              PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
@@ -309,6 +311,17 @@ if [[ -n "$ISOLATION" ]]; then
     exit 2
   fi
   SANDBOX="$_ISO_SANDBOX"
+fi
+
+# Codex full machine access (--sandbox danger-full-access) is retired: codex's
+# max isolation is workspace-write. isolation_level:none no longer maps here, but
+# a caller can still pass --sandbox danger-full-access directly, or reach it via
+# `pmctl dispatch run` native-flag passthrough. Reject it fail-loud at this single
+# chokepoint that every dispatch path crosses before `codex exec` is built, so the
+# policy cannot be bypassed by the raw native flag.
+if [[ "$SANDBOX" == "danger-full-access" ]]; then
+  printf 'codex-dispatch: error: --sandbox danger-full-access is not supported (codex full machine access is retired; max isolation is workspace-write)\n' >&2
+  exit 2
 fi
 
 CMD=(codex exec

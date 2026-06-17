@@ -808,6 +808,36 @@ case_isolation_none() {
   pass "$name"
 }
 
+# ---- 26b: raw --sandbox danger-full-access is rejected fail-loud ----
+case_sandbox_danger_full_access_rejected() {
+  # Verifies the codex full-access retirement holds against the raw native flag,
+  # not just the --isolation none path. A caller passing --sandbox
+  # danger-full-access directly (or via pmctl dispatch run native-flag
+  # passthrough) must be rejected fail-loud (exit 2) before `codex exec` is built.
+  # Steps:
+  # 1. Create a temp dir with a minimal brief file.
+  # 2. Run codex-dispatch.sh --sandbox danger-full-access --print-cmd; capture exit.
+  # 3. Assert exit 2 and that the printed command does NOT contain danger-full-access.
+  local name="sandbox-danger-full-access-rejected"
+  local dir brief out code
+  should_run "$name" || return 0
+
+  dir="$(mktemp -d)"
+  brief="$dir/brief.md"
+  printf 'goal: sandbox bypass test\n' > "$brief"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --sandbox danger-full-access --print-cmd 2>&1)" && code=0 || code=$?
+  rm -rf "$dir"
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for retired --sandbox danger-full-access; got $code (out: $out)"
+    return
+  fi
+  if printf '%s\n' "$out" | grep -q -- 'danger-full-access' && printf '%s\n' "$out" | grep -q -- 'codex exec'; then
+    fail "$name" "printed codex exec command still contains danger-full-access: $out"
+    return
+  fi
+  pass "$name"
+}
+
 # ---- 27: isolation read-only generates read-only sandbox ----
 case_isolation_read_only() {
   # Verifies that --isolation read-only generates --sandbox read-only.
@@ -1004,6 +1034,7 @@ case_isolation_workspace_network
 case_isolation_workspace_write_no_network
 case_isolation_unknown_level_exits_error
 case_isolation_none
+case_sandbox_danger_full_access_rejected
 case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief

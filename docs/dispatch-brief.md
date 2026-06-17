@@ -545,7 +545,7 @@ Argument order is stable:
 5. `--timeout <safe timeout>`
 6. `--brief-file <safe brief_file>`
 
-`isolation_level: none` (full machine access) is **opencode-only**, where it is load-bearing (opencode has no finer-grained sandbox). For codex and claude it is hard-rejected on every route — their max isolation is `workspace-write`, and the Agent escape hatch that once carried full access for codex was retired. There is no full-access route for codex/claude.
+`isolation_level: none` (full machine access) is **opencode-only**, where it is load-bearing (opencode has no finer-grained sandbox). For codex and claude it is hard-rejected on every route — their max isolation is `workspace-write`, and the Agent escape hatch that once carried full access for codex was retired. There is no full-access route for codex/claude. The codex adapter also rejects a raw `--sandbox danger-full-access` flag (fail-loud, exit 2), so native-flag passthrough through `pmctl dispatch run` cannot reintroduce full access.
 
 Quoting and command-shape rules:
 

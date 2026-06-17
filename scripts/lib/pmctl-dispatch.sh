@@ -484,6 +484,13 @@ pmctl_dispatch_run() {
         return 2
         ;;
       *)
+        # Non-core flags pass through to the adapter verbatim (the adapter owns
+        # its native-flag surface). pmctl does not interpret adapter-specific
+        # flags, so safety-sensitive native values are validated by the adapter —
+        # the single effective-policy chokepoint every dispatch path crosses:
+        # e.g. the codex adapter rejects --sandbox danger-full-access, so this
+        # passthrough cannot reintroduce full machine access past the
+        # isolation_level policy.
         forward+=("$1")
         shift
         ;;
