@@ -366,21 +366,6 @@ echo
 $LIST || echo "== hook-executor-write-guard (runtime asymmetry) =="
 truncate_log
 
-# LIVE PreToolUse context (no PM_GUARD_CHECK_CLI): claude self-executes its
-# work-dir edits, so the live hook MUST no-op — even for a path the brief policy
-# would otherwise reject. Blocking these would deny claude-executor's real work.
-run_case "exw: claude-executor LIVE Write source file → no-op (self-exec)" 0 "$EXWHOOK" \
-  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
-run_case "exw: claude-executor LIVE Write /etc/passwd → no-op (self-exec)" 0 "$EXWHOOK" \
-  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
-
-# CLI-driven context (PM_GUARD_CHECK_CLI=1, set by pmctl guard check): the
-# brief-location policy IS enforced for claude, identically to codex.
-run_case_env "exw: claude-executor CLI Write /tmp/brief-x.md → allow" 0 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
-  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
-run_case_env "exw: claude-executor CLI Write /etc/passwd → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
-  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
-
 # codex (write_guard_mode=cli-only as of CC-375/CC-385a) is also no-op in the
 # LIVE context — same as claude; enforcement only via PM_GUARD_CHECK_CLI.
 run_case "exw: codex-executor LIVE Write /etc/passwd → no-op (cli-only)" 0 "$EXWHOOK" \
@@ -392,40 +377,6 @@ run_case_env "exw: unregistered runtime CLI → deny (fail-closed)" 2 "PM_GUARD_
   '{"agent_type":"bogus-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
 run_case "exw: unregistered runtime LIVE → no-op" 0 "$EXWHOOK" \
   '{"agent_type":"bogus-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-x.md"}}'
-
-# --- claude bypass (per-runtime env, derived as PM_HOOK_<RUNTIME>_WRITE_GUARD) ---
-# The bypass env name is derived from the runtime, so the claude path exercises a
-# distinct branch from the codex bypass above. Under the CLI-driven context the
-# brief policy would deny /etc/passwd; the bypass must short-circuit to allow (0).
-if should_run "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off"; then
-  _exw_claude_bypass_exit=$(printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
-    | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CLAUDE_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1; echo $?)
-  if [[ "$_exw_claude_bypass_exit" == "0" ]]; then
-    pass "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off"
-  else
-    fail "exw: claude-executor CLI bypass via PM_HOOK_CLAUDE_WRITE_GUARD=off" "expected exit 0, got $_exw_claude_bypass_exit"
-  fi
-  unset _exw_claude_bypass_exit
-fi
-
-# --- claude audit-log content (CLI-driven; mirrors the codex audit block) ---
-$LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' \
-  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
-assert_log "exw: claude audit log contains allow line" "decision=allow"
-assert_log "exw: claude allow line records agent=claude-executor" "agent=claude-executor"
-
-$LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
-  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
-assert_log "exw: claude audit log contains deny line" "decision=deny"
-assert_log "exw: claude deny line records agent=claude-executor" "agent=claude-executor"
-
-$LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' \
-  | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CLAUDE_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
-assert_log "exw: claude audit log contains bypass line" "decision=bypass"
-assert_log "exw: claude bypass line records agent=claude-executor" "agent=claude-executor"
 
 # =============================================================================
 # reviewer-write-guard
@@ -484,10 +435,6 @@ run_case "rw: reviewer Write to any project's .gate-results → allow (CC-319)" 
   "{\"agent_type\":\"reviewer\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_rw_cross_gate/output.md\"}}"
 rm -rf "$(dirname "$_rw_cross_gate")"
 unset _rw_cross_gate
-
-# --- no-op for non-reviewer agents ---
-run_case "rw: claude-executor Write anywhere → no-op" 0 "$RWHOOK" \
-  '{"agent_type":"claude-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/main.go"}}'
 
 run_case "rw: project-pm Write anywhere → no-op (pm guard handles it)" 0 "$RWHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/whatever.md"}}'

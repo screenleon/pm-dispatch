@@ -11,8 +11,8 @@ This schema was used by `scripts/pr-gate.sh` when the selected executor was
 `claude` (pre-CC-383). It is intentionally separate from `dispatch_handover_v1`.
 
 - Envelope fence: ```pr-gate-handover_v1
-- Purpose: instruct the main-thread orchestrator to fan out one or more
-  `Agent(subagent_type: "claude-executor")` calls.
+- Purpose: instructed the main-thread orchestrator to fan out one or more
+  in-session reviewer Agent calls.
 
 ## Schema shape
 
@@ -46,9 +46,8 @@ The behavior below describes the pre-CC-383 handover route and no longer occurs;
 `scripts/pr-gate.sh` does not print a handover block for any executor.
 
 - The gate script printed the handover block on stdout when running in claude mode.
-- The caller parsed the block and dispatched one
-  `Agent(subagent_type: "claude-executor")` call for every `role: reviewer`
-  entry, passing `brief_file` as the call prompt. The reviewer brief already
+- The caller parsed the block and dispatched one in-session Agent call for every
+  `role: reviewer` entry, passing `brief_file` as the call prompt. The reviewer brief already
   contains an explicit `pmctl guard check --role reviewer --runtime claude
   --event pre-write` constraint (CC-297) — the executor calls it before
   writing, enforcing the `.gate-results/`-only rule via the same policy hook

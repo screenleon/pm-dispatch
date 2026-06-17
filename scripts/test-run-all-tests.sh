@@ -47,7 +47,6 @@ SUITE_NAMES=(
   test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
-  test-claude-executor
   test-run-all-tests
   test-lint-model-aliases
   test-core-schemas
@@ -129,7 +128,6 @@ suite_path() {
     test-dispatch-post-verify) printf 'scripts/test-dispatch-post-verify.sh\n' ;;
     test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
-    test-claude-executor) printf 'scripts/test-claude-executor.sh\n' ;;
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
     test-lint-model-aliases) printf 'scripts/test-lint-model-aliases.sh\n' ;;
     test-core-schemas) printf 'scripts/test-core-schemas.sh\n' ;;

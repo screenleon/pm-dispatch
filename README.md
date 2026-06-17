@@ -20,7 +20,7 @@ This repository is designed for a single maintainer working on their own adaptat
 - [Context retrieval](docs/context-retrieval.md) — repo index + prior-art scan before dispatching
 - [Task lifecycle](docs/pmctl-task.md) — `pmctl task` subcommands (claim/dispatch/status/review)
 - [Review model](docs/review-model.md) — four-layer rigor model (pre-impl → pr-gate → machine verify)
-- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — `pr-gate-handover_v1` block format (claude-executor fan-out)
+- [pr-gate handover schema](docs/pr-gate-handover-schema.md) — deprecated `pr-gate-handover_v1` block format
 
 ## Working language
 
@@ -214,7 +214,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Dispatch briefs
 
-Schema and reusable self-verify macros: [`docs/dispatch-brief.md`](docs/dispatch-brief.md). All briefs dispatched to `codex-executor` or `claude-executor` must include `working_dir`, `goal`, `files`, and `acceptance`; both executors reject briefs missing those fields.
+Schema and reusable self-verify macros: [`docs/dispatch-brief.md`](docs/dispatch-brief.md). All briefs dispatched to executor adapters must include `working_dir`, `goal`, `files`, and `acceptance`; executors reject briefs missing those fields.
 
 - `self_verify` — **required for file-writing briefs** (any brief whose `files:` block contains an entry tagged `write:` or `new:`, or any entry without an explicit `read:` tag; when in doubt, treat as file-writing). Optional only for read-only briefs where *every* `files:` entry is explicitly tagged `read:`. See [`docs/dispatch-brief.md`](docs/dispatch-brief.md) for the canonical definition.
 

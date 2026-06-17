@@ -616,13 +616,10 @@ test_output_directory_created() {
   pass "$name"
 }
 
-test_claude_executor_dispatches_subprocess() {
-  # CC-383: --executor claude now dispatches an INDEPENDENT subprocess (headless
-  # `claude --print` via adapters/claude/dispatch.sh) and integrity-checks the
-  # result in-process -- the agent_executor/handover route is retired. Verifies
-  # the gate runs the claude adapter, materializes the result file, and exits 0
-  # on a GO result (no pr-gate-handover_v1 block is emitted).
-  local name="claude-executor-dispatches-subprocess"
+test_claude_adapter_dispatches_subprocess() {
+  # Verifies pr-gate --executor claude dispatches a subprocess, materializes the
+  # result file, and exits 0 on a GO result without emitting a handover block.
+  local name="claude-adapter-dispatches-subprocess"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -2228,7 +2225,7 @@ run_test test_reviewers_override_skips_tier_detection
 run_test test_brief_file_inside_workdir
 run_test test_brief_cleanup_on_dispatch_failure
 run_test test_output_directory_created
-run_test test_claude_executor_dispatches_subprocess
+run_test test_claude_adapter_dispatches_subprocess
 run_test test_standard_tier_detection
 run_test test_full_tier_line_count
 run_test test_full_tier_sensitive_file

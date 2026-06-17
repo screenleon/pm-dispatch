@@ -44,7 +44,6 @@ SUITE_NAMES=(
   test-check-docs-freshness
   test-skill-refine
   test-pr-gate-profile
-  test-claude-executor
   test-run-all-tests
   test-lint-model-aliases
   test-core-schemas
@@ -103,7 +102,6 @@ declare -A SUITE_PATHS=(
   [test-check-docs-freshness]="scripts/test-check-docs-freshness.sh"
   [test-skill-refine]="scripts/test-skill-refine.sh"
   [test-pr-gate-profile]="scripts/test-pr-gate-profile.sh"
-  [test-claude-executor]="scripts/test-claude-executor.sh"
   [test-run-all-tests]="scripts/test-run-all-tests.sh"
   [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
   [test-core-schemas]="scripts/test-core-schemas.sh"
