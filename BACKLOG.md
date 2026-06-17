@@ -197,7 +197,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Sequencing**: 機械性、零能力損失，可先於 [[CC-395]]。umbrella [[CC-333]]（in-session Agent executor 層）。
 
-**See**: pr:#TBD
+**See**: pr:#293
 
 **See**: [[CC-395]]（codex 對稱退場）、[[CC-333]]、[[CC-388]]、[[CC-376]]。
 
