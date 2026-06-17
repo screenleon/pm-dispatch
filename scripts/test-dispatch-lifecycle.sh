@@ -395,6 +395,115 @@ case_supervisor_rejects_native_brief_smuggle() {
   rm -rf "$work" "$bindir"; rm -f "$evil"
 }
 
+# Emit a schema-v2 run-spec with per-field control. An empty value omits that
+# line entirely (to exercise missing-field validation). Args after `--` are raw
+# native passthrough args, base64-encoded into the native_b64 section.
+_emit_runspec() {
+  local file="$1" schema="$2" rid="$3" adapter="$4" work="$5" cd="$6" brief="$7" pc="$8"; shift 8
+  [[ "${1:-}" == "--" ]] && shift
+  {
+    [[ -n "$schema" ]] && printf 'schema_version=%s\n' "$schema"
+    [[ -n "$rid" ]] && printf 'run_id=%s\n' "$rid"
+    [[ -n "$adapter" ]] && printf 'adapter=%s\n' "$adapter"
+    [[ -n "$work" ]] && printf 'work_dir=%s\n' "$work"
+    [[ -n "$cd" ]] && printf 'cd_arg=%s\n' "$cd"
+    [[ -n "$brief" ]] && printf 'brief_file=%s\n' "$brief"
+    printf 'model=\n'
+    printf 'created_ts=2026-06-17T00:00:00Z\n'
+    [[ -n "$pc" ]] && printf 'print_cmd=%s\n' "$pc"
+    printf 'native_b64:\n'
+    local a
+    for a in "$@"; do printf '%s\n' "$(printf '%s' "$a" | base64 | tr -d '\n')"; done
+  } > "$file"
+}
+
+# Drive the supervisor with a crafted spec; assert exit 2, a message match, and
+# that no executor record was produced (the spec was rejected before launch).
+_expect_supervisor_reject() {
+  local name="$1" work="$2" spec="$3" pattern="$4"
+  local code err
+  set +e
+  err="$(bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qiE "$pattern" <<<"$err" && [[ -z "$(_first_record "$work")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+}
+
+_RID_OK="run-20260617T000000Z-aaaaaa"
+
+case_supervisor_rejects_malformed_base64() {
+  local name="supervisor/run-spec with malformed base64 native arg rejected"
+  should_run "$name" || return 0
+  local work brief spec
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  {
+    printf 'schema_version=2\nrun_id=%s\nadapter=codex\nwork_dir=%s\ncd_arg=%s\nbrief_file=%s\nmodel=\ncreated_ts=2026-06-17T00:00:00Z\nprint_cmd=0\nnative_b64:\n' "$_RID_OK" "$work" "$work" "$brief"
+    printf '@@@not-valid-base64@@@\n'
+  } > "$spec"
+  _expect_supervisor_reject "$name" "$work" "$spec" 'malformed base64'
+  rm -rf "$work"
+}
+
+case_supervisor_rejects_bad_schema() {
+  local name="supervisor/run-spec with unsupported schema_version rejected"
+  should_run "$name" || return 0
+  local work brief spec
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _emit_runspec "$spec" 99 "$_RID_OK" codex "$work" "$work" "$brief" 0
+  _expect_supervisor_reject "$name" "$work" "$spec" 'unsupported run-spec schema_version'
+  rm -rf "$work"
+}
+
+case_supervisor_rejects_bad_runid() {
+  local name="supervisor/run-spec with invalid run_id rejected"
+  should_run "$name" || return 0
+  local work brief spec
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _emit_runspec "$spec" 2 "not-a-valid-runid" codex "$work" "$work" "$brief" 0
+  _expect_supervisor_reject "$name" "$work" "$spec" 'invalid run_id'
+  rm -rf "$work"
+}
+
+case_supervisor_rejects_missing_scalar() {
+  local name="supervisor/run-spec missing brief_file scalar rejected"
+  should_run "$name" || return 0
+  local work spec
+  work="$(mktemp -d)"; git init -q "$work"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  # brief_file omitted (empty arg) -> missing-scalar validation fires.
+  _emit_runspec "$spec" 2 "$_RID_OK" codex "$work" "$work" "" 0
+  _expect_supervisor_reject "$name" "$work" "$spec" 'missing brief_file'
+  rm -rf "$work"
+}
+
+case_supervisor_rejects_bad_printcmd() {
+  local name="supervisor/run-spec with invalid print_cmd rejected"
+  should_run "$name" || return 0
+  local work brief spec
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _emit_runspec "$spec" 2 "$_RID_OK" codex "$work" "$work" "$brief" 9
+  _expect_supervisor_reject "$name" "$work" "$spec" 'invalid print_cmd'
+  rm -rf "$work"
+}
+
+case_supervisor_rejects_cd_smuggle() {
+  local name="supervisor/run-spec native args carrying --cd rejected"
+  should_run "$name" || return 0
+  local work brief spec
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _emit_runspec "$spec" 2 "$_RID_OK" codex "$work" "$work" "$brief" 0 -- --cd /tmp
+  _expect_supervisor_reject "$name" "$work" "$spec" 'native args must not contain --cd'
+  rm -rf "$work"
+}
+
 # ── detached + auto-pack is rejected (deferred combination) ───────────────────
 case_detached_autopack_rejected() {
   local name="lifecycle/detached + auto-pack rejected"
@@ -429,5 +538,11 @@ case_supervisor_rejects_traversal_name
 case_supervisor_missing_spec
 case_supervisor_rejects_malformed_brief
 case_supervisor_rejects_native_brief_smuggle
+case_supervisor_rejects_malformed_base64
+case_supervisor_rejects_bad_schema
+case_supervisor_rejects_bad_runid
+case_supervisor_rejects_missing_scalar
+case_supervisor_rejects_bad_printcmd
+case_supervisor_rejects_cd_smuggle
 case_detached_autopack_rejected
 th_summary
