@@ -322,17 +322,19 @@ handover_validate_all_metadata() {
   local _iso_val
   _iso_val="$(handover_get_field "$metadata" isolation_level)" || return 1
   handover_validate_isolation_level "$_iso_val" || return 1
-  # isolation_level:none maps to danger-full-access in the Codex adapter.
-  # The Bash dispatch route does not support full-access for codex; reject it so
-  # PM-authored codex briefs cannot reach danger-full-access through unattended dispatch.
-  # Exception: opencode is a cli-subprocess on the bash route and explicitly supports
-  # isolation_level:none (→ --dangerously-skip-permissions); allow it.
+  # isolation_level:none means full machine access (codex danger-full-access,
+  # claude bypassPermissions). Only opencode supports it: opencode has no
+  # finer-grained sandbox, so none (→ --dangerously-skip-permissions) is its sole
+  # unattended mode and is load-bearing. Every other executor has a safe sandboxed
+  # default (codex/claude workspace-write), so full machine access is a
+  # non-load-bearing escalation that is cut entirely — reject none on ALL routes
+  # regardless of dispatch_route. (The in-session Agent-spawn escape hatch that
+  # previously carried full access for codex has been retired.)
   if [[ "$_iso_val" == "none" ]]; then
-    local _route _exec
-    _route="$(handover_get_field "$metadata" dispatch_route 2>/dev/null)" || _route=""
+    local _exec
     _exec="$(handover_get_field "$metadata" executor 2>/dev/null)" || _exec=""
-    if [[ "$_route" == "main_thread_bash_background" && "$_exec" != "opencode" ]]; then
-      handover_reject isolation_level "isolation_level none maps to danger-full-access which is not supported by main_thread_bash_background; use agent_executor dispatch_route or a less permissive isolation level" || return 1
+    if [[ "$_exec" != "opencode" ]]; then
+      handover_reject isolation_level "isolation_level none (full machine access) is only supported by opencode; ${_exec:-this executor} max isolation is workspace-write" || return 1
     fi
   fi
 

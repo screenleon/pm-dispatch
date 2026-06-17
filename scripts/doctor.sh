@@ -205,8 +205,8 @@ check_claude() {
 
 check_codex() {
   if ! codex_available; then
-    emit_check codex warn "codex not found — full-profile adapter bash guards (adapters/codex/bash-guard.sh etc.) will be skipped; minimal profile active" \
-      "Install Codex CLI for full-profile hooks (optional)"
+    emit_check codex warn "codex not found — dispatch to the codex adapter (pmctl dispatch run --adapter codex) is unavailable" \
+      "Install Codex CLI if you dispatch tasks to codex (optional)"
     return
   fi
   # Binary present: an unauthenticated executor must fail loud, not silently

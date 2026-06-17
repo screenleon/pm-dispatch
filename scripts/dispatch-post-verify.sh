@@ -14,8 +14,7 @@ usage() {
 # override the default latest.* symlinks with per-run explicit paths (e.g. parsed
 # from the dispatch footer by the /pm main-thread route, where latest.* would race
 # across concurrent dispatches). Absent flags, behavior is identical to the
-# positional <work_dir> [brief_file] form used by `pmctl dispatch run` and
-# codex-executor.
+# positional <work_dir> [brief_file] form used by `pmctl dispatch run`.
 BRIEF_FILE=""
 LAST_OVERRIDE=""
 JSONL_OVERRIDE=""
@@ -171,8 +170,8 @@ FAILED=0
 # Fail-closed on a flag-supplied --stderr whose file is absent: the footer claimed
 # this per-run artifact exists, so a missing one signals a broken footer parse or a
 # lost artifact and must not be reported as a clean post-verify. The default
-# (positional) latest.stderr path stays optional — pmctl dispatch run and
-# codex-executor pass no --stderr and rely on that tolerance.
+# (positional) latest.stderr path stays optional — pmctl dispatch run passes no
+# --stderr and relies on that tolerance.
 if [[ -n "$STDERR_OVERRIDE" && ! -e "$LATEST_STDERR" ]]; then
   printf 'FAILED: supplied --stderr not found: %s\n' "$STDERR_OVERRIDE"
   FAILED=1
@@ -189,8 +188,8 @@ fi
 # CC-386: trace integrity. The executor's own .last/`status:` line is its
 # self-report; the JSONL event stream is independent proof the run actually ran to
 # completion. A run can exit 0 yet leave a truncated/orphaned trace (e.g. a
-# background job SIGKILLed mid-write, the orphan signature documented in
-# codex-executor.md): the .last contract alone cannot tell that from a clean
+# background job SIGKILLed mid-write, leaving a partial trailing record as its
+# orphan signature): the .last contract alone cannot tell that from a clean
 # finish. So when a trace is present we require it to be structurally whole — fully
 # parseable as a JSON stream — which catches a partial trailing record (the
 # truncation signature). Semantic completion markers differ per adapter (codex's

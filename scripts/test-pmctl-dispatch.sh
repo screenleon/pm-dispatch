@@ -418,6 +418,29 @@ case_arg_passthrough() {
   rm -rf "$work"
 }
 
+# ---- 17b: native-flag passthrough cannot bypass the codex full-access cut ----
+# pmctl forwards non-core flags verbatim, so a caller could try to escalate the
+# codex sandbox with the raw native `--sandbox danger-full-access` flag past the
+# isolation_level:none rejection. The codex adapter rejects that value fail-loud,
+# and pmctl must propagate the non-zero exit — full access stays unreachable.
+case_sandbox_danger_full_access_denied() {
+  local name="dispatch/codex --sandbox danger-full-access rejected (no native-flag bypass)"
+  should_run "$name" || return 0
+  local work brief out code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  set +e
+  out="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+         --sandbox danger-full-access --print-cmd 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 ]] && grep -qi 'danger-full-access is not supported' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit + rejection message; code=$code out=$(head -2 <<<"$out")"
+  fi
+  rm -rf "$work"
+}
+
 # Installs a fake codex that writes valid per-run output but then corrupts
 # latest.last by relinking it to a file with "status: failed" — simulating a
 # concurrent-dispatch race (CC-305).  If pmctl reads latest.last post-verify fails;
@@ -947,6 +970,7 @@ case_no_auto_pack_overrides_config_on() {
 case_missing_adapter
 case_unknown_adapter
 case_arg_passthrough
+case_sandbox_danger_full_access_denied
 case_adapter_resolution_and_route
 case_brief_validation_blocks
 case_guard_denies_dispatch

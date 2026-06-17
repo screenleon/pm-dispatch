@@ -206,12 +206,14 @@ pmctl_guard_check() {
   #                      selected by runtime CONVENTION (hook-<runtime>-write-
   #                      guard.sh) so it stays identity-matched to agent_type (no
   #                      fail-OPEN) AND a new runtime needs no edit here.
-  #   [runtime-specific] genuinely differs by runtime and may NOT be collapsed —
-  #                      codex-executor (thin dispatcher) has a pre-bash policy;
-  #                      other executor runtimes self-execute under harness perms
-  #                      and register none. Adding a bash policy for a new runtime
-  #                      IS a guard decision (a new role-policy cell), not an
-  #                      adapter concern — so this stays an explicit registry.
+  #   [runtime-specific] genuinely differs by runtime and may NOT be collapsed.
+  #                      No executor runtime currently registers a pre-bash policy:
+  #                      the codex-executor subagent (the only one that ever did)
+  #                      was retired, and every executor now runs as an independent
+  #                      subprocess via pmctl dispatch rather than an in-session
+  #                      subagent whose Bash needs gating. Adding a bash policy for a
+  #                      new runtime IS a guard decision (a new role-policy cell),
+  #                      not an adapter concern — so this stays an explicit registry.
   local hook=""
   case "$event" in
     pre-write)
@@ -236,13 +238,11 @@ pmctl_guard_check() {
     pre-bash)
       case "$role" in
         executor)
-          case "$runtime" in
-            codex) hook="hook-codex-bash-guard.sh" ;;  # [runtime-specific]
-            *)
-              printf 'pmctl guard check: no guard policy registered for role=executor runtime=%s event=pre-bash — denying\n' "$runtime" >&2
-              return 3
-              ;;
-          esac
+          # No executor runtime registers a pre-bash policy (see [runtime-specific]
+          # above) — the codex-executor subagent that needed one was retired. Fail
+          # closed so an unrecognized request can never silently pass.
+          printf 'pmctl guard check: no guard policy registered for role=executor runtime=%s event=pre-bash — denying\n' "$runtime" >&2
+          return 3
           ;;
         pm)
           # project-pm is a planner that never runs Bash → fail closed.

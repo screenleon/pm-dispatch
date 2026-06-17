@@ -63,6 +63,8 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-335 | deprecated surface 移除 sweep：handover legacy trio（sandbox/approval/skip_git_check）＋ CLAUDE_HOOK_* shims 移除；codex-dispatch.sh shim 殘留 dead-code 清理；pr-gate.sh 直呼降級為文件 deprecation（standalone 為官方 fallback，不刪檔） | ✅ |
+| CC-394 | 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode） | ✅ |
+| CC-395 | 退場 `agents/codex-executor.md` + 砍 codex danger-full-access（decision A）：`none` 僅 opencode 允許、codex/claude 全 route reject；刪 codex bash-guard ＋ install orphan-cleanup ＋ pmctl-safe/pre-bash fail-closed；文件/測試收斂。衍生 CC-396（operational 檔 CC-provenance 註解清理） | ✅ |
 
 ### Phase 7 — executor lifecycle ownership（P2；executor 抽象的完成式）
 

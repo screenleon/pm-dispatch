@@ -9,10 +9,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Keying is role×runtime (CC-291): guard cares about --role (pm|executor|reviewer);
 # the --runtime axis (codex|claude) is consulted only where a role's policy differs
 # by runtime.
-# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, codex-prebash-allow, claude-prewrite-allow, reviewer-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
-# 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
-# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prebash-missing-command-flag, prewrite-rejects-command-flag, prebash-rejects-file-flag, hook-not-executable, missing-repo-root, jq-missing
-# 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny, codex-prebash-deny-verb, codex-prebash-deny-metachar
+# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, claude-prewrite-allow, reviewer-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
+# 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed + codex-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
+# 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prewrite-rejects-command-flag, hook-not-executable, missing-repo-root, jq-missing
+# 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny
 # 5. State transitions: N/A - guard check is a stateless per-call decision; no persisted state machine in the SUT
 # 6. Concurrency / race conditions: N/A - each invocation is an isolated subprocess synthesizing its own JSON; no shared mutable state
 # 7. Side effects: prewrite-no-mutation - a pre-write check never creates the target file
@@ -49,7 +49,6 @@ _tpg_needs_symlink() {
 PMCTL="$REPO_ROOT/cli/pmctl"
 PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
 EXWHOOK="$SCRIPT_DIR/hook-executor-write-guard.sh"
-CXBHOOK="$SCRIPT_DIR/hook-codex-bash-guard.sh"
 
 # Sandbox audit logs + pin codex read roots so path-based cases are deterministic
 # regardless of the host's $HOME (mirrors scripts/test-hooks.sh).
@@ -84,10 +83,16 @@ if should_run "pm-prewrite-allow"; then
   assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
 fi
 
-if should_run "codex-prebash-allow"; then
-  name="codex-prebash-allow"
+if should_run "codex-prebash-fail-closed"; then
+  # The codex-executor subagent (and its dedicated bash guard) was retired;
+  # pm-dispatch registers no bash policy for any executor runtime. codex pre-bash
+  # now fails closed (exit 3), mirroring claude.
+  name="codex-prebash-fail-closed"
   run_guard --event pre-bash --role executor --runtime codex --command "git status"
-  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+  if assert_exit "$name" "$GUARD_EXIT" "3" &&
+    assert_string_contains "$name" "$GUARD_OUT" "no guard policy registered for role=executor runtime=codex"; then
+    pass "$name"
+  fi
 fi
 
 # claude runtime (CC-266): brief-file pre-write mirrors codex (/tmp/brief-*.md).
@@ -379,15 +384,6 @@ if should_run "prewrite-missing-file-flag"; then
   fi
 fi
 
-if should_run "prebash-missing-command-flag"; then
-  name="prebash-missing-command-flag"
-  run_guard --event pre-bash --role executor --runtime codex
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "--command required for event pre-bash"; then
-    pass "$name"
-  fi
-fi
-
 if should_run "missing-repo-root"; then
   # Called via the sourced function directly: the CLI always passes REPO_ROOT,
   # so this precondition is only reachable at the library boundary.
@@ -411,14 +407,6 @@ if should_run "prewrite-rejects-command-flag"; then
   fi
 fi
 
-if should_run "prebash-rejects-file-flag"; then
-  name="prebash-rejects-file-flag"
-  run_guard --event pre-bash --role executor --runtime codex --command "git status" --file /tmp/x
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "--file is not valid for event pre-bash"; then
-    pass "$name"
-  fi
-fi
 
 if should_run "hook-not-executable"; then
   # Point the function at a fake repo root whose guard hook is non-executable so
@@ -473,21 +461,6 @@ if should_run "pm-prewrite-deny"; then
     assert_string_contains "$name" "$GUARD_OUT" "hook-pm-write-guard"; then
     pass "$name"
   fi
-fi
-
-if should_run "codex-prebash-deny-verb"; then
-  name="codex-prebash-deny-verb"
-  run_guard --event pre-bash --role executor --runtime codex --command "rm -rf /tmp/x"
-  if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-codex-bash-guard"; then
-    pass "$name"
-  fi
-fi
-
-if should_run "codex-prebash-deny-metachar"; then
-  name="codex-prebash-deny-metachar"
-  run_guard --event pre-bash --role executor --runtime codex --command "git status; rm -rf /"
-  assert_exit "$name" "$GUARD_EXIT" "2" && pass "$name"
 fi
 
 # ---------------------------------------------------------------------------
@@ -627,13 +600,5 @@ r2_equiv "r2-equiv-pm-write-allow" "$PMHOOK" \
 r2_equiv "r2-equiv-pm-write-deny" "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/oops.md"}}' \
   --event pre-write --role pm --runtime claude --file /tmp/oops.md
-
-r2_equiv "r2-equiv-codex-bash-allow" "$CXBHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"git status"}}' \
-  --event pre-bash --role executor --runtime codex --command "git status"
-
-r2_equiv "r2-equiv-codex-bash-deny" "$CXBHOOK" \
-  '{"agent_type":"codex-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}' \
-  --event pre-bash --role executor --runtime codex --command "rm -rf /tmp/x"
 
 th_summary

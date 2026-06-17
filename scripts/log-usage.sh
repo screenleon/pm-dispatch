@@ -9,7 +9,7 @@
 #   pr_gate_full        — full-tier PR gate (5 reviewers)
 #   pr_gate_standard    — standard-tier PR gate (3 reviewers)
 #   pr_gate_express     — express-tier PR gate (2 reviewers)
-#   codex_task          — codex-executor dispatch
+#   codex_task          — codex dispatch
 #   codex_dispatch      — Codex CLI dispatch auto-log
 #   pm_analysis         — project-pm analysis
 #   pm_synthesis        — project-pm gate synthesis

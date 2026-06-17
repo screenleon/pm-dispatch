@@ -28,8 +28,10 @@
 # multiline briefs are much easier to get wrong inline.
 #
 # Defaults:
-#   --sandbox  workspace-write   (read-only | workspace-write | danger-full-access)
-#   --isolation empty            (none | read-only | workspace-write | workspace-network | sandboxed)
+#   --sandbox  workspace-write   (read-only | workspace-write; danger-full-access
+#                                 is REJECTED — codex full access is retired)
+#   --isolation empty            (read-only | workspace-write | workspace-network |
+#                                 sandboxed; `none` is REJECTED for codex)
 #   --approval never             (never | on-failure | on-request | untrusted)
 #   --timeout  precedence (via pmctl): --timeout flag (wins) > CODEX_DISPATCH_TIMEOUT env >
 #              PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
@@ -311,21 +313,16 @@ if [[ -n "$ISOLATION" ]]; then
   SANDBOX="$_ISO_SANDBOX"
 fi
 
-# Expose the dispatch target's git root to the bash guard so codex can read
-# from the target repo regardless of where it lives (CC-320). Composition is
-# `<git_root>:/tmp[:<inherited>]`:
-#   - git_root  — the dispatch target, prepended so codex reads its sources.
-#   - /tmp      — the guard's documented default baseline (`$HOME/github:/tmp`).
-#                 Setting this env var REPLACES the guard default entirely, so we
-#                 must re-add /tmp here or codex loses scratch/brief access under
-#                 /tmp. This is required for correctness, not a policy widening.
-#   - inherited — any caller-set PM_HOOK_CODEX_READ_ROOTS is preserved as a
-#                 trailing fallback.
-# Deprecated-name compat shim — remove after v0.5.0
-[[ -z "${PM_HOOK_CODEX_READ_ROOTS:-}" && -n "${CLAUDE_HOOK_CODEX_READ_ROOTS:-}" ]] && { printf '[pm-dispatch] CLAUDE_HOOK_CODEX_READ_ROOTS deprecated; use PM_HOOK_CODEX_READ_ROOTS\n' >&2; PM_HOOK_CODEX_READ_ROOTS="${CLAUDE_HOOK_CODEX_READ_ROOTS}"; }
-_CODEX_GIT_ROOT="$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$WORK_DIR")"
-export PM_HOOK_CODEX_READ_ROOTS="$_CODEX_GIT_ROOT:/tmp${PM_HOOK_CODEX_READ_ROOTS:+:$PM_HOOK_CODEX_READ_ROOTS}"
-unset _CODEX_GIT_ROOT
+# Codex full machine access (--sandbox danger-full-access) is retired: codex's
+# max isolation is workspace-write. isolation_level:none no longer maps here, but
+# a caller can still pass --sandbox danger-full-access directly, or reach it via
+# `pmctl dispatch run` native-flag passthrough. Reject it fail-loud at this single
+# chokepoint that every dispatch path crosses before `codex exec` is built, so the
+# policy cannot be bypassed by the raw native flag.
+if [[ "$SANDBOX" == "danger-full-access" ]]; then
+  printf 'codex-dispatch: error: --sandbox danger-full-access is not supported (codex full machine access is retired; max isolation is workspace-write)\n' >&2
+  exit 2
+fi
 
 CMD=(codex exec
   --cd "$WORK_DIR"

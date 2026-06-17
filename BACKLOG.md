@@ -90,7 +90,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-392 | ✅ done | **[arch: claude adapter runner_kind 分類漂移 — manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`]** `adapters/claude/adapter.yaml` 宣告 `runner_kind: host-native`，但自 [[CC-383]]/[[CC-388]] 後 `adapters/claude/dispatch.sh` 實際是 headless `claude --print` 獨立子程序（行為上 cli-subprocess / Model B），讓 `runner_kind` 成為不可信謂詞、卡住 [[CC-391]] detach 資格推導。修法：`runner_kind: cli-subprocess` ＋ override `write_guard_mode: cli-only`、`needs_bash_guard: false`（三衍生旗標解析後行為 byte-identical；`dispatch_route` derive 至 main_thread_bash_background 僅 label，不驅動 exec 分支）；同步刷新 `executor-contract.md` profiles/guard 表與相關 code comment 過時的 host-native 措辭；加回歸鎖定。pr-gate standard = GO。關聯 [[CC-391]]、[[CC-373]]、[[CC-383]]、[[CC-388]]、[[guard-role-runtime]]。**See**: pr:#289 | arch/portability | 2026-06-15 | pr:#289 | P2 | design |
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
 | CC-394 | ✅ done | **[arch: 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode）]** Model B 後 claude 主路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]）；`Agent(claude-executor)` 已降級為「Claude 當 PM host 且 `claude` CLI 不在 PATH」的窄 fallback。它**不補任何能力缺口**（adapter 做同樣的事，與 codex-executor 的 danger-full-access 缺口不同），且持續課維護稅——[[CC-335]] 即因 trio 引用藏在此檔連兩輪 gate NO-GO。opencode（[[CC-376]]）已是 adapter-only、無 Agent，為目標形狀。退場範圍：刪 agent 檔＋guard role-model 的 executor(claude) 慣例分支＋install/uninstall 接線＋test-pmctl-guard/test-install/test-hook-framework 相關案例＋文件收斂（commands/pm.md Route B、executor-contract profiles、dispatch-brief fallback）。決策前置：確認無「Claude 為 host 但 claude CLI 缺席仍需跑 claude brief」的真實環境（傾向 fail-loud 而非默默降級）；保留 same-host 免 spawn 子程序的最佳化為唯一反論。umbrella [[CC-333]]（in-session Agent executor 層）。先於 [[CC-395]]。 | arch/portability | 2026-06-17 | — | P2 | design |
-| CC-395 | 🟢 someday | **[arch: 退場 `agents/codex-executor.md` + 決定 danger-full-access 去留]** 對稱 [[CC-394]]，但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的唯一逃生口，且是刻意安全閘——`handover-validate.sh` hard-reject full-access 於 `main_thread_bash_background`（避免無人值守背景 dispatch 摸到 full-access），只允許經 `agent_executor` route（人為明示 spawn）。退場前必須先拍板 full-access 去留：(a) 直接砍掉能力（fail-loud，最統一）；或 (b) 搬進 codex adapter 並設安全閘（專屬 route／明示確認旗標），不經 Agent 也能達成——重新開啟當初用 Agent 擋住的安全邊界設計。決策後才談退 agent 檔＋guard＋install＋test＋文件。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | — | P3 | design |
+| CC-396 | 🟢 someday | **[chore: 清理 operational 檔內的 CC-provenance 註解]** scripts/adapters/cli/core 等非文件檔殘留「設計沿革票號」註解（如 `pmctl-guard.sh` 的 `# ...(CC-288; keying CC-291)`），違反 No-CC-in-operational 慣例，應搬去 docs/DECISIONS 或刪除。**明確排除**：測試 fixture data（如 `test-pmctl-task.sh` 用 `task create CC-101` 當輸入）與 ID 格式範例（如 `task.schema.json` 的 `e.g. CC-229`）——皆為合法測試輸入/說明，非違規。需逐處判斷非機械替換；估真違規子集遠小於原始 grep 計數。發現於 [[CC-395]] 退場工作。 | process/DX | 2026-06-17 | — | P3 | — |
+| CC-395 | ✅ done | **[arch: 退場 `agents/codex-executor.md`（codex 收斂為 adapter-only）]** 對稱 [[CC-394]]。`Agent(codex-executor)` 現存唯一獨有能力是 `danger-full-access`（`isolation_level: none`）——退 agent 前須先拍板其去留。**DECISION 2026-06-17：選 (A) 砍掉 codex full-access**——codex 最高權限收斂為 `workspace-write` 真沙箱，brief 帶 `none` 在所有 route fail-loud REJECT。依據：codex full-access 非 load-bearing（有 workspace-write 安全預設）、零實際使用、Agent 閘是 Model B 前的遺產、claude 經 [[CC-394]] 已在同一 end-state；opencode 的 `none` 為 load-bearing 故不動。退場 plan（同 [[CC-394]] 機械性、零能力損失）：full-access 收口 ＋ 退 agent 檔/guard/install/test ＋ 文件收斂。security gate 風險低（收窄非放寬）。實作後 pr-gate full tier 首輪 NO-GO（raw `--sandbox danger-full-access` 旁路）→ 於 adapter chokepoint 修復＋回歸 → 重跑 GO。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | pr:#294 | P3 | design |
 
 ---
 
@@ -203,21 +204,49 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-395 — arch: 退場 agents/codex-executor.md + 決定 danger-full-access 去留 🟢 someday
+## CC-395 — arch: 退場 agents/codex-executor.md + 決定 danger-full-access 去留 ✅ 2026-06-17
 
-**Problem**: 對稱 [[CC-394]]，把 codex 也收斂為 adapter-only。但 codex 帶 claude 沒有的後果：`Agent(codex-executor)` 是 `danger-full-access`（`isolation_level: none`）的**唯一逃生口**。
+**See**: pr:#294
 
-**安全脈絡**: `handover-validate.sh` 刻意 hard-reject `isolation_level: none` 於 `main_thread_bash_background`（理由：PM 自寫的 codex brief 不可透過無人值守背景 dispatch 摸到 full-access），唯一合法途徑是切 `agent_executor` route = `Agent(codex-executor)`（需人為明示 spawn）。所以這個 Agent fallback 同時是能力出口**也是**安全閘。
+**Problem**: 對稱 [[CC-394]]，把 codex 也收斂為 adapter-only。`Agent(codex-executor)` 現存的唯一獨有能力是 `danger-full-access`（`isolation_level: none`）——`handover-validate.sh:330` hard-reject `none` 於 `main_thread_bash_background`（opencode 除外），只允許經 `agent_executor` route = 人為明示 `Agent(codex-executor)` spawn。退 agent 前必須先拍板 full-access 去留。
 
-**決策前置（退 agent 之前必須先拍板）**:
-- **(a) 砍掉 full-access 能力** — fail-loud「不支援」，最統一，但失去一個可能在用的能力。
-- **(b) 搬進 codex adapter 加安全閘** — 專屬 dispatch route／明示確認旗標，不經 Agent 也能達成 full-access；正確解耦，但重新開啟當初用 Agent 擋住的安全邊界設計，工作量與 security review 風險較高。
+**DECISION (2026-06-17): 選 (A) — 砍掉 codex full-access。** codex 最高權限收斂為 `workspace-write` 真沙箱；任何 codex brief 帶 `isolation_level: none` 在**所有 route** fail-loud REJECT。決策依據見下方校正分析。未來若真有 full-access 需求，再以獨立明示旗標（原 (b) 形狀）deliberate 重新引入；現在不為零使用的能力背安全債。
 
-**退場 checklist**（決策後）: 同 [[CC-394]] 形狀（agent 檔＋guard＋install＋test＋文件），外加 full-access 路徑的新實作/移除與 security/risk hard gate。
+**校正分析（取代原 (a)/(b) 二選一框架）**:
+- **codex full-access 非 load-bearing**：codex 預設 `workspace-write` → `--sandbox workspace-write` 是可無人值守寫檔的真沙箱，正常 brief 完全不需要 `none`。砍掉 `none` 不影響任何現行 dispatch。
+- **opencode 的 `none` 才是 load-bearing，不能砍**：opencode 無細粒度沙箱，`none` → `--dangerously-skip-permissions` 是它**唯一**的無人值守模式（CC-376）。所以「codex 擋 / opencode 放」的不對稱是**有原則的**（依 executor 是否具沙箱預設），不是要消除的 smell。本票只動 codex，opencode 不動。
+- **零實際使用**：`git log -S "isolation_level: none"` 掃全史，`none` 只出現在退場/sweep/test commit，**無任何真實 brief 用過 codex full-access**。
+- **Agent 閘是 Model A 遺產**：full-access 綁 `Agent(codex-executor)` 的設計源於子代理自寫 brief 時代；Model B（[[CC-385]]）後所有 brief 由 main thread 撰寫，此閘的原始威脅模型已位移。
+- **claude 已在 A end-state**：[[CC-394]] 退 claude-executor 後，claude full-access 已無路可達（bash route reject `none` + 無 Agent route），且 claude `workspace-write` → `acceptEdits` 同樣是安全無人值守預設。決策 A 等於讓 codex 與 claude 現狀對齊——最終只剩 opencode 保留 `none`。
 
-**Sequencing**: 排在 [[CC-394]] 之後（claude 先收乾淨，codex 待 full-access 決策）。umbrella [[CC-333]]。
+**退場 plan（A 形狀，零能力損失，同 [[CC-394]] 機械性）**:
+1. **full-access 收口**：`handover-validate.sh` 將 `none` 對 codex 的 reject 從「僅 bash route」擴到**所有 route**（含 `agent_executor`）；codex `isolation-map.yaml` 移除 `none` 條目；訊息指向「codex max isolation = workspace-write」。opencode 的 `none` 豁免保留不動。實作可沿用現有 executor-name 特例，或更乾淨地由「adapter 是否具 sandboxed level」推導（thin-slice 不強制）。
+2. **退 agent 檔**：刪 `agents/codex-executor.md` ＋ guard role-model 的 executor(codex) 慣例分支 ＋ install/uninstall 接線 ＋ `test-pmctl-guard`／`test-install`／`test-hook-framework`／`test-hooks` 相關案例。
+3. **文件收斂**：`commands/pm.md`（移除 full-access 經 Agent fallback 的指引）、`docs/dispatch-brief.md` §Fallback（移除 full-access 列＋`agent_executor` full-access 描述）、`docs/executor-contract.md`、`docs/CONCEPTS.md`、`docs/review-model.md`。
+4. **回歸鎖定**：新增 codex `none` 在所有 route 被 REJECT 的測試；opencode `none` on bash route 仍 accept 的既有測試保留。
 
-**See**: [[CC-394]]（claude 對稱、先行）、[[CC-333]]、[[CC-387]]（codex routine self-write 退場、fallback 保留的前一步）、[[CC-391]]（無 Agent 後 lifecycle 簡化）。
+**Sequencing**: 排在 [[CC-394]] 之後（已 MERGED main 185adfc）。決策已拍板，ready to implement。security/risk hard gate：本案是**收窄**權限（移除 full-access 出口），非放寬，過 gate 風險低。umbrella [[CC-333]]。
+
+**claude 對稱（本票一併收）**: 收口邏輯改為「`none` 僅 opencode 允許，其餘 executor 全 route REJECT」，故 claude 的 `none`（bypassPermissions）亦同步變成全 route 明確拒絕（先前僅 bash route reject、agent route 未明確且已無 claude agent）。語義更清、與 codex 對稱，零行為風險（claude full-access 本就不可達）。
+
+**衍生**: 退場工作中發現 operational 檔（scripts/adapters/cli/core）殘留設計沿革票號註解違反 No-CC-in-operational 慣例，拆 [[CC-396]] 專責清理（明確排除測試 fixture data 與 ID 格式範例）。
+
+**See**: [[CC-394]]（claude 對稱、先行、已 MERGED）、[[CC-333]]、[[CC-385]]（Model B 使 brief 全由 main thread 撰寫，鬆動 Agent 閘）、[[CC-376]]（opencode load-bearing `none` 來源）、[[CC-387]]、[[CC-391]]（無 Agent 後 lifecycle 簡化）、[[CC-396]]（衍生清理票）。
+
+---
+
+## CC-396 — chore: 清理 operational 檔內的 CC-provenance 註解 🟢 someday
+
+**Problem**: `scripts/`、`adapters/`、`cli/`、`core/` 等非文件檔殘留設計沿革票號註解（如 `scripts/lib/pmctl-guard.sh:3` `# Executor-agnostic guard-check front-end (CC-288; role×runtime keying CC-291)`），違反 No-CC-in-operational 慣例（票號只進 BACKLOG/MILESTONES/CHANGELOG/docs）。
+
+**重要 scope 界定**: 原始 `grep -rE "CC-[0-9]+"` 在 operational 樹得數百筆，但**絕大多數非違規**：
+- **測試 fixture data**（保留）—— `test-pmctl-task.sh`（228 筆）、`test-archive-closed-backlog.sh`（96 筆）等用 `CC-101`/`CC-103.json` 當 backlog/task 工具的測試輸入；刪了測試會壞。
+- **ID 格式範例**（保留）—— `core/schema/task.schema.json` 的 `"e.g. CC-229, JS-106"` 是說明 ticket-id 文法。
+- **provenance 註解**（本票目標）—— 程式碼註解裡記設計沿革的票號，應搬 docs/DECISIONS 或刪。
+
+**做法**: 逐處判斷（非機械 sed 替換）；分類 fixture/範例/沿革，只動沿革子集。完成後加 lint 規則防回歸（選配，視子集大小）。
+
+**Sequencing**: [[CC-395]] 合併後另開 PR，避免污染退場 diff。發現於 [[CC-395]] 退場工作。umbrella [[CC-333]]（衛生軸）。
 
 ---
 
