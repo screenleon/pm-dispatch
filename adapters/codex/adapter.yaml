@@ -14,11 +14,15 @@ dispatch_contract: dispatch_handover_v1
 # codex runs as an independent headless subprocess driven by pmctl dispatch run;
 # the PM authors the brief (via pmctl or Write to /tmp/brief-*.md) and passes it
 # in — no executor subagent self-writes a brief, so no live PreToolUse write guard
-# is needed. Spike CC-385a (2026-06-15) confirmed Model B (pmctl-authored brief +
-# independent subprocess) works end-to-end. write_guard_mode overrides cli-subprocess
-# default (hook) to cli-only; the bash guard remains (codex dispatches Bash).
+# is needed. write_guard_mode overrides the cli-subprocess default (hook) to
+# cli-only. needs_bash_guard overrides the default (true) to false: the bash guard
+# only ever gated the retired in-session codex-executor subagent's Bash calls; the
+# main-thread pmctl dispatch route is not a subagent and was never gated by it, so
+# with that subagent gone the guard has nothing to protect. codex now matches
+# claude/opencode (cli-subprocess, no bash guard).
 runner_kind: cli-subprocess
 write_guard_mode: cli-only
+needs_bash_guard: false
 # terminal_event: the JSONL event `.type` that marks a semantically complete run.
 # `codex exec --json` emits a single `turn.completed` event at the end of a
 # finished turn; post-verify asserts at least one trace record matches

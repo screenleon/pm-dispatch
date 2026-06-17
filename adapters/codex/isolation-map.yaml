@@ -12,17 +12,20 @@
 #   config_overrides – list of -c key=value strings appended to the command
 #
 # Semantic definitions (source of truth: core/policy/isolation-level.yaml):
-#   none             – no isolation; full machine access
 #   read-only        – read files only; no writes
 #   workspace-write  – write within project working directory only (default)
 #   workspace network – workspace-write + TCP localhost access enabled
 #   sandboxed        – best-effort; Codex has no true ephemeral mode; maps to
 #                     workspace-write with no network (strongest available constraint)
+#
+# NOTE: isolation_level:none (danger-full-access) is intentionally NOT mapped here.
+# Codex's max isolation is workspace-write; full machine access was a
+# non-load-bearing, zero-usage escalation cut when the codex-executor agent retired.
+# handover-validate.sh rejects none for codex up front; if a direct adapter call
+# passes --isolation none anyway, the lookup below fails loud (exit 2). Only
+# opencode keeps none as its load-bearing unattended mode.
 
 mappings:
-  none:
-    sandbox: danger-full-access
-    config_overrides: []
   read-only:
     sandbox: read-only
     config_overrides: []

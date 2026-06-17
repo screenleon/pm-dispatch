@@ -1,6 +1,6 @@
 # pm-facing_alias	wire_model_id	reasoning_effort
 # Schema: PM-facing alias, wire-format model id, reasoning effort.
-# This file is the codex-executor alias table. The claude-executor alias table
+# This file is the codex adapter alias table. The claude adapter alias table
 # lives at share/claude-model-aliases.tsv (same 3-column format).
 #
 # Columns must be tab-separated.

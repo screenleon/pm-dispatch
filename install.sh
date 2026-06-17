@@ -7,9 +7,12 @@
 # Usage:
 #   ./install.sh [--dry-run] [--profile minimal|full] [--verify]
 #
-# --profile selects the hook set:
-#   full     wire all hooks including codex-* guards (use when you run codex CLI)
-#   minimal  skip codex-* guards (claude-only setup)
+# --profile is forwarded to install-hooks.sh and selects whether to wire adapter
+# bash guards (adapters/<name>/bash-guard.sh, manifest-driven via needs_bash_guard).
+# No adapter ships a bash guard today, so both profiles currently wire the same
+# hook set; the flag is retained for forward compatibility with future adapters.
+#   full     wire all hooks including any adapter bash guards (none ship today)
+#   minimal  skip adapter bash guards
 #   (omit)   auto-detect: codex on PATH → full, else minimal
 #
 # --verify runs all preflight test suites before installing.

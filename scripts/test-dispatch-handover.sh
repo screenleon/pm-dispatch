@@ -568,11 +568,12 @@ fallback_allowed: true"
   expect_reject isolation_level handover_validate_all_metadata "$block"
 }
 
-# Behavior: isolation_level none is rejected on main_thread_bash_background route.
+# Behavior: codex isolation_level none is rejected on main_thread_bash_background route.
 # Steps:
-#   1. Build metadata with isolation_level none and dispatch_route main_thread_bash_background.
-#   2. Assert handover_validate_all_metadata rejects — none maps to danger-full-access which
-#      is not supported on the Bash route; the Agent fallback route must be used instead.
+#   1. Build metadata with executor:codex, isolation_level none, route main_thread_bash_background.
+#   2. Assert handover_validate_all_metadata rejects — codex full machine access was retired
+#      with the codex-executor agent; codex max isolation is workspace-write. (none is only
+#      supported by opencode, where it is load-bearing.)
 all_metadata_isolation_none_bash_route_rejects_case() {
   local block
   block="handover_version: 3
@@ -580,6 +581,26 @@ executor: codex
 dispatch_route: main_thread_bash_background
 working_dir: $REPO_ROOT
 brief_file: /tmp/brief-none-bash.md
+isolation_level: none
+timeout: 1200
+model: default
+fallback_allowed: true"
+  expect_reject isolation_level handover_validate_all_metadata "$block"
+}
+
+# Behavior: codex isolation_level none is rejected on the agent_executor route too.
+# Steps:
+#   1. Build metadata with executor:codex, isolation_level none, dispatch_route agent_executor.
+#   2. Assert handover_validate_all_metadata rejects — the Agent(codex-executor) escape hatch
+#      that once carried full access was retired, so none is now rejected on ALL routes for
+#      codex, not just the Bash route.
+all_metadata_codex_isolation_none_agent_route_rejects_case() {
+  local block
+  block="handover_version: 3
+executor: codex
+dispatch_route: agent_executor
+working_dir: $REPO_ROOT
+brief_file: /tmp/brief-none-agent.md
 isolation_level: none
 timeout: 1200
 model: default
@@ -1114,6 +1135,7 @@ run_case "handover/isolation_level read-only accepts" isolation_level_read_only_
 run_case "handover/isolation_level unknown rejects" isolation_level_unknown_rejects_case
 run_case "handover/all metadata invalid isolation_level rejects" all_metadata_invalid_isolation_level_rejects_case
 run_case "handover/all metadata isolation none bash route rejects" all_metadata_isolation_none_bash_route_rejects_case
+run_case "handover/all metadata codex isolation none agent route rejects" all_metadata_codex_isolation_none_agent_route_rejects_case
 run_case "handover/all metadata opencode isolation none bash route accepts" all_metadata_opencode_isolation_none_bash_route_accepts_case
 run_case "handover/all metadata with isolation_level accepts" all_metadata_with_isolation_level_accepts_case
 run_case "handover/required fields with isolation_level accepts" required_fields_with_isolation_level_accepts_case

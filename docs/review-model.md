@@ -75,7 +75,7 @@ The pairing matters:
 | Field | Evaluated by | Purpose |
 |---|---|---|
 | `self_verify cmd:` | executor (inside) | prove done before returning |
-| `acceptance:` | codex-executor (outside) | contract from the brief author's perspective |
+| `acceptance:` | main thread / post-verify (outside) | contract from the brief author's perspective |
 
 If machine verification passes, the task is done. If it fails, it re-opens. This replaces "looks good to me after a quick scan" with a reproducible binary signal.
 

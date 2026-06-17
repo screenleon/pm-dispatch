@@ -40,8 +40,8 @@ project-pm: blocked by $HOOK_NAME — $reason
   attempted: $HK_TOOL_NAME on ${file_path:-(empty)}
   allowed:   ${ALLOWED_BASE}/<project>/memory/**
 
-If a code change is needed, hand a brief back to the main thread for codex-executor
-dispatch (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
+If a code change is needed, hand a brief back to the main thread for executor
+dispatch via pmctl dispatch run (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
 
 Bypass for one turn: set PM_HOOK_PM_GUARD=off (logged).
 EOF

@@ -56,9 +56,9 @@ _TI_RETIRED_CODEX_WRITE="hook-codex-write-""guard.sh"
 _TI_JQ_DIR="$(dirname "$(command -v jq 2>/dev/null)" 2>/dev/null || true)"
 
 # Skip a test on Windows with a visible note. Used for tests that assert
-# Linux/codex-platform semantics the Windows install path intentionally omits
-# (e.g. codex-executor guard wiring — on Windows `--profile full` downgrades to
-# minimal; see install-hooks-windows-full-downgraded-to-minimal). Usage:
+# POSIX-only semantics the Windows install path intentionally omits (e.g. pmctl
+# copy/symlink behavior, or real-symlink fixtures that MSYS `ln -s` cannot
+# create). Usage:
 #   if _ti_skip_win "$name" "reason"; then return 0; fi
 _ti_skip_win() {
   local name="$1" reason="$2"
@@ -737,13 +737,12 @@ test_legacy_stale_symlinks_removed() {
 test_install_sh_wires_hooks() {
   # Proves that the primary install.sh path wires managed hooks
   # into settings.json automatically — no manual install-hooks.sh step needed.
-  # Pre-CC-102 this test relied on the host having codex on PATH to pick
-  # "full" profile auto-detection; on CI runners codex is absent, so the
-  # test now passes --profile full explicitly to preserve its original
-  # all-six-hooks assertion regardless of host codex availability.
+  # Passes --profile full explicitly to assert the full managed hook set is
+  # wired regardless of host codex availability. No adapter ships a bash guard
+  # today (codex's was retired with the codex-executor agent), so the settings
+  # must NOT contain any adapter bash-guard entry on either platform.
   local name="install-sh-wires-hooks"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -754,7 +753,7 @@ test_install_sh_wires_hooks() {
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -790,12 +789,13 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
   pass "$name"
 }
 
-test_install_sh_profile_full_wires_codex_hooks() {
-  # Proves --profile full explicitly wires every managed hook, including
-  # adapter bash guards (adapters/<name>/bash-guard.sh, manifest-derived).
-  local name="install-sh-profile-full-wires-codex-hooks"
+test_install_sh_profile_full_wires_no_adapter_bash_guard() {
+  # Regression lock for the codex-executor retirement: --profile full wires the
+  # managed hook set but NO adapter bash guard, because no adapter ships one
+  # (codex's bash guard was retired with the codex-executor agent). Manifest-
+  # driven wiring + orphan cleanup means the retired guard is never wired.
+  local name="install-sh-profile-full-wires-no-adapter-bash-guard"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts adapter bash guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -806,7 +806,7 @@ test_install_sh_profile_full_wires_codex_hooks() {
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1332,37 +1332,45 @@ test_install_hooks_windows_profile_minimal_silent() {
   pass "$name"
 }
 
-test_install_hooks_profile_downgrade_removes_codex() {
-  # Proves that running install-hooks.sh with --profile full and then again
-  # with --profile minimal converges to the minimal hook set — adapter bash
-  # guards installed by the first run must be removed by the second run.
-  local name="install-hooks-profile-downgrade-removes-codex"
+test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
+  # Regression for the codex-executor retirement: a settings.json left over from
+  # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
+  # file) must have that orphaned PreToolUse Bash entry pruned on the next
+  # install-hooks run, regardless of profile — no adapter manifest declares a
+  # bash guard anymore, so the manifest-driven orphan cleanup removes it. Other
+  # managed hooks must survive.
+  local name="install-hooks-orphan-cleanup-removes-retired-adapter-guard"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts adapter bash guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
+  # Seed a settings.json that still wires a now-retired adapter bash guard.
+  cat > "$home/.claude/settings.json" <<'EOF'
+{
+  "permissions": {},
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "/repo/adapters/codex/bash-guard.sh"}]}
+    ]
+  }
+}
+EOF
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  # The non-codex managed hooks must still be present after downgrade.
+  # The other managed hooks must still be present after cleanup.
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
   pass "$name"
 }
 
 test_install_hooks_auto_detect_with_codex_wires_full() {
-  # Proves omitted --profile flag + codex on PATH resolves to full
-  # (wires the two codex-* guards). Uses a stub codex binary in a
-  # tmp bin dir prepended to PATH so the test does not depend on the
-  # host having codex installed.
+  # Proves omitted --profile flag + codex on PATH resolves to the full profile
+  # and installs cleanly. No adapter ships a bash guard (codex's was retired),
+  # so full wires the managed hooks but no adapter bash guard. Uses a stub codex
+  # binary so the test does not depend on the host having codex installed.
   local name="install-hooks-auto-detect-codex-present-wires-full"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "codex-present auto-detect wires full on POSIX; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -1375,7 +1383,8 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   HOME="$home" PATH="$stub_bin:$PATH" \
     bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1446,7 +1455,7 @@ test_install_hooks_platform_linux_explicit() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform linux --profile full > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
@@ -1526,11 +1535,10 @@ test_install_hooks_jq_missing_prints_platform_hints() {
 
 test_install_sh_wires_hooks_no_settings() {
   # First-time install with no pre-existing settings.json — install.sh must
-  # create a minimal settings.json and wire all hooks before the Write-enabled
-  # codex-executor agent is accessible.
+  # create a minimal settings.json and wire the managed hooks. No adapter ships
+  # a bash guard (codex's was retired), so none is wired.
   local name="install-sh-wires-hooks-no-settings"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards wired; Windows downgrades --profile full to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   # Deliberately no settings.json
@@ -1545,7 +1553,7 @@ test_install_sh_wires_hooks_no_settings() {
     return
   fi
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1557,14 +1565,13 @@ test_install_sh_wires_hooks_no_settings() {
 test_hooks_install_uninstall_lifecycle() {
   local name="hooks-install-uninstall-lifecycle"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts adapter bash guards wired by --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1637,7 +1644,6 @@ test_install_hooks_prunes_retired_hooks() {
   #   3. Assert retired hooks are absent and active hooks remain present.
   local name="install-hooks-prunes-retired-hooks"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "asserts codex guards survive --profile full; Windows downgrades to minimal"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   local _tt_cmd _rl_cmd
@@ -1650,6 +1656,7 @@ test_install_hooks_prunes_retired_hooks() {
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-pm-write-guard.sh"}]},
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/$_TI_RETIRED_CODEX_WRITE"}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-bash-guard.sh"}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/adapters/codex/bash-guard.sh"}]},
       {"matcher": "*", "hooks": [{"type": "command", "command": "$_tt_cmd"}]}
     ],
     "PostToolUse": [
@@ -1672,10 +1679,12 @@ JSON
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_CODEX_WRITE" || return
-  # CC-375: hook-codex-bash-guard.sh (scripts/ form) is pruned; adapter form is added.
+  # Both forms of the retired codex bash guard are pruned: the legacy scripts/
+  # form, and the adapters/codex/ form orphaned by the codex-executor retirement
+  # (no adapter manifest declares a bash guard anymore).
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
@@ -1693,19 +1702,17 @@ test_install_hooks_updates_stale_paths_after_rename() {
   #   3. Assert each hook appears exactly once and with the current path
   local name="install-hooks-updates-stale-paths-after-rename"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "iterates codex guards (count==1); Windows downgrades them out of the full profile"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
-  # Simulate settings.json left over from old repo path (cx/exw in scripts/ form are
-  # now retired; they get pruned by install-hooks.sh and the adapter form is re-added).
+  # Simulate settings.json left over from old repo path. The managed hooks must
+  # have their paths refreshed to the current repo root without duplication.
   cat > "$home/.claude/settings.json" <<'JSON'
 {
   "permissions": {},
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
-      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/adapters/codex/bash-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]}
     ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
@@ -1732,11 +1739,9 @@ JSON
       return
     fi
   done
-  # bash-guard.sh appears once in adapter form
-  local bg_count
-  bg_count=$(grep -o "bash-guard.sh" "$settings" | wc -l | tr -d ' ')
-  if [[ "$bg_count" -ne 1 ]]; then
-    fail "$name" "bash-guard.sh appears $bg_count times in settings.json (want 1)"
+  # No adapter ships a bash guard, so none should be wired after refresh.
+  if grep -q "bash-guard.sh" "$settings"; then
+    fail "$name" "no adapter bash guard should be wired, but bash-guard.sh is present"
     return
   fi
 
@@ -1746,7 +1751,6 @@ JSON
     return
   fi
   assert_file_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$settings" "$REPO_ROOT/adapters/codex/bash-guard.sh" || return
 
   pass "$name"
 }
@@ -1814,7 +1818,6 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
   #   4. Assert all managed hook basenames are gone from settings.json
   local name="install-hooks-uninstall-stale-paths-after-rename"
   should_run "$name" || return 0
-  if _ti_skip_win "$name" "iterates codex guards; Windows downgrades them out of the full profile"; then return 0; fi
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
@@ -2588,8 +2591,8 @@ test_uninstall_junction_mode_removes_dir() {
 
 test_install_sh_wires_hooks
 test_install_sh_profile_minimal_skips_codex_hooks
-test_install_sh_profile_full_wires_codex_hooks
-test_install_hooks_profile_downgrade_removes_codex
+test_install_sh_profile_full_wires_no_adapter_bash_guard
+test_install_hooks_orphan_cleanup_removes_retired_adapter_guard
 test_install_hooks_auto_detect_with_codex_wires_full
 test_install_hooks_auto_detect_without_codex_wires_minimal
 test_install_hooks_windows_profile_full_downgrades_to_minimal

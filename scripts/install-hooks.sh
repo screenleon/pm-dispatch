@@ -24,7 +24,7 @@
 # Usage:
 #   scripts/install-hooks.sh                       # apply, profile auto-detected
 #   scripts/install-hooks.sh --dry-run             # show what would change
-#   scripts/install-hooks.sh --profile minimal     # claude-only profile; skip codex hooks
+#   scripts/install-hooks.sh --profile minimal     # skip adapter bash guards
 #   scripts/install-hooks.sh --profile full        # explicit full profile (all hooks)
 #
 # Profile auto-detection (when --profile omitted):
@@ -277,6 +277,24 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
         ((.command | split("/") | last) == ("hook-codex-bash-" + "guard.sh")) )
       and ((.command | split("/") | .[-2]) == "scripts") | not
     ))
+  ) |
+  .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
+
+  # Prune orphaned adapter bash guards: any wired adapters/<name>/bash-guard.sh
+  # whose path is not in the current manifest-derived $bg_guards set. This makes
+  # the adapter manifests the single source of truth for which bash guards are
+  # wired — when an adapter flips needs_bash_guard to false (or is removed), its
+  # previously wired guard is cleaned from existing installs on the next run,
+  # regardless of profile. ($bg_guards is [] when no adapter needs a guard.)
+  .hooks.PreToolUse |= map(
+    .hooks |= map(
+      (.command) as $c |
+      select(
+        ( ($c | split("/") | last) == "bash-guard.sh"
+          and ($c | split("/") | .[-3]) == "adapters"
+          and ($bg_guards | index($c)) == null ) | not
+      )
+    )
   ) |
   .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
   .hooks.PostToolUse |= map(

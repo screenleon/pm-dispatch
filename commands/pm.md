@@ -29,9 +29,7 @@ The abstract contract both routes implement is documented in `docs/executor-cont
 Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. A brief needing full access (`isolation_level: none` → danger-full-access) must use the `Agent(codex-executor)` fallback. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
-
-Use `Agent(codex-executor)` only per the fallback allowlist in `docs/dispatch-brief.md` §Fallback.
+Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. `isolation_level: none` (full machine access) is opencode-only; codex and claude reject it (their max isolation is `workspace-write`) — there is no full-access route for them. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
 
 ### Route B — `executor: claude`
 
@@ -43,7 +41,7 @@ Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an extern
 
 ### Choosing the route
 
-`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same Bash dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. If fallback to an Agent is needed (CLI unavailable), say why in one sentence before dispatching `Agent(codex-executor)` per `docs/dispatch-brief.md` §Fallback.
+`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same Bash dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. There is no Agent executor fallback — every executor dispatches via the main-thread `pmctl dispatch run` Bash route.
 
 Main-thread completion handling for both routes — codex and claude now share the same Bash dispatch shape (steps 1–3 and 5–7 are tool-call orchestration only the main thread can do; the verification body in step 4 is the shared, tested `scripts/dispatch-post-verify.sh`, not re-implemented prose):
 
@@ -61,7 +59,7 @@ Main-thread completion handling for both routes — codex and claude now share t
 6. On footer `exit: 124`, run the foreground diagnostic checklist, then retry exactly once with the same `brief_file` and flags.
 7. On any other non-zero footer exit, stop and report the trace, stderr, and footer exit code for main-thread review.
 
-Briefs must follow the schema at `docs/dispatch-brief.md` (working_dir / goal / files / acceptance, plus self_verify required for file-writing briefs and optional only for read-only briefs where every files entry is explicitly tagged `read:`). codex-executor rejects briefs missing the required fields.
+Briefs must follow the schema at `docs/dispatch-brief.md` (working_dir / goal / files / acceptance, plus self_verify required for file-writing briefs and optional only for read-only briefs where every files entry is explicitly tagged `read:`). The `pmctl dispatch run` pre-flight (`brief-validate`) rejects briefs missing the required fields.
 
 Use `base` as the PR integration branch when the caller names one; otherwise resolve it with `git merge-base --fork-point origin/main HEAD` and fall back to `origin/main` if no fork point is available. The handover extraction, validation, safe argv, and footer parsing contract is covered by `scripts/test-dispatch-handover.sh`.
 

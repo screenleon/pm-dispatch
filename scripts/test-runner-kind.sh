@@ -99,11 +99,20 @@ assert_file_matches "manifest/claude-kind" "$REPO_ROOT/adapters/claude/adapter.y
 assert_file_matches "manifest/claude-guardmode" "$REPO_ROOT/adapters/claude/adapter.yaml" "^write_guard_mode:[[:space:]]*cli-only" && pass "manifest/claude-guardmode"
 assert_file_matches "manifest/claude-bashguard" "$REPO_ROOT/adapters/claude/adapter.yaml" "^needs_bash_guard:[[:space:]]*false" && pass "manifest/claude-bashguard"
 
+# --- codex derived-flag regression: codex is cli-subprocess with the same two
+#     overrides off its defaults (write_guard_mode cli-only, needs_bash_guard
+#     false). The bash guard MUST stay off — it only ever gated the retired
+#     in-session codex-executor subagent; a manifest drift back to a wired guard
+#     fails here.
+assert_file_matches "manifest/codex-guardmode" "$REPO_ROOT/adapters/codex/adapter.yaml" "^write_guard_mode:[[:space:]]*cli-only" && pass "manifest/codex-guardmode"
+assert_file_matches "manifest/codex-bashguard" "$REPO_ROOT/adapters/codex/adapter.yaml" "^needs_bash_guard:[[:space:]]*false" && pass "manifest/codex-bashguard"
+
 # --- end-to-end: read a real manifest, derive its full flag set -------------
 # Mirrors how the host PM (claude OR codex) will resolve any executor's topology
 # from the manifest alone — no PM-host assumption baked in. Both shipped adapters
-# are cli-subprocess; claude reaches cli-only / no-bash-guard via per-flag
-# overrides (the asymmetry seam), not via a distinct runner_kind.
+# are cli-subprocess; both reach cli-only / no-bash-guard via per-flag overrides
+# (codex's bash guard was retired with the codex-executor agent), not via a
+# distinct runner_kind.
 for adapter in codex claude; do
   kind="$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" runner_kind)"
   route="$(runner_kind_resolve_flag "$kind" dispatch_route \
@@ -113,7 +122,7 @@ for adapter in codex claude; do
   bashguard="$(runner_kind_resolve_flag "$kind" needs_bash_guard \
             "$(runner_kind_manifest_field "$REPO_ROOT/adapters/$adapter/adapter.yaml" needs_bash_guard)")"
   case "$adapter" in
-    codex)  { [[ "$route" == "main_thread_bash_background" && "$guardmode" == "cli-only" && "$bashguard" == "true"  ]] && pass "e2e/$adapter-flags"; } || fail "e2e/$adapter-flags" "route=$route guard=$guardmode bash=$bashguard" ;;
+    codex)  { [[ "$route" == "main_thread_bash_background" && "$guardmode" == "cli-only" && "$bashguard" == "false" ]] && pass "e2e/$adapter-flags"; } || fail "e2e/$adapter-flags" "route=$route guard=$guardmode bash=$bashguard" ;;
     claude) { [[ "$route" == "main_thread_bash_background" && "$guardmode" == "cli-only" && "$bashguard" == "false" ]] && pass "e2e/$adapter-flags"; } || fail "e2e/$adapter-flags" "route=$route guard=$guardmode bash=$bashguard" ;;
   esac
 done

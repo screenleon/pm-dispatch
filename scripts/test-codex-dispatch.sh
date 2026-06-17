@@ -777,24 +777,32 @@ case_isolation_unknown_level_exits_error() {
   pass "$name"
 }
 
-# ---- 26: isolation none generates danger-full-access sandbox ----
+# ---- 26: isolation none is rejected (codex full-access retired) ----
 case_isolation_none() {
-  # Verifies that --isolation none generates --sandbox danger-full-access.
+  # Verifies that --isolation none is rejected fail-loud (exit 2). codex's
+  # danger-full-access mapping was removed with the codex-executor retirement;
+  # `none` is no longer in adapters/codex/isolation-map.yaml, so the adapter's
+  # isolation lookup fails with an "unknown isolation_level" error. codex's max
+  # isolation is workspace-write.
   # Steps:
   # 1. Create a temp dir with a minimal brief file.
-  # 2. Run codex-dispatch.sh --isolation none --print-cmd.
-  # 3. Assert output contains --sandbox danger-full-access.
-  local name="isolation-none"
-  local dir brief out
+  # 2. Run codex-dispatch.sh --isolation none --print-cmd; capture exit code.
+  # 3. Assert exit 2 and an "unknown isolation_level" message mentioning none.
+  local name="isolation-none-rejected"
+  local dir brief out code
   should_run "$name" || return 0
 
   dir="$(mktemp -d)"
   brief="$dir/brief.md"
   printf 'goal: isolation test\n' > "$brief"
-  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation none --print-cmd 2>&1)"
+  out="$(bash "$DISPATCH" --cd "$dir" --brief-file "$brief" --isolation none --print-cmd 2>&1)" && code=0 || code=$?
   rm -rf "$dir"
-  if ! printf '%s\n' "$out" | grep -q -- '--sandbox danger-full-access'; then
-    fail "$name" "expected --sandbox danger-full-access in output; got: $out"
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for retired isolation level none; got $code (out: $out)"
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -qi 'unknown isolation_level'; then
+    fail "$name" "expected 'unknown isolation_level' message; got: $out"
     return
   fi
   pass "$name"
@@ -967,106 +975,6 @@ FAKELN
   rm -rf "$_fake" "$_home" "$_work"; rm -f "$_brief"
 }
 
-case_codex_read_roots_includes_work_dir() {
-  # CC-320: the adapter exports PM_HOOK_CODEX_READ_ROOTS containing the
-  # dispatch target's git root, so hook-codex-bash-guard allows reads from any
-  # project rather than only repos under $HOME/github.
-  #
-  # Steps:
-  #   1. git init a temp work dir and capture its git root.
-  #   2. Dispatch with a fake codex that echoes PM_HOOK_CODEX_READ_ROOTS
-  #      into --output-last-message (surfaced in "=== final message ===").
-  #   3. Assert the exported value contains the work dir's git root.
-  local name="codex-dispatch: PM_HOOK_CODEX_READ_ROOTS includes work_dir git root"
-  should_run "$name" || return 0
-  local _fake _work _brief _output _git_root
-
-  _fake="$(mktemp -d)"
-  _work="$(mktemp -d)"
-  git init -q "$_work"
-  _git_root="$(git -C "$_work" rev-parse --show-toplevel 2>/dev/null)"
-
-  # Fake codex: parse --output-last-message path and write the read-roots
-  # value there so it surfaces in the adapter's "=== final message ===" output.
-  cat > "$_fake/codex" << 'FAKEOF'
-#!/usr/bin/env bash
-_last=""
-shift 2>/dev/null || true  # skip 'exec' subcommand
-while [[ $# -gt 0 ]]; do
-  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
-done
-[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${PM_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
-FAKEOF
-  chmod +x "$_fake/codex"
-
-  _brief="$(mktemp --suffix=.md)"
-  printf 'working_dir: %s\ngoal: test read roots export\n' "$_work" > "$_brief"
-
-  _output="$(PATH="$_fake:$PATH" "$DISPATCH" --cd "$_work" --brief-file "$_brief" 2>/dev/null || true)"
-
-  rm -rf "$_fake" "$_work"; rm -f "$_brief"
-
-  if printf '%s\n' "$_output" | grep -qF "READ_ROOTS=$_git_root"; then
-    pass "$name"
-  else
-    fail "$name" "expected READ_ROOTS=$_git_root (got: $(printf '%s\n' "$_output" | grep READ_ROOTS || echo none))"
-  fi
-}
-
-case_codex_read_roots_preserves_inherited() {
-  # CC-320: when the caller already exports PM_HOOK_CODEX_READ_ROOTS, the
-  # adapter prepends the target git root plus the /tmp baseline, then preserves
-  # the inherited value as trailing fallback — the export must be EXACTLY
-  # `<git_root>:/tmp:<inherited>` with no unintended extra roots. The /tmp
-  # baseline mirrors the guard default ($HOME/github:/tmp) that the explicit
-  # export would otherwise clobber, so it must be re-added for correctness.
-  #
-  # Steps:
-  #   1. git init a temp work dir and capture its git root; pick an inherited
-  #      read root (/opt/custom-read-root) distinct from git_root and /tmp.
-  #   2. Dispatch with PM_HOOK_CODEX_READ_ROOTS pre-set to the inherited
-  #      value and a fake codex that echoes the var into --output-last-message.
-  #   3. Assert the exported value equals EXACTLY <git_root>:/tmp:<inherited>.
-  local name="codex-dispatch: PM_HOOK_CODEX_READ_ROOTS preserves inherited value"
-  should_run "$name" || return 0
-  local _fake _work _brief _output _git_root _inherited _expected _got
-
-  _fake="$(mktemp -d)"
-  _work="$(mktemp -d)"
-  git init -q "$_work"
-  _git_root="$(git -C "$_work" rev-parse --show-toplevel 2>/dev/null)"
-  _inherited="/opt/custom-read-root"
-  _expected="READ_ROOTS=$_git_root:/tmp:$_inherited"
-
-  cat > "$_fake/codex" << 'FAKEOF'
-#!/usr/bin/env bash
-_last=""
-shift 2>/dev/null || true  # skip 'exec' subcommand
-while [[ $# -gt 0 ]]; do
-  case "$1" in --output-last-message) _last="$2"; shift 2;; *) shift;; esac
-done
-[[ -n "$_last" ]] && printf 'READ_ROOTS=%s\n' "${PM_HOOK_CODEX_READ_ROOTS:-unset}" > "$_last"
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
-FAKEOF
-  chmod +x "$_fake/codex"
-
-  _brief="$(mktemp --suffix=.md)"
-  printf 'working_dir: %s\ngoal: test read roots preservation\n' "$_work" > "$_brief"
-
-  _output="$(PM_HOOK_CODEX_READ_ROOTS="$_inherited" PATH="$_fake:$PATH" \
-    "$DISPATCH" --cd "$_work" --brief-file "$_brief" 2>/dev/null || true)"
-  _got="$(printf '%s\n' "$_output" | grep '^READ_ROOTS=' || echo none)"
-
-  rm -rf "$_fake" "$_work"; rm -f "$_brief"
-
-  if [[ "$_got" == "$_expected" ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected '$_expected' (got: '$_got')"
-  fi
-}
-
 case_help_exits_0
 case_help_output_preserved
 case_fresh_invocation_reexecs_from_snapshot_copy
@@ -1100,8 +1008,6 @@ case_isolation_read_only
 case_isolation_sandboxed
 case_print_cmd_no_brief
 case_latest_symlink_failure_tolerated
-case_codex_read_roots_includes_work_dir
-case_codex_read_roots_preserves_inherited
 case_state_store_no_direct_run_row_codex
 
 # ---- light alias resolves to gpt-5.3-codex-spark ----

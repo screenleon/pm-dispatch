@@ -1,6 +1,6 @@
 # Dispatch brief schema
 
-The canonical structure for any brief dispatched to an executor (`codex-executor` via `pmctl dispatch run --adapter codex` or Agent fallback, or claude via `adapters/claude/dispatch.sh` → headless `claude --print`).
+The canonical structure for any brief dispatched to an executor (codex, claude, or opencode via `pmctl dispatch run --adapter <name>`).
 
 Executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
 The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
@@ -46,7 +46,7 @@ The handover metadata's `executor:` field selects which executor receives the br
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
 
-The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but `codex-executor` re-checks `acceptance` against `git diff` from outside.
+The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but the main-thread dispatch route (and `dispatch-post-verify.sh`) re-checks `acceptance` against `git diff` from outside.
 
 ### `files:` block semantics — sandbox allowlist, NOT must-read list
 
@@ -87,7 +87,7 @@ Use as needed; not all briefs require all of them.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
-- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none` (requires `agent_executor` dispatch route). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected.
+- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex and claude reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
@@ -381,7 +381,7 @@ No working_dir, no files, no acceptance criteria. Codex would have to guess what
 
 ## Main-thread dispatch via dispatch_handover_v1
 
-`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter codex` in the background. This is the **sole routine codex path** — no subagent ever holds brief-write authority on it. `Agent(codex-executor)` is a **fallback only** (the cases below); even there the main thread pre-writes the brief — codex-executor has no `Write` tool — so no subagent self-writes a brief on any codex route.
+`project-pm` hands implementation briefs back to the main thread as one fenced block tagged `dispatch_handover_v1`. The main thread extracts the block, writes the brief body to `brief_file`, then dispatches via `pmctl dispatch run --adapter <executor>` in the background. This is the **only** dispatch path — no executor subagent exists or holds brief-write authority; the brief is always authored by trusted main-thread code.
 
 ```dispatch_handover_v1
 handover_version: 3
@@ -422,13 +422,13 @@ Metadata fields:
 |---|---|---|
 | `handover_version` | yes | Currently `3`; bump on shape change. |
 | `executor` | yes | Closed enum: `codex`, `claude`, `opencode`. Main-thread dispatch uses this field to choose the executor-specific adapter. |
-| `dispatch_route` | yes | `main_thread_bash_background` by default, or `agent_executor` for fallback. |
+| `dispatch_route` | yes | `main_thread_bash_background` — the routine route for every shipped (cli-subprocess) adapter. `agent_executor` remains a valid value reserved for a future host-native adapter, but no shipped executor uses it. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
 | `isolation_level` | yes | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. The legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected. |
 | `timeout` | yes | Seconds; `1200` default. Passed through to the executor adapter. For `opencode`, must be 0 (no limit) or ≥ 120 (per-attempt floor). |
 | `model` | yes | `default` or an executor-specific model wire-id. For `opencode`, aliases like `light`/`default` are resolved by the adapter. |
-| `fallback_allowed` | yes | Whether main thread may use `Agent(codex-executor)` if the Bash route is unsuitable. |
+| `fallback_allowed` | yes | Legacy flag retained for schema compatibility. The Agent-spawn executor fallback was retired, so all dispatch uses the main-thread Bash route regardless of this value. |
 | `snapshot_file` | no | Absolute path to a PM-generated context snapshot; if present, PM uses it for orientation. PM re-derives security-sensitive fields (current branch, HEAD SHA) from git — see `agents/project-pm.md` `## Snapshot ingestion`. |
 
 ### Env / config precedence
@@ -545,7 +545,7 @@ Argument order is stable:
 5. `--timeout <safe timeout>`
 6. `--brief-file <safe brief_file>`
 
-The Bash route never grants full access unattended: `isolation_level: none` (which maps to danger-full-access) is hard-rejected on `main_thread_bash_background` for every executor except opencode. Callers needing full access must use the Agent(codex-executor) fallback.
+`isolation_level: none` (full machine access) is **opencode-only**, where it is load-bearing (opencode has no finer-grained sandbox). For codex and claude it is hard-rejected on every route — their max isolation is `workspace-write`, and the Agent escape hatch that once carried full access for codex was retired. There is no full-access route for codex/claude.
 
 Quoting and command-shape rules:
 
@@ -583,28 +583,13 @@ Dispatch stderr: <none | concise warning summary>
 
 If the completion notification does not arrive within `<timeout>+30s`, run the diagnostic checklist from `[[feedback_codex_dispatch_foreground]]`: check for a live `codex-dispatch` process, inspect `.agent-trace/latest.*` mtimes, and decide whether the task is still running or orphaned before retrying. If the direct Bash route exits 124, retry exactly once with the same brief and flags after the diagnostic check; do not retry other non-zero exits without main-thread review.
 
-### Fallback
+### No Agent executor fallback
 
-Use `Agent(codex-executor)` only for this fallback allowlist:
-
-| Condition | Rationale |
-|---|---|
-| Strict pre-flight validation is the primary need. | `codex-executor` rejects missing schema fields, missing file-writing `self_verify`, and subtle read/write ambiguity before a long dispatch is wasted. |
-| Main-thread context is near-full. | The fallback moves validation, trace-reading, and result verification out of the main thread when the conversation window is the limiting factor. |
-| Sync workflow must remain serialized. | Some composed flows need foreground sequencing and artifact validation rather than an asynchronous completion notification. |
-| Direct Bash route is locally unavailable. | Missing script path, unreachable `working_dir`, or an unavailable Bash tool means the documented primary route cannot run. |
-| Brief requires full access (`isolation_level: none` → danger-full-access). | Bash route validator hard-rejects full access on `main_thread_bash_background` (except opencode) with no override channel; the Agent route accepts it via codex-executor's documented override flags. |
-| User explicitly requests codex-executor validation. | User intent overrides the ergonomic default when it does not conflict with safety rules. |
-
-When using fallback, set `dispatch_route: agent_executor` and state the reason in one sentence before dispatch. Do not expand the fallback list casually; the default route is main-thread background Bash.
-
-The authoritative codex fallback checklist lives in `agents/codex-executor.md` §When NOT to use this agent; it delegates brief schema validation to `scripts/brief-validate.sh` via the `pmctl dispatch run` pre-flight.
+There is no Agent-spawn executor route. Both the `claude-executor` and `codex-executor` subagents were retired; every executor now runs as an independent subprocess driven by `pmctl dispatch run`, and the brief is always authored by trusted main-thread code (no subagent self-writes a brief). Schema validation is delegated to `scripts/brief-validate.sh` via the `pmctl dispatch run` pre-flight. (`agent_executor` survives only as a reserved `dispatch_route` value for a possible future host-native adapter.)
 
 ## Dispatching a brief
 
-Write the brief to `/tmp/brief-<task>.md` first, then pass it via `--brief-file`. This is the **canonical** way to dispatch.
-
-When dispatching from an agent path such as `codex-executor`, the spawning main thread (or spawning agent's parent) must create the brief file before the Agent call. `codex-executor` has no Write tool, so it cannot create `/tmp/brief-<task>.md` for itself.
+Write the brief to `/tmp/brief-<task>.md` first, then pass it via `--brief-file`. This is the **canonical** way to dispatch. The main thread creates the brief file with its own Write tool before invoking `pmctl dispatch run`.
 
 For a human shell only, a heredoc is an acceptable way to create the same file:
 
@@ -620,23 +605,9 @@ pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write -
 ```
 
 **Why `--brief-file` and not inline `-- "<brief>"`?**
-- The `hook-codex-bash-guard.sh` PreToolUse hook blocks any command that contains a newline or `\` continuation. Long briefs with code blocks, JSON, and shell paths almost always trigger this.
-- `--brief-file` decouples brief content from the shell invocation — the hook only sees the single-line dispatch command.
+- `--brief-file` decouples brief content from the shell invocation — the dispatch command stays a single line with no newline or `\` continuation, no matter how large the brief. Long briefs with code blocks, JSON, and shell paths embed cleanly in the file instead of the command.
+- It keeps the dispatch command free of shell-metacharacter and quoting hazards that inline brief bodies introduce.
 - Inline `-- <brief>` is kept only for trivial smoke checks. Do not use it for real implementation briefs.
-
-## Fallback Agent Call Checklist
-
-Before the main thread dispatches `codex-executor` via `Agent(subagent_type: "codex-executor", ...)` as a fallback route, verify these checks:
-
-| Check | Rule | Why |
-|---|---|---|
-| `isolation` absent | **Never set `isolation: "worktree"`** | Harness tries to create a worktree from the main thread's CWD, which may not be a git repo → instant "Cannot create agent worktree" error before codex-executor starts |
-| `run_in_background: true` | **Required for parallel dispatches** | Without it the main thread blocks on each agent; user cannot send new commands while agents run |
-| `self_verify` in brief | **Required for file-writing briefs** | codex-executor rejects immediately with 0 tool uses if absent; entire invocation is wasted |
-| brief file pre-written | **Required before the Agent call** | codex-executor has no Write tool, so it cannot create `/tmp/brief-*.md` for itself |
-| `qa_checklist` in brief | **Required when ≥ 3 behavioral units introduced** | Without it, `qa-tester` blocks in gate round 1 for missing coverage; fixing after the fact adds 1–2 extra gate rounds |
-
-Failing any check wastes the agent invocation before a single tool call is made. Check every item before sending.
 
 ## Commit delegation rule
 
@@ -644,7 +615,7 @@ Failing any check wastes the agent invocation before a single tool call is made.
 
 Commit is always delegated to the main thread after dispatch-post-verify succeeds. This is a structural rule, not a style preference:
 
-- `hook-codex-bash-guard.sh` blocks `git commit` inside the executor sandbox. Any brief that includes a commit step will cause the executor to report `status: partial` — even when every code change landed correctly. This is a false partial that pollutes the signal.
+- The executor runs sandboxed (e.g. codex's `--sandbox workspace-write`), which blocks `git commit`. Any brief that includes a commit step will cause the executor to report `status: partial` — even when every code change landed correctly. This is a false partial that pollutes the signal.
 - `hook-executor-write-guard.sh` (the unified executor write-guard) prevents an executor from writing to the repo outside its allowed brief-file surface at dispatch time.
 - The main thread is always the commit authority: it runs `git diff`, reviews changes, and commits when satisfied.
 
