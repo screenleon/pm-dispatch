@@ -450,6 +450,120 @@ pmctl_dispatch_auto_pack() {
   return 0
 }
 
+pmctl_dispatch_execute_tail() {
+  local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}" adapter_path="${4:-}"
+  local _dispatch_run_id="${5:-}" _dispatch_model="${6:-}" brief_file="${7:-}"
+  local _dispatch_created_ts="${8:-}" print_cmd="${9:-}"
+  shift 9 || true
+  local -a _forward=("$@")
+
+  if [[ "$print_cmd" -eq 0 ]]; then
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+      "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "" || return $?
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+      "dispatched" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "pending" || return $?
+  fi
+
+  # Invoke the adapter subprocess and capture its stdout footer so per-run
+  # artifact paths can be extracted for post-verify without relying on latest.*
+  # symlinks. The footer is durable-local so a later recovery path can re-read
+  # the adapter-declared paths after the adapter has exited.
+  local exit_code=0 _footer_dir="" _footer_path=""
+  local -a _pst=(0 0)
+  _footer_dir="$work_dir/.agent-trace"
+  _footer_path="$_footer_dir/$_dispatch_run_id.footer"
+  mkdir -p "$_footer_dir" || { printf 'pmctl dispatch run: mkdir failed: %s\n' "$_footer_dir" >&2; return 2; }
+  # Capture PIPESTATUS before any subsequent command clobbers it.  The { } group
+  # is the LHS of ||, so set -e is suppressed for a non-zero pipeline exit.
+  { bash "$adapter_path" "${_forward[@]}" | tee "$_footer_path"; _pst=("${PIPESTATUS[@]}"); } || true
+  exit_code="${_pst[0]}"
+  if [[ "${_pst[1]:-0}" -ne 0 ]]; then
+    printf 'pmctl dispatch run: footer capture failed: %s\n' "$_footer_path" >&2
+    return 2
+  fi
+
+  # Parse per-run paths from the adapter stdout footer ("last:   <path>",
+  # "stderr: <path>"). Empty strings make post-verify fall back to latest.*.
+  # "model:  <value>" overrides the pmctl-extracted model with the adapter's
+  # effective model.
+  local _run_last="" _run_trace="" _run_stderr="" _run_model=""
+  _run_last="$(grep -m1 '^last:' "$_footer_path" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_trace="$(grep -m1 '^trace:' "$_footer_path" | sed 's/^trace:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_stderr="$(grep -m1 '^stderr:' "$_footer_path" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  _run_model="$(grep -m1 '^model:' "$_footer_path" | sed 's/^model:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
+  [[ -n "$_run_model" ]] && _dispatch_model="$_run_model"
+
+  # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
+  # there is no output contract to read and nothing to post-verify.
+  if [[ "$print_cmd" -eq 1 ]]; then
+    return "$exit_code"
+  fi
+
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "dispatched" || return $?
+
+  # A failed adapter run short-circuits: propagate its exit verbatim. The
+  # adapter already wrote forensic trace/stderr for post-mortem.
+  if [[ "$exit_code" -ne 0 ]]; then
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+      "$work_dir" "$exit_code" "failed" "adapter exited before post-verify (exit $exit_code)" \
+      "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
+    return "$exit_code"
+  fi
+
+  # Post-verify (shared): pass explicit per-run paths parsed from the footer, so
+  # post-verify does not depend on shared latest.* symlinks. Falls back to
+  # latest.* defaults when footer parsing found nothing.
+  # Read the adapter's declared semantic terminal_event from its manifest and
+  # thread it to post-verify, which asserts the trace carries at least one such
+  # event (semantic completion, layered on the structural integrity check). Read
+  # via the canonical manifest-field helper; sourced defensively so a missing lib
+  # or absent field leaves the value empty and post-verify stays structure-only
+  # (back-compat) rather than aborting dispatch.
+  local _terminal_event="" _adapter_manifest="$repo_root/adapters/$adapter/adapter.yaml"
+  if [[ -f "$_adapter_manifest" ]]; then
+    if ! declare -F runner_kind_manifest_field >/dev/null 2>&1; then
+      # shellcheck disable=SC1091  # dynamic repo root path.
+      . "$repo_root/scripts/lib/runner-kind.sh" 2>/dev/null || true
+    fi
+    if declare -F runner_kind_manifest_field >/dev/null 2>&1; then
+      _terminal_event="$(runner_kind_manifest_field "$_adapter_manifest" terminal_event 2>/dev/null || true)"
+    fi
+  fi
+
+  local -a _pv_args=("$work_dir" "$brief_file")
+  [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
+  [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
+  [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
+  [[ -n "$_terminal_event" ]] && _pv_args+=(--terminal-event "$_terminal_event")
+  local _pv_out="" _pv_rc=0
+  if _pv_out="$(bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}")"; then
+    _pv_rc=0
+  else
+    _pv_rc=$?
+  fi
+  printf '%s\n' "$_pv_out"
+  if [[ "$_pv_rc" -ne 0 ]]; then
+    printf 'pmctl dispatch run: post-verify failed\n' >&2
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+      "$work_dir" 1 "failed" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
+      "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
+    return 1
+  fi
+
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
+    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
+  pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
+    "$work_dir" "$exit_code" "ok" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
+    "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
+
+  return "$exit_code"
+}
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -659,109 +773,8 @@ pmctl_dispatch_run() {
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
 
-  if [[ "$print_cmd" -eq 0 ]]; then
-    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "" || return $?
-    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "dispatched" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "pending" || return $?
-  fi
-
-  # 5. Invoke the adapter subprocess — the ONLY executor-specific step.
-  #    Tee stdout to a temp file so per-run artifact paths in the adapter footer
-  #    can be extracted for post-verify without relying on latest.* symlinks.
-  #    latest.* is shared mutable state: two concurrent dispatches on the same
-  #    work dir both call `ln -sfn <adapter>-<ts>.last latest.last`, so the
-  #    second finisher silently overwrites the first's symlink before post-verify
-  #    reads it (CC-305). Explicit per-run paths eliminate the race entirely.
-  local exit_code=0 _footer_tmp=""
-  local -a _pst=(0 0)
-  _footer_tmp="$(mktemp)" || { printf 'pmctl dispatch run: mktemp failed\n' >&2; return 2; }
-  # Capture PIPESTATUS before any subsequent command clobbers it.  The { } group
-  # is the LHS of ||, so set -e is suppressed for a non-zero pipeline exit.
-  { bash "$adapter_path" "${forward[@]}" | tee "$_footer_tmp"; _pst=("${PIPESTATUS[@]}"); } || true
-  exit_code="${_pst[0]}"
-
-  # Parse per-run paths from the adapter stdout footer ("last:   <path>",
-  # "stderr: <path>").  Empty strings → post-verify falls back to latest.*.
-  # "model:  <value>" overrides the pmctl-extracted model with the adapter's
-  # effective model (e.g. codex always resolves its built-in "default" alias
-  # even when no --model or config default is supplied).
-  local _run_last="" _run_trace="" _run_stderr="" _run_model=""
-  _run_last="$(grep -m1 '^last:' "$_footer_tmp" | sed 's/^last:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
-  _run_trace="$(grep -m1 '^trace:' "$_footer_tmp" | sed 's/^trace:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
-  _run_stderr="$(grep -m1 '^stderr:' "$_footer_tmp" | sed 's/^stderr:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
-  _run_model="$(grep -m1 '^model:' "$_footer_tmp" | sed 's/^model:[[:space:]]*//;s/[[:space:]]*$//' 2>/dev/null)" || true
-  [[ -n "$_run_model" ]] && _dispatch_model="$_run_model"
-  rm -f "$_footer_tmp"
-
-  # Dry-run (--print-cmd): the adapter printed its command and wrote no trace;
-  # there is no output contract to read and nothing to post-verify.
-  if [[ "$print_cmd" -eq 1 ]]; then
-    return "$exit_code"
-  fi
-
-  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "verifying" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "dispatched" || return $?
-
-  # 6. A failed adapter run short-circuits: propagate its exit verbatim. The
-  #    adapter already wrote forensic trace/stderr for post-mortem.
-  if [[ "$exit_code" -ne 0 ]]; then
-    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
-    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
-      "$work_dir" "$exit_code" "failed" "adapter exited before post-verify (exit $exit_code)" \
-      "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
-    return "$exit_code"
-  fi
-
-  # 7. Post-verify (shared): pass explicit per-run paths (parsed from the adapter
-  #    footer) so post-verify never reads latest.*, eliminating the CC-305 race.
-  #    Falls back to latest.* defaults when footer parsing found nothing (e.g.,
-  #    a print-cmd adapter or a future adapter that omits the footer).
-  # Read the adapter's declared semantic terminal_event from its manifest and
-  # thread it to post-verify, which asserts the trace carries at least one such
-  # event (semantic completion, layered on the structural integrity check). Read
-  # via the canonical manifest-field helper; sourced defensively so a missing lib
-  # or absent field leaves the value empty and post-verify stays structure-only
-  # (back-compat) rather than aborting dispatch.
-  local _terminal_event="" _adapter_manifest="$repo_root/adapters/$adapter/adapter.yaml"
-  if [[ -f "$_adapter_manifest" ]]; then
-    if ! declare -F runner_kind_manifest_field >/dev/null 2>&1; then
-      # shellcheck disable=SC1091  # dynamic repo root path.
-      . "$repo_root/scripts/lib/runner-kind.sh" 2>/dev/null || true
-    fi
-    if declare -F runner_kind_manifest_field >/dev/null 2>&1; then
-      _terminal_event="$(runner_kind_manifest_field "$_adapter_manifest" terminal_event 2>/dev/null || true)"
-    fi
-  fi
-
-  local -a _pv_args=("$work_dir" "$brief_file")
-  [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
-  [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
-  [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
-  [[ -n "$_terminal_event" ]] && _pv_args+=(--terminal-event "$_terminal_event")
-  local _pv_out="" _pv_rc=0
-  if _pv_out="$(bash "$repo_root/scripts/dispatch-post-verify.sh" "${_pv_args[@]}")"; then
-    _pv_rc=0
-  else
-    _pv_rc=$?
-  fi
-  printf '%s\n' "$_pv_out"
-  if [[ "$_pv_rc" -ne 0 ]]; then
-    printf 'pmctl dispatch run: post-verify failed\n' >&2
-    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-      "failed" 1 "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
-    pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
-      "$work_dir" 1 "failed" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
-      "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
-    return 1
-  fi
-
-  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
-    "ok" "$exit_code" "$_dispatch_model" "$brief_file" "${_run_last:-}" "$_dispatch_created_ts" "verifying" || return $?
-  pmctl_dispatch_write_record_soft "$_dispatch_run_id" "$adapter" "$_dispatch_model" "$brief_file" \
-    "$work_dir" "$exit_code" "ok" "$_pv_out" "${_run_last:-}" "${_run_trace:-}" "${_run_stderr:-}" \
-    "$_dispatch_created_ts" "$(pmctl_dispatch_utc_ts)"
-
-  return "$exit_code"
+  pmctl_dispatch_execute_tail "$repo_root" "$work_dir" "$adapter" "$adapter_path" \
+    "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+    "${forward[@]}"
+  return $?
 }
