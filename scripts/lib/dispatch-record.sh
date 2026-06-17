@@ -35,6 +35,9 @@ dispatch_record_write() {
   q_created_ts="$(printf '%s' "$created_ts" | jq -Rs .)" || { rm -f "$tmp"; return 1; }
   q_finished_ts="$(printf '%s' "$finished_ts" | jq -Rs .)" || { rm -f "$tmp"; return 1; }
 
+  # Backticks in the printf format strings below are literal Markdown code spans,
+  # not command substitution — single quotes keep them literal as intended.
+  # shellcheck disable=SC2016
   {
     printf '%s\n' '---'
     printf 'schema_version: 1\n'
