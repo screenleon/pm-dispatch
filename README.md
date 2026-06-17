@@ -76,8 +76,8 @@ Legacy PM directories or symlinks under the old `github` checkout location are n
 ```sh
 ./install.sh --dry-run                # preview
 ./install.sh                          # apply (auto-detect profile)
-./install.sh --profile minimal        # claude-only setup; skip codex hooks
-./install.sh --profile full           # explicit codex setup
+./install.sh --profile minimal        # skip adapter bash guards
+./install.sh --profile full           # wire all hooks (no adapter ships a bash guard today)
 CLAUDE_HOME=/tmp/sandbox ./install.sh # install into an alternate dir (sandbox/testing)
 ```
 
@@ -96,7 +96,7 @@ already on `$PATH`. On Windows Git Bash it does not copy `pmctl`; add
 `<repo>/cli` to `$PATH` manually so `pmctl` runs in place and can resolve its
 repo-local libraries.
 
-**Profile**: `full` wires every hook including the codex-* guards (use when you run the [Codex CLI](https://github.com/openai/codex) for dispatch). `minimal` skips the codex-* guards (use when you only use Claude Code; the `claude` executor handles dispatch). Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
+**Profile**: selects whether to wire adapter bash guards (`adapters/<name>/bash-guard.sh`, manifest-driven via `needs_bash_guard`). No adapter ships a bash guard today (codex's was retired with the codex-executor agent), so `full` and `minimal` currently wire the same hook set; the flag is retained for forward compatibility with future adapters that declare one. Auto-detect runs `command -v codex` — if found, `full`; otherwise `minimal`. See [docs/executor-contract.md](docs/executor-contract.md) for the executor profile model.
 
 After installing, verify the environment is healthy:
 
