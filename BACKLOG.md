@@ -92,6 +92,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-394 | ✅ done | **[arch: 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode）]** Model B 後 claude 主路是 headless `claude --print` 子程序（`adapters/claude/`，[[CC-388]]）；`Agent(claude-executor)` 已降級為「Claude 當 PM host 且 `claude` CLI 不在 PATH」的窄 fallback。它**不補任何能力缺口**（adapter 做同樣的事，與 codex-executor 的 danger-full-access 缺口不同），且持續課維護稅——[[CC-335]] 即因 trio 引用藏在此檔連兩輪 gate NO-GO。opencode（[[CC-376]]）已是 adapter-only、無 Agent，為目標形狀。退場範圍：刪 agent 檔＋guard role-model 的 executor(claude) 慣例分支＋install/uninstall 接線＋test-pmctl-guard/test-install/test-hook-framework 相關案例＋文件收斂（commands/pm.md Route B、executor-contract profiles、dispatch-brief fallback）。決策前置：確認無「Claude 為 host 但 claude CLI 缺席仍需跑 claude brief」的真實環境（傾向 fail-loud 而非默默降級）；保留 same-host 免 spawn 子程序的最佳化為唯一反論。umbrella [[CC-333]]（in-session Agent executor 層）。先於 [[CC-395]]。 | arch/portability | 2026-06-17 | — | P2 | design |
 | CC-396 | 🟢 someday | **[chore: 清理 operational 檔內的 CC-provenance 註解]** scripts/adapters/cli/core 等非文件檔殘留「設計沿革票號」註解（如 `pmctl-guard.sh` 的 `# ...(CC-288; keying CC-291)`），違反 No-CC-in-operational 慣例，應搬去 docs/DECISIONS 或刪除。**明確排除**：測試 fixture data（如 `test-pmctl-task.sh` 用 `task create CC-101` 當輸入）與 ID 格式範例（如 `task.schema.json` 的 `e.g. CC-229`）——皆為合法測試輸入/說明，非違規。需逐處判斷非機械替換；估真違規子集遠小於原始 grep 計數。發現於 [[CC-395]] 退場工作。 | process/DX | 2026-06-17 | — | P3 | — |
 | CC-395 | ✅ done | **[arch: 退場 `agents/codex-executor.md`（codex 收斂為 adapter-only）]** 對稱 [[CC-394]]。`Agent(codex-executor)` 現存唯一獨有能力是 `danger-full-access`（`isolation_level: none`）——退 agent 前須先拍板其去留。**DECISION 2026-06-17：選 (A) 砍掉 codex full-access**——codex 最高權限收斂為 `workspace-write` 真沙箱，brief 帶 `none` 在所有 route fail-loud REJECT。依據：codex full-access 非 load-bearing（有 workspace-write 安全預設）、零實際使用、Agent 閘是 Model B 前的遺產、claude 經 [[CC-394]] 已在同一 end-state；opencode 的 `none` 為 load-bearing 故不動。退場 plan（同 [[CC-394]] 機械性、零能力損失）：full-access 收口 ＋ 退 agent 檔/guard/install/test ＋ 文件收斂。security gate 風險低（收窄非放寬）。實作後 pr-gate full tier 首輪 NO-GO（raw `--sandbox danger-full-access` 旁路）→ 於 adapter chokepoint 修復＋回歸 → 重跑 GO。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | pr:#294 | P3 | design |
+| CC-397 | ✅ done | **[refactor: extract pmctl_dispatch_run executor tail + persist footer durably]** Phase 7c-1 groundwork for detached-supervised dispatch ([[CC-391]]). Extract the post-preflight executor tail (invoke → footer → verify → terminal state + [[CC-225]] record) into one shared internal function (behavior-identical), and replace the ephemeral mktemp footer with a durable per-run `.agent-trace/<run_id>.footer` so a later supervisor crash between adapter exit and post-verify cannot lose the footer-derived per-run paths ([[CC-305]] explicit-path contract preserved). No supervisor/lifecycle surface yet ([[CC-391]]落地 7c-2). umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
 
 ---
 
@@ -247,6 +248,24 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **做法**: 逐處判斷（非機械 sed 替換）；分類 fixture/範例/沿革，只動沿革子集。完成後加 lint 規則防回歸（選配，視子集大小）。
 
 **Sequencing**: [[CC-395]] 合併後另開 PR，避免污染退場 diff。發現於 [[CC-395]] 退場工作。umbrella [[CC-333]]（衛生軸）。
+
+---
+
+## CC-397 — refactor: extract pmctl_dispatch_run executor tail + persist footer durably ✅ 2026-06-17
+
+**Closed 2026-06-17**: Implemented Phase 7c-1 groundwork for detached-supervised dispatch. `pmctl_dispatch_run` keeps the existing guard/config preflight and delegates the post-preflight executor tail to `pmctl_dispatch_execute_tail`, preserving the foreground transition order and exit-code behavior. Adapter stdout footer capture now writes `<work_dir>/.agent-trace/<run_id>.footer` durably instead of a deleted `mktemp`, while post-verify still receives the footer-derived explicit `--last`/`--jsonl`/`--stderr` paths. No supervisor, detached lifecycle, start/wait command, or run schema surface was added.
+
+**Problem / 目標**: [[CC-391]] 的 detached-supervised dispatch 軸需要 supervisor 之後重用 foreground dispatch 已驗證的 executor tail：adapter invocation → footer parse → verifying → post-verify → terminal state + [[CC-225]] durable record。現況 tail inline 在 `pmctl_dispatch_run`，且 footer 只存在於 `mktemp`，parse 後立即刪除；若未來 supervisor 在 adapter exit 後、post-verify 前崩潰，會丟失 [[CC-305]] explicit-path handoff 的 per-run artifact paths。
+
+**Requirement**:
+- Extract post-preflight tail into one shared internal function, behavior-identical for foreground dispatch: pending → dispatched → adapter pipeline → verifying → failed/ok, same exit propagation, same post-verify stdout/stderr, same record write semantics.
+- Replace the ephemeral footer temp file with durable `<work_dir>/.agent-trace/<run_id>.footer`; create `.agent-trace/` defensively before `tee`; do not delete the footer.
+- Preserve the explicit-path contract: footer `trace:`/`last:`/`stderr:` are still parsed and passed to `dispatch-post-verify.sh` as `--jsonl`/`--last`/`--stderr`; post-verify does not read `latest.*` when explicit paths are present.
+- Keep Phase 7c-1 scoped to groundwork only: no `--lifecycle`, no supervisor process, no detach/start/wait command, no `run.schema.json` change.
+
+**Verification**: `scripts/test-pmctl-dispatch.sh` covers durable footer persistence with per-run artifact paths and direct invocation of the extracted tail, including the foreground lifecycle order `pending,dispatched,verifying,ok`.
+
+**See**: [[CC-391]], [[CC-225]], [[CC-305]], [[CC-333]].
 
 ---
 

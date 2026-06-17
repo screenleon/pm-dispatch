@@ -537,6 +537,75 @@ case_footer_trace_threaded_to_post_verify() {
   rm -rf "$work" "$bindir"
 }
 
+case_footer_persisted_and_paths_parse() {
+  local name="dispatch/footer persists with per-run artifact paths"
+  should_run "$name" || return 0
+  local work brief bindir out code footer last_path trace_path stderr_path record
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  footer="$(find "$work/.agent-trace" -maxdepth 1 -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
+  last_path="$(sed -n 's/^last:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
+  trace_path="$(sed -n 's/^trace:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
+  stderr_path="$(sed -n 's/^stderr:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
+  record="$(find "$work/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1)"
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ "$footer" == "$work/.agent-trace/"run-*.footer ]] \
+     && [[ -s "$footer" ]] \
+     && [[ "$last_path" == "$work/.agent-trace/"codex-*.last ]] \
+     && [[ "$trace_path" == "$work/.agent-trace/"codex-*.jsonl ]] \
+     && [[ "$stderr_path" == "$work/.agent-trace/"codex-*.stderr ]] \
+     && [[ -s "$last_path" ]] \
+     && [[ -s "$trace_path" ]] \
+     && [[ -e "$stderr_path" ]] \
+     && grep -Fq "last_path: \"$last_path\"" "$record" \
+     && grep -Fq "trace_path: \"$trace_path\"" "$record" \
+     && grep -Fq "stderr_path: \"$stderr_path\"" "$record"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code footer=$footer last=$last_path trace=$trace_path stderr=$stderr_path"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+case_execute_tail_direct_lifecycle_identity() {
+  local name="dispatch/extracted tail preserves foreground lifecycle"
+  should_run "$name" || return 0
+  local work brief bindir out code run_id created_ts footer record states
+  local -a forward=()
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+  created_ts="$(pmctl_dispatch_utc_ts)"
+  forward=(--cd "$work" --brief-file "$brief")
+  set +e
+  out="$(PATH="$bindir:$PATH" pmctl_dispatch_execute_tail "$REPO_ROOT" "$work" codex \
+    "$REPO_ROOT/adapters/codex/dispatch.sh" "$run_id" "" "$brief" "$created_ts" 0 \
+    "${forward[@]}" 2>&1)"; code=$?
+  set -e
+  footer="$work/.agent-trace/$run_id.footer"
+  record="$work/.dispatch-results/$run_id.md"
+  states="$(find "$PM_DISPATCH_STATE_ROOT" -type f -name events.jsonl \
+    -exec jq -r --arg run "$run_id" 'select(.subject_id == $run) | .payload.state' {} + 2>/dev/null \
+    | paste -sd, -)"
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ -s "$footer" ]] \
+     && [[ -f "$record" ]] \
+     && grep -q '^final_state: "ok"$' "$record" \
+     && [[ "$states" == "pending,dispatched,verifying,ok" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code states=$states footer=$footer"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ---- 18c: manifest terminal_event is threaded to post-verify ----
 # Proves pmctl reads `terminal_event` from adapters/codex/adapter.yaml and passes
 # it to post-verify as --terminal-event. Distinguishing signal: the fake codex
@@ -987,6 +1056,8 @@ case_missing_brief_file
 case_symlinked_adapter_rejected
 case_stale_latest_symlink_avoidance
 case_footer_trace_threaded_to_post_verify
+case_footer_persisted_and_paths_parse
+case_execute_tail_direct_lifecycle_identity
 case_manifest_terminal_event_threaded
 case_footer_exit_propagated_through_tee
 case_config_timeout_exported_to_adapter
