@@ -564,6 +564,165 @@ pmctl_dispatch_execute_tail() {
   return "$exit_code"
 }
 
+# Resolve + security-gate an adapter by NAME: validate the bare identifier,
+# resolve adapters/<name>/dispatch.sh, reject symlink/containment escapes, and
+# enforce the route allowlist. Echoes the validated adapter_path on stdout; the
+# route log line and all errors go to stderr; returns 2 on any failure.
+#
+# This is the shared security preflight used by BOTH pmctl_dispatch_run and the
+# detached supervisor (scripts/dispatch-supervisor.sh), so a supervisor handed a
+# tampered run-spec can never reach an executor that `pmctl dispatch run` would
+# have refused. The identifier regex is duplicated in pmctl_dispatch_run's early
+# input-validation block by design: each entry point is an independent gate.
+pmctl_dispatch_resolve_adapter() {
+  local repo_root="${1:-}" adapter="${2:-}"
+
+  if ! [[ "$adapter" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+    printf 'pmctl dispatch run: invalid adapter name %q (must be a bare lowercase identifier: a letter, then letters/digits/hyphen/underscore — no path separators)\n' "$adapter" >&2
+    return 2
+  fi
+
+  local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
+  if [[ ! -f "$adapter_path" ]]; then
+    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; run pmctl adapter generate to scaffold it.\n' "$adapter" "$adapter_path" >&2
+    return 2
+  fi
+  if [[ -L "$adapter_path" ]]; then
+    printf 'pmctl dispatch run: adapter dispatch script must not be a symlink: %s\n' "$adapter_path" >&2
+    return 2
+  fi
+  local _adapters_base _adapter_dir_real
+  if ! _adapters_base="$(cd -P -- "$repo_root/adapters" 2>/dev/null && pwd -P)"; then
+    printf 'pmctl dispatch run: adapters directory not found under %s\n' "$repo_root" >&2
+    return 2
+  fi
+  if ! _adapter_dir_real="$(cd -P -- "$(dirname "$adapter_path")" 2>/dev/null && pwd -P)"; then
+    printf 'pmctl dispatch run: cannot resolve adapter directory for %q\n' "$adapter" >&2
+    return 2
+  fi
+  case "$_adapter_dir_real" in
+    "$_adapters_base"/?*) : ;;
+    *)
+      printf 'pmctl dispatch run: adapter path escapes the adapters/ boundary: %s\n' "$_adapter_dir_real" >&2
+      return 2
+      ;;
+  esac
+
+  if ! declare -F dispatch_route_for >/dev/null; then
+    printf 'pmctl dispatch run: routing registry unavailable (executor-router not sourced) — refusing to dispatch without allowlist enforcement\n' >&2
+    return 2
+  fi
+  local route
+  if ! route="$(dispatch_route_for "$adapter" 2>/dev/null)"; then
+    printf 'pmctl dispatch run: %q is not a routable executor (not in the dispatch allowlist)\n' "$adapter" >&2
+    return 2
+  fi
+  printf 'pmctl dispatch run: adapter=%s route=%s\n' "$adapter" "$route" >&2
+
+  printf '%s\n' "$adapter_path"
+}
+
+# Decide whether an adapter may run under a detached supervisor (CC-391 lifecycle
+# axis). Eligibility is DERIVED from the adapter's declared runner_kind, never a
+# manifest lifecycle field: cli-subprocess executors are Model B subprocesses
+# pmctl can reparent under a supervisor; host-native executors ARE the host and
+# cannot be. Returns 0 (eligible), 1 (ineligible), 2 (cannot determine — fail
+# closed). Prints a diagnostic on stderr for the non-eligible cases.
+pmctl_dispatch_detach_eligible() {
+  local repo_root="${1:-}" adapter="${2:-}"
+  local manifest="$repo_root/adapters/$adapter/adapter.yaml" rk elig=0
+
+  if ! declare -F runner_kind_detach_eligible >/dev/null 2>&1; then
+    # shellcheck disable=SC1091  # dynamic repo root path.
+    . "$repo_root/scripts/lib/runner-kind.sh" 2>/dev/null || true
+  fi
+  if ! declare -F runner_kind_detach_eligible >/dev/null 2>&1; then
+    printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (runner-kind lib unavailable)\n' "$adapter" >&2
+    return 2
+  fi
+  if [[ ! -r "$manifest" ]]; then
+    printf 'pmctl dispatch run: cannot evaluate detach eligibility for %q (no readable manifest %s)\n' "$adapter" "$manifest" >&2
+    return 2
+  fi
+  rk="$(runner_kind_manifest_field "$manifest" runner_kind 2>/dev/null || true)"
+  if [[ -z "$rk" ]]; then
+    printf 'pmctl dispatch run: adapter %q declares no runner_kind; detached dispatch requires a known runner-kind\n' "$adapter" >&2
+    return 2
+  fi
+  runner_kind_detach_eligible "$rk" || elig=$?
+  case "$elig" in
+    0) return 0 ;;
+    1)
+      printf 'pmctl dispatch run: adapter %q (runner_kind=%s) is not detach-eligible; run it with --lifecycle foreground\n' "$adapter" "$rk" >&2
+      return 1
+      ;;
+    *)
+      printf 'pmctl dispatch run: adapter %q has unknown runner_kind %q; refusing detached dispatch\n' "$adapter" "$rk" >&2
+      return 2
+      ;;
+  esac
+}
+
+# Serialize a validated, post-preflight run into a durable run-spec the detached
+# supervisor consumes. Scalars are written human-readable for forensics; the
+# adapter forward args are base64-encoded one per line (robust against spaces,
+# newlines, and shell metacharacters) so the supervisor never re-parses or
+# word-splits user-influenced tokens. Written atomically via mktemp + mv.
+pmctl_dispatch_write_runspec() {
+  local spec_path="${1:-}"; shift || true
+  local run_id="${1:-}" adapter="${2:-}" work_dir="${3:-}" brief_file="${4:-}"
+  local model="${5:-}" created_ts="${6:-}" print_cmd="${7:-}"
+  shift 7 || true
+  local -a fwd=("$@")
+  local spec_dir tmp arg
+  spec_dir="$(dirname "$spec_path")"
+  tmp="$(mktemp "$spec_dir/.runspec.tmp.XXXXXX")" || return 1
+  {
+    printf 'schema_version=1\n'
+    printf 'run_id=%s\n' "$run_id"
+    printf 'adapter=%s\n' "$adapter"
+    printf 'work_dir=%s\n' "$work_dir"
+    printf 'brief_file=%s\n' "$brief_file"
+    printf 'model=%s\n' "$model"
+    printf 'created_ts=%s\n' "$created_ts"
+    printf 'print_cmd=%s\n' "$print_cmd"
+    printf 'forward_b64:\n'
+    for arg in ${fwd[@]+"${fwd[@]}"}; do
+      printf '%s\n' "$(printf '%s' "$arg" | base64 | tr -d '\n')"
+    done
+  } > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$spec_path" || { rm -f "$tmp"; return 1; }
+}
+
+# Detached lifecycle launcher (CC-391 Phase 7c-2a). Persist the run-spec, then
+# invoke the supervisor. In 7c-2a the supervisor runs SYNCHRONOUSLY, so detached
+# is behavior-equivalent to foreground; setsid/nohup true detachment and
+# `pmctl dispatch wait <run_id>` land in 7c-2b. The supervisor re-runs the full
+# security preflight (name/containment/route/guard) before any executor launch,
+# so this path is never a guard bypass.
+pmctl_dispatch_run_detached() {
+  local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}"
+  local run_id="${4:-}" model="${5:-}" brief_file="${6:-}" created_ts="${7:-}" print_cmd="${8:-}"
+  shift 8 || true
+  local -a forward=("$@")
+
+  local spec_dir spec_path
+  spec_dir="$work_dir/.agent-trace"
+  spec_path="$spec_dir/$run_id.runspec"
+  if ! mkdir -p "$spec_dir"; then
+    printf 'pmctl dispatch run: mkdir failed: %s\n' "$spec_dir" >&2
+    return 2
+  fi
+  if ! pmctl_dispatch_write_runspec "$spec_path" "$run_id" "$adapter" "$work_dir" \
+      "$brief_file" "$model" "$created_ts" "$print_cmd" ${forward[@]+"${forward[@]}"}; then
+    printf 'pmctl dispatch run: failed to write run-spec: %s\n' "$spec_path" >&2
+    return 2
+  fi
+
+  bash "$repo_root/scripts/dispatch-supervisor.sh" --run-spec "$spec_path"
+  return $?
+}
+
 pmctl_dispatch_run() {
   local repo_root="${1:-}"
   if [[ -z "$repo_root" ]]; then
@@ -572,7 +731,7 @@ pmctl_dispatch_run() {
   fi
   shift || true
 
-  local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag=""
+  local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag="" lifecycle_flag=""
   local -a forward=()
 
   # Peek at the flags the shared steps need (--adapter is consumed; --cd and
@@ -621,6 +780,22 @@ pmctl_dispatch_run() {
         auto_pack_flag="off"
         shift
         ;;
+      --lifecycle)
+        # Consumed by pmctl (lifecycle is a dispatch-time choice, not an adapter
+        # flag); never forwarded to the adapter.
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch run: missing value for --lifecycle\n' >&2
+          return 2
+        fi
+        case "$2" in
+          foreground|detached) lifecycle_flag="$2" ;;
+          *)
+            printf 'pmctl dispatch run: invalid --lifecycle %q (expected foreground or detached)\n' "$2" >&2
+            return 2
+            ;;
+        esac
+        shift 2
+        ;;
       --)
         # Inline brief form skips brief-validate + guard, so it is a policy
         # bypass. Refuse it at the orchestrator (the policy surface); briefs must
@@ -662,51 +837,12 @@ pmctl_dispatch_run() {
     return 2
   fi
 
-  # 1. Resolve adapter by convention — the name is now a validated bare identifier.
-  local adapter_path="$repo_root/adapters/$adapter/dispatch.sh"
-  if [[ ! -f "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: unknown adapter %q (no %s). An adapter must provide adapters/<name>/dispatch.sh; run pmctl adapter generate to scaffold it.\n' "$adapter" "$adapter_path" >&2
-    return 2
-  fi
-
-  # Containment: the adapter script must be a regular file (not a symlink) whose
-  # physical directory stays within repo_root/adapters/. Name validation already
-  # blocks `../` in the token; this additionally blocks a symlinked dispatch.sh
-  # (or symlinked adapter dir) from escaping the trust boundary to execute an
-  # arbitrary script outside the repo.
-  if [[ -L "$adapter_path" ]]; then
-    printf 'pmctl dispatch run: adapter dispatch script must not be a symlink: %s\n' "$adapter_path" >&2
-    return 2
-  fi
-  local _adapters_base _adapter_dir_real
-  if ! _adapters_base="$(cd -P -- "$repo_root/adapters" 2>/dev/null && pwd -P)"; then
-    printf 'pmctl dispatch run: adapters directory not found under %s\n' "$repo_root" >&2
-    return 2
-  fi
-  if ! _adapter_dir_real="$(cd -P -- "$(dirname "$adapter_path")" 2>/dev/null && pwd -P)"; then
-    printf 'pmctl dispatch run: cannot resolve adapter directory for %q\n' "$adapter" >&2
-    return 2
-  fi
-  case "$_adapter_dir_real" in
-    "$_adapters_base"/?*) : ;;
-    *)
-      printf 'pmctl dispatch run: adapter path escapes the adapters/ boundary: %s\n' "$_adapter_dir_real" >&2
-      return 2
-      ;;
-  esac
-
-  # 2. Route — the dispatch ALLOWLIST. Fail closed: a missing routing registry
-  #    must refuse the dispatch, never silently skip the allowlist.
-  if ! declare -F dispatch_route_for >/dev/null; then
-    printf 'pmctl dispatch run: routing registry unavailable (executor-router not sourced) — refusing to dispatch without allowlist enforcement\n' >&2
-    return 2
-  fi
-  local route
-  if ! route="$(dispatch_route_for "$adapter" 2>/dev/null)"; then
-    printf 'pmctl dispatch run: %q is not a routable executor (not in the dispatch allowlist)\n' "$adapter" >&2
-    return 2
-  fi
-  printf 'pmctl dispatch run: adapter=%s route=%s\n' "$adapter" "$route" >&2
+  # 1-2. Resolve adapter (convention + symlink/containment guard) and enforce the
+  #      route ALLOWLIST via the shared security preflight. Fail closed: a missing
+  #      routing registry refuses the dispatch, never silently skips the allowlist.
+  #      The same helper backs the detached supervisor.
+  local adapter_path
+  adapter_path="$(pmctl_dispatch_resolve_adapter "$repo_root" "$adapter")" || return 2
 
   # 3. Brief-validate (shared) — always runs; there is no brief-less path.
   local brief_result=0
@@ -728,6 +864,28 @@ pmctl_dispatch_run() {
   _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
   _dispatch_created_ts="$(pmctl_dispatch_utc_ts)"
   _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
+
+  # 3b. Resolve the effective lifecycle (flag > dispatch.lifecycle config >
+  # foreground) and, for detached, reject ineligible adapters BEFORE any executor
+  # launch (hard gate). Detached is incompatible with the --print-cmd dry-run.
+  local _lifecycle_effective="foreground"
+  if [[ "$lifecycle_flag" == "foreground" || "$lifecycle_flag" == "detached" ]]; then
+    _lifecycle_effective="$lifecycle_flag"
+  elif [[ "${PM_CFG_LIFECYCLE:-}" == "foreground" || "${PM_CFG_LIFECYCLE:-}" == "detached" ]]; then
+    _lifecycle_effective="$PM_CFG_LIFECYCLE"
+  fi
+  if [[ "$_lifecycle_effective" == "detached" ]]; then
+    if [[ "$print_cmd" -eq 1 ]]; then
+      printf 'pmctl dispatch run: --lifecycle detached is incompatible with --print-cmd (nothing to supervise)\n' >&2
+      return 2
+    fi
+    local _detach_elig=0
+    pmctl_dispatch_detach_eligible "$repo_root" "$adapter" || _detach_elig=$?
+    if [[ "$_detach_elig" -ne 0 ]]; then
+      return 2
+    fi
+  fi
+
   _auto_pack_effective="off"
   if [[ "$auto_pack_flag" == "on" || "$auto_pack_flag" == "off" ]]; then
     _auto_pack_effective="$auto_pack_flag"
@@ -772,6 +930,17 @@ pmctl_dispatch_run() {
   #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
+
+  # 5. Execute. Foreground runs the tail in-process (current behavior). Detached
+  #    persists a run-spec and hands the post-preflight tail to the supervisor;
+  #    in 7c-2a the supervisor runs synchronously (behavior-equivalent), so all
+  #    the preflight gates above still front every executor invocation.
+  if [[ "$_lifecycle_effective" == "detached" ]]; then
+    pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
+      "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+      "${forward[@]}"
+    return $?
+  fi
 
   pmctl_dispatch_execute_tail "$repo_root" "$work_dir" "$adapter" "$adapter_path" \
     "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \

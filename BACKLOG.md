@@ -93,6 +93,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-396 | 🟢 someday | **[chore: 清理 operational 檔內的 CC-provenance 註解]** scripts/adapters/cli/core 等非文件檔殘留「設計沿革票號」註解（如 `pmctl-guard.sh` 的 `# ...(CC-288; keying CC-291)`），違反 No-CC-in-operational 慣例，應搬去 docs/DECISIONS 或刪除。**明確排除**：測試 fixture data（如 `test-pmctl-task.sh` 用 `task create CC-101` 當輸入）與 ID 格式範例（如 `task.schema.json` 的 `e.g. CC-229`）——皆為合法測試輸入/說明，非違規。需逐處判斷非機械替換；估真違規子集遠小於原始 grep 計數。發現於 [[CC-395]] 退場工作。 | process/DX | 2026-06-17 | — | P3 | — |
 | CC-395 | ✅ done | **[arch: 退場 `agents/codex-executor.md`（codex 收斂為 adapter-only）]** 對稱 [[CC-394]]。`Agent(codex-executor)` 現存唯一獨有能力是 `danger-full-access`（`isolation_level: none`）——退 agent 前須先拍板其去留。**DECISION 2026-06-17：選 (A) 砍掉 codex full-access**——codex 最高權限收斂為 `workspace-write` 真沙箱，brief 帶 `none` 在所有 route fail-loud REJECT。依據：codex full-access 非 load-bearing（有 workspace-write 安全預設）、零實際使用、Agent 閘是 Model B 前的遺產、claude 經 [[CC-394]] 已在同一 end-state；opencode 的 `none` 為 load-bearing 故不動。退場 plan（同 [[CC-394]] 機械性、零能力損失）：full-access 收口 ＋ 退 agent 檔/guard/install/test ＋ 文件收斂。security gate 風險低（收窄非放寬）。實作後 pr-gate full tier 首輪 NO-GO（raw `--sandbox danger-full-access` 旁路）→ 於 adapter chokepoint 修復＋回歸 → 重跑 GO。排在 [[CC-394]] 之後。umbrella [[CC-333]]。 | arch/security | 2026-06-16 | pr:#294 | P3 | design |
 | CC-397 | ✅ done | **[refactor: extract pmctl_dispatch_run executor tail + persist footer durably]** Phase 7c-1 groundwork for detached-supervised dispatch ([[CC-391]]). Extract the post-preflight executor tail (invoke → footer → verify → terminal state + [[CC-225]] record) into one shared internal function (behavior-identical), and replace the ephemeral mktemp footer with a durable per-run `.agent-trace/<run_id>.footer` so a later supervisor crash between adapter exit and post-verify cannot lose the footer-derived per-run paths ([[CC-305]] explicit-path contract preserved). No supervisor/lifecycle surface yet ([[CC-391]]落地 7c-2). umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
+| CC-398 | ✅ done | **[feat: dispatch lifecycle axis — `--lifecycle detached` + synchronous supervisor boundary]** Phase 7c-2a of [[CC-391]]. Add the dispatch-time lifecycle axis: `pmctl dispatch run --lifecycle foreground\|detached` (+ `dispatch.lifecycle` config default), detach-eligibility DERIVED from `runner_kind` (`runner_kind_detach_eligible`; cli-subprocess=yes, host-native=no), reject ineligible adapters pre-launch, and a new `scripts/dispatch-supervisor.sh` that consumes a pmctl-produced run-spec and RE-RUNS the full security preflight (name/containment/route + guard) so it is not a bypass door. Supervisor runs SYNCHRONOUSLY (behavior-equivalent to foreground); `setsid`/`nohup` true detachment + `pmctl dispatch wait` are 7c-2b ([[CC-399]]). HARD security+risk gate. umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
+| CC-399 | 🔵 active | **[feat: detached dispatch true detachment + `pmctl dispatch wait`]** Phase 7c-2b of [[CC-391]]. Flip the `scripts/dispatch-supervisor.sh` launch to `setsid`/`nohup` with redirected stdio so the supervisor survives the caller exiting; `--lifecycle detached` returns a `run_id` immediately (pending/dispatched written before return); add `pmctl dispatch wait <run_id>` resolving the terminal outcome from the durable `.dispatch-results/<run_id>.md` record ([[CC-225]]; run_id is identity, PID advisory only). Builds on the 7c-2a ([[CC-398]]) supervisor + run-spec. Then 7c-3 = [[CC-238]] generic supervisor timeout + per-child attribution. HARD security+risk gate (env/credential allowlist for the detached process). umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
 
 ---
 
@@ -266,6 +268,44 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Verification**: `scripts/test-pmctl-dispatch.sh` covers durable footer persistence with per-run artifact paths and direct invocation of the extracted tail, including the foreground lifecycle order `pending,dispatched,verifying,ok`.
 
 **See**: [[CC-391]], [[CC-225]], [[CC-305]], [[CC-333]].
+
+---
+
+## CC-398 — feat: dispatch lifecycle axis — `--lifecycle detached` + synchronous supervisor boundary ✅ 2026-06-17
+
+**Closed 2026-06-17**: Implemented Phase 7c-2a of the detached-supervised dispatch axis. Adds the dispatch-time lifecycle choice without true process detachment yet, so the security boundary lands and gates on its own before the `setsid`/`nohup` mechanics (7c-2b, [[CC-399]]).
+
+**Problem / 目標**: [[CC-391]] spike (partial-adopt) 的遷移順序 D7 steps 3–4：在真正 detach 之前，先把 lifecycle 作為派發當下的選擇引入、把 supervisor 邊界立起來、並讓「supervisor 不能成為 guard 旁路」這條紅線可獨立審查。eligibility 由 [[CC-372]] `runner_kind` 推導（非 manifest 欄位），符合 [[CC-391]] modeling red line。
+
+**Requirement / 實作**:
+- `runner_kind_detach_eligible <runner_kind>` in `scripts/lib/runner-kind.sh` (cli-subprocess→0 eligible, host-native→1, unknown→2; exported).
+- `pmctl dispatch run --lifecycle foreground|detached` parsing (consumed by pmctl, never forwarded to the adapter) + `dispatch.lifecycle` config key → `PM_CFG_LIFECYCLE` (`scripts/lib/pmctl-config.sh`); precedence flag > config > foreground.
+- `pmctl_dispatch_detach_eligible` rejects ineligible adapters BEFORE any executor launch; detached + `--print-cmd` rejected.
+- Factored `pmctl_dispatch_resolve_adapter` (name + symlink/containment + route allowlist) as the shared security preflight used by both `pmctl_dispatch_run` and the supervisor; existing error messages preserved.
+- `pmctl_dispatch_write_runspec` writes a durable `<work_dir>/.agent-trace/<run_id>.runspec` (human-readable scalars + base64 forward args, atomic mktemp+mv).
+- New `scripts/dispatch-supervisor.sh`: reads `--run-spec`, derives REPO_ROOT from its own path, RE-RUNS the security preflight (name/containment/route via `pmctl_dispatch_resolve_adapter` + `pmctl guard check`), then calls `pmctl_dispatch_execute_tail`. Not a bypass door — a tampered run-spec cannot reach an executor pmctl would refuse.
+- 7c-2a scope only: supervisor invoked SYNCHRONOUSLY; no `setsid`/`nohup`, no `dispatch start`/`wait`, no `run.schema.json` change.
+
+**Verification**: `scripts/test-dispatch-lifecycle.sh` (12 cases): foreground default writes no run-spec; detached is behavior-equivalent (+writes run-spec, ok record); detached adapter failure propagates exit; invalid `--lifecycle` rejected; detached+`--print-cmd` rejected; ineligible adapter rejected pre-launch (no executor run); eligibility unit gate over cli-subprocess/host-native/missing/unknown; `dispatch.lifecycle=detached` config activates; flag beats config; supervisor rejects non-routable + path-traversal adapter run-specs and a missing run-spec. Existing `test-pmctl-dispatch.sh` / `test-dispatch-record.sh` / `test-runner-kind.sh` unchanged-green (foreground identical).
+
+**See**: [[CC-391]], [[CC-397]], [[CC-372]], [[CC-225]], [[CC-399]], [[CC-333]].
+
+---
+
+## CC-399 — feat: detached dispatch true detachment + `pmctl dispatch wait` 🔵 active
+
+**Problem / 目標**: Phase 7c-2b of [[CC-391]] — turn the 7c-2a ([[CC-398]]) synchronous supervisor into a genuinely detached one (D7 step 5). The boundary and run-spec already exist; this slice adds true process detachment and the reattach/wait surface.
+
+**Requirement**:
+- Launch `scripts/dispatch-supervisor.sh` via `setsid`/`nohup` with stdio redirected to a per-run supervisor log; the supervisor must survive the calling shell/session exiting and own + reap the executor child.
+- `pmctl dispatch run --lifecycle detached` returns a `run_id` immediately, after writing `pending`/`dispatched`, instead of blocking on the tail.
+- `pmctl dispatch wait <run_id>` resolves the terminal outcome from the durable `.dispatch-results/<run_id>.md` record ([[CC-225]]); identity is `run_id`, PID is advisory only and must include recorded start time when used.
+- Define an env/credential allowlist for the detached process; do not log secrets (spike risk row).
+- Acceptance: one real eligible adapter detached run returns a run_id before completion, the original thread exits, and `dispatch wait` reports the terminal outcome from durable state with no orphaned child.
+
+**Sequencing**: after [[CC-398]]; then 7c-3 = [[CC-238]] (generic supervisor timeout + per-child attribution, retire the pr-gate fan-out one-off). HARD security+risk gate.
+
+**See**: [[CC-391]], [[CC-398]], [[CC-225]], [[CC-238]], [[CC-333]], `docs/spikes/CC-391-detached-supervised-dispatch-scope.md`.
 
 ---
 

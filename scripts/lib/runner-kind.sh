@@ -134,6 +134,21 @@ runner_kind_resolve_flag() {
   printf '%s\n' "$override"
 }
 
+# runner_kind_detach_eligible <runner_kind>
+# Decides whether an adapter of this runner-kind may run under a detached
+# supervisor (CC-391 lifecycle axis). DERIVED from the declared runner-kind, not
+# a manifest field: a cli-subprocess executor is a Model B subprocess pmctl can
+# reparent under a supervisor; a host-native executor IS the running host and
+# cannot be handed to an external supervisor. Returns 0 (eligible), 1 (not
+# eligible), or 2 (unknown runner-kind — caller should fail closed).
+runner_kind_detach_eligible() {
+  case "${1-}" in
+    cli-subprocess) return 0 ;;
+    host-native)    return 1 ;;
+    *)              return 2 ;;
+  esac
+}
+
 # runner_kind_manifest_field <adapter.yaml> <key>
 # Reads one top-level flat scalar from an adapter manifest. Tolerant of inline
 # `# comments` and surrounding quotes; prints nothing (exit 0) when the key is
@@ -167,4 +182,5 @@ runner_kind_manifest_field() {
 export -f runner_kind_valid
 export -f runner_kind_default_flag
 export -f runner_kind_resolve_flag
+export -f runner_kind_detach_eligible
 export -f runner_kind_manifest_field

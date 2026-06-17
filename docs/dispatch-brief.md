@@ -448,6 +448,17 @@ dispatch.default_timeout=900
 
 Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnings and ignored. Unknown keys are ignored for forward compatibility.
 
+### Dispatch lifecycle
+
+`pmctl dispatch run` supports a `--lifecycle foreground|detached` flag (default `foreground`), with a `dispatch.lifecycle = foreground|detached` config default the flag overrides. This axis is **orthogonal** to an adapter's `runner_kind` (which says *how* the executor is reached): lifecycle says *who owns the executor after launch*.
+
+- `foreground` runs the post-preflight executor tail (adapter invocation → footer parse → post-verify → terminal state + durable record) in-process — the historical behavior.
+- `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec` and hands the same tail to `scripts/dispatch-supervisor.sh`. The supervisor re-runs the full security preflight (adapter name/containment, route allowlist, `pmctl guard check`) before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces.
+
+Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is derived from the adapter's `runner_kind` (`cli-subprocess` = eligible; `host-native` = not). An ineligible adapter, or `--lifecycle detached --print-cmd`, is rejected before any executor launch.
+
+> **Note (Phase 7c-2a):** the supervisor currently runs **synchronously**, so `detached` is behavior-equivalent to `foreground`. True `setsid`/`nohup` detachment — an immediate `run_id` return plus `pmctl dispatch wait <run_id>` resolving from the durable result record — is the 7c-2b follow-up and is not yet wired.
+
 ## Executor-agnostic model aliases
 
 Use these aliases in briefs and PM routing — never hard-code executor wire-format IDs.
