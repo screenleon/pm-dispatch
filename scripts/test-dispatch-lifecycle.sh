@@ -104,9 +104,11 @@ case_detached_equivalent() {
     && grep -q '^OK$' <<<"$out" \
     && grep -q 'PASS: trace structurally complete' <<<"$out" \
     && [[ -n "$record" ]] && grep -q '^final_state: "ok"$' "$record" \
-    && [[ -n "$runspec" ]] && grep -q '^schema_version=1$' "$runspec" \
+    && [[ -n "$runspec" ]] && grep -q '^schema_version=2$' "$runspec" \
     && grep -q '^adapter=codex$' "$runspec" \
-    && grep -q '^forward_b64:$' "$runspec"; then
+    && grep -q '^cd_arg=' "$runspec" \
+    && grep -q "^brief_file=$brief\$" "$runspec" \
+    && grep -q '^native_b64:$' "$runspec"; then
     pass "$name"
   else
     fail "$name" "code=$code record=${record:-missing} runspec=${runspec:-missing} tail=$(tail -3 <<<"$out" | tr '\n' '|')"
@@ -263,23 +265,25 @@ case_flag_beats_config() {
   rm -rf "$work" "$bindir"; rm -f "$cfg"
 }
 
-# ── supervisor is not a bypass: a tampered run-spec adapter is re-validated ───
+# ── supervisor is not a bypass: a tampered run-spec is re-validated ───────────
+# Writes a schema-v2 run-spec. Extra base64-encoded native args may be appended.
 _write_runspec() {
-  local path="$1" adapter="$2" work="$3" brief="$4"
+  local path="$1" adapter="$2" work="$3" brief="$4"; shift 4
   {
-    printf 'schema_version=1\n'
+    printf 'schema_version=2\n'
     printf 'run_id=run-20260617T000000Z-aaaaaa\n'
     printf 'adapter=%s\n' "$adapter"
     printf 'work_dir=%s\n' "$work"
+    printf 'cd_arg=%s\n' "$work"
     printf 'brief_file=%s\n' "$brief"
     printf 'model=\n'
     printf 'created_ts=2026-06-17T00:00:00Z\n'
     printf 'print_cmd=0\n'
-    printf 'forward_b64:\n'
-    printf '%s\n' "$(printf '%s' '--cd' | base64 | tr -d '\n')"
-    printf '%s\n' "$(printf '%s' "$work" | base64 | tr -d '\n')"
-    printf '%s\n' "$(printf '%s' '--brief-file' | base64 | tr -d '\n')"
-    printf '%s\n' "$(printf '%s' "$brief" | base64 | tr -d '\n')"
+    printf 'native_b64:\n'
+    local a
+    for a in "$@"; do
+      printf '%s\n' "$(printf '%s' "$a" | base64 | tr -d '\n')"
+    done
   } > "$path"
 }
 
@@ -339,6 +343,78 @@ case_supervisor_missing_spec() {
   fi
 }
 
+# ── supervisor rejects a malformed brief BEFORE launching the executor ────────
+case_supervisor_rejects_malformed_brief() {
+  local name="supervisor/run-spec with malformed brief rejected before launch"
+  should_run "$name" || return 0
+  local work bad bindir spec code err
+  work="$(mktemp -d)"; git init -q "$work"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  # A guard-allowed /tmp/brief-*.md path that fails brief-validate (missing
+  # required schema fields). pmctl dispatch run would reject it; so must the
+  # supervisor, before any executor runs.
+  bad="/tmp/brief-lifecycle-malformed-$$.md"; printf 'not: a valid brief\n' > "$bad"
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _write_runspec "$spec" "codex" "$work" "$bad"
+  set +e
+  err="$(PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+    && grep -qi 'brief failed validation' <<<"$err" \
+    && [[ -z "$(_first_record "$work")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$bad"
+}
+
+# ── supervisor rejects native args that smuggle in --brief-file ──────────────
+case_supervisor_rejects_native_brief_smuggle() {
+  local name="supervisor/run-spec native args carrying --brief-file rejected"
+  should_run "$name" || return 0
+  local work brief evil bindir spec code err
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  evil="/tmp/brief-lifecycle-evil-$$.md"; cp "$brief" "$evil"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  # The trusted scalars name $brief, but native args try to override the brief the
+  # adapter receives with $evil — the supervisor must refuse the split.
+  _write_runspec "$spec" "codex" "$work" "$brief" "--brief-file" "$evil"
+  set +e
+  err="$(PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+    && grep -qi 'native args must not contain --brief-file' <<<"$err" \
+    && [[ -z "$(_first_record "$work")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$evil"
+}
+
+# ── detached + auto-pack is rejected (deferred combination) ───────────────────
+case_detached_autopack_rejected() {
+  local name="lifecycle/detached + auto-pack rejected"
+  should_run "$name" || return 0
+  local work brief code err
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  set +e
+  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached --auto-pack 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] \
+    && grep -qi 'does not yet support auto-pack' <<<"$err" \
+    && [[ -z "$(_first_runspec "$work")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code runspec=$(_first_runspec "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+  rm -rf "$work"
+}
+
 case_foreground_default_no_runspec
 case_detached_equivalent
 case_detached_failure_propagates
@@ -351,4 +427,7 @@ case_flag_beats_config
 case_supervisor_rejects_unroutable
 case_supervisor_rejects_traversal_name
 case_supervisor_missing_spec
+case_supervisor_rejects_malformed_brief
+case_supervisor_rejects_native_brief_smuggle
+case_detached_autopack_rejected
 th_summary

@@ -622,6 +622,26 @@ pmctl_dispatch_resolve_adapter() {
   printf '%s\n' "$adapter_path"
 }
 
+# Shared brief-validate step: runs scripts/brief-validate.sh on the brief the
+# adapter will consume, echoing any non-fatal validator notes to stderr. Used by
+# BOTH pmctl_dispatch_run and the detached supervisor so every executor launch —
+# foreground or detached — is fronted by the same brief schema check (a detached
+# supervisor must not be able to launch an executor on a brief that
+# `pmctl dispatch run` would reject). Returns 2 on validation failure.
+pmctl_dispatch_validate_brief() {
+  local repo_root="${1:-}" brief_file="${2:-}"
+  local brief_result=0 brief_msg
+  brief_msg="$(bash "$repo_root/scripts/brief-validate.sh" "$brief_file" 2>&1)" || brief_result=$?
+  if [[ "$brief_result" -ne 0 ]]; then
+    printf 'pmctl dispatch run: brief failed validation: %s\n%s\n' "$brief_file" "$brief_msg" >&2
+    return 2
+  fi
+  if [[ -n "$brief_msg" && "$brief_msg" != "VALID" ]]; then
+    printf '%s\n' "$brief_msg" >&2
+  fi
+  return 0
+}
+
 # Decide whether an adapter may run under a detached supervisor (CC-391 lifecycle
 # axis). Eligibility is DERIVED from the adapter's declared runner_kind, never a
 # manifest lifecycle field: cli-subprocess executors are Model B subprocesses
@@ -663,48 +683,83 @@ pmctl_dispatch_detach_eligible() {
   esac
 }
 
-# Serialize a validated, post-preflight run into a durable run-spec the detached
-# supervisor consumes. Scalars are written human-readable for forensics; the
-# adapter forward args are base64-encoded one per line (robust against spaces,
-# newlines, and shell metacharacters) so the supervisor never re-parses or
-# word-splits user-influenced tokens. Written atomically via mktemp + mv.
+# Serialize a validated, post-preflight run into a durable run-spec (schema v2)
+# the detached supervisor consumes. The run-spec is the SINGLE source of truth:
+# `cd_arg` (the --cd value the adapter receives) and `brief_file` (the brief that
+# is guarded, validated, AND forwarded) are recorded as trusted scalars; the
+# `native_b64` section carries ONLY the non-core adapter passthrough args
+# (everything except --cd / --brief-file), base64-encoded one per line so the
+# supervisor never word-splits user-influenced tokens. The supervisor rebuilds
+# the adapter command as `--cd <cd_arg> --brief-file <brief_file> <native…>`, so
+# the brief/work-dir the adapter runs are exactly the ones guarded and validated
+# — there is no second, divergent source. Written atomically via mktemp + mv.
 pmctl_dispatch_write_runspec() {
   local spec_path="${1:-}"; shift || true
-  local run_id="${1:-}" adapter="${2:-}" work_dir="${3:-}" brief_file="${4:-}"
-  local model="${5:-}" created_ts="${6:-}" print_cmd="${7:-}"
-  shift 7 || true
-  local -a fwd=("$@")
+  local run_id="${1:-}" adapter="${2:-}" work_dir="${3:-}" cd_arg="${4:-}" brief_file="${5:-}"
+  local model="${6:-}" created_ts="${7:-}" print_cmd="${8:-}"
+  shift 8 || true
+  local -a native=("$@")
   local spec_dir tmp arg
   spec_dir="$(dirname "$spec_path")"
   tmp="$(mktemp "$spec_dir/.runspec.tmp.XXXXXX")" || return 1
   {
-    printf 'schema_version=1\n'
+    printf 'schema_version=2\n'
     printf 'run_id=%s\n' "$run_id"
     printf 'adapter=%s\n' "$adapter"
     printf 'work_dir=%s\n' "$work_dir"
+    printf 'cd_arg=%s\n' "$cd_arg"
     printf 'brief_file=%s\n' "$brief_file"
     printf 'model=%s\n' "$model"
     printf 'created_ts=%s\n' "$created_ts"
     printf 'print_cmd=%s\n' "$print_cmd"
-    printf 'forward_b64:\n'
-    for arg in ${fwd[@]+"${fwd[@]}"}; do
+    printf 'native_b64:\n'
+    for arg in ${native[@]+"${native[@]}"}; do
       printf '%s\n' "$(printf '%s' "$arg" | base64 | tr -d '\n')"
     done
   } > "$tmp" || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$spec_path" || { rm -f "$tmp"; return 1; }
 }
 
-# Detached lifecycle launcher (CC-391 Phase 7c-2a). Persist the run-spec, then
-# invoke the supervisor. In 7c-2a the supervisor runs SYNCHRONOUSLY, so detached
-# is behavior-equivalent to foreground; setsid/nohup true detachment and
+# Detached lifecycle launcher (CC-391 Phase 7c-2a). Splits the core --cd /
+# --brief-file out of the forward args (recording them as trusted run-spec
+# scalars) so the brief/work-dir the supervisor guards and validates are exactly
+# the ones it forwards to the adapter, then persists the run-spec and invokes the
+# supervisor. In 7c-2a the supervisor runs SYNCHRONOUSLY, so detached is
+# behavior-equivalent to foreground; setsid/nohup true detachment and
 # `pmctl dispatch wait <run_id>` land in 7c-2b. The supervisor re-runs the full
-# security preflight (name/containment/route/guard) before any executor launch,
-# so this path is never a guard bypass.
+# security preflight (name/containment/route + brief-validate + guard) before any
+# executor launch, so this path is never a policy bypass.
 pmctl_dispatch_run_detached() {
   local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}"
   local run_id="${4:-}" model="${5:-}" brief_file="${6:-}" created_ts="${7:-}" print_cmd="${8:-}"
   shift 8 || true
   local -a forward=("$@")
+
+  # Separate the core --cd / --brief-file (recorded as trusted scalars) from the
+  # native passthrough args. Detached rejects auto-pack, so the forwarded brief
+  # always equals the guarded brief_file; assert that invariant defensively.
+  local cd_arg="" fwd_brief="" i=0
+  local -a native=()
+  while [[ "$i" -lt "${#forward[@]}" ]]; do
+    case "${forward[$i]}" in
+      --cd)
+        cd_arg="${forward[$((i + 1))]:-}"
+        i=$((i + 2))
+        ;;
+      --brief-file)
+        fwd_brief="${forward[$((i + 1))]:-}"
+        i=$((i + 2))
+        ;;
+      *)
+        native+=("${forward[$i]}")
+        i=$((i + 1))
+        ;;
+    esac
+  done
+  if [[ -n "$fwd_brief" && "$fwd_brief" != "$brief_file" ]]; then
+    printf 'pmctl dispatch run: internal error: detached forwarded brief (%s) diverges from guarded brief (%s)\n' "$fwd_brief" "$brief_file" >&2
+    return 2
+  fi
 
   local spec_dir spec_path
   spec_dir="$work_dir/.agent-trace"
@@ -714,7 +769,7 @@ pmctl_dispatch_run_detached() {
     return 2
   fi
   if ! pmctl_dispatch_write_runspec "$spec_path" "$run_id" "$adapter" "$work_dir" \
-      "$brief_file" "$model" "$created_ts" "$print_cmd" ${forward[@]+"${forward[@]}"}; then
+      "$cd_arg" "$brief_file" "$model" "$created_ts" "$print_cmd" ${native[@]+"${native[@]}"}; then
     printf 'pmctl dispatch run: failed to write run-spec: %s\n' "$spec_path" >&2
     return 2
   fi
@@ -845,16 +900,7 @@ pmctl_dispatch_run() {
   adapter_path="$(pmctl_dispatch_resolve_adapter "$repo_root" "$adapter")" || return 2
 
   # 3. Brief-validate (shared) — always runs; there is no brief-less path.
-  local brief_result=0
-  local brief_msg
-  brief_msg="$(bash "$repo_root/scripts/brief-validate.sh" "$brief_file" 2>&1)" || brief_result=$?
-  if [[ "$brief_result" -ne 0 ]]; then
-    printf 'pmctl dispatch run: brief failed validation: %s\n%s\n' "$brief_file" "$brief_msg" >&2
-    return 2
-  fi
-  if [[ -n "$brief_msg" && "$brief_msg" != "VALID" ]]; then
-    printf '%s\n' "$brief_msg" >&2
-  fi
+  pmctl_dispatch_validate_brief "$repo_root" "$brief_file" || return 2
 
   # 3a. Optional auto-pack. Config is loaded here because dispatch.auto_pack
   # decides whether this pre-guard step runs; adapter-facing config exports are
@@ -892,6 +938,19 @@ pmctl_dispatch_run() {
   elif [[ "${PM_CFG_AUTO_PACK:-}" == "on" || "${PM_CFG_AUTO_PACK:-}" == "off" ]]; then
     _auto_pack_effective="$PM_CFG_AUTO_PACK"
   fi
+
+  # Detached + auto-pack is rejected for now. Auto-pack forwards a derived pack
+  # brief (under .pm-dispatch/ctx/packs/, outside the /tmp brief-guard pattern)
+  # that differs from the /tmp brief the guard validates; supporting that safely
+  # in a detached run-spec needs a pack-provenance contract that is out of scope
+  # for 7c-2a. Rejecting the combination keeps the detached invariant simple and
+  # auditable: the brief that is guarded IS the brief that is validated and
+  # executed. (auto-pack default is off; detached is opt-in.)
+  if [[ "$_lifecycle_effective" == "detached" && "$_auto_pack_effective" == "on" ]]; then
+    printf 'pmctl dispatch run: --lifecycle detached does not yet support auto-pack; run foreground or pass --no-auto-pack\n' >&2
+    return 2
+  fi
+
   PMCTL_DISPATCH_AUTO_PACK_PATH=""
   if [[ "$_auto_pack_effective" == "on" ]]; then
     pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true

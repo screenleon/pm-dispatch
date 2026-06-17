@@ -58,27 +58,29 @@ done
 [[ -n "$run_spec" ]] || _die "--run-spec <path> is required"
 [[ -f "$run_spec" ]] || _die "run-spec not found: $run_spec"
 
-# ── Read run-spec ───────────────────────────────────────────────────────────
-# Scalars are key=value (first '=' splits, so values may contain '=' or spaces);
-# forward args follow the `forward_b64:` marker, one base64 token per line. The
-# supervisor never word-splits or re-parses user-influenced tokens.
-spec_schema="" spec_run_id="" spec_adapter="" spec_work_dir=""
+# ── Read run-spec (schema v2) ───────────────────────────────────────────────
+# Scalars are key=value (first '=' splits, so values may contain '=' or spaces).
+# `cd_arg` and `brief_file` are the trusted core args; the `native_b64:` section
+# holds ONLY the non-core adapter passthrough args (no --cd / --brief-file), one
+# base64 token per line. The supervisor never word-splits user-influenced tokens.
+spec_schema="" spec_run_id="" spec_adapter="" spec_work_dir="" spec_cd_arg=""
 spec_brief_file="" spec_model="" spec_created_ts="" spec_print_cmd=""
-forward=()
-in_forward=0
+native=()
+in_native=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-  if [[ "$in_forward" -eq 1 ]]; then
+  if [[ "$in_native" -eq 1 ]]; then
     [[ -z "$line" ]] && continue
-    arg="$(printf '%s' "$line" | base64 -d 2>/dev/null)" || _die "malformed base64 forward arg in run-spec"
-    forward+=("$arg")
+    arg="$(printf '%s' "$line" | base64 -d 2>/dev/null)" || _die "malformed base64 arg in run-spec"
+    native+=("$arg")
     continue
   fi
   case "$line" in
-    forward_b64:) in_forward=1 ;;
+    native_b64:) in_native=1 ;;
     schema_version=*) spec_schema="${line#schema_version=}" ;;
     run_id=*)       spec_run_id="${line#run_id=}" ;;
     adapter=*)      spec_adapter="${line#adapter=}" ;;
     work_dir=*)     spec_work_dir="${line#work_dir=}" ;;
+    cd_arg=*)       spec_cd_arg="${line#cd_arg=}" ;;
     brief_file=*)   spec_brief_file="${line#brief_file=}" ;;
     model=*)        spec_model="${line#model=}" ;;
     created_ts=*)   spec_created_ts="${line#created_ts=}" ;;
@@ -88,25 +90,51 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < "$run_spec"
 
 # ── Validate the spec's own fields (independent of pmctl) ────────────────────
-[[ "$spec_schema" == "1" ]] || _die "unsupported run-spec schema_version: ${spec_schema:-<empty>}"
+[[ "$spec_schema" == "2" ]] || _die "unsupported run-spec schema_version: ${spec_schema:-<empty>}"
 [[ "$spec_run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] || _die "invalid run_id in run-spec: ${spec_run_id:-<empty>}"
 [[ -n "$spec_adapter" ]] || _die "missing adapter in run-spec"
 [[ -n "$spec_work_dir" ]] || _die "missing work_dir in run-spec"
+[[ -n "$spec_cd_arg" ]] || _die "missing cd_arg in run-spec"
 [[ -n "$spec_brief_file" ]] || _die "missing brief_file in run-spec"
 case "$spec_print_cmd" in 0|1) : ;; *) _die "invalid print_cmd in run-spec: ${spec_print_cmd:-<empty>}" ;; esac
 
-# ── Re-run the security preflight (defense in depth — not a bypass door) ─────
+# The native passthrough args must NOT smuggle in their own --cd / --brief-file:
+# those are trusted scalars the supervisor reconstructs below, so a second copy in
+# the native section would let a tampered run-spec point the adapter at a brief or
+# work dir different from the one guarded and validated. Reject any such token.
+for arg in ${native[@]+"${native[@]}"}; do
+  case "$arg" in
+    --cd|--brief-file)
+      _die "run-spec native args must not contain $arg (it is a trusted scalar, not a passthrough)"
+      ;;
+  esac
+done
+
+# ── Re-run the full security preflight (defense in depth — not a bypass door) ─
+# resolve adapter (name/containment/route) -> validate the exact brief the
+# adapter will run -> guard that same brief. Identical contract to
+# `pmctl dispatch run`, so the supervisor can never launch what pmctl would
+# refuse, even from a hand-crafted run-spec.
 declare -F pmctl_dispatch_resolve_adapter >/dev/null || _die "pmctl-dispatch lib unavailable"
 adapter_path="$(pmctl_dispatch_resolve_adapter "$REPO_ROOT" "$spec_adapter")" || exit 2
+
+declare -F pmctl_dispatch_validate_brief >/dev/null || _die "pmctl_dispatch_validate_brief unavailable"
+pmctl_dispatch_validate_brief "$REPO_ROOT" "$spec_brief_file" || exit 2
 
 declare -F pmctl_guard_check >/dev/null || _die "guard unavailable (pmctl-guard not sourced)"
 if ! pmctl_guard_check "$REPO_ROOT" --event pre-write --role executor --runtime "$spec_adapter" --file "$spec_brief_file"; then
   _die "guard denied dispatch for adapter $spec_adapter"
 fi
 
+# ── Rebuild the adapter forward args from trusted scalars + native passthrough ─
+# --cd / --brief-file come ONLY from the validated scalars, so the brief and work
+# dir the adapter runs are exactly the ones guarded and validated above.
+forward=(--cd "$spec_cd_arg" --brief-file "$spec_brief_file")
+forward+=(${native[@]+"${native[@]}"})
+
 # ── Run the shared post-preflight tail ──────────────────────────────────────
 declare -F pmctl_dispatch_execute_tail >/dev/null || _die "pmctl_dispatch_execute_tail unavailable"
 pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
-  ${forward[@]+"${forward[@]}"}
+  "${forward[@]}"
 exit $?
