@@ -73,7 +73,7 @@ case_ok_record_written() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   record="$(_first_record "$work")"
   if [[ "$code" -eq 0 ]] \
@@ -99,7 +99,7 @@ case_failed_record_written() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 7
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
   set -e
   record="$(_first_record "$work")"
   if [[ "$code" -eq 7 ]] \
@@ -123,7 +123,7 @@ case_post_verify_summary_captured() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0 empty-last
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   record="$(_first_record "$work")"
   if [[ "$code" -eq 1 ]] \
@@ -145,7 +145,7 @@ case_print_cmd_writes_no_record() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd >/dev/null 2>&1; code=$?
+  "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd >/dev/null 2>&1; code=$?
   set -e
   if [[ -d "$work/.dispatch-results" ]]; then
     count="$(find "$work/.dispatch-results" -type f | wc -l | tr -d ' ')"
@@ -169,7 +169,7 @@ case_record_failure_is_soft() {
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   dispatch_record_write() { return 42; }
   set +e
-  out="$(PATH="$bindir:$PATH" pmctl_dispatch_run "$REPO_ROOT" --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" pmctl_dispatch_run "$REPO_ROOT" --adapter codex --lifecycle foreground --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   unset -f dispatch_record_write
   # shellcheck source=scripts/lib/dispatch-record.sh

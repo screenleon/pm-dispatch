@@ -501,14 +501,14 @@ case_all_attempts_failed() {
   rm -rf "$bindir" "$work"; rm -f "$bf"
 }
 
-# Behavior: pmctl dispatch run --adapter opencode routes through the opencode adapter,
+# Behavior: pmctl dispatch run --lifecycle foreground --adapter opencode routes through the opencode adapter,
 # records executor:"opencode" in the Run state row, and creates latest.last.
 # Steps:
 #   1. git-init a workdir; install fake opencode that succeeds.
-#   2. Run pmctl dispatch run --adapter opencode with a fresh state store.
+#   2. Run pmctl dispatch run --lifecycle foreground --adapter opencode with a fresh state store.
 #   3. Assert runs.jsonl row has executor:"opencode", state:"ok", and latest.last exists.
 case_pmctl_route() {
-  local name="pmctl-route/pmctl dispatch run --adapter opencode records Run row"; should_run "$name" || return 0
+  local name="pmctl-route/pmctl dispatch run --lifecycle foreground --adapter opencode records Run row"; should_run "$name" || return 0
   local store bindir work bf runs_file executor state exit_code
   store="$(mktemp -d)"; bindir="$(mktemp -d)"; work="$(mktemp -d)"
   bf="$(mktemp /tmp/brief-oc-pmctl-XXXXXX.md)"
@@ -517,7 +517,7 @@ case_pmctl_route() {
     "$work" "$work" > "$bf"
   _fake_opencode_success "$bindir" "pmctl route ok"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$bindir:$PATH" \
-    "$PMCTL" dispatch run --adapter opencode \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter opencode \
     --cd "$work" --brief-file "$bf" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   executor="$(jq -r '.executor' "$runs_file" 2>/dev/null | tail -1 || true)"

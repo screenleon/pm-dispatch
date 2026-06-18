@@ -123,7 +123,7 @@ EOF
 
 e2e_log="$(mktemp)"
 dispatch_rc=0
-"$PMCTL" dispatch run \
+"$PMCTL" dispatch run --lifecycle foreground \
   --adapter "$ADAPTER" \
   --cd "$smoke_dir" \
   --brief-file "$brief_file" \

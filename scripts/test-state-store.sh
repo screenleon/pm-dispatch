@@ -946,7 +946,7 @@ case_pmctl_dispatch_creates_run_row() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   local runs_file schema_v executor state exit_code events_file event_kinds
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
@@ -985,7 +985,7 @@ case_pmctl_dispatch_correct_partition() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   expected_partition="$store/projects/$work_dir_key"
   if [[ -f "$expected_partition/runs.jsonl" ]]; then
@@ -1017,7 +1017,7 @@ case_pmctl_dispatch_run_json_valid() {
   brief_file="$(mk_pmctl_brief "$work_dir")"
   # Use a model name with characters that would corrupt printf-based JSON
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --model 'model-with-"quotes"' \
     --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
@@ -1041,7 +1041,7 @@ case_pmctl_dispatch_model_explicit() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --model "explicit-model-x" \
     --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
@@ -1071,7 +1071,7 @@ case_pmctl_dispatch_model_config_default() {
   printf 'dispatch.default_model = config-default-model\n' > "$cfg_file"
   PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_CONFIG_FILE="$cfg_file" \
     PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   model_found="$(jq -r '.model' "$runs_file" 2>/dev/null | tail -1 || true)"
@@ -1099,7 +1099,7 @@ case_pmctl_dispatch_model_builtin_default() {
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
     unset PM_CFG_DEFAULT_MODEL 2>/dev/null; \
     PM_DISPATCH_STATE_ROOT="$store" PM_CFG_DEFAULT_MODEL="" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   model_found="$(jq -r '.model' "$runs_file" 2>/dev/null | tail -1 || true)"
@@ -1133,7 +1133,7 @@ case_pmctl_dispatch_subdir_partition_key() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_subdir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_subdir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   expected_partition="$store/projects/$root_key"
   if [[ -f "$expected_partition/runs.jsonl" ]]; then
@@ -1207,7 +1207,7 @@ case_pmctl_dispatch_failed_records_state() {
   install_fake_codex "$fake_bin_dir" 42
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name "runs.jsonl" -type f 2>/dev/null | head -1 || true)"
   state_found=""
@@ -1236,7 +1236,7 @@ case_pmctl_dispatch_pre_event_before_adapter() {
   install_fake_codex "$fake_bin_dir" 0 "$probe_file"
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
   first_two_kinds=""
@@ -1260,7 +1260,7 @@ case_pmctl_dispatch_completed_event() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
   kinds=""
@@ -1288,7 +1288,7 @@ case_pmctl_dispatch_full_fsm_sequence() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
   runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
@@ -1316,7 +1316,7 @@ case_pmctl_dispatch_terminal_run_event_invariant() {
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   runs_file="$(find "$store" -name runs.jsonl -type f 2>/dev/null | head -1 || true)"
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
@@ -1359,7 +1359,7 @@ case_pmctl_dispatch_failed_event() {
   install_fake_codex "$fake_bin_dir" 42
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || true
   events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
   failed_exit=""
@@ -1393,7 +1393,7 @@ case_pmctl_dispatch_pre_event_fail_blocks_adapter() {
   proj_dir="$(PM_DISPATCH_STATE_ROOT="$store" _SW_REPO_ROOT="$work_dir" _sw_project_dir)"
   mkdir "$proj_dir/events.jsonl"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -ne 0 && ! -f "$probe_file" ]]; then
     pass "$name"
@@ -1421,7 +1421,7 @@ case_pmctl_dispatch_terminal_event_append_fail() {
   brief_file="$(mk_pmctl_brief "$work_dir")"
   rc=0
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
-    "$PMCTL" dispatch run --adapter codex \
+    "$PMCTL" dispatch run --adapter codex --lifecycle foreground \\
     --cd "$work_dir" --brief-file "$brief_file" >/dev/null 2>&1 || rc=$?
   # Restore events.jsonl permissions so the temp dir can be cleaned up.
   find "$store" -name events.jsonl | xargs chmod 600 2>/dev/null || true
