@@ -78,8 +78,8 @@
 |----|------|------|
 | CC-391 | **(7a 決策-only，先行)** detached-supervised dispatch 建模決策：lifecycle 作派發旗標非 manifest 欄位、supervisor 元件邊界、durable-outbox 為 load-bearing、foreground→detached 遷移順序（fail-closed 不弱化）、一次真實 detached 派發等價證明。**codex spike = partial-adopt**（`docs/spikes/CC-391-*.md`） | ✅ pr:#288 |
 | CC-392 | **(7a 前置)** claude adapter `runner_kind` 分類漂移修正——manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`（[[CC-383]]/[[CC-388]] 後）→ `runner_kind` 不可信、卡住 [[CC-391]] detach 資格推導。傾向定 canonical 為 `cli-subprocess`＋override 保行為不變；security/risk hard gate（不弱化 claude write guard） | ✅ pr:#289 |
-| CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ⏸ |
-| CC-391 落地子票 | **(7c net-new 核心，Phase 5 後)** `pmctl dispatch start`（setsid/nohup detached supervisor）+ `pmctl dispatch wait`/`pmctl inbox`（reattach）+ durable-outbox notify channel；重用 [[CC-386]]/[[CC-389]] post-verify。**spike 決策後再開正式子票號** | — |
+| CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ✅ pr:#295 |
+| CC-399 | **(7c-2b)** `pmctl dispatch run --lifecycle detached` now launches the supervisor via `setsid`/`nohup`, returns `run_id` immediately, writes advisory supervisor PID/log sidecars. `pmctl dispatch wait <run_id> --cd <dir>` reattaches via the supervisor sentinel (nonce-bearing `/tmp` path, key in per-user private dir); falls back to `.dispatch-results/<run_id>.md` when key is absent. `pmctl inbox`/notify channel remain out of this thin slice. | ✅ pr:#298 |
 | CC-238 | **(7c)** pr-gate fan-out 無 timeout / 弱 attribution = 缺 supervisor 症狀；以通用 supervisor timeout + per-child attribution 收掉（非在 `pr-gate.sh` 做一次性 timeout） | ⏸ |
 
 ### 延後至 v0.7.0+（明確排除於 v0.6.0）

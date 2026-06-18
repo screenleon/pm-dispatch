@@ -73,7 +73,7 @@ case_missing_adapter() {
   should_run "$name" || return 0
   local err code
   set +e
-  err="$("$PMCTL" dispatch run --cd /tmp 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --cd /tmp 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'adapter.*required' <<<"$err"; then
     pass "$name"
@@ -88,7 +88,7 @@ case_unknown_adapter() {
   should_run "$name" || return 0
   local err code
   set +e
-  err="$("$PMCTL" dispatch run --adapter nope --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter nope --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'unknown adapter' <<<"$err"; then
     pass "$name"
@@ -105,7 +105,7 @@ case_adapter_resolution_and_route() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  out="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>/tmp/_t3.$$)"; code=$?
+  out="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>/tmp/_t3.$$)"; code=$?
   err="$(cat /tmp/_t3.$$)"; rm -f /tmp/_t3.$$
   set -e
   if [[ "$code" -eq 0 ]] \
@@ -129,7 +129,7 @@ case_brief_validation_blocks() {
   printf 'goal: incomplete brief\n' > "$brief"
   _BRIEFS+=("$brief")
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'failed validation' <<<"$err"; then
     pass "$name"
@@ -157,7 +157,7 @@ acceptance:
   - dispatch exits 0
 EOF
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'guard denied' <<<"$err"; then
     pass "$name"
@@ -176,7 +176,7 @@ case_happy_path_post_verify_ok() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] \
      && grep -q '^OK$' <<<"$out" \
@@ -197,7 +197,7 @@ case_adapter_exit_propagated() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 7
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
   set -e
   if [[ "$code" -eq 7 ]]; then
     pass "$name"
@@ -224,7 +224,7 @@ exit 0
 FAKEOF
   chmod +x "$bindir/codex"
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
   set -e
   if [[ "$code" -eq 1 ]]; then
     pass "$name"
@@ -240,7 +240,7 @@ case_invalid_adapter_name() {
   should_run "$name" || return 0
   local err code
   set +e
-  err="$("$PMCTL" dispatch run --adapter ../codex --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter ../codex --cd /tmp --brief-file /tmp/x.md 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'invalid adapter name' <<<"$err"; then
     pass "$name"
@@ -256,7 +256,7 @@ case_inline_brief_rejected() {
   local work err code
   work="$(mktemp -d)"; git init -q "$work"
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" -- do a thing 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" -- do a thing 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi 'inline brief form' <<<"$err"; then
     pass "$name"
@@ -339,7 +339,7 @@ case_missing_cd() {
   should_run "$name" || return 0
   local err code
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --brief-file /tmp/x.md 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --brief-file /tmp/x.md 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi '\-\-cd <dir> is required' <<<"$err"; then
     pass "$name"
@@ -355,7 +355,7 @@ case_missing_brief_file() {
   local work err code
   work="$(mktemp -d)"; git init -q "$work"
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" 2>&1)"; code=$?
+  err="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] && grep -qi '\-\-brief-file <path> is required' <<<"$err"; then
     pass "$name"
@@ -405,7 +405,7 @@ case_arg_passthrough() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  out="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+  out="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
          --approval on-request --print-cmd 2>/dev/null)"; code=$?
   set -e
   # The codex adapter renders --approval into `approval_policy="<val>"`; seeing the
@@ -430,7 +430,7 @@ case_sandbox_danger_full_access_denied() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  out="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+  out="$("$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
          --sandbox danger-full-access --print-cmd 2>&1)"; code=$?
   set -e
   if [[ "$code" -ne 0 ]] && grep -qi 'danger-full-access is not supported' <<<"$out"; then
@@ -476,7 +476,7 @@ case_stale_latest_symlink_avoidance() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex_stale_symlink "$bindir"
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   # latest.last → wrong.last contains "status: failed" — if pmctl read it,
   # post-verify would fail with code 1.  Explicit footer path has the real output.
@@ -523,7 +523,7 @@ case_footer_trace_threaded_to_post_verify() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex_stale_jsonl_symlink "$bindir"
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   # The trace-integrity PASS line must reference the per-run codex-<ts>.jsonl
   # (from the footer), proving --jsonl was threaded; overall post-verify is OK.
@@ -545,7 +545,7 @@ case_footer_persisted_and_paths_parse() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   footer="$(find "$work/.agent-trace" -maxdepth 1 -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
   last_path="$(sed -n 's/^last:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
@@ -638,7 +638,7 @@ case_manifest_terminal_event_threaded() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex_non_terminal "$bindir"
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
   # Non-terminal trace + threaded --terminal-event turn.completed → semantic FAIL.
   if [[ "$code" -eq 1 ]] \
@@ -661,7 +661,7 @@ case_footer_exit_propagated_through_tee() {
   brief="$(_mk_guard_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 13
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
   set -e
   if [[ "$code" -eq 13 ]]; then
     pass "$name"
@@ -685,7 +685,7 @@ case_config_timeout_exported_to_adapter() {
   stderr="$(mktemp)"
   set +e
   HOME="$home" CODEX_DISPATCH_TIMEOUT= \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && grep -q 'timeout:  750s' "$stderr"; then
@@ -708,7 +708,7 @@ case_config_model_exported_to_adapter() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+  out="$(HOME="$home" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
     --print-cmd 2>/dev/null)"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"-m gpt-5.4"* ]] && [[ "$out" != *"-m gpt-5.5"* ]]; then
@@ -731,7 +731,7 @@ case_caller_model_beats_config() {
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_guard_brief "$work")"
   set +e
-  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+  out="$(HOME="$home" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
     --model gpt-5.5 --print-cmd 2>/dev/null)"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"-m gpt-5.5"* ]] && [[ "$out" != *"-m gpt-5.4"* ]]; then
@@ -756,7 +756,7 @@ case_config_malformed_model_warns_and_fallback() {
   brief="$(_mk_guard_brief "$work")"
   stderr="$(mktemp)"
   set +e
-  out="$(HOME="$home" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+  out="$(HOME="$home" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
     --print-cmd 2>"$stderr")"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] \
@@ -784,7 +784,7 @@ case_config_timeout_exported_to_claude_adapter() {
   stderr="$(mktemp)"
   set +e
   HOME="$home" CLAUDE_DISPATCH_TIMEOUT= \
-    "$PMCTL" dispatch run --adapter claude --cd "$work" --brief-file "$brief" --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter claude --cd "$work" --brief-file "$brief" --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && grep -q 'timeout:.*820s' "$stderr"; then
@@ -809,7 +809,7 @@ case_timeout_flag_beats_config_via_pmctl() {
   stderr="$(mktemp)"
   set +e
   HOME="$home" CODEX_DISPATCH_TIMEOUT= \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
     --timeout 999 --print-cmd >/dev/null 2>"$stderr"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] && grep -q 'timeout:  999s' "$stderr" \
@@ -830,7 +830,7 @@ case_auto_pack_default_off_emits_no_event() {
   state_root="$(mktemp -d)"
   set +e
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
     >/dev/null 2>/dev/null; code=$?
   set -e
   count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
@@ -852,7 +852,7 @@ case_auto_pack_zero_hits_event_original_brief() {
   stderr="$(mktemp)"
   set +e
   PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
@@ -886,7 +886,7 @@ EOF
   stderr="$(mktemp)"
   set +e
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
@@ -934,7 +934,7 @@ EOF
   # A non-canonical --cd spelling (trailing /.): canonicalization must clean the
   # internal pack path while the adapter still receives the original spelling.
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work/." --brief-file "$brief" --auto-pack --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work/." --brief-file "$brief" --auto-pack --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
@@ -972,7 +972,7 @@ EOF
   stderr="$(mktemp)"
   set +e
   PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack --print-cmd \
     >/dev/null 2>"$stderr"; code=$?
   set -e
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
@@ -1000,7 +1000,7 @@ case_config_auto_pack_on_activates_without_flag() {
   state_root="$(mktemp -d)"
   set +e
   HOME="$home" PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
     >/dev/null 2>/dev/null; code=$?
   set -e
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
@@ -1024,7 +1024,7 @@ case_no_auto_pack_overrides_config_on() {
   state_root="$(mktemp -d)"
   set +e
   HOME="$home" PM_DISPATCH_STATE_ROOT="$state_root" \
-    "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --no-auto-pack --print-cmd \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --no-auto-pack --print-cmd \
     >/dev/null 2>/dev/null; code=$?
   set -e
   count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"

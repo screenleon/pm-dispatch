@@ -120,7 +120,12 @@ token cost without adding signal.
 
 For deterministic opt-in packing at dispatch time, run:
 
-    pmctl dispatch run --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+    pmctl dispatch run --lifecycle foreground --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+
+`--lifecycle foreground` is required here: the built-in default is now `detached`
+for eligible adapters (see §Dispatch lifecycle), and `--lifecycle detached`
+combined with `--auto-pack` is rejected before launch (the derived pack brief
+would diverge from the guarded `/tmp` brief under a detached run-spec).
 
 or set:
 
@@ -450,14 +455,14 @@ Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnin
 
 ### Dispatch lifecycle
 
-`pmctl dispatch run` supports a `--lifecycle foreground|detached` flag (default `foreground`), with a `dispatch.lifecycle = foreground|detached` config default the flag overrides. This axis is **orthogonal** to an adapter's `runner_kind` (which says *how* the executor is reached): lifecycle says *who owns the executor after launch*.
+`pmctl dispatch run` supports a `--lifecycle foreground|detached` flag, with a `dispatch.lifecycle = foreground|detached` config default the flag overrides. **The built-in default is `detached` for eligible adapters** (`cli-subprocess` runner kind, e.g. codex): bare `pmctl dispatch run` returns a `run_id` immediately without waiting for the adapter to complete. Callers that need the old synchronous, blocking behavior must pass `--lifecycle foreground` or set `dispatch.lifecycle = foreground` in their project config. This axis is **orthogonal** to an adapter's `runner_kind` (which says *how* the executor is reached): lifecycle says *who owns the executor after launch*.
 
-- `foreground` runs the post-preflight executor tail (adapter invocation → footer parse → post-verify → terminal state + durable record) in-process — the historical behavior.
-- `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec` and hands the same tail to `scripts/dispatch-supervisor.sh`. The supervisor re-runs the **full** security preflight — adapter name/containment, route allowlist, `brief-validate.sh`, and `pmctl guard check` — before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces. The run-spec records the `--cd` and `--brief-file` values as trusted scalars and carries only the non-core adapter args as passthrough; the supervisor rebuilds the adapter command from those scalars, so the brief that is guarded and validated is exactly the one executed (it rejects any attempt to smuggle a second `--cd`/`--brief-file` through the passthrough args).
+- `foreground` runs the post-preflight executor tail (adapter invocation → footer parse → post-verify → terminal state + durable record) in-process and blocks until the adapter exits — the historical behavior. No run-spec is written; the dispatch exit code is the adapter exit code.
+- `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec`, launches `scripts/dispatch-supervisor.sh` via `setsid`/`nohup` (falling back to `nohup ... & disown`), writes the `run_id` to stdout, and exits 0 without waiting for the adapter. The supervisor re-runs the **full** security preflight — adapter name/containment, route allowlist, `brief-validate.sh`, and `pmctl guard check` — before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces. The run-spec records the `--cd` and `--brief-file` values as trusted scalars and carries only the non-core adapter args as passthrough; the supervisor rebuilds the adapter command from those scalars, so the brief that is guarded and validated is exactly the one executed (it rejects any attempt to smuggle a second `--cd`/`--brief-file` through the passthrough args).
+
+Use `pmctl dispatch wait <run_id> --cd <work_dir> [--timeout <secs>]` to reattach and resolve the terminal outcome. `--cd` is mandatory; timeout exits 124. The authoritative completion signal is the supervisor sentinel written to `/tmp` (never the in-workspace `.dispatch-results/<run_id>.md` record, which is executor-writable and used for observability only). The sentinel path includes a per-run nonce held in a per-user `mode 700` key dir and not stored in the workspace run-spec: this stops *other OS users* and cross-run/predictable-path collisions from resolving the wait, but a *same-user* executor (same uid) can read the key — so the executor is **trusted** not to forge it (the deployment runs the operator's own login-authenticated agent; see `docs/executor-contract.md` → Durable dispatch record for the full trust model and CC-399 override). If the sentinel key is absent, `dispatch wait` returns **indeterminate (exit 3)** and prints the durable record for observability only — never as authenticated success.
 
 Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is derived from the adapter's `runner_kind` (`cli-subprocess` = eligible; `host-native` = not). An ineligible adapter, `--lifecycle detached --print-cmd`, or `--lifecycle detached` combined with auto-pack is rejected before any executor launch (auto-pack forwards a derived pack brief that diverges from the guarded `/tmp` brief; supporting that under a detached run-spec is deferred).
-
-> **Note (Phase 7c-2a):** the supervisor currently runs **synchronously**, so `detached` is behavior-equivalent to `foreground`. True `setsid`/`nohup` detachment — an immediate `run_id` return plus `pmctl dispatch wait <run_id>` resolving from the durable result record — is the 7c-2b follow-up and is not yet wired.
 
 ## Executor-agnostic model aliases
 

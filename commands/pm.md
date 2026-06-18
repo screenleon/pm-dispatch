@@ -26,15 +26,15 @@ The abstract contract both routes implement is documented in `docs/executor-cont
 ### Route A — `executor: codex`
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch codex for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter codex --lifecycle foreground --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch codex for <slug>")
 ```
 
-Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. `isolation_level: none` (full machine access) is opencode-only; codex and claude reject it (their max isolation is `workspace-write`) — there is no full-access route for them. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
+`--lifecycle foreground` is required here: the built-in default changed to `detached` (returns `run_id` immediately), which is incompatible with the `run_in_background: true` + footer-parse completion pattern below. Omit `--model <safe model>` when `model: default`. `isolation_level:` is required in every handover block; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed and a brief carrying any of them is rejected at validation, so never construct `--sandbox`/`--approval`/`--skip-git-check`. `isolation_level: none` (full machine access) is opencode-only; codex and claude reject it (their max isolation is `workspace-write`) — there is no full-access route for them. Insert only `handover_safe_argv` output. Keep the command on one physical line; never use `cd <dir> && ...`.
 
 ### Route B — `executor: claude`
 
 ```text
-Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter claude --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch claude for <slug>")
+Bash(command: "bash ${PM_DISPATCH_REPO}/cli/pmctl dispatch run --adapter claude --lifecycle foreground --cd <safe working_dir> --brief-file <safe brief_file> --model <safe model> --isolation <safe isolation_level> --timeout <safe timeout>", run_in_background: true, description: "Dispatch claude for <slug>")
 ```
 
 Invokes `adapters/claude/dispatch.sh` → headless `claude --print` as an external CLI subprocess; host-independent (codex-as-PM can drive it). Completion handling is identical to Route A — same Bash footer format, same post-verify flow. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL from dispatch-post-verify.sh.

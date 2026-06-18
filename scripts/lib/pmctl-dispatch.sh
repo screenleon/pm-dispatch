@@ -457,7 +457,8 @@ pmctl_dispatch_execute_tail() {
   shift 9 || true
   local -a _forward=("$@")
 
-  if [[ "$print_cmd" -eq 0 ]]; then
+  local _initial_state_written="${PMCTL_DISPATCH_INITIAL_STATE_WRITTEN:-0}"
+  if [[ "$print_cmd" -eq 0 && "$_initial_state_written" != "1" ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "" || return $?
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
@@ -712,6 +713,7 @@ pmctl_dispatch_write_runspec() {
     printf 'model=%s\n' "$model"
     printf 'created_ts=%s\n' "$created_ts"
     printf 'print_cmd=%s\n' "$print_cmd"
+    printf 'initial_state_written=1\n'
     printf 'native_b64:\n'
     for arg in ${native[@]+"${native[@]}"}; do
       printf '%s\n' "$(printf '%s' "$arg" | base64 | tr -d '\n')"
@@ -720,13 +722,54 @@ pmctl_dispatch_write_runspec() {
   mv -f "$tmp" "$spec_path" || { rm -f "$tmp"; return 1; }
 }
 
-# Detached lifecycle launcher (CC-391 Phase 7c-2a). Splits the core --cd /
+# Launch the detached supervisor as the only process-detachment boundary. The
+# environment is intentionally inherited exactly like foreground dispatch:
+# this deployment uses login-authenticated CLIs, not API keys in env, so the
+# security gate explicitly approves no env unset/allowlist layer here.
+
+# Derive the private sentinel key file path for a run_id. The key directory is
+# per-user with mode 700, so only the owning user can list or read its contents.
+# Both pmctl_dispatch_run_detached and pmctl_dispatch_wait use the same derivation
+# so they find the same file without storing the path in the workspace.
+_pmctl_sentinel_key_file() {
+  local _run_id="${1:-}" _uid _key_dir
+  _uid="$(id -u 2>/dev/null)" || _uid="0"
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
+    _key_dir="${XDG_RUNTIME_DIR}/pm-dispatch"
+  else
+    _key_dir="/tmp/pm-dispatch-${_uid}"
+  fi
+  printf '%s/%s' "$_key_dir" "$_run_id"
+}
+
+_pmctl_dispatch_launch_supervisor() {
+  local repo_root="${1:-}" spec_path="${2:-}" supervisor_log="${3:-}" pid_file="${4:-}"
+  local supervisor pid
+
+  supervisor="$repo_root/scripts/dispatch-supervisor.sh"
+  mkdir -p "$(dirname "$supervisor_log")" "$(dirname "$pid_file")" || return 1
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup bash "$supervisor" --run-spec "$spec_path" \
+      </dev/null >"$supervisor_log" 2>&1 &
+    pid=$!
+  else
+    nohup bash "$supervisor" --run-spec "$spec_path" \
+      </dev/null >"$supervisor_log" 2>&1 &
+    pid=$!
+    disown "$pid" 2>/dev/null || true
+  fi
+  printf '%s\n' "$pid" > "$pid_file" || return 1
+  return 0
+}
+
+# Detached lifecycle launcher (CC-391 Phase 7c-2). Splits the core --cd /
 # --brief-file out of the forward args (recording them as trusted run-spec
 # scalars) so the brief/work-dir the supervisor guards and validates are exactly
 # the ones it forwards to the adapter, then persists the run-spec and invokes the
-# supervisor. In 7c-2a the supervisor runs SYNCHRONOUSLY, so detached is
-# behavior-equivalent to foreground; setsid/nohup true detachment and
-# `pmctl dispatch wait <run_id>` land in 7c-2b. The supervisor re-runs the full
+# supervisor under setsid/nohup. The parent returns the run_id immediately; use
+# `pmctl dispatch wait <run_id> --cd <work_dir>` to resolve the durable terminal
+# result. The supervisor re-runs the full
 # security preflight (name/containment/route + brief-validate + guard) before any
 # executor launch, so this path is never a policy bypass.
 pmctl_dispatch_run_detached() {
@@ -761,21 +804,230 @@ pmctl_dispatch_run_detached() {
     return 2
   fi
 
-  local spec_dir spec_path
+  local spec_dir spec_path supervisor_log pid_file
   spec_dir="$work_dir/.agent-trace"
   spec_path="$spec_dir/$run_id.runspec"
+  supervisor_log="$spec_dir/$run_id.supervisor.log"
+  pid_file="$spec_dir/$run_id.supervisor.pid"
   if ! mkdir -p "$spec_dir"; then
     printf 'pmctl dispatch run: mkdir failed: %s\n' "$spec_dir" >&2
     return 2
   fi
+
+  # Generate a sentinel nonce unknown to the executor. The nonce is passed to the
+  # supervisor via an environment variable (not written to the workspace run-spec)
+  # and the supervisor unsets it before exec-ing the adapter subprocess. This makes
+  # the sentinel path /tmp/pm-supervisor-sentinel-<run_id>-<nonce> unpredictable to
+  # an executor that can only read workspace files. The key file is stored in a
+  # per-user private directory (mode 700) so only the owning user can access it.
+  local _sup_nonce _sup_key_file _sup_key_dir
+  _sup_nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
+    || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
+  [[ -n "$_sup_nonce" ]] || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
+  _sup_key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  _sup_key_dir="$(dirname "$_sup_key_file")"
+  # Create the per-user key dir, then verify it is owner-only AND owned by us.
+  # `mkdir -m 700 -p` is insufficient: -m only applies to the deepest *new* dir
+  # (SC2174), and a pre-existing dir keeps its prior mode/owner — a pre-seeded
+  # permissive or foreign-owned dir could expose nonce files. So: mkdir, chmod 700
+  # (tightens an owner-owned-but-loose dir; fails if we do not own it), and refuse
+  # any dir not owned by the current uid.
+  mkdir -p "$_sup_key_dir" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to create private key directory: %s\n' "$_sup_key_dir" >&2
+    return 2
+  }
+  chmod 700 "$_sup_key_dir" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to secure private key directory (not owner?): %s\n' "$_sup_key_dir" >&2
+    return 2
+  }
+  local _key_dir_owner
+  _key_dir_owner="$(stat -c '%u' "$_sup_key_dir" 2>/dev/null || stat -f '%u' "$_sup_key_dir" 2>/dev/null || true)"
+  if [[ -n "$_key_dir_owner" && "$_key_dir_owner" != "$(id -u)" ]]; then
+    printf 'pmctl dispatch run: refusing key directory not owned by current user (owner uid=%s): %s\n' "$_key_dir_owner" "$_sup_key_dir" >&2
+    return 2
+  fi
+  printf '%s' "$_sup_nonce" > "$_sup_key_file" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to write sentinel key file\n' >&2
+    return 2
+  }
+  # Export nonce to supervisor via env; supervisor reads and immediately unsets.
+  export PM_SUPERVISOR_NONCE="$_sup_nonce"
+
+  # Snapshot the brief into /tmp/brief-<run_id>.md before launching so the
+  # caller can safely clean up the original temp brief after run_id returns.
+  # The snapshot path stays within the /tmp/brief-*.md guard pattern so the
+  # supervisor's validate -> guard -> execute all see the same stable bytes
+  # with no TOCTOU window (no second copy step needed in the supervisor).
+  local brief_snapshot brief_snap_tmp
+  brief_snapshot="/tmp/brief-$run_id.md"
+  brief_snap_tmp="$(mktemp "/tmp/.brief-$run_id.XXXXXX")" || {
+    printf 'pmctl dispatch run: failed to create brief snapshot tempfile\n' >&2
+    return 2
+  }
+  cp "$brief_file" "$brief_snap_tmp" \
+    || { rm -f "$brief_snap_tmp"; printf 'pmctl dispatch run: failed to snapshot brief: %s\n' "$brief_file" >&2; return 2; }
+  mv -f "$brief_snap_tmp" "$brief_snapshot" \
+    || { rm -f "$brief_snap_tmp"; printf 'pmctl dispatch run: failed to commit brief snapshot\n' >&2; return 2; }
+  brief_file="$brief_snapshot"
   if ! pmctl_dispatch_write_runspec "$spec_path" "$run_id" "$adapter" "$work_dir" \
       "$cd_arg" "$brief_file" "$model" "$created_ts" "$print_cmd" ${native[@]+"${native[@]}"}; then
     printf 'pmctl dispatch run: failed to write run-spec: %s\n' "$spec_path" >&2
     return 2
   fi
 
-  bash "$repo_root/scripts/dispatch-supervisor.sh" --run-spec "$spec_path"
-  return $?
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+    "pending" 0 "$model" "$brief_file" "" "$created_ts" "" || return $?
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+    "dispatched" 0 "$model" "$brief_file" "" "$created_ts" "pending" || return $?
+
+  if ! _pmctl_dispatch_launch_supervisor "$repo_root" "$spec_path" "$supervisor_log" "$pid_file"; then
+    printf 'pmctl dispatch run: failed to launch detached supervisor for %s\n' "$run_id" >&2
+    # Write terminal failed record so dispatch wait resolves quickly, and write
+    # the supervisor sentinel so dispatch wait can resolve (sentinel is required
+    # because dispatch wait trusts sentinel not workspace record). Clean up the
+    # brief snapshot (brief_file now points to the /tmp snapshot copy).
+    local _launch_fail_ts
+    _launch_fail_ts="$(pmctl_dispatch_utc_ts 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+      "failed" 2 "$model" "$brief_file" "" "$created_ts" "dispatched" 2>/dev/null || true
+    pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
+      "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
+    printf 'final_state=failed\nexit_code=2\n' \
+      > "/tmp/pm-supervisor-sentinel-${run_id}-${_sup_nonce}" 2>/dev/null || true
+    rm -f "$brief_file" 2>/dev/null || true
+    # Keep the key file: dispatch wait must read the nonce to authenticate the
+    # failure sentinel above (exit 2). Removing it here would force wait into the
+    # key-absent indeterminate (exit 3) path and defeat the sentinel we just wrote.
+    # The key is consumed by the first dispatch wait, or reaped by tmpwatch.
+    unset PM_SUPERVISOR_NONCE
+    return 2
+  fi
+  unset PM_SUPERVISOR_NONCE
+  printf '%s\n' "$run_id"
+  return 0
+}
+
+pmctl_dispatch_wait() {
+  local _repo_root="${1:-}"
+  shift || true
+  local run_id="" work_dir="" timeout=3600
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch wait: missing value for --cd\n' >&2
+          return 2
+        fi
+        work_dir="$(_portable_canonical_path "$2")"
+        shift 2
+        ;;
+      --timeout)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch wait: missing value for --timeout\n' >&2
+          return 2
+        fi
+        if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+          printf 'pmctl dispatch wait: invalid --timeout %q (expected seconds)\n' "$2" >&2
+          return 2
+        fi
+        timeout="$2"
+        shift 2
+        ;;
+      --*)
+        printf 'pmctl dispatch wait: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$run_id" ]]; then
+          printf 'pmctl dispatch wait: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$run_id" ]]; then
+    printf 'pmctl dispatch wait: <run_id> is required\n' >&2
+    return 2
+  fi
+  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    printf 'pmctl dispatch wait: invalid run_id %q\n' "$run_id" >&2
+    return 2
+  fi
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch wait: --cd <work_dir> is required\n' >&2
+    return 2
+  fi
+
+  # Resolve the sentinel path from the nonce key file written by the parent
+  # before the supervisor was launched. The key file is in a per-user private
+  # directory (mode 700) so other OS users cannot read the nonce. An executor
+  # that forged a sentinel at the predictable (nonce-free) path would produce a
+  # file at a different path that dispatch wait never polls.
+  local _key_nonce _key_file
+  _key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  if [[ ! -f "$_key_file" ]]; then
+    # Sentinel key absent. This happens when:
+    #   (a) A prior successful dispatch wait already consumed the key (one-shot).
+    #   (b) The temp directory was cleaned up (reboot / tmpwatch).
+    #   (c) An executor removed it (outside the trusted same-user model).
+    # Without the key there is NO authenticated completion signal. The in-workspace
+    # dispatch record is executor-writable, so it is NOT authoritative: print it for
+    # observability but return an indeterminate (non-zero, 3) status. Callers MUST
+    # treat exit 3 as "completion unverified", never as success.
+    if dispatch_record_read_state "$work_dir" "$run_id" 2>/dev/null; then
+      printf 'run: %s  state: %s  exit: %s  (advisory: durable record, NOT sentinel-authenticated)\n' \
+        "$run_id" "$DISPATCH_RECORD_STATE" "${DISPATCH_RECORD_EXIT:-?}"
+      if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+        printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+      fi
+      printf 'pmctl dispatch wait: indeterminate: sentinel key absent; completion is unverified (durable record shown for observability only; exit=3)\n' >&2
+      return 3
+    fi
+    printf 'pmctl dispatch wait: indeterminate: sentinel key absent and no durable record for %s in %s (exit=3)\n' "$run_id" "$work_dir" >&2
+    return 3
+  fi
+  _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
+  if [[ -z "$_key_nonce" ]]; then
+    printf 'pmctl dispatch wait: empty sentinel key for %s\n' "$run_id" >&2
+    return 2
+  fi
+
+  local _sentinel="/tmp/pm-supervisor-sentinel-${run_id}-${_key_nonce}"
+  local start elapsed
+  start="$SECONDS"
+  while true; do
+    if [[ -f "$_sentinel" ]]; then
+      local _sent_state _sent_exit
+      _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
+      [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
+      if dispatch_record_read_state "$work_dir" "$run_id"; then
+        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+          "${_sent_state:-$DISPATCH_RECORD_STATE}" "${_sent_exit:-$DISPATCH_RECORD_EXIT}"
+        if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+          printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+        fi
+      else
+        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+          "${_sent_state:-unknown}" "${_sent_exit:-1}"
+        if [[ "${_sent_exit:-1}" -eq 0 ]]; then
+          printf 'pmctl dispatch wait: WARN: sentinel ok but durable dispatch record not found for %s in %s\n' "$run_id" "$work_dir" >&2
+        fi
+      fi
+      return "${_sent_exit:-1}"
+    fi
+    elapsed=$((SECONDS - start))
+    if (( elapsed >= timeout )); then
+      printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
+      return 124
+    fi
+    sleep 2
+  done
 }
 
 pmctl_dispatch_run() {
@@ -912,9 +1164,9 @@ pmctl_dispatch_run() {
   _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
 
   # 3b. Resolve the effective lifecycle (flag > dispatch.lifecycle config >
-  # foreground) and, for detached, reject ineligible adapters BEFORE any executor
+  # detached) and, for detached, reject ineligible adapters BEFORE any executor
   # launch (hard gate). Detached is incompatible with the --print-cmd dry-run.
-  local _lifecycle_effective="foreground"
+  local _lifecycle_effective="detached"
   if [[ "$lifecycle_flag" == "foreground" || "$lifecycle_flag" == "detached" ]]; then
     _lifecycle_effective="$lifecycle_flag"
   elif [[ "${PM_CFG_LIFECYCLE:-}" == "foreground" || "${PM_CFG_LIFECYCLE:-}" == "detached" ]]; then
@@ -945,7 +1197,7 @@ pmctl_dispatch_run() {
   # in a detached run-spec needs a pack-provenance contract that is out of scope
   # for 7c-2a. Rejecting the combination keeps the detached invariant simple and
   # auditable: the brief that is guarded IS the brief that is validated and
-  # executed. (auto-pack default is off; detached is opt-in.)
+  # executed. (auto-pack default is off; detached is the built-in default for eligible adapters.)
   if [[ "$_lifecycle_effective" == "detached" && "$_auto_pack_effective" == "on" ]]; then
     printf 'pmctl dispatch run: --lifecycle detached does not yet support auto-pack; run foreground or pass --no-auto-pack\n' >&2
     return 2
@@ -990,10 +1242,10 @@ pmctl_dispatch_run() {
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
 
-  # 5. Execute. Foreground runs the tail in-process (current behavior). Detached
-  #    persists a run-spec and hands the post-preflight tail to the supervisor;
-  #    in 7c-2a the supervisor runs synchronously (behavior-equivalent), so all
-  #    the preflight gates above still front every executor invocation.
+  # 5. Execute. Foreground runs the tail in-process (blocking). Detached persists
+  #    a run-spec, snapshots the brief durably, and hands the post-preflight tail
+  #    to the supervisor via setsid/nohup; returns run_id immediately.  The
+  #    preflight gates above still front every executor invocation in both paths.
   if [[ "$_lifecycle_effective" == "detached" ]]; then
     pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
       "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
