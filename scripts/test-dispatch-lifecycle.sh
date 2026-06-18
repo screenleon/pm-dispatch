@@ -731,6 +731,56 @@ case_supervisor_preflight_failure() {
   rm -rf "$work" "$bindir"
 }
 
+# ── supervisor execute_tail failure writes fallback dispatch record ────────────
+# When execute_tail fails before writing the terminal dispatch record (e.g. an
+# FSM state-store transition write failure), the supervisor writes a best-effort
+# failed record so dispatch wait resolves quickly instead of timing out.
+case_supervisor_tail_failure_writes_fallback_record() {
+  local name="lifecycle/supervisor execute_tail failure writes fallback dispatch record"
+  should_run "$name" || return 0
+  local work brief spec bindir supervisor_code wait_out wait_code record run_id bad_state_root
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  run_id="run-20260618T000000Z-tailfail"
+  mkdir -p "$work/.agent-trace"
+  spec="$work/.agent-trace/$run_id.runspec"
+  {
+    printf 'schema_version=2\n'
+    printf 'run_id=%s\n' "$run_id"
+    printf 'adapter=codex\n'
+    printf 'work_dir=%s\n' "$work"
+    printf 'cd_arg=%s\n' "$work"
+    printf 'brief_file=%s\n' "$brief"
+    printf 'model=\n'
+    printf 'created_ts=2026-06-18T00:00:00Z\n'
+    printf 'print_cmd=0\n'
+    printf 'initial_state_written=0\n'
+    printf 'native_b64:\n'
+  } > "$spec"
+  # Point state root to a non-writable dir so FSM transition writes fail and
+  # execute_tail exits non-zero before writing any dispatch record.
+  bad_state_root="$(mktemp -d)"
+  chmod 000 "$bad_state_root"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$bad_state_root" PATH="$bindir:$PATH" \
+    bash "$SUPERVISOR" --run-spec "$spec" 2>/dev/null; supervisor_code=$?
+  set -e
+  chmod 755 "$bad_state_root"
+  record="$(_record_for_run "$work" "$run_id")"
+  set +e
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>&1)"; wait_code=$?
+  set -e
+  if [[ "$supervisor_code" -ne 0 ]] \
+    && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record" \
+    && [[ "$wait_code" -ne 0 && "$wait_code" -ne 124 ]]; then
+    pass "$name"
+  else
+    fail "$name" "supervisor=$supervisor_code record=${record:-missing} wait=$wait_code wait_out=$(tail -2 <<<"$wait_out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir" "$bad_state_root"
+}
+
 case_foreground_default_no_runspec
 case_detached_true_detach
 case_dispatch_wait_failure_propagates
@@ -757,4 +807,5 @@ case_supervisor_rejects_bad_printcmd
 case_supervisor_rejects_cd_smuggle
 case_detached_autopack_rejected
 case_supervisor_preflight_failure
+case_supervisor_tail_failure_writes_fallback_record
 th_summary

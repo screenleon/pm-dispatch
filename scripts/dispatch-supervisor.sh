@@ -165,8 +165,22 @@ forward+=(${native[@]+"${native[@]}"})
 
 # ── Run the shared post-preflight tail ──────────────────────────────────────
 declare -F pmctl_dispatch_execute_tail >/dev/null || _die "pmctl_dispatch_execute_tail unavailable"
+_execute_rc=0
 PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
   pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
-  "${forward[@]}"
-exit $?
+  "${forward[@]}" || _execute_rc=$?
+
+# Best-effort fallback: if execute_tail exited non-zero and no terminal dispatch
+# record was written (e.g. a state-store transition write failed before the
+# normal record path), write a failed record now so dispatch wait can resolve
+# quickly instead of blocking until timeout.
+if [[ "$_execute_rc" -ne 0 ]] \
+  && ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1; then
+  _fallback_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  dispatch_record_write "$spec_run_id" "" "${spec_adapter:-}" "${spec_model:-}" \
+    "${spec_brief_file:-}" "$spec_work_dir" "$_execute_rc" "failed" \
+    "supervisor tail exited $spec_run_id rc=$_execute_rc; no durable record written" \
+    "" "" "" "${spec_created_ts:-}" "$_fallback_ts" 2>/dev/null || true
+fi
+exit "$_execute_rc"
