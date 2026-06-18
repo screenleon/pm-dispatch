@@ -1157,11 +1157,15 @@ case_dispatch_wait_ignores_forged_sentinel() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
-# A same-user executor CAN forge the correct nonce-bearing sentinel by reading
-# the private key directory (it runs as the owning user). This test documents
-# that known limitation and verifies the observed behavior under that attack.
+# Trust model (CC-399 override): the executor runs under the same uid as the
+# supervisor, so it CAN read the mode-700 key directory and write the correct
+# nonce-bearing sentinel. This is by design — the executor is trusted (the
+# operator's own login-authenticated agent), and the supervisor itself is also a
+# same-user process. This test asserts that a same-user process holding the right
+# nonce resolves the wait (the intended mechanism), distinct from a wrong-path
+# forgery which is rejected (see case_dispatch_wait_ignores_forged_sentinel).
 case_dispatch_wait_same_user_nonce_forgery_documented() {
-  local name="lifecycle/same-user nonce-sentinel forgery is documented (known limitation)"
+  local name="lifecycle/same-user process with valid nonce resolves wait (trusted-executor model, CC-399 override)"
   should_run "$name" || return 0
   local work brief bindir run_id code wait_code _started_dummy
   local started_fifo release_fifo
@@ -1188,34 +1192,34 @@ case_dispatch_wait_same_user_nonce_forgery_documented() {
     rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
   fi
 
-  # Same-user executor forged the correct nonce sentinel; dispatch wait resolves it.
-  # This documents the limitation: same-user processes can read the key directory.
+  # Same-user process wrote a valid nonce sentinel; dispatch wait resolves it.
+  # By the trusted-executor model, a same-user process can read the key directory.
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 3 >/dev/null 2>&1
   wait_code=$?
   set -e
-  local forged_accepted=0
-  [[ "$wait_code" -eq 0 ]] && forged_accepted=1  # resolved from forged ok sentinel
+  local nonce_resolved=0
+  [[ "$wait_code" -eq 0 ]] && nonce_resolved=1  # resolved from the valid nonce sentinel
 
-  # Release adapter. The test assertion (forged_accepted) was determined before
+  # Release adapter. The test assertion (nonce_resolved) was determined before
   # this point; supervisor completing asynchronously is not load-bearing here.
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
-  if [[ "$forged_accepted" -eq 1 ]]; then
+  if [[ "$nonce_resolved" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "expected forged nonce sentinel to be accepted (wait_code=$wait_code want 0)"
+    fail "$name" "expected valid nonce sentinel to resolve wait (wait_code=$wait_code want 0)"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
-# An adversarial same-user executor removes the sentinel key file and forges the
-# workspace dispatch record before exiting. dispatch wait must use the key-absent
-# fallback path, and will read the forged workspace record because workspace files
-# are not sentinel-authenticated. Documents the known fallback trust boundary:
-# key removal by the executor makes the fallback path susceptible to forgery.
+# An executor removes the sentinel key file and forges a success workspace record
+# before exiting. With the key absent there is no authenticated completion signal,
+# so dispatch wait MUST return indeterminate (exit 3) and refuse to treat the
+# executor-writable workspace record as authoritative success. Asserts the closed
+# boundary: a forged workspace record can never make wait report success.
 case_dispatch_wait_fallback_adversarial_key_removal() {
-  local name="lifecycle/adversarial key removal causes fallback to forged workspace record (known limitation)"
+  local name="lifecycle/key removal + forged workspace record yields indeterminate (exit 3), not success"
   should_run "$name" || return 0
   local work brief bindir run_id code wait_code _key_file started_fifo release_fifo
   work="$(mktemp -d)"; git init -q "$work"
@@ -1249,8 +1253,8 @@ case_dispatch_wait_fallback_adversarial_key_removal() {
   printf 'schema_version: 1\nrun_id: "%s"\nexit_code: 0\nfinal_state: ok\nverify_summary: "FORGED-FALLBACK"\n' \
     "$run_id" > "$work/.dispatch-results/$run_id.md"
 
-  # dispatch wait: key absent, adapter blocked (no sentinel written) → fallback to
-  # forged workspace record → returns 0 (known limitation: workspace not authenticated).
+  # dispatch wait: key absent, adapter blocked (no sentinel written). The forged
+  # workspace record must NOT be treated as authoritative → wait returns 3.
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 >/dev/null 2>&1
   wait_code=$?
@@ -1259,19 +1263,19 @@ case_dispatch_wait_fallback_adversarial_key_removal() {
   # Release the blocked adapter so the supervisor can clean up.
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
-  if [[ "$wait_code" -eq 0 ]]; then
+  if [[ "$wait_code" -eq 3 ]]; then
     pass "$name"
   else
-    fail "$name" "expected fallback to forged workspace record to return 0 (got wait_code=$wait_code)"
+    fail "$name" "expected indeterminate exit 3 (forged record not authoritative), got wait_code=$wait_code"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
-# After a successful dispatch wait consumes the sentinel key, a second call must
-# fall back to the durable workspace record (not error out). Documents one-shot
-# sentinel semantics with graceful durable-record recovery on subsequent calls.
+# dispatch wait is one-shot authenticated: the first call consumes the sentinel
+# key. A second call finds no key → no authenticated signal → returns indeterminate
+# (exit 3), printing the durable record for observability only (never as success).
 case_dispatch_wait_second_call_uses_record() {
-  local name="lifecycle/dispatch wait second call falls back to durable record"
+  local name="lifecycle/dispatch wait second call returns indeterminate (one-shot sentinel; record advisory)"
   should_run "$name" || return 0
   local work brief bindir run_id code first_code second_code
   work="$(mktemp -d)"; git init -q "$work"
@@ -1289,15 +1293,15 @@ case_dispatch_wait_second_call_uses_record() {
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1
   first_code=$?
   set -e
-  # Second wait: sentinel key is gone; must fall back to durable workspace record.
+  # Second wait: sentinel key is gone; no authenticated signal → indeterminate (3).
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>/dev/null
   second_code=$?
   set -e
-  if [[ "$first_code" -eq 0 && "$second_code" -eq 0 ]]; then
+  if [[ "$first_code" -eq 0 && "$second_code" -eq 3 ]]; then
     pass "$name"
   else
-    fail "$name" "first_code=$first_code second_code=$second_code (both want 0)"
+    fail "$name" "first_code=$first_code (want 0) second_code=$second_code (want 3 indeterminate)"
   fi
   rm -rf "$work" "$bindir"
 }

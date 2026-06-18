@@ -51,6 +51,7 @@ PHASE_NAMES=()
 PHASE_RESULTS=()
 FAILED=0
 REQUIRED_SKIPPED=0
+DISPATCH_PREREQ_SKIPPED=0  # set when Phase B skips for adapter/auth unavailability
 
 record() {  # record <name> <PASS|FAIL|SKIP> [note]
   PHASE_NAMES+=("$1")
@@ -68,6 +69,7 @@ synthetic_base=""
 synthetic_remote=""
 gate_result=""
 e2e_log=""
+# shellcheck disable=SC2317  # all commands run indirectly via trap (EXIT/INT/TERM)
 cleanup() {
   rm -f "$brief_file" "$e2e_log" 2>/dev/null || true
   if [[ -n "$smoke_dir"        ]]; then rm -rf "$smoke_dir"        2>/dev/null || true; fi
@@ -133,6 +135,7 @@ dispatch_rc=0
 if [[ "$dispatch_rc" -ne 0 ]]; then
   record "real dispatch" SKIP "dispatch exited $dispatch_rc — adapter may need authentication; run manually: ./scripts/test-e2e.sh --adapter $ADAPTER"
   REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
+  DISPATCH_PREREQ_SKIPPED=1
   rm -f "$e2e_log" "$brief_file" 2>/dev/null || true
   rm -rf "$smoke_dir" 2>/dev/null || true
 else
@@ -171,6 +174,13 @@ if [[ "$SKIP_GATE" -eq 1 ]]; then
 elif ! command -v codex >/dev/null 2>&1; then
   record "pr-gate smoke (codex)" SKIP \
     "codex not on PATH — claude executor is handover-only (no self-contained run)"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
+elif [[ "$DISPATCH_PREREQ_SKIPPED" -eq 1 && "$ADAPTER" == "codex" ]]; then
+  # Phase B's real codex dispatch skipped for adapter/auth unavailability. Phase C's
+  # pr-gate also drives codex, so the same prerequisite gap applies — carry the skip
+  # deterministically rather than running gate into a 0-byte result (false NO-GO).
+  record "pr-gate smoke (codex)" SKIP \
+    "codex dispatch prerequisite unavailable (Phase B skipped); pr-gate needs the same live executor"
   REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
 else
   synthetic_remote="$(mktemp -d)"

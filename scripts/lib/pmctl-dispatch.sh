@@ -826,10 +826,26 @@ pmctl_dispatch_run_detached() {
   [[ -n "$_sup_nonce" ]] || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
   _sup_key_file="$(_pmctl_sentinel_key_file "$run_id")"
   _sup_key_dir="$(dirname "$_sup_key_file")"
-  mkdir -m 700 -p "$_sup_key_dir" 2>/dev/null || {
+  # Create the per-user key dir, then verify it is owner-only AND owned by us.
+  # `mkdir -m 700 -p` is insufficient: -m only applies to the deepest *new* dir
+  # (SC2174), and a pre-existing dir keeps its prior mode/owner — a pre-seeded
+  # permissive or foreign-owned dir could expose nonce files. So: mkdir, chmod 700
+  # (tightens an owner-owned-but-loose dir; fails if we do not own it), and refuse
+  # any dir not owned by the current uid.
+  mkdir -p "$_sup_key_dir" 2>/dev/null || {
     printf 'pmctl dispatch run: failed to create private key directory: %s\n' "$_sup_key_dir" >&2
     return 2
   }
+  chmod 700 "$_sup_key_dir" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to secure private key directory (not owner?): %s\n' "$_sup_key_dir" >&2
+    return 2
+  }
+  local _key_dir_owner
+  _key_dir_owner="$(stat -c '%u' "$_sup_key_dir" 2>/dev/null || stat -f '%u' "$_sup_key_dir" 2>/dev/null || true)"
+  if [[ -n "$_key_dir_owner" && "$_key_dir_owner" != "$(id -u)" ]]; then
+    printf 'pmctl dispatch run: refusing key directory not owned by current user (owner uid=%s): %s\n' "$_key_dir_owner" "$_sup_key_dir" >&2
+    return 2
+  fi
   printf '%s' "$_sup_nonce" > "$_sup_key_file" 2>/dev/null || {
     printf 'pmctl dispatch run: failed to write sentinel key file\n' >&2
     return 2
@@ -879,7 +895,10 @@ pmctl_dispatch_run_detached() {
     printf 'final_state=failed\nexit_code=2\n' \
       > "/tmp/pm-supervisor-sentinel-${run_id}-${_sup_nonce}" 2>/dev/null || true
     rm -f "$brief_file" 2>/dev/null || true
-    rm -f "$_sup_key_file" 2>/dev/null || true
+    # Keep the key file: dispatch wait must read the nonce to authenticate the
+    # failure sentinel above (exit 2). Removing it here would force wait into the
+    # key-absent indeterminate (exit 3) path and defeat the sentinel we just wrote.
+    # The key is consumed by the first dispatch wait, or reaped by tmpwatch.
     unset PM_SUPERVISOR_NONCE
     return 2
   fi
@@ -952,21 +971,24 @@ pmctl_dispatch_wait() {
   _key_file="$(_pmctl_sentinel_key_file "$run_id")"
   if [[ ! -f "$_key_file" ]]; then
     # Sentinel key absent. This happens when:
-    #   (a) A prior successful dispatch wait already consumed the key.
+    #   (a) A prior successful dispatch wait already consumed the key (one-shot).
     #   (b) The temp directory was cleaned up (reboot / tmpwatch).
-    # Fall back to the durable workspace dispatch record for observability.
-    # Note: the record is human-readable and not sentinel-authenticated.
+    #   (c) An executor removed it (outside the trusted same-user model).
+    # Without the key there is NO authenticated completion signal. The in-workspace
+    # dispatch record is executor-writable, so it is NOT authoritative: print it for
+    # observability but return an indeterminate (non-zero, 3) status. Callers MUST
+    # treat exit 3 as "completion unverified", never as success.
     if dispatch_record_read_state "$work_dir" "$run_id" 2>/dev/null; then
-      printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
-        "$DISPATCH_RECORD_STATE" "${DISPATCH_RECORD_EXIT:-1}"
+      printf 'run: %s  state: %s  exit: %s  (advisory: durable record, NOT sentinel-authenticated)\n' \
+        "$run_id" "$DISPATCH_RECORD_STATE" "${DISPATCH_RECORD_EXIT:-?}"
       if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
         printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
       fi
-      printf 'pmctl dispatch wait: WARN: resolved from durable record only (sentinel key absent; not sentinel-authenticated)\n' >&2
-      return "${DISPATCH_RECORD_EXIT:-1}"
+      printf 'pmctl dispatch wait: indeterminate: sentinel key absent; completion is unverified (durable record shown for observability only; exit=3)\n' >&2
+      return 3
     fi
-    printf 'pmctl dispatch wait: sentinel key not found and no durable record for %s in %s\n' "$run_id" "$work_dir" >&2
-    return 2
+    printf 'pmctl dispatch wait: indeterminate: sentinel key absent and no durable record for %s in %s (exit=3)\n' "$run_id" "$work_dir" >&2
+    return 3
   fi
   _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
   if [[ -z "$_key_nonce" ]]; then
