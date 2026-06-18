@@ -133,6 +133,44 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
+# Blocking fake codex that forges the supervisor sentinel at the predictable
+# (nonce-free) path. Used to verify that dispatch wait, which polls the
+# nonce-including path, ignores a sentinel forged without the nonce.
+_install_fake_codex_forging_sentinel_blocking() {
+  local bindir="$1" code="${2:-7}" started_fifo="$3" release_fifo="$4"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+# Forge the sentinel at the predictable path (no nonce). The real sentinel
+# dispatch wait polls includes a nonce that this executor cannot see.
+_work=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
+done
+_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
+if [[ -n "\$_rid" ]]; then
+  printf 'final_state=ok\nexit_code=0\n' > "/tmp/pm-supervisor-sentinel-\$_rid"
+fi
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
+if [[ -p "$release_fifo" ]]; then
+  read -r _dummy < "$release_fifo" 2>/dev/null || true
+fi
+exec 7>&- 2>/dev/null || true
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -n "\$_last" ]] && printf 'dispatch complete (fake codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
 _first_record() { find "$1/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1; }
 _first_runspec() { find "$1/.agent-trace" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
 _record_for_run() {
@@ -1009,6 +1047,70 @@ case_dispatch_wait_ignores_forged_workspace_record() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
+# The executor forges the sentinel at the predictable path (no nonce). dispatch
+# wait polls the nonce-including path and must ignore the forged file, returning
+# the real exit code only after the supervisor writes the authentic sentinel.
+case_dispatch_wait_ignores_forged_sentinel() {
+  local name="lifecycle/dispatch wait ignores executor-forged sentinel (wrong path, no nonce)"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code forged_path _started_dummy
+  local started_fifo release_fifo
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  # Forging sentinel codex: writes forged "ok" sentinel at predictable path
+  # (no nonce), then blocks on FIFO, then exits with code 7 (failure).
+  _install_fake_codex_forging_sentinel_blocking "$bindir" 7 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Wait for forging codex to start (and forge the sentinel at wrong path).
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "forging codex did not start within 10s"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Forged sentinel at wrong path exists; real (nonce-including) sentinel does not.
+  # dispatch wait must NOT resolve from the forged file.
+  forged_path="/tmp/pm-supervisor-sentinel-$run_id"
+  local forged_exists=0
+  [[ -f "$forged_path" ]] && forged_exists=1
+
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 3 >/dev/null 2>&1
+  wait_code=$?
+  set -e
+  local forged_ignored=0
+  [[ "$wait_code" -eq 124 ]] && forged_ignored=1  # timed out = correctly ignored
+
+  # Release adapter (exits 7 → supervisor writes real sentinel).
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  # Now dispatch wait should resolve with the real exit code (7).
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1
+  wait_code=$?
+  set -e
+
+  rm -f "$forged_path" 2>/dev/null || true
+  if [[ "$forged_exists" -eq 1 && "$forged_ignored" -eq 1 && "$wait_code" -eq 7 ]]; then
+    pass "$name"
+  else
+    fail "$name" "forged_exists=$forged_exists forged_ignored=$forged_ignored wait_code=$wait_code"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
@@ -1041,4 +1143,5 @@ case_supervisor_preflight_failure
 case_supervisor_tail_failure_writes_fallback_record
 case_supervisor_fallback_covers_ok_run_with_poisoned_results
 case_dispatch_wait_ignores_forged_workspace_record
+case_dispatch_wait_ignores_forged_sentinel
 th_summary

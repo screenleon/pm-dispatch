@@ -36,15 +36,25 @@ for _lib in pmctl-config portable runner-kind executor-router pmctl-guard dispat
 done
 unset _lib
 
+# Capture the parent-supplied sentinel nonce from the environment and immediately
+# unset it so the adapter subprocess cannot read it and forge the sentinel path.
+# The nonce is NOT written to the run-spec (which is workspace-readable), so an
+# executor that can read the workspace run-spec cannot derive the sentinel path.
+_sentinel_nonce="${PM_SUPERVISOR_NONCE:-}"
+unset PM_SUPERVISOR_NONCE
+
 # Write the supervisor sentinel to /tmp so pmctl dispatch wait can authenticate
 # that the supervisor (not the executor) signalled completion. The sentinel path
-# is outside the executor's workspace-write sandbox and cannot be forged by the
-# adapter subprocess. Takes final_state (ok|failed) and exit_code as arguments.
+# includes a nonce known only to the parent and supervisor: because the nonce is
+# not in the workspace run-spec and is unset from the environment before the
+# adapter runs, an executor cannot forge the correct path to fake completion.
+# Takes final_state (ok|failed) and exit_code as arguments.
 _write_sentinel() {
   local _state="${1:-failed}" _rc="${2:-2}"
-  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+     && [[ -n "${_sentinel_nonce:-}" ]]; then
     printf 'final_state=%s\nexit_code=%s\n' "$_state" "$_rc" \
-      > "/tmp/pm-supervisor-sentinel-$spec_run_id" 2>/dev/null || true
+      > "/tmp/pm-supervisor-sentinel-${spec_run_id}-${_sentinel_nonce}" 2>/dev/null || true
   fi
 }
 
@@ -175,9 +185,10 @@ PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
   "${forward[@]}" || _execute_rc=$?
 
-# Terminal record is load-bearing for detached dispatch: pmctl dispatch wait
-# resolves only from .dispatch-results/<run_id>.md. Ensure a terminal record
-# always exists when the supervisor exits, regardless of execute_tail's outcome.
+# The terminal dispatch record is a human-readable observability artifact; pmctl
+# dispatch wait resolves from the supervisor sentinel written below, NOT from this
+# record. Ensure a record always exists when the supervisor exits so that humans
+# inspecting .dispatch-results/ can see what happened, regardless of outcome.
 # This covers both the error path (adapter failed before writing a record) and
 # the rare case where execute_tail succeeded but the soft record write silently
 # failed (e.g. filesystem full or permissions on .dispatch-results/).
@@ -192,9 +203,10 @@ if ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1;
 fi
 
 # Write the authoritative supervisor sentinel to /tmp before exiting. This
-# sentinel is the only signal pmctl dispatch wait trusts: because it is outside
-# the executor's workspace-write sandbox, an executor cannot forge it to produce
-# a false terminal state. The sentinel records the real execute_tail exit code.
+# sentinel is the only signal pmctl dispatch wait trusts. Its path includes the
+# nonce captured at startup (now unset from env), so an executor that read the
+# workspace run-spec cannot derive the correct path and cannot forge completion.
+# The sentinel records the real execute_tail exit code.
 _finished_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
 _write_sentinel "$_finished_state" "$_execute_rc"
 

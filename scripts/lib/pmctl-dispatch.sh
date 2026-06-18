@@ -797,6 +797,24 @@ pmctl_dispatch_run_detached() {
     printf 'pmctl dispatch run: mkdir failed: %s\n' "$spec_dir" >&2
     return 2
   fi
+
+  # Generate a sentinel nonce unknown to the executor. The nonce is passed to the
+  # supervisor via an environment variable (not written to the workspace run-spec)
+  # and the supervisor unsets it before exec-ing the adapter subprocess. This makes
+  # the sentinel path /tmp/pm-supervisor-sentinel-<run_id>-<nonce> unpredictable to
+  # an executor that can only read workspace files, so it cannot forge completion.
+  local _sup_nonce _sup_key_file
+  _sup_nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
+    || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
+  [[ -n "$_sup_nonce" ]] || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
+  _sup_key_file="/tmp/pm-dispatch-key-$run_id"
+  printf '%s' "$_sup_nonce" > "$_sup_key_file" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to write sentinel key file\n' >&2
+    return 2
+  }
+  # Export nonce to supervisor via env; supervisor reads and immediately unsets.
+  export PM_SUPERVISOR_NONCE="$_sup_nonce"
+
   # Snapshot the brief into /tmp/brief-<run_id>.md before launching so the
   # caller can safely clean up the original temp brief after run_id returns.
   # The snapshot path stays within the /tmp/brief-*.md guard pattern so the
@@ -837,10 +855,12 @@ pmctl_dispatch_run_detached() {
     pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
       "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
     printf 'final_state=failed\nexit_code=2\n' \
-      > "/tmp/pm-supervisor-sentinel-$run_id" 2>/dev/null || true
-    rm -f "$brief_file" 2>/dev/null || true
+      > "/tmp/pm-supervisor-sentinel-${run_id}-${_sup_nonce}" 2>/dev/null || true
+    rm -f "$brief_file" "$_sup_key_file" 2>/dev/null || true
+    unset PM_SUPERVISOR_NONCE
     return 2
   fi
+  unset PM_SUPERVISOR_NONCE
   printf '%s\n' "$run_id"
   return 0
 }
@@ -900,14 +920,24 @@ pmctl_dispatch_wait() {
     return 2
   fi
 
-  # Poll the supervisor sentinel (/tmp/pm-supervisor-sentinel-<run_id>), not the
-  # in-workspace dispatch record. The sentinel is written by the supervisor after
-  # execute_tail completes and is outside the executor's workspace-write sandbox,
-  # so an executor cannot forge a terminal state that causes dispatch wait to
-  # return before the supervisor has actually finished. The in-workspace dispatch
-  # record (.dispatch-results/<run_id>.md) is read for the human-readable summary
-  # only and is NOT trusted as the authoritative completion signal.
-  local _sentinel="/tmp/pm-supervisor-sentinel-$run_id"
+  # Resolve the sentinel path from the nonce key file written by the parent
+  # before the supervisor was launched. The key file lives in /tmp but outside
+  # the workspace, so an executor that forged a sentinel at the predictable
+  # /tmp/pm-supervisor-sentinel-<run_id> path (without the nonce suffix) would
+  # produce a file at a different path that dispatch wait never polls.
+  local _key_nonce _key_file
+  _key_file="/tmp/pm-dispatch-key-$run_id"
+  if [[ ! -f "$_key_file" ]]; then
+    printf 'pmctl dispatch wait: sentinel key not found for %s (run may have already completed, or dispatch run predates this version)\n' "$run_id" >&2
+    return 2
+  fi
+  _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
+  if [[ -z "$_key_nonce" ]]; then
+    printf 'pmctl dispatch wait: empty sentinel key for %s\n' "$run_id" >&2
+    return 2
+  fi
+
+  local _sentinel="/tmp/pm-supervisor-sentinel-${run_id}-${_key_nonce}"
   local start elapsed
   start="$SECONDS"
   while true; do
@@ -915,7 +945,7 @@ pmctl_dispatch_wait() {
       local _sent_state _sent_exit
       _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-      rm -f "$_sentinel" 2>/dev/null || true
+      rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
       [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
       if dispatch_record_read_state "$work_dir" "$run_id"; then
         printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
@@ -926,6 +956,9 @@ pmctl_dispatch_wait() {
       else
         printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
           "${_sent_state:-unknown}" "${_sent_exit:-1}"
+        if [[ "${_sent_exit:-1}" -eq 0 ]]; then
+          printf 'pmctl dispatch wait: WARN: sentinel ok but durable dispatch record not found for %s in %s\n' "$run_id" "$work_dir" >&2
+        fi
       fi
       return "${_sent_exit:-1}"
     fi
