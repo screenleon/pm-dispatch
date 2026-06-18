@@ -81,7 +81,11 @@ After `pmctl dispatch run` reaches a terminal foreground state (`ok` or `failed`
 
 The record contains YAML frontmatter with machine-readable summary fields (`run_id`, optional `task_id`, `executor`, `model`, `brief_file`, `working_dir`, `exit_code`, `final_state`, `verify_summary`, per-run trace paths, `created_ts`, and `finished_ts`) plus a short human-readable body. For successful adapter exits, `verify_summary` is the captured stdout from `dispatch-post-verify.sh`; for adapter non-zero exits that short-circuit before post-verify, it is a short adapter-exit verdict.
 
-`.dispatch-results/` is intentionally gitignored like `.gate-results/` and `.agent-trace/`: it is durable for local recovery across threads or shell sessions, not a committed project artifact. Record writes are best-effort observability. If writing the markdown file fails, `pmctl dispatch run` logs a warning to stderr and preserves the original dispatch exit code.
+`.dispatch-results/` is intentionally gitignored like `.gate-results/` and `.agent-trace/`: it is durable for local recovery across threads or shell sessions, not a committed project artifact.
+
+**Record-write contract depends on lifecycle:**
+- **Foreground (`--lifecycle foreground`)**: record writes are best-effort observability. If writing the markdown file fails, `pmctl dispatch run` logs a warning to stderr and preserves the original dispatch exit code.
+- **Detached (`--lifecycle detached`)**: the dispatch record is the **load-bearing control surface** for `pmctl dispatch wait`. The detached supervisor (`scripts/dispatch-supervisor.sh`) guarantees a terminal record is written before it exits — even if the soft write in `execute_tail` failed — so that `dispatch wait` can always resolve without polling the state store.
 
 ## Non-interactive executor contract (Model B)
 

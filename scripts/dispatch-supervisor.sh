@@ -161,17 +161,20 @@ PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
   "${forward[@]}" || _execute_rc=$?
 
-# Best-effort fallback: if execute_tail exited non-zero and no terminal dispatch
-# record was written (e.g. a state-store transition write failed before the
-# normal record path), write a failed record now so dispatch wait can resolve
-# quickly instead of blocking until timeout.
-if [[ "$_execute_rc" -ne 0 ]] \
-  && ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1; then
+# Terminal record is load-bearing for detached dispatch: pmctl dispatch wait
+# resolves only from .dispatch-results/<run_id>.md. Ensure a terminal record
+# always exists when the supervisor exits, regardless of execute_tail's outcome.
+# This covers both the error path (adapter failed before writing a record) and
+# the rare case where execute_tail succeeded but the soft record write silently
+# failed (e.g. filesystem full or permissions on .dispatch-results/).
+if ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1; then
   _fallback_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+  _fallback_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
   dispatch_record_write "$spec_run_id" "" "${spec_adapter:-}" "${spec_model:-}" \
-    "${spec_brief_file:-}" "$spec_work_dir" "$_execute_rc" "failed" \
-    "supervisor tail exited $spec_run_id rc=$_execute_rc; no durable record written" \
-    "" "" "" "${spec_created_ts:-}" "$_fallback_ts" 2>/dev/null || true
+    "${spec_brief_file:-}" "$spec_work_dir" "$_execute_rc" "$_fallback_state" \
+    "supervisor fallback record (execute_tail rc=$_execute_rc; original record write missed)" \
+    "" "" "" "${spec_created_ts:-}" "$_fallback_ts" 2>/dev/null \
+    || printf 'dispatch-supervisor: WARN: fallback record write also failed for %s\n' "$spec_run_id" >&2
 fi
 
 # Best-effort cleanup of the durable brief snapshot now that the adapter has

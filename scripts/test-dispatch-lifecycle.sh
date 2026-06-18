@@ -464,7 +464,9 @@ case_config_lifecycle_foreground() {
     && [[ -n "$(_first_record "$work")" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code runspec=${_first_runspec "$work":-absent} record=${_first_record "$work":-absent} out=$(tail -2 <<<"$out" | tr '\n' '|')"
+    local _rs _rc
+    _rs="$(_first_runspec "$work")"; _rc="$(_first_record "$work")"
+    fail "$name" "code=$code runspec=${_rs:-absent} record=${_rc:-absent} out=$(tail -2 <<<"$out" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$cfg"
 }
@@ -867,6 +869,44 @@ case_supervisor_tail_failure_writes_fallback_record() {
   rm -rf "$work" "$bindir" "$bad_state_root"
 }
 
+# ── supervisor fallback record covers successful adapter when dispatch-results
+#    is poisoned: dispatch wait returns non-success (timeout or failed record),
+#    never a false-positive "ok". Supervisor log contains the fallback warning.
+case_supervisor_fallback_covers_ok_run_with_poisoned_results() {
+  local name="lifecycle/supervisor fallback written even for successful adapter when .dispatch-results is poisoned"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code supervisor_log _log_ok
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  # Poison .dispatch-results by making it a regular file — record writes will fail.
+  touch "$work/.dispatch-results"
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    rm -rf "$work" "$bindir"; return
+  fi
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 >/dev/null 2>&1; wait_code=$?
+  set -e
+  supervisor_log="$work/.agent-trace/$run_id.supervisor.log"
+  _log_ok=0
+  if [[ -f "$supervisor_log" ]] && grep -q "fallback" "$supervisor_log" 2>/dev/null; then
+    _log_ok=1
+  fi
+  # With poisoned .dispatch-results, dispatch wait must NOT exit 0 (no false success).
+  # It should time out (124) because the fallback record write also fails.
+  if [[ "$wait_code" -ne 0 && "$_log_ok" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "wait_code=$wait_code (want !=0) log_ok=$_log_ok supervisor_log=${supervisor_log}"
+  fi
+  rm -f "$work/.dispatch-results"
+  rm -rf "$work" "$bindir"
+}
+
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
@@ -897,4 +937,5 @@ case_supervisor_rejects_cd_smuggle
 case_detached_autopack_rejected
 case_supervisor_preflight_failure
 case_supervisor_tail_failure_writes_fallback_record
+case_supervisor_fallback_covers_ok_run_with_poisoned_results
 th_summary

@@ -826,6 +826,15 @@ pmctl_dispatch_run_detached() {
 
   if ! _pmctl_dispatch_launch_supervisor "$repo_root" "$spec_path" "$supervisor_log" "$pid_file"; then
     printf 'pmctl dispatch run: failed to launch detached supervisor for %s\n' "$run_id" >&2
+    # Write terminal failed record so dispatch wait resolves quickly, and clean
+    # up the brief snapshot (brief_file now points to the /tmp snapshot copy).
+    local _launch_fail_ts
+    _launch_fail_ts="$(pmctl_dispatch_utc_ts 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+    pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+      "failed" 2 "$model" "$brief_file" "" "$created_ts" "dispatched" 2>/dev/null || true
+    pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
+      "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
+    rm -f "$brief_file" 2>/dev/null || true
     return 2
   fi
   printf '%s\n' "$run_id"

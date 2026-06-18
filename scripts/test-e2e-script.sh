@@ -78,26 +78,27 @@ test_usage_error_exits_2() {
   assert_exit "usage-error-exits-2" 2 bash "$E2E" --bad
 }
 
-# ── Missing prerequisite: adapter not on PATH → Phase A FAIL → exit 1 ────────
+# ── Missing prerequisite: adapter not on PATH → Phase A SKIP → exit 4 ───────
 # Use a restricted PATH (no codex/claude) with a valid adapter name so Phase A
-# fails with FAIL (not a usage error) and the script exits 1 (NO-GO).
+# records SKIP (not FAIL) and the script exits 4 (PARTIAL GO) — E2E requires a
+# live adapter, so the gate gracefully skips rather than hard-failing.
 
-test_missing_adapter_exits_1() {
+test_missing_adapter_exits_4() {
   local rc=0 out
   out=$(PATH=/usr/bin:/bin bash "$E2E" --adapter codex 2>&1) || rc=$?
-  if [[ "$rc" -eq 1 ]]; then pass "missing-adapter-exits-1"; else fail "missing-adapter-exits-1" "exit $rc want 1"; fi
-  assert_contains "missing-adapter-no-go" "NO-GO" "$out"
+  if [[ "$rc" -eq 4 ]]; then pass "missing-adapter-exits-4"; else fail "missing-adapter-exits-4" "exit $rc want 4"; fi
+  assert_contains "missing-adapter-partial-go" "PARTIAL GO" "$out"
 }
 
 # ── Phase C skip flag is accepted without error ───────────────────────────────
-# --skip-gate is a valid flag; combining with restricted PATH still exits 1
-# (Phase A failure) not 2 (parse error), confirming the flag is parsed OK.
+# --skip-gate is a valid flag; combining with restricted PATH still exits 4
+# (Phase A skip) not 2 (parse error), confirming the flag is parsed OK.
 
 test_skip_gate_flag_accepted() {
   local rc=0
   PATH=/usr/bin:/bin bash "$E2E" --adapter codex --skip-gate 2>/dev/null || rc=$?
-  if [[ "$rc" -eq 1 ]]; then pass "skip-gate-flag-accepted"
-  else fail "skip-gate-flag-accepted" "exit $rc want 1 (parse error would be 2)"; fi
+  if [[ "$rc" -eq 4 ]]; then pass "skip-gate-flag-accepted"
+  else fail "skip-gate-flag-accepted" "exit $rc want 4 (parse error would be 2)"; fi
 }
 
 # ── Phase C produces SKIP (not FAIL) when --skip-gate requested ───────────────
@@ -184,7 +185,7 @@ test_unknown_flag
 test_adapter_missing_value
 test_adapter_invalid
 test_usage_error_exits_2
-test_missing_adapter_exits_1
+test_missing_adapter_exits_4
 test_skip_gate_flag_accepted
 test_skip_gate_not_usage_error
 test_skip_gate_reaches_phase_c_skip
