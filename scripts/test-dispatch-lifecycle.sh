@@ -260,6 +260,9 @@ case_dispatch_wait_timeout() {
   else
     fail "$name" "code=$code wait=$wait_code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
+  # Wait for the detached supervisor to finish before cleanup so that
+  # rm -rf does not race with the supervisor still writing to .agent-trace.
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1 || true
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
