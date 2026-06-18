@@ -173,4 +173,11 @@ if [[ "$_execute_rc" -ne 0 ]] \
     "supervisor tail exited $spec_run_id rc=$_execute_rc; no durable record written" \
     "" "" "" "${spec_created_ts:-}" "$_fallback_ts" 2>/dev/null || true
 fi
+
+# Best-effort cleanup of the durable brief snapshot now that the adapter has
+# finished. The snapshot at spec_brief_file (/tmp/brief-<run_id>.md) was
+# created by the parent before returning the run_id; it is no longer needed
+# once the supervisor exits and a terminal record exists.
+rm -f "${spec_brief_file:-}" 2>/dev/null || true
+
 exit "$_execute_rc"

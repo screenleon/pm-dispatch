@@ -88,10 +88,11 @@ printf 'adapter:  %s\n' "$ADAPTER"
 printf 'repo:     %s\n' "$REPO_ROOT"
 
 if ! command -v "$ADAPTER" >/dev/null 2>&1; then
-  record "$ADAPTER on PATH" FAIL "not found — install and authenticate $ADAPTER before running E2E"
+  record "$ADAPTER on PATH" SKIP "not found — E2E requires an authenticated live adapter; run manually (./scripts/test-e2e.sh --adapter $ADAPTER)"
+  REQUIRED_SKIPPED=$((REQUIRED_SKIPPED + 1))
   section "Verdict"; hr
-  printf 'AUTOMATED VERDICT: NO-GO  (missing prerequisite)\n'
-  exit 1
+  printf 'AUTOMATED VERDICT: PARTIAL GO  (1 checks, 0 failures, 1 required phase(s) skipped)\n'
+  exit 4
 fi
 record "$ADAPTER on PATH" PASS "$("$ADAPTER" --version 2>&1 | head -1)"
 

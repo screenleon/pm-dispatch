@@ -146,6 +146,37 @@ case_foreground_explicit_no_runspec() {
   rm -rf "$work" "$bindir"
 }
 
+# ── default lifecycle: end-to-end run_id capture → wait → ok record ─────────
+# Regression for the primary caller pattern after the default flip to detached:
+# bare dispatch (no --lifecycle flag) must return a run_id, dispatch wait must
+# resolve, and the terminal dispatch record must reach state "ok".
+case_default_detach_terminal_record_is_ok() {
+  local name="lifecycle/default (no --lifecycle): run_id capture → wait → ok record"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code record
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || ! "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    fail "$name" "dispatch run failed or returned no run_id: code=$code run_id=${run_id:-empty}"
+    rm -rf "$work" "$bindir"; return
+  fi
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1; wait_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
+  if [[ "$wait_code" -eq 0 && -n "$record" ]] \
+    && grep -q '^final_state: "ok"$' "$record" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "wait=$wait_code record=${record:-absent} state=$(grep 'final_state' "$record" 2>/dev/null | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ── detached launches supervisor and returns run_id immediately ──────────────
 # Deterministic proof: dispatch returns while the adapter is still blocked on
 # release_fifo. After reading from started_fifo (FIFO-based — no sleep) we
@@ -184,8 +215,21 @@ case_detached_true_detach() {
 
   # At this point: dispatch has returned (run_id in hand) AND adapter is still
   # blocked on release_fifo (record cannot exist yet). Deterministic proof.
-  local record_while_blocked
+  local record_while_blocked snap_ok=0
   record_while_blocked="$(_record_for_run "$work" "$run_id")"
+
+  # Verify runspec fields and snapshot content while adapter is still blocked
+  # (snapshot exists during adapter execution; supervisor cleans it up on exit).
+  if [[ -n "$runspec" ]] && grep -q '^schema_version=2$' "$runspec" \
+    && grep -q '^adapter=codex$' "$runspec" && grep -q '^cd_arg=' "$runspec" \
+    && grep -q '^native_b64:$' "$runspec"; then
+    local _snap
+    _snap="$(grep '^brief_file=' "$runspec" | cut -d= -f2-)"
+    if [[ "$_snap" =~ ^/tmp/brief-run-[A-Za-z0-9]+-[A-Za-z0-9]+\.md$ ]] \
+      && diff "$brief" "$_snap" >/dev/null 2>&1; then
+      snap_ok=1
+    fi
+  fi
 
   # Unblock adapter (O_RDWR open prevents blocking if adapter already exited).
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
@@ -198,21 +242,15 @@ case_detached_true_detach() {
   if [[ "$code" -eq 0 ]] \
     && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
     && [[ -z "$record_while_blocked" ]] \
+    && [[ "$snap_ok" -eq 1 ]] \
     && [[ "$wait_code" -eq 0 ]] \
     && grep -q "state: ok  exit: 0" <<<"$wait_out" \
     && [[ -n "$record" ]] && grep -q '^final_state: "ok"$' "$record" \
-    && [[ -n "$runspec" ]] && grep -q '^schema_version=2$' "$runspec" \
-    && grep -q '^adapter=codex$' "$runspec" \
-    && grep -q '^cd_arg=' "$runspec" \
-    && { _snap="$(grep '^brief_file=' "$runspec" | cut -d= -f2-)"; \
-         [[ "$_snap" =~ ^/tmp/brief-run-[A-Za-z0-9]+-[A-Za-z0-9]+\.md$ ]] \
-         && diff "$brief" "$_snap" >/dev/null 2>&1; } \
-    && grep -q '^native_b64:$' "$runspec" \
     && [[ -s "$pid_file" ]] \
     && [[ -s "$log_file" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} blocked_record=${record_while_blocked:-absent} record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
+    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} blocked_record=${record_while_blocked:-absent} snap_ok=$snap_ok record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$err" "$started_fifo" "$release_fifo"
 }
@@ -831,6 +869,7 @@ case_supervisor_tail_failure_writes_fallback_record() {
 
 case_detached_is_default
 case_foreground_explicit_no_runspec
+case_default_detach_terminal_record_is_ok
 case_detached_true_detach
 case_dispatch_wait_failure_propagates
 case_dispatch_wait_timeout
