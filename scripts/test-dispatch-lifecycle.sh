@@ -405,6 +405,30 @@ case_config_lifecycle_detached() {
   rm -rf "$work" "$bindir"; rm -f "$cfg"
 }
 
+# ── config dispatch.lifecycle = foreground opts back to foreground ────────────
+case_config_lifecycle_foreground() {
+  local name="lifecycle/config dispatch.lifecycle=foreground restores foreground with no --lifecycle flag"
+  should_run "$name" || return 0
+  local work brief bindir cfg code out
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  cfg="$(mktemp)"; printf 'dispatch.lifecycle = foreground\n' > "$cfg"
+  set +e
+  out="$(PM_DISPATCH_CONFIG_FILE="$cfg" PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  # foreground: exits with adapter exit code, no run-spec written, dispatch record present
+  if [[ "$code" -eq 0 ]] \
+    && grep -q '^OK$' <<<"$out" \
+    && [[ -z "$(_first_runspec "$work")" ]] \
+    && [[ -n "$(_first_record "$work")" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code runspec=${_first_runspec "$work":-absent} record=${_first_record "$work":-absent} out=$(tail -2 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$cfg"
+}
+
 # ── config --lifecycle flag beats config default ─────────────────────────────
 case_flag_beats_config() {
   local name="lifecycle/--lifecycle foreground overrides config detached"
@@ -819,6 +843,7 @@ case_detached_print_cmd_incompatible
 case_detached_ineligible_rejected
 case_detach_eligible_unit
 case_config_lifecycle_detached
+case_config_lifecycle_foreground
 case_flag_beats_config
 case_supervisor_rejects_unroutable
 case_supervisor_rejects_traversal_name
