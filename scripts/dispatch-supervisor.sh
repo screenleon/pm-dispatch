@@ -127,10 +127,13 @@ for arg in ${native[@]+"${native[@]}"}; do
 done
 
 # ── Re-run the full security preflight (defense in depth — not a bypass door) ─
-# resolve adapter (name/containment/route) -> validate the exact brief the
-# adapter will run -> guard that same brief. Identical contract to
-# `pmctl dispatch run`, so the supervisor can never launch what pmctl would
-# refuse, even from a hand-crafted run-spec.
+# spec_brief_file points at the parent's durable snapshot committed atomically
+# before dispatch run returned; the original temp brief may be gone by now.
+# resolve adapter (name/containment/route) -> validate the snapshot ->
+# guard the snapshot -> execute the same snapshot.  No TOCTOU window because
+# validate, guard, and execute all operate on the identical on-disk bytes.
+# Identical contract to `pmctl dispatch run`, so the supervisor can never
+# launch what pmctl would refuse, even from a hand-crafted run-spec.
 declare -F pmctl_dispatch_resolve_adapter >/dev/null || _die "pmctl-dispatch lib unavailable"
 adapter_path="$(pmctl_dispatch_resolve_adapter "$REPO_ROOT" "$spec_adapter")" \
   || _die "adapter resolution failed for $spec_adapter"
@@ -143,19 +146,6 @@ declare -F pmctl_guard_check >/dev/null || _die "guard unavailable (pmctl-guard 
 if ! pmctl_guard_check "$REPO_ROOT" --event pre-write --role executor --runtime "$spec_adapter" --file "$spec_brief_file"; then
   _die "guard denied dispatch for adapter $spec_adapter"
 fi
-
-# Snapshot the validated brief into the supervisor-owned work directory so the
-# caller can safely clean up its temporary brief after detached dispatch returns.
-# Always overwrite atomically from the validated source so a stale or raced
-# pre-existing snapshot can never bypass the guard and validation above.
-_brief_snapshot="$spec_work_dir/.agent-trace/$spec_run_id.brief.md"
-_brief_tmp="$(mktemp "$spec_work_dir/.agent-trace/.$spec_run_id.brief.XXXXXX")" \
-  || _die "failed to create brief snapshot tempfile"
-cp "$spec_brief_file" "$_brief_tmp" \
-  || { rm -f "$_brief_tmp"; _die "failed to snapshot brief: $spec_brief_file"; }
-mv -f "$_brief_tmp" "$_brief_snapshot" \
-  || { rm -f "$_brief_tmp"; _die "failed to commit brief snapshot: $spec_brief_file"; }
-spec_brief_file="$_brief_snapshot"
 
 # ── Rebuild the adapter forward args from trusted scalars + native passthrough ─
 # --cd / --brief-file come ONLY from the validated scalars, so the brief and work

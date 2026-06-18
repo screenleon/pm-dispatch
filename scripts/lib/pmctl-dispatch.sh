@@ -797,6 +797,22 @@ pmctl_dispatch_run_detached() {
     printf 'pmctl dispatch run: mkdir failed: %s\n' "$spec_dir" >&2
     return 2
   fi
+  # Snapshot the brief into /tmp/brief-<run_id>.md before launching so the
+  # caller can safely clean up the original temp brief after run_id returns.
+  # The snapshot path stays within the /tmp/brief-*.md guard pattern so the
+  # supervisor's validate -> guard -> execute all see the same stable bytes
+  # with no TOCTOU window (no second copy step needed in the supervisor).
+  local brief_snapshot brief_snap_tmp
+  brief_snapshot="/tmp/brief-$run_id.md"
+  brief_snap_tmp="$(mktemp "/tmp/.brief-$run_id.XXXXXX")" || {
+    printf 'pmctl dispatch run: failed to create brief snapshot tempfile\n' >&2
+    return 2
+  }
+  cp "$brief_file" "$brief_snap_tmp" \
+    || { rm -f "$brief_snap_tmp"; printf 'pmctl dispatch run: failed to snapshot brief: %s\n' "$brief_file" >&2; return 2; }
+  mv -f "$brief_snap_tmp" "$brief_snapshot" \
+    || { rm -f "$brief_snap_tmp"; printf 'pmctl dispatch run: failed to commit brief snapshot\n' >&2; return 2; }
+  brief_file="$brief_snapshot"
   if ! pmctl_dispatch_write_runspec "$spec_path" "$run_id" "$adapter" "$work_dir" \
       "$cd_arg" "$brief_file" "$model" "$created_ts" "$print_cmd" ${native[@]+"${native[@]}"}; then
     printf 'pmctl dispatch run: failed to write run-spec: %s\n' "$spec_path" >&2
@@ -1057,7 +1073,7 @@ pmctl_dispatch_run() {
   # in a detached run-spec needs a pack-provenance contract that is out of scope
   # for 7c-2a. Rejecting the combination keeps the detached invariant simple and
   # auditable: the brief that is guarded IS the brief that is validated and
-  # executed. (auto-pack default is off; detached is opt-in.)
+  # executed. (auto-pack default is off; detached is the built-in default for eligible adapters.)
   if [[ "$_lifecycle_effective" == "detached" && "$_auto_pack_effective" == "on" ]]; then
     printf 'pmctl dispatch run: --lifecycle detached does not yet support auto-pack; run foreground or pass --no-auto-pack\n' >&2
     return 2
@@ -1102,10 +1118,10 @@ pmctl_dispatch_run() {
   # shellcheck disable=SC2163
   export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
 
-  # 5. Execute. Foreground runs the tail in-process (current behavior). Detached
-  #    persists a run-spec and hands the post-preflight tail to the supervisor;
-  #    in 7c-2a the supervisor runs synchronously (behavior-equivalent), so all
-  #    the preflight gates above still front every executor invocation.
+  # 5. Execute. Foreground runs the tail in-process (blocking). Detached persists
+  #    a run-spec, snapshots the brief durably, and hands the post-preflight tail
+  #    to the supervisor via setsid/nohup; returns run_id immediately.  The
+  #    preflight gates above still front every executor invocation in both paths.
   if [[ "$_lifecycle_effective" == "detached" ]]; then
     pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
       "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \

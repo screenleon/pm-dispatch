@@ -204,7 +204,9 @@ case_detached_true_detach() {
     && [[ -n "$runspec" ]] && grep -q '^schema_version=2$' "$runspec" \
     && grep -q '^adapter=codex$' "$runspec" \
     && grep -q '^cd_arg=' "$runspec" \
-    && grep -q "^brief_file=$brief\$" "$runspec" \
+    && { _snap="$(grep '^brief_file=' "$runspec" | cut -d= -f2-)"; \
+         [[ "$_snap" =~ ^/tmp/brief-run-[A-Za-z0-9]+-[A-Za-z0-9]+\.md$ ]] \
+         && diff "$brief" "$_snap" >/dev/null 2>&1; } \
     && grep -q '^native_b64:$' "$runspec" \
     && [[ -s "$pid_file" ]] \
     && [[ -s "$log_file" ]]; then
@@ -429,6 +431,31 @@ case_config_lifecycle_foreground() {
   rm -rf "$work" "$bindir"; rm -f "$cfg"
 }
 
+# ── parent brief snapshot survives caller cleanup of temp brief ───────────────
+case_detached_brief_snapshot_survives_cleanup() {
+  local name="lifecycle/detached: supervisor snapshot survives caller cleanup of temp brief"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
+  set -e
+  # Simulate caller cleanup: remove the original temp brief immediately.
+  rm -f "$brief"
+  # The supervisor must still complete from its durable snapshot.
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  set -e
+  if [[ "$code" -eq 0 && "$wait_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code wait=$wait_code (brief removed after dispatch returned)"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ── config --lifecycle flag beats config default ─────────────────────────────
 case_flag_beats_config() {
   local name="lifecycle/--lifecycle foreground overrides config detached"
@@ -554,35 +581,6 @@ case_supervisor_rejects_malformed_brief() {
   rm -rf "$work" "$bindir"; rm -f "$bad"
 }
 
-# ── supervisor overwrites a pre-existing brief snapshot atomically ────────────
-# A stale .brief.md in .agent-trace must not bypass guard/validation. The
-# supervisor always snapshots from the validated source, overwriting any prior.
-case_supervisor_overwrites_stale_snapshot() {
-  local name="supervisor/pre-existing brief snapshot is overwritten from validated source"
-  should_run "$name" || return 0
-  local work brief spec bindir code stale_content
-  work="$(mktemp -d)"; git init -q "$work"
-  brief="$(_mk_brief "$work")"
-  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
-  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
-  _write_runspec "$spec" "codex" "$work" "$brief"
-  # Seed a stale snapshot with different content before supervisor launch.
-  stale_content="stale brief content that must be replaced"
-  printf '%s\n' "$stale_content" > "$work/.agent-trace/run-20260617T000000Z-aaaaaa.brief.md"
-  set +e
-  PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>/dev/null; code=$?
-  set -e
-  local snap="$work/.agent-trace/run-20260617T000000Z-aaaaaa.brief.md"
-  if [[ "$code" -eq 0 ]] \
-    && [[ -f "$snap" ]] \
-    && ! grep -qF "$stale_content" "$snap" \
-    && grep -q 'goal: exercise dispatch lifecycle' "$snap"; then
-    pass "$name"
-  else
-    fail "$name" "code=$code snap_content=$(head -2 "$snap" 2>/dev/null | tr '\n' '|')"
-  fi
-  rm -rf "$work" "$bindir"
-}
 
 # ── supervisor rejects native args that smuggle in --brief-file ──────────────
 case_supervisor_rejects_native_brief_smuggle() {
@@ -844,12 +842,12 @@ case_detached_ineligible_rejected
 case_detach_eligible_unit
 case_config_lifecycle_detached
 case_config_lifecycle_foreground
+case_detached_brief_snapshot_survives_cleanup
 case_flag_beats_config
 case_supervisor_rejects_unroutable
 case_supervisor_rejects_traversal_name
 case_supervisor_missing_spec
 case_supervisor_rejects_malformed_brief
-case_supervisor_overwrites_stale_snapshot
 case_supervisor_rejects_native_brief_smuggle
 case_supervisor_rejects_malformed_base64
 case_supervisor_rejects_bad_schema
