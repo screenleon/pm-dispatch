@@ -109,7 +109,7 @@ function valid_priority(s) {
 }
 
 function valid_epic(s) {
-  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "design" || s == "spike" || s == "—")
+  return (s == "oss" || s == "reuse-debt" || s == "hygiene" || s == "design" || s == "spike" || s == "retrieval" || s == "—")
 }
 
 function norm_area(s) {

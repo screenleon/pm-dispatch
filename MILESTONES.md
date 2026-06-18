@@ -84,30 +84,49 @@
 
 ### 延後至 v0.7.0+（明確排除於 v0.6.0）
 
-- **CC-216 MCP server**——「通用橋」邏輯上是 executor 抽象＋lifecycle 之後的下一層，且為重型 net-new surface（Node/Python server + `pmctl --json`），不符 thin-slice。**2026-06-13 user 拍板 defer。** v0.7.0 headline，見下方 v0.7.0 區段。
+- **CC-216 MCP server（DEFERRED，不排入 milestone）**——「通用橋」邏輯上是 executor 抽象＋lifecycle 之後的下一層，重型 net-new surface（Node/Python server + `pmctl --json`），不符 thin-slice。**2026-06-13 從 v0.6.0 defer；2026-06-18 user 進一步拍板：不排入任何 milestone，待核心（executor 抽象 + retrieval/memory 基底）覺得**基本都穩定**後再考慮。** 不再是 v0.7.0 headline——v0.7.0 改為 retrieval-first + memory 主題。
 - **CC-333 七層耦合中的 1/4/7**（memory 路徑 / 安裝路徑 / reviewer memory 讀取）——本版聚焦 dispatch+guard+install+lifecycle 的 executor 抽象；memory/install-target 軸（含 [[CC-104m]] 多目標投影）留待後續。
 - **CC-358 / CC-359**（runner telemetry / worktree batch dispatch）——建在抽象之上的能力層，抽象穩定後再做。
-- **完整 knowledge index（CC-340）**——延續 v0.5.0 的 v0.6.0+ 排除，與 executor 抽象無關，獨立排程。
+- **完整 knowledge index（CC-340）**——**已被 [[CC-403]] supersede**（2026-06-18）：memory-index MVP 移入 v0.7.0 retrieval epic，CC-340 僅剩 embeddings remainder。
 
 ---
 
-## v0.7.0 — 通用橋 MCP server（規劃中 2026-06-15）
+## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
 
-**主題**：executor 抽象（v0.6.0 dispatch/guard/install + lifecycle）穩定後的下一層——**MCP 通用橋**，讓任意 MCP-aware host 透過單一協定使用 pm-dispatch，不必逐工具接線。
+**主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
 
-> **為什麼排在 v0.6.0 之後**：MCP 必須包**穩定的** pmctl 與**已收口的 executor 抽象**（含 lifecycle）。v0.6.0 把 executor 變成資料驅動、生命週期獨立的 supervised worker 後，MCP 才有穩定的下層可包。重型 net-new surface（Node/Python server + `pmctl --json`），不符 v0.6.0 thin-slice。**2026-06-13 user 拍板從 v0.6.0 defer。**
+> **設計依據**：2026-06-18 memory + `pmctl context` 統整（opus 獨立分析 + codex 獨立第二意見 + 外部 chatgpt/gemini/grok 研究對照）。核心洞察兩層：(1) **能力缺口**——`pmctl context` 的 index 只掃 repo 內檔，memory（repo 外 `~/.claude/projects/<id>/memory/`）**完全搜不到**，故對「決策/規則/偏好」這類最常找的特定資料，「優先用 pmctl context」物理上不可能；(2) **行為缺口**——即使能力補上，prompt 裡的「reflex」會在壓力下退化成 grep，必須在**單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。
 
-### Phase 1 — MCP server + `pmctl --json`（P2）
+### Phase 1 — retrieval-first context discipline（P2；行為層，可先行）
+
+> 純 prompt/command/validator/dispatch，**不**碰 memory 索引引擎；風險低、最快改變行為。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-216 | `mcp/pm-dispatch-server` + `mcp/README.md` + `pmctl --json` 設計約束；thin Node/Python wrapper over pmctl subprocesses（避免邏輯重複），或 spec 穩定後 native bash MCP server。相依 [[CC-211]]、[[CC-215]]（pmctl 穩定先於包裝）、v0.6.0 executor 抽象＋lifecycle | ⏸ |
+| CC-400 | prompt/docs 檢索順序強制：project-pm Principle 3 改硬性「context query →（no hits 才）Read/Grep」；context-retrieval.md 升級為「Query before Read/Grep/full-file open」。純文件，零程式風險 | 🟢 |
+| CC-401 | brief-validate `retrieval:` 證據 chokepoint：非 trivial brief 須有 context refs / `auto_pack:true` / `skip_reason:`，先 warn 後 fail。把 reflex 釘成合約。相依 [[CC-400]] | 🟢 |
+| CC-402 | auto-pack 與 detached lifecycle 相容（augmented brief 記為 run-spec trusted brief_file），解禁後 `dispatch.auto_pack = on` 可預設。HARD security/risk gate。相依 [[CC-399]] | 🟢 |
+
+### Phase 2 — memory 檢索基底（P2-P3；能力層）
+
+> 讓 memory 成為 `pmctl context` 的可檢索 source，並收斂出單一檢索入口；同時治理 memory 本身的 inject bloat 與 staleness。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-403 | `pmctl context --source repo/memory/all`：memory 變可檢索 source（memory-local DB、schema `source_domain` 補 memory、pack `memories[]` 填值、reuse-scan 維持 repo-only）。**supersede/吸收 [[CC-340]] MVP**，embeddings 留 CC-340 | 🟢 |
+| CC-404 | `MEMORY.md` 注入預算 + `priority: always`/`scope: active` metadata，取代「全注入 + >=50 才警告」。需與 CC-405 metadata 同捆或先行 | 🟢 |
+| CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | 🟢 |
+| CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | 🟢 |
+| CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | 🟢 |
+
+> **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
 
 ### 待後續 / 與本版正交
 
+- **CC-216 MCP server（DEFERRED，不排入 milestone）**——「通用橋」讓任意 MCP-aware host 透過單一協定使用 pm-dispatch。**2026-06-18 user 拍板：先 defer、不排入任何 milestone，待核心（executor 抽象 + retrieval/memory 基底）覺得**基本都穩定**後再考慮**。重型 net-new surface（Node/Python server + `pmctl --json`），需穩定 pmctl + 已收口 executor 抽象作下層。相依 [[CC-211]]、[[CC-215]]。
 - **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
-- **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程；可與 MCP 同期評估。
-- **完整 knowledge index（CC-340）**——standalone FTS + embeddings 重型版，與 executor 抽象無關，獨立排程。
+- **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程。
+- **CC-340 knowledge index 重型版**——**已被 [[CC-403]] supersede**：memory-index MVP 移入 Phase 2，CC-340 僅剩 embeddings / 語意後端 remainder，待 FTS/LIKE 證明不足再 resume。
 
 ---
 
