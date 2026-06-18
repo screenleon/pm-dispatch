@@ -85,7 +85,7 @@ The record contains YAML frontmatter with machine-readable summary fields (`run_
 
 **Record-write contract depends on lifecycle:**
 - **Foreground (`--lifecycle foreground`)**: record writes are best-effort observability. If writing the markdown file fails, `pmctl dispatch run` logs a warning to stderr and preserves the original dispatch exit code.
-- **Detached (`--lifecycle detached`)**: the dispatch record is the **load-bearing control surface** for `pmctl dispatch wait`. The detached supervisor (`scripts/dispatch-supervisor.sh`) guarantees a terminal record is written before it exits — even if the soft write in `execute_tail` failed — so that `dispatch wait` can always resolve without polling the state store.
+- **Detached (`--lifecycle detached`)**: the authoritative completion signal for `pmctl dispatch wait` is a **supervisor sentinel** written to `/tmp/pm-supervisor-sentinel-<run_id>` by `scripts/dispatch-supervisor.sh` — outside the executor's workspace-write sandbox. Because the sentinel path is inaccessible to the adapter subprocess, an executor cannot forge terminal state. The in-workspace dispatch record (`.dispatch-results/<run_id>.md`) is written as a human-readable artifact but is NOT trusted by `dispatch wait`; only the supervisor sentinel resolves the wait.
 
 ## Non-interactive executor contract (Model B)
 

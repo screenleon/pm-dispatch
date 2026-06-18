@@ -826,14 +826,18 @@ pmctl_dispatch_run_detached() {
 
   if ! _pmctl_dispatch_launch_supervisor "$repo_root" "$spec_path" "$supervisor_log" "$pid_file"; then
     printf 'pmctl dispatch run: failed to launch detached supervisor for %s\n' "$run_id" >&2
-    # Write terminal failed record so dispatch wait resolves quickly, and clean
-    # up the brief snapshot (brief_file now points to the /tmp snapshot copy).
+    # Write terminal failed record so dispatch wait resolves quickly, and write
+    # the supervisor sentinel so dispatch wait can resolve (sentinel is required
+    # because dispatch wait trusts sentinel not workspace record). Clean up the
+    # brief snapshot (brief_file now points to the /tmp snapshot copy).
     local _launch_fail_ts
     _launch_fail_ts="$(pmctl_dispatch_utc_ts 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
       "failed" 2 "$model" "$brief_file" "" "$created_ts" "dispatched" 2>/dev/null || true
     pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
       "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
+    printf 'final_state=failed\nexit_code=2\n' \
+      > "/tmp/pm-supervisor-sentinel-$run_id" 2>/dev/null || true
     rm -f "$brief_file" 2>/dev/null || true
     return 2
   fi
@@ -896,15 +900,34 @@ pmctl_dispatch_wait() {
     return 2
   fi
 
+  # Poll the supervisor sentinel (/tmp/pm-supervisor-sentinel-<run_id>), not the
+  # in-workspace dispatch record. The sentinel is written by the supervisor after
+  # execute_tail completes and is outside the executor's workspace-write sandbox,
+  # so an executor cannot forge a terminal state that causes dispatch wait to
+  # return before the supervisor has actually finished. The in-workspace dispatch
+  # record (.dispatch-results/<run_id>.md) is read for the human-readable summary
+  # only and is NOT trusted as the authoritative completion signal.
+  local _sentinel="/tmp/pm-supervisor-sentinel-$run_id"
   local start elapsed
   start="$SECONDS"
   while true; do
-    if dispatch_record_read_state "$work_dir" "$run_id"; then
-      printf 'run: %s  state: %s  exit: %s\n' "$run_id" "$DISPATCH_RECORD_STATE" "$DISPATCH_RECORD_EXIT"
-      if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
-        printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+    if [[ -f "$_sentinel" ]]; then
+      local _sent_state _sent_exit
+      _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      rm -f "$_sentinel" 2>/dev/null || true
+      [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
+      if dispatch_record_read_state "$work_dir" "$run_id"; then
+        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+          "${_sent_state:-$DISPATCH_RECORD_STATE}" "${_sent_exit:-$DISPATCH_RECORD_EXIT}"
+        if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+          printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+        fi
+      else
+        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+          "${_sent_state:-unknown}" "${_sent_exit:-1}"
       fi
-      return "$DISPATCH_RECORD_EXIT"
+      return "${_sent_exit:-1}"
     fi
     elapsed=$((SECONDS - start))
     if (( elapsed >= timeout )); then

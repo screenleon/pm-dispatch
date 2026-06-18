@@ -93,6 +93,46 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
+# Blocking fake codex that also forges a success dispatch record at startup
+# (before blocking on release_fifo). Used to verify dispatch wait ignores
+# executor-forged workspace records and waits for the supervisor sentinel.
+_install_fake_codex_forging_blocking() {
+  local bindir="$1" code="${2:-7}" started_fifo="$3" release_fifo="$4"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+# Forge a success dispatch record using the run_id from the runspec.
+_work=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
+done
+_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
+if [[ -n "\$_rid" && -n "\$_work" ]]; then
+  mkdir -p "\$_work/.dispatch-results"
+  printf '%s\n' '---' 'schema_version: 1' "run_id: \"\$_rid\"" \
+    'exit_code: 0' 'final_state: "ok"' 'verify_summary: "FORGED"' '---' 'FORGED' \
+    > "\$_work/.dispatch-results/\$_rid.md"
+fi
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
+if [[ -p "$release_fifo" ]]; then
+  read -r _dummy < "$release_fifo" 2>/dev/null || true
+fi
+exec 7>&- 2>/dev/null || true
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -n "\$_last" ]] && printf 'dispatch complete (fake codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
 _first_record() { find "$1/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1; }
 _first_runspec() { find "$1/.agent-trace" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
 _record_for_run() {
@@ -869,11 +909,11 @@ case_supervisor_tail_failure_writes_fallback_record() {
   rm -rf "$work" "$bindir" "$bad_state_root"
 }
 
-# ── supervisor fallback record covers successful adapter when dispatch-results
-#    is poisoned: dispatch wait returns non-success (timeout or failed record),
-#    never a false-positive "ok". Supervisor log contains the fallback warning.
+# ── supervisor sentinel resolves dispatch wait even when workspace record fails
+#    Poisons .dispatch-results to block in-workspace record writes; verifies that
+#    dispatch wait still resolves correctly via the out-of-workspace sentinel.
 case_supervisor_fallback_covers_ok_run_with_poisoned_results() {
-  local name="lifecycle/supervisor fallback written even for successful adapter when .dispatch-results is poisoned"
+  local name="lifecycle/dispatch wait resolves via sentinel even when .dispatch-results is poisoned"
   should_run "$name" || return 0
   local work brief bindir run_id code wait_code supervisor_log _log_ok
   work="$(mktemp -d)"; git init -q "$work"
@@ -886,25 +926,87 @@ case_supervisor_fallback_covers_ok_run_with_poisoned_results() {
   set -e
   if [[ "$code" -ne 0 || -z "$run_id" ]]; then
     fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
-    rm -rf "$work" "$bindir"; return
+    rm -f "$work/.dispatch-results"; rm -rf "$work" "$bindir"; return
   fi
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1; wait_code=$?
   set -e
   supervisor_log="$work/.agent-trace/$run_id.supervisor.log"
   _log_ok=0
   if [[ -f "$supervisor_log" ]] && grep -q "fallback" "$supervisor_log" 2>/dev/null; then
     _log_ok=1
   fi
-  # With poisoned .dispatch-results, dispatch wait must NOT exit 0 (no false success).
-  # It should time out (124) because the fallback record write also fails.
-  if [[ "$wait_code" -ne 0 && "$_log_ok" -eq 1 ]]; then
+  # Sentinel in /tmp (outside workspace) resolves wait_code=0, even though the
+  # in-workspace dispatch record could not be written. Supervisor log shows the
+  # fallback record write failure (WARN line).
+  if [[ "$wait_code" -eq 0 && "$_log_ok" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "wait_code=$wait_code (want !=0) log_ok=$_log_ok supervisor_log=${supervisor_log}"
+    fail "$name" "wait_code=$wait_code (want 0) log_ok=$_log_ok supervisor_log=${supervisor_log}"
   fi
   rm -f "$work/.dispatch-results"
   rm -rf "$work" "$bindir"
+}
+
+# ── dispatch wait ignores executor-forged workspace record (security) ─────────
+# A malicious executor can write a forged "ok" dispatch record to the workspace
+# before actually completing. dispatch wait must NOT resolve from the forged
+# record; it must wait for the out-of-workspace supervisor sentinel.
+case_dispatch_wait_ignores_forged_workspace_record() {
+  local name="lifecycle/dispatch wait ignores executor-forged .dispatch-results record"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code wait_out record _started_dummy
+  local started_fifo release_fifo
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  # Forging + blocking codex: writes forged "ok" record, then blocks on FIFO,
+  # then exits with code 7 (failure).
+  _install_fake_codex_forging_blocking "$bindir" 7 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Wait for forging codex to start (and forge the record), then block.
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "forging codex did not start within 10s"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Forged "ok" record now exists in workspace. Sentinel does NOT exist yet.
+  # dispatch wait must NOT return success from the forged record.
+  set +e
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 3 2>&1)"; wait_code=$?
+  set -e
+  local forged_still_running=0
+  [[ "$wait_code" -eq 124 ]] && forged_still_running=1  # timed out = correctly ignored
+
+  # Release adapter (exits 7 → supervisor writes sentinel with exit 7).
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  # Now dispatch wait should resolve with the real exit code (7).
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 2>&1; wait_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
+
+  if [[ "$forged_still_running" -eq 1 ]] \
+    && [[ "$wait_code" -eq 7 ]] \
+    && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record" 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "forged_still_running=$forged_still_running wait_code=$wait_code record=${record:-absent}"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
 case_detached_is_default
@@ -938,4 +1040,5 @@ case_detached_autopack_rejected
 case_supervisor_preflight_failure
 case_supervisor_tail_failure_writes_fallback_record
 case_supervisor_fallback_covers_ok_run_with_poisoned_results
+case_dispatch_wait_ignores_forged_workspace_record
 th_summary

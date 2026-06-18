@@ -36,6 +36,18 @@ for _lib in pmctl-config portable runner-kind executor-router pmctl-guard dispat
 done
 unset _lib
 
+# Write the supervisor sentinel to /tmp so pmctl dispatch wait can authenticate
+# that the supervisor (not the executor) signalled completion. The sentinel path
+# is outside the executor's workspace-write sandbox and cannot be forged by the
+# adapter subprocess. Takes final_state (ok|failed) and exit_code as arguments.
+_write_sentinel() {
+  local _state="${1:-failed}" _rc="${2:-2}"
+  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    printf 'final_state=%s\nexit_code=%s\n' "$_state" "$_rc" \
+      > "/tmp/pm-supervisor-sentinel-$spec_run_id" 2>/dev/null || true
+  fi
+}
+
 _die() {
   printf 'dispatch-supervisor: %s\n' "$*" >&2
   # Write a failed dispatch record so pmctl dispatch wait observes failure
@@ -51,6 +63,8 @@ _die() {
       "supervisor preflight failed: $*" "" "" "" \
       "${spec_created_ts:-}" "$_finished_ts" 2>/dev/null || true
   fi
+  _write_sentinel "failed" 2
+  rm -f "${spec_brief_file:-}" 2>/dev/null || true
   exit 2
 }
 
@@ -176,6 +190,13 @@ if ! dispatch_record_read_state "$spec_work_dir" "$spec_run_id" >/dev/null 2>&1;
     "" "" "" "${spec_created_ts:-}" "$_fallback_ts" 2>/dev/null \
     || printf 'dispatch-supervisor: WARN: fallback record write also failed for %s\n' "$spec_run_id" >&2
 fi
+
+# Write the authoritative supervisor sentinel to /tmp before exiting. This
+# sentinel is the only signal pmctl dispatch wait trusts: because it is outside
+# the executor's workspace-write sandbox, an executor cannot forge it to produce
+# a false terminal state. The sentinel records the real execute_tail exit code.
+_finished_state="$( [[ "$_execute_rc" -eq 0 ]] && printf 'ok' || printf 'failed' )"
+_write_sentinel "$_finished_state" "$_execute_rc"
 
 # Best-effort cleanup of the durable brief snapshot now that the adapter has
 # finished. The snapshot at spec_brief_file (/tmp/brief-<run_id>.md) was
