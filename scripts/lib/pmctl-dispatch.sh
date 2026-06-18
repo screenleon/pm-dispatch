@@ -1024,9 +1024,9 @@ pmctl_dispatch_run() {
   _dispatch_run_id="run-$(pmctl_dispatch_stamp)-$(pmctl_dispatch_hex6)"
 
   # 3b. Resolve the effective lifecycle (flag > dispatch.lifecycle config >
-  # foreground) and, for detached, reject ineligible adapters BEFORE any executor
+  # detached) and, for detached, reject ineligible adapters BEFORE any executor
   # launch (hard gate). Detached is incompatible with the --print-cmd dry-run.
-  local _lifecycle_effective="foreground"
+  local _lifecycle_effective="detached"
   if [[ "$lifecycle_flag" == "foreground" || "$lifecycle_flag" == "detached" ]]; then
     _lifecycle_effective="$lifecycle_flag"
   elif [[ "${PM_CFG_LIFECYCLE:-}" == "foreground" || "${PM_CFG_LIFECYCLE:-}" == "detached" ]]; then

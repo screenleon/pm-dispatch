@@ -101,16 +101,39 @@ _record_for_run() {
   fi
 }
 
-# ── foreground default writes no run-spec (supervisor not involved) ──────────
-case_foreground_default_no_runspec() {
-  local name="lifecycle/foreground default writes no run-spec"
+# ── detached is the default (no --lifecycle flag → detached) ────────────────
+case_detached_is_default() {
+  local name="lifecycle/detached is the default when --lifecycle is omitted"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] \
+    && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+    && [[ -n "$(_first_runspec "$work")" ]] \
+    && [[ "$wait_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code run_id=${run_id:-missing} runspec=$(_first_runspec "$work") wait=$wait_code"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+# ── explicit --lifecycle foreground writes no run-spec ───────────────────────
+case_foreground_explicit_no_runspec() {
+  local name="lifecycle/--lifecycle foreground writes no run-spec"
   should_run "$name" || return 0
   local work brief bindir out code
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle foreground 2>&1)"; code=$?
   set -e
   if [[ "$code" -eq 0 ]] \
     && grep -q '^OK$' <<<"$out" \
@@ -781,7 +804,8 @@ case_supervisor_tail_failure_writes_fallback_record() {
   rm -rf "$work" "$bindir" "$bad_state_root"
 }
 
-case_foreground_default_no_runspec
+case_detached_is_default
+case_foreground_explicit_no_runspec
 case_detached_true_detach
 case_dispatch_wait_failure_propagates
 case_dispatch_wait_timeout
