@@ -14,9 +14,9 @@
 # REPO_ROOT is derived from this script's own resolved location (mirroring
 # cli/pmctl), so the spec cannot redirect the trust anchor.
 #
-# 7c-2a invokes the supervisor SYNCHRONOUSLY from pmctl_dispatch_run, so detached
-# dispatch is behavior-equivalent to foreground. True setsid/nohup detachment,
-# immediate run_id return, and `pmctl dispatch wait <run_id>` arrive in 7c-2b.
+# Launched by pmctl_dispatch_run via setsid/nohup for true detachment. The parent
+# returns a run_id immediately; `pmctl dispatch wait <run_id> --cd <work_dir>`
+# later resolves the terminal outcome from the durable dispatch record.
 set -euo pipefail
 
 # Resolve the real script path through symlinks so REPO_ROOT is the actual repo
@@ -65,6 +65,7 @@ done
 # base64 token per line. The supervisor never word-splits user-influenced tokens.
 spec_schema="" spec_run_id="" spec_adapter="" spec_work_dir="" spec_cd_arg=""
 spec_brief_file="" spec_model="" spec_created_ts="" spec_print_cmd=""
+spec_initial_state_written="0"
 native=()
 in_native=0
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -85,6 +86,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     model=*)        spec_model="${line#model=}" ;;
     created_ts=*)   spec_created_ts="${line#created_ts=}" ;;
     print_cmd=*)    spec_print_cmd="${line#print_cmd=}" ;;
+    initial_state_written=*) spec_initial_state_written="${line#initial_state_written=}" ;;
     *) : ;;  # ignore unknown keys (forward-compatible)
   esac
 done < "$run_spec"
@@ -97,6 +99,7 @@ done < "$run_spec"
 [[ -n "$spec_cd_arg" ]] || _die "missing cd_arg in run-spec"
 [[ -n "$spec_brief_file" ]] || _die "missing brief_file in run-spec"
 case "$spec_print_cmd" in 0|1) : ;; *) _die "invalid print_cmd in run-spec: ${spec_print_cmd:-<empty>}" ;; esac
+case "$spec_initial_state_written" in 0|1) : ;; *) _die "invalid initial_state_written in run-spec: ${spec_initial_state_written:-<empty>}" ;; esac
 
 # The native passthrough args must NOT smuggle in their own --cd / --brief-file:
 # those are trusted scalars the supervisor reconstructs below, so a second copy in
@@ -134,7 +137,8 @@ forward+=(${native[@]+"${native[@]}"})
 
 # ── Run the shared post-preflight tail ──────────────────────────────────────
 declare -F pmctl_dispatch_execute_tail >/dev/null || _die "pmctl_dispatch_execute_tail unavailable"
-pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
+PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
+  pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \
   "${forward[@]}"
 exit $?

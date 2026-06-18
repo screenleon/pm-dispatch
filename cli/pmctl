@@ -69,6 +69,12 @@ case "$cmd/$sub" in
     fi
     pmctl_dispatch_run "$REPO_ROOT" "$@"
     ;;
+  dispatch/wait)
+    if ! declare -F pmctl_dispatch_wait >/dev/null; then
+      pmctl_die "dispatch wait unavailable"
+    fi
+    pmctl_dispatch_wait "$REPO_ROOT" "$@"
+    ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then
       pmctl_die "trace tail unavailable"

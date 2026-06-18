@@ -457,7 +457,8 @@ pmctl_dispatch_execute_tail() {
   shift 9 || true
   local -a _forward=("$@")
 
-  if [[ "$print_cmd" -eq 0 ]]; then
+  local _initial_state_written="${PMCTL_DISPATCH_INITIAL_STATE_WRITTEN:-0}"
+  if [[ "$print_cmd" -eq 0 && "$_initial_state_written" != "1" ]]; then
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
       "pending" 0 "$_dispatch_model" "$brief_file" "" "$_dispatch_created_ts" "" || return $?
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \
@@ -712,6 +713,7 @@ pmctl_dispatch_write_runspec() {
     printf 'model=%s\n' "$model"
     printf 'created_ts=%s\n' "$created_ts"
     printf 'print_cmd=%s\n' "$print_cmd"
+    printf 'initial_state_written=1\n'
     printf 'native_b64:\n'
     for arg in ${native[@]+"${native[@]}"}; do
       printf '%s\n' "$(printf '%s' "$arg" | base64 | tr -d '\n')"
@@ -720,13 +722,38 @@ pmctl_dispatch_write_runspec() {
   mv -f "$tmp" "$spec_path" || { rm -f "$tmp"; return 1; }
 }
 
-# Detached lifecycle launcher (CC-391 Phase 7c-2a). Splits the core --cd /
+# Launch the detached supervisor as the only process-detachment boundary. The
+# environment is intentionally inherited exactly like foreground dispatch:
+# this deployment uses login-authenticated CLIs, not API keys in env, so the
+# security gate explicitly approves no env unset/allowlist layer here.
+_pmctl_dispatch_launch_supervisor() {
+  local repo_root="${1:-}" spec_path="${2:-}" supervisor_log="${3:-}" pid_file="${4:-}"
+  local supervisor pid
+
+  supervisor="$repo_root/scripts/dispatch-supervisor.sh"
+  mkdir -p "$(dirname "$supervisor_log")" "$(dirname "$pid_file")" || return 1
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup bash "$supervisor" --run-spec "$spec_path" \
+      </dev/null >"$supervisor_log" 2>&1 &
+    pid=$!
+  else
+    nohup bash "$supervisor" --run-spec "$spec_path" \
+      </dev/null >"$supervisor_log" 2>&1 &
+    pid=$!
+    disown "$pid" 2>/dev/null || true
+  fi
+  printf '%s\n' "$pid" > "$pid_file" || return 1
+  return 0
+}
+
+# Detached lifecycle launcher (CC-391 Phase 7c-2). Splits the core --cd /
 # --brief-file out of the forward args (recording them as trusted run-spec
 # scalars) so the brief/work-dir the supervisor guards and validates are exactly
 # the ones it forwards to the adapter, then persists the run-spec and invokes the
-# supervisor. In 7c-2a the supervisor runs SYNCHRONOUSLY, so detached is
-# behavior-equivalent to foreground; setsid/nohup true detachment and
-# `pmctl dispatch wait <run_id>` land in 7c-2b. The supervisor re-runs the full
+# supervisor under setsid/nohup. The parent returns the run_id immediately; use
+# `pmctl dispatch wait <run_id> --cd <work_dir>` to resolve the durable terminal
+# result. The supervisor re-runs the full
 # security preflight (name/containment/route + brief-validate + guard) before any
 # executor launch, so this path is never a policy bypass.
 pmctl_dispatch_run_detached() {
@@ -761,9 +788,11 @@ pmctl_dispatch_run_detached() {
     return 2
   fi
 
-  local spec_dir spec_path
+  local spec_dir spec_path supervisor_log pid_file
   spec_dir="$work_dir/.agent-trace"
   spec_path="$spec_dir/$run_id.runspec"
+  supervisor_log="$spec_dir/$run_id.supervisor.log"
+  pid_file="$spec_dir/$run_id.supervisor.pid"
   if ! mkdir -p "$spec_dir"; then
     printf 'pmctl dispatch run: mkdir failed: %s\n' "$spec_dir" >&2
     return 2
@@ -774,8 +803,91 @@ pmctl_dispatch_run_detached() {
     return 2
   fi
 
-  bash "$repo_root/scripts/dispatch-supervisor.sh" --run-spec "$spec_path"
-  return $?
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+    "pending" 0 "$model" "$brief_file" "" "$created_ts" "" || return $?
+  pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$run_id" \
+    "dispatched" 0 "$model" "$brief_file" "" "$created_ts" "pending" || return $?
+
+  if ! _pmctl_dispatch_launch_supervisor "$repo_root" "$spec_path" "$supervisor_log" "$pid_file"; then
+    printf 'pmctl dispatch run: failed to launch detached supervisor for %s\n' "$run_id" >&2
+    return 2
+  fi
+  printf '%s\n' "$run_id"
+  return 0
+}
+
+pmctl_dispatch_wait() {
+  local _repo_root="${1:-}"
+  shift || true
+  local run_id="" work_dir="" timeout=3600
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch wait: missing value for --cd\n' >&2
+          return 2
+        fi
+        work_dir="$(_portable_canonical_path "$2")"
+        shift 2
+        ;;
+      --timeout)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl dispatch wait: missing value for --timeout\n' >&2
+          return 2
+        fi
+        if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+          printf 'pmctl dispatch wait: invalid --timeout %q (expected seconds)\n' "$2" >&2
+          return 2
+        fi
+        timeout="$2"
+        shift 2
+        ;;
+      --*)
+        printf 'pmctl dispatch wait: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$run_id" ]]; then
+          printf 'pmctl dispatch wait: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$run_id" ]]; then
+    printf 'pmctl dispatch wait: <run_id> is required\n' >&2
+    return 2
+  fi
+  if ! [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]]; then
+    printf 'pmctl dispatch wait: invalid run_id %q\n' "$run_id" >&2
+    return 2
+  fi
+  if [[ -z "$work_dir" ]]; then
+    printf 'pmctl dispatch wait: --cd <work_dir> is required\n' >&2
+    return 2
+  fi
+
+  local start elapsed
+  start="$SECONDS"
+  while true; do
+    if dispatch_record_read_state "$work_dir" "$run_id"; then
+      printf 'run: %s  state: %s  exit: %s\n' "$run_id" "$DISPATCH_RECORD_STATE" "$DISPATCH_RECORD_EXIT"
+      if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+        printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+      fi
+      return "$DISPATCH_RECORD_EXIT"
+    fi
+    elapsed=$((SECONDS - start))
+    if (( elapsed >= timeout )); then
+      printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
+      return 124
+    fi
+    sleep 2
+  done
 }
 
 pmctl_dispatch_run() {

@@ -36,6 +36,7 @@ EOF
   printf '%s\n' "$bf"
 }
 
+# shellcheck disable=SC2317  # invoked by the EXIT trap.
 _cleanup() { rm -f "${_BRIEFS[@]}" 2>/dev/null || true; }
 trap _cleanup EXIT
 
@@ -183,9 +184,50 @@ case_record_failure_is_soft() {
   rm -rf "$work" "$bindir"
 }
 
+case_read_state_terminal_record() {
+  local name="dispatch-record/read_state returns terminal frontmatter"
+  should_run "$name" || return 0
+  local work run_id code
+  work="$(mktemp -d)"
+  run_id="run-20260618T000000Z-abcdef"
+  dispatch_record_write "$run_id" "CC-399" "codex" "default" "/tmp/brief-dispatch-record.md" \
+    "$work" 0 "ok" "PASS: example summary" "/tmp/last" "/tmp/trace" "/tmp/stderr" \
+    "2026-06-18T00:00:00Z" "2026-06-18T00:00:01Z"
+  set +e
+  dispatch_record_read_state "$work" "$run_id"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] \
+    && [[ "$DISPATCH_RECORD_STATE" == "ok" ]] \
+    && [[ "$DISPATCH_RECORD_EXIT" == "0" ]] \
+    && [[ "$DISPATCH_RECORD_SUMMARY" == "PASS: example summary" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code state=${DISPATCH_RECORD_STATE:-} exit=${DISPATCH_RECORD_EXIT:-} summary=${DISPATCH_RECORD_SUMMARY:-}"
+  fi
+  rm -rf "$work"
+}
+
+case_read_state_absent_is_nonterminal() {
+  local name="dispatch-record/read_state absent record is non-terminal"
+  should_run "$name" || return 0
+  local work code
+  work="$(mktemp -d)"
+  set +e
+  dispatch_record_read_state "$work" "run-20260618T000000Z-abcdef"; code=$?
+  set -e
+  if [[ "$code" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code"
+  fi
+  rm -rf "$work"
+}
+
 case_ok_record_written
 case_failed_record_written
 case_post_verify_summary_captured
 case_print_cmd_writes_no_record
 case_record_failure_is_soft
+case_read_state_terminal_record
+case_read_state_absent_is_nonterminal
 th_summary

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression tests for the dispatch lifecycle axis (CC-391 Phase 7c-2a):
+# Regression tests for the dispatch lifecycle axis (CC-391 Phase 7c-2):
 # --lifecycle foreground|detached, detach-eligibility gating, the run-spec, and
-# the supervisor's re-run security preflight. In 7c-2a the supervisor runs
-# synchronously, so detached must be behavior-equivalent to foreground.
+# the supervisor's re-run security preflight. Detached dispatch now launches a
+# true setsid/nohup supervisor and resolves terminal outcomes via dispatch wait.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,13 +42,15 @@ EOF
   printf '%s\n' "$bf"
 }
 
+# shellcheck disable=SC2317  # invoked by the EXIT trap.
 _cleanup() { rm -f "${_BRIEFS[@]}" 2>/dev/null || true; }
 trap _cleanup EXIT
 
 _install_fake_codex() {
-  local bindir="$1" code="${2:-0}"
+  local bindir="$1" code="${2:-0}" delay="${3:-0}"
   cat > "$bindir/codex" <<FAKEOF
 #!/usr/bin/env bash
+sleep "$delay"
 _last=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
@@ -65,6 +67,11 @@ FAKEOF
 
 _first_record() { find "$1/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1; }
 _first_runspec() { find "$1/.agent-trace" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
+_record_for_run() {
+  if [[ -f "$1/.dispatch-results/$2.md" ]]; then
+    printf '%s/.dispatch-results/%s.md\n' "$1" "$2"
+  fi
+}
 
 # ── foreground default writes no run-spec (supervisor not involved) ──────────
 case_foreground_default_no_runspec() {
@@ -88,53 +95,120 @@ case_foreground_default_no_runspec() {
   rm -rf "$work" "$bindir"
 }
 
-# ── detached is behavior-equivalent and persists a run-spec ──────────────────
-case_detached_equivalent() {
-  local name="lifecycle/detached behaves like foreground + writes run-spec"
+# ── detached launches supervisor and returns run_id immediately ──────────────
+case_detached_true_detach() {
+  local name="lifecycle/detached launches supervisor and returns run_id"
   should_run "$name" || return 0
-  local work brief bindir out code record runspec
+  local work brief bindir out err code record runspec pid_file log_file wait_out wait_code
+  local start_ns end_ns elapsed_ms run_id
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
-  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0 2
+  err="$(mktemp)"
+  start_ns="$(date +%s%N)"
   set +e
-  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>&1)"; code=$?
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>"$err")"; code=$?
   set -e
-  record="$(_first_record "$work")"; runspec="$(_first_runspec "$work")"
+  end_ns="$(date +%s%N)"
+  elapsed_ms=$(((end_ns - start_ns) / 1000000))
+  run_id="$out"
+  runspec="$(_first_runspec "$work")"
+  pid_file="$work/.agent-trace/$run_id.supervisor.pid"
+  log_file="$work/.agent-trace/$run_id.supervisor.log"
+  set +e
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 2>&1)"; wait_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
   if [[ "$code" -eq 0 ]] \
-    && grep -q '^OK$' <<<"$out" \
-    && grep -q 'PASS: trace structurally complete' <<<"$out" \
+    && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+    && [[ "$elapsed_ms" -lt 1500 ]] \
+    && [[ "$wait_code" -eq 0 ]] \
+    && grep -q "state: ok  exit: 0" <<<"$wait_out" \
     && [[ -n "$record" ]] && grep -q '^final_state: "ok"$' "$record" \
     && [[ -n "$runspec" ]] && grep -q '^schema_version=2$' "$runspec" \
     && grep -q '^adapter=codex$' "$runspec" \
     && grep -q '^cd_arg=' "$runspec" \
     && grep -q "^brief_file=$brief\$" "$runspec" \
-    && grep -q '^native_b64:$' "$runspec"; then
+    && grep -q '^native_b64:$' "$runspec" \
+    && [[ -s "$pid_file" ]] \
+    && [[ -s "$log_file" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code record=${record:-missing} runspec=${runspec:-missing} tail=$(tail -3 <<<"$out" | tr '\n' '|')"
+    fail "$name" "code=$code wait=$wait_code elapsed_ms=$elapsed_ms run_id=${run_id:-missing} record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
   fi
-  rm -rf "$work" "$bindir"
+  rm -rf "$work" "$bindir"; rm -f "$err"
 }
 
-# ── adapter failure under detached propagates verbatim ───────────────────────
-case_detached_failure_propagates() {
-  local name="lifecycle/detached adapter failure propagates exit"
+# ── adapter failure under detached is reported by dispatch wait ──────────────
+case_dispatch_wait_failure_propagates() {
+  local name="lifecycle/dispatch wait propagates detached adapter failure"
   should_run "$name" || return 0
-  local work brief bindir code record
+  local work brief bindir code run_id wait_code record
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 7
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached >/dev/null 2>&1; code=$?
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
   set -e
-  record="$(_first_record "$work")"
-  if [[ "$code" -eq 7 ]] \
+  record="$(_record_for_run "$work" "$run_id")"
+  if [[ "$code" -eq 0 && "$wait_code" -eq 7 ]] \
     && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record"; then
     pass "$name"
   else
-    fail "$name" "code=$code record=${record:-missing}"
+    fail "$name" "code=$code wait=$wait_code record=${record:-missing}"
   fi
   rm -rf "$work" "$bindir"
+}
+
+case_dispatch_wait_timeout() {
+  local name="lifecycle/dispatch wait timeout exits 124"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code err
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0 5
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
+  err="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 1 2>&1 >/dev/null)"; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1 || true
+  set -e
+  if [[ "$code" -eq 0 && "$wait_code" -eq 124 ]] && grep -qi 'timed out' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code wait=$wait_code err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+case_dispatch_wait_not_found() {
+  local name="lifecycle/dispatch wait invalid run_id exits 2"
+  should_run "$name" || return 0
+  local work code err
+  work="$(mktemp -d)"; git init -q "$work"
+  set +e
+  err="$("$PMCTL" dispatch wait unknown-run-id --cd "$work" 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi 'invalid run_id' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
+  rm -rf "$work"
+}
+
+case_dispatch_wait_requires_cd() {
+  local name="lifecycle/dispatch wait requires --cd"
+  should_run "$name" || return 0
+  local code err
+  set +e
+  err="$("$PMCTL" dispatch wait run-20260618T000000Z-abcdef 2>&1 >/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -eq 2 ]] && grep -qi -- '--cd' <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
+  fi
 }
 
 # ── invalid --lifecycle value is rejected ────────────────────────────────────
@@ -229,18 +303,19 @@ case_detach_eligible_unit() {
 case_config_lifecycle_detached() {
   local name="lifecycle/config dispatch.lifecycle=detached activates detached"
   should_run "$name" || return 0
-  local work brief bindir cfg code
+  local work brief bindir cfg code run_id wait_code
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   cfg="$(mktemp)"; printf 'dispatch.lifecycle = detached\n' > "$cfg"
   set +e
-  PM_DISPATCH_CONFIG_FILE="$cfg" PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" >/dev/null 2>&1; code=$?
+  run_id="$(PM_DISPATCH_CONFIG_FILE="$cfg" PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
   set -e
-  if [[ "$code" -eq 0 ]] && [[ -n "$(_first_runspec "$work")" ]]; then
+  if [[ "$code" -eq 0 && "$wait_code" -eq 0 ]] && [[ -n "$(_first_runspec "$work")" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code runspec=$(_first_runspec "$work")"
+    fail "$name" "code=$code wait=$wait_code runspec=$(_first_runspec "$work")"
   fi
   rm -rf "$work" "$bindir"; rm -f "$cfg"
 }
@@ -525,8 +600,11 @@ case_detached_autopack_rejected() {
 }
 
 case_foreground_default_no_runspec
-case_detached_equivalent
-case_detached_failure_propagates
+case_detached_true_detach
+case_dispatch_wait_failure_propagates
+case_dispatch_wait_timeout
+case_dispatch_wait_not_found
+case_dispatch_wait_requires_cd
 case_invalid_lifecycle_value
 case_detached_print_cmd_incompatible
 case_detached_ineligible_rejected

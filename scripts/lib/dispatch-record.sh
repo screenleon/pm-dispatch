@@ -75,3 +75,34 @@ dispatch_record_write() {
 
   mv -f "$tmp" "$result_path" || { rm -f "$tmp"; return 1; }
 }
+
+dispatch_record_read_state() {
+  local work_dir="${1:-}" run_id="${2:-}"
+  local record state exit_code summary
+
+  DISPATCH_RECORD_STATE=""
+  DISPATCH_RECORD_EXIT=""
+  DISPATCH_RECORD_SUMMARY=""
+
+  [[ -n "$work_dir" && -n "$run_id" ]] || return 1
+  record="$work_dir/.dispatch-results/$run_id.md"
+  [[ -f "$record" ]] || return 1
+
+  state="$(grep -m1 '^final_state:' "$record" 2>/dev/null | sed 's/^final_state:[[:space:]]*//;s/^"//;s/"$//;s/[[:space:]]*$//')" || true
+  case "$state" in
+    ok|failed|partial) : ;;
+    *) return 1 ;;
+  esac
+
+  exit_code="$(grep -m1 '^exit_code:' "$record" 2>/dev/null | sed 's/^exit_code:[[:space:]]*//;s/[[:space:]]*$//')" || true
+  [[ "$exit_code" =~ ^-?[0-9]+$ ]] || return 1
+  summary="$(grep -m1 '^verify_summary:' "$record" 2>/dev/null | sed 's/^verify_summary:[[:space:]]*//;s/^"//;s/"$//;s/[[:space:]]*$//')" || true
+
+  # shellcheck disable=SC2034  # output globals consumed by pmctl_dispatch_wait/tests after this helper returns.
+  DISPATCH_RECORD_STATE="$state"
+  # shellcheck disable=SC2034
+  DISPATCH_RECORD_EXIT="$exit_code"
+  # shellcheck disable=SC2034
+  DISPATCH_RECORD_SUMMARY="$summary"
+  return 0
+}
