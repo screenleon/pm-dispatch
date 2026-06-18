@@ -1197,14 +1197,72 @@ case_dispatch_wait_same_user_nonce_forgery_documented() {
   local forged_accepted=0
   [[ "$wait_code" -eq 0 ]] && forged_accepted=1  # resolved from forged ok sentinel
 
-  # Release adapter so it can exit cleanly.
+  # Release adapter. The test assertion (forged_accepted) was determined before
+  # this point; supervisor completing asynchronously is not load-bearing here.
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
-  sleep 2  # allow supervisor to exit
 
   if [[ "$forged_accepted" -eq 1 ]]; then
     pass "$name"
   else
     fail "$name" "expected forged nonce sentinel to be accepted (wait_code=$wait_code want 0)"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+# An adversarial same-user executor removes the sentinel key file and forges the
+# workspace dispatch record before exiting. dispatch wait must use the key-absent
+# fallback path, and will read the forged workspace record because workspace files
+# are not sentinel-authenticated. Documents the known fallback trust boundary:
+# key removal by the executor makes the fallback path susceptible to forgery.
+case_dispatch_wait_fallback_adversarial_key_removal() {
+  local name="lifecycle/adversarial key removal causes fallback to forged workspace record (known limitation)"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code _key_file started_fifo release_fifo
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; mkfifo "$started_fifo"
+  release_fifo="$(mktemp -u)"; mkfifo "$release_fifo"
+
+  # Adapter: signal started, then block on release_fifo. While adapter is blocked,
+  # the test manually removes the key and writes a forged workspace record. Since
+  # the adapter never exits, the supervisor never writes its sentinel. dispatch wait
+  # then sees no key → falls back to the workspace record.
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Wait for adapter to have started (supervisor exec'd it).
+  read -r -t 10 _ < "$started_fifo" || true
+
+  # Simulate adversarial executor action: remove the sentinel key and forge a
+  # success workspace record while the adapter is still running (no sentinel yet).
+  _key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  rm -f "$_key_file" 2>/dev/null || true
+  mkdir -p "$work/.dispatch-results"
+  printf 'schema_version: 1\nrun_id: "%s"\nexit_code: 0\nfinal_state: ok\nverify_summary: "FORGED-FALLBACK"\n' \
+    "$run_id" > "$work/.dispatch-results/$run_id.md"
+
+  # dispatch wait: key absent, adapter blocked (no sentinel written) → fallback to
+  # forged workspace record → returns 0 (known limitation: workspace not authenticated).
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 >/dev/null 2>&1
+  wait_code=$?
+  set -e
+
+  # Release the blocked adapter so the supervisor can clean up.
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+
+  if [[ "$wait_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected fallback to forged workspace record to return 0 (got wait_code=$wait_code)"
   fi
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
@@ -1315,6 +1373,7 @@ case_supervisor_fallback_covers_ok_run_with_poisoned_results
 case_dispatch_wait_ignores_forged_workspace_record
 case_dispatch_wait_ignores_forged_sentinel
 case_dispatch_wait_same_user_nonce_forgery_documented
+case_dispatch_wait_fallback_adversarial_key_removal
 case_dispatch_wait_second_call_uses_record
 case_supervisor_die_restricted_cleanup
 th_summary
