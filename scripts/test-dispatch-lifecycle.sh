@@ -504,6 +504,36 @@ case_supervisor_rejects_malformed_brief() {
   rm -rf "$work" "$bindir"; rm -f "$bad"
 }
 
+# ── supervisor overwrites a pre-existing brief snapshot atomically ────────────
+# A stale .brief.md in .agent-trace must not bypass guard/validation. The
+# supervisor always snapshots from the validated source, overwriting any prior.
+case_supervisor_overwrites_stale_snapshot() {
+  local name="supervisor/pre-existing brief snapshot is overwritten from validated source"
+  should_run "$name" || return 0
+  local work brief spec bindir code stale_content
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  spec="$work/.agent-trace/t.runspec"; mkdir -p "$work/.agent-trace"
+  _write_runspec "$spec" "codex" "$work" "$brief"
+  # Seed a stale snapshot with different content before supervisor launch.
+  stale_content="stale brief content that must be replaced"
+  printf '%s\n' "$stale_content" > "$work/.agent-trace/run-20260617T000000Z-aaaaaa.brief.md"
+  set +e
+  PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>/dev/null; code=$?
+  set -e
+  local snap="$work/.agent-trace/run-20260617T000000Z-aaaaaa.brief.md"
+  if [[ "$code" -eq 0 ]] \
+    && [[ -f "$snap" ]] \
+    && ! grep -qF "$stale_content" "$snap" \
+    && grep -q 'goal: exercise dispatch lifecycle' "$snap"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code snap_content=$(head -2 "$snap" 2>/dev/null | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ── supervisor rejects native args that smuggle in --brief-file ──────────────
 case_supervisor_rejects_native_brief_smuggle() {
   local name="supervisor/run-spec native args carrying --brief-file rejected"
@@ -717,6 +747,7 @@ case_supervisor_rejects_unroutable
 case_supervisor_rejects_traversal_name
 case_supervisor_missing_spec
 case_supervisor_rejects_malformed_brief
+case_supervisor_overwrites_stale_snapshot
 case_supervisor_rejects_native_brief_smuggle
 case_supervisor_rejects_malformed_base64
 case_supervisor_rejects_bad_schema

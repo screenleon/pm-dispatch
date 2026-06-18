@@ -146,11 +146,15 @@ fi
 
 # Snapshot the validated brief into the supervisor-owned work directory so the
 # caller can safely clean up its temporary brief after detached dispatch returns.
+# Always overwrite atomically from the validated source so a stale or raced
+# pre-existing snapshot can never bypass the guard and validation above.
 _brief_snapshot="$spec_work_dir/.agent-trace/$spec_run_id.brief.md"
-if [[ ! -f "$_brief_snapshot" ]]; then
-  cp "$spec_brief_file" "$_brief_snapshot" \
-    || _die "failed to snapshot brief to work dir: $spec_brief_file"
-fi
+_brief_tmp="$(mktemp "$spec_work_dir/.agent-trace/.$spec_run_id.brief.XXXXXX")" \
+  || _die "failed to create brief snapshot tempfile"
+cp "$spec_brief_file" "$_brief_tmp" \
+  || { rm -f "$_brief_tmp"; _die "failed to snapshot brief: $spec_brief_file"; }
+mv -f "$_brief_tmp" "$_brief_snapshot" \
+  || { rm -f "$_brief_tmp"; _die "failed to commit brief snapshot: $spec_brief_file"; }
 spec_brief_file="$_brief_snapshot"
 
 # ── Rebuild the adapter forward args from trusted scalars + native passthrough ─
