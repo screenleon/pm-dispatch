@@ -74,7 +74,15 @@ _die() {
       "${spec_created_ts:-}" "$_finished_ts" 2>/dev/null || true
   fi
   _write_sentinel "failed" 2
-  rm -f "${spec_brief_file:-}" 2>/dev/null || true
+  # Only unlink the parent-created brief snapshot, never an arbitrary path from the
+  # run-spec. Validate that the path matches the /tmp/brief-<run_id>.md pattern
+  # that the parent writes before launching the supervisor. A tampered run-spec
+  # cannot cause _die to delete an arbitrary file by pointing brief_file elsewhere.
+  local _expected_brief="/tmp/brief-${spec_run_id:-}.md"
+  if [[ -n "${spec_run_id:-}" \
+        && "${spec_brief_file:-}" == "$_expected_brief" ]]; then
+    rm -f "$spec_brief_file" 2>/dev/null || true
+  fi
   exit 2
 }
 
@@ -213,7 +221,10 @@ _write_sentinel "$_finished_state" "$_execute_rc"
 # Best-effort cleanup of the durable brief snapshot now that the adapter has
 # finished. The snapshot at spec_brief_file (/tmp/brief-<run_id>.md) was
 # created by the parent before returning the run_id; it is no longer needed
-# once the supervisor exits and a terminal record exists.
-rm -f "${spec_brief_file:-}" 2>/dev/null || true
+# once the supervisor exits and a terminal record exists. Only delete the
+# expected parent-created path; a tampered run-spec cannot delete other files.
+if [[ "${spec_brief_file:-}" == "/tmp/brief-${spec_run_id}.md" ]]; then
+  rm -f "$spec_brief_file" 2>/dev/null || true
+fi
 
 exit "$_execute_rc"

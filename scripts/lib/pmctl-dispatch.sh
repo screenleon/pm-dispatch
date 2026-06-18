@@ -726,6 +726,22 @@ pmctl_dispatch_write_runspec() {
 # environment is intentionally inherited exactly like foreground dispatch:
 # this deployment uses login-authenticated CLIs, not API keys in env, so the
 # security gate explicitly approves no env unset/allowlist layer here.
+
+# Derive the private sentinel key file path for a run_id. The key directory is
+# per-user with mode 700, so only the owning user can list or read its contents.
+# Both pmctl_dispatch_run_detached and pmctl_dispatch_wait use the same derivation
+# so they find the same file without storing the path in the workspace.
+_pmctl_sentinel_key_file() {
+  local _run_id="${1:-}" _uid _key_dir
+  _uid="$(id -u 2>/dev/null)" || _uid="0"
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
+    _key_dir="${XDG_RUNTIME_DIR}/pm-dispatch"
+  else
+    _key_dir="/tmp/pm-dispatch-${_uid}"
+  fi
+  printf '%s/%s' "$_key_dir" "$_run_id"
+}
+
 _pmctl_dispatch_launch_supervisor() {
   local repo_root="${1:-}" spec_path="${2:-}" supervisor_log="${3:-}" pid_file="${4:-}"
   local supervisor pid
@@ -802,12 +818,18 @@ pmctl_dispatch_run_detached() {
   # supervisor via an environment variable (not written to the workspace run-spec)
   # and the supervisor unsets it before exec-ing the adapter subprocess. This makes
   # the sentinel path /tmp/pm-supervisor-sentinel-<run_id>-<nonce> unpredictable to
-  # an executor that can only read workspace files, so it cannot forge completion.
-  local _sup_nonce _sup_key_file
+  # an executor that can only read workspace files. The key file is stored in a
+  # per-user private directory (mode 700) so only the owning user can access it.
+  local _sup_nonce _sup_key_file _sup_key_dir
   _sup_nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
     || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
   [[ -n "$_sup_nonce" ]] || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
-  _sup_key_file="/tmp/pm-dispatch-key-$run_id"
+  _sup_key_file="$(_pmctl_sentinel_key_file "$run_id")"
+  _sup_key_dir="$(dirname "$_sup_key_file")"
+  mkdir -m 700 -p "$_sup_key_dir" 2>/dev/null || {
+    printf 'pmctl dispatch run: failed to create private key directory: %s\n' "$_sup_key_dir" >&2
+    return 2
+  }
   printf '%s' "$_sup_nonce" > "$_sup_key_file" 2>/dev/null || {
     printf 'pmctl dispatch run: failed to write sentinel key file\n' >&2
     return 2
@@ -856,7 +878,8 @@ pmctl_dispatch_run_detached() {
       "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
     printf 'final_state=failed\nexit_code=2\n' \
       > "/tmp/pm-supervisor-sentinel-${run_id}-${_sup_nonce}" 2>/dev/null || true
-    rm -f "$brief_file" "$_sup_key_file" 2>/dev/null || true
+    rm -f "$brief_file" 2>/dev/null || true
+    rm -f "$_sup_key_file" 2>/dev/null || true
     unset PM_SUPERVISOR_NONCE
     return 2
   fi
@@ -921,14 +944,28 @@ pmctl_dispatch_wait() {
   fi
 
   # Resolve the sentinel path from the nonce key file written by the parent
-  # before the supervisor was launched. The key file lives in /tmp but outside
-  # the workspace, so an executor that forged a sentinel at the predictable
-  # /tmp/pm-supervisor-sentinel-<run_id> path (without the nonce suffix) would
-  # produce a file at a different path that dispatch wait never polls.
+  # before the supervisor was launched. The key file is in a per-user private
+  # directory (mode 700) so other OS users cannot read the nonce. An executor
+  # that forged a sentinel at the predictable (nonce-free) path would produce a
+  # file at a different path that dispatch wait never polls.
   local _key_nonce _key_file
-  _key_file="/tmp/pm-dispatch-key-$run_id"
+  _key_file="$(_pmctl_sentinel_key_file "$run_id")"
   if [[ ! -f "$_key_file" ]]; then
-    printf 'pmctl dispatch wait: sentinel key not found for %s (run may have already completed, or dispatch run predates this version)\n' "$run_id" >&2
+    # Sentinel key absent. This happens when:
+    #   (a) A prior successful dispatch wait already consumed the key.
+    #   (b) The temp directory was cleaned up (reboot / tmpwatch).
+    # Fall back to the durable workspace dispatch record for observability.
+    # Note: the record is human-readable and not sentinel-authenticated.
+    if dispatch_record_read_state "$work_dir" "$run_id" 2>/dev/null; then
+      printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+        "$DISPATCH_RECORD_STATE" "${DISPATCH_RECORD_EXIT:-1}"
+      if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+        printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
+      fi
+      printf 'pmctl dispatch wait: WARN: resolved from durable record only (sentinel key absent; not sentinel-authenticated)\n' >&2
+      return "${DISPATCH_RECORD_EXIT:-1}"
+    fi
+    printf 'pmctl dispatch wait: sentinel key not found and no durable record for %s in %s\n' "$run_id" "$work_dir" >&2
     return 2
   fi
   _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""

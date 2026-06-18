@@ -171,6 +171,52 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
+# Blocking fake codex that forges the sentinel at the CORRECT nonce-bearing path
+# by reading the sentinel key file from the private per-user directory. This
+# adapter demonstrates the known same-user-process limitation: an executor running
+# as the owning user can read the key and produce a valid nonce path.
+_install_fake_codex_forging_nonce_sentinel_blocking() {
+  local bindir="$1" code="${2:-0}" started_fifo="$3" release_fifo="$4"
+  cat > "$bindir/codex" <<FAKEOF
+#!/usr/bin/env bash
+# Read nonce from private key directory (same logic as _pmctl_sentinel_key_file).
+_work=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
+done
+_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
+_uid="\$(id -u 2>/dev/null)"
+if [[ -n "\${XDG_RUNTIME_DIR:-}" && -d "\${XDG_RUNTIME_DIR}" ]]; then
+  _key_dir="\${XDG_RUNTIME_DIR}/pm-dispatch"
+else
+  _key_dir="/tmp/pm-dispatch-\${_uid}"
+fi
+_nonce="\$(cat "\$_key_dir/\$_rid" 2>/dev/null)" || _nonce=""
+if [[ -n "\$_rid" && -n "\$_nonce" ]]; then
+  printf 'final_state=ok\nexit_code=0\n' \
+    > "/tmp/pm-supervisor-sentinel-\${_rid}-\${_nonce}" 2>/dev/null || true
+fi
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
+if [[ -p "$release_fifo" ]]; then
+  read -r _dummy < "$release_fifo" 2>/dev/null || true
+fi
+exec 7>&- 2>/dev/null || true
+_last=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --output-last-message) _last="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -n "\$_last" ]] && printf 'dispatch complete (fake codex)\n' > "\$_last"
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+exit $code
+FAKEOF
+  chmod +x "$bindir/codex"
+}
+
 _first_record() { find "$1/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1; }
 _first_runspec() { find "$1/.agent-trace" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
 _record_for_run() {
@@ -1111,6 +1157,130 @@ case_dispatch_wait_ignores_forged_sentinel() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
+# A same-user executor CAN forge the correct nonce-bearing sentinel by reading
+# the private key directory (it runs as the owning user). This test documents
+# that known limitation and verifies the observed behavior under that attack.
+case_dispatch_wait_same_user_nonce_forgery_documented() {
+  local name="lifecycle/same-user nonce-sentinel forgery is documented (known limitation)"
+  should_run "$name" || return 0
+  local work brief bindir run_id code wait_code _started_dummy
+  local started_fifo release_fifo
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  # Adapter reads key to get nonce, forges sentinel at correct path, then blocks.
+  _install_fake_codex_forging_nonce_sentinel_blocking "$bindir" 7 "$started_fifo" "$release_fifo"
+
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "forging codex did not start within 10s"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"; return
+  fi
+
+  # Same-user executor forged the correct nonce sentinel; dispatch wait resolves it.
+  # This documents the limitation: same-user processes can read the key directory.
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 3 >/dev/null 2>&1
+  wait_code=$?
+  set -e
+  local forged_accepted=0
+  [[ "$wait_code" -eq 0 ]] && forged_accepted=1  # resolved from forged ok sentinel
+
+  # Release adapter so it can exit cleanly.
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  sleep 2  # allow supervisor to exit
+
+  if [[ "$forged_accepted" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected forged nonce sentinel to be accepted (wait_code=$wait_code want 0)"
+  fi
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
+}
+
+# After a successful dispatch wait consumes the sentinel key, a second call must
+# fall back to the durable workspace record (not error out). Documents one-shot
+# sentinel semantics with graceful durable-record recovery on subsequent calls.
+case_dispatch_wait_second_call_uses_record() {
+  local name="lifecycle/dispatch wait second call falls back to durable record"
+  should_run "$name" || return 0
+  local work brief bindir run_id code first_code second_code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
+    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
+    rm -rf "$work" "$bindir"; return
+  fi
+  # First wait: resolves from sentinel, cleans up key + sentinel.
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1
+  first_code=$?
+  set -e
+  # Second wait: sentinel key is gone; must fall back to durable workspace record.
+  set +e
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>/dev/null
+  second_code=$?
+  set -e
+  if [[ "$first_code" -eq 0 && "$second_code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "first_code=$first_code second_code=$second_code (both want 0)"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
+# A tampered run-spec with an arbitrary brief_file path must not cause _die() to
+# delete that file. The supervisor cleanup must be restricted to the validated
+# parent-created snapshot path (/tmp/brief-<run_id>.md).
+case_supervisor_die_restricted_cleanup() {
+  local name="supervisor/tampered run-spec brief_file does not get deleted on preflight failure"
+  should_run "$name" || return 0
+  local work victim_file spec_file run_id
+  work="$(mktemp -d)"; git init -q "$work"
+  victim_file="$(mktemp /tmp/victim-XXXXXX)"
+  printf 'victim-content\n' > "$victim_file"
+
+  # Craft a run-spec that sets brief_file to the victim path and print_cmd=9
+  # (invalid) so the supervisor triggers _die() after parsing spec_brief_file.
+  run_id="run-20260101T000000Z-deadbeef"
+  spec_file="$(mktemp /tmp/runspec-XXXXXX)"
+  printf 'schema_version=2\nrun_id=%s\nadapter=codex\nwork_dir=%s\ncd_arg=%s\n' \
+    "$run_id" "$work" "$work" > "$spec_file"
+  printf 'brief_file=%s\nmodel=default\ncreated_ts=2026-01-01T00:00:00Z\n' \
+    "$victim_file" >> "$spec_file"
+  printf 'print_cmd=9\ninitial_state_written=0\nnative_b64:\n' >> "$spec_file"
+
+  local supervisor_log
+  supervisor_log="$(mktemp)"
+  set +e
+  bash "$REPO_ROOT/scripts/dispatch-supervisor.sh" --run-spec "$spec_file" \
+    >"$supervisor_log" 2>&1
+  set -e
+
+  if [[ -f "$victim_file" ]]; then
+    pass "$name"
+  else
+    fail "$name" "victim file was deleted by supervisor _die() — tampered brief_file cleanup not restricted"
+  fi
+  rm -f "$victim_file" "$spec_file" "$supervisor_log" 2>/dev/null || true
+  rm -rf "$work"
+}
+
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
@@ -1144,4 +1314,7 @@ case_supervisor_tail_failure_writes_fallback_record
 case_supervisor_fallback_covers_ok_run_with_poisoned_results
 case_dispatch_wait_ignores_forged_workspace_record
 case_dispatch_wait_ignores_forged_sentinel
+case_dispatch_wait_same_user_nonce_forgery_documented
+case_dispatch_wait_second_call_uses_record
+case_supervisor_die_restricted_cleanup
 th_summary
