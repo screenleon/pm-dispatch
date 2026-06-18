@@ -70,7 +70,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
 | CC-333 | 🔵 active | **[arch: pm-dispatch runtime 解耦合 — 移除對 Claude AI 路徑、hook 機制、術語的硬依賴]（v0.6.0 umbrella epic）** pm-dispatch 目前在七個層面硬耦合 Claude Code runtime：(1) memory 路徑（`~/.claude/projects/<id>/memory/`）；(2) hook 機制（PreToolUse/PostToolUse）；(3) 設定格式（settings.json）；(4) 安裝路徑（`~/.claude/`）；(5) env var 前綴（`CLAUDE_HOOK_*`，CC-321 部分解）；(6) dispatch 術語（`dispatch_handover_v1`、Agent tool 約定）；(7) reviewer agents 直接讀 Claude memory 路徑而非透過 handover brief。目標：pm-dispatch 的核心 workflow 應可在不同 AI runtime（或 CLI 工具）上運行，Claude-specific 部分降為 adapter layer。**v0.6.0 執行子票**：[[CC-372]]（runner-kind manifest）→ [[CC-373]]（router 資料驅動）→ [[CC-374]]/[[CC-375]]（guard 收口＋安裝接線）→ [[CC-386]]/[[CC-387]]/[[CC-388]]/[[CC-389]]（dispatch-model 統一 Model B 全面上路，[[CC-385]] 決策）→ [[CC-376]]/[[CC-377]]（opencode/antigravity 真 adapter 驗收）＋ [[CC-335]]（deprecation 清掃）。見 MILESTONES.md v0.6.0。 | arch | 2026-06-07 | — | P2 | design |
 | CC-335 | ✅ done | **[release: deprecated surface registry + v0.6.0 removal sweep]** 追蹤 v0.4.0/v0.5.0 期間標記為 deprecated 的 public surface，在 v0.6.0 統一移除。實況分三類：handover legacy trio（sandbox/approval/skip_git_check）＋ CLAUDE_HOOK_* shims 真實移除（含 JSON schema 收斂）；codex-dispatch.sh shim 早於 v0.3.0 sunset 刪除，本次清 dead-code 殘留；pr-gate.sh 直呼降級為文件 deprecation（standalone 為官方 fallback，不刪檔）；guard --profile 早已移除。**See**: pr:#292 | release | 2026-06-16 | pr:#292 | P2 | — |
-| CC-340 | 🟢 someday | **[knowledge index: heavy remainder after CC-354 — standalone FTS + embeddings]** The usable anchored-TOC slice (in-repo knowledge-doc section indexing) is pulled forward to CC-354 (v0.5.0). CC-340 is now the heavy remainder, symmetric to the repo index CC-338: out-of-repo memory cards + wiki + episodes (low-trust) indexing, standalone full-text ranking, embeddings, and richer trust-tier weighting — deferred to v0.6.0, overlapping /mem-search. FTS5-optional + LIKE/grep fallback; no embeddings in MVP. | memory | 2026-06-08 | — | P3 | design |
+| CC-340 | 🟡 deferred | **[knowledge index: heavy remainder — SUPERSEDED by [[CC-403]]]** Out-of-repo memory-card / episodes indexing + standalone full-text ranking is now owned by [[CC-403]] (`pmctl context --source memory`, retrieval epic, v0.7.0), which absorbs CC-340's MVP scope. CC-340 is retained only as the **embeddings / semantic-backend remainder** (Khoj-class accelerator) split out of CC-403; resume only if FTS/LIKE ranking proves insufficient. The anchored-TOC slice already shipped as CC-354 (v0.5.0). | memory | 2026-06-08 | — | P3 | retrieval |
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-355 | 🟢 someday | **[knowledge index: HTML semantic chunking — `<h1-6>` sections]** CC-354 chunks markdown by heading and txt/other by line windows; HTML falls back to window chunking, losing its `<h1>..<h6>` section structure (the same human-authored semantic anchors as markdown headings). Plug an html strategy into the CC-354 per-format chunker seam: split on heading tags, use tag-stripped heading text as the chunk heading, strip tags for the lead, handle parsing edge cases (comments, pre/code, entities). Split out because robust HTML parsing in bash is its own concern and there is no html knowledge source in the repo today. Trigger: a real html file enters the knowledge plane. | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
@@ -95,6 +95,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-397 | ✅ done | **[refactor: extract pmctl_dispatch_run executor tail + persist footer durably]** Phase 7c-1 groundwork for detached-supervised dispatch ([[CC-391]]). Extract the post-preflight executor tail (invoke → footer → verify → terminal state + [[CC-225]] record) into one shared internal function (behavior-identical), and replace the ephemeral mktemp footer with a durable per-run `.agent-trace/<run_id>.footer` so a later supervisor crash between adapter exit and post-verify cannot lose the footer-derived per-run paths ([[CC-305]] explicit-path contract preserved). No supervisor/lifecycle surface yet ([[CC-391]]落地 7c-2). umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
 | CC-398 | ✅ done | **[feat: dispatch lifecycle axis — `--lifecycle detached` + synchronous supervisor boundary]** Phase 7c-2a of [[CC-391]]. Add the dispatch-time lifecycle axis: `pmctl dispatch run --lifecycle foreground\|detached` (+ `dispatch.lifecycle` config default), detach-eligibility DERIVED from `runner_kind` (`runner_kind_detach_eligible`; cli-subprocess=yes, host-native=no), reject ineligible adapters pre-launch, and a new `scripts/dispatch-supervisor.sh` that consumes a pmctl-produced run-spec (v2: trusted `--cd`/`--brief-file` scalars + non-core passthrough) and RE-RUNS the full security preflight (name/containment/route + brief-validate + guard) so it is not a bypass door — guarded brief == validated brief == executed brief. Supervisor runs SYNCHRONOUSLY (behavior-equivalent to foreground); `setsid`/`nohup` true detachment + `pmctl dispatch wait` are 7c-2b ([[CC-399]]). HARD security+risk gate. umbrella [[CC-333]]. | arch | 2026-06-17 | — | P2 | design |
 | CC-399 | ✅ done | **[feat: detached dispatch true detachment + `pmctl dispatch wait`]** Phase 7c-2b of [[CC-391]]. Flip the `scripts/dispatch-supervisor.sh` launch to `setsid`/`nohup` with redirected stdio so the supervisor survives the caller exiting; `--lifecycle detached` returns a `run_id` immediately (pending/dispatched written before return); add `pmctl dispatch wait <run_id>` resolving the terminal outcome from the durable `.dispatch-results/<run_id>.md` record ([[CC-225]]; run_id is identity, PID advisory only). Builds on the 7c-2a ([[CC-398]]) supervisor + run-spec. Then 7c-3 = [[CC-238]] generic supervisor timeout + per-child attribution. HARD security/risk gate approved full env inheritance for login-auth CLI deployment. umbrella [[CC-333]]. **See**: pr:#298 | arch | 2026-06-18 | pr:#298 | P2 | design |
+| CC-400 | 🟢 someday | **[retrieval-first: prompt/docs 檢索順序強制]** 把 context-first 從軟 reflex 升級為 workflow invariant。`agents/project-pm.md` Principle 3 改成硬性檢索順序——找既有票/決策/規則/prior-art 一律先 `pmctl context query` →（`# no hits` 才）Read/Grep/full-file open；`docs/context-retrieval.md` 標題從「Query before grep」升級為「Query before Read/Grep/full-file open」。純 prompt/command/docs，零程式風險，可獨立於本 milestone 提前落地。發現於 2026-06-18 memory+context retrieval 統整（opus+codex+外部研究）。 | process/DX | 2026-06-18 | — | P2 | retrieval |
+| CC-401 | 🟢 someday | **[retrieval-first: brief-validate `retrieval:` 證據 chokepoint]** 在 dispatch brief 加 `retrieval:` 區段、`brief-validate.sh` 對非 trivial brief 檢查（先 warn 後 fail）：須含 `pmctl_context:` refs、或 `auto_pack: true`、或 `skip_reason:`。把「reflex」變成被檢查的合約，符合本 repo 單一 chokepoint enforce 哲學（見 [[feedback_cut_capability_close_all_paths]]）。非 pmctl-context.sh，動 brief schema+validator+docs。最高行為槓桿。相依 [[CC-400]]。 | process/gate | 2026-06-18 | — | P2 | retrieval |
+| CC-402 | 🟢 someday | **[retrieval-first: auto-pack 與 detached lifecycle 相容]** 目前唯一結構性 context-first 機制 dispatch `--auto-pack` 預設 off，且與預設 detached lifecycle（[[CC-398]]/[[CC-399]]）不相容（augmented brief 偏離 guarded /tmp brief 故 pre-launch 被拒）。修法：detached 下先產 augmented brief、記為 run-spec 的 trusted `brief_file`，確保 guarded==validated==executed==recorded 同一份；之後 `dispatch.auto_pack = on` 才實際可預設。動 pmctl-dispatch.sh，HARD security/risk gate。 | arch | 2026-06-18 | — | P3 | retrieval |
+| CC-403 | 🟢 someday | **[retrieval-first: `pmctl context --source memory` 讓 memory 可被檢索（supersede/吸收 [[CC-340]]）]** 今天 pmctl context 只掃 repo 內檔，memory（`~/.claude/projects/<id>/memory/`）完全搜不到 → 對「決策/規則/偏好」這類最常找的特定資料「優先用 pmctl context」物理上不可能。新增 source 軸 `query --source repo/memory/all`（不 overload `--domain`；memory 是不同平面非 repo 路徑類），memory DB 落 memory 目錄下而非 repo-local（避免私有 memory 進 checkout），schema `source_domain` enum 補 `memory`、pack `memories[]` 真正填值、reuse-scan 維持 repo-only。吸收 CC-340 MVP（FTS5-optional + LIKE/grep fallback、no embeddings）；embeddings/語意後端留作 follow-up。動 pmctl-context.sh。 | memory | 2026-06-18 | — | P2 | retrieval |
+| CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `hook-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-405 | 🟢 someday | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 
 ---
 
@@ -1519,7 +1527,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ---
 
-## CC-340 — knowledge index: standalone FTS over memory/backlog/decisions 🟢 someday → v0.6.0
+## CC-340 — knowledge index: standalone FTS over memory/backlog/decisions 🟡 deferred (SUPERSEDED by [[CC-403]])
+
+> **SUPERSEDED 2026-06-18**: the out-of-repo memory-card / episodes indexing + standalone full-text ranking MVP is now owned by **[[CC-403]]** (`pmctl context --source memory`, retrieval epic, v0.7.0). CC-340 is retained only as the **embeddings / semantic-backend remainder** (Khoj-class accelerator) that CC-403 explicitly leaves out of its MVP; resume only if FTS5/LIKE ranking proves insufficient in practice. The anchored-TOC slice already shipped as [[CC-354]] (v0.5.0).
 
 **Problem**: The repo index (CC-338) covers the code plane ("where to change, what to reuse"), but the second-brain plane — "why, how was this decided, what failed before" — has no structured search backing the context-pack. `/mem-search` exists as a skill but is keyword/grep over files, not an index with ranking or trust tiers.
 
@@ -1538,7 +1548,154 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3.
 
-**Cross-link**: [[CC-354]] (anchored-TOC slice, pulled forward), [[CC-338]] (repo-index counterpart), [[CC-237]] (shared interface), [[CC-234]] (memory v2 write side), [[CC-232]] (pack schema).
+**Cross-link**: [[CC-354]] (anchored-TOC slice, pulled forward), [[CC-338]] (repo-index counterpart), [[CC-237]] (shared interface), [[CC-234]] (memory v2 write side), [[CC-232]] (pack schema), [[CC-403]] (supersedes the memory-index MVP).
+
+## CC-400 — retrieval-first: prompt/docs 檢索順序強制 🟢 someday → v0.7.0
+
+**Problem**: `agents/project-pm.md` Principle 3 把 context retrieval 寫成「before grepping knowledge docs」的軟 reflex，且同一份 prompt 又要求 project-touching invocation 一開始直接讀 `project_<repo>.md` → agent 容易先用 memory file / Read / Grep，而非把 `pmctl context` 當第一入口。`docs/context-retrieval.md` 標題也只寫「Query before grep」，沒涵蓋 full-file Read。
+
+**Why**: 行為要改，最便宜的第一步是把「檢索順序」講成 workflow invariant 而非建議——這是純文件改動、零程式風險，可獨立於本 milestone 提前落地，並為 [[CC-401]]（把它釘成被驗證的合約）鋪路。
+
+**Requirement**:
+- `agents/project-pm.md` Principle 3 改成硬性檢索順序：找既有票/決策/規則/prior-art/symbol 一律先 `pmctl context query`（knowledge/repo/未來 memory source）→ 拿到 ref 才 Read 對應段落；`# no hits` 才 fallback 到 targeted Grep/Read 並在 brief 註明 miss。
+- `docs/context-retrieval.md` 把「Query before grep」升級為「Query before Read/Grep/full-file open」。
+- 不動程式；測試面僅 `scripts/test-commands.sh` / agent-lint 既有檢查。
+
+**Priority**: P2.
+
+
+**Refs**: [[CC-401]]、[[CC-403]]（memory source 落地後檢索順序涵蓋 memory）、[[feedback_cut_capability_close_all_paths]]、`docs/context-retrieval.md`。
+
+## CC-401 — retrieval-first: brief-validate `retrieval:` 證據 chokepoint 🟢 someday → v0.7.0
+
+**Problem**: `agents/project-pm.md` Principle 3 把 context retrieval 寫成「reflex」（軟提示），但本 repo 哲學是**在單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。軟提示在壓力下會退化成直接 grep / full-file Read，PM 重新推論背景而非引用 context refs——正是 v0.5.0 §Phase 2 驗收原則想避免的反模式。
+
+**Why**: dispatch 路徑唯一的可信 chokepoint 是 `pmctl dispatch run` → `brief-validate.sh`。把「有沒有先檢索」變成**被驗證的 brief 欄位**，比要求 agent 記得 reflex 強得多，且天然可觀測（搭配既有 `context.queried` telemetry）。
+
+**Requirement**:
+- brief schema 新增選用 `retrieval:` 區段，非 trivial brief（`architecture_impact: minor|major`，或 `files:` 超過大小門檻）須滿足其一：`pmctl_context:`（query/reuse-scan/pack 的 refs）、`auto_pack: true`、或 `skip_reason:`（明確理由，如目標無可索引 repo / 任務極小）。
+- `brief-validate.sh` 加檢查，**先 warn 後 fail**（rollout 期不立即擋現有 brief）。
+- 非 `pmctl-context.sh` 範圍：動 brief schema + validator + `docs/dispatch-brief.md` + 測試。
+
+**Non-goals**: 不強制每個 trivial 修補都附 refs（`skip_reason:` 即出口）；不取代 PM 判斷，只要求留下檢索證據。
+
+**Sequencing**: 相依 [[CC-400]]（prompt/docs 先把檢索順序講清楚），之後本票把它釘成合約。retrieval epic 行為層最高槓桿。
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-400]]、[[feedback_cut_capability_close_all_paths]]、[[feedback_pr_gate_fix_all]]、auto-pack 路徑 [[CC-402]]、`docs/context-retrieval.md` §Success metric。
+
+## CC-402 — retrieval-first: auto-pack 與 detached lifecycle 相容 🟢 someday → v0.7.0
+
+**Problem**: 目前唯一**結構性**的 context-first 機制是 dispatch `--auto-pack`（跑 reuse-scan、附 pointer-only `auto_context` block），但它 (a) 預設 off，(b) 與 v0.6.0 落地的**預設 detached lifecycle**（[[CC-398]]/[[CC-399]]）不相容——auto-pack 會 forward 一份 derived pack brief，與被 guard/validate 的 `/tmp` brief 分歧，故 detached + auto-pack 在 pre-launch 被直接 REJECT（見 `docs/dispatch-brief.md` §Dispatch lifecycle）。結果：最該預設開的機制，在預設派發路徑上反而開不了。
+
+**Why**: 要讓「context-first」成為預設行為而非 opt-in，auto-pack 必須能在 detached 下運作，且不破壞 [[CC-398]] 的核心不變式（guarded == validated == executed == recorded 同一份 brief）。
+
+**Requirement**:
+- detached 下：先產 augmented brief（原 brief + `auto_context:`），把 augmented 路徑寫入 run-spec 作為 trusted `brief_file`，supervisor 重跑 preflight 時 guard/validate 的就是 augmented 那份。
+- 維持 [[CC-398]] run-spec v2 的 trusted-scalar 契約，不得讓 passthrough 夾帶第二個 `--brief-file`。
+- 解禁後評估把 `dispatch.auto_pack = on` 設為預設。
+
+**Non-goals**: 不改 reuse-scan 內容（仍 repo-only，見 [[CC-403]]）；不改 auto-pack 的 pointer-only 上限（5 筆）。
+
+**Sequencing**: 排在 [[CC-399]] detached 完成之後（已 done）。HARD security/risk gate（動 supervisor brief 來源）。
+
+**Priority**: P3.
+
+**Cross-link**: [[CC-398]]、[[CC-399]]、[[CC-391]]（lifecycle 軸）、[[CC-403]]（reuse-scan 隔離）、`docs/context-retrieval.md` §Dispatch auto-pack。
+
+## CC-403 — retrieval-first: `pmctl context --source memory`（supersede/吸收 [[CC-340]]）🟢 someday → v0.7.0
+
+**Problem**: `pmctl context` 的 index 只 `find "$repo_root"` 掃 repo 內檔（`scripts/lib/pmctl-context.sh` index 段），而 memory 住在 repo 外的 `~/.claude/projects/<id>/memory/`，**完全不在索引內**。因此對使用者最常找的「特定資料」——過去決策、規則、偏好——「優先用 `pmctl context`」在能力上不可能；`pack` 的 `"memories":[]` 與 schema description 把 memory 列為 pluggable source，是個**留了縫但沒蓋好的接縫**。
+
+**Why（設計取捨）**: memory 是與 repo **不同的檢索平面**，不是 repo 路徑類別。故**新增 source 軸**而非 overload `--domain`：
+- `pmctl context query --source repo|memory|all <term>`，`--domain knowledge|repo` 維持為 repo 平面內的路徑分類器。
+- pack 結果分流：memory hits 進 `memories[]`（`source: memory-index`、`source_domain: memory`）；schema `source_domain` enum 目前是 `["knowledge","repo","state"]`，**須補 `memory`**（[[CC-376]] 先例：enum/schema 加值是 additive registration footprint，非 structural core change）。
+- **reuse-scan 維持 repo-only**：它是 repo prior-art（給 executor 重用程式碼），memory（決策/偏好）混入會擠掉真正的 helper；若要含 memory 走獨立 `memory_candidates:` 或顯式 flag，預設 off。
+
+**隱私（load-bearing）**: 不把私有 memory 明文複製進 repo-local `<repo>/.pm-dispatch/ctx/context.db`（即使 gitignored 仍在 checkout 內、可被工具/封存帶出）。memory 的衍生 DB 落 memory 目錄下（如 `~/.claude/projects/<id>/memory/.pm-dispatch/context.db`），重用既有 `find_memory_dir`（`scripts/lib/memory.sh`）解析；auto-pack 對 memory 只用 pointer-only ref，snippet 需顯式 flag。
+
+**Scope（吸收 CC-340 MVP）**: FTS5-optional + LIKE/grep fallback、trust-tier 標記（curated card > episode）、no embeddings。embeddings / 語意後端留 [[CC-340]] 作 follow-up。
+
+**Acceptance**:
+- `pmctl context query --source memory -- "<term>"` 能搜到 memory cards / MEMORY.md / episodes，輸出 `context_hit_v1`（含 `source_domain: memory`）。
+- `--source all` 合併 repo + memory；`--source repo`（預設）行為與今天 byte-identical。
+- memory DB **不**寫進 repo checkout；缺 memory dir 時 graceful（`# no hits`）。
+- `reuse-scan` 輸出不含 memory hits（回歸鎖定）。
+- schema 接受 `source_domain: memory`；pack `memories[]` 可被填值。
+
+**Sequencing**: retrieval epic 能力層核心；解鎖 [[CC-406]]（/mem-search 改走它）。動 `pmctl-context.sh` + schema + 測試 + docs。
+
+**Priority**: P2.
+
+**Cross-link**: supersedes [[CC-340]]（吸收 MVP）、[[CC-338]]（repo-index 對稱）、[[CC-237]]（shared interface）、[[CC-232]]（pack schema）、[[CC-406]]（消費者）、[[CC-400]]/[[CC-401]]（行為層）。
+
+## CC-404 — memory: MEMORY.md 注入預算 + priority metadata 🟢 someday → v0.7.0
+
+**Problem**: `scripts/hook-inject-memory.sh` 把 `MEMORY.md` 所有 `^- ` 行全注入，>=50 條才印警告，且 `scripts/test-hooks.sh` 明確斷言 60 條不截斷。結果：index bloat 必然發生，每個 session 都付 stale / 不相關條目的 token，與 memory「keep index short, high-signal」的設計目標相反。
+
+**Why**: 注入是每 session 固定成本的最大來源；把它從「全注入」改成「預算 + 排序」是 memory 端最高 token 槓桿。但若無 priority metadata 直接截斷，可能蓋掉關鍵 user 約束——故須與 [[CC-405]] metadata 同捆或在其後。
+
+**Requirement**:
+- hook 加硬注入預算（max 條數 + max bytes）。
+- 永遠注入固定前言（memory dir、條數、`/mem-search` 指令提示）+ `priority: always` / `scope: active` 條目。
+- 其餘條目依 prompt-aware 廉價比對（title / hook text / tags）擇優注入。
+- 超量印「N 條省略；用 `/mem-search <topic>`」而非全倒。
+- 改現有 no-truncation 測試為「預算內 + always 條目必達 + 超量有省略提示」。
+
+**Priority**: P3.
+
+
+**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/hook-inject-memory.sh`、`scripts/test-hooks.sh`。
+
+## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 🟢 someday → v0.7.0
+
+**Problem**: memory 檢索目前靠 filename tier（`feedback_`/`project_`/…）+ hook text 扛太多工作，缺結構化 metadata → 檢索精準度、staleness 偵測、跨專案分享都受限；也沒有便宜可常跑的健檢（`/memory-compress` 是手動重寫流程，需把卡片讀進對話）。
+
+**Why**: 結構化 metadata 是 [[CC-404]] 注入排序與 [[CC-403]] memory 檢索 ranking 的共同前置；`/mem-doctor` 提供 read-only 可觀測面，讓 bloat / dead link / stale ref 在變成問題前被看到。
+
+**Requirement**:
+- card frontmatter 必填/建議：`topics`（檢索詞）、`priority`（always/normal/low）、`status`（active/stale/archived）、`updated_at`、optional `expires_at`、`repo_refs`（可被檢查的檔/函式/flag）。
+- `/mem-distill`、`/memory-compress` 維護這些欄位；先 warn 後 enforce。
+- 新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale `repo_refs`、episodes 大小與建議；預設不需讀全部卡片進對話。
+
+**Priority**: P3.
+
+
+**Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`。
+
+## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` 🟢 someday → v0.7.0
+
+**Problem**: `commands/mem-search.md` 自刻一套（Step 2 `rg`/`grep`、Step 3 semantic fallback），**完全不經 `pmctl context`** → 與「優先用內建 context 指令」的目標直接衝突，且檢索品質受 MEMORY.md index 手感影響過大。
+
+**Why**: 要讓 `/mem-search` 誠實「優先用 pmctl context」，前提是 `pmctl context` 真的搜得到 memory——故本票**相依 [[CC-403]]**；在 CC-403 之前無法落地（pmctl context 根本沒有 memory source）。
+
+**Requirement**:
+- 改流程：定位 memory source → `pmctl context query --source memory -- "$ARGUMENTS"` → 只讀回傳的 card / episode refs → index 不可用才 fallback 直接 `rg`（保留現有 no-shell-injection 寫法）。
+- 顯示 `memory:<card>:<section>` 之類 ref，而非整檔倒出。
+- 更新 `scripts/test-commands.sh` 對 mem-search 的契約檢查。
+
+**Priority**: P3.
+
+
+**Refs**: 相依 [[CC-403]]、[[CC-400]]（檢索順序）、`commands/mem-search.md`。
+
+## CC-407 — memory: episodes 衍生摘要/索引 + 歸檔策略 🟢 someday → v0.7.0
+
+**Problem**: `episodes.jsonl` append-only 利於稽核但會無限長；`/mem-recall` 只讀最近 N 條非空摘要、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已被 promote 否則不可見，Stop hook 又持續 append。
+
+**Why**: 長期成長會稀釋 recall 訊號；衍生摘要/索引讓舊模式可被檢索，同時不破壞原始 append-only 稽核性（衍生物可重建）。優先度低於注入 bloat（[[CC-404]]）與檢索強制（[[CC-401]]）。
+
+**Requirement**:
+- 保留 `episodes.jsonl` 原始 append-only。
+- 加可重建衍生物：`episodes.summary.md`（月摘要，由 `/mem-distill` 產）、`episodes.index.jsonl`（keyword / date / cwd / promoted 狀態）。
+- 超過大小/年齡門檻 shard/archive；清理空 skeleton 或至少健檢警告（與 [[CC-405]] `/mem-doctor` 對接）。
+- `/mem-recall` 讀「最近 + 相關摘要」而非只讀最近 N 條。
+
+**Priority**: P3.
+
+
+**Refs**: 延伸 [[CC-234]]（memory v2 寫側）、[[CC-405]]（mem-doctor 報告 episodes 大小）。
 
 ## CC-355 — knowledge index: HTML semantic chunking（`<h1-6>` sections）🟢 someday
 
