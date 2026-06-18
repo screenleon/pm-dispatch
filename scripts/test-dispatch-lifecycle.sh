@@ -65,16 +65,20 @@ FAKEOF
   chmod +x "$bindir/codex"
 }
 
-# Blocking fake codex: writes $started_file then blocks on $release_fifo.
-# Deterministic proof of detachment: dispatch returns while adapter is blocked.
+# Blocking fake codex: signals $started_fifo then blocks on $release_fifo.
+# Uses O_RDWR open on $started_fifo so the write never blocks even if the test
+# has not yet opened the read side. The fd is kept open while blocking on
+# $release_fifo so the test's O_RDONLY open does not stall indefinitely.
 _install_fake_codex_blocking() {
-  local bindir="$1" code="${2:-0}" started_file="$3" release_fifo="$4"
+  local bindir="$1" code="${2:-0}" started_fifo="$3" release_fifo="$4"
   cat > "$bindir/codex" <<FAKEOF
 #!/usr/bin/env bash
-touch "$started_file"
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
 if [[ -p "$release_fifo" ]]; then
   read -r _dummy < "$release_fifo" 2>/dev/null || true
 fi
+exec 7>&- 2>/dev/null || true
 _last=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
@@ -121,20 +125,20 @@ case_foreground_default_no_runspec() {
 
 # ── detached launches supervisor and returns run_id immediately ──────────────
 # Deterministic proof: dispatch returns while the adapter is still blocked on
-# release_fifo. No wall-clock threshold; detachment is proven by observing
-# that dispatch already returned AND the adapter has started (started_file
-# exists) but has NOT finished (record absent) before we release the FIFO.
+# release_fifo. After reading from started_fifo (FIFO-based — no sleep) we
+# know: dispatch already returned AND adapter is live but not yet finished
+# (so no record). Releasing the FIFO then lets dispatch wait resolve normally.
 case_detached_true_detach() {
   local name="lifecycle/detached launches supervisor and returns run_id"
   should_run "$name" || return 0
   local work brief bindir err code record runspec pid_file log_file wait_out wait_code
-  local run_id started_file release_fifo i
+  local run_id started_fifo release_fifo _started_dummy
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"
-  started_file="$(mktemp -u)"; release_fifo="$(mktemp -u)"
-  mkfifo "$release_fifo"
-  _install_fake_codex_blocking "$bindir" 0 "$started_file" "$release_fifo"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
   err="$(mktemp)"
 
   set +e
@@ -145,21 +149,23 @@ case_detached_true_detach() {
   pid_file="$work/.agent-trace/$run_id.supervisor.pid"
   log_file="$work/.agent-trace/$run_id.supervisor.log"
 
-  # Wait (up to 5s) for adapter to signal it started — confirms supervisor
-  # launched and adapter is live; dispatch already returned.
-  i=0
-  while [[ ! -f "$started_file" && "$i" -lt 50 ]]; do
-    sleep 0.1; i=$((i + 1))
-  done
+  # Block until adapter signals it started via FIFO — no sleep. Adapter opens
+  # started_fifo O_RDWR (non-blocking) then writes "started" before blocking on
+  # release_fifo, keeping the write-side fd open so our O_RDONLY read unblocks.
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "adapter did not start within 10s; err=$(tail -3 "$err" | tr '\n' '|')"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -rf "$work" "$bindir"; rm -f "$err" "$started_fifo" "$release_fifo"
+    return
+  fi
 
   # At this point: dispatch has returned (run_id in hand) AND adapter is still
-  # blocked on release_fifo (record cannot exist yet). This is the deterministic
-  # proof that dispatch returned before adapter finished.
+  # blocked on release_fifo (record cannot exist yet). Deterministic proof.
   local record_while_blocked
   record_while_blocked="$(_record_for_run "$work" "$run_id")"
 
-  # Unblock adapter, then wait for terminal outcome.
-  printf 'go\n' > "$release_fifo" 2>/dev/null || true
+  # Unblock adapter (O_RDWR open prevents blocking if adapter already exited).
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
   set +e
   wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 2>&1)"; wait_code=$?
@@ -168,7 +174,6 @@ case_detached_true_detach() {
 
   if [[ "$code" -eq 0 ]] \
     && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
-    && [[ -f "$started_file" ]] \
     && [[ -z "$record_while_blocked" ]] \
     && [[ "$wait_code" -eq 0 ]] \
     && grep -q "state: ok  exit: 0" <<<"$wait_out" \
@@ -182,9 +187,9 @@ case_detached_true_detach() {
     && [[ -s "$log_file" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} started=$([[ -f "$started_file" ]] && echo yes || echo no) blocked_record=${record_while_blocked:-absent} record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
+    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} blocked_record=${record_while_blocked:-absent} record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
   fi
-  rm -rf "$work" "$bindir"; rm -f "$err" "$started_file" "$release_fifo"
+  rm -rf "$work" "$bindir"; rm -f "$err" "$started_fifo" "$release_fifo"
 }
 
 # ── adapter failure under detached is reported by dispatch wait ──────────────
@@ -212,27 +217,27 @@ case_dispatch_wait_failure_propagates() {
 case_dispatch_wait_timeout() {
   local name="lifecycle/dispatch wait timeout exits 124"
   should_run "$name" || return 0
-  local work brief bindir run_id code wait_code err started_file release_fifo
+  local work brief bindir run_id code wait_code err started_fifo release_fifo
   work="$(mktemp -d)"; git init -q "$work"
   brief="$(_mk_brief "$work")"
   bindir="$(mktemp -d)"
-  started_file="$(mktemp -u)"; release_fifo="$(mktemp -u)"
-  mkfifo "$release_fifo"
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
   # Blocking adapter: dispatch wait --timeout 1 times out while adapter is
   # still blocked; no wall-clock sleep needed.
-  _install_fake_codex_blocking "$bindir" 0 "$started_file" "$release_fifo"
+  _install_fake_codex_blocking "$bindir" 0 "$started_fifo" "$release_fifo"
   set +e
   run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
   err="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 1 2>&1 >/dev/null)"; wait_code=$?
   set -e
-  # Release adapter so it finishes cleanly (avoid background zombie).
-  printf 'go\n' > "$release_fifo" 2>/dev/null || true
+  # Release adapter (O_RDWR open prevents blocking if adapter already exited).
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
   if [[ "$code" -eq 0 && "$wait_code" -eq 124 ]] && grep -qi 'timed out' <<<"$err"; then
     pass "$name"
   else
     fail "$name" "code=$code wait=$wait_code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
-  rm -rf "$work" "$bindir"; rm -f "$started_file" "$release_fifo"
+  rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
 case_dispatch_wait_not_found() {
@@ -430,11 +435,10 @@ case_supervisor_rejects_unroutable() {
   # The adapter is refused by the shared security preflight (file-existence check
   # fires before the route check; either refusal is correct) and no executor runs.
   if [[ "$code" -eq 2 ]] \
-    && grep -qiE 'unknown adapter|not a routable executor' <<<"$err" \
-    && [[ -z "$(_first_record "$work")" ]]; then
+    && grep -qiE 'unknown adapter|not a routable executor' <<<"$err"; then
     pass "$name"
   else
-    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+    fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
   rm -rf "$work"
 }
@@ -488,12 +492,14 @@ case_supervisor_rejects_malformed_brief() {
   set +e
   err="$(PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
   set -e
+  local record
+  record="$(_first_record "$work")"
   if [[ "$code" -eq 2 ]] \
-    && grep -qi 'brief failed validation' <<<"$err" \
-    && [[ -z "$(_first_record "$work")" ]]; then
+    && grep -qiE 'brief failed validation|brief validation failed' <<<"$err" \
+    && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record"; then
     pass "$name"
   else
-    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+    fail "$name" "code=$code record=${record:-missing} err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$bad"
 }
@@ -515,11 +521,10 @@ case_supervisor_rejects_native_brief_smuggle() {
   err="$(PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
   set -e
   if [[ "$code" -eq 2 ]] \
-    && grep -qi 'native args must not contain --brief-file' <<<"$err" \
-    && [[ -z "$(_first_record "$work")" ]]; then
+    && grep -qi 'native args must not contain --brief-file' <<<"$err"; then
     pass "$name"
   else
-    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+    fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$evil"
 }
@@ -554,10 +559,10 @@ _expect_supervisor_reject() {
   set +e
   err="$(bash "$SUPERVISOR" --run-spec "$spec" 2>&1 >/dev/null)"; code=$?
   set -e
-  if [[ "$code" -eq 2 ]] && grep -qiE "$pattern" <<<"$err" && [[ -z "$(_first_record "$work")" ]]; then
+  if [[ "$code" -eq 2 ]] && grep -qiE "$pattern" <<<"$err"; then
     pass "$name"
   else
-    fail "$name" "code=$code record=$(_first_record "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+    fail "$name" "code=$code err=$(tail -2 <<<"$err" | tr '\n' '|')"
   fi
 }
 
@@ -653,6 +658,49 @@ case_detached_autopack_rejected() {
   rm -rf "$work"
 }
 
+# ── supervisor preflight failure is observable through dispatch wait ──────────
+# When the supervisor fails before execute_tail (e.g. brief not found), it now
+# writes a failed dispatch record so dispatch wait resolves quickly instead of
+# blocking until timeout.
+case_supervisor_preflight_failure() {
+  local name="lifecycle/supervisor preflight failure is observable through dispatch wait"
+  should_run "$name" || return 0
+  local work spec run_id bindir supervisor_code wait_out wait_code record
+  work="$(mktemp -d)"; git init -q "$work"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  run_id="run-20260618T000000Z-pftest"
+  mkdir -p "$work/.agent-trace"
+  spec="$work/.agent-trace/$run_id.runspec"
+  {
+    printf 'schema_version=2\n'
+    printf 'run_id=%s\n' "$run_id"
+    printf 'adapter=codex\n'
+    printf 'work_dir=%s\n' "$work"
+    printf 'cd_arg=%s\n' "$work"
+    printf 'brief_file=/tmp/brief-no-such-file-%s.md\n' "$$"
+    printf 'model=\n'
+    printf 'created_ts=2026-06-18T00:00:00Z\n'
+    printf 'print_cmd=0\n'
+    printf 'initial_state_written=0\n'
+    printf 'native_b64:\n'
+  } > "$spec"
+  set +e
+  PATH="$bindir:$PATH" bash "$SUPERVISOR" --run-spec "$spec" 2>/dev/null; supervisor_code=$?
+  set -e
+  record="$(_record_for_run "$work" "$run_id")"
+  set +e
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>&1)"; wait_code=$?
+  set -e
+  if [[ "$supervisor_code" -ne 0 ]] \
+    && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record" \
+    && [[ "$wait_code" -ne 0 && "$wait_code" -ne 124 ]]; then
+    pass "$name"
+  else
+    fail "$name" "supervisor=$supervisor_code record=${record:-missing} wait=$wait_code wait_out=$(tail -2 <<<"$wait_out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 case_foreground_default_no_runspec
 case_detached_true_detach
 case_dispatch_wait_failure_propagates
@@ -677,4 +725,5 @@ case_supervisor_rejects_missing_scalar
 case_supervisor_rejects_bad_printcmd
 case_supervisor_rejects_cd_smuggle
 case_detached_autopack_rejected
+case_supervisor_preflight_failure
 th_summary

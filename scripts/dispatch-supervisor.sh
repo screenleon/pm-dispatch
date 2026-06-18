@@ -38,6 +38,19 @@ unset _lib
 
 _die() {
   printf 'dispatch-supervisor: %s\n' "$*" >&2
+  # Write a failed dispatch record so pmctl dispatch wait observes failure
+  # quickly instead of blocking until timeout. Only possible after the run-spec
+  # has been parsed and the run_id + work_dir are valid.
+  if [[ "${spec_run_id:-}" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+    && [[ -n "${spec_work_dir:-}" ]] \
+    && declare -F dispatch_record_write >/dev/null 2>&1; then
+    local _finished_ts
+    _finished_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+    dispatch_record_write "$spec_run_id" "" "${spec_adapter:-}" "${spec_model:-}" \
+      "${spec_brief_file:-}" "$spec_work_dir" 2 "failed" \
+      "supervisor preflight failed: $*" "" "" "" \
+      "${spec_created_ts:-}" "$_finished_ts" 2>/dev/null || true
+  fi
   exit 2
 }
 
@@ -119,15 +132,26 @@ done
 # `pmctl dispatch run`, so the supervisor can never launch what pmctl would
 # refuse, even from a hand-crafted run-spec.
 declare -F pmctl_dispatch_resolve_adapter >/dev/null || _die "pmctl-dispatch lib unavailable"
-adapter_path="$(pmctl_dispatch_resolve_adapter "$REPO_ROOT" "$spec_adapter")" || exit 2
+adapter_path="$(pmctl_dispatch_resolve_adapter "$REPO_ROOT" "$spec_adapter")" \
+  || _die "adapter resolution failed for $spec_adapter"
 
 declare -F pmctl_dispatch_validate_brief >/dev/null || _die "pmctl_dispatch_validate_brief unavailable"
-pmctl_dispatch_validate_brief "$REPO_ROOT" "$spec_brief_file" || exit 2
+pmctl_dispatch_validate_brief "$REPO_ROOT" "$spec_brief_file" \
+  || _die "brief validation failed: $spec_brief_file"
 
 declare -F pmctl_guard_check >/dev/null || _die "guard unavailable (pmctl-guard not sourced)"
 if ! pmctl_guard_check "$REPO_ROOT" --event pre-write --role executor --runtime "$spec_adapter" --file "$spec_brief_file"; then
   _die "guard denied dispatch for adapter $spec_adapter"
 fi
+
+# Snapshot the validated brief into the supervisor-owned work directory so the
+# caller can safely clean up its temporary brief after detached dispatch returns.
+_brief_snapshot="$spec_work_dir/.agent-trace/$spec_run_id.brief.md"
+if [[ ! -f "$_brief_snapshot" ]]; then
+  cp "$spec_brief_file" "$_brief_snapshot" \
+    || _die "failed to snapshot brief to work dir: $spec_brief_file"
+fi
+spec_brief_file="$_brief_snapshot"
 
 # ── Rebuild the adapter forward args from trusted scalars + native passthrough ─
 # --cd / --brief-file come ONLY from the validated scalars, so the brief and work
