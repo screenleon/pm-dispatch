@@ -120,7 +120,12 @@ token cost without adding signal.
 
 For deterministic opt-in packing at dispatch time, run:
 
-    pmctl dispatch run --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+    pmctl dispatch run --lifecycle foreground --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+
+`--lifecycle foreground` is required here: the built-in default is now `detached`
+for eligible adapters (see §Dispatch lifecycle), and `--lifecycle detached`
+combined with `--auto-pack` is rejected before launch (the derived pack brief
+would diverge from the guarded `/tmp` brief under a detached run-spec).
 
 or set:
 
