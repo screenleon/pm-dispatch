@@ -183,10 +183,12 @@ has_context_evidence() {
       rest = $0
       sub(/^(auto_)?context:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
-      if (rest != "" && rest !~ /^#/ && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
-        found = 1
-        exit
-      }
+      # Block-scalar header (| or >, optional chomp +/-, optional trailing # comment):
+      # the evidence is in the indented body, checked below.
+      is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
+      # Structurally-empty inline forms carry no evidence.
+      is_empty = (rest == "" || rest == "\"\"" || rest == "\047\047" || rest == "[]" || rest == "{}" || rest == "~" || rest == "null")
+      if (!is_block && !is_empty && rest !~ /^#/) { found = 1; exit }
       in_context = 1
       next
     }
@@ -206,7 +208,9 @@ has_retrieval_skip_reason() {
       rest = $0
       sub(/^retrieval_skip_reason:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
-      if (rest != "" && rest !~ /^#/ && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+      is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
+      is_empty = (rest == "" || rest == "\"\"" || rest == "\047\047" || rest == "[]" || rest == "{}" || rest == "~" || rest == "null")
+      if (!is_block && !is_empty && rest !~ /^#/) {
         found = 1
         exit
       }

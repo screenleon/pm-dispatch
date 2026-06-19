@@ -973,6 +973,125 @@ EOF
   assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
 }
 
+# Structurally-empty inline context forms ([], {}, "", '') are not evidence:
+# fail mode must reject each despite a non-blank literal after the key.
+# Steps:
+# 1. For each empty YAML form, write a file-writing brief with context: <form>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_context_forms() {
+  local name="reject-retrieval-empty-context-forms"
+  should_run "$name" || return 0
+  local form brief out rc
+  for form in '[]' '{}' '""' "''"; do
+    brief="$tmpdir/retrieval-empty-context.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty context form.
+context: $form
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "context: $form should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A block-scalar indicator with a trailing comment ("| # ...") and no real body is
+# not evidence: fail mode must reject context: and retrieval_skip_reason: forms.
+# Steps:
+# 1. Write briefs whose context:/retrieval_skip_reason: is "| # comment" with no body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_block_indicator_trailing_comment() {
+  local name="reject-retrieval-block-indicator-trailing-comment"
+  should_run "$name" || return 0
+  local brief out rc
+  brief="$tmpdir/retrieval-ctx-block-comment.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a commented block indicator.
+context: | # no real body follows
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+  set +e; out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"; rc=$?; set -e
+  if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+    fail "$name" "context: | # comment should REJECT; got rc=$rc output='$out'"; return 0
+  fi
+  brief="$tmpdir/retrieval-skip-block-comment.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a commented block indicator skip reason.
+retrieval_skip_reason: | # no real reason follows
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+  set +e; out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"; rc=$?; set -e
+  if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+    fail "$name" "retrieval_skip_reason: | # comment should REJECT; got rc=$rc output='$out'"; return 0
+  fi
+  pass "$name"
+}
+
+# Structurally-empty inline skip-reason forms ("", '', [], {}) are not a reason:
+# fail mode must reject each.
+# Steps:
+# 1. For each empty YAML form, write a file-writing brief with retrieval_skip_reason: <form>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_forms() {
+  local name="reject-retrieval-empty-skip-reason-forms"
+  should_run "$name" || return 0
+  local form brief out rc
+  for form in '""' "''" '[]' '{}'; do
+    brief="$tmpdir/retrieval-empty-skip-form.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip-reason form.
+retrieval_skip_reason: $form
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "retrieval_skip_reason: $form should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 # A non-empty retrieval_skip_reason satisfies retrieval evidence.
 case_valid_retrieval_evidence_skip_reason() {
   local name="valid-retrieval-evidence-skip-reason"
@@ -1123,5 +1242,8 @@ case_reject_retrieval_empty_skip_reason_bare
 case_reject_retrieval_bare_auto_pack_true
 case_reject_retrieval_comment_only_context
 case_reject_retrieval_comment_only_skip_reason
+case_reject_retrieval_empty_context_forms
+case_reject_retrieval_block_indicator_trailing_comment
+case_reject_retrieval_empty_skip_reason_forms
 
 th_summary
