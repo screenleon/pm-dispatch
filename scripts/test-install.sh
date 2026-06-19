@@ -3248,6 +3248,48 @@ FAKEJQ
   pass "$name"
 }
 
+test_uninstall_prunes_empty_adapters_dir() {
+  # Verifies uninstall.sh removes an empty ~/.claude/adapters/ directory so no
+  # managed parent dirs are left behind after a clean uninstall.
+  local name="uninstall-prunes-empty-adapters-dir"
+  should_run "$name" || return 0
+  local home override
+  home="$tmp_root/$name-home"
+  override="$tmp_root/$name-override"
+  mkdir -p "$home"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" \
+    CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
+    CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
+    bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  local install_rc=$?
+  set -e
+  if [[ "$install_rc" -ne 0 ]]; then
+    fail "$name" "precondition: install.sh exited $install_rc"
+    return
+  fi
+
+  # Simulate the post-adapter-symlink-removal state: adapters/ exists but is empty.
+  mkdir -p "$override/adapters"
+
+  set +e
+  HOME="$home" CLAUDE_HOME="$override" \
+    bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
+  local uninstall_rc=$?
+  set -e
+  if [[ "$uninstall_rc" -ne 0 ]]; then
+    fail "$name" "uninstall.sh exited $uninstall_rc (expected 0)"
+    return
+  fi
+
+  if [[ -d "$override/adapters" ]]; then
+    fail "$name" "~/.claude/adapters/ still exists after uninstall (empty dir not pruned)"
+    return
+  fi
+  pass "$name"
+}
+
 test_install_share_asset_installed
 test_install_share_asset_conflict
 test_install_share_asset_uninstall
@@ -3255,5 +3297,6 @@ test_install_claude_home_override
 test_uninstall_claude_home_override
 test_install_hooks_spaced_repo_root
 test_install_hooks_msys_native_jq_boundary
+test_uninstall_prunes_empty_adapters_dir
 
 th_summary

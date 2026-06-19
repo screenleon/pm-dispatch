@@ -359,7 +359,7 @@ if [[ "$DRY_RUN" -ne 1 ]]; then
     echo "  note: $safety_skipped item(s) require manual attention — manifest preserved for re-run"
     echo "  resolve conflicts manually, then re-run uninstall.sh"
   fi
-  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share"; do
+  for d in "$CLAUDE_HOME/agents" "$CLAUDE_HOME/commands" "$CLAUDE_HOME/skills" "$CLAUDE_HOME/scripts" "$CLAUDE_HOME/share" "$CLAUDE_HOME/adapters"; do
     [[ -d "$d" ]] || continue
     if rmdir "$d" 2>/dev/null; then
       echo "  pruned $d"
