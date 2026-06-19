@@ -46,6 +46,20 @@ The handover metadata's `executor:` field selects which executor receives the br
 
 A brief missing any of these is a request for guesswork. Reject and ask the caller.
 
+File-writing briefs must also carry retrieval evidence. A brief is
+file-writing under the same rule used for `self_verify`: any `files:` entry not
+tagged `read:` makes it non-trivial. Retrieval evidence is satisfied by any one
+of:
+
+- a non-empty `context:` block with copied refs or prior-art anchors,
+- `auto_pack: true` metadata for dispatch-time prior-art packing,
+- `retrieval_skip_reason:` with a non-empty reason.
+
+Read-only briefs are exempt. During rollout, `brief-validate.sh` defaults to
+warning on missing retrieval evidence and still prints `VALID`; set
+`BRIEF_VALIDATE_RETRIEVAL=fail` to reject instead. The only supported values
+are `warn` and `fail`.
+
 The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but the main-thread dispatch route (and `dispatch-post-verify.sh`) re-checks `acceptance` against `git diff` from outside.
 
 ### `files:` block semantics — sandbox allowlist, NOT must-read list
@@ -85,6 +99,7 @@ Use as needed; not all briefs require all of them.
   ```
 - **`constraints`** — what NOT to do. File paths off-limits, conventions to preserve, tests that must still pass after the change. **When the brief introduces ≥ 3 behavioral units or has `architecture_impact ≠ none`**, run `/pre-impl "<feature description>"` first and paste the output's design constraint list here — this prevents architecture-reviewer blocks from boundary/dependency issues caught too late.
 - **`context`** — free-form background section used by composed workflows (e.g., `pr-gate`) to pass reviewer context or codebase summary to the agent.
+- **`retrieval_skip_reason`** — non-empty reason why retrieval was intentionally skipped for a file-writing brief. Use this only when query/reuse-scan evidence would add no signal, such as a mechanical edit with all context already supplied in the brief.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
 - **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex and claude reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected.

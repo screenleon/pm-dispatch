@@ -36,6 +36,38 @@ assert_validation() {
   fi
 }
 
+assert_validation_with_retrieval_mode() {
+  local name="$1" mode="$2" brief="$3" expected_rc="$4" expected_output="$5"
+  local output="" rc=0
+
+  set +e
+  output="$(BRIEF_VALIDATE_RETRIEVAL="$mode" bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -eq "$expected_rc" && "$output" == *"$expected_output"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=$expected_rc output~'$expected_output'; got rc=$rc output='$output'"
+  fi
+}
+
+assert_validation_no_warn() {
+  local name="$1" brief="$2"
+  local output="" rc=0
+
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 && "$output" == *"VALID"* && "$output" != *"WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with VALID and no WARN; got rc=$rc output='$output'"
+  fi
+}
+
 # A read-only brief with only read: entries validates as VALID without requiring self_verify.
 # Steps:
 # 1. Write a brief with schema_version, working_dir, goal, acceptance, and only read: file entries.
@@ -767,6 +799,137 @@ EOF
   fi
 }
 
+# A file-writing brief without retrieval evidence warns by default but still passes.
+case_warn_retrieval_evidence_default() {
+  local name="warn-retrieval-evidence-default"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-default-warn.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs without retrieval evidence.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"WARN"* && "$output" == *"VALID"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with WARN+VALID; got rc=$rc output='$output'"
+  fi
+}
+
+# Fail mode rejects a file-writing brief without retrieval evidence.
+case_reject_retrieval_evidence_fail_mode() {
+  local name="reject-retrieval-evidence-fail-mode"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-fail.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs without retrieval evidence.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A non-empty context block satisfies retrieval evidence.
+case_valid_retrieval_evidence_context() {
+  local name="valid-retrieval-evidence-context"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-context.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with cited context.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  docs/context-retrieval.md:1 explains retrieval ordering.
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# auto_pack:true satisfies retrieval evidence.
+case_valid_retrieval_evidence_auto_pack() {
+  local name="valid-retrieval-evidence-auto-pack"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-auto-pack.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with dispatch-time packing.
+auto_pack: true
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# A non-empty retrieval_skip_reason satisfies retrieval evidence.
+case_valid_retrieval_evidence_skip_reason() {
+  local name="valid-retrieval-evidence-skip-reason"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-skip-reason.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a justified retrieval skip.
+retrieval_skip_reason: exact text replacement with no source lookup needed
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# Read-only briefs are exempt from retrieval evidence.
+case_valid_retrieval_trivial_read_only_exempt() {
+  local name="valid-retrieval-trivial-read-only-exempt"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-read-only.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Inspect dispatch docs without retrieval evidence.
+files:
+  - read: docs/dispatch-brief.md
+acceptance:
+  - read-only brief validates without retrieval evidence
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
 case_valid_read_only_brief
 case_valid_write_with_self_verify
 case_valid_new_with_self_verify
@@ -799,5 +962,11 @@ case_reject_invalid_architecture_impact
 case_reject_write_self_verify_no_cmd
 case_warn_vague_acceptance
 case_warn_behavioral_units_no_qa_checklist
+case_warn_retrieval_evidence_default
+case_reject_retrieval_evidence_fail_mode
+case_valid_retrieval_evidence_context
+case_valid_retrieval_evidence_auto_pack
+case_valid_retrieval_evidence_skip_reason
+case_valid_retrieval_trivial_read_only_exempt
 
 th_summary

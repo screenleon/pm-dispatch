@@ -170,6 +170,52 @@ has_conceptual_map() {
   ' "$brief"
 }
 
+has_context_block() {
+  local brief="$1"
+  awk '
+    /^context:[[:space:]]*/ {
+      rest = $0
+      sub(/^context:[[:space:]]*/, "", rest)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+        found = 1
+        exit
+      }
+      in_context = 1
+      next
+    }
+    in_context {
+      if (/^[a-z_]+:[[:space:]]*/) { in_context = 0; next }
+      if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$brief"
+}
+
+auto_pack_value() {
+  local brief="$1"
+  awk '
+    /^auto_pack:[[:space:]]*/ {
+      sub(/^auto_pack:[[:space:]]*/, "", $0)
+      gsub(/[[:space:]]/, "", $0)
+      print
+      exit
+    }
+  ' "$brief"
+}
+
+retrieval_skip_reason_value() {
+  local brief="$1"
+  awk '
+    /^retrieval_skip_reason:[[:space:]]*/ {
+      sub(/^retrieval_skip_reason:[[:space:]]*/, "", $0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      print
+      exit
+    }
+  ' "$brief"
+}
+
 has_cmd_self_verify() {
   local brief="$1"
   awk '
@@ -308,6 +354,25 @@ if has_behavioral_units_field "$brief"; then
   if [[ "$bu" =~ ^[0-9]+$ ]] && [[ "$bu" -ge 3 ]] && ! has_qa_checklist "$brief"; then
     warn "behavioral_units:${bu} >= 3 but no 'qa_checklist' field — qa-tester will block without per-unit coverage"
   fi
+fi
+
+retrieval_mode="${BRIEF_VALIDATE_RETRIEVAL:-warn}"
+case "$retrieval_mode" in
+  warn|fail) ;;
+  *) reject "invalid BRIEF_VALIDATE_RETRIEVAL: expected warn|fail, got '${retrieval_mode}'";;
+esac
+
+auto_pack="$(auto_pack_value "$brief")"
+retrieval_skip_reason="$(retrieval_skip_reason_value "$brief")"
+if has_file_writing_entry "$brief" \
+  && ! has_context_block "$brief" \
+  && [[ "$auto_pack" != "true" ]] \
+  && [[ -z "$retrieval_skip_reason" ]]; then
+  retrieval_message="file-writing brief lacks retrieval evidence: add non-empty 'context:', 'auto_pack: true', or 'retrieval_skip_reason:'"
+  if [[ "$retrieval_mode" == "fail" ]]; then
+    reject "$retrieval_message"
+  fi
+  warn "$retrieval_message"
 fi
 
 printf 'VALID\n'

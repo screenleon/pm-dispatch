@@ -1,13 +1,15 @@
 # Context retrieval
 
-## Query before grep
+## Query before Read/Grep/full-file open
 
-Before opening a large knowledge doc to search for a ticket or decision, run:
+For knowledge-doc lookups, retrieval comes first. Run the context query before
+any Read, Grep, or full-file open:
 
     pmctl context query --domain knowledge <term>
 
 This returns heading-anchored hits with line numbers. Paste the ref directly
-into a brief's context block instead of re-deriving the background.
+into a brief's context block instead of re-deriving the background. Fall back to
+targeted Read/Grep only when the query returns no hits.
 
 For code symbols, omit --domain or use --domain repo:
 
