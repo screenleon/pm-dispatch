@@ -983,7 +983,7 @@ case_reject_retrieval_empty_context_forms() {
   local name="reject-retrieval-empty-context-forms"
   should_run "$name" || return 0
   local form brief out rc
-  for form in '[]' '{}' '""' "''"; do
+  for form in '[]' '{}' '""' "''" '~' 'null' '[] # TODO' '"" # TODO' 'null # later'; do
     brief="$tmpdir/retrieval-empty-context.md"
     write_brief "$brief" <<EOF
 schema_version: 1
@@ -1066,7 +1066,7 @@ case_reject_retrieval_empty_skip_reason_forms() {
   local name="reject-retrieval-empty-skip-reason-forms"
   should_run "$name" || return 0
   local form brief out rc
-  for form in '""' "''" '[]' '{}'; do
+  for form in '""' "''" '[]' '{}' '~' 'null' '[] # TODO' '"" # TODO' 'null # later'; do
     brief="$tmpdir/retrieval-empty-skip-form.md"
     write_brief "$brief" <<EOF
 schema_version: 1

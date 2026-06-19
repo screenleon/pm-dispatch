@@ -183,6 +183,9 @@ has_context_evidence() {
       rest = $0
       sub(/^(auto_)?context:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      # Strip a trailing inline YAML comment (whitespace + #...) before classifying,
+      # so empty forms with a trailing comment (context: [] # TODO) are still empty.
+      sub(/[[:space:]]+#.*$/, "", rest)
       # Block-scalar header (| or >, optional chomp +/-, optional trailing # comment):
       # the evidence is in the indented body, checked below.
       is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
@@ -208,6 +211,7 @@ has_retrieval_skip_reason() {
       rest = $0
       sub(/^retrieval_skip_reason:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      sub(/[[:space:]]+#.*$/, "", rest)
       is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
       is_empty = (rest == "" || rest == "\"\"" || rest == "\047\047" || rest == "[]" || rest == "{}" || rest == "~" || rest == "null")
       if (!is_block && !is_empty && rest !~ /^#/) {
