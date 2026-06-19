@@ -233,7 +233,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: Cosmetic only — the directory is empty, there are no dangling symlinks, and nothing functional remains. The `docs/RELEASE_CHECKLIST.md` §2a "no leftover dir" intent (which it states explicitly for `share/`) is not fully met.
 **Requirement**: Add `adapters` to the empty-dir prune list in the uninstall path so a clean uninstall leaves no managed parent dirs; extend the uninstall regression coverage with a leftover-dir assertion (no managed parent dir survives a full uninstall).
 **Source**: surfaced during v0.5.0 release §2a manual verification (2026-06-13); `~/.claude/adapters/` observed empty after `uninstall.sh`, hand-cleaned to restore the test environment.
-**See**: pr:#TBD
+**See**: pr:#300
 
 ## CC-370 — native Windows support deferred to post-core platform phase
 
@@ -682,7 +682,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance. Sequence (c) test coverage with that work rather than building a one-off timeout in `pr-gate.sh`.
 
 **Cross-link**: [[CC-391]] (supervisor — general fix), CC-217 (origin), `commands/pr-gate.md` Route B.
-**See**: pr:#TBD
+**See**: pr:#300
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
 
