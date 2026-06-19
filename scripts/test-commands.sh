@@ -192,6 +192,26 @@ should_run "pm-cmd: has Discovery route orchestration" && assert_file_contains "
 should_run "pm-cmd: gates discover on run_discover flag" && assert_file_contains "pm-cmd: gates discover on run_discover flag" "$PM_CMD" "run_discover: true" && pass "pm-cmd: gates discover on run_discover flag"
 should_run "pm-cmd: research auto-offered not auto-fired" && assert_file_contains "pm-cmd: research auto-offered not auto-fired" "$PM_CMD" "auto-offered, not auto-fired" && pass "pm-cmd: research auto-offered not auto-fired"
 
+# active-scope guard — the TACTICAL FALSE PATH (named scope must NOT auto-fire discovery)
+should_run "project-pm: tactical named scope never auto-routes to Discovery" && assert_file_contains "project-pm: tactical named scope never auto-routes to Discovery" "$PROJECT_PM" "never auto-route to Discovery" && pass "project-pm: tactical named scope never auto-routes to Discovery"
+should_run "project-pm: tactical request does not auto-fire an uncertainty mode" && assert_file_contains "project-pm: tactical request does not auto-fire an uncertainty mode" "$PROJECT_PM" "do **not** auto-fire an uncertainty mode" && pass "project-pm: tactical request does not auto-fire an uncertainty mode"
+should_run "pm-cmd: named scope sets run_discover false (no fan-out)" && assert_file_contains "pm-cmd: named scope sets run_discover false (no fan-out)" "$PM_CMD" "run_discover: false" && pass "pm-cmd: named scope sets run_discover false (no fan-out)"
+should_run "pm-cmd: tactical request does not auto-run discover" && assert_file_contains "pm-cmd: tactical request does not auto-run discover" "$PM_CMD" "Do **not** auto-run \`/discover\` for tactical" && pass "pm-cmd: tactical request does not auto-run discover"
+
+# /discover per-pick routing contract: Next carries the per-pick route, why-not-direct-brief is the top-pick global line
+should_run "discover: per-pick route chosen one per row" && assert_file_contains "discover: per-pick route chosen one per row" "$DISCOVER" "Pick one per row" && pass "discover: per-pick route chosen one per row"
+should_run "discover: research route means external method gap" && assert_file_contains "discover: research route means external method gap" "$DISCOVER" "needs an external method" && pass "discover: research route means external method gap"
+
+# /spike verdict validation: local-env failure -> AMBER, mandatory main-thread sanity-check
+should_run "spike-cmd: has main-thread verdict validation step" && assert_file_contains "spike-cmd: has main-thread verdict validation step" "$SPIKE_CMD" "Main-thread validation" && pass "spike-cmd: has main-thread verdict validation step"
+should_run "spike-cmd: local-env failure classifies AMBER not RED" && assert_file_contains "spike-cmd: local-env failure classifies AMBER not RED" "$SPIKE_CMD" "local-env" && pass "spike-cmd: local-env failure classifies AMBER not RED"
+should_run "spike-cmd: documents AMBER verdict" && assert_file_contains "spike-cmd: documents AMBER verdict" "$SPIKE_CMD" "AMBER" && pass "spike-cmd: documents AMBER verdict"
+
+# /research constraint-filtering output contract
+should_run "research: filters external methods against internal constraints" && assert_file_contains "research: filters external methods against internal constraints" "$RESEARCH" "Filter against internal constraints" && pass "research: filters external methods against internal constraints"
+should_run "research: output carries maps-to / conflicts-with verdict field" && assert_file_contains "research: output carries maps-to / conflicts-with verdict field" "$RESEARCH" "Maps to / conflicts with" && pass "research: output carries maps-to / conflicts-with verdict field"
+should_run "research: marks methods adoptable" && assert_file_contains "research: marks methods adoptable" "$RESEARCH" "adoptable" && pass "research: marks methods adoptable"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary

@@ -1429,7 +1429,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
   - 已選候選但卡在 durable 決策未知 → spike（確保/建立 spike 票後跑 `/spike CC-NNN`）。
   - 已 scoped 的實作 → Planning/Brief，不啟動 uncertainty mode。
 - `commands/pm.md` 加 main-thread orchestration 規則：PM 回傳 route，**main thread** 跑 `/discover` 並把報告回灌給 PM 後才產最終建議（subagent 不能巢狀呼叫 agent，比照 `/pr-gate` fan-out）。
-- `commands/discover.md` 輸出升級為 routing input：每個 pick 加 `suggested_next_action: pm|spike|research|defer`、`refs`/anchors、`why_not_direct_pm`（CC-343 已關閉，此升級併入本票）。
+- `commands/discover.md` 輸出升級為 routing input：每個 pick 加 `suggested_next_action`（`Next` 欄：pm|spike|research|defer，此即該 pick 的 per-pick 路由決策）+ `refs`/anchors；**top-pick** 附一行 `Why not a direct brief`（全域，非每列一欄，避免表格過寬）。CC-343 已關閉，此升級併入本票。
 - Done-when：問「下一步建議做什麼」會引用 `/discover` 輸出並明說下一步是 pm/spike/research/defer；active-scope guard 有測試（戰術型「這張票下一步」不得誤觸 auto-discover）。
 
 **Non-goals**:
