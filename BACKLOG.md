@@ -681,9 +681,9 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance.
 
-**Design decision (2026-06-19)**: CC-391 (supervisor) was not delivered in v0.6.0. This ticket is closed via a **local `pr-gate.sh` watchdog** (SIGTERM-based, covering both reviewer fan-out and synthesis) rather than the supervisor path. Tradeoff: the watchdog duplicates lifecycle ownership that would belong to the supervisor layer, but provides immediate value. The supervisor direction remains aspirational; this is an intentional pragmatic choice with the tradeoff recorded here.
+**Design decision (2026-06-19)**: The general detached supervisor ([[CC-391]] spike + [[CC-399]] implementation) was delivered in v0.6.0 for `pmctl dispatch run --lifecycle detached`. However, `pr-gate.sh` parallel reviewer fan-out manages its subprocesses **directly inside `pr-gate.sh`** (via `eval "$DISPATCH_CMD" ... &`), not via `pmctl dispatch run` — so the supervisor lifecycle path does not apply here. This ticket is closed via a **local `pr-gate.sh` watchdog** (SIGTERM-based, covering both reviewer fan-out and synthesis), which is the correct ownership boundary for in-process subprocess management.
 
-**Cross-link**: [[CC-391]] (supervisor — general long-term fix), CC-217 (origin), `commands/pr-gate.md` Route B.
+**Cross-link**: [[CC-391]] (supervisor spike), [[CC-399]] (supervisor implementation — different path), CC-217 (origin), `commands/pr-gate.md` Route B.
 **See**: pr:#300
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
