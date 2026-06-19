@@ -63,7 +63,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-306 | 🟡 deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-342 | 🟢 someday | **[agent: debt-auditor — proactive tech-debt health scan on living code]** 新增 `agents/debt-auditor.md`：對指定 codebase 區域（目錄 / module）做主動技術債健康掃描，不需要 PR 觸發。輸出是按優先序排列的債務清單（重複、慣例分歧、過早抽象、缺少測試的不變量），含位置、影響、建議修法、預估規模。定位為**真正新的認知模式**（proactive health assessment），有別於所有現有 reviewer（全部 PR-diff focused）。由 `pmctl audit <path>` 或 `/audit` skill 呼叫；隔離執行確保不受進行中任務錨定。 | process/DX | 2026-06-05 | — | P3 | design |
 | CC-344 | ✅ closed 2026-06-19 | **[skill: /research — grounded external research with internal context anchoring]** 新增 `commands/research.md`：補足 `/discover` 純內部掃描的盲區，加入外部研究維度。流程：(1) 自動讀內部相關 memory/decisions 建立錨定；(2) 問使用者 1–2 個定向問題縮小搜尋範圍；(3) 派有 WebSearch 能力的 agent 抓取外部實作與方法；(4) 主線程以內部設計 constraint 過濾結果，標記「可採用」或「與 constraint X 衝突」。目標：讓外部技術知識能有效導入而非淪為噪音。與 `/discover` 互補——discover 看「我們已知但未做的」，research 看「外部有我們還沒想到的」。 | process/DX | 2026-06-09 | pr:#302 | P3 | design |
-| CC-345 | 🟢 someday | **[dx: claude adapter 即時進度串流（stream-json）]** `adapters/claude/dispatch.sh` 目前使用 `--output-format json`，stdout 完全 buffered 至 process 結束，dispatch 期間 trace 為空、working tree 無變動，使用者無法判斷 executor 在讀取或寫檔。改用 `--output-format stream-json` 並以 tee 寫入 trace，同步解析 tool-use events，在 stderr banner 即時顯示 `[reading]`、`[writing]`、`[running]` 進度行。 | ux/ops | 2026-06-09 | — | P2 | design |
+| CC-345 | ✅ closed 2026-06-19 | **[dx: claude adapter 即時進度串流（stream-json）]** Superseded by CC-388（PR#287）：已切換至 stream-json JSONL，需求已實現。 | ux/ops | 2026-06-09 | pr:#287 | P2 | design |
 | CC-346 | ⏸ deferred | **[repo-index: cross-file ref tracking（file_refs layer，5 languages）]** CC-338 只有 symbol+chunk，看不出引用關係。新增 `file_refs(from_id, to_path, ref_type, line_number, resolved)` 表，以 grep 解析 bash source、Java import、JS/TS import/require、Go import。分三 phase：(a) bash、(b) JS/TS、(c) Java+Go。讓 query 回傳的 `refs` 欄位含直接引用者，並為 CC-347 blast-radius 和 CC-239 reuse-scan 提供資料。**Paused 2026-06-10（arch review）**：reuse-scan 本身尚無任何操作面 caller——給沒人用的工具加深資料層是加倍下注未驗證假設。Resume trigger：reuse-scan 輸出（經 CC-356 接線）實際進過 ≥2 份真 brief，且觀察到缺 ref 資料確為瓶頸；屆時先只做 Phase a（bash source）。 | ops | 2026-06-09 | — | P3 | design |
 | CC-347 | 🟢 someday | **[pr-gate: blast-radius analysis using cross-file refs（CC-346）]** gate brief 組裝時對 diff 中每個變更符號走一層 file_refs 圖，彙整成 `blast_radius` 清單（`{file, referenced_by: [path,...], ref_count: N}`）注入 brief context 段落，讓 risk-reviewer 有依據評估波及範圍。無 CC-346 index 時靜默跳過。 | gate | 2026-06-09 | — | P3 | design |
 | CC-348 | 🟢 someday | **[pmctl project-map: cross-file dependency graph visualisation]** `pmctl project-map [--format text/dot] [--from <path>] [--depth N]` — 以 CC-346 file_refs 表輸出 ASCII 樹狀（預設）或 Graphviz DOT 引用圖；標示 broken refs（to_path 不在 files 表）；無 index 時 exit 1 並提示 `pmctl context index`。 | ops/DX | 2026-06-09 | — | P3 | design |
@@ -1046,7 +1046,11 @@ This makes directory creation the mutex.
 
 ---
 
-## CC-345 — dx: claude adapter 即時進度串流（stream-json）🟢 someday
+## CC-345 — dx: claude adapter 即時進度串流（stream-json）✅ 2026-06-19
+
+**See**: pr:#287 (CC-388: claude adapter stream-json executor)
+
+> **SUPERSEDED 2026-06-19**: CC-388（PR#287，v0.6.0 Phase 4）已將 `adapters/claude/dispatch.sh` 切換至 `--output-format stream-json`，逐行 NDJSON events 輸出，CC-345 所描述的需求已完整實現。本票廢棄。
 
 **Problem**: `adapters/claude/dispatch.sh` 使用 `--output-format json`，使 claude 的 stdout 完全 buffered 至 process 結束才 flush。dispatch 執行期間 trace file 為 0 bytes、git working tree 無變動，使用者無從判斷 executor 是在讀取、規劃還是寫檔，只能盲等。
 
