@@ -197,8 +197,18 @@ has_context_evidence() {
     }
     in_context {
       if (/^[a-z_]+:[[:space:]]*/) { in_context = 0; next }
-      if (/^[[:space:]]*#/ || /^[[:space:]]*$/) next
-      if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
+      if (/^[[:space:]]*$/ || /^[[:space:]]*#/) next
+      if (/^[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)        # drop indentation
+        sub(/^-[[:space:]]*/, "", line)        # drop a leading sequence marker
+        sub(/[[:space:]]+#.*$/, "", line)      # drop a trailing inline comment
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (line == "\"\"" || line == "\047\047" || line == "[]" || line == "{}" || line == "~" || line == "null") next
+        found = 1
+        exit
+      }
     }
     END { exit found ? 0 : 1 }
   ' "$brief"
@@ -223,8 +233,18 @@ has_retrieval_skip_reason() {
     }
     in_reason {
       if (/^[a-z_]+:[[:space:]]*/) { in_reason = 0; next }
-      if (/^[[:space:]]*#/ || /^[[:space:]]*$/) next
-      if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
+      if (/^[[:space:]]*$/ || /^[[:space:]]*#/) next
+      if (/^[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/^-[[:space:]]*/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (line == "\"\"" || line == "\047\047" || line == "[]" || line == "{}" || line == "~" || line == "null") next
+        found = 1
+        exit
+      }
     }
     END { exit found ? 0 : 1 }
   ' "$brief"

@@ -1112,6 +1112,80 @@ EOF
   pass "$name"
 }
 
+# A context: sequence whose only items are comments or structurally-empty
+# (- # comment, - ~, - "", - []) is not evidence: fail mode must reject.
+# Steps:
+# 1. For each empty/comment sequence item, write a brief with context:\n  <item>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_context_sequence_items() {
+  local name="reject-retrieval-empty-context-sequence-items"
+  should_run "$name" || return 0
+  local item brief out rc
+  for item in '- # no real refs' '- ~' '- ""' '- []'; do
+    brief="$tmpdir/retrieval-empty-ctx-seq.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty context sequence item.
+context:
+  $item
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "context sequence item '$item' should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A retrieval_skip_reason: sequence whose only items are comments or empty forms
+# is not a reason: fail mode must reject.
+# Steps:
+# 1. For each empty/comment sequence item, write a brief with retrieval_skip_reason:\n  <item>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_sequence_items() {
+  local name="reject-retrieval-empty-skip-reason-sequence-items"
+  should_run "$name" || return 0
+  local item brief out rc
+  for item in '- # no real reason' '- ~' '- ""'; do
+    brief="$tmpdir/retrieval-empty-skip-seq.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip-reason sequence item.
+retrieval_skip_reason:
+  $item
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "skip-reason sequence item '$item' should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 # A non-empty retrieval_skip_reason satisfies retrieval evidence.
 # Steps:
 # 1. Write a file-writing brief with a non-empty inline retrieval_skip_reason:.
@@ -1285,5 +1359,7 @@ case_reject_retrieval_comment_only_skip_reason
 case_reject_retrieval_empty_context_forms
 case_reject_retrieval_block_indicator_trailing_comment
 case_reject_retrieval_empty_skip_reason_forms
+case_reject_retrieval_empty_context_sequence_items
+case_reject_retrieval_empty_skip_reason_sequence_items
 
 th_summary
