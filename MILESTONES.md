@@ -106,6 +106,7 @@
 ---
 
 ## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
+> 最後排程更新：2026-06-19
 
 **主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
 
@@ -133,6 +134,14 @@
 | CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | 🟢 |
 | CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | 🟢 |
 
+### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
+
+> 純命名脫鉤，**零行為改動**：`hook-*.sh`（8 檔）/ `hook-framework.sh` / `hk_*`/`HK_*` 函式 / `PM_HOOK_*` env → 平台中性 `guard-*`；`settings.json` 的 `PreToolUse` 鍵保留（Claude 平台自有）。獨立 PR，不可與安全邊界票混搭。前置 [[CC-376]] ✅ 已達成；[[CC-377]] deferred 不阻本票。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-384 | `hook-*.sh` → `guard-*.sh`、framework/helper/env 前綴一起掃；install/uninstall/doctor 接線 + parity scanner + 測試 + 文件同步。[[CC-333]] layer 2/6 | 🟢 |
+
 > **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
 
 ### 待後續 / 與本版正交
@@ -141,6 +150,11 @@
 - **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
 - **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程。
 - **CC-340 knowledge index 重型版**——**已被 [[CC-403]] supersede**：memory-index MVP 移入 Phase 2，CC-340 僅剩 embeddings / 語意後端 remainder，待 FTS/LIKE 證明不足再 resume。
+- **CC-026（/skill-distill）——continue defer**：前置 episode signal 層（CC-027b/c）仍 deferred；列入 someday 待 signal 層就緒再評估。
+- **CC-018（rate-limit 統一）——continue defer**：ux/token 主題與 retrieval 正交；維持 P3 active 不排入 v0.7.0。
+- **CC-342（debt-auditor agent）——continue someday**：proactive 技術債掃描與本版主題無直接相關；待核心穩定後再評估。
+- **CC-357（skill as contract schema）——continue someday**：架構較大、無明確 trigger 條件，不排入 v0.7.0。
+- **CC-033（Public flip checklist）——blocked on CC-032**：CC-032（`[[feedback_*]]` 公開化）仍 🔵 active 未完成；CC-033 依賴其完成，不排入 v0.7.0。
 
 ---
 
