@@ -155,7 +155,6 @@
 - **CC-342（debt-auditor agent）——continue someday**：proactive 技術債掃描與本版主題無直接相關；待核心穩定後再評估。
 - **CC-357（skill as contract schema）——continue someday**：架構較大、無明確 trigger 條件，不排入 v0.7.0。
 - **CC-033（Public flip checklist）——blocked on CC-032**：CC-032（`[[feedback_*]]` 公開化）仍 🔵 active 未完成；CC-033 依賴其完成，不排入 v0.7.0。
-- **CC-345（claude stream-json 進度串流）——已被 CC-388 涵蓋（v0.6.0 Phase 4）**：CC-388 切換至 stream-json JSONL 已於 v0.6.0 ship（✅）；CC-345 所描述的需求已實現，可視為 superseded，無需獨立排入 v0.7.0。
 
 ---
 
