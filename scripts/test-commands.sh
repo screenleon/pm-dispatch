@@ -147,6 +147,51 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     "$agent_file" "Output brevity" "English only"
 done
 
+# ── next-step uncertainty router contract (discover/research/spike family) ────
+
+DISCOVER="$COMMANDS_DIR/discover.md"
+RESEARCH="$COMMANDS_DIR/research.md"
+SPIKE_CMD="$COMMANDS_DIR/spike.md"
+SPIKE_AGENT="$AGENTS_DIR/spike.md"
+PROJECT_PM="$AGENTS_DIR/project-pm.md"
+PM_CMD="$COMMANDS_DIR/pm.md"
+
+# /discover output is a routing input, not just a human menu
+assert_frontmatter "discover: frontmatter valid" "$DISCOVER"
+should_run "discover: output table has Next column" && assert_file_contains "discover: output table has Next column" "$DISCOVER" "| Next | Refs |" && pass "discover: output table has Next column"
+should_run "discover: documents why-not-direct-brief line" && assert_file_contains "discover: documents why-not-direct-brief line" "$DISCOVER" "**Why not a direct brief**" && pass "discover: documents why-not-direct-brief line"
+should_run "discover: Next column is a route label only" && assert_file_contains "discover: Next column is a route label only" "$DISCOVER" "route label only" && pass "discover: Next column is a route label only"
+should_run "discover: documents defer route" && assert_file_contains "discover: documents defer route" "$DISCOVER" "real but not timely" && pass "discover: documents defer route"
+
+# /research grounded-pipeline contract
+assert_frontmatter "research: frontmatter valid" "$RESEARCH"
+should_run "research: internal anchoring is mandatory before search" && assert_file_contains "research: internal anchoring is mandatory before search" "$RESEARCH" "Internal anchoring (mandatory" && pass "research: internal anchoring is mandatory before search"
+should_run "research: mandatory directioning question step" && assert_file_contains "research: mandatory directioning question step" "$RESEARCH" "Directioning question" && pass "research: mandatory directioning question step"
+should_run "research: anchoring has retrieval swap-point" && assert_file_contains "research: anchoring has retrieval swap-point" "$RESEARCH" "swap-point" && pass "research: anchoring has retrieval swap-point"
+should_run "research: dispatches a WebSearch-capable agent" && assert_file_contains "research: dispatches a WebSearch-capable agent" "$RESEARCH" "WebSearch-capable agent" && pass "research: dispatches a WebSearch-capable agent"
+should_run "research: does not auto-open tickets" && assert_file_contains "research: does not auto-open tickets" "$RESEARCH" "does not auto-open tickets" && pass "research: does not auto-open tickets"
+should_run "research: mandatory persistence prompt" && assert_file_contains "research: mandatory persistence prompt" "$RESEARCH" "Persistence prompt (mandatory" && pass "research: mandatory persistence prompt"
+
+# /spike orchestrator + spike planner agent
+assert_frontmatter "spike-cmd: frontmatter valid" "$SPIKE_CMD"
+should_run "spike-cmd: main thread fans out one agent per angle" && assert_file_contains "spike-cmd: main thread fans out one agent per angle" "$SPIKE_CMD" "fans out one agent per angle" && pass "spike-cmd: main thread fans out one agent per angle"
+should_run "spike-cmd: consumes spike_plan_v1 block" && assert_file_contains "spike-cmd: consumes spike_plan_v1 block" "$SPIKE_CMD" "spike_plan_v1" && pass "spike-cmd: consumes spike_plan_v1 block"
+should_run "spike-cmd: result committed to docs/spikes" && assert_file_contains "spike-cmd: result committed to docs/spikes" "$SPIKE_CMD" "docs/spikes/<ticket-id>.md" && pass "spike-cmd: result committed to docs/spikes"
+should_run "spike-agent: returns spike_plan_v1" && assert_file_contains "spike-agent: returns spike_plan_v1" "$SPIKE_AGENT" "spike_plan_v1" && pass "spike-agent: returns spike_plan_v1"
+should_run "spike-agent: cannot spawn subagents (planner only)" && assert_file_contains "spike-agent: cannot spawn subagents (planner only)" "$SPIKE_AGENT" "You cannot spawn subagents." && pass "spike-agent: cannot spawn subagents (planner only)"
+should_run "spike-agent: has a synthesis pass" && assert_file_contains "spike-agent: has a synthesis pass" "$SPIKE_AGENT" "# Synthesis pass" && pass "spike-agent: has a synthesis pass"
+
+# project-pm uncertainty routing + load-bearing active-scope guard
+should_run "project-pm: has Uncertainty routing section" && assert_file_contains "project-pm: has Uncertainty routing section" "$PROJECT_PM" "## Uncertainty routing" && pass "project-pm: has Uncertainty routing section"
+should_run "project-pm: documents load-bearing active-scope guard" && assert_file_contains "project-pm: documents load-bearing active-scope guard" "$PROJECT_PM" "Active-scope guard (load-bearing)" && pass "project-pm: documents load-bearing active-scope guard"
+should_run "project-pm: emits next_step_route block" && assert_file_contains "project-pm: emits next_step_route block" "$PROJECT_PM" "next_step_route:" && pass "project-pm: emits next_step_route block"
+should_run "project-pm: discover auto-fired, research auto-offered" && assert_file_contains "project-pm: discover auto-fired, research auto-offered" "$PROJECT_PM" "Automation asymmetry" && pass "project-pm: discover auto-fired, research auto-offered"
+
+# /pm main-thread discovery orchestration
+should_run "pm-cmd: has Discovery route orchestration" && assert_file_contains "pm-cmd: has Discovery route orchestration" "$PM_CMD" "**Discovery route**" && pass "pm-cmd: has Discovery route orchestration"
+should_run "pm-cmd: gates discover on run_discover flag" && assert_file_contains "pm-cmd: gates discover on run_discover flag" "$PM_CMD" "run_discover: true" && pass "pm-cmd: gates discover on run_discover flag"
+should_run "pm-cmd: research auto-offered not auto-fired" && assert_file_contains "pm-cmd: research auto-offered not auto-fired" "$PM_CMD" "auto-offered, not auto-fired" && pass "pm-cmd: research auto-offered not auto-fired"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
