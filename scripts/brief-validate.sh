@@ -204,15 +204,25 @@ auto_pack_value() {
   ' "$brief"
 }
 
-retrieval_skip_reason_value() {
+has_retrieval_skip_reason() {
   local brief="$1"
   awk '
     /^retrieval_skip_reason:[[:space:]]*/ {
-      sub(/^retrieval_skip_reason:[[:space:]]*/, "", $0)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-      print
-      exit
+      rest = $0
+      sub(/^retrieval_skip_reason:[[:space:]]*/, "", rest)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+        found = 1
+        exit
+      }
+      in_reason = 1
+      next
     }
+    in_reason {
+      if (/^[a-z_]+:[[:space:]]*/) { in_reason = 0; next }
+      if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
   ' "$brief"
 }
 
@@ -363,11 +373,10 @@ case "$retrieval_mode" in
 esac
 
 auto_pack="$(auto_pack_value "$brief")"
-retrieval_skip_reason="$(retrieval_skip_reason_value "$brief")"
 if has_file_writing_entry "$brief" \
   && ! has_context_block "$brief" \
   && [[ "$auto_pack" != "true" ]] \
-  && [[ -z "$retrieval_skip_reason" ]]; then
+  && ! has_retrieval_skip_reason "$brief"; then
   retrieval_message="file-writing brief lacks retrieval evidence: add non-empty 'context:', 'auto_pack: true', or 'retrieval_skip_reason:'"
   if [[ "$retrieval_mode" == "fail" ]]; then
     reject "$retrieval_message"

@@ -930,6 +930,73 @@ EOF
   assert_validation_no_warn "$name" "$brief"
 }
 
+# An unsupported BRIEF_VALIDATE_RETRIEVAL value is rejected before the evidence
+# check (so even an evidence-bearing brief is rejected).
+case_reject_invalid_retrieval_mode() {
+  local name="reject-invalid-retrieval-mode"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-invalid-mode.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with cited context.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  docs/context-retrieval.md:1 explains retrieval ordering.
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "bogus" "$brief" 1 "REJECT: invalid BRIEF_VALIDATE_RETRIEVAL"
+}
+
+# An empty block-scalar retrieval_skip_reason ("|" with no body) is NOT evidence:
+# fail mode must still reject. Guards the empty-skip-reason bypass.
+case_reject_retrieval_empty_skip_reason_block_scalar() {
+  local name="reject-retrieval-empty-skip-reason-block-scalar"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-empty-skip-block.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip reason.
+retrieval_skip_reason: |
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A bare empty retrieval_skip_reason (key with no value, no body) is NOT evidence:
+# fail mode must still reject.
+case_reject_retrieval_empty_skip_reason_bare() {
+  local name="reject-retrieval-empty-skip-reason-bare"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-empty-skip-bare.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip reason.
+retrieval_skip_reason:
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
 case_valid_read_only_brief
 case_valid_write_with_self_verify
 case_valid_new_with_self_verify
@@ -968,5 +1035,8 @@ case_valid_retrieval_evidence_context
 case_valid_retrieval_evidence_auto_pack
 case_valid_retrieval_evidence_skip_reason
 case_valid_retrieval_trivial_read_only_exempt
+case_reject_invalid_retrieval_mode
+case_reject_retrieval_empty_skip_reason_block_scalar
+case_reject_retrieval_empty_skip_reason_bare
 
 th_summary
