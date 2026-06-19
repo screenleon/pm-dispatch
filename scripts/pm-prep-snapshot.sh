@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# [CC-244] Typed snapshot output aligns with future spike_v1 schema.
-# This script is the PM pre-spawn snapshot writer used by CC-243.
+# PM pre-spawn snapshot writer — typed output aligned with spike_v1 schema.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

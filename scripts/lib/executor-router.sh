@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourceable executor routing helpers for adapter dispatch callers.
 #
-# Routing is DATA-DRIVEN (CC-373): the dispatch allowlist and per-executor route
+# Routing is DATA-DRIVEN: the dispatch allowlist and per-executor route
 # are derived from on-disk adapter manifests (adapters/<name>/adapter.yaml), not a
 # hardcoded codex|claude enum. An executor is routable iff its adapter directory
 # carries a readable, non-symlink manifest declaring a valid runner_kind. Adding
@@ -162,7 +162,7 @@ dispatch_via() {
     printf 'executor-router: %s is not a routable executor (no valid adapter manifest)\n' "$executor" >&2
     return 2
   }
-  # The validated name resolves the adapter path by convention (CC-289: the real
+  # The validated name resolves the adapter path by convention (the real
   # adapter, not the legacy scripts/<name>-dispatch.sh compatibility shim).
   local dispatch_script="${EXECUTOR_ROUTER_SCRIPT_DIR%/scripts}/adapters/$executor/dispatch.sh"
 

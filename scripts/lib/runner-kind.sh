@@ -136,7 +136,7 @@ runner_kind_resolve_flag() {
 
 # runner_kind_detach_eligible <runner_kind>
 # Decides whether an adapter of this runner-kind may run under a detached
-# supervisor (CC-391 lifecycle axis). DERIVED from the declared runner-kind, not
+# supervisor. DERIVED from the declared runner-kind, not
 # a manifest field: a cli-subprocess executor is a Model B subprocess pmctl can
 # reparent under a supervisor; a host-native executor IS the running host and
 # cannot be handed to an external supervisor. Returns 0 (eligible), 1 (not

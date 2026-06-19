@@ -53,7 +53,7 @@ trap 'rm -f "$tmp_new"' EXIT
 _chain_target=""
 [[ -f "$statusline_chain_conf" ]] && _chain_target=$(head -1 "$statusline_chain_conf")
 
-# CC-334: compute the reviewer Write glob to include in managed removal.
+# Compute the reviewer Write glob to include in managed removal.
 # gate_workspace_root is sourced from scripts/lib/gate-workspace.sh;
 # falls back to inline detection if the lib is absent (copy-mode installs).
 if command -v gate_workspace_root >/dev/null 2>&1; then

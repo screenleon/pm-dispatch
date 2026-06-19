@@ -128,7 +128,7 @@ EOF
 #   2. write the output contract — $WORK_DIR/.agent-trace/latest.last (the final
 #      message) — so dispatch-post-verify.sh can read it.
 # The adapter is routable as soon as adapter.yaml declares a valid runner_kind:
-# the dispatch allowlist is derived from on-disk manifests (CC-373), so no edit to
+# the dispatch allowlist is derived from on-disk manifests, so no edit to
 # scripts/lib/executor-router.sh is required.
 # See adapters/codex/dispatch.sh for a reference implementation.
 set -euo pipefail

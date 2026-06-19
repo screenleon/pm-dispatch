@@ -7,7 +7,7 @@
 # codex adapter's sandbox:/config_overrides: schema and from the flat native_flags:
 # schema that `pmctl adapter generate` emits. Do not cross-pollinate.
 #
-# Why permission_mode is the right knob (verified empirically, CC-266): in
+# Why permission_mode is the right knob (verified empirically): in
 # headless `claude -p` there is no interactive approver, so the permission mode
 # alone determines what the executor can mutate:
 #   acceptEdits       – edits in the working dir are auto-accepted (executor mode)
