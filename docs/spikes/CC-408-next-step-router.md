@@ -3,9 +3,12 @@
 **Status**: complete
 **Date**: 2026-06-19
 **Ticket**: BACKLOG.md CC-408
-**Method**: multi-source design spike — main-thread (opus, read-only repo analysis) +
-codex second opinion (`gpt-5.5`, effort=high, `/tmp/codex-analysis.md`) + external
-ChatGPT analysis (`~/github/temp/chatgpt.md`). Three independent analyses, then synthesis.
+**Method**: multi-source design spike — three independent analyses then synthesis:
+main-thread (opus, read-only repo analysis), a codex second opinion (`gpt-5.5`, effort=high),
+and an external ChatGPT analysis. The raw angle artifacts were transient inputs (codex run
+output and a user-supplied ChatGPT transcript); their load-bearing content is captured and
+attributed per-angle below in §Angles and §Findings, so **this committed synthesis is the
+reviewable artifact** — the original scratch files are not required to audit the decision.
 
 ## Investigation scope
 
