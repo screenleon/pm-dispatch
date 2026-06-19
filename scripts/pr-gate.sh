@@ -17,6 +17,21 @@ trap '' PIPE
 # shellcheck disable=SC2059  # printf passthrough wrapper: the caller owns the format string
 say() { printf "$@" 2>/dev/null || true; }
 
+# _kill_process_tree <pid> [signal] -- signal a process AND all its descendants.
+# A plain `kill <pid>` only reaches the `eval` subshell / dispatch.sh wrapper we
+# backgrounded; the grandchild executor (`codex exec`, or a test `sleep` stub)
+# lives in the same call chain but survives as an orphan reparented to init. The
+# parallel reviewer/synthesis watchdogs must reap the whole tree or a timed-out
+# gate leaks live executor processes. Walk children depth-first via `pgrep -P`
+# (leaves before parents) so each layer is signaled before its parent disappears.
+_kill_process_tree() {
+  local _pid="$1" _sig="${2:-TERM}" _child
+  for _child in $(pgrep -P "$_pid" 2>/dev/null || true); do
+    _kill_process_tree "$_child" "$_sig"
+  done
+  kill -"$_sig" "$_pid" 2>/dev/null || true
+}
+
 # pr-gate.sh -- PR-gate review via a dispatched session
 #
 # DEFAULT (single-session / sequential):
@@ -56,6 +71,11 @@ say() { printf "$@" 2>/dev/null || true; }
 #   --sequential         alias for default single-session mode (kept for backward compatibility)
 #   --allow-hooks        execute repo-local .pm-dispatch hook scripts (trusted branches only)
 #   --allow-dirty        review the working tree as-is instead of failing on a dirty tree atop committed changes
+#   --override-file <f>  inject accepted-risk overrides into every reviewer brief; auto-discovered
+#                        from .gate-overrides.md at repo root when this flag is omitted. A relative
+#                        <f> is resolved against the working dir (--cd), not the caller's CWD, since
+#                        the file is loaded after the gate cd's into the work dir. The loaded source
+#                        and content are recorded in the gate result (## Gate Overrides Applied).
 
 WORK_DIR=""
 TIER_OVERRIDE=""
@@ -68,6 +88,7 @@ SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
 ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in (CC-260)
+OVERRIDE_FILE=""
 # "default" → omit --model → the executor adapter applies its own pinned default
 # (for codex, resolved via share/model-aliases.tsv; decoupled from ~/.codex/config.toml).
 # The gate is analysis-heavy and must run on a full model, never the spark variant;
@@ -96,12 +117,18 @@ while [[ $# -gt 0 ]]; do
     --sequential) SEQUENTIAL=true;         shift;;   # backward compat
     --allow-hooks) ALLOW_HOOKS=true;       shift;;
     --allow-dirty) ALLOW_DIRTY=true;       shift;;
+    --override-file)
+      # Guard the operand explicitly: under `set -u` a bare `--override-file` with
+      # no following arg would abort with a raw "unbound variable" instead of the
+      # script's controlled CLI error style.
+      [[ $# -ge 2 ]] || { printf 'Error: --override-file requires a file path\n' >&2; exit 2; }
+      OVERRIDE_FILE="$2";  shift 2;;
     -h|--help)
-      sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,63p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty (-h for help)\n' >&2
+      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -330,6 +357,24 @@ EXECUTOR_IS_SUBPROCESS=true
 unset _self _self_dir EXECUTOR_ROUTER_PATH
 
 cd "$WORK_DIR"
+
+# ── Load gate overrides ───────────────────────────────────────────────────────
+# Auto-discover .gate-overrides.md when --override-file is not specified.
+# Overrides are injected into every reviewer brief so accepted-risk items are
+# not re-blocked across rounds without a material change to the reviewed code.
+if [[ -z "$OVERRIDE_FILE" && -f "$WORK_DIR/.gate-overrides.md" ]]; then
+  OVERRIDE_FILE="$WORK_DIR/.gate-overrides.md"
+  say 'pr-gate: discovered override file: .gate-overrides.md\n'
+fi
+GATE_OVERRIDES_CONTENT=""
+if [[ -n "$OVERRIDE_FILE" ]]; then
+  if [[ ! -f "$OVERRIDE_FILE" ]]; then
+    printf 'Error: override file not found: %s\n' "$OVERRIDE_FILE" >&2
+    exit 2
+  fi
+  GATE_OVERRIDES_CONTENT=$(cat "$OVERRIDE_FILE")
+  say 'pr-gate: override file loaded: %s (%d bytes)\n' "$OVERRIDE_FILE" "${#GATE_OVERRIDES_CONTENT}"
+fi
 
 # ── Detect base branch ────────────────────────────────────────────────────────
 if [[ -n "$BASE_OVERRIDE" ]]; then
@@ -631,6 +676,21 @@ DIFF_STAT_INDENTED=$(printf '%s\n' "$DIFF_STAT" | sed 's/^/    /')
 REPO_REF_INDEX="$(_build_repo_ref_index "$WORK_DIR")"
 ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev/null || true)
 
+# Render the accepted-risk override context block injected into EVERY reviewer
+# and synthesis brief. Single source of truth: all three brief templates
+# (sequential, parallel reviewer, parallel synthesis) reference the one
+# ${GATE_OVERRIDES_CONTEXT_BLOCK} this produces, so an override-rendering change
+# lands in exactly one place. Emits the empty string when there are no overrides.
+render_gate_overrides_block() {
+  local content="$1" indented
+  [[ -z "$content" ]] && return 0
+  indented=$(printf '%s\n' "$content" | sed 's/^/  /')
+  printf '  Accepted-risk overrides (do NOT re-block these unless the diff materially\n  changes the accepted risk -- re-raising an already-accepted override when the\n  code has not changed is a false-positive that must be suppressed):\n%s\n' "$indented"
+}
+
+# Pre-format the override block for heredoc injection (empty when no overrides).
+GATE_OVERRIDES_CONTEXT_BLOCK="$(render_gate_overrides_block "$GATE_OVERRIDES_CONTENT")"
+
 say 'pr-gate: %s tier -- %s\n' "$TIER" "$REVIEWER_DISPLAY"
 [[ "${ADJ_COUNT:-0}" -gt 0 ]] && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
@@ -690,7 +750,7 @@ context:
   Base: ${BASE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-
+${GATE_OVERRIDES_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -874,7 +934,7 @@ context:
   Base: ${BASE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-
+${GATE_OVERRIDES_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -924,7 +984,7 @@ RBRIEF_EOF
     (
       sleep "$_GATE_WATCHDOG_TIMEOUT"
       for _wpid in "${DISPATCH_PIDS[@]}"; do
-        kill "$_wpid" 2>/dev/null || true
+        _kill_process_tree "$_wpid" TERM
       done
     ) &
     _GATE_WATCHDOG_PID=$!
@@ -1096,7 +1156,7 @@ context:
   Base: ${BASE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-
+${GATE_OVERRIDES_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
@@ -1214,7 +1274,7 @@ SBRIEF_P2
   _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
   (
     sleep "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT"
-    kill "$_SYNTHESIS_PID" 2>/dev/null || true
+    _kill_process_tree "$_SYNTHESIS_PID" TERM
   ) &
   _SYNTHESIS_WATCHDOG_PID=$!
   _synthesis_exit=0
@@ -1261,6 +1321,34 @@ SBRIEF_P2
   fi
   fi
 
+fi
+
+# ── Override provenance (audit record) ─────────────────────────────────────────
+# When accepted-risk overrides were injected, the gate result must say so: which
+# file they came from and exactly what was suppressed. Without this, an override
+# silently turns a would-be block into a GO with no trace in the result. The block
+# is appended deterministically by the gate (not the executor) so the audit record
+# is independent of what the reviewer chose to echo. It is written on both GO and
+# NO-GO -- the audit is about what was offered for suppression, not the outcome.
+# Lines are indented (markdown code block) so this section can never introduce a
+# spurious top-level `Final:` line or a frontmatter `---` fence that would trip
+# gate_result_verify / `pmctl gate verify`.
+if [[ -n "$GATE_OVERRIDES_CONTENT" ]]; then
+  # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
+  {
+    printf '\n## Gate Overrides Applied\n'
+    printf 'Accepted-risk overrides were loaded from `%s` and injected into every\n' "$OVERRIDE_FILE"
+    printf 'reviewer and synthesis brief for this run. Reviewers were instructed not to\n'
+    printf 're-block these items unless the diff materially changed the accepted risk.\n'
+    printf 'This block is the audit record of what was offered for suppression.\n\n'
+    printf '%s\n' "$GATE_OVERRIDES_CONTENT" | sed 's/^/    /'
+  } >> "$OUTPUT_FILE"
+  say 'pr-gate: override provenance recorded in result\n'
+  # Re-verify after appending: the provenance block is written post-verification,
+  # so re-run the same integrity contract to prove the appended (indented) content
+  # did not introduce a second Final: line or break frontmatter parity -- a
+  # parser-hostile override file (containing `Final: GO` / `---`) must stay neutralized.
+  gate_result_verify "$OUTPUT_FILE" "" "post-provenance-append" || exit 1
 fi
 
 # ── Post-gate hook ─────────────────────────────────────────────────────────
