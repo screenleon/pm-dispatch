@@ -24,7 +24,9 @@ A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED
 
 - [ ] Working tree clean on the release branch (`git status` empty).
 - [ ] `git pull` — branch up to date with `origin`.
-- [ ] `VERSION` / installer version bumped to the target (e.g. `0.5.0`).
+- [ ] `README.md` version badge bumped to the target tag (badge label **and**
+      the release-tag link, e.g. `version-v0.6.0` → `releases/tag/v0.6.0`). This
+      is the repo's sole version marker — no `VERSION` file / installer constant.
 - [ ] `CHANGELOG.md`: `## [Unreleased]` section reviewed and renamed to
       `## [x.y.z] — YYYY-MM-DD`; every shipped change is listed.
 - [ ] No `TODO(release)` / `XXX` left in changed files: `git grep -nE 'TODO\(release\)|XXX'`.
