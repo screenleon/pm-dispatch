@@ -870,15 +870,43 @@ EOF
   assert_validation_no_warn "$name" "$brief"
 }
 
-# auto_pack:true satisfies retrieval evidence.
-case_valid_retrieval_evidence_auto_pack() {
-  local name="valid-retrieval-evidence-auto-pack"
+# The auto_context: block that `pmctl dispatch run --auto-pack` appends to the
+# augmented brief satisfies retrieval evidence (the real auto-pack path).
+case_valid_retrieval_evidence_auto_context() {
+  local name="valid-retrieval-evidence-auto-context"
   should_run "$name" || return 0
-  local brief="$tmpdir/retrieval-auto-pack.md"
+  local brief="$tmpdir/retrieval-auto-context.md"
   write_brief "$brief" <<EOF
 schema_version: 1
 working_dir: $REPO_ROOT
 goal: Update dispatch docs with dispatch-time packing.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+
+auto_context:
+  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand
+  - docs/context-retrieval.md:1
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# A bare auto_pack: true field is NOT retrieval evidence: nothing at dispatch
+# reads it (auto-pack is driven by --auto-pack / dispatch.auto_pack, which appends
+# an auto_context: block instead). Fail mode must still reject it. Closes the
+# false escape-hatch where a brief looks retrieval-backed but supplies no context.
+case_reject_retrieval_bare_auto_pack_true() {
+  local name="reject-retrieval-bare-auto-pack-true"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-bare-auto-pack.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a bare auto_pack flag.
 auto_pack: true
 files:
   - write: docs/dispatch-brief.md
@@ -888,7 +916,7 @@ self_verify:
   - cmd: "test -f docs/dispatch-brief.md"
 EOF
 
-  assert_validation_no_warn "$name" "$brief"
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
 }
 
 # A non-empty retrieval_skip_reason satisfies retrieval evidence.
@@ -1032,11 +1060,12 @@ case_warn_behavioral_units_no_qa_checklist
 case_warn_retrieval_evidence_default
 case_reject_retrieval_evidence_fail_mode
 case_valid_retrieval_evidence_context
-case_valid_retrieval_evidence_auto_pack
+case_valid_retrieval_evidence_auto_context
 case_valid_retrieval_evidence_skip_reason
 case_valid_retrieval_trivial_read_only_exempt
 case_reject_invalid_retrieval_mode
 case_reject_retrieval_empty_skip_reason_block_scalar
 case_reject_retrieval_empty_skip_reason_bare
+case_reject_retrieval_bare_auto_pack_true
 
 th_summary

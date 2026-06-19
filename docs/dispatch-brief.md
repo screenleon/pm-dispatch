@@ -52,7 +52,10 @@ tagged `read:` makes it non-trivial. Retrieval evidence is satisfied by any one
 of:
 
 - a non-empty `context:` block with copied refs or prior-art anchors,
-- `auto_pack: true` metadata for dispatch-time prior-art packing,
+- the `auto_context:` block that `pmctl dispatch run --auto-pack` (or
+  `dispatch.auto_pack = on`) appends to the augmented brief — dispatch-time
+  prior-art packing supplies evidence by appending this block, not via any brief
+  field,
 - `retrieval_skip_reason:` with a non-empty reason.
 
 Read-only briefs are exempt. During rollout, `brief-validate.sh` defaults to

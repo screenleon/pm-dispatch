@@ -170,12 +170,16 @@ has_conceptual_map() {
   ' "$brief"
 }
 
-has_context_block() {
+# Retrieval evidence via a context block: either a hand-authored `context:` block
+# or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends to the
+# augmented brief. A bare key with only a block-scalar indicator (| > |- >-) and no
+# indented body is not evidence.
+has_context_evidence() {
   local brief="$1"
   awk '
-    /^context:[[:space:]]*/ {
+    /^(auto_)?context:[[:space:]]*/ {
       rest = $0
-      sub(/^context:[[:space:]]*/, "", rest)
+      sub(/^(auto_)?context:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
       if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
         found = 1
@@ -189,18 +193,6 @@ has_context_block() {
       if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
     }
     END { exit found ? 0 : 1 }
-  ' "$brief"
-}
-
-auto_pack_value() {
-  local brief="$1"
-  awk '
-    /^auto_pack:[[:space:]]*/ {
-      sub(/^auto_pack:[[:space:]]*/, "", $0)
-      gsub(/[[:space:]]/, "", $0)
-      print
-      exit
-    }
   ' "$brief"
 }
 
@@ -372,12 +364,10 @@ case "$retrieval_mode" in
   *) reject "invalid BRIEF_VALIDATE_RETRIEVAL: expected warn|fail, got '${retrieval_mode}'";;
 esac
 
-auto_pack="$(auto_pack_value "$brief")"
 if has_file_writing_entry "$brief" \
-  && ! has_context_block "$brief" \
-  && [[ "$auto_pack" != "true" ]] \
+  && ! has_context_evidence "$brief" \
   && ! has_retrieval_skip_reason "$brief"; then
-  retrieval_message="file-writing brief lacks retrieval evidence: add non-empty 'context:', 'auto_pack: true', or 'retrieval_skip_reason:'"
+  retrieval_message="file-writing brief lacks retrieval evidence: add a non-empty 'context:' block (or dispatch with --auto-pack so an 'auto_context:' block is appended), or a non-empty 'retrieval_skip_reason:'"
   if [[ "$retrieval_mode" == "fail" ]]; then
     reject "$retrieval_message"
   fi
