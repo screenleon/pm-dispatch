@@ -1207,11 +1207,27 @@ SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
   SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-  # Diagnostic chatter to stderr, not our (possibly piped-closed) stdout -- see
-  # the sequential dispatch above. Synthesis runs in the foreground like the
-  # sequential route, so without this a closed `gate run --parallel | head`
-  # consumer pipe would kill synthesis before the result file is written (CC-350).
-  eval "$SYNTHESIS_DISPATCH_CMD" >&2
+  # Diagnostic chatter to stderr -- see sequential dispatch note above (CC-350).
+  # Synthesis runs in background so a watchdog can kill it if it hangs indefinitely.
+  eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
+  _SYNTHESIS_PID=$!
+  _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
+  (
+    sleep "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT"
+    kill "$_SYNTHESIS_PID" 2>/dev/null || true
+  ) &
+  _SYNTHESIS_WATCHDOG_PID=$!
+  _synthesis_exit=0
+  wait "$_SYNTHESIS_PID" || _synthesis_exit=$?
+  kill "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
+  wait "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
+  if [[ "$_synthesis_exit" -gt 128 ]]; then
+    printf 'Timeout: synthesis session did not complete within %ds\n' "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT" >&2
+    exit 1
+  elif [[ "$_synthesis_exit" -ne 0 ]]; then
+    printf 'Error: synthesis session failed (exit %d)\n' "$_synthesis_exit" >&2
+    exit 1
+  fi
 
   # Validate synthesis output via the shared contract, pinned to the
   # shell-computed verdict: a synthesis that contradicts SHELL_FINAL (in either

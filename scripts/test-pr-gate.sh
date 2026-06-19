@@ -711,6 +711,35 @@ test_parallel_timeout_kills_hanging_reviewer() {
   pass "$name"
 }
 
+test_parallel_timeout_kills_hanging_synthesis() {
+  # Verifies --parallel mode exits nonzero and reports Timeout when the synthesis
+  # session stalls. A synthesis-specific watchdog kills it before the gate hangs.
+  local name="parallel-timeout-kills-hanging-synthesis"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  # Reviewers use default success stub; only synthesis hangs (SYNTHESIS_MODE=hang).
+  # Synthesis watchdog override = 2s so the test completes quickly.
+  _PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT=2 \
+    CODEX_GATE_STUB_SYNTHESIS_MODE=hang \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --reviewers critic --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when synthesis hangs"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Timeout:" || return
+  pass "$name"
+}
+
 test_sequential_flag_produces_combined_brief() {
   # Verifies --sequential produces the combined reviewer brief with the
   # "Process each reviewer IN ORDER" instruction.
@@ -2269,6 +2298,7 @@ run_test test_binary_file_routes_to_standard
 run_test test_untracked_binary_routes_to_standard
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer
+run_test test_parallel_timeout_kills_hanging_synthesis
 run_test test_sequential_flag_produces_combined_brief
 run_test test_sequential_combined_brief_validates
 run_test test_parallel_reviewer_brief_validates

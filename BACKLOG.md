@@ -679,9 +679,11 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P3 — advisory follow-up; the CC-217 GO was not blocked on it.
 
-**Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance. Sequence (c) test coverage with that work rather than building a one-off timeout in `pr-gate.sh`.
+**Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance.
 
-**Cross-link**: [[CC-391]] (supervisor — general fix), CC-217 (origin), `commands/pr-gate.md` Route B.
+**Design decision (2026-06-19)**: CC-391 (supervisor) was not delivered in v0.6.0. This ticket is closed via a **local `pr-gate.sh` watchdog** (SIGTERM-based, covering both reviewer fan-out and synthesis) rather than the supervisor path. Tradeoff: the watchdog duplicates lifecycle ownership that would belong to the supervisor layer, but provides immediate value. The supervisor direction remains aspirational; this is an intentional pragmatic choice with the tradeoff recorded here.
+
+**Cross-link**: [[CC-391]] (supervisor — general long-term fix), CC-217 (origin), `commands/pr-gate.md` Route B.
 **See**: pr:#300
 
 ## CC-240 — test-suite reliability follow-ups（deferred — partial）
