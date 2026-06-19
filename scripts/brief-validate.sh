@@ -170,6 +170,86 @@ has_conceptual_map() {
   ' "$brief"
 }
 
+# Retrieval evidence via a context block: either a hand-authored `context:` block
+# or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends to the
+# augmented brief. A bare key with only a block-scalar indicator (| > |- >-), an
+# inline comment, or an indented body of only comment/blank lines is not evidence —
+# real refs or prior-art anchors are required. (The auto-pack block leads with a
+# comment line but follows it with real pointer entries, so it still counts.)
+has_context_evidence() {
+  local brief="$1"
+  awk '
+    /^(auto_)?context:[[:space:]]*/ {
+      rest = $0
+      sub(/^(auto_)?context:[[:space:]]*/, "", rest)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      # Strip a trailing inline YAML comment (whitespace + #...) before classifying,
+      # so empty forms with a trailing comment (context: [] # TODO) are still empty.
+      sub(/[[:space:]]+#.*$/, "", rest)
+      # Block-scalar header (| or >, optional chomp +/-, optional trailing # comment):
+      # the evidence is in the indented body, checked below.
+      is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
+      # Structurally-empty inline forms carry no evidence.
+      is_empty = (rest == "" || rest == "\"\"" || rest == "\047\047" || rest == "[]" || rest == "{}" || rest == "~" || rest == "null")
+      if (!is_block && !is_empty && rest !~ /^#/) { found = 1; exit }
+      in_context = 1
+      next
+    }
+    in_context {
+      if (/^[a-z_]+:[[:space:]]*/) { in_context = 0; next }
+      if (/^[[:space:]]*$/ || /^[[:space:]]*#/) next
+      if (/^[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)        # drop indentation
+        sub(/^-[[:space:]]*/, "", line)        # drop a leading sequence marker
+        sub(/[[:space:]]+#.*$/, "", line)      # drop a trailing inline comment
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (line == "\"\"" || line == "\047\047" || line == "[]" || line == "{}" || line == "~" || line == "null") next
+        found = 1
+        exit
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$brief"
+}
+
+has_retrieval_skip_reason() {
+  local brief="$1"
+  awk '
+    /^retrieval_skip_reason:[[:space:]]*/ {
+      rest = $0
+      sub(/^retrieval_skip_reason:[[:space:]]*/, "", rest)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+      sub(/[[:space:]]+#.*$/, "", rest)
+      is_block = (rest ~ /^[|>][+-]?([[:space:]]+#.*)?$/)
+      is_empty = (rest == "" || rest == "\"\"" || rest == "\047\047" || rest == "[]" || rest == "{}" || rest == "~" || rest == "null")
+      if (!is_block && !is_empty && rest !~ /^#/) {
+        found = 1
+        exit
+      }
+      in_reason = 1
+      next
+    }
+    in_reason {
+      if (/^[a-z_]+:[[:space:]]*/) { in_reason = 0; next }
+      if (/^[[:space:]]*$/ || /^[[:space:]]*#/) next
+      if (/^[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/^-[[:space:]]*/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line == "" || line ~ /^#/) next
+        if (line == "\"\"" || line == "\047\047" || line == "[]" || line == "{}" || line == "~" || line == "null") next
+        found = 1
+        exit
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$brief"
+}
+
 has_cmd_self_verify() {
   local brief="$1"
   awk '
@@ -308,6 +388,22 @@ if has_behavioral_units_field "$brief"; then
   if [[ "$bu" =~ ^[0-9]+$ ]] && [[ "$bu" -ge 3 ]] && ! has_qa_checklist "$brief"; then
     warn "behavioral_units:${bu} >= 3 but no 'qa_checklist' field — qa-tester will block without per-unit coverage"
   fi
+fi
+
+retrieval_mode="${BRIEF_VALIDATE_RETRIEVAL:-warn}"
+case "$retrieval_mode" in
+  warn|fail) ;;
+  *) reject "invalid BRIEF_VALIDATE_RETRIEVAL: expected warn|fail, got '${retrieval_mode}'";;
+esac
+
+if has_file_writing_entry "$brief" \
+  && ! has_context_evidence "$brief" \
+  && ! has_retrieval_skip_reason "$brief"; then
+  retrieval_message="file-writing brief lacks retrieval evidence: add a non-empty 'context:' block (or dispatch with --auto-pack so an 'auto_context:' block is appended), or a non-empty 'retrieval_skip_reason:'"
+  if [[ "$retrieval_mode" == "fail" ]]; then
+    reject "$retrieval_message"
+  fi
+  warn "$retrieval_message"
 fi
 
 printf 'VALID\n'

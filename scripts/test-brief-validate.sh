@@ -36,6 +36,38 @@ assert_validation() {
   fi
 }
 
+assert_validation_with_retrieval_mode() {
+  local name="$1" mode="$2" brief="$3" expected_rc="$4" expected_output="$5"
+  local output="" rc=0
+
+  set +e
+  output="$(BRIEF_VALIDATE_RETRIEVAL="$mode" bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -eq "$expected_rc" && "$output" == *"$expected_output"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=$expected_rc output~'$expected_output'; got rc=$rc output='$output'"
+  fi
+}
+
+assert_validation_no_warn() {
+  local name="$1" brief="$2"
+  local output="" rc=0
+
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 && "$output" == *"VALID"* && "$output" != *"WARN"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with VALID and no WARN; got rc=$rc output='$output'"
+  fi
+}
+
 # A read-only brief with only read: entries validates as VALID without requiring self_verify.
 # Steps:
 # 1. Write a brief with schema_version, working_dir, goal, acceptance, and only read: file entries.
@@ -767,6 +799,519 @@ EOF
   fi
 }
 
+# A file-writing brief without retrieval evidence warns by default but still passes.
+# Steps:
+# 1. Write a file-writing brief with no context:/auto_context:/retrieval_skip_reason:.
+# 2. Run brief-validate.sh with no BRIEF_VALIDATE_RETRIEVAL set (default warn).
+# 3. Assert exit 0 with both WARN and VALID in the output.
+case_warn_retrieval_evidence_default() {
+  local name="warn-retrieval-evidence-default"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-default-warn.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs without retrieval evidence.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  local output="" rc=0
+  set +e
+  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 && "$output" == *"WARN"* && "$output" == *"VALID"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rc=0 with WARN+VALID; got rc=$rc output='$output'"
+  fi
+}
+
+# Fail mode rejects a file-writing brief without retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with no retrieval evidence.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_evidence_fail_mode() {
+  local name="reject-retrieval-evidence-fail-mode"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-fail.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs without retrieval evidence.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A non-empty context block satisfies retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with a context: block holding a real ref.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
+case_valid_retrieval_evidence_context() {
+  local name="valid-retrieval-evidence-context"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-context.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with cited context.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  docs/context-retrieval.md:1 explains retrieval ordering.
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# The auto_context: block that `pmctl dispatch run --auto-pack` appends to the
+# augmented brief satisfies retrieval evidence (the real auto-pack path).
+# Steps:
+# 1. Write a file-writing brief whose appended auto_context: block has a real pointer.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
+case_valid_retrieval_evidence_auto_context() {
+  local name="valid-retrieval-evidence-auto-context"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-auto-context.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with dispatch-time packing.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+
+auto_context:
+  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand
+  - docs/context-retrieval.md:1
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# A bare auto_pack: true field is NOT retrieval evidence: nothing at dispatch
+# reads it (auto-pack is driven by --auto-pack / dispatch.auto_pack, which appends
+# an auto_context: block instead). Fail mode must still reject it. Closes the
+# false escape-hatch where a brief looks retrieval-backed but supplies no context.
+# Steps:
+# 1. Write a file-writing brief whose only retrieval-ish field is auto_pack: true.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_bare_auto_pack_true() {
+  local name="reject-retrieval-bare-auto-pack-true"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-bare-auto-pack.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a bare auto_pack flag.
+auto_pack: true
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A context: block whose body is only a YAML comment is not retrieval evidence:
+# the docs require copied refs or prior-art anchors, not a commented-out block.
+# Steps:
+# 1. Write a file-writing brief whose context: block holds only a "# ..." line.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_comment_only_context() {
+  local name="reject-retrieval-comment-only-context"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-comment-only-context.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a comment-only context block.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  # no real refs here, just a comment
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A retrieval_skip_reason: block whose body is only a YAML comment is not a reason:
+# the docs require a non-empty reason, so fail mode must reject it.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: block holds only a comment.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_comment_only_skip_reason() {
+  local name="reject-retrieval-comment-only-skip-reason"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-comment-only-skip.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a comment-only skip reason.
+retrieval_skip_reason: |
+  # not a real reason, just a comment
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# Structurally-empty inline context forms ([], {}, "", '') are not evidence:
+# fail mode must reject each despite a non-blank literal after the key.
+# Steps:
+# 1. For each empty YAML form, write a file-writing brief with context: <form>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_context_forms() {
+  local name="reject-retrieval-empty-context-forms"
+  should_run "$name" || return 0
+  local form brief out rc
+  for form in '[]' '{}' '""' "''" '~' 'null' '[] # TODO' '"" # TODO' 'null # later'; do
+    brief="$tmpdir/retrieval-empty-context.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty context form.
+context: $form
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "context: $form should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A block-scalar indicator with a trailing comment ("| # ...") and no real body is
+# not evidence: fail mode must reject context: and retrieval_skip_reason: forms.
+# Steps:
+# 1. Write briefs whose context:/retrieval_skip_reason: is "| # comment" with no body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_block_indicator_trailing_comment() {
+  local name="reject-retrieval-block-indicator-trailing-comment"
+  should_run "$name" || return 0
+  local brief out rc
+  brief="$tmpdir/retrieval-ctx-block-comment.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a commented block indicator.
+context: | # no real body follows
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+  set +e; out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"; rc=$?; set -e
+  if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+    fail "$name" "context: | # comment should REJECT; got rc=$rc output='$out'"; return 0
+  fi
+  brief="$tmpdir/retrieval-skip-block-comment.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a commented block indicator skip reason.
+retrieval_skip_reason: | # no real reason follows
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+  set +e; out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"; rc=$?; set -e
+  if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+    fail "$name" "retrieval_skip_reason: | # comment should REJECT; got rc=$rc output='$out'"; return 0
+  fi
+  pass "$name"
+}
+
+# Structurally-empty inline skip-reason forms ("", '', [], {}) are not a reason:
+# fail mode must reject each.
+# Steps:
+# 1. For each empty YAML form, write a file-writing brief with retrieval_skip_reason: <form>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_forms() {
+  local name="reject-retrieval-empty-skip-reason-forms"
+  should_run "$name" || return 0
+  local form brief out rc
+  for form in '""' "''" '[]' '{}' '~' 'null' '[] # TODO' '"" # TODO' 'null # later'; do
+    brief="$tmpdir/retrieval-empty-skip-form.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip-reason form.
+retrieval_skip_reason: $form
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "retrieval_skip_reason: $form should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A context: sequence whose only items are comments or structurally-empty
+# (- # comment, - ~, - "", - []) is not evidence: fail mode must reject.
+# Steps:
+# 1. For each empty/comment sequence item, write a brief with context:\n  <item>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_context_sequence_items() {
+  local name="reject-retrieval-empty-context-sequence-items"
+  should_run "$name" || return 0
+  local item brief out rc
+  for item in '- # no real refs' '- ~' '- ""' '- []'; do
+    brief="$tmpdir/retrieval-empty-ctx-seq.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty context sequence item.
+context:
+  $item
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "context sequence item '$item' should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A retrieval_skip_reason: sequence whose only items are comments or empty forms
+# is not a reason: fail mode must reject.
+# Steps:
+# 1. For each empty/comment sequence item, write a brief with retrieval_skip_reason:\n  <item>.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_sequence_items() {
+  local name="reject-retrieval-empty-skip-reason-sequence-items"
+  should_run "$name" || return 0
+  local item brief out rc
+  for item in '- # no real reason' '- ~' '- ""'; do
+    brief="$tmpdir/retrieval-empty-skip-seq.md"
+    write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip-reason sequence item.
+retrieval_skip_reason:
+  $item
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+    set +e
+    out="$(BRIEF_VALIDATE_RETRIEVAL=fail bash "$VALIDATOR" "$brief" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 1 || "$out" != *"REJECT: file-writing brief lacks retrieval evidence"* ]]; then
+      fail "$name" "skip-reason sequence item '$item' should REJECT in fail mode; got rc=$rc output='$out'"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
+# A non-empty retrieval_skip_reason satisfies retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with a non-empty inline retrieval_skip_reason:.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
+case_valid_retrieval_evidence_skip_reason() {
+  local name="valid-retrieval-evidence-skip-reason"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-skip-reason.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a justified retrieval skip.
+retrieval_skip_reason: exact text replacement with no source lookup needed
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# Read-only briefs are exempt from retrieval evidence.
+# Steps:
+# 1. Write a brief whose files: entries are all read: with no retrieval evidence.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
+case_valid_retrieval_trivial_read_only_exempt() {
+  local name="valid-retrieval-trivial-read-only-exempt"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-read-only.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Inspect dispatch docs without retrieval evidence.
+files:
+  - read: docs/dispatch-brief.md
+acceptance:
+  - read-only brief validates without retrieval evidence
+EOF
+
+  assert_validation_no_warn "$name" "$brief"
+}
+
+# An unsupported BRIEF_VALIDATE_RETRIEVAL value is rejected before the evidence
+# check (so even an evidence-bearing brief is rejected).
+# Steps:
+# 1. Write an evidence-bearing file-writing brief.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=bogus.
+# 3. Assert exit 1 and the invalid-BRIEF_VALIDATE_RETRIEVAL REJECT message.
+case_reject_invalid_retrieval_mode() {
+  local name="reject-invalid-retrieval-mode"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-invalid-mode.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with cited context.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  docs/context-retrieval.md:1 explains retrieval ordering.
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "bogus" "$brief" 1 "REJECT: invalid BRIEF_VALIDATE_RETRIEVAL"
+}
+
+# An empty block-scalar retrieval_skip_reason ("|" with no body) is NOT evidence:
+# fail mode must still reject. Guards the empty-skip-reason bypass.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: is "|" with no body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_block_scalar() {
+  local name="reject-retrieval-empty-skip-reason-block-scalar"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-empty-skip-block.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip reason.
+retrieval_skip_reason: |
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A bare empty retrieval_skip_reason (key with no value, no body) is NOT evidence:
+# fail mode must still reject.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: key has no value or body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_empty_skip_reason_bare() {
+  local name="reject-retrieval-empty-skip-reason-bare"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-empty-skip-bare.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with an empty skip reason.
+retrieval_skip_reason:
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
 case_valid_read_only_brief
 case_valid_write_with_self_verify
 case_valid_new_with_self_verify
@@ -799,5 +1344,22 @@ case_reject_invalid_architecture_impact
 case_reject_write_self_verify_no_cmd
 case_warn_vague_acceptance
 case_warn_behavioral_units_no_qa_checklist
+case_warn_retrieval_evidence_default
+case_reject_retrieval_evidence_fail_mode
+case_valid_retrieval_evidence_context
+case_valid_retrieval_evidence_auto_context
+case_valid_retrieval_evidence_skip_reason
+case_valid_retrieval_trivial_read_only_exempt
+case_reject_invalid_retrieval_mode
+case_reject_retrieval_empty_skip_reason_block_scalar
+case_reject_retrieval_empty_skip_reason_bare
+case_reject_retrieval_bare_auto_pack_true
+case_reject_retrieval_comment_only_context
+case_reject_retrieval_comment_only_skip_reason
+case_reject_retrieval_empty_context_forms
+case_reject_retrieval_block_indicator_trailing_comment
+case_reject_retrieval_empty_skip_reason_forms
+case_reject_retrieval_empty_context_sequence_items
+case_reject_retrieval_empty_skip_reason_sequence_items
 
 th_summary

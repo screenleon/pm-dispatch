@@ -8,7 +8,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_(no changes yet)_
+### Changed
+
+- **Context retrieval ordering is now a mandatory PM contract.** The PM agent rule and context-retrieval spec now require context query before Read/Grep/full-file opens, with targeted fallback only after no hits (CC-400).
+
+### Added
+
+- **`brief-validate.sh` now checks retrieval evidence for file-writing briefs.** Non-trivial briefs must carry a non-empty `context:` block (or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends), or a non-empty `retrieval_skip_reason:`; rollout defaults to warn and can be flipped to fail with `BRIEF_VALIDATE_RETRIEVAL=fail` (CC-401).
 
 ---
 
