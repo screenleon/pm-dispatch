@@ -60,8 +60,14 @@ concurrently (one message, multiple tool calls):
 - `executor: Explore` → Agent tool `subagent_type: Explore` for read-only code/prior-art
   search angles.
 - `executor: codex` → write a brief to `/tmp/brief-spike-<ticket-id>-<angle>.md` and
-  dispatch the codex adapter (`pmctl dispatch run --adapter codex --cd <working_dir>
-  --brief-file <path>`). Use this when sandbox isolation or a heavy build/index is needed.
+  dispatch the codex adapter (`pmctl dispatch run --adapter codex --lifecycle foreground
+  --cd <working_dir> --brief-file <path>`) with `run_in_background: true`, then parse the
+  footer for completion (same synchronous-orchestration contract as `commands/pm.md`). Use
+  this when sandbox isolation or a heavy build/index is needed. **`--lifecycle foreground` is
+  required**: the dispatch default is `detached`, which returns only a `run_id` and never
+  hands back the angle findings — a detached angle must instead be resolved with
+  `pmctl dispatch wait <run_id> --cd <working_dir>` before synthesis. Either way, do not
+  proceed to synthesis until every angle's output is collected.
 
 Collect each angle's findings. If an angle fails or returns nothing usable, record that
 and continue — a partial spike with a stated gap is better than a silent one.
