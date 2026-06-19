@@ -919,6 +919,60 @@ EOF
   assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
 }
 
+# A context: block whose body is only a YAML comment is not retrieval evidence:
+# the docs require copied refs or prior-art anchors, not a commented-out block.
+# Steps:
+# 1. Write a file-writing brief whose context: block holds only a "# ..." line.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_comment_only_context() {
+  local name="reject-retrieval-comment-only-context"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-comment-only-context.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a comment-only context block.
+files:
+  - write: docs/dispatch-brief.md
+context: |
+  # no real refs here, just a comment
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
+# A retrieval_skip_reason: block whose body is only a YAML comment is not a reason:
+# the docs require a non-empty reason, so fail mode must reject it.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: block holds only a comment.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_comment_only_skip_reason() {
+  local name="reject-retrieval-comment-only-skip-reason"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-comment-only-skip.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs with a comment-only skip reason.
+retrieval_skip_reason: |
+  # not a real reason, just a comment
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation_with_retrieval_mode "$name" "fail" "$brief" 1 "REJECT: file-writing brief lacks retrieval evidence"
+}
+
 # A non-empty retrieval_skip_reason satisfies retrieval evidence.
 case_valid_retrieval_evidence_skip_reason() {
   local name="valid-retrieval-evidence-skip-reason"
@@ -1067,5 +1121,7 @@ case_reject_invalid_retrieval_mode
 case_reject_retrieval_empty_skip_reason_block_scalar
 case_reject_retrieval_empty_skip_reason_bare
 case_reject_retrieval_bare_auto_pack_true
+case_reject_retrieval_comment_only_context
+case_reject_retrieval_comment_only_skip_reason
 
 th_summary

@@ -172,8 +172,10 @@ has_conceptual_map() {
 
 # Retrieval evidence via a context block: either a hand-authored `context:` block
 # or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends to the
-# augmented brief. A bare key with only a block-scalar indicator (| > |- >-) and no
-# indented body is not evidence.
+# augmented brief. A bare key with only a block-scalar indicator (| > |- >-), an
+# inline comment, or an indented body of only comment/blank lines is not evidence —
+# real refs or prior-art anchors are required. (The auto-pack block leads with a
+# comment line but follows it with real pointer entries, so it still counts.)
 has_context_evidence() {
   local brief="$1"
   awk '
@@ -181,7 +183,7 @@ has_context_evidence() {
       rest = $0
       sub(/^(auto_)?context:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
-      if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+      if (rest != "" && rest !~ /^#/ && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
         found = 1
         exit
       }
@@ -190,6 +192,7 @@ has_context_evidence() {
     }
     in_context {
       if (/^[a-z_]+:[[:space:]]*/) { in_context = 0; next }
+      if (/^[[:space:]]*#/ || /^[[:space:]]*$/) next
       if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
     }
     END { exit found ? 0 : 1 }
@@ -203,7 +206,7 @@ has_retrieval_skip_reason() {
       rest = $0
       sub(/^retrieval_skip_reason:[[:space:]]*/, "", rest)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
-      if (rest != "" && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
+      if (rest != "" && rest !~ /^#/ && rest != "|" && rest != ">" && rest != "|-" && rest != ">-") {
         found = 1
         exit
       }
@@ -212,6 +215,7 @@ has_retrieval_skip_reason() {
     }
     in_reason {
       if (/^[a-z_]+:[[:space:]]*/) { in_reason = 0; next }
+      if (/^[[:space:]]*#/ || /^[[:space:]]*$/) next
       if (/^[[:space:]]+[^[:space:]]/) { found = 1; exit }
     }
     END { exit found ? 0 : 1 }
