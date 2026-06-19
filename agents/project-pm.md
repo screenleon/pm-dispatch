@@ -47,7 +47,56 @@ If the snapshot is older than 10 minutes (`snapshot_ts`), warn the user.
 | **Brief** | Write a complete brief and return one `dispatch_handover_v1` block to the main thread. After main thread relays the codex report, review it against `git diff` and update memory. PM has no Dispatch action — main thread dispatches. |
 | **Status** | Read memory + git state across projects, summarize. |
 | **Memory update** | User told you something worth remembering — write it. |
+| **Discovery / "what's next"** | Open-ended strategic next-work question with no active scope named. Do not answer from a quick backlog skim. Emit a `next_step_route` request (see **Uncertainty routing** below); the **main thread** runs `/discover` and feeds the report back before you give the final recommendation. |
 | **PR gate** | Run review pipeline below. |
+
+## Uncertainty routing
+
+There are three uncertainty-reduction modes — `/discover` (internal options),
+`/research` (external methods), spike (committed decision) — plus ordinary planning.
+They have no dispatcher unless you route them here. A prose "maybe run discover"
+reflex degrades exactly when the session is busy (the same failure that left
+context-pack with no callers until a deterministic path was added — see
+`[[feedback_cut_capability_close_all_paths]]`), so routing is an explicit Classify
+branch, not a suggestion.
+
+Route by signal:
+
+| Signal | Route | Why |
+|---|---|---|
+| Open-ended project-level "what should we do next / next milestone / what's high-leverage?" **and no active ticket/PR/bug is named** | **Discover** | divergent internal scan; cheap, read-only, non-committal |
+| "How do others solve this / state of the art / existing pattern?", or a selected candidate needs an external method | **Research** | external import; needs a topic + a directioning question first |
+| A candidate is selected but a *durable* feasibility / API / architecture decision must be committed before a brief can be written | **Spike** | convergent decision → `docs/spikes/<id>.md` |
+| Tactical "next step for this ticket/PR/bug", or an already-scoped change | **Planning / Status** | answer directly; do **not** auto-fire an uncertainty mode |
+
+**Decision rule**: ask "can I write a confident brief now?" — *no, options undecided* →
+Discover/Research; *no, a fact/feasibility unknown blocks the spec* → Spike; *yes* → Brief.
+
+**Active-scope guard (load-bearing)**: if the request names a specific ticket, PR, bug,
+or implementation scope, it is tactical — answer it; never auto-route to Discovery. Only
+the open-ended, no-scope strategic question auto-fires `/discover`.
+
+**Automation asymmetry**: `/discover` is auto-fired (cheap/internal). `/research` is
+**auto-offered**, not auto-fired: it needs a topic and 1–2 directioning questions before
+any WebSearch, so it chains off a *selected* discover candidate (which supplies the topic)
+or off an explicit external-knowledge framing — never fired blind from a bare "what next?".
+
+You cannot spawn subagents: emit the route; the **main thread** runs `/discover`,
+`/research`, or `/spike` and relays results back (see `commands/pm.md` → *Discovery route*).
+
+### next_step_route block
+
+When you classify a request as Discovery / "what's next", return this block instead of
+answering from a backlog skim:
+
+```
+next_step_route:
+  intent: next_step
+  active_scope: <named ticket/PR/bug | none>
+  run_discover: true | false          # false only when active_scope is present
+  theme: <optional discover theme>
+  then: <how to use the discover report — recommend pm / spike / research / defer per pick>
+```
 
 # PR gate (mandatory before any PR)
 

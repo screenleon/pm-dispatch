@@ -63,4 +63,13 @@ Briefs must follow the schema at `docs/dispatch-brief.md` (working_dir / goal / 
 
 Use `base` as the PR integration branch when the caller names one; otherwise resolve it with `git merge-base --fork-point origin/main HEAD` and fall back to `origin/main` if no fork point is available. The handover extraction, validation, safe argv, and footer parsing contract is covered by `scripts/test-dispatch-handover.sh`.
 
+**Discovery route**: Subagents cannot spawn subagents, so when PM classifies a request as Discovery / "what's next" it returns a `next_step_route` block instead of answering from a backlog skim (see `agents/project-pm.md` → *Uncertainty routing*). The **main thread** then orchestrates:
+
+1. If `active_scope` is a named ticket/PR/bug (`run_discover: false`), there is no fan-out — relay PM's tactical answer directly. Do **not** auto-run `/discover` for tactical, already-scoped requests.
+2. If `run_discover: true`, run `/discover <theme>` (passing `theme` when present). `/discover` is read-only and non-committal — no confirmation needed.
+3. Feed the `/discover` report back to `project-pm` (re-invoke via Agent with the report as context) so PM produces the final recommendation — citing the discover output and stating, per pick, the next route: `pm` (scoped enough to brief), `spike` (needs a committed decision first), `research` (needs an external method), or `defer`.
+4. `/research` is **auto-offered, not auto-fired**: only run it when PM's recommendation flags an external-method gap on a *selected* candidate, and only after `/research`'s own directioning question is answered (it owns the topic-narrowing — do not invent a topic here). For a candidate blocked by a durable decision, route to `/spike <ticket-id>` instead.
+
+Relay PM's final recommendation. Do not open tickets, dispatch, or modify files from a discovery flow without explicit user confirmation.
+
 For PR-gate flows, use `/pr-gate` instead — that skill handles reviewer orchestration; do not re-implement it inline here.

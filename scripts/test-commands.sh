@@ -147,6 +147,81 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     "$agent_file" "Output brevity" "English only"
 done
 
+# ── next-step uncertainty router contract (discover/research/spike family) ────
+
+DISCOVER="$COMMANDS_DIR/discover.md"
+RESEARCH="$COMMANDS_DIR/research.md"
+SPIKE_CMD="$COMMANDS_DIR/spike.md"
+SPIKE_AGENT="$AGENTS_DIR/spike.md"
+PROJECT_PM="$AGENTS_DIR/project-pm.md"
+PM_CMD="$COMMANDS_DIR/pm.md"
+
+# /discover output is a routing input, not just a human menu
+assert_frontmatter "discover: frontmatter valid" "$DISCOVER"
+should_run "discover: output table has Next column" && assert_file_contains "discover: output table has Next column" "$DISCOVER" "| Next | Refs |" && pass "discover: output table has Next column"
+should_run "discover: documents why-not-direct-brief line" && assert_file_contains "discover: documents why-not-direct-brief line" "$DISCOVER" "**Why not a direct brief**" && pass "discover: documents why-not-direct-brief line"
+should_run "discover: Next column is a route label only" && assert_file_contains "discover: Next column is a route label only" "$DISCOVER" "route label only" && pass "discover: Next column is a route label only"
+should_run "discover: documents defer route" && assert_file_contains "discover: documents defer route" "$DISCOVER" "real but not timely" && pass "discover: documents defer route"
+
+# /research grounded-pipeline contract
+assert_frontmatter "research: frontmatter valid" "$RESEARCH"
+should_run "research: internal anchoring is mandatory before search" && assert_file_contains "research: internal anchoring is mandatory before search" "$RESEARCH" "Internal anchoring (mandatory" && pass "research: internal anchoring is mandatory before search"
+should_run "research: mandatory directioning question step" && assert_file_contains "research: mandatory directioning question step" "$RESEARCH" "Directioning question" && pass "research: mandatory directioning question step"
+should_run "research: directioning is a stop-before-search guard" && assert_file_contains "research: directioning is a stop-before-search guard" "$RESEARCH" "Wait for the answer. Do not invent a topic or skip this step" && pass "research: directioning is a stop-before-search guard"
+should_run "research: anchoring has retrieval swap-point" && assert_file_contains "research: anchoring has retrieval swap-point" "$RESEARCH" "swap-point" && pass "research: anchoring has retrieval swap-point"
+should_run "research: dispatches a WebSearch-capable agent" && assert_file_contains "research: dispatches a WebSearch-capable agent" "$RESEARCH" "WebSearch-capable agent" && pass "research: dispatches a WebSearch-capable agent"
+should_run "research: does not auto-open tickets" && assert_file_contains "research: does not auto-open tickets" "$RESEARCH" "does not auto-open tickets" && pass "research: does not auto-open tickets"
+should_run "research: mandatory persistence prompt" && assert_file_contains "research: mandatory persistence prompt" "$RESEARCH" "Persistence prompt (mandatory" && pass "research: mandatory persistence prompt"
+
+# /spike orchestrator + spike planner agent
+assert_frontmatter "spike-cmd: frontmatter valid" "$SPIKE_CMD"
+should_run "spike-cmd: main thread fans out one agent per angle" && assert_file_contains "spike-cmd: main thread fans out one agent per angle" "$SPIKE_CMD" "fans out one agent per angle" && pass "spike-cmd: main thread fans out one agent per angle"
+should_run "spike-cmd: consumes spike_plan_v1 block" && assert_file_contains "spike-cmd: consumes spike_plan_v1 block" "$SPIKE_CMD" "spike_plan_v1" && pass "spike-cmd: consumes spike_plan_v1 block"
+should_run "spike-cmd: result committed to docs/spikes" && assert_file_contains "spike-cmd: result committed to docs/spikes" "$SPIKE_CMD" "docs/spikes/<ticket-id>.md" && pass "spike-cmd: result committed to docs/spikes"
+# ticket-resolution validation: non-spike ticket / missing spike structure must stop
+should_run "spike-cmd: rejects non-spike ticket (stop and report)" && assert_file_contains "spike-cmd: rejects non-spike ticket (stop and report)" "$SPIKE_CMD" "carries the \`spike\` epic. If not, stop and report" && pass "spike-cmd: rejects non-spike ticket (stop and report)"
+should_run "spike-cmd: handles missing spike structure" && assert_file_contains "spike-cmd: handles missing spike structure" "$SPIKE_CMD" "missing the spike structure" && pass "spike-cmd: handles missing spike structure"
+should_run "spike-agent: returns spike_plan_v1" && assert_file_contains "spike-agent: returns spike_plan_v1" "$SPIKE_AGENT" "spike_plan_v1" && pass "spike-agent: returns spike_plan_v1"
+should_run "spike-agent: cannot spawn subagents (planner only)" && assert_file_contains "spike-agent: cannot spawn subagents (planner only)" "$SPIKE_AGENT" "You cannot spawn subagents." && pass "spike-agent: cannot spawn subagents (planner only)"
+should_run "spike-agent: has a synthesis pass" && assert_file_contains "spike-agent: has a synthesis pass" "$SPIKE_AGENT" "# Synthesis pass" && pass "spike-agent: has a synthesis pass"
+
+# project-pm uncertainty routing + load-bearing active-scope guard
+should_run "project-pm: has Uncertainty routing section" && assert_file_contains "project-pm: has Uncertainty routing section" "$PROJECT_PM" "## Uncertainty routing" && pass "project-pm: has Uncertainty routing section"
+should_run "project-pm: documents load-bearing active-scope guard" && assert_file_contains "project-pm: documents load-bearing active-scope guard" "$PROJECT_PM" "Active-scope guard (load-bearing)" && pass "project-pm: documents load-bearing active-scope guard"
+should_run "project-pm: emits next_step_route block" && assert_file_contains "project-pm: emits next_step_route block" "$PROJECT_PM" "next_step_route:" && pass "project-pm: emits next_step_route block"
+should_run "project-pm: discover auto-fired, research auto-offered" && assert_file_contains "project-pm: discover auto-fired, research auto-offered" "$PROJECT_PM" "Automation asymmetry" && pass "project-pm: discover auto-fired, research auto-offered"
+
+# /pm main-thread discovery orchestration
+should_run "pm-cmd: has Discovery route orchestration" && assert_file_contains "pm-cmd: has Discovery route orchestration" "$PM_CMD" "**Discovery route**" && pass "pm-cmd: has Discovery route orchestration"
+should_run "pm-cmd: gates discover on run_discover flag" && assert_file_contains "pm-cmd: gates discover on run_discover flag" "$PM_CMD" "run_discover: true" && pass "pm-cmd: gates discover on run_discover flag"
+should_run "pm-cmd: research auto-offered not auto-fired" && assert_file_contains "pm-cmd: research auto-offered not auto-fired" "$PM_CMD" "auto-offered, not auto-fired" && pass "pm-cmd: research auto-offered not auto-fired"
+
+# active-scope guard — the TACTICAL FALSE PATH (named scope must NOT auto-fire discovery)
+should_run "project-pm: tactical named scope never auto-routes to Discovery" && assert_file_contains "project-pm: tactical named scope never auto-routes to Discovery" "$PROJECT_PM" "never auto-route to Discovery" && pass "project-pm: tactical named scope never auto-routes to Discovery"
+should_run "project-pm: tactical request does not auto-fire an uncertainty mode" && assert_file_contains "project-pm: tactical request does not auto-fire an uncertainty mode" "$PROJECT_PM" "do **not** auto-fire an uncertainty mode" && pass "project-pm: tactical request does not auto-fire an uncertainty mode"
+should_run "pm-cmd: named scope sets run_discover false (no fan-out)" && assert_file_contains "pm-cmd: named scope sets run_discover false (no fan-out)" "$PM_CMD" "run_discover: false" && pass "pm-cmd: named scope sets run_discover false (no fan-out)"
+should_run "pm-cmd: tactical request does not auto-run discover" && assert_file_contains "pm-cmd: tactical request does not auto-run discover" "$PM_CMD" "Do **not** auto-run \`/discover\` for tactical" && pass "pm-cmd: tactical request does not auto-run discover"
+
+# /discover per-pick routing contract: Next carries the per-pick route, why-not-direct-brief is the top-pick global line
+should_run "discover: per-pick route chosen one per row" && assert_file_contains "discover: per-pick route chosen one per row" "$DISCOVER" "Pick one per row" && pass "discover: per-pick route chosen one per row"
+should_run "discover: research route means external method gap" && assert_file_contains "discover: research route means external method gap" "$DISCOVER" "needs an external method" && pass "discover: research route means external method gap"
+
+# /spike verdict validation: local-env failure -> AMBER, mandatory main-thread sanity-check
+should_run "spike-cmd: has main-thread verdict validation step" && assert_file_contains "spike-cmd: has main-thread verdict validation step" "$SPIKE_CMD" "Main-thread validation" && pass "spike-cmd: has main-thread verdict validation step"
+should_run "spike-cmd: local-env failure classifies AMBER not RED" && assert_file_contains "spike-cmd: local-env failure classifies AMBER not RED" "$SPIKE_CMD" "local-env" && pass "spike-cmd: local-env failure classifies AMBER not RED"
+should_run "spike-cmd: documents AMBER verdict" && assert_file_contains "spike-cmd: documents AMBER verdict" "$SPIKE_CMD" "AMBER" && pass "spike-cmd: documents AMBER verdict"
+# codex fan-out must be synchronous (detached default would return only a run_id, not findings)
+should_run "spike-cmd: codex angle dispatch uses foreground lifecycle" && assert_file_contains "spike-cmd: codex angle dispatch uses foreground lifecycle" "$SPIKE_CMD" "--lifecycle foreground" && pass "spike-cmd: codex angle dispatch uses foreground lifecycle"
+should_run "spike-cmd: detached angle resolved via dispatch wait" && assert_file_contains "spike-cmd: detached angle resolved via dispatch wait" "$SPIKE_CMD" "pmctl dispatch wait" && pass "spike-cmd: detached angle resolved via dispatch wait"
+# codex angle brief must use exclusive-create temp file (no predictable shared /tmp name — symlink race)
+should_run "spike-cmd: codex angle brief uses mktemp exclusive-create" && assert_file_contains "spike-cmd: codex angle brief uses mktemp exclusive-create" "$SPIKE_CMD" "mktemp -p /tmp brief-spike-XXXXXX.md" && pass "spike-cmd: codex angle brief uses mktemp exclusive-create"
+should_run "spike-cmd: codex angle brief avoids predictable shared path" && assert_not_contains "spike-cmd: codex angle brief avoids predictable shared path" "$SPIKE_CMD" "/tmp/brief-spike-<ticket-id>-<angle>.md"
+
+# /research constraint-filtering output contract
+should_run "research: filters external methods against internal constraints" && assert_file_contains "research: filters external methods against internal constraints" "$RESEARCH" "Filter against internal constraints" && pass "research: filters external methods against internal constraints"
+should_run "research: output carries maps-to / conflicts-with verdict field" && assert_file_contains "research: output carries maps-to / conflicts-with verdict field" "$RESEARCH" "Maps to / conflicts with" && pass "research: output carries maps-to / conflicts-with verdict field"
+should_run "research: marks methods adoptable" && assert_file_contains "research: marks methods adoptable" "$RESEARCH" "adoptable" && pass "research: marks methods adoptable"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
