@@ -800,6 +800,10 @@ EOF
 }
 
 # A file-writing brief without retrieval evidence warns by default but still passes.
+# Steps:
+# 1. Write a file-writing brief with no context:/auto_context:/retrieval_skip_reason:.
+# 2. Run brief-validate.sh with no BRIEF_VALIDATE_RETRIEVAL set (default warn).
+# 3. Assert exit 0 with both WARN and VALID in the output.
 case_warn_retrieval_evidence_default() {
   local name="warn-retrieval-evidence-default"
   should_run "$name" || return 0
@@ -829,6 +833,10 @@ EOF
 }
 
 # Fail mode rejects a file-writing brief without retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with no retrieval evidence.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
 case_reject_retrieval_evidence_fail_mode() {
   local name="reject-retrieval-evidence-fail-mode"
   should_run "$name" || return 0
@@ -849,6 +857,10 @@ EOF
 }
 
 # A non-empty context block satisfies retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with a context: block holding a real ref.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
 case_valid_retrieval_evidence_context() {
   local name="valid-retrieval-evidence-context"
   should_run "$name" || return 0
@@ -872,6 +884,10 @@ EOF
 
 # The auto_context: block that `pmctl dispatch run --auto-pack` appends to the
 # augmented brief satisfies retrieval evidence (the real auto-pack path).
+# Steps:
+# 1. Write a file-writing brief whose appended auto_context: block has a real pointer.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
 case_valid_retrieval_evidence_auto_context() {
   local name="valid-retrieval-evidence-auto-context"
   should_run "$name" || return 0
@@ -899,6 +915,10 @@ EOF
 # reads it (auto-pack is driven by --auto-pack / dispatch.auto_pack, which appends
 # an auto_context: block instead). Fail mode must still reject it. Closes the
 # false escape-hatch where a brief looks retrieval-backed but supplies no context.
+# Steps:
+# 1. Write a file-writing brief whose only retrieval-ish field is auto_pack: true.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
 case_reject_retrieval_bare_auto_pack_true() {
   local name="reject-retrieval-bare-auto-pack-true"
   should_run "$name" || return 0
@@ -1093,6 +1113,10 @@ EOF
 }
 
 # A non-empty retrieval_skip_reason satisfies retrieval evidence.
+# Steps:
+# 1. Write a file-writing brief with a non-empty inline retrieval_skip_reason:.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
 case_valid_retrieval_evidence_skip_reason() {
   local name="valid-retrieval-evidence-skip-reason"
   should_run "$name" || return 0
@@ -1114,6 +1138,10 @@ EOF
 }
 
 # Read-only briefs are exempt from retrieval evidence.
+# Steps:
+# 1. Write a brief whose files: entries are all read: with no retrieval evidence.
+# 2. Run brief-validate.sh (default mode).
+# 3. Assert exit 0 with VALID and no WARN.
 case_valid_retrieval_trivial_read_only_exempt() {
   local name="valid-retrieval-trivial-read-only-exempt"
   should_run "$name" || return 0
@@ -1133,6 +1161,10 @@ EOF
 
 # An unsupported BRIEF_VALIDATE_RETRIEVAL value is rejected before the evidence
 # check (so even an evidence-bearing brief is rejected).
+# Steps:
+# 1. Write an evidence-bearing file-writing brief.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=bogus.
+# 3. Assert exit 1 and the invalid-BRIEF_VALIDATE_RETRIEVAL REJECT message.
 case_reject_invalid_retrieval_mode() {
   local name="reject-invalid-retrieval-mode"
   should_run "$name" || return 0
@@ -1156,6 +1188,10 @@ EOF
 
 # An empty block-scalar retrieval_skip_reason ("|" with no body) is NOT evidence:
 # fail mode must still reject. Guards the empty-skip-reason bypass.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: is "|" with no body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
 case_reject_retrieval_empty_skip_reason_block_scalar() {
   local name="reject-retrieval-empty-skip-reason-block-scalar"
   should_run "$name" || return 0
@@ -1178,6 +1214,10 @@ EOF
 
 # A bare empty retrieval_skip_reason (key with no value, no body) is NOT evidence:
 # fail mode must still reject.
+# Steps:
+# 1. Write a file-writing brief whose retrieval_skip_reason: key has no value or body.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=fail.
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
 case_reject_retrieval_empty_skip_reason_bare() {
   local name="reject-retrieval-empty-skip-reason-bare"
   should_run "$name" || return 0
