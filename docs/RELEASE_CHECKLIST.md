@@ -151,8 +151,11 @@ covering check has passed this cycle.
 | `pmctl dispatch run` (claude / codex adapters) | §1 Phase 2 (`test-*-dispatch`) + §2b (real) |
 | `pmctl trace` / `decision` / `validate` / `safe` | §1 Phase 2 (`test-pmctl-*`) |
 | `pmctl backlog` view / lint | §1 Phase 2 (`test-pmctl-backlog`) |
-| `pmctl guard check` (write-guard / bash-guard policy) | §1 Phase 2 (`test-pmctl-guard`) |
+| `pmctl guard check` (write-guard / bash-guard policy) | §1 Phase 2 (`test-pmctl-guard`) + §1 Phase 3b |
 | `adapter generate` | §1 Phase 2 (`test-pmctl-adapter-generate`) |
+| adapter manifests (`runner_kind`) | §1 Phase 3b |
+| isolation policy: `isolation_level:none` rejected for codex (v0.6.0) | §1 Phase 2 (`test-*-handover`) + §1 Phase 3b |
+| isolation policy: legacy trio (`sandbox`/`approval`/`skip_git_check`) removed (v0.6.0) | §1 Phase 2 (`test-*-handover`) + §1 Phase 3b |
 | install / uninstall / doctor | §1 Phase 2 (`test-install/uninstall/doctor`) + §2a (real) |
 | hooks (write-guard, routing, memory, usage…) | §1 Phase 2 (`test-hooks`, `test-hook-framework`) + §2d (live) |
 | brief-validate + handover contract | §1 Phase 2 (`test-brief-validate`, `test-*-handover`) |

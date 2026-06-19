@@ -29,12 +29,14 @@ suite_log=""
 smoke_state=""
 smoke_err=""
 smoke_telemetry_root=""
+bv_dir=""
 e2e_log=""
 # shellcheck disable=SC2329,SC2317  # invoked indirectly via trap
 cleanup() {
   rm -f "$suite_log" "$smoke_err" "$e2e_log" 2>/dev/null || true
   if [[ -n "$smoke_state" ]]; then rm -rf "$smoke_state" 2>/dev/null || true; fi
   if [[ -n "$smoke_telemetry_root" ]]; then rm -rf "$smoke_telemetry_root" 2>/dev/null || true; fi
+  if [[ -n "$bv_dir" ]]; then rm -rf "$bv_dir" 2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
 
@@ -246,6 +248,115 @@ else
   # later phases (e.g. E2E dispatch) write to the real store as intended.
   unset PM_DISPATCH_STATE_ROOT
   rm -rf "$smoke_telemetry_root"; smoke_telemetry_root=""
+fi
+
+# ── Phase 3b: v0.6.0 feature smoke ──────────────────────────────────────────
+# Exercises the headline v0.6.0 additions that aren't covered by the unit
+# suites alone: adapter manifests, unified guard check, and brief-validate
+# policy changes (legacy trio removal + isolation_level:none codex rejection).
+section "Phase 3b — v0.6.0 feature smoke (adapters · guard · brief-validate)"
+
+# Adapter manifests — codex/claude/opencode must declare runner_kind
+for _adapter in codex claude opencode; do
+  _manifest="$REPO_ROOT/adapters/$_adapter/adapter.yaml"
+  if [[ ! -f "$_manifest" ]]; then
+    record "adapter-manifest-$_adapter" FAIL "adapter.yaml not found"
+  elif grep -q "^runner_kind:" "$_manifest"; then
+    _rk="$(awk '/^runner_kind:/{print $2;exit}' "$_manifest")"
+    record "adapter-manifest-$_adapter" PASS "runner_kind=$_rk"
+  else
+    record "adapter-manifest-$_adapter" FAIL "adapter.yaml missing runner_kind"
+  fi
+done
+
+# Guard check — exercises the unified write-guard CLI:
+#   executor+codex allow: /tmp/brief-*.md only
+#   executor+codex block: anything outside that pattern
+if [[ ! -x "$PMCTL" ]]; then
+  record "guard-check-executor-allow" SKIP "pmctl not found"
+  record "guard-check-executor-block" SKIP "pmctl not found"
+else
+  # executor+codex writing a brief temp file must be allowed
+  if "$PMCTL" guard check \
+      --role executor --runtime codex \
+      --event pre-write --file "/tmp/brief-smoke-$$.md" \
+      >/dev/null 2>&1; then
+    record "guard-check-executor-allow" PASS "executor write /tmp/brief-*.md: allowed"
+  else
+    record "guard-check-executor-allow" FAIL "executor write /tmp/brief-*.md: unexpectedly blocked"
+  fi
+  # executor+codex writing outside the brief pattern must be blocked
+  if "$PMCTL" guard check \
+      --role executor --runtime codex \
+      --event pre-write --file "/tmp/guard-smoke-$$-outside.txt" \
+      >/dev/null 2>&1; then
+    record "guard-check-executor-block" FAIL "executor write outside brief pattern: allowed (should block)"
+  else
+    record "guard-check-executor-block" PASS "executor write outside brief pattern: blocked"
+  fi
+fi
+
+# Brief validate — legacy trio rejection + codex isolation_level:none rejection + valid brief
+if [[ ! -x "$PMCTL" ]]; then
+  record "brief-validate-legacy-reject"     SKIP "pmctl not found"
+  record "brief-validate-none-codex-reject" SKIP "pmctl not found"
+  record "brief-validate-valid"             SKIP "pmctl not found"
+else
+  bv_dir="$(mktemp -d)"  # registered in cleanup trap above
+  _bv_tmp_brief="/tmp/brief-smoke-$$.md"
+
+  # 3b-i. legacy sandbox field must be rejected (v0.6.0 removal)
+  {
+    printf '%s\n' '```dispatch_handover_v1'
+    printf 'handover_version: 3\nexecutor: codex\ndispatch_route: main_thread_bash_background\n'
+    printf 'working_dir: %s\nbrief_file: %s\n' "$REPO_ROOT" "$_bv_tmp_brief"
+    printf 'isolation_level: workspace-write\nsandbox: workspace-write\ntimeout: 300\nmodel: default\nfallback_allowed: true\n'
+    printf '%s\n' '---'
+    printf 'working_dir: %s\ngoal: smoke test\nfiles: []\nacceptance:\n  - done\n' "$REPO_ROOT"
+    printf '%s\n' '```'
+  } > "$bv_dir/brief-legacy.md"
+
+  if ! "$PMCTL" validate brief "$bv_dir/brief-legacy.md" >/dev/null 2>&1; then
+    record "brief-validate-legacy-reject" PASS "legacy sandbox field correctly rejected"
+  else
+    record "brief-validate-legacy-reject" FAIL "legacy sandbox field accepted (should reject)"
+  fi
+
+  # 3b-ii. codex + isolation_level:none must be rejected
+  {
+    printf '%s\n' '```dispatch_handover_v1'
+    printf 'handover_version: 3\nexecutor: codex\ndispatch_route: main_thread_bash_background\n'
+    printf 'working_dir: %s\nbrief_file: %s\n' "$REPO_ROOT" "$_bv_tmp_brief"
+    printf 'isolation_level: none\ntimeout: 300\nmodel: default\nfallback_allowed: true\n'
+    printf '%s\n' '---'
+    printf 'working_dir: %s\ngoal: smoke test\nfiles: []\nacceptance:\n  - done\n' "$REPO_ROOT"
+    printf '%s\n' '```'
+  } > "$bv_dir/brief-none.md"
+
+  if ! "$PMCTL" validate brief "$bv_dir/brief-none.md" >/dev/null 2>&1; then
+    record "brief-validate-none-codex-reject" PASS "codex isolation_level:none correctly rejected"
+  else
+    record "brief-validate-none-codex-reject" FAIL "codex isolation_level:none accepted (should reject)"
+  fi
+
+  # 3b-iii. valid brief with isolation_level:workspace-write must be accepted
+  {
+    printf '%s\n' '```dispatch_handover_v1'
+    printf 'handover_version: 3\nexecutor: codex\ndispatch_route: main_thread_bash_background\n'
+    printf 'working_dir: %s\nbrief_file: %s\n' "$REPO_ROOT" "$_bv_tmp_brief"
+    printf 'isolation_level: workspace-write\ntimeout: 300\nmodel: default\nfallback_allowed: true\n'
+    printf '%s\n' '---'
+    printf 'working_dir: %s\ngoal: smoke test\nfiles:\n  - read: BACKLOG.md\nacceptance:\n  - done\n' "$REPO_ROOT"
+    printf '%s\n' '```'
+  } > "$bv_dir/brief-valid.md"
+
+  if "$PMCTL" validate brief "$bv_dir/brief-valid.md" >/dev/null 2>&1; then
+    record "brief-validate-valid" PASS "valid brief (isolation_level:workspace-write) accepted"
+  else
+    record "brief-validate-valid" FAIL "valid brief unexpectedly rejected"
+  fi
+
+  rm -rf "$bv_dir"; bv_dir=""
 fi
 
 # ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────

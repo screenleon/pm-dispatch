@@ -208,6 +208,33 @@ EOF
   assert_not_contains "native-windows-refused-no-fail-record" "[FAIL]" "$out"
 }
 
+# ── Phase 3b: v0.6.0 feature smoke regression ────────────────────────────────
+# Verifies that Phase 3b records appear in --no-suite output and that the
+# new guard + brief-validate smoke cases pass against the real pmctl binary.
+
+test_phase3b_adapter_manifests() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3b-manifest-codex"    "[PASS] adapter-manifest-codex"    "$out"
+  assert_contains "phase3b-manifest-claude"   "[PASS] adapter-manifest-claude"   "$out"
+  assert_contains "phase3b-manifest-opencode" "[PASS] adapter-manifest-opencode" "$out"
+}
+
+test_phase3b_guard_check() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3b-guard-allow" "[PASS] guard-check-executor-allow" "$out"
+  assert_contains "phase3b-guard-block" "[PASS] guard-check-executor-block" "$out"
+}
+
+test_phase3b_brief_validate() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3b-legacy-reject" "[PASS] brief-validate-legacy-reject"     "$out"
+  assert_contains "phase3b-none-reject"   "[PASS] brief-validate-none-codex-reject" "$out"
+  assert_contains "phase3b-valid-brief"   "[PASS] brief-validate-valid"             "$out"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -227,6 +254,9 @@ test_e2e_delegation_required_skip
 test_no_e2e_phase4_skip_recorded
 test_phase3_external_repo_cases
 test_phase3_repo_local_db_smoke
+test_phase3b_adapter_manifests
+test_phase3b_guard_check
+test_phase3b_brief_validate
 test_native_windows_refused
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
