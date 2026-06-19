@@ -209,6 +209,9 @@ should_run "spike-cmd: documents AMBER verdict" && assert_file_contains "spike-c
 # codex fan-out must be synchronous (detached default would return only a run_id, not findings)
 should_run "spike-cmd: codex angle dispatch uses foreground lifecycle" && assert_file_contains "spike-cmd: codex angle dispatch uses foreground lifecycle" "$SPIKE_CMD" "--lifecycle foreground" && pass "spike-cmd: codex angle dispatch uses foreground lifecycle"
 should_run "spike-cmd: detached angle resolved via dispatch wait" && assert_file_contains "spike-cmd: detached angle resolved via dispatch wait" "$SPIKE_CMD" "pmctl dispatch wait" && pass "spike-cmd: detached angle resolved via dispatch wait"
+# codex angle brief must use exclusive-create temp file (no predictable shared /tmp name — symlink race)
+should_run "spike-cmd: codex angle brief uses mktemp exclusive-create" && assert_file_contains "spike-cmd: codex angle brief uses mktemp exclusive-create" "$SPIKE_CMD" "mktemp -p /tmp brief-spike-XXXXXX.md" && pass "spike-cmd: codex angle brief uses mktemp exclusive-create"
+should_run "spike-cmd: codex angle brief avoids predictable shared path" && assert_not_contains "spike-cmd: codex angle brief avoids predictable shared path" "$SPIKE_CMD" "/tmp/brief-spike-<ticket-id>-<angle>.md"
 
 # /research constraint-filtering output contract
 should_run "research: filters external methods against internal constraints" && assert_file_contains "research: filters external methods against internal constraints" "$RESEARCH" "Filter against internal constraints" && pass "research: filters external methods against internal constraints"

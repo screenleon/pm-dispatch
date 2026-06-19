@@ -59,9 +59,11 @@ concurrently (one message, multiple tool calls):
   passing the angle `brief` and `question`. Override model per the angle.
 - `executor: Explore` → Agent tool `subagent_type: Explore` for read-only code/prior-art
   search angles.
-- `executor: codex` → write a brief to `/tmp/brief-spike-<ticket-id>-<angle>.md` and
-  dispatch the codex adapter (`pmctl dispatch run --adapter codex --lifecycle foreground
-  --cd <working_dir> --brief-file <path>`) with `run_in_background: true`, then parse the
+- `executor: codex` → write the angle brief to an exclusive-create temp file via
+  `mktemp -p /tmp brief-spike-XXXXXX.md` (mode 0600) — never a predictable shared
+  `/tmp` name, which invites symlink races (same safe-write contract as `commands/pm.md`) —
+  then dispatch the codex adapter (`pmctl dispatch run --adapter codex --lifecycle foreground
+  --cd <working_dir> --brief-file <temp_brief>`) with `run_in_background: true` and parse the
   footer for completion (same synchronous-orchestration contract as `commands/pm.md`). Use
   this when sandbox isolation or a heavy build/index is needed. **`--lifecycle foreground` is
   required**: the dispatch default is `detached`, which returns only a `run_id` and never
