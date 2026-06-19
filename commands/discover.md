@@ -86,14 +86,24 @@ Produce the discovery report in this format:
 ```
 ## /discover — <theme or "all areas"> — <YYYY-MM-DD>
 
-| # | Title | Problem | Why now | Size |
-|---|---|---|---|---|
-| 1 | <short title> | <one sentence: what problem this solves> | <one sentence: why this moment is right> | XS |
-| 2 | … | … | … | S |
+| # | Title | Problem | Why now | Size | Next | Refs |
+|---|---|---|---|---|---|---|
+| 1 | <short title> | <one sentence: what problem this solves> | <one sentence: why this moment is right> | XS | pm | <ticket id / decision / file> |
+| 2 | … | … | … | S | research | … |
 …
 
 **Top pick**: <ticket id if applicable> — <one-sentence rationale for why this is the highest-leverage next step>
+**Why not a direct brief**: <one sentence — what is still undecided/unknown, or "nothing — ready for /pm">
 ```
+
+The **Next** column makes each pick a routing input (consumed by `/pm`'s discovery flow), not just a human menu. It is a *suggested* next action — choosing it stays with the user. Pick one per row using the same rule the PM router uses:
+
+- `pm` — scoped enough that a brief can be written now.
+- `spike` — a durable feasibility / API / architecture decision must be committed first.
+- `research` — needs an external method (competitor/community/academic) we don't have.
+- `defer` — real but not timely; leave it on the board.
+
+**Refs**: anchors for the pick — the ticket id (if one exists), the DECISIONS entry or memory note that motivates it, or the file/area it touches. Keep it terse; this is provenance, not a plan.
 
 Close with one line:
 
@@ -101,6 +111,6 @@ Close with one line:
 
 **Hard constraints on the output**:
 - Do not write a dispatch brief
-- Do not suggest implementation steps
+- Do not suggest implementation steps (the `Next` column is a route label only, not steps)
 - Do not open or modify tickets
 - Do not rank active or done items — divergent mode reads only the open opportunity space
