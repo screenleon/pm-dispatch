@@ -8,6 +8,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+_(no changes yet)_
+
+---
+
+## [0.6.0] — 2026-06-19
+
 **Theme**: Executor abstraction (v0.6.0) — runtime decoupling. Foundation phase: declare an adapter's execution topology once in its manifest so the router, guard wrappers, and install wiring derive from a single source instead of re-encoding it three times.
 
 ### Added
@@ -62,6 +68,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`scripts/install-hooks.sh` / `scripts/uninstall-hooks.sh`** — the pr-gate reviewer guard permission was allow-listed only in bare form `Bash(pmctl guard check:*)`. An in-session reviewer subagent whose `PATH` lacks the pmctl bin dir invokes `pmctl` by absolute path, which did not match — and a background subagent cannot prompt, so the guard call was denied and the gate result file could not be written (same tilde-vs-absolute class as CC-291). `install-hooks.sh` now writes the bare, absolute (`${PMCTL_BIN_DIR:-$HOME/.local/bin}`), and tilde forms; `uninstall-hooks.sh` removes all three (install/uninstall kept symmetric per CC-368); the three CC-334 reviewer-permission tests assert the abs+tilde forms (CC-380).
 - **`scripts/pr-gate.sh`** — a relative `--output` (or relative `--cd` default) was embedded verbatim into the reviewer brief's `pmctl guard check … --file` constraint and the `pr-gate-handover_v1` `output_file` field, but the reviewer write-guard requires an absolute `file_path` and the handover schema mandates an absolute `output_file`. The guard therefore exited nonzero and the reviewer aborted the write, leaving a 0-byte result while the gate reported success — for **both** executors (codex and the claude handover). `OUTPUT_FILE` is now normalized to absolute against the working dir before brief construction. New regression `relative-output-normalized-to-absolute` asserts the generated brief carries the absolute guard path; the bug had escaped because callers had only ever passed the default (already-absolute) output (CC-382).
 - **`scripts/test-run-all-tests.sh`** — mirrored the `test-runner-kind` suite into the meta-test's `SUITE_NAMES` registration and path map; CC-372 had added it to `scripts/run-all-tests.sh` only, drifting the aggregator's listed count (55) from the meta-test's expected count (54) and cascading 9 local-only failures. Not a CI job, so CI was unaffected (CC-382).
+
+### Maintenance
+
+- **Operational file CC-provenance cleanup.** Removed design-history ticket references (CC-NNN) from `scripts/`, `adapters/`, and `lib/` operational files; BACKLOG, MILESTONES, CHANGELOG, and test fixture data are unaffected (CC-396, PR #303).
+
+- **`scripts/release-verify.sh` Phase 3b — v0.6.0 feature smoke.** New phase exercises three v0.6.0 contracts against the real installed binary: adapter manifests (`runner_kind` field presence for codex/claude/opencode), write-guard policy (`pmctl guard check` executor allow/block), and brief-validate policy (legacy `sandbox`/`approval`/`skip_git_check` trio rejection + `isolation_level:none` codex rejection). Three `test_phase3b_*` regression functions added to `test-release-verify.sh` (PR #304).
 
 ## [0.5.0] — 2026-06-13
 

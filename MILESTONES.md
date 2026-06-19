@@ -9,7 +9,7 @@
 
 ---
 
-## v0.6.0 — executor abstraction（runtime 解耦合；規劃中 2026-06-14）
+## v0.6.0 — executor abstraction（runtime 解耦合；released 2026-06-19）
 
 **主題**：把 dispatch / guard / 安裝三條路徑上「綁定特定 executor」的最後硬編碼收乾淨，讓 pm-dispatch 真正 **executor-agnostic**。一句話驗收標準：**「新增第三個 executor = 放 `adapters/<name>/` + 一份 manifest，核心零改動」**——router 自動路由、guard 自動套對、install 自動接線。並用 **opencode + Google Antigravity（`agy`）兩個真 adapter** 落地當抽象的驗收（N≥2 才算抽象成立，不是僥倖）。Umbrella epic：[[CC-333]]（runtime 解耦合）。
 
@@ -65,7 +65,8 @@
 | CC-335 | deprecated surface 移除 sweep：handover legacy trio（sandbox/approval/skip_git_check）＋ CLAUDE_HOOK_* shims 移除；codex-dispatch.sh shim 殘留 dead-code 清理；pr-gate.sh 直呼降級為文件 deprecation（standalone 為官方 fallback，不刪檔） | ✅ |
 | CC-394 | 退場 `agents/claude-executor.md` — claude 收斂為 adapter-only（對齊 opencode） | ✅ |
 | CC-395 | 退場 `agents/codex-executor.md` + 砍 codex danger-full-access（decision A）：`none` 僅 opencode 允許、codex/claude 全 route reject；刪 codex bash-guard ＋ install orphan-cleanup ＋ pmctl-safe/pre-bash fail-closed；文件/測試收斂。衍生 CC-396（operational 檔 CC-provenance 註解清理） | ✅ |
-| CC-396 | 清理 scripts/adapters/lib 等 operational 檔中殘留設計沿革票號（CC-NNN）註解；保留測試 fixture data 與 ID 格式範例 | ✅ |
+| CC-396 | 清理 scripts/adapters/lib 等 operational 檔中殘留設計沿革票號（CC-NNN）註解；保留測試 fixture data 與 ID 格式範例 | ✅ pr:#303 |
+| CC-371 | uninstall adapter 殘留清理：`uninstall.sh` 補上 `adapters/` 目錄移除（CC-395 adapter 退場的收尾）| ✅ pr:#300 |
 
 ### Phase 7 — executor lifecycle ownership（P2；executor 抽象的完成式）
 
@@ -80,8 +81,20 @@
 | CC-391 | **(7a 決策-only，先行)** detached-supervised dispatch 建模決策：lifecycle 作派發旗標非 manifest 欄位、supervisor 元件邊界、durable-outbox 為 load-bearing、foreground→detached 遷移順序（fail-closed 不弱化）、一次真實 detached 派發等價證明。**codex spike = partial-adopt**（`docs/spikes/CC-391-*.md`） | ✅ pr:#288 |
 | CC-392 | **(7a 前置)** claude adapter `runner_kind` 分類漂移修正——manifest 宣告 `host-native` 但 adapter 實跑 headless `claude --print`（[[CC-383]]/[[CC-388]] 後）→ `runner_kind` 不可信、卡住 [[CC-391]] detach 資格推導。傾向定 canonical 為 `cli-subprocess`＋override 保行為不變；security/risk hard gate（不弱化 claude write guard） | ✅ pr:#289 |
 | CC-225 | **(7b durable，可獨立先 ship)** all-executor durable run-state 記錄（brief 路徑 / result 摘要 / exit / post-verify 判定 → repo-tracked，格式對齊 `.gate-results/`）；對齊 [[CC-211]] run-FSM。supervisor 的 durable 半；真 adapter 需要時前拉 | ✅ pr:#295 |
+| CC-397 | **(7b refactor，前置 7c)** `pmctl_dispatch_run` executor tail 抽出為獨立函式 `pmctl_dispatch_execute_tail`；adapter stdout footer 從 mktemp 改為 durable sidecar（`<run_id>.footer`），確保 recovery window 可讀 | ✅ pr:#296 |
+| CC-398 | **(7c-2a)** dispatch lifecycle axis：`--lifecycle foreground\|detached` + config key `dispatch.lifecycle`；detach 資格由 `runner_kind` 推導（cli-subprocess = eligible）；`scripts/dispatch-supervisor.sh` 同步 supervisor；21 個 test-dispatch-lifecycle 案例 | ✅ pr:#297 |
 | CC-399 | **(7c-2b)** `pmctl dispatch run --lifecycle detached` now launches the supervisor via `setsid`/`nohup`, returns `run_id` immediately, writes advisory supervisor PID/log sidecars. `pmctl dispatch wait <run_id> --cd <dir>` reattaches via the supervisor sentinel (nonce-bearing `/tmp` path, key in per-user private dir); falls back to `.dispatch-results/<run_id>.md` when key is absent. `pmctl inbox`/notify channel remain out of this thin slice. | ✅ pr:#298 |
 | CC-238 | **(7c)** pr-gate fan-out 無 timeout / 弱 attribution：加 reviewer + synthesis 本地 watchdog（SIGTERM-based，per-reviewer attribution）。**設計決策**：`pr-gate.sh` parallel fan-out 直接管理子程序（非走 `pmctl dispatch run`），故 local watchdog 是正確的 ownership boundary；general supervisor（[[CC-399]]）為不同路徑。tradeoff 記錄於 BACKLOG CC-238 body。 | ✅ pr:#300 |
+
+### Phase 8 — gate 工具能力 + 規劃技能（追加，v0.6.0 一同 ship）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| gh-174 | `pmctl gate run` 支援 persistent accepted-risk overrides（`--override-file`/auto-discover `.gate-overrides.md`）；每次 run 附加不可靜默的 provenance audit block，parser-safe | ✅ pr:#301 |
+| gh-173 | `docs/sandbox-limitations.md` — codex sandbox 摩擦模式（`go build`、網路、Docker、`git commit`）與 workaround 文件；`skills/dispatch-brief` 補指引 | ✅ pr:#301 |
+| CC-408 | next-step uncertainty router — PM-level 決策層，判斷一個需求應走 `/discover`、`/spike`、`/research` 還是直接 brief；避免把 spike/research 混用為 pure-exploration 工具 | ✅ pr:#302 |
+| CC-220 | `/spike` skill + `spike` planner agent（`agents/spike.md`）——spike 有 committed 流程：planner 規劃 2-3 diverging angles，main thread fan-out，synthesize `docs/spikes/<id>.md` | ✅ pr:#302 |
+| CC-344 | `/research` skill（`commands/research.md`）——外部知識引入管道：internal anchor → direction question → bounded WebSearch → filter against constraints → persistence prompt | ✅ pr:#302 |
 
 ### 延後至 v0.7.0+（明確排除於 v0.6.0）
 
