@@ -916,17 +916,36 @@ RBRIEF_EOF
   if [[ "$EXECUTOR_IS_SUBPROCESS" == true ]]; then
     say '\n  waiting for %d reviewer session(s)...\n' "${#DISPATCH_PIDS[@]}"
 
+    # Watchdog: kill any reviewer subprocess that hasn't exited after the fan-out
+    # timeout. Defense-in-depth: pmctl already passes --timeout to the executor,
+    # but if pmctl itself hangs the inner timeout never fires. Watchdog timeout =
+    # per-reviewer TIMEOUT + 60s overhead; override via _PM_DISPATCH_GATE_WATCHDOG_TIMEOUT.
+    _GATE_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
+    (
+      sleep "$_GATE_WATCHDOG_TIMEOUT"
+      for _wpid in "${DISPATCH_PIDS[@]}"; do
+        kill "$_wpid" 2>/dev/null || true
+      done
+    ) &
+    _GATE_WATCHDOG_PID=$!
+
     # Wait for all reviewer sessions. Any non-zero exit aborts the gate -- an
     # incomplete review cannot certify a valid gate result.
     # Hash each reviewer output immediately after its PID exits so we capture
     # the content before any concurrently-running reviewer session can modify it.
+    # Exit code > 128 means killed by signal (SIGTERM=143); attribute these as
+    # timeouts (watchdog fired) rather than clean executor failures.
     FAILED_REVIEWERS=()
+    TIMED_OUT_REVIEWERS=()
     REVIEWER_POST_WAIT_HASHES=()
     for i in "${!DISPATCH_PIDS[@]}"; do
       pid="${DISPATCH_PIDS[$i]}"
       r="${REVIEWER_NAMES[$i]}"
       rf="${REVIEWER_OUTPUT_FILES[$i]}"
-      if ! wait "$pid"; then
+      _wait_exit=0
+      wait "$pid" || _wait_exit=$?
+      if [[ "$_wait_exit" -ne 0 ]]; then
+        [[ "$_wait_exit" -gt 128 ]] && TIMED_OUT_REVIEWERS+=("$r")
         FAILED_REVIEWERS+=("$r")
         REVIEWER_POST_WAIT_HASHES+=("none")
       else
@@ -934,6 +953,14 @@ RBRIEF_EOF
       fi
     done
 
+    # Kill watchdog if reviewers finished before the deadline.
+    kill "$_GATE_WATCHDOG_PID" 2>/dev/null || true
+    wait "$_GATE_WATCHDOG_PID" 2>/dev/null || true
+
+    if [[ "${#TIMED_OUT_REVIEWERS[@]}" -gt 0 ]]; then
+      printf 'Timeout: %d reviewer session(s) did not complete within %ds: %s\n' \
+        "${#TIMED_OUT_REVIEWERS[@]}" "$_GATE_WATCHDOG_TIMEOUT" "${TIMED_OUT_REVIEWERS[*]}" >&2
+    fi
     if [[ "${#FAILED_REVIEWERS[@]}" -gt 0 ]]; then
       printf 'Error: %d reviewer session(s) failed: %s\n' \
         "${#FAILED_REVIEWERS[@]}" "${FAILED_REVIEWERS[*]}" >&2
@@ -1180,11 +1207,27 @@ SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
   SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-  # Diagnostic chatter to stderr, not our (possibly piped-closed) stdout -- see
-  # the sequential dispatch above. Synthesis runs in the foreground like the
-  # sequential route, so without this a closed `gate run --parallel | head`
-  # consumer pipe would kill synthesis before the result file is written (CC-350).
-  eval "$SYNTHESIS_DISPATCH_CMD" >&2
+  # Diagnostic chatter to stderr -- see sequential dispatch note above (CC-350).
+  # Synthesis runs in background so a watchdog can kill it if it hangs indefinitely.
+  eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
+  _SYNTHESIS_PID=$!
+  _GATE_SYNTHESIS_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_SYNTHESIS_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
+  (
+    sleep "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT"
+    kill "$_SYNTHESIS_PID" 2>/dev/null || true
+  ) &
+  _SYNTHESIS_WATCHDOG_PID=$!
+  _synthesis_exit=0
+  wait "$_SYNTHESIS_PID" || _synthesis_exit=$?
+  kill "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
+  wait "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
+  if [[ "$_synthesis_exit" -gt 128 ]]; then
+    printf 'Timeout: synthesis session did not complete within %ds\n' "$_GATE_SYNTHESIS_WATCHDOG_TIMEOUT" >&2
+    exit 1
+  elif [[ "$_synthesis_exit" -ne 0 ]]; then
+    printf 'Error: synthesis session failed (exit %d)\n' "$_synthesis_exit" >&2
+    exit 1
+  fi
 
   # Validate synthesis output via the shared contract, pinned to the
   # shell-computed verdict: a synthesis that contradicts SHELL_FINAL (in either
