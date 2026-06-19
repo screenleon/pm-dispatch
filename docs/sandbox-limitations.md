@@ -39,7 +39,7 @@ around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 | Hook | When it runs | Executor support | Failure behaviour |
 |---|---|---|---|
 | `.pm-dispatch/pre-gate.sh` | before any reviewer dispatch | codex, claude | non-zero exit aborts the entire gate |
-| `.pm-dispatch/post-gate.sh` | after all reviewers finish, **only when gate result is GO** (codex only) | **codex only** | non-zero exit marks gate as failed |
+| `.pm-dispatch/post-gate.sh` | after gate completion, **only when gate result is GO** | codex, claude | non-zero exit marks gate as failed |
 
 **Hook contract**:
 - Runs as the main thread user (full machine access).
@@ -48,10 +48,12 @@ around the gate run. Place hook scripts in `.pm-dispatch/` at your project root:
 - Non-zero exit from either hook aborts the gate.
 - **`--allow-hooks` required**: hooks are skipped by default unless this flag is passed.
 
-> **`--executor claude` limitation**: On the claude executor route, `pr-gate.sh`
-> emits a handover block and exits before reviewers run. `post-gate.sh` is therefore
-> **not invoked** on that route (a notice is printed to stderr). Pre-gate works
-> normally on both routes.
+> **Executor routes behave identically**: both `--executor codex` and
+> `--executor claude` dispatch the reviewers as an independent headless subprocess
+> and complete the gate in-process (the older claude "emit a handover block and
+> exit before reviewers run" route was retired). Pre-gate and post-gate therefore
+> fire the same way on both routes — `post-gate.sh` runs after gate completion on
+> either executor when the result is GO.
 
 **Two post-gate usage patterns**
 
@@ -175,6 +177,72 @@ thread's environment including Docker and localhost.
 | The executor needs live TCP access *during* `self_verify` (e.g., a running service already started by the user) | `--isolation workspace-network` |
 | Teardown must run on both success and failure | Caller-level `trap cleanup EXIT` (Pattern 1A) |
 | Reviewers need network access (external API calls, package downloads) | `--executor claude` (inherits main-thread environment) |
+
+## Pattern 4: git commit blocked in executor sandbox
+
+`git add` and `git commit` inside the executor sandbox are blocked by
+`hook-codex-bash-guard` (or the equivalent write-guard hook for the active
+executor). This is by design: the executor must not push to the branch
+autonomously.
+
+**Impact**: A brief that ends with a `git commit` step will always fail that
+step, causing the dispatch report to show `status: partial` even when all code
+changes were applied correctly. The commit block in `self_verify` also fails
+post-verify.
+
+**Fix (Option A — recommended)**: Do not include `git add` / `git commit` in
+brief `self_verify` or `task` blocks. Commit is always delegated to the main
+thread after you review the executor's diff.
+
+Brief `self_verify` pattern — correct:
+```yaml
+self_verify:
+  - cmd: "bash scripts/test.sh"
+  - git-status no-collateral-damage
+```
+
+Brief `self_verify` pattern — **incorrect** (always fails):
+```yaml
+self_verify:
+  - cmd: "git add -A && git commit -m 'feat: ...' "   # blocked by hook — omit this
+```
+
+**Fix (Option B — if you need the executor to commit)**: Add
+`Bash(git add:*)` and `Bash(git commit:*)` to the project's allowed-list in
+`.claude/settings.json` (or user-level `~/.claude/settings.json`). This opens
+both commands for all executor dispatches in this project — only do this if you
+trust the executor's commit scope, as it bypasses the hook guard.
+
+**Standard workflow**: After `pmctl dispatch run` finishes:
+1. Review the executor's diff with `git diff` / `git status`
+2. Stage and commit from the main thread: `git add <files> && git commit`
+
+## Pattern 5: apply_patch intermediate failures
+
+When the executor edits a large or structurally complex file using
+`apply_patch`, the patch may not apply cleanly if the surrounding context has
+changed since the brief was written. The executor usually detects this, re-reads
+the file, and retries — succeeding on the second attempt.
+
+**Impact**: Noise in the dispatch trace; adds 1–2 minutes per occurrence; can
+appear as a "non-fatal error in stderr" in the post-verify report even when all
+changes are actually applied correctly.
+
+**Fix**: Break large file edits into smaller, anchored hunks in the brief's
+`task:` block. Give each hunk a short, unique anchor string (a nearby function
+name, a distinctive comment, a unique variable name) so the executor can
+unambiguously locate the insertion point:
+
+```yaml
+task:
+  Edit scripts/pr-gate.sh:
+  - Locate the line starting with "WORK_DIR=" (search uniquely identifies this line)
+  - After that line, add: ...
+  - Separately locate the line "cd "$WORK_DIR"" and add below it: ...
+```
+
+This is brief-authoring discipline, not a tool limitation — the executor handles
+uniquely-anchored hunks reliably.
 
 ## Adding new patterns
 

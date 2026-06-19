@@ -25,6 +25,10 @@ the executor can act on without re-asking questions.
   fenced `dispatch_handover_v1` block, plus the model-selection guidance.
 - **`scripts/lib/handover-validate.sh`** — the validator the main thread runs
   before constructing argv; your metadata values must pass it.
+- **`docs/sandbox-limitations.md`** — executor sandbox constraints and
+  workarounds. Read this before writing `self_verify` blocks that use `go
+  build`, network calls, Docker, or `git commit` — all of these have sandbox
+  limitations with documented workarounds (Patterns 1–5).
 
 ## Prior-art scan (before writing `files:` / `context:`)
 
