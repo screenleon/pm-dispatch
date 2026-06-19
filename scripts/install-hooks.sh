@@ -13,9 +13,9 @@
 # Note: hook-reviewer-write-guard.sh is NOT wired as a PreToolUse hook.
 # It is a policy-backing script called exclusively by `pmctl guard check
 # --role reviewer`. Both codex and claude reviewer paths use explicit
-# pmctl guard check (CC-297 uniform explicit-guard design).
+# pmctl guard check (uniform explicit-guard design).
 #
-# Note: routing_log.md migration is NOT run automatically (CC-314).
+# Note: routing_log.md migration is NOT run automatically.
 # Run scripts/migrate-routing-to-events.sh manually to move legacy routing
 # records into state-store events.jsonl.
 # Safe to re-run: detects existing entries (matched by command path) and skips
@@ -264,8 +264,8 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
   # Prune retired managed hooks from existing installs. Includes the per-runtime
-  # executor write-guards retired by CC-374 collapse and the scripts/-based bash
-  # guards retired by CC-375 (now manifest-driven from adapters/). Basenames are
+  # executor write-guards retired in the v0.6.0 collapse and the scripts/-based
+  # bash guards now manifest-driven from adapters/. Basenames are
   # split with string concat so the doctor hook-inventory parity scanner does not
   # count these retired names as current managed hooks.
   .hooks.PreToolUse |= map(
@@ -400,7 +400,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   )
   ' > "$tmp_new" < "$settings"
 
-# --- Permissions merge for reviewer subagents (CC-334) ---
+# --- Permissions merge for reviewer subagents ---
 # Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
 # to write results and run guard checks. Workspace root detection is shared with
 # uninstall-hooks.sh via scripts/lib/gate-workspace.sh.

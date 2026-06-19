@@ -87,7 +87,7 @@ TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
 EXECUTOR_OPTION="auto"
 ALLOW_HOOKS=false   # hooks require explicit --allow-hooks opt-in (security)
-ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in (CC-260)
+ALLOW_DIRTY=false   # gate refuses a dirty tree atop committed changes unless this opt-in
 OVERRIDE_FILE=""
 # "default" → omit --model → the executor adapter applies its own pinned default
 # (for codex, resolved via share/model-aliases.tsv; decoupled from ~/.codex/config.toml).
@@ -318,7 +318,7 @@ fi
 # Executor-name validation is delegated to resolve_executor (below): it is the
 # single, data-driven authority — `auto` autodetects and any other value must be a
 # routable adapter (a valid on-disk manifest), fail-closed on unknown. A hardcoded
-# auto|codex|claude pre-check here would re-introduce the very enum CC-373 removed,
+# auto|codex|claude pre-check here would re-introduce the very enum the router refactoring removed,
 # silently rejecting a manifest-only adapter before resolve_executor is reached.
 
 _validate_isolation_level() {
@@ -410,10 +410,10 @@ _worktree_is_dirty() {
   [[ -n "$(git ls-files --others --exclude-standard)" ]]
 }
 
-# ── CC-260: dirty-worktree preflight ────────────────────────────────────────
+# ── dirty-worktree preflight ─────────────────────────────────────────────────
 # When the branch has committed changes, the brief below is built from
 # "$BASE"...HEAD and silently omits uncommitted tracked + untracked files
-# (CC-229 Gate 12 missed install.sh this exact way). Fail loud so the user
+# (a prior gate missed install.sh this exact way). Fail loud so the user
 # commits first for a complete, reproducible review -- unless they explicitly
 # opt into reviewing the working tree as-is. A dirty-only tree with NO
 # committed changes is handled by the working-tree fallback below and is NOT
@@ -602,7 +602,7 @@ SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
 BRIEF_FILES+=("$SYNTHESIS_BRIEF")
 
 # Build a compact index of verified reference files (agents/, commands/, docs/, skills/)
-# for injection into gate brief preambles (CC-208). Reviewers may cite docs/sections
+# for injection into gate brief preambles. Reviewers may cite docs/sections
 # that don't exist; the index provides ground truth so they can verify before citing.
 _build_repo_ref_index() {
   local work_dir="$1" out=""
@@ -740,7 +740,7 @@ constraints:
   - Before writing ${OUTPUT_FILE}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories for ${OUTPUT_FILE} if needed (mkdir -p).
-  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
+  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
 
 context:
   Tier: ${TIER}
@@ -854,7 +854,7 @@ BRIEF_EOF
   # stdout and a consumer closed that pipe (`gate run | head`), the child's
   # first write would hit EPIPE and -- with SIGPIPE ignored + set -e -- exit
   # nonzero before writing the result, killing the gate before its integrity
-  # checks could fire (CC-350). Parallel reviewers already redirect to a log.
+  # checks could fire. Parallel reviewers already redirect to a log.
   eval "$DISPATCH_CMD" >&2
 
   # Validate single-session output via the shared contract (must exist, be
@@ -925,7 +925,7 @@ constraints:
   - Before writing ${REVIEWER_OUTPUT}, call: pmctl guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
-  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations (CC-208).
+  - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
 
 context:
   Tier: ${TIER}
@@ -1146,7 +1146,7 @@ constraints:
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}
     This is pre-computed from the reviewer verdicts and must not be overridden.
-  - Only cite files in the verified reference index or reviewer findings; do not invent citations (CC-208).
+  - Only cite files in the verified reference index or reviewer findings; do not invent citations.
 
 context:
   Tier: ${TIER}
@@ -1267,7 +1267,7 @@ SBRIEF_P2
 
   say '  [synthesis] running PM consolidation...\n'
   SYNTHESIS_DISPATCH_CMD="$(dispatch_via "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION")" || exit 2
-  # Diagnostic chatter to stderr -- see sequential dispatch note above (CC-350).
+  # Diagnostic chatter to stderr -- see sequential dispatch note above.
   # Synthesis runs in background so a watchdog can kill it if it hangs indefinitely.
   eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
   _SYNTHESIS_PID=$!

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # token-usage.sh — multi-pool token usage estimator (Claude / Codex / Spark)
-# Pure bash+jq implementation (CC-104t) — no python3 dependency.
+# Pure bash+jq implementation — no python3 dependency.
 #
 # Usage:
 #   bash ~/.claude/scripts/token-usage.sh               # last 5 hours

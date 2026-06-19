@@ -7,7 +7,7 @@
 # working set of non-terminal tickets; no `**See**:` stub remains.
 #
 # Terminal index statuses — single source of truth is pm/schema.md §2.3; this
-# comment and the awk predicate below must track it (CC-378, 2026-06-14):
+# comment and the awk predicate below must track it (2026-06-14):
 # `✅ done` (with or without date), `✅ closed YYYY-MM-DD`,
 # `🟢 superseded YYYY-MM-DD`, `🚫 dropped YYYY-MM-DD`. `✅ done` is terminal (the
 # soft-close-stays-active rule was retired — in practice `done`/`superseded`
@@ -19,8 +19,8 @@
 # Status is read from the INDEX table (the schema §6.1 source of truth). A
 # body section is archived when its ticket's index status is terminal; bodies
 # already present in BACKLOG-ARCHIVE.md (matched by exact heading) are not
-# re-appended, which also makes the run idempotent and immune to the CC-283
-# sentinel false-negative (we no longer scan body prose for `**See**:`).
+# re-appended, which also makes the run idempotent (we no longer scan body prose
+# for `**See**:`).
 #
 # Pre-existing `**See**:` stubs + their index rows (the legacy archive shape)
 # are swept on the next run: the row is terminal so it is dropped, and the
@@ -131,7 +131,7 @@ in_section {
   rid = id_from_row($0)
   # Terminal iff status is an EXACT token/date form (pm/schema.md §2.3). A loose
   # prefix match would archive malformed near-misses like "✅ done-ish" or
-  # "🟢 supersededsoon" (CC-378 gate fix). `done` date is optional; closed /
+  # "🟢 supersededsoon". `done` date is optional; closed /
   # superseded / dropped require YYYY-MM-DD.
   if (status ~ /^✅ done$/ ||
       status ~ /^✅ done [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ ||

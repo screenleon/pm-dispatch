@@ -185,7 +185,7 @@ if [[ -n "$EXECUTOR_STATUS" ]]; then
   FAILED=1
 fi
 
-# CC-386: trace integrity. The executor's own .last/`status:` line is its
+# Trace integrity. The executor's own .last/`status:` line is its
 # self-report; the JSONL event stream is independent proof the run actually ran to
 # completion. A run can exit 0 yet leave a truncated/orphaned trace (e.g. a
 # background job SIGKILLed mid-write, leaving a partial trailing record as its
@@ -257,7 +257,7 @@ else
 fi
 printf '\n'
 
-# CC-318: a self_verify item is one of two kinds.
+# A self_verify item is one of two kinds.
 #   - Machine-executable check: the structured `- cmd: "<bash>"` form. post-verify
 #     RUNS the command in $WORK_DIR under a timeout — exit 0 = PASS, non-zero or
 #     timeout = FAIL. This replaces the old substring search of latest.last, so the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Executor-agnostic dispatch orchestrator (CC-289, approach B).
+# Executor-agnostic dispatch orchestrator.
 #
 # `pmctl dispatch run --adapter <name> --cd <dir> --brief-file <path>` OWNS the
 # shared dispatch flow and composes the M2-extracted pieces; the adapter under
@@ -49,7 +49,7 @@
 #   *  — any other non-zero adapter exit is propagated verbatim
 
 # Source the shared config loader so pmctl_dispatch_run can resolve config
-# defaults and export them to adapter subprocesses (CC-293).
+# defaults and export them to adapter subprocesses.
 if ! declare -F pm_config_load >/dev/null 2>&1; then
   _pmctl_dispatch_lib_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck disable=SC1091  # dynamic path; pmctl-config.sh scanned separately
@@ -643,8 +643,8 @@ pmctl_dispatch_validate_brief() {
   return 0
 }
 
-# Decide whether an adapter may run under a detached supervisor (CC-391 lifecycle
-# axis). Eligibility is DERIVED from the adapter's declared runner_kind, never a
+# Decide whether an adapter may run under a detached supervisor. Eligibility is
+# DERIVED from the adapter's declared runner_kind, never a
 # manifest lifecycle field: cli-subprocess executors are Model B subprocesses
 # pmctl can reparent under a supervisor; host-native executors ARE the host and
 # cannot be. Returns 0 (eligible), 1 (ineligible), 2 (cannot determine — fail
@@ -763,7 +763,7 @@ _pmctl_dispatch_launch_supervisor() {
   return 0
 }
 
-# Detached lifecycle launcher (CC-391 Phase 7c-2). Splits the core --cd /
+# Detached lifecycle launcher. Splits the core --cd /
 # --brief-file out of the forward args (recording them as trusted run-spec
 # scalars) so the brief/work-dir the supervisor guards and validates are exactly
 # the ones it forwards to the adapter, then persists the run-spec and invokes the
@@ -1221,7 +1221,7 @@ pmctl_dispatch_run() {
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
   #    Gates the executor's brief-file write for this runtime via the same code
   #    path the PreToolUse hooks enforce. The dispatch adapter IS the runtime
-  #    axis (CC-291); the role is always `executor` here.
+  #    axis; the role is always `executor` here.
   if ! declare -F pmctl_guard_check >/dev/null; then
     printf 'pmctl dispatch run: guard unavailable (pmctl-guard not sourced) — refusing to dispatch without policy enforcement\n' >&2
     return 2
@@ -1231,7 +1231,7 @@ pmctl_dispatch_run() {
     return 2
   fi
 
-  # 4a. Export config defaults to the adapter subprocess (CC-293).
+  # 4a. Export config defaults to the adapter subprocess.
   #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
   #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
   #     lower than an explicit --timeout / --model flag — the existing elif chains

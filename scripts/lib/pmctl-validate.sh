@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pmctl validate — handover brief validation front-end (CC-341).
+# pmctl validate — handover brief validation front-end.
 # Wires the handover-validate.sh framework into the pmctl CLI surface.
 # No shell options set here; cli/pmctl owns execution policy.
 

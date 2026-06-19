@@ -10,9 +10,9 @@
 # (gate-<ts>.md) and parallel (reviewer-<r>-<ts>.md) modes without enumerating
 # filenames. Binding the directory name, not the filename or the repo root, is
 # intentional — any project can use this guard without coupling the check to the
-# pm-dispatch install location (CC-319).
+# pm-dispatch install location.
 #
-# Role → agent-type mapping (CC-297: role ≠ agent-type):
+# Role → agent-type mapping (role ≠ agent-type):
 #   reviewer role → critic | qa-tester | architecture-reviewer
 #                   security-reviewer | risk-reviewer
 #
@@ -92,7 +92,7 @@ abs_path="$HK_ABS_PATH"
 
 # The file's immediate parent directory must be named exactly ".gate-results".
 # Binding the directory name (not the repo root) lets any project use this guard
-# without coupling the check to the pm-dispatch install path (CC-319).
+# without coupling the check to the pm-dispatch install path.
 # realpath_m resolves symlinks so a .gate-results/ symlink is caught.
 gate_results_dir="$(dirname "$abs_path")"
 if [[ "$(basename "$gate_results_dir")" != ".gate-results" ]]; then

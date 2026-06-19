@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Detached-supervised dispatch executor (CC-391 Phase 7c-2a).
+# Detached-supervised dispatch executor.
 #
 # Owns exactly the post-preflight executor tail: invoke the adapter, capture and
 # persist the stdout footer, run post-verify, and write the terminal durable run

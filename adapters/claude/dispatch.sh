@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claude-dispatch (adapters/claude/dispatch.sh)
 #
-# Thin claude executor adapter (CC-266), symmetric to adapters/codex/dispatch.sh.
+# Thin claude executor adapter, symmetric to adapters/codex/dispatch.sh.
 # Invokes headless `claude --print` as the canonical, host-independent claude
 # executor — NOT Agent()-spawn (which only exists when Claude is the main thread).
 # Driven by `pmctl dispatch run --adapter claude`, which owns the shared flow
@@ -142,7 +142,7 @@ _resolve_permission_mode() {
 
 # Timeout precedence: --timeout flag (parsed below, wins) > $CLAUDE_DISPATCH_TIMEOUT
 # env > PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
-# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run` (CC-293); direct
+# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run`; direct
 # adapter invocations fall back to 1200 when the var is absent.
 if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then
   TIMEOUT="$CLAUDE_DISPATCH_TIMEOUT"

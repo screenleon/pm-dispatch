@@ -35,7 +35,7 @@ else
   }
   # Copy-mode parity: portable.sh would supply codex_available(); define a
   # matching fallback so check_codex() / the hook-profile case do not hit an
-  # undefined function when lib/ is absent (CC-201).
+  # undefined function when lib/ is absent.
   codex_available() { command -v codex >/dev/null 2>&1; }
 fi
 
@@ -583,7 +583,7 @@ check_manifest() {
 
 check_frontmatter_lint() {
   # In copy-mode (no lib/), lint-frontmatter.sh is not co-installed with doctor.sh.
-  # This check degrades to WARN in that case. See CC-225 for v2 resolution.
+  # This check degrades to WARN in that case.
   # Always run the installed (trusted) linter; never execute scripts from --repo target.
   local lint_script="${SCRIPT_DIR}/lint-frontmatter.sh"
   if [[ ! -x "$lint_script" ]]; then

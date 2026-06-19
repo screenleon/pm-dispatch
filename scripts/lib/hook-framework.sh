@@ -93,7 +93,7 @@ hk_check_bypass() {
 # form via cygpath, so it matches the form realpath_m and the POSIX checks
 # expect (e.g. C:/Users/.../Temp -> /tmp). Shared so that every side of a path
 # comparison normalizes identically — the reviewer guard normalizes its repo
-# root through this too (CC-308), closing the asymmetry where file_path was
+# root through this too, closing the asymmetry where file_path was
 # cygpath-normalized but the compared-against root was not.
 #
 # Echoes the (possibly unchanged) path. Returns:

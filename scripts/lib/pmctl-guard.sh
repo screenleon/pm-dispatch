@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Executor-agnostic guard-check front-end (CC-288; role×runtime keying CC-291).
+# Executor-agnostic guard-check front-end.
 #
 # `pmctl guard check` lets ANY host — not just Claude's PreToolUse auto-hooks —
 # enforce the identical guard policy. The guard LOGIC is unchanged: this surface
@@ -14,7 +14,7 @@
 # via PreToolUse; a non-Claude host (e.g. codex-as-PM) must call `pmctl guard
 # check` explicitly before the action. Both paths run the same policy.
 #
-# Two orthogonal axes (CC-291) — keep them distinct:
+# Two orthogonal axes — keep them distinct:
 #   * ROLE (`--role pm|executor|…`) — what the agent IS. guard cares about role.
 #     `pm` is runtime-agnostic (codex-as-PM and claude-as-PM share one policy).
 #     `executor` is the role shared by all executor runtimes (codex, claude, opencode, …).
@@ -119,11 +119,11 @@ pmctl_guard_check() {
   # pre-bash policy genuinely differs by runtime (see registry).
   # `reviewer` REQUIRES a runtime — it runs on both codex (reviewer brief in
   # codex session) AND claude (reviewer agent subagent). The .gate-results/-only
-  # rule is identical across runtimes (CC-297: one role, one fixed rule). Both
+  # rule is identical across runtimes (one role, one fixed rule). Both
   # routes enforce the guard via explicit pmctl guard check in the reviewer brief
   # (not auto PreToolUse); requiring --runtime preserves the role×runtime two-axis
-  # design (CC-291) and keeps reviewer symmetric with executor — not collapsed like pm.
-  # All roles require --runtime for consistent two-axis CLI semantics (CC-291/CC-297).
+  # design and keeps reviewer symmetric with executor — not collapsed like pm.
+  # All roles require --runtime for consistent two-axis CLI semantics.
   # Even pm (currently claude-only) is explicit — this prevents silent
   # runtime assumption and keeps the door open for non-Claude pm variants.
   case "$role" in
@@ -167,8 +167,8 @@ pmctl_guard_check() {
   # (runtime-agnostic); `executor` derives it BY CONVENTION from the runtime
   # (<runtime>-executor), so adding a runtime needs no edit here; `reviewer`
   # uses the synthetic identity "reviewer" — the hook recognises this alongside
-  # the five named reviewer agent types (CC-297).
-  # CRITICAL (CC-291): each hook self-gates on HK_AGENT_TYPE and no-ops (exit 0 =
+  # the five named reviewer agent types.
+  # CRITICAL: each hook self-gates on HK_AGENT_TYPE and no-ops (exit 0 =
   # ALLOW) for any other identity. Because agent_type AND the physical pre-write
   # hook below are BOTH derived from $role/$runtime, they cannot drift — a
   # fail-OPEN from an identity/hook mismatch is impossible by construction.
@@ -198,7 +198,7 @@ pmctl_guard_check() {
     return 3
   fi
 
-  # Role-keyed guard registry, tagged by LAYER (CC-291) — the tags are the design
+  # Role-keyed guard registry, tagged by LAYER — the tags are the design
   # contract, not decoration:
   #
   #   [role-based]       runtime-agnostic dispatch-guard — brief landing. The
@@ -223,11 +223,11 @@ pmctl_guard_check() {
           hook="hook-pm-write-guard.sh"
           ;;
         reviewer)
-          # [role-based] CC-297: one fixed rule (.gate-results/) across runtimes.
+          # [role-based] One fixed rule (.gate-results/) across runtimes.
           hook="hook-reviewer-write-guard.sh"
           ;;
         executor)
-          # [role-based] ONE unified wrapper across all executor runtimes (CC-374).
+          # [role-based] ONE unified wrapper across all executor runtimes.
           # It derives the runtime from agent_type (<runtime>-executor) and reads the
           # runtime's write_guard_mode from its manifest, so adding a runtime only
           # requires dropping in adapters/<runtime>/ — no new guard file.
@@ -309,7 +309,7 @@ pmctl_guard_check() {
 
   # PM_GUARD_CHECK_CLI marks the CLI-driven invocation so the unified executor
   # write-guard enforces regardless of write_guard_mode. Absent (a live PreToolUse
-  # firing), a cli-only runtime's hook no-ops instead (CC-374). Harmless to the
+  # firing), a cli-only runtime's hook no-ops instead. Harmless to the
   # pm/reviewer/bash hooks, which ignore it.
   printf '%s' "$json" | PM_GUARD_CHECK_CLI=1 "$hook_path"
 }
