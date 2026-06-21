@@ -23,6 +23,16 @@ SUPERVISOR="$REPO_ROOT/scripts/dispatch-supervisor.sh"
 th_init "$@"
 export PM_DISPATCH_STATE_ROOT="$tmp_root/lifecycle-state"
 
+# Isolate the supervisor sentinel key dir to a writable, owner-only temp so the
+# detached-lifecycle cases are deterministic everywhere. _pmctl_sentinel_key_file
+# uses $XDG_RUNTIME_DIR/pm-dispatch when XDG_RUNTIME_DIR is a dir; in a restricted
+# sandbox (CI / pr-gate codex) that path (e.g. /run/user/<uid>) can exist but be
+# unwritable, which fails key-dir creation, stalls `dispatch wait`, and hangs the
+# suite. Pointing it at a temp dir we own keeps the detached path runnable.
+_TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
+mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
+export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf

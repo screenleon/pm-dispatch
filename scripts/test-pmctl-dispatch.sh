@@ -167,6 +167,55 @@ EOF
   rm -rf "$work"
 }
 
+case_guard_denied_brief_creates_no_pack_artifact() {
+  # Security regression (CC-402): the authored --brief-file is guarded for path policy
+  # BEFORE auto-pack reads/copies it, so a guard-denied brief must leave NO derived
+  # artifact — no pack under .pm-dispatch/ctx/packs/ and no context.auto_packed event —
+  # even when reuse hits are available. Fails if auto-pack runs ahead of the guard.
+  local name="dispatch/guard-denied brief with reuse hits creates no pack artifact"
+  should_run "$name" || return 0
+  local work brief state_root err code packs autopacked
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  # Valid content but OUTSIDE /tmp/brief-*.md (guard denies); goal matches the indexed
+  # content so auto-pack WOULD find hits if it wrongly ran before the guard.
+  brief="$work/brief.md"
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $work
+goal: exercise the pmctl dispatch orchestrator shared flow
+files:
+  - read: $work/README
+acceptance:
+  - dispatch exits 0
+EOF
+  state_root="$(mktemp -d)"
+  set +e
+  err="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack 2>&1)"; code=$?
+  set -e
+  # Guard the dir test: the packs/ dir is created by auto-pack, which (correctly) never
+  # ran here — find on a missing dir exits non-zero and would trip set -o pipefail.
+  packs=0
+  [[ -d "$work/.pm-dispatch/ctx/packs" ]] && packs="$(find "$work/.pm-dispatch/ctx/packs" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  autopacked="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 2 ]] && grep -qi 'guard denied' <<<"$err" \
+     && [[ "$packs" -eq 0 ]] \
+     && [[ "$autopacked" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code packs=$packs autopacked=$autopacked err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
 # ---- 6: happy path — adapter runs, output contract read, post-verify OK ----
 case_happy_path_post_verify_ok() {
   local name="dispatch/happy path runs adapter + post-verify OK"
@@ -1120,6 +1169,7 @@ case_sandbox_danger_full_access_denied
 case_adapter_resolution_and_route
 case_brief_validation_blocks
 case_guard_denies_dispatch
+case_guard_denied_brief_creates_no_pack_artifact
 case_happy_path_post_verify_ok
 case_adapter_exit_propagated
 case_post_verify_failure
