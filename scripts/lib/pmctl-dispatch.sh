@@ -364,7 +364,7 @@ pmctl_dispatch_emit_auto_packed_event() {
 
 pmctl_dispatch_auto_pack() {
   local repo_root="${1:-}" work_dir="${2:-}" brief_file="${3:-}" run_id="${4:-}"
-  local goal reuse_yaml reuse_err block_file block_hits pack_dir pack_path validate_msg validate_status=0
+  local goal reuse_yaml reuse_err block_file block_hits pack_dir pack_path validate_msg validate_status=0 ctx_root
 
   if ! declare -F pmctl_context_reuse_scan >/dev/null 2>&1; then
     # shellcheck disable=SC1091  # dynamic repo root path.
@@ -374,6 +374,19 @@ pmctl_dispatch_auto_pack() {
     printf 'pmctl dispatch run: warning: auto-pack skipped: pmctl context reuse-scan unavailable\n' >&2
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
+  fi
+
+  # Context artifacts (the reuse-scan DB and the pack) are repo-root-local by contract
+  # (docs/context-retrieval.md), and the state-writer already keys a subdirectory --cd
+  # to its git top-level. So resolve work_dir to the git top-level for ALL context I/O
+  # below — otherwise a subdirectory --cd would scatter context.db / .gitignore / packs
+  # under the subdir instead of the repo root. Fall back to work_dir verbatim when it is
+  # not a git work tree (best-effort, same as reuse-scan's own behavior). The adapter
+  # still receives the caller's original --cd; only context placement is normalized.
+  ctx_root="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$ctx_root" ]] || ctx_root="$work_dir"
+  if declare -F _portable_canonical_path >/dev/null 2>&1; then
+    ctx_root="$(_portable_canonical_path "$ctx_root" 2>/dev/null || printf '%s' "$ctx_root")"
   fi
 
   if ! goal="$(pmctl_dispatch_extract_goal "$brief_file" 2>/dev/null)" || [[ -z "$goal" ]]; then
@@ -387,7 +400,7 @@ pmctl_dispatch_auto_pack() {
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
   }
-  if ! reuse_yaml="$(pmctl_context_reuse_scan "$work_dir" "$goal" 2>"$reuse_err")"; then
+  if ! reuse_yaml="$(pmctl_context_reuse_scan "$ctx_root" "$goal" 2>"$reuse_err")"; then
     printf 'pmctl dispatch run: warning: auto-pack skipped: reuse-scan failed: %s\n' "$(tr '\n' ' ' < "$reuse_err")" >&2
     rm -f "$reuse_err"
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
@@ -413,7 +426,7 @@ pmctl_dispatch_auto_pack() {
     return 0
   fi
 
-  pack_dir="$work_dir/.pm-dispatch/ctx/packs"
+  pack_dir="$ctx_root/.pm-dispatch/ctx/packs"
   pack_path="$pack_dir/$run_id.md"
   if ! mkdir -p "$pack_dir"; then
     printf 'pmctl dispatch run: warning: auto-pack skipped: cannot create %s\n' "$pack_dir" >&2

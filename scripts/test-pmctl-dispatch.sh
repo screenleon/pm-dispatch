@@ -1115,6 +1115,59 @@ EOF
   rm -rf "$work" "$state_root"; rm -f "$stderr"
 }
 
+case_auto_pack_subdir_cd_roots_context_at_git_top() {
+  # CC-402: with default-on auto-pack and a subdirectory --cd, context artifacts
+  # (reuse-scan DB + pack) must root at the git top-level, NOT under the subdir
+  # (repo-root-local contract; matches the state-writer's subdir->git-root keying).
+  # Steps:
+  # 1. git repo with src/alpha.sh at the root + a nested sub/dir; index the root.
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd` with --cd <repo>/sub/dir.
+  # 3. Assert the pack path and context.db are under <repo>/.pm-dispatch, and that NO
+  #    .pm-dispatch dir was created under the subdirectory.
+  local name="dispatch/auto-pack subdirectory --cd roots context at git top-level"
+  should_run "$name" || return 0
+  local work sub brief state_root evt code pack ctxdb
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src" "$work/sub/dir"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  sub="$work/sub/dir"
+  brief="/tmp/brief-pmctl-subdir-$$-${#_BRIEFS[@]}.md"; _BRIEFS+=("$brief")
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $sub
+goal: exercise the pmctl dispatch orchestrator shared flow
+files:
+  - read: $work/src/alpha.sh
+acceptance:
+  - dispatch exits 0
+EOF
+  state_root="$(mktemp -d)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$sub" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // ""' 2>/dev/null || printf '')"
+  ctxdb=""; [[ -f "$work/.pm-dispatch/ctx/context.db" ]] && ctxdb="root"
+  if [[ "$code" -eq 0 \
+        && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md \
+        && "$pack" != "$sub/"* \
+        && "$ctxdb" == "root" \
+        && ! -e "$sub/.pm-dispatch" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code pack=$pack ctxdb=$ctxdb sub_pm=$( [[ -e "$sub/.pm-dispatch" ]] && echo yes || echo no )"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
 case_auto_pack_pack_failure_degrades_to_original_brief() {
   local name="dispatch/--auto-pack pack write failure keeps original brief"
   should_run "$name" || return 0
@@ -1235,6 +1288,7 @@ case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_hits_creates_pack_and_forwards_copy
 case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
+case_auto_pack_subdir_cd_roots_context_at_git_top
 case_auto_pack_pack_failure_degrades_to_original_brief
 case_config_auto_pack_on_activates_without_flag
 case_no_auto_pack_overrides_config_on
