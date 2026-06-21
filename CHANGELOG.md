@@ -12,6 +12,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **Context retrieval ordering is now a mandatory PM contract.** The PM agent rule and context-retrieval spec now require context query before Read/Grep/full-file opens, with targeted fallback only after no hits (CC-400).
 
+- **Retrieval-first defaults are now load-bearing (CC-402).** Three coordinated changes make context-first the default dispatch behavior instead of opt-in:
+  - **`dispatch.auto_pack` built-in default flipped `off` → `on`.** Every `pmctl dispatch run` now runs reuse-scan and appends an `auto_context:` block by default; `--no-auto-pack` (or `dispatch.auto_pack = off`) opts out. Precedence is flag > config > built-in (on).
+  - **`BRIEF_VALIDATE_RETRIEVAL` default flipped `warn` → `fail`.** A file-writing brief with no retrieval evidence (`context:` / `auto_context:` / `retrieval_skip_reason:`) is now **rejected**, not just warned. Set `BRIEF_VALIDATE_RETRIEVAL=warn` to restore the advisory behavior.
+  - **Detached + auto-pack is now supported** (previously rejected before launch). Under the default `detached` lifecycle the augmented brief is snapshotted to the guardable `/tmp/brief-<run_id>.md` path and recorded as the run-spec's trusted `brief_file`, so the supervisor validates == guards == executes one augmented brief — preserving the CC-398 single-brief invariant with no second `--brief-file` passthrough. The dispatch gate now validates the *effective* (post-auto-pack) brief so an appended `auto_context:` block counts as evidence under `fail` mode.
+
 ### Added
 
 - **`brief-validate.sh` now checks retrieval evidence for file-writing briefs.** Non-trivial briefs must carry a non-empty `context:` block (or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends), or a non-empty `retrieval_skip_reason:`; rollout defaults to warn and can be flipped to fail with `BRIEF_VALIDATE_RETRIEVAL=fail` (CC-401).

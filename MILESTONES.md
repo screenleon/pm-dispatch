@@ -120,7 +120,7 @@
 |----|------|------|
 | CC-400 | prompt/docs 檢索順序強制：project-pm Principle 3 改硬性「context query →（no hits 才）Read/Grep」；context-retrieval.md 升級為「Query before Read/Grep/full-file open」。純文件，零程式風險 | ✅ pr:#308 |
 | CC-401 | brief-validate retrieval 證據 chokepoint：非 trivial brief 須有 `context:`／`auto_context:`／`retrieval_skip_reason:`，先 warn 後 fail（`BRIEF_VALIDATE_RETRIEVAL`）。把 reflex 釘成合約。相依 [[CC-400]] | ✅ pr:#308 |
-| CC-402 | auto-pack 與 detached lifecycle 相容（augmented brief 記為 run-spec trusted brief_file），解禁後 `dispatch.auto_pack = on` 可預設。HARD security/risk gate。相依 [[CC-399]] | 🟢 |
+| CC-402 | auto-pack 與 detached lifecycle 相容（augmented brief 記為 run-spec trusted brief_file）+ gate 改驗 effective brief；`dispatch.auto_pack` 預設翻 on、`BRIEF_VALIDATE_RETRIEVAL` 預設翻 fail（CC-401 fail-flip）。HARD security/risk gate。相依 [[CC-399]] | ✅ |
 
 ### Phase 2 — memory 檢索基底（P2-P3；能力層）
 

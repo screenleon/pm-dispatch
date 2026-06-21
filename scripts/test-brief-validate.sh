@@ -110,6 +110,7 @@ acceptance:
   - dispatch docs updated
 self_verify:
   - cmd: "bash scripts/test-brief-validate.sh"
+retrieval_skip_reason: fixture exercises the write+self_verify path, not retrieval
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -134,6 +135,7 @@ acceptance:
   - validator added
 self_verify:
   - cmd: "bash scripts/brief-validate.sh --help"
+retrieval_skip_reason: fixture exercises the new+self_verify path, not retrieval
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -590,6 +592,7 @@ acceptance:
   - brief-validate.sh rejects invalid architecture_impact enum values
 self_verify:
   - cmd: "grep -q 'architecture_impact' scripts/brief-validate.sh"
+retrieval_skip_reason: fixture exercises architecture_impact:minor warning, not retrieval
 EOF
 
   local output="" rc=0
@@ -627,6 +630,7 @@ acceptance:
   - dispatch-brief.md contains new field documentation
 self_verify:
   - cmd: "grep -q 'architecture_impact' docs/dispatch-brief.md"
+retrieval_skip_reason: fixture exercises architecture_impact:minor+conceptual_map, not retrieval
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -655,6 +659,7 @@ acceptance:
   - core/state/store.sh exists and passes shellcheck
 self_verify:
   - cmd: "bash -c 'shellcheck core/state/store.sh'"
+retrieval_skip_reason: fixture exercises architecture_impact:major+conceptual_map, not retrieval
 EOF
 
   assert_validation "$name" "$brief" 0 "VALID"
@@ -751,6 +756,7 @@ acceptance:
   - works as expected
 self_verify:
   - cmd: "test -f docs/dispatch-brief.md"
+retrieval_skip_reason: fixture exercises vague-acceptance warning, not retrieval
 EOF
 
   local output="" rc=0
@@ -785,6 +791,7 @@ acceptance:
   - new-feature.sh exists and is executable
 self_verify:
   - cmd: "test -x scripts/new-feature.sh"
+retrieval_skip_reason: fixture exercises behavioral_units qa-checklist warning, not retrieval
 EOF
 
   local output="" rc=0
@@ -799,15 +806,41 @@ EOF
   fi
 }
 
-# A file-writing brief without retrieval evidence warns by default but still passes.
+# A file-writing brief without retrieval evidence is REJECTED by default.
+# The default flipped warn -> fail (CC-402), so retrieval evidence is now mandatory
+# unless BRIEF_VALIDATE_RETRIEVAL=warn is set explicitly.
 # Steps:
 # 1. Write a file-writing brief with no context:/auto_context:/retrieval_skip_reason:.
-# 2. Run brief-validate.sh with no BRIEF_VALIDATE_RETRIEVAL set (default warn).
-# 3. Assert exit 0 with both WARN and VALID in the output.
-case_warn_retrieval_evidence_default() {
-  local name="warn-retrieval-evidence-default"
+# 2. Run brief-validate.sh with no BRIEF_VALIDATE_RETRIEVAL set (default fail).
+# 3. Assert exit 1 and the lacking-retrieval-evidence REJECT message.
+case_reject_retrieval_evidence_default() {
+  local name="reject-retrieval-evidence-default"
   should_run "$name" || return 0
-  local brief="$tmpdir/retrieval-default-warn.md"
+  local brief="$tmpdir/retrieval-default-fail.md"
+  write_brief "$brief" <<EOF
+schema_version: 1
+working_dir: $REPO_ROOT
+goal: Update dispatch docs without retrieval evidence.
+files:
+  - write: docs/dispatch-brief.md
+acceptance:
+  - dispatch docs are updated
+self_verify:
+  - cmd: "test -f docs/dispatch-brief.md"
+EOF
+
+  assert_validation "$name" "$brief" 1 "lacks retrieval evidence"
+}
+
+# The legacy warn behavior is still reachable via an explicit override.
+# Steps:
+# 1. Write the same evidence-less file-writing brief.
+# 2. Run brief-validate.sh with BRIEF_VALIDATE_RETRIEVAL=warn.
+# 3. Assert exit 0 with both WARN and VALID in the output.
+case_warn_retrieval_evidence_explicit() {
+  local name="warn-retrieval-evidence-explicit"
+  should_run "$name" || return 0
+  local brief="$tmpdir/retrieval-explicit-warn.md"
   write_brief "$brief" <<EOF
 schema_version: 1
 working_dir: $REPO_ROOT
@@ -822,7 +855,7 @@ EOF
 
   local output="" rc=0
   set +e
-  output="$(bash "$VALIDATOR" "$brief" 2>&1)"
+  output="$(BRIEF_VALIDATE_RETRIEVAL=warn bash "$VALIDATOR" "$brief" 2>&1)"
   rc=$?
   set -e
   if [[ "$rc" -eq 0 && "$output" == *"WARN"* && "$output" == *"VALID"* ]]; then
@@ -1344,7 +1377,8 @@ case_reject_invalid_architecture_impact
 case_reject_write_self_verify_no_cmd
 case_warn_vague_acceptance
 case_warn_behavioral_units_no_qa_checklist
-case_warn_retrieval_evidence_default
+case_reject_retrieval_evidence_default
+case_warn_retrieval_evidence_explicit
 case_reject_retrieval_evidence_fail_mode
 case_valid_retrieval_evidence_context
 case_valid_retrieval_evidence_auto_context

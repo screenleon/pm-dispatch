@@ -390,7 +390,7 @@ if has_behavioral_units_field "$brief"; then
   fi
 fi
 
-retrieval_mode="${BRIEF_VALIDATE_RETRIEVAL:-warn}"
+retrieval_mode="${BRIEF_VALIDATE_RETRIEVAL:-fail}"
 case "$retrieval_mode" in
   warn|fail) ;;
   *) reject "invalid BRIEF_VALIDATE_RETRIEVAL: expected warn|fail, got '${retrieval_mode}'";;

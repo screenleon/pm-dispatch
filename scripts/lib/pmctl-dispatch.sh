@@ -779,8 +779,10 @@ pmctl_dispatch_run_detached() {
   local -a forward=("$@")
 
   # Separate the core --cd / --brief-file (recorded as trusted scalars) from the
-  # native passthrough args. Detached rejects auto-pack, so the forwarded brief
-  # always equals the guarded brief_file; assert that invariant defensively.
+  # native passthrough args. The caller passes the EFFECTIVE brief (the auto-pack
+  # augmented copy when auto-pack ran, else the original) as brief_file AND has
+  # already swapped the forwarded --brief-file to that same path, so the two must
+  # match; assert that invariant defensively.
   local cd_arg="" fwd_brief="" i=0
   local -a native=()
   while [[ "$i" -lt "${#forward[@]}" ]]; do
@@ -1151,12 +1153,12 @@ pmctl_dispatch_run() {
   local adapter_path
   adapter_path="$(pmctl_dispatch_resolve_adapter "$repo_root" "$adapter")" || return 2
 
-  # 3. Brief-validate (shared) — always runs; there is no brief-less path.
-  pmctl_dispatch_validate_brief "$repo_root" "$brief_file" || return 2
-
-  # 3a. Optional auto-pack. Config is loaded here because dispatch.auto_pack
-  # decides whether this pre-guard step runs; adapter-facing config exports are
-  # still applied below before invocation.
+  # 3. Optional auto-pack, then brief-validate the EFFECTIVE brief. Auto-pack runs
+  # BEFORE validation on purpose: under BRIEF_VALIDATE_RETRIEVAL=fail an appended
+  # auto_context: block must count as retrieval evidence for the gate, so the gate
+  # has to see the post-pack brief. Config is loaded here because dispatch.auto_pack
+  # decides whether the pack step runs; adapter-facing config exports are still
+  # applied below before invocation.
   if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
   local _dispatch_model _dispatch_created_ts _dispatch_run_id _auto_pack_effective
   _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
@@ -1184,25 +1186,24 @@ pmctl_dispatch_run() {
     fi
   fi
 
-  _auto_pack_effective="off"
+  # Built-in default is ON (context-first by default): retrieval-first discipline
+  # wants the structural auto_context mechanism active unless explicitly opted out
+  # (flag --no-auto-pack > dispatch.auto_pack config > this built-in default).
+  _auto_pack_effective="on"
   if [[ "$auto_pack_flag" == "on" || "$auto_pack_flag" == "off" ]]; then
     _auto_pack_effective="$auto_pack_flag"
   elif [[ "${PM_CFG_AUTO_PACK:-}" == "on" || "${PM_CFG_AUTO_PACK:-}" == "off" ]]; then
     _auto_pack_effective="$PM_CFG_AUTO_PACK"
   fi
 
-  # Detached + auto-pack is rejected for now. Auto-pack forwards a derived pack
-  # brief (under .pm-dispatch/ctx/packs/, outside the /tmp brief-guard pattern)
-  # that differs from the /tmp brief the guard validates; supporting that safely
-  # in a detached run-spec needs a pack-provenance contract that is out of scope
-  # for 7c-2a. Rejecting the combination keeps the detached invariant simple and
-  # auditable: the brief that is guarded IS the brief that is validated and
-  # executed. (auto-pack default is off; detached is the built-in default for eligible adapters.)
-  if [[ "$_lifecycle_effective" == "detached" && "$_auto_pack_effective" == "on" ]]; then
-    printf 'pmctl dispatch run: --lifecycle detached does not yet support auto-pack; run foreground or pass --no-auto-pack\n' >&2
-    return 2
-  fi
-
+  # Auto-pack (best-effort) runs for BOTH lifecycles. It appends a pointer-only
+  # auto_context: block to a copy of the brief under .pm-dispatch/ctx/packs/ and,
+  # on success, that pack becomes the EFFECTIVE brief. Foreground forwards the pack
+  # to the adapter directly; detached snapshots the pack to /tmp/brief-<run_id>.md
+  # (the only guardable location) so the supervisor validates == guards == executes
+  # the same augmented bytes, preserving the single-brief invariant. The earlier
+  # divergence — pack outside the /tmp guard pattern — is resolved by that snapshot,
+  # so detached + auto-pack is no longer rejected.
   PMCTL_DISPATCH_AUTO_PACK_PATH=""
   if [[ "$_auto_pack_effective" == "on" ]]; then
     pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true
@@ -1217,6 +1218,15 @@ pmctl_dispatch_run() {
       unset _brief_i
     fi
   fi
+
+  # 3c. Validate the EFFECTIVE brief (the augmented pack when auto-pack produced one,
+  # else the original). Validating here — after auto-pack — lets the gate count an
+  # appended auto_context: block as retrieval evidence under BRIEF_VALIDATE_RETRIEVAL=
+  # fail. The check is content-only and path-agnostic; the guard below still runs on
+  # the original /tmp brief (the only guardable path), and detached re-validates and
+  # re-guards the /tmp snapshot of this same effective brief in the supervisor.
+  local _effective_brief="${PMCTL_DISPATCH_AUTO_PACK_PATH:-$brief_file}"
+  pmctl_dispatch_validate_brief "$repo_root" "$_effective_brief" || return 2
 
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
   #    Gates the executor's brief-file write for this runtime via the same code
@@ -1248,7 +1258,7 @@ pmctl_dispatch_run() {
   #    preflight gates above still front every executor invocation in both paths.
   if [[ "$_lifecycle_effective" == "detached" ]]; then
     pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
-      "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+      "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
       "${forward[@]}"
     return $?
   fi

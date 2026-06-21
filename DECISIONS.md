@@ -7,6 +7,18 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-21: retrieval-first-defaults-on-and-fail
+
+Closes: BACKLOG.md#CC-402
+
+**Context**: After CC-400 (mandatory retrieval order) and CC-401 (brief-validate retrieval-evidence chokepoint, shipped at `BRIEF_VALIDATE_RETRIEVAL=warn`), the retrieval-first discipline existed but was not load-bearing: the only structural context-first mechanism — dispatch `--auto-pack` — defaulted off AND was rejected under the default `detached` lifecycle (the augmented pack brief diverged from the guarded `/tmp` brief), and the evidence gate only warned. The earlier auto-pack decision (2026-06-13 `passive-context-v1-auto-pack-pointer-only-opt-in`) deliberately shipped auto-pack **opt-in, default off**, gated on `context.auto_packed` telemetry before flipping the default.
+
+**Decision**: Ship the full coherent slice in one PR rather than staging the flips: (1) make detached + auto-pack compatible by snapshotting the augmented brief to the guardable `/tmp/brief-<run_id>.md` and recording it as the run-spec's trusted `brief_file` (supervisor validates == guards == executes one brief; CC-398 invariant intact); (2) move the dispatch gate validation to **after** auto-pack so it validates the effective brief and an appended `auto_context:` block counts as evidence; (3) flip `dispatch.auto_pack` built-in default **off → on**; (4) flip `BRIEF_VALIDATE_RETRIEVAL` default **warn → fail**. Approver: screenleon (chose full-C "complete, not half-baked" over compat-only or compat+single-flip, 2026-06-21), explicitly accepting the revision of the observe-first telemetry gate on the auto-pack default — rationale: both flips are cheaply reversible config defaults, auto-pack is fail-open + pointer-only + read-only reuse-scan (worst case adds low-value pointers, never breaks a dispatch), and this is a single-developer dogfood tool where the author, gate-runner, and brief-author are the same actor.
+
+**Alternatives considered**: (a) **Compat-only, defer both flips** — cleanest single-purpose PR for the HARD gate; rejected as half-baked (leaves Ph1 advisory, not enforced). (b) **Compat + warn→fail only** — rejected as the *worst* ordering: it requires evidence before the auto-supply mechanism (auto_pack) is on by default, pushing the burden back to manual `context:` discipline — exactly the reflex-degradation CC-401 fought. (c) **Make auto-pack stamp a "0-hit, scanned" auto_context block** so auto_pack-on always satisfies the gate — rejected as dishonest: it would turn the gate into a rubber stamp; a brief whose scan found nothing and whose author wrote nothing genuinely skipped retrieval and should declare `retrieval_skip_reason:`.
+
+**Constraints introduced**: A file-writing brief with **zero** reuse hits and no hand-authored `context:`/`retrieval_skip_reason:` is rejected by default — auto-pack does not manufacture evidence. The PM agent (CC-400 retrieval-first) authors `context:` from its own retrieval, so PM briefs are unaffected; ad-hoc/manual briefs must carry evidence or an explicit skip reason. `BRIEF_VALIDATE_RETRIEVAL=warn` remains available as an escape hatch. The detached-snapshot path must keep the trusted-scalar contract (no second `--brief-file` in run-spec native args) — regression-locked by `test-dispatch-lifecycle.sh`.
+
 ## 2026-06-19: gate-overrides-autodiscovery-trust-boundary-accepted
 
 Relates: gh-174, gh-173

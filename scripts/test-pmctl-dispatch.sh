@@ -821,8 +821,11 @@ case_timeout_flag_beats_config_via_pmctl() {
   rm -rf "$home" "$work"; rm -f "$stderr"
 }
 
-case_auto_pack_default_off_emits_no_event() {
-  local name="dispatch/auto-pack default off emits no event"
+case_auto_pack_default_on_emits_event() {
+  # Built-in default flipped off -> on (CC-402): a dispatch with no --auto-pack /
+  # --no-auto-pack flag and no config now auto-packs, emitting a context.auto_packed
+  # event (hits may be 0 on an unindexed work dir, but the event always fires).
+  local name="dispatch/auto-pack default on emits event"
   should_run "$name" || return 0
   local work brief state_root count code
   work="$(mktemp -d)"; git init -q "$work"
@@ -831,6 +834,28 @@ case_auto_pack_default_off_emits_no_event() {
   set +e
   PM_DISPATCH_STATE_ROOT="$state_root" \
     "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 0 && "$count" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code context.auto_packed_count=$count"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
+case_no_auto_pack_overrides_default_on() {
+  # --no-auto-pack disables the new built-in default-on (no config needed).
+  local name="dispatch/--no-auto-pack overrides built-in default on"
+  should_run "$name" || return 0
+  local work brief state_root count code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --no-auto-pack --print-cmd \
     >/dev/null 2>/dev/null; code=$?
   set -e
   count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
@@ -1066,7 +1091,8 @@ case_caller_model_beats_config
 case_config_malformed_model_warns_and_fallback
 case_config_timeout_exported_to_claude_adapter
 case_timeout_flag_beats_config_via_pmctl
-case_auto_pack_default_off_emits_no_event
+case_auto_pack_default_on_emits_event
+case_no_auto_pack_overrides_default_on
 case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_hits_creates_pack_and_forwards_copy
 case_dispatch_cd_canonicalized_for_pack_path
