@@ -19,7 +19,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **`brief-validate.sh` now checks retrieval evidence for file-writing briefs.** Non-trivial briefs must carry a non-empty `context:` block (or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends), or a non-empty `retrieval_skip_reason:`; rollout defaults to warn and can be flipped to fail with `BRIEF_VALIDATE_RETRIEVAL=fail` (CC-401).
+- **`brief-validate.sh` now checks retrieval evidence for file-writing briefs.** Non-trivial briefs must carry a non-empty `context:` block (or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends), or a non-empty `retrieval_skip_reason:` (CC-401). The check shipped at `BRIEF_VALIDATE_RETRIEVAL=warn` and is now **fail** by default — see the `Changed` entry above for the default flip (CC-402); set `BRIEF_VALIDATE_RETRIEVAL=warn` to restore advisory behavior.
 
 ---
 

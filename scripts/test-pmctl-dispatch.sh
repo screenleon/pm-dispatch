@@ -172,6 +172,12 @@ case_guard_denied_brief_creates_no_pack_artifact() {
   # BEFORE auto-pack reads/copies it, so a guard-denied brief must leave NO derived
   # artifact — no pack under .pm-dispatch/ctx/packs/ and no context.auto_packed event —
   # even when reuse hits are available. Fails if auto-pack runs ahead of the guard.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index` (reuse hits available).
+  # 2. Place a valid brief OUTSIDE /tmp (guard-denied) with a goal matching the hits;
+  #    run `pmctl dispatch run --auto-pack`.
+  # 3. Assert exit 2 + "guard denied", zero pack files, and zero context.auto_packed
+  #    events (the authored brief is guarded before any auto-pack read/copy).
   local name="dispatch/guard-denied brief with reuse hits creates no pack artifact"
   should_run "$name" || return 0
   local work brief state_root err code packs autopacked
@@ -874,6 +880,10 @@ case_auto_pack_default_on_emits_event() {
   # Built-in default flipped off -> on (CC-402): a dispatch with no --auto-pack /
   # --no-auto-pack flag and no config now auto-packs, emitting a context.auto_packed
   # event (hits may be 0 on an unindexed work dir, but the event always fires).
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief; set no auto-pack/lifecycle flag.
+  # 2. Run `pmctl dispatch run --lifecycle foreground --print-cmd` (no --auto-pack).
+  # 3. Assert exit 0 and >=1 context.auto_packed event (built-in default is on).
   local name="dispatch/auto-pack default on emits event"
   should_run "$name" || return 0
   local work brief state_root count code
@@ -896,6 +906,10 @@ case_auto_pack_default_on_emits_event() {
 
 case_no_auto_pack_overrides_default_on() {
   # --no-auto-pack disables the new built-in default-on (no config needed).
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief; write no config.
+  # 2. Run `pmctl dispatch run --no-auto-pack --print-cmd`.
+  # 3. Assert exit 0 and zero context.auto_packed events.
   local name="dispatch/--no-auto-pack overrides built-in default on"
   should_run "$name" || return 0
   local work brief state_root count code
@@ -917,6 +931,12 @@ case_no_auto_pack_overrides_default_on() {
 }
 
 case_auto_pack_zero_hits_event_original_brief() {
+  # Auto-pack with zero reuse hits emits a hits=0 event and keeps the original brief.
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief (no indexed content -> no hits).
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd`.
+  # 3. Assert exit 0, event hits=0 with empty pack, the original brief is forwarded,
+  #    and no pack file was written under .pm-dispatch/ctx/packs/.
   local name="dispatch/--auto-pack zero hits emits event and keeps original brief"
   should_run "$name" || return 0
   local work brief state_root stderr evt code hits pack cmd_brief
@@ -947,6 +967,11 @@ case_auto_pack_hits_creates_pack_and_forwards_copy() {
   # snapshots it to the guardable /tmp/brief-<run_id>.md, forwarding the snapshot so a
   # single effective brief is guarded == executed == recorded (CC-402). Assert both
   # the work-repo pack content and that the forwarded brief is the equal /tmp snapshot.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index` so reuse-scan finds hits.
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd` against a read-only guard brief.
+  # 3. Assert the work-repo pack has auto_context + <=5 refs and its head equals the
+  #    original brief, and the forwarded brief is the equal guardable /tmp snapshot.
   local name="dispatch/--auto-pack hits create pack and forward /tmp snapshot"
   should_run "$name" || return 0
   local work brief state_root stderr evt code hits pack cmd_brief refs original_part brief_lines
@@ -1002,6 +1027,11 @@ case_auto_pack_foreground_records_executed_snapshot() {
   # original brief. Fails under the mutation where execute_tail/records receive the
   # original brief while the adapter argv receives the pack (guarded/executed/recorded
   # divergence). Exercises execute_tail + post-verify + durable record, not --print-cmd.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index`; install a fake codex (exit 0).
+  # 2. Run a non-dry-run foreground `pmctl dispatch run --auto-pack`.
+  # 3. Assert exit 0/OK, runs.jsonl brief_file == the forwarded /tmp snapshot, and the
+  #    snapshot carries auto_context (executed == recorded augmented brief).
   local name="dispatch/foreground auto-pack records the executed augmented snapshot"
   should_run "$name" || return 0
   local work brief bindir state_root out code runs_file rec_brief fwd_brief
@@ -1041,6 +1071,12 @@ EOF
 }
 
 case_dispatch_cd_canonicalized_for_pack_path() {
+  # Auto-pack canonicalizes the --cd value for the internal pack path while still
+  # forwarding the original --cd spelling to the adapter.
+  # Steps:
+  # 1. Seed indexed content; pass a non-canonical --cd ("$work/.").
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd`.
+  # 3. Assert the event pack path is canonical (no "/./") and the adapter cwd keeps "/.".
   local name="dispatch/--cd canonicalized for pack path; original spelling forwarded to adapter"
   should_run "$name" || return 0
   local work brief state_root stderr evt code pack cwd
