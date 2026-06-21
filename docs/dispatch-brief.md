@@ -146,11 +146,13 @@ on where a config disabled it:
 
     pmctl dispatch run --adapter <executor> --cd <repo_root> --brief-file <brief>
 
-Auto-pack works under **both** lifecycles. Under the default `detached` lifecycle
-the augmented brief is snapshotted to the guardable `/tmp/brief-<run_id>.md` path
-and recorded as the run-spec's trusted `brief_file`, so the supervisor validates,
-guards, and executes that one augmented brief (no divergence from the guarded
-brief). Under `--lifecycle foreground` the augmented copy is forwarded directly.
+Auto-pack works under **both** lifecycles, and in both the augmented brief is
+landed at the guardable `/tmp/brief-<run_id>.md` path so a single brief is
+guarded == validated == executed == recorded. Under the default `detached`
+lifecycle that snapshot is recorded as the run-spec's trusted `brief_file` and the
+supervisor validates, guards, and executes it. Under `--lifecycle foreground`
+dispatch snapshots the pack to the same `/tmp` path before guarding and forwarding
+it to the executor.
 
 When enabled, `pmctl dispatch run` extracts the brief `goal`, runs
 `pmctl context reuse-scan`, and writes a temporary augmented copy under the

@@ -1198,50 +1198,74 @@ pmctl_dispatch_run() {
 
   # Auto-pack (best-effort) runs for BOTH lifecycles. It appends a pointer-only
   # auto_context: block to a copy of the brief under .pm-dispatch/ctx/packs/ and,
-  # on success, that pack becomes the EFFECTIVE brief. Foreground forwards the pack
-  # to the adapter directly; detached snapshots the pack to /tmp/brief-<run_id>.md
-  # (the only guardable location) so the supervisor validates == guards == executes
-  # the same augmented bytes, preserving the single-brief invariant. The earlier
-  # divergence — pack outside the /tmp guard pattern — is resolved by that snapshot,
-  # so detached + auto-pack is no longer rejected.
+  # on success, that pack becomes the EFFECTIVE brief.
   PMCTL_DISPATCH_AUTO_PACK_PATH=""
   if [[ "$_auto_pack_effective" == "on" ]]; then
     pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true
-    if [[ -n "${PMCTL_DISPATCH_AUTO_PACK_PATH:-}" ]]; then
-      local _brief_i
-      for ((_brief_i = 0; _brief_i < ${#forward[@]}; _brief_i += 1)); do
-        if [[ "${forward[$_brief_i]}" == "--brief-file" && $((_brief_i + 1)) -lt ${#forward[@]} ]]; then
-          forward[_brief_i + 1]="$PMCTL_DISPATCH_AUTO_PACK_PATH"
-          break
-        fi
-      done
-      unset _brief_i
-    fi
   fi
 
   # 3c. Validate the EFFECTIVE brief (the augmented pack when auto-pack produced one,
   # else the original). Validating here — after auto-pack — lets the gate count an
   # appended auto_context: block as retrieval evidence under BRIEF_VALIDATE_RETRIEVAL=
-  # fail. The check is content-only and path-agnostic; the guard below still runs on
-  # the original /tmp brief (the only guardable path), and detached re-validates and
-  # re-guards the /tmp snapshot of this same effective brief in the supervisor.
+  # fail. The check is content-only and path-agnostic.
   local _effective_brief="${PMCTL_DISPATCH_AUTO_PACK_PATH:-$brief_file}"
   pmctl_dispatch_validate_brief "$repo_root" "$_effective_brief" || return 2
 
   # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
-  #    Gates the executor's brief-file write for this runtime via the same code
-  #    path the PreToolUse hooks enforce. The dispatch adapter IS the runtime
-  #    axis; the role is always `executor` here.
+  #    Gates the executor brief-file path for this runtime via the same code path the
+  #    PreToolUse hooks enforce. The dispatch adapter IS the runtime axis; the role is
+  #    always `executor` here.
   if ! declare -F pmctl_guard_check >/dev/null; then
     printf 'pmctl dispatch run: guard unavailable (pmctl-guard not sourced) — refusing to dispatch without policy enforcement\n' >&2
     return 2
   fi
+  # 4a. Guard the AUTHORED brief (the caller-supplied --brief-file) for path policy —
+  #     this is the security gate that denies a brief outside the /tmp guard pattern,
+  #     BEFORE any pack derivation. Both lifecycles (detached re-guards in supervisor).
   if ! pmctl_guard_check "$repo_root" --event pre-write --role executor --runtime "$adapter" --file "$brief_file"; then
     printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
     return 2
   fi
 
-  # 4a. Export config defaults to the adapter subprocess.
+  # 4b. Foreground: land the effective brief at the guardable /tmp/brief-<run_id>.md
+  # path and guard THAT too, so a SINGLE brief is guarded == validated == executed ==
+  # post-verified == recorded — matching the detached supervisor, which re-guards its
+  # own /tmp snapshot before the executor runs. The auto-pack pack lives under
+  # .pm-dispatch/ctx/packs/ (not a guardable path), so when one was produced we
+  # snapshot it to /tmp here. No-op when no pack was produced: the effective brief is
+  # already the authored /tmp brief just guarded above. Detached keeps the work-repo
+  # pack as its effective brief and snapshots it inside run_detached/the supervisor.
+  if [[ "$_lifecycle_effective" == "foreground" && -n "$PMCTL_DISPATCH_AUTO_PACK_PATH" ]]; then
+    local _fg_snapshot="/tmp/brief-$_dispatch_run_id.md" _fg_snap_tmp
+    _fg_snap_tmp="$(mktemp "/tmp/.brief-$_dispatch_run_id.XXXXXX")" || {
+      printf 'pmctl dispatch run: failed to create foreground pack snapshot tempfile\n' >&2
+      return 2
+    }
+    if ! { cp "$_effective_brief" "$_fg_snap_tmp" && mv -f "$_fg_snap_tmp" "$_fg_snapshot"; }; then
+      rm -f "$_fg_snap_tmp"
+      printf 'pmctl dispatch run: failed to snapshot foreground pack to %s\n' "$_fg_snapshot" >&2
+      return 2
+    fi
+    _effective_brief="$_fg_snapshot"
+    if ! pmctl_guard_check "$repo_root" --event pre-write --role executor --runtime "$adapter" --file "$_effective_brief"; then
+      printf 'pmctl dispatch run: guard denied dispatch for adapter %q (effective brief)\n' "$adapter" >&2
+      return 2
+    fi
+  fi
+
+  # 4c. Point the adapter argv at the effective brief (single rewrite, both lifecycles).
+  if [[ "$_effective_brief" != "$brief_file" ]]; then
+    local _brief_i
+    for ((_brief_i = 0; _brief_i < ${#forward[@]}; _brief_i += 1)); do
+      if [[ "${forward[$_brief_i]}" == "--brief-file" && $((_brief_i + 1)) -lt ${#forward[@]} ]]; then
+        forward[_brief_i + 1]="$_effective_brief"
+        break
+      fi
+    done
+    unset _brief_i
+  fi
+
+  # 4d. Export config defaults to the adapter subprocess.
   #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
   #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
   #     lower than an explicit --timeout / --model flag — the existing elif chains
@@ -1264,7 +1288,7 @@ pmctl_dispatch_run() {
   fi
 
   pmctl_dispatch_execute_tail "$repo_root" "$work_dir" "$adapter" "$adapter_path" \
-    "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+    "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
     "${forward[@]}"
   return $?
 }

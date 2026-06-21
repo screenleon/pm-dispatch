@@ -894,7 +894,11 @@ case_auto_pack_zero_hits_event_original_brief() {
 }
 
 case_auto_pack_hits_creates_pack_and_forwards_copy() {
-  local name="dispatch/--auto-pack hits create pack and forward copy"
+  # Foreground auto-pack writes the augmented pack under .pm-dispatch/ctx/packs/ AND
+  # snapshots it to the guardable /tmp/brief-<run_id>.md, forwarding the snapshot so a
+  # single effective brief is guarded == executed == recorded (CC-402). Assert both
+  # the work-repo pack content and that the forwarded brief is the equal /tmp snapshot.
+  local name="dispatch/--auto-pack hits create pack and forward /tmp snapshot"
   should_run "$name" || return 0
   local work brief state_root stderr evt code hits pack cmd_brief refs original_part brief_lines
   work="$(mktemp -d)"; git init -q "$work"
@@ -923,7 +927,7 @@ EOF
   original_part="$(mktemp)"
   brief_lines="$(wc -l < "$brief" | tr -d ' ')"
   [[ -f "$pack" ]] && head -n "$brief_lines" "$pack" > "$original_part"
-  if [[ "$code" -eq 0 && "$hits" -ge 1 && "$hits" -le 5 && "$cmd_brief" == "$pack" && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md ]] \
+  if [[ "$code" -eq 0 && "$hits" -ge 1 && "$hits" -le 5 && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md ]] \
      && [[ -f "$pack" ]] \
      && grep -q '^auto_context:' "$pack" \
      && grep -q '^  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand$' "$pack" \
@@ -931,12 +935,60 @@ EOF
      && grep -q '^    why_relevant: "' "$pack" \
      && grep -q '^    confidence: ' "$pack" \
      && [[ "$refs" -le 5 ]] \
-     && cmp -s "$brief" "$original_part"; then
+     && cmp -s "$brief" "$original_part" \
+     && [[ "$cmd_brief" == /tmp/brief-run-*.md ]] \
+     && [[ -f "$cmd_brief" ]] \
+     && cmp -s "$cmd_brief" "$pack"; then
     pass "$name"
   else
     fail "$name" "code=$code hits=$hits pack=$pack cmd_brief=$cmd_brief refs=$refs"
   fi
-  rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part"
+  rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part" "$cmd_brief" 2>/dev/null || true
+}
+
+case_auto_pack_foreground_records_executed_snapshot() {
+  # CC-402 / QA: a NON-dry-run foreground auto-pack run. The brief recorded in
+  # runs.jsonl must be the SAME augmented effective brief the adapter executed —
+  # the guardable /tmp/brief-<run_id>.md snapshot carrying auto_context, NOT the
+  # original brief. Fails under the mutation where execute_tail/records receive the
+  # original brief while the adapter argv receives the pack (guarded/executed/recorded
+  # divergence). Exercises execute_tail + post-verify + durable record, not --print-cmd.
+  local name="dispatch/foreground auto-pack records the executed augmented snapshot"
+  should_run "$name" || return 0
+  local work brief bindir state_root out code runs_file rec_brief fwd_brief
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  state_root="$(mktemp -d)"
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" PATH="$bindir:$PATH" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack 2>&1)"; code=$?
+  set -e
+  # runs.jsonl lives only in the work-dir partition (context telemetry writes only
+  # events.jsonl), so head -1 deterministically finds the dispatch run rows.
+  runs_file="$(find "$state_root" -name runs.jsonl -type f 2>/dev/null | head -1)"
+  rec_brief=""
+  [[ -n "$runs_file" ]] && rec_brief="$(jq -r 'select(.brief_file)|.brief_file' "$runs_file" 2>/dev/null | tail -1)"
+  fwd_brief="$(awk '/brief:[[:space:]]/ { print $2; exit }' <<<"$out")"
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ "$rec_brief" == /tmp/brief-run-*.md ]] \
+     && [[ "$rec_brief" == "$fwd_brief" ]] \
+     && [[ -f "$rec_brief" ]] \
+     && grep -q '^auto_context:' "$rec_brief"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code rec_brief=$rec_brief fwd_brief=$fwd_brief tail=$(tail -3 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir" "$state_root"; rm -f "$rec_brief" 2>/dev/null || true
 }
 
 case_dispatch_cd_canonicalized_for_pack_path() {
@@ -1095,6 +1147,7 @@ case_auto_pack_default_on_emits_event
 case_no_auto_pack_overrides_default_on
 case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_hits_creates_pack_and_forwards_copy
+case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
 case_auto_pack_pack_failure_degrades_to_original_brief
 case_config_auto_pack_on_activates_without_flag

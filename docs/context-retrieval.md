@@ -58,12 +58,14 @@ pointer-only candidates) at:
 
     <repo-root>/.pm-dispatch/ctx/packs/<run_id>.md
 
-Under `--lifecycle foreground` that copy is forwarded directly to the executor.
-Under the default `detached` lifecycle the augmented copy is snapshotted to the
-guardable `/tmp/brief-<run_id>.md` path and recorded as the run-spec's trusted
-`brief_file`, so the supervisor validates, guards, and executes exactly the
-augmented brief — the single guarded == validated == executed brief invariant
-holds in both lifecycles. The authored brief file stays unchanged. If reuse-scan,
+In BOTH lifecycles the augmented brief is landed at the guardable
+`/tmp/brief-<run_id>.md` path and used as the single brief that is guarded,
+validated, executed, post-verified, and recorded. Under `--lifecycle foreground`
+dispatch snapshots the pack there before guarding and forwarding it; under the
+default `detached` lifecycle the snapshot is recorded as the run-spec's trusted
+`brief_file` and the supervisor validates, guards, and executes exactly that
+brief — so the single guarded == validated == executed brief invariant holds
+identically in both lifecycles. The authored brief file stays unchanged. If reuse-scan,
 pack creation, or validation fails, dispatch warns on stderr and continues with
 the original brief and the same exit semantics.
 
