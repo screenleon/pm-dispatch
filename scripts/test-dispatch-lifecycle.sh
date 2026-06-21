@@ -23,6 +23,16 @@ SUPERVISOR="$REPO_ROOT/scripts/dispatch-supervisor.sh"
 th_init "$@"
 export PM_DISPATCH_STATE_ROOT="$tmp_root/lifecycle-state"
 
+# Isolate the supervisor sentinel key dir to a writable, owner-only temp so the
+# detached-lifecycle cases are deterministic everywhere. _pmctl_sentinel_key_file
+# uses $XDG_RUNTIME_DIR/pm-dispatch when XDG_RUNTIME_DIR is a dir; in a restricted
+# sandbox (CI / pr-gate codex) that path (e.g. /run/user/<uid>) can exist but be
+# unwritable, which fails key-dir creation, stalls `dispatch wait`, and hangs the
+# suite. Pointing it at a temp dir we own keeps the detached path runnable.
+_TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
+mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
+export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf
@@ -880,24 +890,62 @@ case_supervisor_rejects_cd_smuggle() {
   rm -rf "$work"
 }
 
-# ── detached + auto-pack is rejected (deferred combination) ───────────────────
-case_detached_autopack_rejected() {
-  local name="lifecycle/detached + auto-pack rejected"
+# ── detached + auto-pack: the run-spec brief IS the augmented snapshot ─────────
+# CC-402: detached + auto-pack is no longer rejected. When auto-pack finds hits it
+# augments the brief with an auto_context: block; under detached, that augmented
+# brief is snapshotted to the guardable /tmp path and recorded as the run-spec's
+# trusted brief_file, so the supervisor validates == guards == executes one brief.
+case_detached_autopack_snapshot_is_augmented() {
+  local name="lifecycle/detached + auto-pack snapshots the augmented brief"
   should_run "$name" || return 0
-  local work brief code err
+  local work brief bindir run_id code wait_code runspec snap native_brief
   work="$(mktemp -d)"; git init -q "$work"
-  brief="$(_mk_brief "$work")"
+  # Seed indexable content so reuse-scan returns hits for the brief goal below.
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'SRC'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch lifecycle helper\n'
+}
+SRC
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  # Read-only brief (exempt from the retrieval gate) with a goal that matches the
+  # seeded content, so the only behaviour under test is the augmented snapshot.
+  brief="/tmp/brief-lifecycle-autopack-$$.md"
+  _BRIEFS+=("$brief")
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $work
+goal: exercise the pmctl dispatch orchestrator shared flow
+files:
+  - read: $work/src/alpha.sh
+acceptance:
+  - dispatch exits 0
+EOF
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
-  err="$("$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached --auto-pack 2>&1 >/dev/null)"; code=$?
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached --auto-pack 2>/dev/null)"; code=$?
   set -e
-  if [[ "$code" -eq 2 ]] \
-    && grep -qi 'does not yet support auto-pack' <<<"$err" \
-    && [[ -z "$(_first_runspec "$work")" ]]; then
+  runspec="$(_first_runspec "$work")"
+  snap=""; native_brief="present"
+  if [[ -n "$runspec" ]]; then
+    snap="$(grep '^brief_file=' "$runspec" | cut -d= -f2-)"
+    # Trusted-scalar contract: --brief-file must NOT appear in the native passthrough.
+    grep -q '^--brief-file$' "$runspec" || native_brief="absent"
+  fi
+  if [[ "$code" -eq 0 ]] \
+    && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
+    && [[ -n "$runspec" ]] \
+    && [[ "$snap" == "/tmp/brief-${run_id}.md" ]] \
+    && [[ -f "$snap" ]] \
+    && grep -q '^auto_context:' "$snap" \
+    && [[ "$native_brief" == "absent" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code runspec=$(_first_runspec "$work") err=$(tail -2 <<<"$err" | tr '\n' '|')"
+    fail "$name" "code=$code run_id=${run_id:-missing} runspec=${runspec:-missing} snap=${snap:-missing} native_brief=$native_brief autoctx=$(grep -c '^auto_context:' "${snap:-/dev/null}" 2>/dev/null || echo 0)"
   fi
-  rm -rf "$work"
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1 || true
+  rm -rf "$work" "$bindir"
 }
 
 # ── supervisor preflight failure is observable through dispatch wait ──────────
@@ -1370,7 +1418,7 @@ case_supervisor_rejects_bad_runid
 case_supervisor_rejects_missing_scalar
 case_supervisor_rejects_bad_printcmd
 case_supervisor_rejects_cd_smuggle
-case_detached_autopack_rejected
+case_detached_autopack_snapshot_is_augmented
 case_supervisor_preflight_failure
 case_supervisor_tail_failure_writes_fallback_record
 case_supervisor_fallback_covers_ok_run_with_poisoned_results

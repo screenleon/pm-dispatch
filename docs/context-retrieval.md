@@ -42,27 +42,37 @@ including calls that find no hits and calls against a repo with no index yet
 
 ## Dispatch auto-pack
 
-`pmctl dispatch run` can opt in to a deterministic prior-art packing step:
+`pmctl dispatch run` runs a deterministic prior-art packing step. Auto-pack is
+**on by default** (the built-in `dispatch.auto_pack` default is `on`):
 
-    pmctl dispatch run --adapter <executor> --cd <repo-root> --brief-file <brief> --auto-pack
+    pmctl dispatch run --adapter <executor> --cd <repo-root> --brief-file <brief>
 
-The equivalent config default is:
-
-    dispatch.auto_pack = on
-
-Use `--no-auto-pack` to override a config default for one dispatch. Auto-pack is
-off by default.
+Use `--no-auto-pack` to opt out for one dispatch (or set `dispatch.auto_pack =
+off`); `--auto-pack` forces it on where a config disabled it. Precedence is
+flag > config > built-in default (on).
 
 When auto-pack is on, dispatch extracts the brief `goal`, runs
-`pmctl context reuse-scan` against the work repo, and forwards the executor an
-augmented brief copy at:
+`pmctl context reuse-scan` against the work repo, and produces an augmented brief
+copy (the original brief plus an appended `auto_context:` block of up to 5
+pointer-only candidates) at:
 
     <repo-root>/.pm-dispatch/ctx/packs/<run_id>.md
 
-The copy contains the original brief plus an appended `auto_context:` block with
-up to 5 pointer-only candidates. The authored brief file stays unchanged. If
-reuse-scan, pack creation, or validation fails, dispatch warns on stderr and
-continues with the original brief and the same exit semantics.
+In BOTH lifecycles the augmented brief is landed at the guardable
+`/tmp/brief-<run_id>.md` path and used as the single brief that is guarded,
+validated, executed, post-verified, and recorded. Under `--lifecycle foreground`
+dispatch snapshots the pack there before guarding and forwarding it; under the
+default `detached` lifecycle the snapshot is recorded as the run-spec's trusted
+`brief_file` and the supervisor validates, guards, and executes exactly that
+brief — so the single guarded == validated == executed brief invariant holds
+identically in both lifecycles. The authored brief file stays unchanged. If reuse-scan,
+pack creation, or validation fails, dispatch warns on stderr and continues with
+the original brief and the same exit semantics.
+
+Because auto-pack supplies retrieval evidence (the `auto_context:` block) only
+when reuse-scan finds hits, a file-writing brief with **zero** reuse hits and no
+hand-authored `context:` / `retrieval_skip_reason:` is still rejected under the
+default `BRIEF_VALIDATE_RETRIEVAL=fail` — auto-pack does not stamp empty evidence.
 
 Every dispatch with auto-pack enabled records a `context.auto_packed` event,
 including zero-hit and fail-open cases. Inspect it with:

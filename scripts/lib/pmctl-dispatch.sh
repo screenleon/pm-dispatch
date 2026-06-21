@@ -364,7 +364,7 @@ pmctl_dispatch_emit_auto_packed_event() {
 
 pmctl_dispatch_auto_pack() {
   local repo_root="${1:-}" work_dir="${2:-}" brief_file="${3:-}" run_id="${4:-}"
-  local goal reuse_yaml reuse_err block_file block_hits pack_dir pack_path validate_msg validate_status=0
+  local goal reuse_yaml reuse_err block_file block_hits pack_dir pack_path validate_msg validate_status=0 ctx_root
 
   if ! declare -F pmctl_context_reuse_scan >/dev/null 2>&1; then
     # shellcheck disable=SC1091  # dynamic repo root path.
@@ -374,6 +374,19 @@ pmctl_dispatch_auto_pack() {
     printf 'pmctl dispatch run: warning: auto-pack skipped: pmctl context reuse-scan unavailable\n' >&2
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
+  fi
+
+  # Context artifacts (the reuse-scan DB and the pack) are repo-root-local by contract
+  # (docs/context-retrieval.md), and the state-writer already keys a subdirectory --cd
+  # to its git top-level. So resolve work_dir to the git top-level for ALL context I/O
+  # below — otherwise a subdirectory --cd would scatter context.db / .gitignore / packs
+  # under the subdir instead of the repo root. Fall back to work_dir verbatim when it is
+  # not a git work tree (best-effort, same as reuse-scan's own behavior). The adapter
+  # still receives the caller's original --cd; only context placement is normalized.
+  ctx_root="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$ctx_root" ]] || ctx_root="$work_dir"
+  if declare -F _portable_canonical_path >/dev/null 2>&1; then
+    ctx_root="$(_portable_canonical_path "$ctx_root" 2>/dev/null || printf '%s' "$ctx_root")"
   fi
 
   if ! goal="$(pmctl_dispatch_extract_goal "$brief_file" 2>/dev/null)" || [[ -z "$goal" ]]; then
@@ -387,7 +400,7 @@ pmctl_dispatch_auto_pack() {
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
     return 0
   }
-  if ! reuse_yaml="$(pmctl_context_reuse_scan "$work_dir" "$goal" 2>"$reuse_err")"; then
+  if ! reuse_yaml="$(pmctl_context_reuse_scan "$ctx_root" "$goal" 2>"$reuse_err")"; then
     printf 'pmctl dispatch run: warning: auto-pack skipped: reuse-scan failed: %s\n' "$(tr '\n' ' ' < "$reuse_err")" >&2
     rm -f "$reuse_err"
     pmctl_dispatch_emit_auto_packed_event "$repo_root" "$run_id" 0 "" "$brief_file"
@@ -413,7 +426,7 @@ pmctl_dispatch_auto_pack() {
     return 0
   fi
 
-  pack_dir="$work_dir/.pm-dispatch/ctx/packs"
+  pack_dir="$ctx_root/.pm-dispatch/ctx/packs"
   pack_path="$pack_dir/$run_id.md"
   if ! mkdir -p "$pack_dir"; then
     printf 'pmctl dispatch run: warning: auto-pack skipped: cannot create %s\n' "$pack_dir" >&2
@@ -779,8 +792,10 @@ pmctl_dispatch_run_detached() {
   local -a forward=("$@")
 
   # Separate the core --cd / --brief-file (recorded as trusted scalars) from the
-  # native passthrough args. Detached rejects auto-pack, so the forwarded brief
-  # always equals the guarded brief_file; assert that invariant defensively.
+  # native passthrough args. The caller passes the EFFECTIVE brief (the auto-pack
+  # augmented copy when auto-pack ran, else the original) as brief_file AND has
+  # already swapped the forwarded --brief-file to that same path, so the two must
+  # match; assert that invariant defensively.
   local cd_arg="" fwd_brief="" i=0
   local -a native=()
   while [[ "$i" -lt "${#forward[@]}" ]]; do
@@ -1151,12 +1166,12 @@ pmctl_dispatch_run() {
   local adapter_path
   adapter_path="$(pmctl_dispatch_resolve_adapter "$repo_root" "$adapter")" || return 2
 
-  # 3. Brief-validate (shared) — always runs; there is no brief-less path.
-  pmctl_dispatch_validate_brief "$repo_root" "$brief_file" || return 2
-
-  # 3a. Optional auto-pack. Config is loaded here because dispatch.auto_pack
-  # decides whether this pre-guard step runs; adapter-facing config exports are
-  # still applied below before invocation.
+  # 3. Optional auto-pack, then brief-validate the EFFECTIVE brief. Auto-pack runs
+  # BEFORE validation on purpose: under BRIEF_VALIDATE_RETRIEVAL=fail an appended
+  # auto_context: block must count as retrieval evidence for the gate, so the gate
+  # has to see the post-pack brief. Config is loaded here because dispatch.auto_pack
+  # decides whether the pack step runs; adapter-facing config exports are still
+  # applied below before invocation.
   if type -t pm_config_load >/dev/null 2>&1; then pm_config_load; fi
   local _dispatch_model _dispatch_created_ts _dispatch_run_id _auto_pack_effective
   _dispatch_model="$(pmctl_dispatch_extract_model "${forward[@]}")"
@@ -1184,54 +1199,89 @@ pmctl_dispatch_run() {
     fi
   fi
 
-  _auto_pack_effective="off"
+  # Built-in default is ON (context-first by default): retrieval-first discipline
+  # wants the structural auto_context mechanism active unless explicitly opted out
+  # (flag --no-auto-pack > dispatch.auto_pack config > this built-in default).
+  _auto_pack_effective="on"
   if [[ "$auto_pack_flag" == "on" || "$auto_pack_flag" == "off" ]]; then
     _auto_pack_effective="$auto_pack_flag"
   elif [[ "${PM_CFG_AUTO_PACK:-}" == "on" || "${PM_CFG_AUTO_PACK:-}" == "off" ]]; then
     _auto_pack_effective="$PM_CFG_AUTO_PACK"
   fi
 
-  # Detached + auto-pack is rejected for now. Auto-pack forwards a derived pack
-  # brief (under .pm-dispatch/ctx/packs/, outside the /tmp brief-guard pattern)
-  # that differs from the /tmp brief the guard validates; supporting that safely
-  # in a detached run-spec needs a pack-provenance contract that is out of scope
-  # for 7c-2a. Rejecting the combination keeps the detached invariant simple and
-  # auditable: the brief that is guarded IS the brief that is validated and
-  # executed. (auto-pack default is off; detached is the built-in default for eligible adapters.)
-  if [[ "$_lifecycle_effective" == "detached" && "$_auto_pack_effective" == "on" ]]; then
-    printf 'pmctl dispatch run: --lifecycle detached does not yet support auto-pack; run foreground or pass --no-auto-pack\n' >&2
-    return 2
-  fi
-
-  PMCTL_DISPATCH_AUTO_PACK_PATH=""
-  if [[ "$_auto_pack_effective" == "on" ]]; then
-    pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true
-    if [[ -n "${PMCTL_DISPATCH_AUTO_PACK_PATH:-}" ]]; then
-      local _brief_i
-      for ((_brief_i = 0; _brief_i < ${#forward[@]}; _brief_i += 1)); do
-        if [[ "${forward[$_brief_i]}" == "--brief-file" && $((_brief_i + 1)) -lt ${#forward[@]} ]]; then
-          forward[_brief_i + 1]="$PMCTL_DISPATCH_AUTO_PACK_PATH"
-          break
-        fi
-      done
-      unset _brief_i
-    fi
-  fi
-
-  # 4. Guard (shared policy) — MANDATORY. Fail closed if the guard is unavailable.
-  #    Gates the executor's brief-file write for this runtime via the same code
-  #    path the PreToolUse hooks enforce. The dispatch adapter IS the runtime
-  #    axis; the role is always `executor` here.
+  # 3c. Guard (shared policy) — MANDATORY, FAIL CLOSED if the guard is unavailable.
+  #     Gates the executor brief-file path for this runtime via the same code path the
+  #     PreToolUse hooks enforce. The dispatch adapter IS the runtime axis; the role is
+  #     always `executor` here.
   if ! declare -F pmctl_guard_check >/dev/null; then
     printf 'pmctl dispatch run: guard unavailable (pmctl-guard not sourced) — refusing to dispatch without policy enforcement\n' >&2
     return 2
   fi
+  # 3d. Guard the AUTHORED brief (the caller-supplied --brief-file) for path policy
+  #     FIRST — BEFORE auto-pack reads or copies it. A brief outside the /tmp guard
+  #     pattern is denied here, so a guard-denied path can never be read into or
+  #     persisted as a derived pack artifact under .pm-dispatch/ctx/packs/. Both
+  #     lifecycles (detached additionally re-guards its /tmp snapshot in the supervisor).
   if ! pmctl_guard_check "$repo_root" --event pre-write --role executor --runtime "$adapter" --file "$brief_file"; then
     printf 'pmctl dispatch run: guard denied dispatch for adapter %q\n' "$adapter" >&2
     return 2
   fi
 
-  # 4a. Export config defaults to the adapter subprocess.
+  # 3e. Auto-pack (best-effort) runs for BOTH lifecycles, deriving a pack ONLY from the
+  # now guard-approved authored brief. It appends a pointer-only auto_context: block to
+  # a copy of the brief under .pm-dispatch/ctx/packs/ and, on success, that pack becomes
+  # the EFFECTIVE brief.
+  PMCTL_DISPATCH_AUTO_PACK_PATH=""
+  if [[ "$_auto_pack_effective" == "on" ]]; then
+    pmctl_dispatch_auto_pack "$repo_root" "$work_dir" "$brief_file" "$_dispatch_run_id" || true
+  fi
+
+  # 3f. Validate the EFFECTIVE brief (the augmented pack when auto-pack produced one,
+  # else the original). Validating here — after auto-pack — lets the gate count an
+  # appended auto_context: block as retrieval evidence under BRIEF_VALIDATE_RETRIEVAL=
+  # fail. The check is content-only and path-agnostic.
+  local _effective_brief="${PMCTL_DISPATCH_AUTO_PACK_PATH:-$brief_file}"
+  pmctl_dispatch_validate_brief "$repo_root" "$_effective_brief" || return 2
+
+  # 3g. Foreground: land the effective brief at the guardable /tmp/brief-<run_id>.md
+  # path and guard THAT too, so a SINGLE brief is guarded == validated == executed ==
+  # post-verified == recorded — matching the detached supervisor, which re-guards its
+  # own /tmp snapshot before the executor runs. The auto-pack pack lives under
+  # .pm-dispatch/ctx/packs/ (not a guardable path), so when one was produced we
+  # snapshot it to /tmp here. No-op when no pack was produced: the effective brief is
+  # already the authored /tmp brief just guarded above. Detached keeps the work-repo
+  # pack as its effective brief and snapshots it inside run_detached/the supervisor.
+  if [[ "$_lifecycle_effective" == "foreground" && -n "$PMCTL_DISPATCH_AUTO_PACK_PATH" ]]; then
+    local _fg_snapshot="/tmp/brief-$_dispatch_run_id.md" _fg_snap_tmp
+    _fg_snap_tmp="$(mktemp "/tmp/.brief-$_dispatch_run_id.XXXXXX")" || {
+      printf 'pmctl dispatch run: failed to create foreground pack snapshot tempfile\n' >&2
+      return 2
+    }
+    if ! { cp "$_effective_brief" "$_fg_snap_tmp" && mv -f "$_fg_snap_tmp" "$_fg_snapshot"; }; then
+      rm -f "$_fg_snap_tmp"
+      printf 'pmctl dispatch run: failed to snapshot foreground pack to %s\n' "$_fg_snapshot" >&2
+      return 2
+    fi
+    _effective_brief="$_fg_snapshot"
+    if ! pmctl_guard_check "$repo_root" --event pre-write --role executor --runtime "$adapter" --file "$_effective_brief"; then
+      printf 'pmctl dispatch run: guard denied dispatch for adapter %q (effective brief)\n' "$adapter" >&2
+      return 2
+    fi
+  fi
+
+  # 3h. Point the adapter argv at the effective brief (single rewrite, both lifecycles).
+  if [[ "$_effective_brief" != "$brief_file" ]]; then
+    local _brief_i
+    for ((_brief_i = 0; _brief_i < ${#forward[@]}; _brief_i += 1)); do
+      if [[ "${forward[$_brief_i]}" == "--brief-file" && $((_brief_i + 1)) -lt ${#forward[@]} ]]; then
+        forward[_brief_i + 1]="$_effective_brief"
+        break
+      fi
+    done
+    unset _brief_i
+  fi
+
+  # 4. Export config defaults to the adapter subprocess.
   #     Adapters honour PM_CFG_TIMEOUT / PM_CFG_DEFAULT_MODEL at lower priority
   #     than their adapter-specific env vars (CODEX_DISPATCH_TIMEOUT, etc.) and
   #     lower than an explicit --timeout / --model flag — the existing elif chains
@@ -1248,13 +1298,13 @@ pmctl_dispatch_run() {
   #    preflight gates above still front every executor invocation in both paths.
   if [[ "$_lifecycle_effective" == "detached" ]]; then
     pmctl_dispatch_run_detached "$repo_root" "$work_dir" "$adapter" \
-      "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+      "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
       "${forward[@]}"
     return $?
   fi
 
   pmctl_dispatch_execute_tail "$repo_root" "$work_dir" "$adapter" "$adapter_path" \
-    "$_dispatch_run_id" "$_dispatch_model" "$brief_file" "$_dispatch_created_ts" "$print_cmd" \
+    "$_dispatch_run_id" "$_dispatch_model" "$_effective_brief" "$_dispatch_created_ts" "$print_cmd" \
     "${forward[@]}"
   return $?
 }

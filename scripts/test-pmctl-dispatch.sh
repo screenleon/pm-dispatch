@@ -167,6 +167,61 @@ EOF
   rm -rf "$work"
 }
 
+case_guard_denied_brief_creates_no_pack_artifact() {
+  # Security regression (CC-402): the authored --brief-file is guarded for path policy
+  # BEFORE auto-pack reads/copies it, so a guard-denied brief must leave NO derived
+  # artifact — no pack under .pm-dispatch/ctx/packs/ and no context.auto_packed event —
+  # even when reuse hits are available. Fails if auto-pack runs ahead of the guard.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index` (reuse hits available).
+  # 2. Place a valid brief OUTSIDE /tmp (guard-denied) with a goal matching the hits;
+  #    run `pmctl dispatch run --auto-pack`.
+  # 3. Assert exit 2 + "guard denied", zero pack files, and zero context.auto_packed
+  #    events (the authored brief is guarded before any auto-pack read/copy).
+  local name="dispatch/guard-denied brief with reuse hits creates no pack artifact"
+  should_run "$name" || return 0
+  local work brief state_root err code packs autopacked
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  # Valid content but OUTSIDE /tmp/brief-*.md (guard denies); goal matches the indexed
+  # content so auto-pack WOULD find hits if it wrongly ran before the guard.
+  brief="$work/brief.md"
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $work
+goal: exercise the pmctl dispatch orchestrator shared flow
+files:
+  - read: $work/README
+acceptance:
+  - dispatch exits 0
+EOF
+  state_root="$(mktemp -d)"
+  set +e
+  err="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack 2>&1)"; code=$?
+  set -e
+  # Guard the dir test: the packs/ dir is created by auto-pack, which (correctly) never
+  # ran here — find on a missing dir exits non-zero and would trip set -o pipefail.
+  packs=0
+  [[ -d "$work/.pm-dispatch/ctx/packs" ]] && packs="$(find "$work/.pm-dispatch/ctx/packs" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  autopacked="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 2 ]] && grep -qi 'guard denied' <<<"$err" \
+     && [[ "$packs" -eq 0 ]] \
+     && [[ "$autopacked" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code packs=$packs autopacked=$autopacked err=$(head -1 <<<"$err")"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
 # ---- 6: happy path — adapter runs, output contract read, post-verify OK ----
 case_happy_path_post_verify_ok() {
   local name="dispatch/happy path runs adapter + post-verify OK"
@@ -821,8 +876,15 @@ case_timeout_flag_beats_config_via_pmctl() {
   rm -rf "$home" "$work"; rm -f "$stderr"
 }
 
-case_auto_pack_default_off_emits_no_event() {
-  local name="dispatch/auto-pack default off emits no event"
+case_auto_pack_default_on_emits_event() {
+  # Built-in default flipped off -> on (CC-402): a dispatch with no --auto-pack /
+  # --no-auto-pack flag and no config now auto-packs, emitting a context.auto_packed
+  # event (hits may be 0 on an unindexed work dir, but the event always fires).
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief; set no auto-pack/lifecycle flag.
+  # 2. Run `pmctl dispatch run --lifecycle foreground --print-cmd` (no --auto-pack).
+  # 3. Assert exit 0 and >=1 context.auto_packed event (built-in default is on).
+  local name="dispatch/auto-pack default on emits event"
   should_run "$name" || return 0
   local work brief state_root count code
   work="$(mktemp -d)"; git init -q "$work"
@@ -831,6 +893,32 @@ case_auto_pack_default_off_emits_no_event() {
   set +e
   PM_DISPATCH_STATE_ROOT="$state_root" \
     "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$code" -eq 0 && "$count" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code context.auto_packed_count=$count"
+  fi
+  rm -rf "$work" "$state_root"
+}
+
+case_no_auto_pack_overrides_default_on() {
+  # --no-auto-pack disables the new built-in default-on (no config needed).
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief; write no config.
+  # 2. Run `pmctl dispatch run --no-auto-pack --print-cmd`.
+  # 3. Assert exit 0 and zero context.auto_packed events.
+  local name="dispatch/--no-auto-pack overrides built-in default on"
+  should_run "$name" || return 0
+  local work brief state_root count code
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  state_root="$(mktemp -d)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --no-auto-pack --print-cmd \
     >/dev/null 2>/dev/null; code=$?
   set -e
   count="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | wc -l | tr -d ' ')"
@@ -843,6 +931,12 @@ case_auto_pack_default_off_emits_no_event() {
 }
 
 case_auto_pack_zero_hits_event_original_brief() {
+  # Auto-pack with zero reuse hits emits a hits=0 event and keeps the original brief.
+  # Steps:
+  # 1. Create a git work dir + read-only guard brief (no indexed content -> no hits).
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd`.
+  # 3. Assert exit 0, event hits=0 with empty pack, the original brief is forwarded,
+  #    and no pack file was written under .pm-dispatch/ctx/packs/.
   local name="dispatch/--auto-pack zero hits emits event and keeps original brief"
   should_run "$name" || return 0
   local work brief state_root stderr evt code hits pack cmd_brief
@@ -869,7 +963,16 @@ case_auto_pack_zero_hits_event_original_brief() {
 }
 
 case_auto_pack_hits_creates_pack_and_forwards_copy() {
-  local name="dispatch/--auto-pack hits create pack and forward copy"
+  # Foreground auto-pack writes the augmented pack under .pm-dispatch/ctx/packs/ AND
+  # snapshots it to the guardable /tmp/brief-<run_id>.md, forwarding the snapshot so a
+  # single effective brief is guarded == executed == recorded (CC-402). Assert both
+  # the work-repo pack content and that the forwarded brief is the equal /tmp snapshot.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index` so reuse-scan finds hits.
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd` against a read-only guard brief.
+  # 3. Assert the work-repo pack has auto_context + <=5 refs and its head equals the
+  #    original brief, and the forwarded brief is the equal guardable /tmp snapshot.
+  local name="dispatch/--auto-pack hits create pack and forward /tmp snapshot"
   should_run "$name" || return 0
   local work brief state_root stderr evt code hits pack cmd_brief refs original_part brief_lines
   work="$(mktemp -d)"; git init -q "$work"
@@ -898,7 +1001,7 @@ EOF
   original_part="$(mktemp)"
   brief_lines="$(wc -l < "$brief" | tr -d ' ')"
   [[ -f "$pack" ]] && head -n "$brief_lines" "$pack" > "$original_part"
-  if [[ "$code" -eq 0 && "$hits" -ge 1 && "$hits" -le 5 && "$cmd_brief" == "$pack" && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md ]] \
+  if [[ "$code" -eq 0 && "$hits" -ge 1 && "$hits" -le 5 && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md ]] \
      && [[ -f "$pack" ]] \
      && grep -q '^auto_context:' "$pack" \
      && grep -q '^  # appended by pmctl dispatch run (auto-pack); pointers only - read on demand$' "$pack" \
@@ -906,15 +1009,74 @@ EOF
      && grep -q '^    why_relevant: "' "$pack" \
      && grep -q '^    confidence: ' "$pack" \
      && [[ "$refs" -le 5 ]] \
-     && cmp -s "$brief" "$original_part"; then
+     && cmp -s "$brief" "$original_part" \
+     && [[ "$cmd_brief" == /tmp/brief-run-*.md ]] \
+     && [[ -f "$cmd_brief" ]] \
+     && cmp -s "$cmd_brief" "$pack"; then
     pass "$name"
   else
     fail "$name" "code=$code hits=$hits pack=$pack cmd_brief=$cmd_brief refs=$refs"
   fi
-  rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part"
+  rm -rf "$work" "$state_root"; rm -f "$stderr" "$original_part" "$cmd_brief" 2>/dev/null || true
+}
+
+case_auto_pack_foreground_records_executed_snapshot() {
+  # CC-402 / QA: a NON-dry-run foreground auto-pack run. The brief recorded in
+  # runs.jsonl must be the SAME augmented effective brief the adapter executed —
+  # the guardable /tmp/brief-<run_id>.md snapshot carrying auto_context, NOT the
+  # original brief. Fails under the mutation where execute_tail/records receive the
+  # original brief while the adapter argv receives the pack (guarded/executed/recorded
+  # divergence). Exercises execute_tail + post-verify + durable record, not --print-cmd.
+  # Steps:
+  # 1. Seed src/alpha.sh + `pmctl context index`; install a fake codex (exit 0).
+  # 2. Run a non-dry-run foreground `pmctl dispatch run --auto-pack`.
+  # 3. Assert exit 0/OK, runs.jsonl brief_file == the forwarded /tmp snapshot, and the
+  #    snapshot carries auto_context (executed == recorded augmented brief).
+  local name="dispatch/foreground auto-pack records the executed augmented snapshot"
+  should_run "$name" || return 0
+  local work brief bindir state_root out code runs_file rec_brief fwd_brief
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  state_root="$(mktemp -d)"
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$state_root" PATH="$bindir:$PATH" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --auto-pack 2>&1)"; code=$?
+  set -e
+  # runs.jsonl lives only in the work-dir partition (context telemetry writes only
+  # events.jsonl), so head -1 deterministically finds the dispatch run rows.
+  runs_file="$(find "$state_root" -name runs.jsonl -type f 2>/dev/null | head -1)"
+  rec_brief=""
+  [[ -n "$runs_file" ]] && rec_brief="$(jq -r 'select(.brief_file)|.brief_file' "$runs_file" 2>/dev/null | tail -1)"
+  fwd_brief="$(awk '/brief:[[:space:]]/ { print $2; exit }' <<<"$out")"
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ "$rec_brief" == /tmp/brief-run-*.md ]] \
+     && [[ "$rec_brief" == "$fwd_brief" ]] \
+     && [[ -f "$rec_brief" ]] \
+     && grep -q '^auto_context:' "$rec_brief"; then
+    pass "$name"
+  else
+    fail "$name" "code=$code rec_brief=$rec_brief fwd_brief=$fwd_brief tail=$(tail -3 <<<"$out" | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir" "$state_root"; rm -f "$rec_brief" 2>/dev/null || true
 }
 
 case_dispatch_cd_canonicalized_for_pack_path() {
+  # Auto-pack canonicalizes the --cd value for the internal pack path while still
+  # forwarding the original --cd spelling to the adapter.
+  # Steps:
+  # 1. Seed indexed content; pass a non-canonical --cd ("$work/.").
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd`.
+  # 3. Assert the event pack path is canonical (no "/./") and the adapter cwd keeps "/.".
   local name="dispatch/--cd canonicalized for pack path; original spelling forwarded to adapter"
   should_run "$name" || return 0
   local work brief state_root stderr evt code pack cwd
@@ -951,6 +1113,59 @@ EOF
     fail "$name" "code=$code pack=$pack cwd=$cwd"
   fi
   rm -rf "$work" "$state_root"; rm -f "$stderr"
+}
+
+case_auto_pack_subdir_cd_roots_context_at_git_top() {
+  # CC-402: with default-on auto-pack and a subdirectory --cd, context artifacts
+  # (reuse-scan DB + pack) must root at the git top-level, NOT under the subdir
+  # (repo-root-local contract; matches the state-writer's subdir->git-root keying).
+  # Steps:
+  # 1. git repo with src/alpha.sh at the root + a nested sub/dir; index the root.
+  # 2. Run `pmctl dispatch run --auto-pack --print-cmd` with --cd <repo>/sub/dir.
+  # 3. Assert the pack path and context.db are under <repo>/.pm-dispatch, and that NO
+  #    .pm-dispatch dir was created under the subdirectory.
+  local name="dispatch/auto-pack subdirectory --cd roots context at git top-level"
+  should_run "$name" || return 0
+  local work sub brief state_root evt code pack ctxdb
+  work="$(mktemp -d)"; git init -q "$work"
+  mkdir -p "$work/src" "$work/sub/dir"
+  cat > "$work/src/alpha.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha_beta_dispatch_helper() {
+  printf 'alpha beta dispatch helper\n'
+}
+EOF
+  "$PMCTL" context index "$work" >/dev/null 2>/dev/null
+  sub="$work/sub/dir"
+  brief="/tmp/brief-pmctl-subdir-$$-${#_BRIEFS[@]}.md"; _BRIEFS+=("$brief")
+  cat > "$brief" <<EOF
+schema_version: 1
+working_dir: $sub
+goal: exercise the pmctl dispatch orchestrator shared flow
+files:
+  - read: $work/src/alpha.sh
+acceptance:
+  - dispatch exits 0
+EOF
+  state_root="$(mktemp -d)"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$sub" --brief-file "$brief" --auto-pack --print-cmd \
+    >/dev/null 2>/dev/null; code=$?
+  set -e
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.auto_packed --all --json 2>/dev/null | tail -1)"
+  pack="$(printf '%s\n' "$evt" | jq -r '.payload.pack // ""' 2>/dev/null || printf '')"
+  ctxdb=""; [[ -f "$work/.pm-dispatch/ctx/context.db" ]] && ctxdb="root"
+  if [[ "$code" -eq 0 \
+        && "$pack" == "$work/.pm-dispatch/ctx/packs/"*.md \
+        && "$pack" != "$sub/"* \
+        && "$ctxdb" == "root" \
+        && ! -e "$sub/.pm-dispatch" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code pack=$pack ctxdb=$ctxdb sub_pm=$( [[ -e "$sub/.pm-dispatch" ]] && echo yes || echo no )"
+  fi
+  rm -rf "$work" "$state_root"
 }
 
 case_auto_pack_pack_failure_degrades_to_original_brief() {
@@ -1043,6 +1258,7 @@ case_sandbox_danger_full_access_denied
 case_adapter_resolution_and_route
 case_brief_validation_blocks
 case_guard_denies_dispatch
+case_guard_denied_brief_creates_no_pack_artifact
 case_happy_path_post_verify_ok
 case_adapter_exit_propagated
 case_post_verify_failure
@@ -1066,10 +1282,13 @@ case_caller_model_beats_config
 case_config_malformed_model_warns_and_fallback
 case_config_timeout_exported_to_claude_adapter
 case_timeout_flag_beats_config_via_pmctl
-case_auto_pack_default_off_emits_no_event
+case_auto_pack_default_on_emits_event
+case_no_auto_pack_overrides_default_on
 case_auto_pack_zero_hits_event_original_brief
 case_auto_pack_hits_creates_pack_and_forwards_copy
+case_auto_pack_foreground_records_executed_snapshot
 case_dispatch_cd_canonicalized_for_pack_path
+case_auto_pack_subdir_cd_roots_context_at_git_top
 case_auto_pack_pack_failure_degrades_to_original_brief
 case_config_auto_pack_on_activates_without_flag
 case_no_auto_pack_overrides_config_on

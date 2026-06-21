@@ -58,10 +58,14 @@ of:
   field,
 - `retrieval_skip_reason:` with a non-empty reason.
 
-Read-only briefs are exempt. During rollout, `brief-validate.sh` defaults to
-warning on missing retrieval evidence and still prints `VALID`; set
-`BRIEF_VALIDATE_RETRIEVAL=fail` to reject instead. The only supported values
-are `warn` and `fail`.
+Read-only briefs are exempt. `brief-validate.sh` defaults to **rejecting** a
+file-writing brief with no retrieval evidence (`BRIEF_VALIDATE_RETRIEVAL=fail` is
+the default); set `BRIEF_VALIDATE_RETRIEVAL=warn` to downgrade to a non-blocking
+warning. The only supported values are `warn` and `fail`. With
+`dispatch.auto_pack` on by default, a dispatch normally supplies this evidence
+automatically (the appended `auto_context:` block) whenever reuse-scan finds
+hits; briefs with no reuse hits still need a `context:` block or a
+`retrieval_skip_reason:`.
 
 The pairing matters: `acceptance` is **what** must be true after the run; `self_verify` is **how** Codex proves it before declaring done. Don't conflate them — Codex evaluates `self_verify` itself, but the main-thread dispatch route (and `dispatch-post-verify.sh`) re-checks `acceptance` against `git diff` from outside.
 
@@ -136,18 +140,19 @@ and paste **at most 5 entries** into the brief's `context:` block. Do not paste
 the raw block unfiltered — stop-word noise in the candidates inflates executor
 token cost without adding signal.
 
-For deterministic opt-in packing at dispatch time, run:
+Auto-pack at dispatch time is **on by default** (`dispatch.auto_pack` built-in
+default is `on`); pass `--no-auto-pack` to opt out, or `--auto-pack` to force it
+on where a config disabled it:
 
-    pmctl dispatch run --lifecycle foreground --adapter <executor> --cd <repo_root> --brief-file <brief> --auto-pack
+    pmctl dispatch run --adapter <executor> --cd <repo_root> --brief-file <brief>
 
-`--lifecycle foreground` is required here: the built-in default is now `detached`
-for eligible adapters (see §Dispatch lifecycle), and `--lifecycle detached`
-combined with `--auto-pack` is rejected before launch (the derived pack brief
-would diverge from the guarded `/tmp` brief under a detached run-spec).
-
-or set:
-
-    dispatch.auto_pack = on
+Auto-pack works under **both** lifecycles, and in both the augmented brief is
+landed at the guardable `/tmp/brief-<run_id>.md` path so a single brief is
+guarded == validated == executed == recorded. Under the default `detached`
+lifecycle that snapshot is recorded as the run-spec's trusted `brief_file` and the
+supervisor validates, guards, and executes it. Under `--lifecycle foreground`
+dispatch snapshots the pack to the same `/tmp` path before guarding and forwarding
+it to the executor.
 
 When enabled, `pmctl dispatch run` extracts the brief `goal`, runs
 `pmctl context reuse-scan`, and writes a temporary augmented copy under the
@@ -173,6 +178,8 @@ Use when: ≤ ~10 file edits, you already know the exact OLD → NEW strings, no
 schema_version: 1
 working_dir: <abs path>
 goal: <one sentence>
+context:
+  - <≤5 prior-art refs from `pmctl context reuse-scan`; or drop this and use retrieval_skip_reason:>
 files:
   - edit: <path 1>
   - edit: <path 2>
@@ -196,6 +203,8 @@ Use when: Codex reads inputs, writes one report file, source data is off-limits.
 schema_version: 1
 working_dir: <abs path>
 goal: Audit <subject> against <criteria>; produce report at <path>.
+context:
+  - <≤5 prior-art refs from `pmctl context reuse-scan`; or drop this and use retrieval_skip_reason:>
 files:
   - read: <inputs>
   - write: <report path>
@@ -221,6 +230,8 @@ Use when: extending JSONL/JSON corpora, new entries must match the existing sche
 schema_version: 1
 working_dir: <abs path>
 goal: Add <N> <content type> entries to <target file family>.
+context:
+  - <≤5 prior-art refs from `pmctl context reuse-scan`; or drop this and use retrieval_skip_reason:>
 files:
   - new: <new paths>
   - read: <reference paths to learn schema>
@@ -246,6 +257,8 @@ Use when: mechanical change preserving semantics (rename, move, signature update
 schema_version: 1
 working_dir: <abs path>
 goal: Rename <X> → <Y> across <module / scope>.
+context:
+  - <≤5 prior-art refs from `pmctl context reuse-scan`; or drop this and use retrieval_skip_reason:>
 files:
   - read: <scope>           # discover all occurrences (grep -rn '<X>' <scope>)
   - edit: <file-to-change>  # repeat for each file requiring updates
@@ -375,6 +388,7 @@ Used when extending an existing data file family.
 ```
 working_dir: /home/example/github/my-app/
 goal: Audit PR #8 N1 corpus additions for JLPT level appropriateness — flag mis-classification.
+retrieval_skip_reason: audit reads its own corpus inputs directly; no repo prior-art to retrieve
 files:
   - read: server/data/corpus/grammar/N1/{ga-hayai-ka,...}.{json,examples.jsonl}
   - read: server/data/corpus/vocab/N1.jsonl (60 net-new rows)
@@ -480,7 +494,7 @@ Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnin
 
 Use `pmctl dispatch wait <run_id> --cd <work_dir> [--timeout <secs>]` to reattach and resolve the terminal outcome. `--cd` is mandatory; timeout exits 124. The authoritative completion signal is the supervisor sentinel written to `/tmp` (never the in-workspace `.dispatch-results/<run_id>.md` record, which is executor-writable and used for observability only). The sentinel path includes a per-run nonce held in a per-user `mode 700` key dir and not stored in the workspace run-spec: this stops *other OS users* and cross-run/predictable-path collisions from resolving the wait, but a *same-user* executor (same uid) can read the key — so the executor is **trusted** not to forge it (the deployment runs the operator's own login-authenticated agent; see `docs/executor-contract.md` → Durable dispatch record for the full trust model and CC-399 override). If the sentinel key is absent, `dispatch wait` returns **indeterminate (exit 3)** and prints the durable record for observability only — never as authenticated success.
 
-Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is derived from the adapter's `runner_kind` (`cli-subprocess` = eligible; `host-native` = not). An ineligible adapter, `--lifecycle detached --print-cmd`, or `--lifecycle detached` combined with auto-pack is rejected before any executor launch (auto-pack forwards a derived pack brief that diverges from the guarded `/tmp` brief; supporting that under a detached run-spec is deferred).
+Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is derived from the adapter's `runner_kind` (`cli-subprocess` = eligible; `host-native` = not). An ineligible adapter or `--lifecycle detached --print-cmd` is rejected before any executor launch. `--lifecycle detached` **is** compatible with auto-pack: the augmented brief is snapshotted to the guardable `/tmp/brief-<run_id>.md` path and recorded as the run-spec's trusted `brief_file`, so the supervisor validates, guards, and executes exactly that augmented brief — preserving the single-brief invariant.
 
 ## Executor-agnostic model aliases
 
