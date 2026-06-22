@@ -33,6 +33,10 @@ _TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
 mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
 export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
 
+# Accelerate dispatch wait polling in tests: the fake codex exits immediately,
+# so a 2s polling interval is pure dead time. Tests may override via the env.
+export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf
