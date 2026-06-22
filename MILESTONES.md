@@ -136,7 +136,7 @@
 
 ### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
 
-> 純命名脫鉤，**零行為改動**：`hook-*.sh`（8 檔）/ `guard-framework.sh` / `hk_*`/`HK_*` 函式 / `PM_HOOK_*` env → 平台中性 `guard-*`；`settings.json` 的 `PreToolUse` 鍵保留（Claude 平台自有）。獨立 PR，不可與安全邊界票混搭。前置 [[CC-376]] ✅ 已達成；[[CC-377]] deferred 不阻本票。
+> 純命名脫鉤，**零行為改動**：`hook-*.sh`（8 檔）/ `hook-framework.sh` / `hk_*`/`HK_*` 函式 / `PM_HOOK_*` env → 平台中性 `guard-*`；`settings.json` 的 `PreToolUse` 鍵保留（Claude 平台自有）。獨立 PR，不可與安全邊界票混搭。前置 [[CC-376]] ✅ 已達成；[[CC-377]] deferred 不阻本票。
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
@@ -265,7 +265,7 @@
 | CC-328 | executor-agnostic `light` alias 文件 + claude adapter alias lint/tests + default model contract 修正（omit `--model` 走 alias table 對齊 codex adapter）。註：此為 light-alias CC-328；後來撞號的 repo symbol-index 已改號 **CC-338**（見 v0.5.0 Phase 0） | ✅ (#229) |
 | CC-331 | test-install CI 並行化（core/hooks --group）+ jq batch + `_PM_DISPATCH_PREFLIGHT_RUNNER` 注入接縫 + stub-based verify 架構（移除 escape-hatch bypass） | ✅ (#231) |
 | CC-321 | rename `CLAUDE_HOOK_*` → `PM_HOOK_*` across 15 files；backward-compat shims（v0.5.0 移除）；427 tests 0 failures | ✅ (#243) |
-| CC-334 | install-guards.sh 安裝時 idempotent merge `permissions.allow`（reviewer subagent 必需的 Write/.gate-results + Bash/pmctl guard check + mkdir -p）；gate-workspace lib 抽取；uninstall-guards 對稱清除；83 tests 0 failures | ✅ (#244) |
+| CC-334 | install-hooks.sh 安裝時 idempotent merge `permissions.allow`（reviewer subagent 必需的 Write/.gate-results + Bash/pmctl guard check + mkdir -p）；gate-workspace lib 抽取；uninstall-hooks 對稱清除；83 tests 0 failures | ✅ (#244) |
 
 ### Review Model Track（並行；不阻塞 Phase 1–3）
 
@@ -359,7 +359,7 @@
 | 票號 | 說明 | 狀態 |
 |---|---|---|
 | CC-287 | `pmctl backlog`（view / lint / archive；吸收 CC-282） | ✅ (#190) |
-| CC-288 | `pmctl guard check`（接 CC-204 guard-framework；guard 邏輯共用、觸發方式 per-adapter） | ✅ (#191) |
+| CC-288 | `pmctl guard check`（接 CC-204 hook-framework；guard 邏輯共用、觸發方式 per-adapter） | ✅ (#191) |
 | CC-289 | `pmctl dispatch run`（**走 B**：擁有共用流程；codex-dispatch.sh 瘦成 `adapters/codex/dispatch.sh`） | ✅ (#194) |
 | CC-266 | `adapters/claude/dispatch.sh`（`claude --print` 薄 executor，使 codex-as-PM → claude-executor 可行；含 Phase-1 feasibility 檢查） | ✅ (#195) |
 | CC-233 | `scripts/test-layer-boundaries.sh`（分層強制器：core/→無 CLI 名、adapters/→無共用邏輯） | ✅ (#197) |
@@ -479,7 +479,7 @@ Tag: `v0.2.0` @ `2c55650`（released 2026-05-22；GitHub Release published）
 | #107 | CC-104t | hooks 層 python3 → jq 重寫；新增 memory.sh / memory-dir.sh |
 | #108 | CC-207 | platform-support.md 改寫 + CC-207 BACKLOG entry |
 | #109 | cc-uninstall | manifest-driven uninstall.sh（23 security tests） |
-| #110 | — | uninstall-guards.sh generic repo-root removal fix（49 tests） |
+| #110 | — | uninstall-hooks.sh generic repo-root removal fix（49 tests） |
 | #111 | — | CC-209/CC-210/CC-211 BACKLOG entries + Epic enum fix |
 | #112 | CC-207 | Windows Git Bash directory junction support |
 | #113 | CC-212/213/214 | CC-207 advise follow-ups（env-var path 傳遞、junction idempotency、docs uninstall 錨定） |
