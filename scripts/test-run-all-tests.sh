@@ -581,6 +581,31 @@ test_jobs_larger_than_suite_count() {
   fi
 }
 
+test_jobs_explicit_sequential() {
+  # Behavior: --jobs 1 forces the sequential code path and preserves pass/fail/skip accounting.
+  # Steps: write pass stubs; run --jobs 1; assert exit 0 and total line shows SUITE_TOTAL passed;
+  #        write a failing stub for lint-agents; run --jobs 1 again; assert exit 1 and
+  #        "FAIL lint-agents" plus "failed suites: lint-agents" in output.
+  local name="jobs-explicit-sequential"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    fail_case "$name (all-pass)" "status=$status out=$out"
+    return
+  fi
+  write_suite_stub "$repo" lint-agents 1
+  status=0
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"FAIL lint-agents"* && "$out" == *"failed suites:"*"lint-agents"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name (one-fail)" "status=$status out=$out"
+  fi
+}
+
 test_list
 test_known_suite_count
 test_skip_unknown_suite
@@ -602,6 +627,7 @@ test_jobs_invalid_zero
 test_jobs_invalid_string
 test_jobs_no_arg_default
 test_jobs_larger_than_suite_count
+test_jobs_explicit_sequential
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
