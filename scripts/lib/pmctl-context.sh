@@ -283,8 +283,13 @@ _ctx_emit_hit() {
   local safe_why="${why_relevant//$'\n'/ }"
   safe_why="${safe_why//$'\r'/ }"
   safe_why="${safe_why//\'/\'\'}"
+  # Source attribution tracks the plane: memory hits are `memory-index`
+  # (per CC-403), repo hits stay `builtin-index`. Keeps source ⟺ source_domain
+  # consistent and matches the pack's sources[] registry.
+  local src="builtin-index"
+  [[ "$source_domain" == "memory" ]] && src="memory-index"
   printf -- '- ref: %s\n'         "$ref"
-  printf    '  source: builtin-index\n'
+  printf    '  source: %s\n'         "$src"
   printf    '  source_domain: %s\n'  "$source_domain"
   printf    "  why_relevant: '%s'\n" "$safe_why"
   printf    '  confidence: %s\n'     "$confidence"
@@ -615,7 +620,11 @@ pmctl_context_index() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --source)
-        source_flag="${2:-}"
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context index: --source requires a value\n' >&2
+          return 2
+        fi
+        source_flag="$2"
         shift 2
         ;;
       --source=*)
@@ -1039,8 +1048,13 @@ _ctx_tsv_to_json_array() {
   while IFS=$'\t' read -r ref domain why conf trust; do
     [[ "$first" -eq 0 ]] && printf ','
     first=0
-    printf '{"ref":%s,"source":"builtin-index","confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
-      "$(_ctx_json_str "$ref")" "$conf" \
+    # Source attribution tracks the plane (CC-403): memory items are
+    # `memory-index`, repo items stay `builtin-index`.
+    local src="builtin-index"
+    [[ "$domain" == "memory" ]] && src="memory-index"
+    printf '{"ref":%s,"source":%s,"confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
+      "$(_ctx_json_str "$ref")" \
+      "$(_ctx_json_str "$src")" "$conf" \
       "$(_ctx_json_str "$domain")" \
       "$(_ctx_json_str "$why")" \
       "$(_ctx_json_str "$trust")"
@@ -1369,14 +1383,22 @@ pmctl_context_pack() {
     fi
   fi
 
-  local ts sym_arr files_arr mem_arr
+  local ts sym_arr files_arr mem_arr sources_arr
   ts="$(_ctx_now_iso8601)"
   sym_arr="$(_ctx_tsv_to_json_array "$sym_tsv")"
   files_arr="$(_ctx_tsv_to_json_array "$files_tsv")"
   mem_arr="$(_ctx_tsv_to_json_array "$mem_tsv")"
 
-  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
-    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$files_arr" "$sym_arr" "$mem_arr"
+  # sources[] registers every producer cited by an item's `source` field. Add the
+  # memory-index producer only when the pack actually carries memory hits, so the
+  # registry stays consistent with item attribution (CC-403).
+  sources_arr='[{"name":"builtin-index","version":"1"}]'
+  if [[ "$mem_arr" != "[]" ]]; then
+    sources_arr='[{"name":"builtin-index","version":"1"},{"name":"memory-index","version":"1"}]'
+  fi
+
+  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
+    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$sources_arr" "$files_arr" "$sym_arr" "$mem_arr"
 }
 
 # ── pmctl_context_reuse_scan ──────────────────────────────────────────────────

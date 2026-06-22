@@ -2414,6 +2414,62 @@ case_context_reuse_scan_never_returns_memory() {
   pass "$name"
 }
 
+case_context_index_source_missing_value() {
+  local name="pmctl context index: --source with no value is rejected (exit 2)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-idx-noval-repo"; mkdir -p "$repo"
+  local err status=0
+  err="$tmp_root/mem-idx-noval.err"
+  # Bare trailing --source (no value) must guard like query/pack, not silently
+  # default to an empty source flag.
+  "$PMCTL" context index "$repo" --source >/dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q -- '--source requires a value' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'requires a value'; got $status err=$(<"$err")"
+  fi
+}
+
+case_context_memory_source_attribution() {
+  local name="pmctl context: memory hits attribute source=memory-index (query + pack sources[])"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-attr-repo" cfg="$tmp_root/mem-attr-cfg"
+  mkdir -p "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  # Query: memory hit YAML carries `source: memory-index`.
+  local q="$tmp_root/mem-attr-q.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$q" 2>/dev/null || true
+  # Pack: memory item source == memory-index AND sources[] registers it.
+  local p="$tmp_root/mem-attr-p.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query codex --source memory > "$p" 2>/dev/null || true
+  if ! command -v jq >/dev/null 2>&1; then
+    fail "$name" "jq required for this assertion"; return 0
+  fi
+  if grep -q 'source: memory-index' "$q" \
+    && ! grep -q 'source: builtin-index' "$q" \
+    && jq -e '.memories[0].source == "memory-index"' "$p" >/dev/null 2>&1 \
+    && jq -e 'any(.sources[]; .name == "memory-index")' "$p" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "expected memory-index attribution in query+pack; q=$(<"$q") p=$(<"$p")"
+  fi
+}
+
+case_context_pack_repo_sources_no_memory_index() {
+  local name="pmctl context pack --source repo: sources[] does NOT register memory-index"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-attr-repo2" cfg="$tmp_root/mem-attr-cfg2"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  local p="$tmp_root/mem-attr-p2.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query my_func_alpha > "$p" 2>/dev/null || true
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e 'all(.sources[]; .name != "memory-index")' "$p" >/dev/null 2>&1; then pass "$name"; else fail "$name" "repo pack leaked memory-index source: $(<"$p")"; fi
+  else
+    if ! grep -q 'memory-index' "$p"; then pass "$name"; else fail "$name" "repo pack leaked memory-index: $(<"$p")"; fi
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -2501,5 +2557,8 @@ case_context_pack_source_repo_memories_empty
 case_context_pack_source_all_populates_both
 case_context_pack_source_invalid_rejected
 case_context_reuse_scan_never_returns_memory
+case_context_index_source_missing_value
+case_context_memory_source_attribution
+case_context_pack_repo_sources_no_memory_index
 
 th_summary
