@@ -124,7 +124,7 @@ fi
 
 pm_cmd="$repo_root/scripts/guard-pm-write.sh"
 stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
-old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
+old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/guard-session-summary.sh"
 inject_cmd="$repo_root/scripts/guard-inject-memory.sh"
 statusline_cmd="$repo_root/scripts/guard-save-rate-limits.sh"
