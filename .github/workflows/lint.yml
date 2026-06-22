@@ -159,7 +159,7 @@ jobs:
             test-usage-tracker.sh
             test-usage-weekly.sh
             token-usage.sh
-            uninstall-hooks.sh
+            uninstall-guards.sh
             usage-weekly.sh
             memory.sh
             memory-dir.sh

@@ -13,10 +13,10 @@ DRY_RUN=0
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$repo_root"
-# shellcheck source=scripts/lib/gate-workspace.sh
+# shellcheck disable=SC1091
 [[ -f "$repo_root/scripts/lib/gate-workspace.sh" ]] && . "$repo_root/scripts/lib/gate-workspace.sh"
 if [[ -f "$repo_root/scripts/lib/allowlist.sh" ]]; then
-  # shellcheck source=scripts/lib/allowlist.sh
+  # shellcheck disable=SC1091
   . "$repo_root/scripts/lib/allowlist.sh"
 else
   # copy-mode fallback: scan adapters dynamically so removal stays concrete
