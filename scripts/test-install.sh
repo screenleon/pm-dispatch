@@ -3097,7 +3097,7 @@ test_install_hooks_spaced_repo_root() {
   # a raw grep for the spaced path text would miss escaped leftovers.
   local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
     | map(select(. != null))
-    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^hook-"))))
+    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))))
     | length'
   local managed_before
   managed_before="$(jq "$managed_q" "$override/settings.json")"
@@ -3225,7 +3225,7 @@ FAKEJQ
   # and remove every managed hook; a slash-mangled repo_root_q would miss them.
   local managed_q='[ (.hooks // {}) | (.PreToolUse,.PostToolUse,.Stop,.UserPromptSubmit) | .[]? | (.hooks // [])[]? | .command, .statusLine.command ]
     | map(select(. != null))
-    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^hook-"))))
+    | map(select((split("/") | .[-2]) == "scripts" and ((split("/") | last) | test("^guard-"))))
     | length'
   if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -lt 1 ]]; then
     fail "$name" "no managed hooks detected pre-uninstall (fixture broken)"

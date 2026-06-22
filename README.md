@@ -203,7 +203,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 - New agent: drop a `name.md` (with frontmatter) into `agents/`, re-run `install.sh`. **Don't include `Agent` in `tools:`** — `scripts/lint-agents.sh` will reject the install.
 - New command: drop a `name.md` into `commands/`, re-run `install.sh`.
-- New hook: drop a `scripts/hook-<name>.sh` and add a corresponding `PreToolUse` entry by re-running `scripts/install-guards.sh` (extend the splice if it's a new pair); don't hand-edit `settings.json` if it can be avoided. Add test cases to `scripts/test-guards.sh` — security-relevant scripts ship with regression coverage.
+- New guard: drop a `scripts/guard-<name>.sh` and add a corresponding `PreToolUse` entry by re-running `scripts/install-guards.sh` (extend the splice if it's a new pair); don't hand-edit `settings.json` if it can be avoided. Add test cases to `scripts/test-guards.sh` — security-relevant scripts ship with regression coverage.
 - Settings allowlist additions: edit `~/.claude/settings.json` directly; don't try to symlink settings.
 
 ## Dispatch briefs

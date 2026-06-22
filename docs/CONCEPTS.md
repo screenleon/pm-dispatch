@@ -45,7 +45,7 @@ The trade-off is that hooks are shell, not English. They are harder to write and
 
 ### Where to look
 
-- `scripts/hook-*.sh` — every hook in this repo
+- `scripts/guard-*.sh` — every guard policy script in this repo
 - `scripts/test-guards.sh` — the test harness for them
 - `~/.claude/settings.json` after `bash install.sh` — the registration
 

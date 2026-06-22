@@ -1030,8 +1030,8 @@ case_doctor_hook_inventory_parity() {
   local name="doctor-hook-inventory-parity"
   should_run "$name" || return 0
   local doctor_hooks install_hooks
-  doctor_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
-  install_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-guards.sh" | sort -u)"
+  doctor_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
+  install_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-guards.sh" | sort -u)"
   if [[ "$doctor_hooks" != "$install_hooks" ]]; then
     fail "$name" "hook inventory mismatch between doctor.sh and install-guards.sh:
 doctor.sh:     $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
@@ -1041,7 +1041,7 @@ install-guards: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
   # Codex-only hooks must appear in the full-profile section of doctor.sh,
   # not in the base hooks array (lines before the full) branch).
   local codex_in_base
-  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'hook-codex-[a-z-]+\.sh' || true)"
+  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'guard-codex-[a-z-]+\.sh' || true)"
   if [[ -n "$codex_in_base" ]]; then
     fail "$name" "codex-only hooks found in base hooks array (should be full-profile only): $codex_in_base"
     return
