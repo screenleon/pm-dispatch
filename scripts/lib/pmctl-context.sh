@@ -13,11 +13,48 @@ if [[ "$(type -t _sw_store_root 2>/dev/null)" != function ]]; then
   . "$_CTX_LIB_DIR/state-writer.sh" 2>/dev/null || true
 fi
 
+# Source memory.sh (leaf helper: find_memory_dir / encode_path, no side effects)
+# for the memory retrieval plane (--source memory). It is a pure path resolver,
+# not an adapter module, so the "MUST NOT source adapters" rule does not apply.
+if [[ "$(type -t find_memory_dir 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/memory.sh
+  # shellcheck disable=SC1091
+  . "$_CTX_LIB_DIR/memory.sh" 2>/dev/null || true
+fi
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _ctx_db_path() {
   local repo_root="$1"
   printf '%s/.pm-dispatch/ctx/context.db\n' "$repo_root"
+}
+
+# Memory-plane DB path. PRIVACY (load-bearing): the memory index lives UNDER the
+# memory directory (out-of-repo `~/.claude/projects/<id>/memory/`), never under
+# the repo checkout — even gitignored, a repo-local copy of private memory could
+# be carried out by tooling or an archive. The derived `.pm-dispatch/context.db`
+# sits beside the source cards it was built from.
+_ctx_memory_db_path() {
+  local memory_dir="$1"
+  printf '%s/.pm-dispatch/context.db\n' "$memory_dir"
+}
+
+# Resolve the project-memory directory for a given working dir, reusing the
+# shared find_memory_dir walker. Echoes the dir on success; returns 1 (no output)
+# when memory.sh is unavailable or no memory dir exists up the tree.
+_ctx_resolve_memory_dir() {
+  local cwd="$1"
+  declare -F find_memory_dir >/dev/null 2>&1 || return 1
+  find_memory_dir "$cwd" 2>/dev/null
+}
+
+# Memory trust tier: curated cards (and the MEMORY.md index) outrank raw
+# episodes. Path-based so it works uniformly across symbol/fts/like hits.
+_ctx_memory_trust() {
+  case "$1" in
+    *episodes*.jsonl) printf 'medium' ;;
+    *)                printf 'high' ;;
+  esac
 }
 
 # VCS hygiene side effect: called during indexing to keep the derived cache
@@ -246,8 +283,13 @@ _ctx_emit_hit() {
   local safe_why="${why_relevant//$'\n'/ }"
   safe_why="${safe_why//$'\r'/ }"
   safe_why="${safe_why//\'/\'\'}"
+  # Source attribution tracks the plane: memory hits are `memory-index`
+  # (per CC-403), repo hits stay `builtin-index`. Keeps source ⟺ source_domain
+  # consistent and matches the pack's sources[] registry.
+  local src="builtin-index"
+  [[ "$source_domain" == "memory" ]] && src="memory-index"
   printf -- '- ref: %s\n'         "$ref"
-  printf    '  source: builtin-index\n'
+  printf    '  source: %s\n'         "$src"
   printf    '  source_domain: %s\n'  "$source_domain"
   printf    "  why_relevant: '%s'\n" "$safe_why"
   printf    '  confidence: %s\n'     "$confidence"
@@ -447,58 +489,50 @@ INSERT INTO content_fts(ref, text)
 SQLFTS
 }
 
-# ── pmctl_context_index ────────────────────────────────────────────────────────
+# ── Index file discovery (per-plane find expression) ──────────────────────────
+# repo plane: code + knowledge docs (the established glob). memory plane: cards
+# + MEMORY.md + episodes, excluding the derived .pm-dispatch cache dir itself.
 
-pmctl_context_index() {
-  local repo_root
-  if [[ $# -gt 0 && -d "${1:-}" ]]; then
-    repo_root="$1"; shift
-  else
-    repo_root="${REPO_ROOT:-}"
-  fi
-  if [[ -z "$repo_root" ]]; then
-    printf 'pmctl context index: repo root required\n' >&2
-    return 2
-  fi
+_ctx_find_index_files() {
+  local root="$1" mode="$2"
+  case "$mode" in
+    memory)
+      find "$root" \
+        -not -path '*/.pm-dispatch/*' \
+        -type f \( -name '*.md' -o -name '*.jsonl' \) 2>/dev/null | sort
+      ;;
+    *)
+      find "$root" \
+        -not -path '*/.git/*' \
+        -not -path '*/node_modules/*' \
+        -not -path '*/vendor/*' \
+        -not -path '*/.cache/*' \
+        -type f \( \
+          -name '*.sh'   -o -name '*.bash' -o \
+          -name '*.go'   -o \
+          -name '*.py'   -o \
+          -name '*.ts'   -o -name '*.tsx'  -o \
+          -name '*.js'   -o -name '*.jsx'  -o \
+          -name '*.md'   -o \
+          -name '*.yaml' -o -name '*.yml'  -o \
+          -name '*.json' -o \
+          -name '*.txt' \
+        \) 2>/dev/null | sort
+      ;;
+  esac
+}
 
-  local source_flag="repo"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --source)
-        source_flag="${2:-}"
-        shift 2
-        ;;
-      --source=*)
-        source_flag="${1#--source=}"
-        shift
-        ;;
-      --)
-        shift
-        break
-        ;;
-      -*)
-        printf 'pmctl context index: unknown flag %s\n' "$1" >&2
-        return 2
-        ;;
-      *)
-        break
-        ;;
-    esac
-  done
+# ── Shared index core (plane-agnostic) ────────────────────────────────────────
+# Indexes a tree ($root) into $db. Used by both the repo plane (pmctl_context_index)
+# and the memory plane (--source memory / _ctx_ensure_fresh_memory). Assumes the
+# caller has already confirmed sqlite3 is available.
+#   do_gitignore=1 → patch <root>/.gitignore (repo plane only; memory must never
+#   touch its source tree's VCS hygiene). mode selects the find expression.
 
-  if [[ "$source_flag" != "repo" ]]; then
-    printf 'pmctl context index: unsupported --source value: %s (only "repo" supported)\n' \
-      "$source_flag" >&2
-    return 2
-  fi
+_ctx_index_tree() {
+  local root="$1" db="$2" do_gitignore="$3" mode="$4"
 
-  if ! _ctx_sqlite3_check; then
-    printf 'pmctl context index: sqlite3 not found on PATH\n' >&2
-    return 1
-  fi
-
-  local db db_dir
-  db="$(_ctx_db_path "$repo_root")"
+  local db_dir
   db_dir="$(dirname "$db")"
   if ! mkdir -p "$db_dir" 2>/dev/null; then
     printf 'pmctl context index: cannot create %s\n' "$db_dir" >&2
@@ -507,7 +541,7 @@ pmctl_context_index() {
   # Run every index, not just first cache-dir creation: _ctx_ensure_gitignore is
   # idempotent (it no-ops when the entry already exists), so a repo with a
   # pre-existing .pm-dispatch/ctx but no .gitignore entry still gets patched.
-  _ctx_ensure_gitignore "$repo_root"
+  [[ "$do_gitignore" == "1" ]] && _ctx_ensure_gitignore "$root"
   _ctx_db_init "$db"
 
   # Batch-load all known mtimes in one query to avoid one sqlite3 subprocess per file.
@@ -529,7 +563,7 @@ pmctl_context_index() {
   local indexed=0 skipped=0
   while IFS= read -r abs_path; do
     [[ -f "$abs_path" ]] || continue
-    local rel_path="${abs_path#"$repo_root/"}"
+    local rel_path="${abs_path#"$root/"}"
     local ep
     ep="$(_ctx_sql_str "$rel_path")"
 
@@ -548,24 +582,9 @@ pmctl_context_index() {
 
     _ctx_generate_file_sql "$abs_path" "$rel_path" >> "$batch_sql"
     indexed=$((indexed + 1))
-  done < <(find "$repo_root" \
-      -not -path '*/.git/*' \
-      -not -path '*/node_modules/*' \
-      -not -path '*/vendor/*' \
-      -not -path '*/.cache/*' \
-      -type f \( \
-        -name '*.sh'   -o -name '*.bash' -o \
-        -name '*.go'   -o \
-        -name '*.py'   -o \
-        -name '*.ts'   -o -name '*.tsx'  -o \
-        -name '*.js'   -o -name '*.jsx'  -o \
-        -name '*.md'   -o \
-        -name '*.yaml' -o -name '*.yml'  -o \
-        -name '*.json' -o \
-        -name '*.txt' \
-      \) 2>/dev/null | sort)
+  done < <(_ctx_find_index_files "$root" "$mode")
 
-  # Reconcile deletions: remove rows for files no longer in the repo.
+  # Reconcile deletions: remove rows for files no longer in the tree.
   {
     printf 'DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
     printf 'DELETE FROM file_chunks WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
@@ -581,6 +600,106 @@ pmctl_context_index() {
 
   printf 'context index: %d indexed, %d skipped\n' "$indexed" "$skipped"
   printf 'db: %s\n' "$db"
+}
+
+# ── pmctl_context_index ────────────────────────────────────────────────────────
+
+pmctl_context_index() {
+  local repo_root
+  if [[ $# -gt 0 && -d "${1:-}" ]]; then
+    repo_root="$1"; shift
+  else
+    repo_root="${REPO_ROOT:-}"
+  fi
+  if [[ -z "$repo_root" ]]; then
+    printf 'pmctl context index: repo root required\n' >&2
+    return 2
+  fi
+
+  local source_flag="repo"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context index: --source requires a value\n' >&2
+          return 2
+        fi
+        source_flag="$2"
+        shift 2
+        ;;
+      --source=*)
+        source_flag="${1#--source=}"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        printf 'pmctl context index: unknown flag %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  local root db do_gitignore mode
+  case "$source_flag" in
+    repo)
+      root="$repo_root"
+      db="$(_ctx_db_path "$repo_root")"
+      do_gitignore=1
+      mode=repo
+      ;;
+    memory)
+      local mdir
+      mdir="$(_ctx_resolve_memory_dir "$repo_root")" || mdir=""
+      if [[ -z "$mdir" ]]; then
+        printf 'pmctl context index: no memory directory found for %s\n' "$repo_root" >&2
+        return 1
+      fi
+      root="$mdir"
+      db="$(_ctx_memory_db_path "$mdir")"
+      do_gitignore=0
+      mode=memory
+      ;;
+    *)
+      printf 'pmctl context index: unsupported --source value: %s (expected repo|memory)\n' \
+        "$source_flag" >&2
+      return 2
+      ;;
+  esac
+
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context index: sqlite3 not found on PATH\n' >&2
+    return 1
+  fi
+
+  _ctx_index_tree "$root" "$db" "$do_gitignore" "$mode"
+}
+
+# ── Memory-plane freshness (auto-build / auto-refresh) ────────────────────────
+# Mirror of _ctx_ensure_fresh for the memory plane. Honors the same opt-out env
+# vars. Returns non-zero (no output) when memory is unavailable so read-side
+# callers degrade to "# no hits".
+
+_ctx_ensure_fresh_memory() {
+  local memory_dir="$1"
+  local mdb
+  mdb="$(_ctx_memory_db_path "$memory_dir")"
+
+  if [[ ! -f "$mdb" ]]; then
+    [[ "${PM_DISPATCH_CONTEXT_AUTOBUILD:-1}" == "0" ]] && return 1
+    _ctx_sqlite3_check || return 1
+    _ctx_index_tree "$memory_dir" "$mdb" 0 memory >/dev/null 2>&1 || return 1
+    return 0
+  fi
+
+  [[ "${PM_DISPATCH_CONTEXT_AUTOREFRESH:-1}" == "0" ]] && return 0
+  _ctx_sqlite3_check || return 1
+  _ctx_index_tree "$memory_dir" "$mdb" 0 memory >/dev/null 2>&1 || return 1
 }
 
 # Ensure read-side context commands do not depend on a prior manual index step.
@@ -798,12 +917,24 @@ _ctx_extract_terms() {
 # Single query-execution path shared by pmctl_context_query (YAML output)
 # and _ctx_parse_query_tsv (pack / reuse-scan TSV accumulation).
 
+# Args: repo_root query [domain] [db_override] [domain_label]
+#   db_override   — query this DB instead of <repo_root>/.pm-dispatch/ctx/context.db
+#                   (used for the out-of-repo memory plane).
+#   domain_label  — when set (e.g. "memory"), every hit's source_domain is forced
+#                   to this label and trust is derived via _ctx_memory_trust; the
+#                   knowledge/repo path classifier and domain filter are bypassed
+#                   (the memory plane has no knowledge/repo subclasses).
 _ctx_query_hits_raw() {
-  local repo_root="$1" query="$2" domain="${3:-}"
+  local repo_root="$1" query="$2" domain="${3:-}" db_override="${4:-}" domain_label="${5:-}"
   local db eq domain_sql=""
-  db="$(_ctx_db_path "$repo_root")"
+  if [[ -n "$db_override" ]]; then
+    db="$db_override"
+  else
+    db="$(_ctx_db_path "$repo_root")"
+  fi
   eq="$(_ctx_sql_str "$query")"
 
+  # domain filter only applies on the repo plane; memory mode passes domain="".
   case "$domain" in
     knowledge)
       domain_sql=" AND (f.path IN ('BACKLOG.md','DECISIONS.md','MILESTONES.md') OR f.path LIKE 'docs/%')"
@@ -815,10 +946,14 @@ _ctx_query_hits_raw() {
 
   while IFS=$'\t' read -r path name kind line_start; do
     [[ -n "$path" ]] || continue
-    local hit_domain
-    hit_domain="$(_ctx_classify_domain "$path")"
+    local hit_domain hit_trust
+    if [[ -n "$domain_label" ]]; then
+      hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
+    else
+      hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="high"
+    fi
     printf '%s\t%s\t%s\t%s\t%s\n' \
-      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "high"
+      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust"
   done < <(sqlite3 -separator $'\t' "$db" \
     "SELECT f.path, s.name, s.kind, s.line_start
      FROM symbols s JOIN files f ON s.file_id=f.id
@@ -841,9 +976,13 @@ _ctx_query_hits_raw() {
       "$fts_query" > "$fts_tmpf"
     while IFS=$'\t' read -r ref text; do
       [[ -n "$ref" ]] || continue
-      local fts_path fts_domain
+      local fts_path fts_domain fts_trust
       fts_path="${ref%:*}"
-      fts_domain="$(_ctx_classify_domain "$fts_path")"
+      if [[ -n "$domain_label" ]]; then
+        fts_domain="$domain_label"; fts_trust="$(_ctx_memory_trust "$fts_path")"
+      else
+        fts_domain="$(_ctx_classify_domain "$fts_path")"; fts_trust="medium"
+      fi
       if [[ -n "$domain" && "$fts_domain" != "$domain" ]]; then
         continue
       fi
@@ -851,16 +990,20 @@ _ctx_query_hits_raw() {
       snippet="${text:0:80}"
       snippet="${snippet//$'\t'/ }"
       printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "medium"
+        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "$fts_trust"
     done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null | tr -d '\r' || true)
     rm -f "$fts_tmpf"
   else
     while IFS=$'\t' read -r path line_start; do
       [[ -n "$path" ]] || continue
-      local hit_domain
-      hit_domain="$(_ctx_classify_domain "$path")"
+      local hit_domain hit_trust
+      if [[ -n "$domain_label" ]]; then
+        hit_domain="$domain_label"; hit_trust="$(_ctx_memory_trust "$path")"
+      else
+        hit_domain="$(_ctx_classify_domain "$path")"; hit_trust="medium"
+      fi
       printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "medium"
+        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust"
     done < <(sqlite3 -separator $'\t' "$db" \
       "SELECT f.path, fc.line_start
        FROM file_chunks fc JOIN files f ON fc.file_id=f.id
@@ -905,8 +1048,13 @@ _ctx_tsv_to_json_array() {
   while IFS=$'\t' read -r ref domain why conf trust; do
     [[ "$first" -eq 0 ]] && printf ','
     first=0
-    printf '{"ref":%s,"source":"builtin-index","confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
-      "$(_ctx_json_str "$ref")" "$conf" \
+    # Source attribution tracks the plane (CC-403): memory items are
+    # `memory-index`, repo items stay `builtin-index`.
+    local src="builtin-index"
+    [[ "$domain" == "memory" ]] && src="memory-index"
+    printf '{"ref":%s,"source":%s,"confidence":%s,"source_domain":%s,"why_relevant":%s,"trust_level":%s}' \
+      "$(_ctx_json_str "$ref")" \
+      "$(_ctx_json_str "$src")" "$conf" \
       "$(_ctx_json_str "$domain")" \
       "$(_ctx_json_str "$why")" \
       "$(_ctx_json_str "$trust")"
@@ -914,9 +1062,39 @@ _ctx_tsv_to_json_array() {
   printf ']'
 }
 
+# ── Multi-source raw query (plane fan-out) ────────────────────────────────────
+# Emits raw TSV hits for the requested source plane(s). repo_root is the cwd used
+# both as the repo-DB anchor and to resolve the memory dir. No dedup is performed
+# (matching the single-source path, which can already emit a symbol + text hit
+# for one ref). Memory-plane freshness is ensured here so a memory-only query is
+# independent of the repo DB; a missing memory dir or DB yields no rows (the
+# caller renders that as "# no hits").
+
+_ctx_query_sources_raw() {
+  local repo_root="$1" query="$2" domain="$3" source="$4"
+
+  if [[ "$source" == "repo" || "$source" == "all" ]]; then
+    _ctx_query_hits_raw "$repo_root" "$query" "$domain" "" ""
+  fi
+
+  if [[ "$source" == "memory" || "$source" == "all" ]]; then
+    local mdir mdb
+    mdir="$(_ctx_resolve_memory_dir "$repo_root")" || mdir=""
+    if [[ -n "$mdir" ]]; then
+      _ctx_ensure_fresh_memory "$mdir" || true
+      mdb="$(_ctx_memory_db_path "$mdir")"
+      if [[ -f "$mdb" ]]; then
+        _ctx_query_hits_raw "$repo_root" "$query" "" "$mdb" "memory"
+      fi
+    fi
+  fi
+}
+
 # ── pmctl_context_query ────────────────────────────────────────────────────────
 #
-# Searches the repo index and outputs context_hit_v1 YAML blocks.
+# Searches the repo and/or memory index and outputs context_hit_v1 YAML blocks.
+# --source repo|memory|all selects the plane(s); --domain (repo-plane only)
+# narrows by knowledge/repo path class.
 # FTS5 path: uses content_fts virtual table (MATCH) for full-text search.
 # LIKE fallback: searches symbols.name and file_chunks.text with LIKE.
 # Either path also searches symbols.name with LIKE for reliable symbol lookup.
@@ -933,7 +1111,7 @@ pmctl_context_query() {
     return 2
   fi
 
-  local query="" domain=""
+  local query="" domain="" source="repo"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --domain)
@@ -946,6 +1124,18 @@ pmctl_context_query() {
         ;;
       --domain=*)
         domain="${1#--domain=}"
+        shift
+        ;;
+      --source)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context query: --source requires a value\n' >&2
+          return 2
+        fi
+        source="$2"
+        shift 2
+        ;;
+      --source=*)
+        source="${1#--source=}"
         shift
         ;;
       --)
@@ -973,6 +1163,21 @@ pmctl_context_query() {
     return 2
   fi
 
+  case "$source" in
+    repo|memory|all) ;;
+    *)
+      printf 'pmctl context query: --source must be "repo", "memory", or "all" (got: %s)\n' "$source" >&2
+      return 2
+      ;;
+  esac
+
+  # --domain is a repo-plane path classifier; the memory plane has no
+  # knowledge/repo subclasses, so the two flags are mutually exclusive there.
+  if [[ -n "$domain" && "$source" != "repo" ]]; then
+    printf 'pmctl context query: --domain is only valid with --source repo (got --source %s)\n' "$source" >&2
+    return 2
+  fi
+
   if [[ -z "$query" ]]; then
     printf 'pmctl context query: query string required\n' >&2
     return 2
@@ -980,8 +1185,15 @@ pmctl_context_query() {
 
   local db
   db="$(_ctx_db_path "$repo_root")"
-  _ctx_ensure_fresh "$repo_root" || true
-  if [[ ! -f "$db" ]]; then
+  # Repo-plane freshness (repo & all). Memory-plane freshness is handled inside
+  # _ctx_query_sources_raw so a memory-only query never depends on the repo DB.
+  if [[ "$source" == "repo" || "$source" == "all" ]]; then
+    _ctx_ensure_fresh "$repo_root" || true
+  fi
+
+  # Pure-repo source keeps its exact legacy short-circuit: no index yet is a
+  # graceful zero-hit, NOT a sqlite error.
+  if [[ "$source" == "repo" && ! -f "$db" ]]; then
     printf '# no hits for: %s\n' "$query"
     # No index yet is still a query: emit a zero-hit event so usage telemetry
     # captures it and the "emits after each call" contract holds uniformly.
@@ -990,8 +1202,15 @@ pmctl_context_query() {
   fi
 
   if ! _ctx_sqlite3_check; then
-    printf 'pmctl context query: sqlite3 not found on PATH\n' >&2
-    return 1
+    # Repo source with an existing DB but no sqlite is a hard error (legacy).
+    # memory/all degrade to graceful empty: no plane can be searched without it.
+    if [[ "$source" == "repo" ]]; then
+      printf 'pmctl context query: sqlite3 not found on PATH\n' >&2
+      return 1
+    fi
+    printf '# no hits for: %s\n' "$query"
+    _ctx_emit_usage_event "context.queried" "$repo_root" "$query" 0
+    return 0
   fi
 
   local hits=0 first=1
@@ -1001,7 +1220,7 @@ pmctl_context_query() {
     first=0
     _ctx_emit_hit "$ref" "$hit_domain" "$why" "$conf" "$trust"
     hits=$((hits + 1))
-  done < <(_ctx_query_hits_raw "$repo_root" "$query" "$domain" 2>/dev/null)
+  done < <(_ctx_query_sources_raw "$repo_root" "$query" "$domain" "$source" 2>/dev/null)
 
   if [[ "$hits" -eq 0 ]]; then
     printf '# no hits for: %s\n' "$query"
@@ -1010,17 +1229,34 @@ pmctl_context_query() {
   return 0
 }
 
+# ── Memory-plane pack accumulator (pointer-only) ──────────────────────────────
+# Appends memory hits to mem_tsv, deduped via seen_file. PRIVACY (load-bearing):
+# pointer-only — the matched card body / snippet is NEVER copied into the pack
+# (which is repo-bound and may be archived). Only the ref + trust tier travel.
+_ctx_pack_memory_tsv() {
+  local repo_root="$1" memory_db="$2" term="$3" seen_file="$4" mem_tsv="$5"
+  while IFS=$'\t' read -r ref hit_domain why conf trust; do
+    [[ -n "$ref" ]] || continue
+    grep -qxF "$ref" "$seen_file" 2>/dev/null && continue
+    printf '%s\n' "$ref" >> "$seen_file"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$ref" "memory" "memory match" "$conf" "$trust" >> "$mem_tsv"
+  done < <(_ctx_query_hits_raw "$repo_root" "$term" "" "$memory_db" "memory" 2>/dev/null)
+}
+
 # ── pmctl_context_pack ────────────────────────────────────────────────────────
 #
-# Assembles multiple repo-index queries into a JSON context-pack (schema v2).
+# Assembles multiple index queries into a JSON context-pack (schema v2).
 # Symbol-name hits (why_relevant starts "symbol:") go into symbols[];
-# chunk/FTS hits go into files[]. Refs are deduplicated across all queries.
+# chunk/FTS hits go into files[]; memory-plane hits go into memories[]
+# (pointer-only). Refs are deduplicated across all queries.
+# --source repo|memory|all selects the plane(s); default repo (memories[] = []).
 #
-# CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ...
+# CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ... [--source repo|memory|all]
 
 pmctl_context_pack() {
   local repo_root="${REPO_ROOT:-}"
   local task_id=""
+  local source="repo"
   local terms=()
 
   while [[ $# -gt 0 ]]; do
@@ -1044,6 +1280,18 @@ pmctl_context_pack() {
         fi
         terms+=("$2")
         shift 2
+        ;;
+      --source)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl context pack: --source requires a value\n' >&2
+          return 2
+        fi
+        source="$2"
+        shift 2
+        ;;
+      --source=*)
+        source="${1#--source=}"
+        shift
         ;;
       -*)
         printf 'pmctl context pack: unknown flag %s\n' "$1" >&2
@@ -1069,10 +1317,22 @@ pmctl_context_pack() {
     printf 'pmctl context pack: at least one --query is required\n' >&2
     return 2
   fi
+  case "$source" in
+    repo|memory|all) ;;
+    *)
+      printf 'pmctl context pack: --source must be "repo", "memory", or "all" (got: %s)\n' "$source" >&2
+      return 2
+      ;;
+  esac
+
   local db
   db="$(_ctx_db_path "$repo_root")"
-  _ctx_ensure_fresh "$repo_root" || true
-  if [[ ! -f "$db" ]]; then
+  if [[ "$source" == "repo" || "$source" == "all" ]]; then
+    _ctx_ensure_fresh "$repo_root" || true
+  fi
+
+  # Pure-repo source with no index keeps its exact legacy empty-pack output.
+  if [[ "$source" == "repo" && ! -f "$db" ]]; then
     local ts
     ts="$(_ctx_now_iso8601)"
     printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
@@ -1081,28 +1341,64 @@ pmctl_context_pack() {
   fi
 
   if ! _ctx_sqlite3_check; then
-    printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
-    return 1
+    # Repo source is a hard error (legacy); memory/all degrade to an empty pack.
+    if [[ "$source" == "repo" ]]; then
+      printf 'pmctl context pack: sqlite3 not found on PATH\n' >&2
+      return 1
+    fi
+    local ts
+    ts="$(_ctx_now_iso8601)"
+    printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":[],"symbols":[],"memories":[],"risks":[]}\n' \
+      "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")"
+    return 0
   fi
 
-  local seen_file sym_tsv files_tsv
+  local seen_file sym_tsv files_tsv mem_tsv
   seen_file="$(mktemp /tmp/ctx-pack-seen-XXXXXX)"
   sym_tsv="$(mktemp /tmp/ctx-pack-sym-XXXXXX)"
   files_tsv="$(mktemp /tmp/ctx-pack-files-XXXXXX)"
+  mem_tsv="$(mktemp /tmp/ctx-pack-mem-XXXXXX)"
   # shellcheck disable=SC2064
-  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv'" EXIT
+  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$mem_tsv'" EXIT
 
-  for term in "${terms[@]}"; do
-    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
-  done
+  if [[ "$source" == "repo" || "$source" == "all" ]]; then
+    if [[ -f "$db" ]]; then
+      for term in "${terms[@]}"; do
+        _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv"
+      done
+    fi
+  fi
 
-  local ts sym_arr files_arr
+  if [[ "$source" == "memory" || "$source" == "all" ]]; then
+    local mdir mdb
+    mdir="$(_ctx_resolve_memory_dir "$repo_root")" || mdir=""
+    if [[ -n "$mdir" ]]; then
+      _ctx_ensure_fresh_memory "$mdir" || true
+      mdb="$(_ctx_memory_db_path "$mdir")"
+      if [[ -f "$mdb" ]]; then
+        for term in "${terms[@]}"; do
+          _ctx_pack_memory_tsv "$repo_root" "$mdb" "$term" "$seen_file" "$mem_tsv"
+        done
+      fi
+    fi
+  fi
+
+  local ts sym_arr files_arr mem_arr sources_arr
   ts="$(_ctx_now_iso8601)"
   sym_arr="$(_ctx_tsv_to_json_array "$sym_tsv")"
   files_arr="$(_ctx_tsv_to_json_array "$files_tsv")"
+  mem_arr="$(_ctx_tsv_to_json_array "$mem_tsv")"
 
-  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":[{"name":"builtin-index","version":"1"}],"files":%s,"symbols":%s,"memories":[],"risks":[]}\n' \
-    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$files_arr" "$sym_arr"
+  # sources[] registers every producer cited by an item's `source` field. Add the
+  # memory-index producer only when the pack actually carries memory hits, so the
+  # registry stays consistent with item attribution (CC-403).
+  sources_arr='[{"name":"builtin-index","version":"1"}]'
+  if [[ "$mem_arr" != "[]" ]]; then
+    sources_arr='[{"name":"builtin-index","version":"1"},{"name":"memory-index","version":"1"}]'
+  fi
+
+  printf '{"schema_version":2,"task_id":%s,"built_ts":%s,"sources":%s,"files":%s,"symbols":%s,"memories":%s,"risks":[]}\n' \
+    "$(_ctx_json_str "$task_id")" "$(_ctx_json_str "$ts")" "$sources_arr" "$files_arr" "$sym_arr" "$mem_arr"
 }
 
 # ── pmctl_context_reuse_scan ──────────────────────────────────────────────────

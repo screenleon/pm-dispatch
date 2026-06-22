@@ -64,8 +64,8 @@
         },
         "source_domain": {
           "type": "string",
-          "enum": ["knowledge", "repo", "state"],
-          "description": "Which index plane this item came from."
+          "enum": ["knowledge", "repo", "state", "memory"],
+          "description": "Which index plane this item came from. 'memory' is the out-of-repo project-memory plane (cards / MEMORY.md / episodes), searched via `pmctl context --source memory`."
         },
         "why_relevant": {
           "type": "string",

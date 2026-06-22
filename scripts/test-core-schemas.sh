@@ -565,6 +565,20 @@ case_context_pack_v2_new_fields_valid() {
   rm -f "$tmpf"
 }
 
+case_context_pack_memory_source_domain_valid() {
+  local name="context-pack.schema.json: memories[] item with source_domain memory validates (CC-403)"
+  should_run "$name" || return 0
+  local schema_file="$CORE_DIR/schema/context-pack.schema.json"
+  local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
+  printf '{"schema_version":2,"task_id":"CC-403","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"memories":[{"ref":"feedback_gate_executor.md:1","source":"builtin-index","confidence":0.75,"source_domain":"memory","why_relevant":"memory match","trust_level":"high"}]}' > "$tmpf"
+  if jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "source_domain='memory' in memories[] should validate"
+  fi
+  rm -f "$tmpf"
+}
+
 case_context_pack_invalid_source_domain_rejected() {
   local name="context-pack.schema.json: invalid source_domain value is rejected"
   should_run "$name" || return 0
@@ -595,6 +609,7 @@ case_context_pack_invalid_trust_level_rejected() {
 
 case_context_pack_v1_still_valid
 case_context_pack_v2_new_fields_valid
+case_context_pack_memory_source_domain_valid
 case_context_pack_invalid_source_domain_rejected
 case_context_pack_invalid_trust_level_rejected
 
