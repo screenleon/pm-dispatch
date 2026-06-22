@@ -466,6 +466,109 @@ test_dispatch_pm_scripts_via_bash() {
   fi
 }
 
+test_jobs_parallel_all_pass() {
+  # Behavior: --jobs 2 runs all suites in parallel and exits 0 with correct totals.
+  local name="jobs-parallel-all-pass"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_parallel_one_fail() {
+  # Behavior: --jobs 2 with one failing suite exits 1 and reports the failed suite name.
+  local name="jobs-parallel-one-fail"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  write_suite_stub "$repo" lint-agents 1
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"FAIL lint-agents"* && "$out" == *"failed suites:"*"lint-agents"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_parallel_skip_accounting() {
+  # Behavior: --jobs 2, one suite --skip'd; totals show 1 skipped.
+  local name="jobs-parallel-skip-accounting"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 --skip lint-agents 2>&1) || status=$?
+  local expected_pass=$(( SUITE_TOTAL - 1 ))
+  if [[ "$status" -eq 0 &&
+        "$out" == *"SKIP lint-agents (requested)"* &&
+        "$out" == *"$expected_pass passed, 0 failed, 1 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_invalid_zero() {
+  # Behavior: --jobs 0 exits 2 with an error message (zero is not a positive integer).
+  local name="jobs-invalid-zero"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs 0 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--jobs requires a positive integer"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_invalid_string() {
+  # Behavior: --jobs abc exits 2 with an error message.
+  local name="jobs-invalid-string"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs abc 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--jobs requires a positive integer"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_no_arg_default() {
+  # Behavior: no --jobs flag uses default parallelism (nproc or 1); exits 0 with correct totals.
+  local name="jobs-no-arg-default"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_larger_than_suite_count() {
+  # Behavior: --jobs N where N > total suites runs all suites without error.
+  local name="jobs-larger-than-suite-count"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 9999 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
 test_list
 test_known_suite_count
 test_skip_unknown_suite
@@ -480,6 +583,13 @@ test_skip_option_like_arg
 test_dispatch_hooks_home_override
 test_dispatch_install_running_flag
 test_dispatch_pm_scripts_via_bash
+test_jobs_parallel_all_pass
+test_jobs_parallel_one_fail
+test_jobs_parallel_skip_accounting
+test_jobs_invalid_zero
+test_jobs_invalid_string
+test_jobs_no_arg_default
+test_jobs_larger_than_suite_count
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

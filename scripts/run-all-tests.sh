@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Standalone test aggregator - run all pm-dispatch test suites.
-# Usage: scripts/run-all-tests.sh [--skip <name>] [--list]
+# Usage: scripts/run-all-tests.sh [--skip <name>] [--list] [--jobs N]
 # Requires a complete developer checkout: registered suites that are missing or
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
+# Use --jobs N (or -j N) to set parallelism (default: nproc; falls back to 1 if nproc unavailable).
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -131,7 +132,7 @@ declare -A SUITE_PATHS=(
 
 declare -A SKIP_REQUESTED=()
 LIST=0
-JOBS="$(nproc 2>/dev/null || echo 4)"
+JOBS="$(nproc 2>/dev/null || echo 1)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
