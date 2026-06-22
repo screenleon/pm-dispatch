@@ -576,7 +576,7 @@ BRIEF_DIR="$WORK_DIR/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
-# Normalize to an absolute path. The reviewer write-guard (hook-reviewer-write-guard.sh)
+# Normalize to an absolute path. The reviewer write-guard (guard-reviewer-write.sh)
 # requires an absolute file_path, and the pr-gate-handover_v1 schema mandates an absolute
 # output_file. A relative --output (or a relative --cd default) would otherwise be embedded
 # verbatim into the reviewer brief's `pmctl guard check` constraint, making the guard exit

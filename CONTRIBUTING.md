@@ -67,7 +67,7 @@ bash scripts/run-all-tests.sh
 
 This runs all suites (hooks, install, portable, pr-gate, usage, pm-scripts, etc.) and
 prints a pass/fail/skip summary. For a focused run on one suite, invoke it directly,
-for example `bash scripts/test-hooks.sh` or `bash scripts/test-install.sh`. Use
+for example `bash scripts/test-guards.sh` or `bash scripts/test-install.sh`. Use
 `--skip <suite>` to opt out of environment-specific suites, such as
 `--skip test-codex-dispatch` when the Codex CLI is not installed.
 
@@ -90,7 +90,7 @@ Use `${PM_DISPATCH_REPO}` in examples and docs to denote your local clone root.
 
 Examples:
 
-- `${PM_DISPATCH_REPO}/scripts/install-hooks.sh --dry-run`
+- `${PM_DISPATCH_REPO}/scripts/install-guards.sh --dry-run`
 - `${PM_DISPATCH_REPO}/commands/pm.md`
 - `export PM_DISPATCH_REPO="/tmp/my-pm-dispatch"`
 

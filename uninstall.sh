@@ -347,9 +347,9 @@ echo "==> hooks"
 # CLAUDE_HOME passed per-call so hook removal targets the same root as the rest
 # of the uninstall (it derives settings.json from CLAUDE_HOME too).
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" --dry-run
+  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-guards.sh" --dry-run
 else
-  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-hooks.sh"
+  CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-guards.sh"
 fi
 
 if [[ "$DRY_RUN" -ne 1 ]]; then

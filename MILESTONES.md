@@ -140,7 +140,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-384 | `hook-*.sh` → `guard-*.sh`、framework/helper/env 前綴一起掃；install/uninstall/doctor 接線 + parity scanner + 測試 + 文件同步。[[CC-333]] layer 2/6 | 🟢 |
+| CC-384 | `hook-*.sh` → `guard-*.sh`、framework/helper/env 前綴一起掃；install/uninstall/doctor 接線 + parity scanner + 測試 + 文件同步。[[CC-333]] layer 2/6 | ✅ (#310) |
 
 > **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Regression suite for hook-pm-write-guard.sh,
-# hook-executor-write-guard.sh, and hook-reviewer-write-guard.sh.
-# Note: hook-reviewer-write-guard.sh is the policy-backing script for
+# Regression suite for guard-pm-write.sh,
+# guard-executor-write.sh, and guard-reviewer-write.sh.
+# Note: guard-reviewer-write.sh is the policy-backing script for
 # `pmctl guard check --role reviewer`; it is NOT a PreToolUse hook.
 # Its pmctl integration is covered by test-pmctl-guard.sh.
 #
@@ -9,37 +9,37 @@
 # Claude Code emits, asserts the exit code, optionally checks for a substring in
 # stderr, and (on selected cases) asserts a substring in the audit log.
 #
-# Audit log is redirected to a per-run temp dir via $PM_HOOK_LOG_DIR — the
+# Audit log is redirected to a per-run temp dir via $PM_GUARD_LOG_DIR — the
 # live ~/.claude/logs/hooks.log is NOT polluted by this suite.
 #
 # Usage:
-#   scripts/test-hooks.sh           # silent unless failures
-#   VERBOSE=1 scripts/test-hooks.sh # print every case
+#   scripts/test-guards.sh           # silent unless failures
+#   VERBOSE=1 scripts/test-guards.sh # print every case
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
-RWHOOK="$SCRIPT_DIR/hook-reviewer-write-guard.sh"
-EXWHOOK="$SCRIPT_DIR/hook-executor-write-guard.sh"
-STOP_HOOK="$SCRIPT_DIR/hook-log-claude-usage.sh"
-RL_HOOK="$SCRIPT_DIR/hook-save-rate-limits.sh"
-MEM_HOOK="$SCRIPT_DIR/hook-inject-memory.sh"
-SESSION_HOOK="$SCRIPT_DIR/hook-session-summary.sh"
+PMHOOK="$SCRIPT_DIR/guard-pm-write.sh"
+RWHOOK="$SCRIPT_DIR/guard-reviewer-write.sh"
+EXWHOOK="$SCRIPT_DIR/guard-executor-write.sh"
+STOP_HOOK="$SCRIPT_DIR/guard-log-claude-usage.sh"
+RL_HOOK="$SCRIPT_DIR/guard-save-rate-limits.sh"
+MEM_HOOK="$SCRIPT_DIR/guard-inject-memory.sh"
+SESSION_HOOK="$SCRIPT_DIR/guard-session-summary.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init --format=indent-2sp-quiet "$@"
 
 # Sandbox audit logs.
-export PM_HOOK_LOG_DIR="$(mktemp -d)"
-TEST_LOG_FILE="$PM_HOOK_LOG_DIR/hooks.log"
-trap 'rm -rf "$PM_HOOK_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
+export PM_GUARD_LOG_DIR="$(mktemp -d)"
+TEST_LOG_FILE="$PM_GUARD_LOG_DIR/hooks.log"
+trap 'rm -rf "$PM_GUARD_LOG_DIR" "${DISPATCH_TEST_BRIEF:-}" "${DISPATCH_TEST_BIN:-}" "${tmp_root:-}"' EXIT
 
 # Pin the codex-executor read roots to known values so path tests are
 # deterministic regardless of caller environment.
-export PM_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
+export PM_GUARD_CODEX_READ_ROOTS="$HOME/github:/tmp"
 
 # run_case <name> <expected_exit> <hook_path> <json_input> [<expected_stderr_substring>]
 run_case() {
@@ -73,7 +73,7 @@ run_case_env() {
   local name="$1" expect_exit="$2" envspec="$3" hook="$4" json="$5"
   should_run "$name" || return 0
   local actual_exit
-  actual_exit=$(printf '%s' "$json" | env "$envspec" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
+  actual_exit=$(printf '%s' "$json" | env "$envspec" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$hook" >/dev/null 2>&1; echo $?)
   if [[ "$actual_exit" == "$expect_exit" ]]; then
     pass "$name"
   else
@@ -126,7 +126,7 @@ truncate_log() { : > "$TEST_LOG_FILE"; }
 
 make_stop_home() {
   local tmp_home
-  tmp_home="$(mktemp -d "$PM_HOOK_LOG_DIR/stop-home.XXXXXX")"
+  tmp_home="$(mktemp -d "$PM_GUARD_LOG_DIR/stop-home.XXXXXX")"
   mkdir -p "$tmp_home/.claude/scripts"
   ln -s "$SCRIPT_DIR/log-usage.sh" "$tmp_home/.claude/scripts/log-usage.sh"
   printf '%s\n' "$tmp_home"
@@ -139,7 +139,7 @@ code_path="$REPO_ROOT/agents/project-pm.md"
 # pm-write-guard
 # =============================================================================
 
-$LIST || echo "== hook-pm-write-guard =="
+$LIST || echo "== guard-pm-write =="
 
 run_case "pm: Edit memory file → allow" 0 "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}"
@@ -202,13 +202,13 @@ run_case "pm: project-pm Bash → no-op (matcher would not fire it)" 0 "$PMHOOK"
 run_case "pm: project-pm Read → no-op" 0 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}'
 
-run_case_env "pm: bypass via PM_HOOK_PM_GUARD=off" 0 "PM_HOOK_PM_GUARD=off" "$PMHOOK" \
+run_case_env "pm: bypass via PM_GUARD_PM_WRITE=off" 0 "PM_GUARD_PM_WRITE=off" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
-run_case_env "pm: bypass=Off (case mismatch) does NOT bypass" 2 "PM_HOOK_PM_GUARD=Off" "$PMHOOK" \
+run_case_env "pm: bypass=Off (case mismatch) does NOT bypass" 2 "PM_GUARD_PM_WRITE=Off" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
-run_case_env "pm: bypass=empty does NOT bypass" 2 "PM_HOOK_PM_GUARD=" "$PMHOOK" \
+run_case_env "pm: bypass=empty does NOT bypass" 2 "PM_GUARD_PM_WRITE=" "$PMHOOK" \
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$code_path\"}}"
 
 # Audit-log content assertions for pm-guard.
@@ -222,7 +222,7 @@ assert_log "pm: audit log contains deny line with reason" "decision=deny"
 assert_log "pm: audit log includes target file_path" "$code_path"
 
 $LIST || truncate_log
-$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env PM_HOOK_PM_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
+$LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$mem_path\"}}" | env PM_GUARD_PM_WRITE=off PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$PMHOOK" >/dev/null 2>&1
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
@@ -231,7 +231,7 @@ assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 # =============================================================================
 
 echo
-$LIST || echo "== hook-executor-write-guard (codex, cli-only) =="
+$LIST || echo "== guard-executor-write (codex, cli-only) =="
 # codex write_guard_mode=cli-only (CC-375/CC-385a): live hook no-ops; enforcement
 # only via PM_GUARD_CHECK_CLI=1 (set by pmctl guard check).
 #
@@ -327,23 +327,23 @@ rm -f "$_exw_symlink_brief" "$_exw_symlink_target"
 unset _exw_symlink_target _exw_symlink_brief
 
 # --- bypass ---
-run_case_env "exw: bypass via PM_HOOK_CODEX_WRITE_GUARD=off" 0 "PM_HOOK_CODEX_WRITE_GUARD=off" "$EXWHOOK" \
+run_case_env "exw: bypass via PM_GUARD_CODEX_WRITE=off" 0 "PM_GUARD_CODEX_WRITE=off" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}'
 
 # --- audit-log content assertions (CLI-driven; enforcement only under PM_GUARD_CHECK_CLI) ---
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' | env PM_GUARD_CHECK_CLI=1 PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains allow line" "decision=allow"
 assert_log "exw: allow line records agent=codex-executor" "agent=codex-executor"
 assert_log "exw: allow line records tool=Write" "tool=Write"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains deny line" "decision=deny"
 assert_log "exw: deny line records agent=codex-executor" "agent=codex-executor"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_HOOK_CODEX_WRITE_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/home/example/github/ExampleApp/foo.go"}}' | env PM_GUARD_CHECK_CLI=1 PM_GUARD_CODEX_WRITE=off PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$EXWHOOK" >/dev/null 2>&1
 assert_log "exw: audit log contains bypass line" "decision=bypass"
 assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor"
 
@@ -362,7 +362,7 @@ assert_log "exw: bypass line records agent=codex-executor" "agent=codex-executor
 #                                         (PM_GUARD_CHECK_CLI set).
 
 echo
-$LIST || echo "== hook-executor-write-guard (runtime asymmetry) =="
+$LIST || echo "== guard-executor-write (runtime asymmetry) =="
 truncate_log
 
 # codex (write_guard_mode=cli-only as of CC-375/CC-385a) is also no-op in the
@@ -382,7 +382,7 @@ run_case "exw: unregistered runtime LIVE → no-op" 0 "$EXWHOOK" \
 # =============================================================================
 
 echo
-$LIST || echo "== hook-reviewer-write-guard =="
+$LIST || echo "== guard-reviewer-write =="
 truncate_log
 
 _gate_dir="$(mktemp -d)/repo/.gate-results"
@@ -469,7 +469,7 @@ rm -f "$_rw_symlink_out" "$_rw_symlink_target"
 unset _rw_symlink_target _rw_symlink_out
 
 # --- bypass ---
-run_case_env "rw: bypass via PM_HOOK_REVIEWER_GUARD=off" 0 "PM_HOOK_REVIEWER_GUARD=off" "$RWHOOK" \
+run_case_env "rw: bypass via PM_GUARD_REVIEWER_WRITE=off" 0 "PM_GUARD_REVIEWER_WRITE=off" "$RWHOOK" \
   '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}'
 
 # --- audit-log content assertions ---
@@ -485,7 +485,7 @@ assert_log "rw: audit log contains deny line" "decision=deny"
 assert_log "rw: deny line records agent=critic" "agent=critic"
 
 $LIST || truncate_log
-$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | env PM_HOOK_REVIEWER_GUARD=off PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$RWHOOK" >/dev/null 2>&1
+$LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"file_path":"/etc/passwd"}}' | env PM_GUARD_REVIEWER_WRITE=off PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$RWHOOK" >/dev/null 2>&1
 assert_log "rw: audit log contains bypass line" "decision=bypass"
 assert_log "rw: bypass line records agent=critic" "agent=critic"
 
@@ -493,11 +493,11 @@ rm -rf "$_gate_dir" "$(dirname "$_gate_dir")"
 unset _gate_dir
 
 # =============================================================================
-# hook-log-claude-usage
+# guard-log-claude-usage
 # =============================================================================
 
 echo
-$LIST || echo "== hook-log-claude-usage =="
+$LIST || echo "== guard-log-claude-usage =="
 truncate_log
 
 stop_happy_path() {
@@ -512,7 +512,7 @@ stop_happy_path() {
   payload="$(jq -nc --arg path "$transcript" --arg session "sess1" '{transcript_path:$path,session_id:$session}')"
   out="$(mktemp)"
   err="$(mktemp)"
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >"$out" 2>"$err"
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
@@ -532,7 +532,7 @@ stop_missing_transcript_path() {
   local name="stop_missing_transcript_path" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' '{"session_id":"s1"}' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' '{"session_id":"s1"}' | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -548,7 +548,7 @@ stop_transcript_file_not_found() {
   local name="stop_transcript_file_not_found" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' '{"transcript_path":"/nonexistent/path","session_id":"s1"}' | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -564,7 +564,7 @@ stop_malformed_json_payload() {
   local name="stop_malformed_json_payload" home status
   should_run "$name" || return 0
   home="$(make_stop_home)"
-  printf '%s' 'not json' | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' 'not json' | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" ]]; then
     PASS=$((PASS+1))
@@ -583,7 +583,7 @@ stop_zero_token_transcript() {
   transcript="$home/transcript-zero.jsonl"
   printf '%s\n' '{"role":"assistant","content":"hello"}' '{"role":"user","content":"ok"}' > "$transcript"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -606,7 +606,7 @@ stop_failure_logged() {
   chmod 444 "$logfile"
   payload="$(jq -nc --arg path "$transcript" --arg session "s1" '{transcript_path:$path,session_id:$session}')"
   truncate_log
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   chmod 644 "$logfile"
   if [[ "$status" == "0" && -f "$TEST_LOG_FILE" ]] && grep -q -F "failed" "$TEST_LOG_FILE"; then
@@ -631,9 +631,9 @@ stop_idempotent_double_call() {
   payload="$(jq -nc --arg path "$transcript" --arg session "sess-idem" \
     '{transcript_path:$path,session_id:$session}')"
   # First invocation
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   # Second invocation (same session + transcript)
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   # Sum all session_total entries for this session - must equal 1700, not 3400
@@ -660,7 +660,7 @@ stop_nested_message_usage() {
     > "$transcript"
   payload="$(jq -nc --arg path "$transcript" --arg session "sess-nested" \
     '{transcript_path:$path,session_id:$session}')"
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   logfile="$home/.claude/usage-tracker.jsonl"
   if [[ "$status" == "0" && -f "$logfile" ]] &&
@@ -686,8 +686,8 @@ stop_no_session_id_skips_log() {
   # Payload has transcript_path but no session_id field
   payload="$(jq -nc --arg path "$transcript" '{transcript_path:$path}')"
   # Invoke twice — without session_id the hook must skip logging (cannot deduplicate)
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
-  printf '%s' "$payload" | HOME="$home" PM_HOOK_LOG_DIR="$PM_HOOK_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
+  printf '%s' "$payload" | HOME="$home" PM_GUARD_LOG_DIR="$PM_GUARD_LOG_DIR" "$STOP_HOOK" >/dev/null 2>&1
   status=$?
   if [[ "$status" == "0" && ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
     PASS=$((PASS+1))
@@ -710,11 +710,11 @@ stop_nested_message_usage
 stop_no_session_id_skips_log
 
 # =============================================================================
-# hook-save-rate-limits
+# guard-save-rate-limits
 # =============================================================================
 
 echo
-$LIST || echo "== hook-save-rate-limits =="
+$LIST || echo "== guard-save-rate-limits =="
 
 run_rl_hook() {
   local json="$1" config_dir="$2"
@@ -1059,7 +1059,7 @@ hook_startup_preserves_59min_rate_tmp() {
 
 _hook_rate_tmp_exit_trap_cleans_up() {
   local name="rl-hook/rate-tmp-exit-trap-cleans-up" rl_home fake_bin fake_mv leaked
-  # Verifies that the EXIT trap in hook-save-rate-limits.sh removes the
+  # Verifies that the EXIT trap in guard-save-rate-limits.sh removes the
   # in-flight _rate_tmp file when the hook process is killed by SIGTERM
   # after mktemp but before the atomic mv completes.
   # Steps:
@@ -1175,11 +1175,11 @@ rl_hook_write_failure_chains
 rl_hook_chain_failure_isolated
 
 # =============================================================================
-# hook-inject-memory
+# guard-inject-memory
 # =============================================================================
 
 echo
-$LIST || echo "== hook-inject-memory =="
+$LIST || echo "== guard-inject-memory =="
 
 inject_encoded_path() {
   local path="$1"
@@ -1510,7 +1510,7 @@ inject_hook_default_home_fallback() {
   # Steps:
   #   1. Create a temp dir used as a sandboxed HOME; write MEMORY.md under
   #      <tmp_home>/.claude/projects/<encoded>/memory/ with a uniquely-named fake cwd
-  #   2. Run hook-inject-memory.sh with HOME overridden to the temp dir and
+  #   2. Run guard-inject-memory.sh with HOME overridden to the temp dir and
   #      CLAUDE_CONFIG_DIR stripped (env -u), so the fallback resolves to tmp_home
   #   3. Assert exit 0 and the index line appears in stdout
   #   4. Clean up the temp HOME — never touches real $HOME
@@ -1770,11 +1770,11 @@ inject_hook_routing_dir_isolation() {
 inject_hook_routing_dir_isolation
 
 # =============================================================================
-# hook-session-summary
+# guard-session-summary
 # =============================================================================
 
 echo
-$LIST || echo "== hook-session-summary =="
+$LIST || echo "== guard-session-summary =="
 
 session_hook_happy_path() {
   # Verifies a new session_id appends a metadata entry to episodes.jsonl.
@@ -2281,12 +2281,12 @@ meta_filter_runs_only_matching() {
   # Verifies --filter executes exactly the cases whose name contains the pattern
   # and exits 0; all other cases are skipped.
   # Steps:
-  #   1. Invoke test-hooks.sh --filter with a pattern matching exactly one known case
+  #   1. Invoke test-guards.sh --filter with a pattern matching exactly one known case
   #   2. Assert the output reports exactly "1 passed, 0 failed"
   local name="meta/filter-runs-only-matching"
   should_run "$name" || return 0
   local out
-  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "pm: Edit memory file" 2>&1)
+  out=$(bash "$SCRIPT_DIR/test-guards.sh" --filter "pm: Edit memory file" 2>&1)
   if [[ "$out" == *"1 passed, 0 failed"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
@@ -2301,13 +2301,13 @@ meta_list_exits_zero_with_count() {
   # Verifies --list exits 0 and emits at least 200 case name lines without
   # executing any test code (counters remain 0).
   # Steps:
-  #   1. Invoke test-hooks.sh --list
+  #   1. Invoke test-guards.sh --list
   #   2. Assert exit status is 0
   #   3. Assert the printed line count exceeds 140 (confirming the full registry)
   local name="meta/list-exits-zero-with-count"
   should_run "$name" || return 0
   local out count status
-  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --list 2>&1)
+  out=$(bash "$SCRIPT_DIR/test-guards.sh" --list 2>&1)
   status=$?
   count=$(printf '%s\n' "$out" | wc -l)
   if [[ "$status" == "0" && "$count" -gt 140 ]]; then
@@ -2324,13 +2324,13 @@ meta_filter_no_match_exits_nonzero() {
   # Verifies --filter with a pattern that matches no cases exits nonzero
   # and emits a diagnostic message rather than silently reporting 0 passed.
   # Steps:
-  #   1. Invoke test-hooks.sh --filter with a pattern known to match nothing
+  #   1. Invoke test-guards.sh --filter with a pattern known to match nothing
   #   2. Assert exit status is nonzero
   #   3. Assert stderr/stdout contains "no tests matched"
   local name="meta/filter-no-match-exits-nonzero"
   should_run "$name" || return 0
   local out status
-  out=$(bash "$SCRIPT_DIR/test-hooks.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
+  out=$(bash "$SCRIPT_DIR/test-guards.sh" --filter "__no_such_case_xyz__" 2>&1) && status=$? || status=$?
   if [[ "$status" -ne 0 && "$out" == *"no tests matched"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"

@@ -81,18 +81,18 @@ write_minimal_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-pm-write.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "${REPO_ROOT}/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -105,19 +105,19 @@ write_stale_path_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-pm-write.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/adapters/codex/bash-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "/fake/old-repo/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"command": "/fake/old-repo/scripts/guard-save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -130,19 +130,19 @@ write_sibling_prefix_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${sibling}/scripts/guard-pm-write.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${sibling}/adapters/codex/bash-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "${sibling}/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "${sibling}/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "${sibling}/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"command": "${sibling}/scripts/guard-save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -155,19 +155,19 @@ write_full_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-pm-write.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "${REPO_ROOT}/adapters/codex/bash-guard.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "${REPO_ROOT}/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "${REPO_ROOT}/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"command": "${REPO_ROOT}/scripts/guard-save-rate-limits.sh"}
 }
 EOF
   add_dispatch_allowlist "$home_dir"
@@ -618,7 +618,7 @@ case_doctor_scripts_not_executable_fail() {
   # Verifies that doctor reports [FAIL] when a managed script is not executable.
   #
   # Steps:
-  #   1. Copy repo scripts to a temp dir; chmod -x hook-pm-write-guard.sh.
+  #   1. Copy repo scripts to a temp dir; chmod -x guard-pm-write.sh.
   #   2. Run doctor --no-color --repo <temp-dir>.
   #   3. Assert exit 1 and output contains "[FAIL]" and "non-executable".
   local name="doctor-scripts-not-executable-fail"
@@ -635,7 +635,7 @@ case_doctor_scripts_not_executable_fail() {
     cp "$f" "$fake_repo/scripts/$(basename "$f")"
     chmod +x "$fake_repo/scripts/$(basename "$f")"
   done
-  chmod -x "$fake_repo/scripts/hook-pm-write-guard.sh"
+  chmod -x "$fake_repo/scripts/guard-pm-write.sh"
 
   write_minimal_settings "$home"
   write_manifest "$home"
@@ -1025,23 +1025,23 @@ case_doctor_profile_invalid_value_exits_2() {
 
 case_doctor_hook_inventory_parity() {
   # CC-224 parity guard: managed hook basenames in doctor.sh must match those
-  # in install-hooks.sh. Also asserts codex-only hooks appear only in the
+  # in install-guards.sh. Also asserts codex-only hooks appear only in the
   # full-profile section of doctor.sh, not the base hooks array.
   local name="doctor-hook-inventory-parity"
   should_run "$name" || return 0
   local doctor_hooks install_hooks
-  doctor_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
-  install_hooks="$(grep -oE 'hook-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-hooks.sh" | sort -u)"
+  doctor_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
+  install_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-guards.sh" | sort -u)"
   if [[ "$doctor_hooks" != "$install_hooks" ]]; then
-    fail "$name" "hook inventory mismatch between doctor.sh and install-hooks.sh:
+    fail "$name" "hook inventory mismatch between doctor.sh and install-guards.sh:
 doctor.sh:     $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
-install-hooks: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
+install-guards: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
     return
   fi
   # Codex-only hooks must appear in the full-profile section of doctor.sh,
   # not in the base hooks array (lines before the full) branch).
   local codex_in_base
-  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'hook-codex-[a-z-]+\.sh' || true)"
+  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'guard-codex-[a-z-]+\.sh' || true)"
   if [[ -n "$codex_in_base" ]]; then
     fail "$name" "codex-only hooks found in base hooks array (should be full-profile only): $codex_in_base"
     return
@@ -1051,7 +1051,7 @@ install-hooks: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
 
 case_doctor_windows_path_hooks_present() {
   # Verifies that hook commands stored in Windows backslash form
-  # (e.g. C:\path\scripts\hook-pm-write-guard.sh) are correctly identified
+  # (e.g. C:\path\scripts\guard-pm-write.sh) are correctly identified
   # as present by hook_present(). Without normalize_path in hook_present(),
   # split("/") fails and all hooks are reported missing.
   #
@@ -1074,18 +1074,18 @@ case_doctor_windows_path_hooks_present() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-pm-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-pm-write.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\pm-dispatch\\scripts\\guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "C:\\pm-dispatch\\scripts\\hook-save-rate-limits.sh"}
+  "statusLine": {"command": "C:\\pm-dispatch\\scripts\\guard-save-rate-limits.sh"}
 }
 EOSETTINGS
   add_dispatch_allowlist "$home"
@@ -1123,18 +1123,18 @@ case_doctor_windows_path_hooks_stale() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-pm-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-pm-write.sh"}]}
     ],
     "PostToolUse": [],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "C:\\other-repo\\scripts\\guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "C:\\other-repo\\scripts\\hook-save-rate-limits.sh"}
+  "statusLine": {"command": "C:\\other-repo\\scripts\\guard-save-rate-limits.sh"}
 }
 EOSETTINGS
   add_dispatch_allowlist "$home"
@@ -1349,7 +1349,7 @@ case_doctor_claude_config_dir() {
   local config_dir="$tmp_root/config-dir-valid"
   mkdir -p "$home_bare"
   mkdir -p "$config_dir/.pm-dispatch"
-  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/hook-pm-write-guard.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/hook-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/hook-save-rate-limits.sh"}\n}\n' \
+  printf '{\n  "hooks": {\n    "PreToolUse": [\n      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "%s/scripts/guard-pm-write.sh"}]},\n      {"matcher": "Bash",       "hooks": [{"type": "command", "command": "%s/adapters/codex/bash-guard.sh"}]}\n    ],\n    "PostToolUse": [],\n    "Stop": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-log-claude-usage.sh"}]},\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-session-summary.sh"}]}\n    ],\n    "UserPromptSubmit": [\n      {"hooks": [{"type": "command", "command": "%s/scripts/guard-inject-memory.sh"}]}\n    ]\n  },\n  "statusLine": {"command": "%s/scripts/guard-save-rate-limits.sh"}\n}\n' \
     "$REPO_ROOT" "$REPO_ROOT" \
     "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" "$REPO_ROOT" > "$config_dir/settings.json"
   # Add abs-path allowlist entries for all dispatch scripts directly into config_dir.

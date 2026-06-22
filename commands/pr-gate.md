@@ -49,7 +49,7 @@ This command should pass exactly one of these explicit modes when known:
 - `--executor auto` for default behavior (`command -v codex` decides)
 
 `--executor auto` is the default; keep that shape here for parity with existing
-`/pm` profile defaults and `scripts/install-hooks.sh` auto-detect.
+`/pm` profile defaults and `scripts/install-guards.sh` auto-detect.
 
 ```bash
 RAW_ARGS="${ARGUMENTS:-}"
@@ -152,16 +152,16 @@ After fixing a NO-GO finding, run only the affected tests before re-gating:
 
 ```bash
 # List all available case names to find the right filter pattern
-bash scripts/test-hooks.sh --list
+bash scripts/test-guards.sh --list
 bash scripts/test-install.sh --list
 
 # Run only tests matching the changed area (substring match)
-bash scripts/test-hooks.sh --filter "session-hook"
+bash scripts/test-guards.sh --filter "session-hook"
 bash scripts/test-install.sh --filter "session-stop"
-bash scripts/test-hooks.sh --filter "inject-hook/episode"
+bash scripts/test-guards.sh --filter "inject-hook/episode"
 
 # Full suites must still pass before re-gating
-bash scripts/test-hooks.sh && bash scripts/test-install.sh
+bash scripts/test-guards.sh && bash scripts/test-install.sh
 ```
 
 `--filter <pattern>` runs only cases whose name contains `<pattern>`.

@@ -54,8 +54,8 @@ If the 90-day window cannot be met, the reporter will be notified in advance.
 ## Scope
 
 **In scope**:
-- Hook bypass or sandbox escape (e.g. a crafted input that lets `hook-pm-write-guard.sh`
-  or `hook-executor-write-guard.sh` allow a disallowed write)
+- Hook bypass or sandbox escape (e.g. a crafted input that lets `guard-pm-write.sh`
+  or `guard-executor-write.sh` allow a disallowed write)
 - Credential or secret exposure through logging or trace files
 - Path traversal or symlink attacks in `install.sh` / `link_or_copy`
 - Privilege escalation via hook or install scripts

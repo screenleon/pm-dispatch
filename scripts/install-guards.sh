@@ -3,14 +3,14 @@
 # ~/.claude/settings.json.
 #
 # Wires:
-#   - matcher "Edit|Write" → scripts/hook-pm-write-guard.sh
+#   - matcher "Edit|Write" → scripts/guard-pm-write.sh
 #   - matcher "Bash"       → adapters/<name>/bash-guard.sh  (manifest-derived; needs_bash_guard=true)
-#   - Stop                 → scripts/hook-log-claude-usage.sh
-#   - Stop                 → scripts/hook-session-summary.sh
-#   - UserPromptSubmit     → scripts/hook-inject-memory.sh
-#   - StatusLine           → scripts/hook-save-rate-limits.sh (chains previous if present)
+#   - Stop                 → scripts/guard-log-claude-usage.sh
+#   - Stop                 → scripts/guard-session-summary.sh
+#   - UserPromptSubmit     → scripts/guard-inject-memory.sh
+#   - StatusLine           → scripts/guard-save-rate-limits.sh (chains previous if present)
 #
-# Note: hook-reviewer-write-guard.sh is NOT wired as a PreToolUse hook.
+# Note: guard-reviewer-write.sh is NOT wired as a PreToolUse hook.
 # It is a policy-backing script called exclusively by `pmctl guard check
 # --role reviewer`. Both codex and claude reviewer paths use explicit
 # pmctl guard check (uniform explicit-guard design).
@@ -22,10 +22,10 @@
 # them. Backs up settings.json once per run if any change is staged.
 #
 # Usage:
-#   scripts/install-hooks.sh                       # apply, profile auto-detected
-#   scripts/install-hooks.sh --dry-run             # show what would change
-#   scripts/install-hooks.sh --profile minimal     # skip adapter bash guards
-#   scripts/install-hooks.sh --profile full        # explicit full profile (all hooks)
+#   scripts/install-guards.sh                       # apply, profile auto-detected
+#   scripts/install-guards.sh --dry-run             # show what would change
+#   scripts/install-guards.sh --profile minimal     # skip adapter bash guards
+#   scripts/install-guards.sh --profile full        # explicit full profile (all hooks)
 #
 # Profile auto-detection (when --profile omitted):
 #   `command -v codex` succeeds  → profile=full
@@ -54,29 +54,29 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --profile)
-      [[ $# -ge 2 ]] || { echo "install-hooks: --profile requires a value" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "install-guards: --profile requires a value" >&2; exit 2; }
       PROFILE="$2"
       shift 2
       ;;
     --profile=*) PROFILE="${1#--profile=}"; shift ;;
     --platform)
-      [[ $# -ge 2 ]] || { echo "install-hooks: --platform requires a value" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "install-guards: --platform requires a value" >&2; exit 2; }
       PLATFORM="$2"
       shift 2
       ;;
     --platform=*) PLATFORM="${1#--platform=}"; shift ;;
-    *) echo "install-hooks: unknown flag $1" >&2; exit 2 ;;
+    *) echo "install-guards: unknown flag $1" >&2; exit 2 ;;
   esac
 done
 
 case "$PROFILE" in
   ""|minimal|full) ;;
-  *) echo "install-hooks: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
+  *) echo "install-guards: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
 esac
 
 case "$PLATFORM" in
   ""|auto|linux|macos|windows) ;;
-  *) echo "install-hooks: --platform must be auto|linux|macos|windows (got: $PLATFORM)" >&2; exit 2 ;;
+  *) echo "install-guards: --platform must be auto|linux|macos|windows (got: $PLATFORM)" >&2; exit 2 ;;
 esac
 
 if [[ -z "$PROFILE" ]]; then
@@ -88,7 +88,7 @@ if [[ "$PLATFORM" == "auto" ]]; then
 fi
 
 if [[ "$PLATFORM" == "windows" && "$PROFILE" == "full" ]]; then
-  echo "install-hooks: platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal" >&2
+  echo "install-guards: platform=windows, --profile full requested; codex hooks unsupported on Windows yet, falling back to minimal" >&2
   PROFILE=minimal
 fi
 
@@ -101,7 +101,7 @@ settings="$CLAUDE_HOME/settings.json"
 
 if ! command -v jq >/dev/null 2>&1; then
   cat >&2 <<EOF
-install-hooks: jq is required but not found on PATH.
+install-guards: jq is required but not found on PATH.
 
 Install it for your platform, then re-run ./install.sh:
 
@@ -118,16 +118,16 @@ EOF
 fi
 
 if [ ! -f "$settings" ]; then
-  echo "install-hooks: $settings not found — create it first" >&2
+  echo "install-guards: $settings not found — create it first" >&2
   exit 2
 fi
 
-pm_cmd="$repo_root/scripts/hook-pm-write-guard.sh"
-stop_cmd="$repo_root/scripts/hook-log-claude-usage.sh"
-old_stop_cmd="$repo_root/hooks/hook-log-claude-usage.sh"
-session_cmd="$repo_root/scripts/hook-session-summary.sh"
-inject_cmd="$repo_root/scripts/hook-inject-memory.sh"
-statusline_cmd="$repo_root/scripts/hook-save-rate-limits.sh"
+pm_cmd="$repo_root/scripts/guard-pm-write.sh"
+stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
+old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
+session_cmd="$repo_root/scripts/guard-session-summary.sh"
+inject_cmd="$repo_root/scripts/guard-inject-memory.sh"
+statusline_cmd="$repo_root/scripts/guard-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
 # shellcheck source=scripts/lib/runner-kind.sh
@@ -148,7 +148,7 @@ for _manifest in "$repo_root"/adapters/*/adapter.yaml; do
   if [[ "$_nbg" == "true" ]]; then
     _guard_file="$_adapter_dir/bash-guard.sh"
     [[ -x "$_guard_file" ]] || {
-      echo "install-hooks: adapter '$_adapter_name' needs_bash_guard=true but bash-guard.sh missing or not executable: $_guard_file" >&2
+      echo "install-guards: adapter '$_adapter_name' needs_bash_guard=true but bash-guard.sh missing or not executable: $_guard_file" >&2
       exit 2
     }
     _bash_guard_cmds+=("$_guard_file")
@@ -182,7 +182,7 @@ write_statusline_chain() {
 }
 
 if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
-  echo "install-hooks: hook scripts missing or not executable" >&2
+  echo "install-guards: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
@@ -264,9 +264,10 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   .hooks.Stop |= map(select((.hooks | length) > 0)) |
 
   # Prune retired managed hooks from existing installs. Includes the per-runtime
-  # executor write-guards retired in the v0.6.0 collapse and the scripts/-based
-  # bash guards now manifest-driven from adapters/. Basenames are
-  # split with string concat so the doctor hook-inventory parity scanner does not
+  # executor write-guards retired in the v0.6.0 collapse, the scripts/-based
+  # bash guards now manifest-driven from adapters/, and the pre-rename hook-*
+  # basenames superseded by guard-* in this release. Basenames are
+  # split with string concat so the doctor guard-inventory parity scanner does not
   # count these retired names as current managed hooks.
   .hooks.PreToolUse |= map(
     .hooks |= map(select(
@@ -274,11 +275,32 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
         ((.command | split("/") | last) == ("hook-codex-write" + "-guard.sh")) or
         ((.command | split("/") | last) == ("hook-claude-write" + "-guard.sh")) or
         ((.command | split("/") | last) == ("hook-executor-write-" + "guard.sh")) or
-        ((.command | split("/") | last) == ("hook-codex-bash-" + "guard.sh")) )
+        ((.command | split("/") | last) == ("hook-codex-bash-" + "guard.sh")) or
+        ((.command | split("/") | last) == ("hook-pm-write-" + "guard.sh")) or
+        ((.command | split("/") | last) == ("hook-reviewer-write-" + "guard.sh")) )
       and ((.command | split("/") | .[-2]) == "scripts") | not
     ))
   ) |
   .hooks.PreToolUse |= map(select((.hooks | length) > 0)) |
+
+  # Prune pre-rename hook-* Stop entries superseded by guard-*.
+  .hooks.Stop |= map(
+    .hooks |= map(select(
+      ( ((.command | split("/") | last) == ("hook-log-claude-" + "usage.sh")) or
+        ((.command | split("/") | last) == ("hook-session-" + "summary.sh")) )
+      and ((.command | split("/") | .[-2]) == "scripts") | not
+    ))
+  ) |
+  .hooks.Stop |= map(select((.hooks | length) > 0)) |
+
+  # Prune pre-rename hook-inject-memory superseded by guard-inject-memory.
+  .hooks.UserPromptSubmit |= map(
+    .hooks |= map(select(
+      ((.command | split("/") | last) == ("hook-inject-" + "memory.sh"))
+      and ((.command | split("/") | .[-2]) == "scripts") | not
+    ))
+  ) |
+  .hooks.UserPromptSubmit |= map(select((.hooks | length) > 0)) |
 
   # Prune orphaned adapter bash guards: any wired adapters/<name>/bash-guard.sh
   # whose path is not in the current manifest-derived $bg_guards set. This makes
@@ -403,7 +425,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
 # --- Permissions merge for reviewer subagents ---
 # Reviewer subagents spawned by pr-gate need Write(.gate-results) and Bash(pmctl guard check)
 # to write results and run guard checks. Workspace root detection is shared with
-# uninstall-hooks.sh via scripts/lib/gate-workspace.sh.
+# uninstall-guards.sh via scripts/lib/gate-workspace.sh.
 _workspace_root="$(gate_workspace_root "$repo_root" "$HOME")"
 _gate_glob="${_workspace_root}/**/.gate-results/**"
 
@@ -435,23 +457,23 @@ if ! jq \
     . + ($required | map(select(. as $p | ($existing | map(select(. == $p)) | length) == 0)))
   )
   ' "$tmp_new" > "$_tmp_perms"; then
-  echo "install-hooks: ERROR: failed to merge permissions.allow — check that $settings is valid JSON" >&2
+  echo "install-guards: ERROR: failed to merge permissions.allow — check that $settings is valid JSON" >&2
   exit 2
 fi
 mv "$_tmp_perms" "$tmp_new"
 trap 'rm -f "$tmp_new"' EXIT
 
-echo "install-hooks: profile=$PROFILE"
-echo "install-hooks: platform=$PLATFORM"
-echo "install-hooks: gate-results glob: $_gate_glob"
+echo "install-guards: profile=$PROFILE"
+echo "install-guards: platform=$PLATFORM"
+echo "install-guards: gate-results glob: $_gate_glob"
 
 if cmp -s "$settings" "$tmp_new"; then
-  echo "install-hooks: already wired, nothing to do (profile=$PROFILE)"
+  echo "install-guards: already wired, nothing to do (profile=$PROFILE)"
   exit 0
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "install-hooks: would apply the following change:"
+  echo "install-guards: would apply the following change:"
   diff -u "$settings" "$tmp_new" || true
   exit 0
 fi
@@ -463,5 +485,5 @@ backup="$settings.bak.$(date +%Y%m%d-%H%M%S)"
 cp "$settings" "$backup"
 mv "$tmp_new" "$settings"
 trap - EXIT
-echo "install-hooks: wrote $settings"
-echo "install-hooks: backup at $backup"
+echo "install-guards: wrote $settings"
+echo "install-guards: backup at $backup"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hook-session-summary.sh — Stop hook: record session metadata to episodes.jsonl.
+# guard-session-summary.sh — Stop hook: record session metadata to episodes.jsonl.
 # Writes a metadata-only entry (no LLM call). Semantic summary is filled in by
 # /mem-log after the user explicitly runs it while the session is still active.
 set -euo pipefail

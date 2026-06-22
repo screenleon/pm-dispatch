@@ -49,19 +49,19 @@ jobs:
       - name: Validate codex model alias source-of-truth
         run: bash scripts/lint-model-aliases.sh
 
-  test-hooks:
+  test-guards:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Hook regression suite
-        run: ./scripts/test-hooks.sh
+      - name: Guard regression suite
+        run: ./scripts/test-guards.sh
 
-  test-hook-framework:
+  test-guard-framework:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Hook framework regression suite
-        run: ./scripts/test-hook-framework.sh
+      - name: Guard framework regression suite
+        run: ./scripts/test-guard-framework.sh
 
   test-pr-gate:
     runs-on: ubuntu-latest
@@ -104,17 +104,14 @@ jobs:
             handover-validate.sh
             codex-dispatch.sh
             codex-watch.sh
-            hook-codex-bash-guard.sh
-            hook-executor-write-guard.sh
-            hook-inject-memory.sh
-            hook-log-claude-usage.sh
-            hook-pm-write-guard.sh
-            hook-reviewer-write-guard.sh
-            hook-routing-log.sh
-            hook-save-rate-limits.sh
-            hook-session-summary.sh
-            hook-tool-trace.sh
-            install-hooks.sh
+            guard-executor-write.sh
+            guard-inject-memory.sh
+            guard-log-claude-usage.sh
+            guard-pm-write.sh
+            guard-reviewer-write.sh
+            guard-save-rate-limits.sh
+            guard-session-summary.sh
+            install-guards.sh
             lint-agents.sh
             lint-scripts.sh
             log-usage.sh
@@ -141,9 +138,9 @@ jobs:
             test-pmctl-backlog.sh
             test-pmctl-guard.sh
             test-handover-validate.sh
-            hook-framework.sh
-            test-hook-framework.sh
-            test-hooks.sh
+            guard-framework.sh
+            test-guard-framework.sh
+            test-guards.sh
             test-install.sh
             test-lint-frontmatter.sh
             test-migrate-routing-log.sh
@@ -162,7 +159,7 @@ jobs:
             test-usage-tracker.sh
             test-usage-weekly.sh
             token-usage.sh
-            uninstall-hooks.sh
+            uninstall-guards.sh
             usage-weekly.sh
             memory.sh
             memory-dir.sh
@@ -241,11 +238,11 @@ jobs:
       - name: install/uninstall core regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group core
 
-  test-install-hooks:
+  test-install-guards:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: install/uninstall hooks regression suite
+      - name: install/uninstall guards regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group hooks
 
   test-usage-weekly:
