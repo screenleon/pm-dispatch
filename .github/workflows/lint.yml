@@ -238,11 +238,11 @@ jobs:
       - name: install/uninstall core regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group core
 
-  test-install-hooks:
+  test-install-guards:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: install/uninstall hooks regression suite
+      - name: install/uninstall guards regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group hooks
 
   test-usage-weekly:

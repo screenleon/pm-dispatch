@@ -180,9 +180,10 @@ thread's environment including Docker and localhost.
 
 ## Pattern 4: git commit blocked in executor sandbox
 
-`git add` and `git commit` inside the executor sandbox are blocked by
-`bash-guard.sh` (the adapter bash-guard for the active executor). This is by design: the executor must not push to the branch
-autonomously.
+`git add` and `git commit` inside the executor sandbox are blocked by the
+executor sandbox permission model. This is by design: the executor must not push to the branch
+autonomously. Current enforcement is via the executor dispatch layer; future
+adapters may also provide adapter-specific bash guards for additional safety.
 
 **Impact**: A brief that ends with a `git commit` step will always fail that
 step, causing the dispatch report to show `status: partial` even when all code
