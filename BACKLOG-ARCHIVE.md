@@ -1,11 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-06-18 -->
+<!-- pm-dispatch: backlog-archive 2026-06-22 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
 BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
 working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-18
+Last archived: 2026-06-22
 
 ---
 
@@ -3866,6 +3866,297 @@ pmctl runs / pmctl dispatch wait <id> / pmctl inbox  # reattach：新的 main �
 ### How to add a new deprecated surface
 
 在這個 body 的 table 新增一行，欄位：surface（exact invocation）、deprecated since（vX.Y.Z）、replacement（exact new invocation）、removal target（vX.Y.Z）。不需另開票。
+
+---
+
+## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）✅ 2026-06-22
+
+**Problem（user 2026-06-14）**: `scripts/hook-*.sh`（8 檔）、`scripts/lib/hook-framework.sh`、`hk_*`/`HK_*` 函式與變數、`PM_HOOK_*` env 都沿用 Claude 平台的「hook」術語。但它們本質是 **PreToolUse 協定的策略腳本**：輸入是 PreToolUse 形狀的 JSON、輸出是 exit code，可由 (a) Claude 活 PreToolUse 觸發，**或** (b) `pmctl guard check` 合成同樣的 JSON 餵入。後者（尤其 [[CC-374]] 收口後 claude 的 cli-only 路徑）**根本不是平台 hook**，只是被餵合成輸入的策略評估器——「hook」對這一半名實不符。
+
+**Why**: 這是 [[CC-333]] layer 2（hook 機制）/ layer 6（術語）的硬耦合：Claude 平台詞漏進想做 runtime-agnostic 的核心。對齊 runner_kind/manifest 之後，命名也應該中性化。
+
+**Requirement**:
+- `hook-*.sh` → 平台中性 `guard-*`（如 `guard-executor-write.sh`、`guard-pm-write.sh`、`guard-codex-bash.sh`）；`hook-framework.sh` → `guard-framework.sh`；`hk_*`/`HK_*` → `g_*`/`G_*`（或等價）；`PM_HOOK_*` env 評估是否改名（保 deprecated alias）。
+- **保留** settings.json 的 `PreToolUse` 鍵——那是 Claude 平台自有、不可改；被接進去的腳本對 Claude 而言確實是 hook。
+- 三方一致：install/uninstall/doctor 接線 + doctor parity scanner + 測試 + 文件同步改。
+
+**Non-goals / 切割**: 純命名/機械改動，**不可**與 guard 行為/安全邊界票混在同一 PR（會污染 security review）。獨立 PR。
+
+**Sequencing**: 排在真 adapter [[CC-376]]/[[CC-377]] 之後；可與 [[CC-335]] deprecation 清掃同期評估。
+
+**See**: pr:#310; [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。
+
+---
+
+## CC-396 — chore: 清理 operational 檔內的 CC-provenance 註解 ✅ 2026-06-19
+
+**Problem**: `scripts/`、`adapters/`、`cli/`、`core/` 等非文件檔殘留設計沿革票號註解（如 `scripts/lib/pmctl-guard.sh:3` `# Executor-agnostic guard-check front-end (CC-288; role×runtime keying CC-291)`），違反 No-CC-in-operational 慣例（票號只進 BACKLOG/MILESTONES/CHANGELOG/docs）。
+
+**重要 scope 界定**: 原始 `grep -rE "CC-[0-9]+"` 在 operational 樹得數百筆，但**絕大多數非違規**：
+- **測試 fixture data**（保留）—— `test-pmctl-task.sh`（228 筆）、`test-archive-closed-backlog.sh`（96 筆）等用 `CC-101`/`CC-103.json` 當 backlog/task 工具的測試輸入；刪了測試會壞。
+- **ID 格式範例**（保留）—— `core/schema/task.schema.json` 的 `"e.g. CC-229, JS-106"` 是說明 ticket-id 文法。
+- **provenance 註解**（本票目標）—— 程式碼註解裡記設計沿革的票號，應搬 docs/DECISIONS 或刪。
+
+**做法**: 逐處判斷（非機械 sed 替換）；分類 fixture/範例/沿革，只動沿革子集。完成後加 lint 規則防回歸（選配，視子集大小）。
+
+**Sequencing**: [[CC-395]] 合併後另開 PR，避免污染退場 diff。發現於 [[CC-395]] 退場工作。umbrella [[CC-333]]（衛生軸）。
+
+**See**: pr:#303
+
+---
+
+## CC-371 — uninstall: prune empty `~/.claude/adapters/` dir ✅ 2026-06-19
+
+**Problem**: `uninstall.sh` (via `uninstall-hooks.sh`) prunes the managed parent dirs `agents/`, `commands/`, `skills/`, `scripts/`, and `share/` once empty, but the prune list omits `adapters/`. After the `adapters/claude` + `adapters/codex` symlinks are removed, an empty `~/.claude/adapters/` directory is left behind.
+**Why**: Cosmetic only — the directory is empty, there are no dangling symlinks, and nothing functional remains. The `docs/RELEASE_CHECKLIST.md` §2a "no leftover dir" intent (which it states explicitly for `share/`) is not fully met.
+**Requirement**: Add `adapters` to the empty-dir prune list in the uninstall path so a clean uninstall leaves no managed parent dirs; extend the uninstall regression coverage with a leftover-dir assertion (no managed parent dir survives a full uninstall).
+**Source**: surfaced during v0.5.0 release §2a manual verification (2026-06-13); `~/.claude/adapters/` observed empty after `uninstall.sh`, hand-cleaned to restore the test environment.
+**See**: pr:#300
+
+## CC-220 — spike agent + `/spike` skill ✅ 2026-06-19
+
+**See**: pr:#302
+
+**Corrected 2026-05-22**: the original "spike agent dispatches parallel sub-agents" is structurally impossible — **subagents cannot spawn subagents**. The spike agent is a *planner* (like `project-pm`); the **main thread** fans out one Agent per angle, modeled on `/pr-gate`'s reviewer fan-out. v0.3.0 M5.
+
+**Problem**: Spike investigations are currently ad-hoc: the PM dispatches a mix of Explore
+calls, the findings are summarized in conversation context, and nothing is committed to
+the repo. Repeating a spike wastes tokens; the result is not reviewable.
+
+**Why**: A dedicated spike agent with a structured workflow produces a committed, reviewable
+result file. The parallel multi-angle dispatch matches how PM agent dispatches reviewers —
+reusing the same agent/fan-out primitives for a different cognitive mode.
+
+**Requirement**:
+- `agents/spike.md` — spike agent definition:
+  - Reads BACKLOG spike ticket for `Investigation scope` and `Done-when`
+  - Plans 2–3 investigation angles (e.g., existing-coupling audit / interface draft / prior art)
+  - Returns a `spike_plan` block (2–3 angles); the **main thread** fans out one `Agent` per angle — subagents cannot spawn subagents (same constraint as `project-pm`)
+  - Synthesises findings into `docs/spikes/CC-NNN.md`
+  - Updates BACKLOG body `Result log` field with the file pointer
+- `commands/spike.md` — `/spike CC-NNN` skill invoking the agent
+- Executor design: each executor type has its own model pool (codex: codex-default + lightweight variants; claude: haiku/sonnet/opus); dispatch layer picks executor+model from pool — no cross-pool model assignment
+- Sandbox is orthogonal to executor type; future: both executor types should support sandbox on/off flag (tracked separately)
+- Architecture spikes: dispatch 2–3 sub-agents with different angles for multi-perspective coverage
+
+**Depends on**: CC-218 (spike type + docs/spikes/ directory must exist first). **✅ CC-218 已滿足** — `docs/spikes/` + `docs/spikes/README.md` + `spike` epic 均已存在，本票技術上可建。
+
+**Complements**: CC-218 (infrastructure), CC-209 (first spike to run through the new agent).
+
+**Decision rule (見 [[CC-408]] 三方統整 `docs/spikes/CC-408-next-step-router.md`)**: spike 在「候選已選定、但一般 impl brief 不負責任，因為須先做並 commit 一個 durable feasibility/API/architecture 決策」時用。`/discover` 選選項、`/research` 引入外部選項、spike 收斂出決策。觸發：spike-epic 票存在；PM 無法在不解 implementation-blocking 未知（API 形狀/schema 邊界/adapter 可行性/migration 策略/工具採用 verdict/跨層 ownership）下寫 brief；答案須 commit 進 `docs/spikes/CC-NNN.md`。非觸發：模糊「下一步」→ discover、「別人怎麼做」→ research、解釋程式碼 → Analysis、規劃已懂的票 → Planning/Brief。
+
+**Status (2026-06-19)**: ✅ **closed — shipped in the agent-family bundle（pr:#302，見 [[CC-408]]）**。三方統整原建議 defer，但 user 拍板把 router/research/spike 三者併同一 PR 一次出。本 PR ship `agents/spike.md`（planner，回 `spike_plan_v1`、plan+synthesis 兩 pass、main-thread fan-out）+ `commands/spike.md`（`/spike` 編排），契約回歸鎖於 `scripts/test-commands.sh`。建構約束已落實：spike agent 為 planner + main-thread fan-out（不自行 spawn agents）。被 next-step router [[CC-408]] 路由觸發。[[CC-244]]（typed spike→brief schema）續 deferred 至 3+ spike docs 門檻觸發。
+
+**Priority**: P3.
+
+## CC-238 — /pr-gate parallel fan-out timeout + attribution ✅ 2026-06-19
+
+**Problem**: CC-217 made the `/pr-gate` claude-executor reviewer and synthesis fan-out (`commands/pr-gate.md` Route B) run detached via `run_in_background: true`. The CC-217 gate (gate-20260523, express tier) raised three advisories on the new flow.
+
+**Why**: A detached fan-out with no timeout can wait indefinitely if a reviewer agent never reports completion; a single fan-out step makes per-reviewer attribution weaker on partial failure; and the behavior change has no test artifact.
+
+**Requirement**:
+- Add a completion timeout / fallback for the background reviewer + synthesis agents — a non-reporting agent must degrade to a partial/fail result, not an indefinite wait.
+- Preserve per-reviewer failure attribution when only one fan-out branch fails.
+- Add test coverage for the claude-route background completion + relay ordering (`scripts/test-pr-gate.sh` or a `commands/`-contract test).
+
+**Priority**: P3 — advisory follow-up; the CC-217 GO was not blocked on it.
+
+**Note (2026-06-15)**: advisories (a) no-timeout / indefinite-wait and (b) weak per-reviewer attribution are **symptoms of the missing supervisor** — a detached fan-out with no process that owns each child's lifecycle. The detached-supervised dispatch spike ([[CC-391]]) subsumes both: the supervisor's completion timeout + per-child attribution is the general fix, of which this gate-route case is one instance.
+
+**Design decision (2026-06-19)**: The general detached supervisor ([[CC-391]] spike + [[CC-399]] implementation) was delivered in v0.6.0 for `pmctl dispatch run --lifecycle detached`. However, `pr-gate.sh` parallel reviewer fan-out manages its subprocesses **directly inside `pr-gate.sh`** (via `eval "$DISPATCH_CMD" ... &`), not via `pmctl dispatch run` — so the supervisor lifecycle path does not apply here. This ticket is closed via a **local `pr-gate.sh` watchdog** (SIGTERM-based, covering both reviewer fan-out and synthesis), which is the correct ownership boundary for in-process subprocess management.
+
+**Cross-link**: [[CC-391]] (supervisor spike), [[CC-399]] (supervisor implementation — different path), CC-217 (origin), `commands/pr-gate.md` Route B.
+**See**: pr:#300
+
+## CC-344 — skill: /research — grounded external research with internal context anchoring ✅ 2026-06-19
+
+**See**: pr:#302
+
+**Problem**: `/discover` 只掃內部 backlog——只能看到「我們已經想到但還沒做」的機會，完全沒有「我們還沒想到的事」這條路。每次想引入外部方法（競品設計、社群實作、學術技術）都要手動搜尋，且搜出來的結果缺乏內部設計 constraint 的過濾，噪音大。
+
+**Why**: 有效的外部研究需要兩個錨：(a) 知道自己「已有什麼」避免重複；(b) 知道「為什麼之前沒做某些事」避免搜到被排除的路。這兩個錨都在內部 memory/decisions 裡，用完全隔離的 agent 搜尋反而丟掉了最有用的 context。正確形狀是：先讀內部建立錨定，再問一個定向問題，最後帶著 constraint 去搜。
+
+**Requirement**:
+- `commands/research.md` — `/research [topic]` skill 定義：
+  1. **內部錨定**：檢索與 topic 相關的 memory cards + DECISIONS 段落，建立「已有什麼、哪些路已排除」的 baseline。今天即可用現有手段（DECISIONS 直讀 / 現有 `pmctl context` repo source + memory 目錄 grep / `MEMORY.md` 索引，比照 `/mem-search`）。**把錨定隔離成單一步驟並留 swap-point**：待 [[CC-403]]（`pmctl context --source memory|all`）落地後改走單一檢索入口，避免散落的 bespoke memory 搜尋（retrieval-first 整合，非阻塞）。
+  2. **定向問題**：問使用者 1–2 個精準問題縮小搜尋查詢（例：「你說記憶優化，是指 recall 精度、token 壓縮、還是 episodic 連貫性？」）
+  3. **外部搜尋**：派一個有 WebSearch 工具的 agent，帶著定向查詢抓取 3–5 個外部資訊點（實作、論文、社群討論）
+  4. **過濾輸出**：主線程以內部 constraint 過濾，每個外部方法標記「可採用」或「與 [constraint X] 衝突，原因是 [decision Y]」
+  5. **持久化詢問（persistence）**：流程結尾必須問使用者「是否把結果轉成 BACKLOG 票 / spike 票 / memory note」——`/research` 不自動開票，但若不問，外部研究又淪為一次性對話 artifact（正是本票要避免的失敗）。
+- 輸出不是搜尋結果的 dump，而是「可行性評估清單」
+
+**Non-goals**:
+- 不自動開票（使用者決定是否跟進；但流程結尾須主動詢問持久化選項，見 Requirement 5）
+- 不取代 `/discover`（兩者互補：discover 看內部機會，research 看外部方法）
+- 不做完全自由的 web crawl——搜尋查詢必須由定向問題錨定
+
+**Relationship**:
+- 互補於 `/discover`（[[CC-343]]）——discover 是內部發散，research 是外部引入；兩者由 next-step router [[CC-408]] 路由觸發（research 為 external-method gap 的 auto-offer 第二層，掛在選定的 discover 候選上、不對裸問題盲 fire）。
+- **前向整合 [[CC-403]]**（`pmctl context --source memory`，非阻塞）：內部錨定今天用現有手段即可（見 Requirement 1）；CC-403 落地後把 memory 錨定改走單一檢索入口。低號票不阻塞於高號票——CC-344 可先行實作。
+- 未來可與 CC-338 repo index 整合：錨定時加入 repo 層的「已有哪些 helper/pattern」。
+
+**Status (2026-06-19)**: ✅ **closed — shipped in the agent-family bundle（pr:#302，見 [[CC-408]]）**。`commands/research.md` 已實作：內部錨定（留 [[CC-403]] swap-point）→ 強制定向問題 → WebSearch agent 抓 3–5 點 → 內部 constraint 過濾 → 強制 persistence 詢問；不自動開票。契約回歸鎖於 `scripts/test-commands.sh`。由 next-step router [[CC-408]] auto-offer 觸發。CC-403 為前向整合而非前置阻塞。
+
+**Cross-link**: [[CC-343]], [[CC-408]], [[CC-403]], [[CC-237]]. （原 [[CC-340]] 的 MVP 已被 [[CC-403]] supersede；memory 錨定的單一入口整合改參考 CC-403。）
+
+---
+
+## CC-345 — dx: claude adapter 即時進度串流（stream-json）✅ 2026-06-19
+
+**See**: pr:#287 (CC-388: claude adapter stream-json executor)
+
+> **SUPERSEDED 2026-06-19**: CC-388（PR#287，v0.6.0 Phase 4）已將 `adapters/claude/dispatch.sh` 切換至 `--output-format stream-json`，逐行 NDJSON events 輸出，CC-345 所描述的需求已完整實現。本票廢棄。
+
+**Problem**: `adapters/claude/dispatch.sh` 使用 `--output-format json`，使 claude 的 stdout 完全 buffered 至 process 結束才 flush。dispatch 執行期間 trace file 為 0 bytes、git working tree 無變動，使用者無從判斷 executor 是在讀取、規劃還是寫檔，只能盲等。
+
+**Why**: `claude -p` 支援 `--output-format stream-json`，逐行輸出 NDJSON events（tool_use、tool_result、assistant），包含 tool name 與路徑。切換後可同步解析 events，在 stderr banner 即時顯示進度：
+- `[reading]  core/schema/context-pack.schema.json`
+- `[writing]  scripts/lib/pmctl-context.sh`
+- `[running]  bash scripts/test-pmctl-context.sh → exit 0`
+
+讓使用者在 dispatch 進行中就能看到 executor 正在操作哪些檔案，不再盲等 15–30 分鐘。
+
+**Requirement**:
+- `adapters/claude/dispatch.sh` 改用 `--output-format stream-json`
+- 以 `tee` 同步寫入 trace file 並 pipe 至 progress parser
+- `scripts/lib/claude-progress.sh`（新建）：讀 NDJSON stream，解析 tool_use events 並輸出 `[reading]`、`[writing]`、`[running]` 進度行至 stderr
+- stream-json 不輸出單一 `.result` 欄位；dispatch.sh 結尾改從 stream 末尾 assistant message 擷取 `.last` 內容
+- 向後相容：stream-json 不可用時 fallback 到 json
+
+**Non-goals**:
+- 不解析 assistant 思考內容（只解析 tool_use / tool_result events）
+- 不改變 `.last` / `.jsonl` 最終格式（post-verify 向後相容）
+- 不加 TUI / 進度條，純 stderr 行輸出
+
+**Milestone**: `🟢 someday` — 不影響正確性；排在 v0.5.0 P1 工作完成後。
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-338]], [[CC-341]].
+
+## CC-400 — retrieval-first: prompt/docs 檢索順序強制 ✅ 2026-06-20
+
+**See**: pr:#308 (shipped with [[CC-401]])
+
+**Problem**: `agents/project-pm.md` Principle 3 把 context retrieval 寫成「before grepping knowledge docs」的軟 reflex，且同一份 prompt 又要求 project-touching invocation 一開始直接讀 `project_<repo>.md` → agent 容易先用 memory file / Read / Grep，而非把 `pmctl context` 當第一入口。`docs/context-retrieval.md` 標題也只寫「Query before grep」，沒涵蓋 full-file Read。
+
+**Why**: 行為要改，最便宜的第一步是把「檢索順序」講成 workflow invariant 而非建議——這是純文件改動、零程式風險，可獨立於本 milestone 提前落地，並為 [[CC-401]]（把它釘成被驗證的合約）鋪路。
+
+**Requirement**:
+- `agents/project-pm.md` Principle 3 改成硬性檢索順序：找既有票/決策/規則/prior-art/symbol 一律先 `pmctl context query`（knowledge/repo/未來 memory source）→ 拿到 ref 才 Read 對應段落；`# no hits` 才 fallback 到 targeted Grep/Read 並在 brief 註明 miss。
+- `docs/context-retrieval.md` 把「Query before grep」升級為「Query before Read/Grep/full-file open」。
+- 不動程式；測試面僅 `scripts/test-commands.sh` / agent-lint 既有檢查。
+
+**Priority**: P2.
+
+
+**Refs**: [[CC-401]]、[[CC-403]]（memory source 落地後檢索順序涵蓋 memory）、[[feedback_cut_capability_close_all_paths]]、`docs/context-retrieval.md`。
+
+## CC-401 — retrieval-first: brief-validate `retrieval:` 證據 chokepoint ✅ 2026-06-20
+
+**See**: pr:#308. **Shipped contract** (diverged from the original sketch above): evidence = non-empty `context:` block (or the `auto_context:` block `--auto-pack` appends), or non-empty `retrieval_skip_reason:`. `auto_pack: true` as a brief field was **dropped** as evidence — nothing at dispatch reads it (auto-pack is `--auto-pack`/`dispatch.auto_pack`-driven and appends `auto_context:`). Rollout knob `BRIEF_VALIDATE_RETRIEVAL=warn|fail` (default warn). fail-mode default flip = [[CC-402]].
+
+**Problem**: `agents/project-pm.md` Principle 3 把 context retrieval 寫成「reflex」（軟提示），但本 repo 哲學是**在單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。軟提示在壓力下會退化成直接 grep / full-file Read，PM 重新推論背景而非引用 context refs——正是 v0.5.0 §Phase 2 驗收原則想避免的反模式。
+
+**Why**: dispatch 路徑唯一的可信 chokepoint 是 `pmctl dispatch run` → `brief-validate.sh`。把「有沒有先檢索」變成**被驗證的 brief 欄位**，比要求 agent 記得 reflex 強得多，且天然可觀測（搭配既有 `context.queried` telemetry）。
+
+**Requirement**:
+- brief schema 新增選用 `retrieval:` 區段，非 trivial brief（`architecture_impact: minor|major`，或 `files:` 超過大小門檻）須滿足其一：`pmctl_context:`（query/reuse-scan/pack 的 refs）、`auto_pack: true`、或 `skip_reason:`（明確理由，如目標無可索引 repo / 任務極小）。
+- `brief-validate.sh` 加檢查，**先 warn 後 fail**（rollout 期不立即擋現有 brief）。
+- 非 `pmctl-context.sh` 範圍：動 brief schema + validator + `docs/dispatch-brief.md` + 測試。
+
+**Non-goals**: 不強制每個 trivial 修補都附 refs（`skip_reason:` 即出口）；不取代 PM 判斷，只要求留下檢索證據。
+
+**Sequencing**: 相依 [[CC-400]]（prompt/docs 先把檢索順序講清楚），之後本票把它釘成合約。retrieval epic 行為層最高槓桿。
+
+**Priority**: P2.
+
+**Cross-link**: [[CC-400]]、[[feedback_cut_capability_close_all_paths]]、[[feedback_pr_gate_fix_all]]、auto-pack 路徑 [[CC-402]]、`docs/context-retrieval.md` §Success metric。
+
+## CC-402 — retrieval-first: auto-pack 與 detached lifecycle 相容 ✅ 2026-06-21
+
+**Problem**: 目前唯一**結構性**的 context-first 機制是 dispatch `--auto-pack`（跑 reuse-scan、附 pointer-only `auto_context` block），但它 (a) 預設 off，(b) 與 v0.6.0 落地的**預設 detached lifecycle**（[[CC-398]]/[[CC-399]]）不相容——auto-pack 會 forward 一份 derived pack brief，與被 guard/validate 的 `/tmp` brief 分歧，故 detached + auto-pack 在 pre-launch 被直接 REJECT（見 `docs/dispatch-brief.md` §Dispatch lifecycle）。結果：最該預設開的機制，在預設派發路徑上反而開不了。
+
+**Why**: 要讓「context-first」成為預設行為而非 opt-in，auto-pack 必須能在 detached 下運作，且不破壞 [[CC-398]] 的核心不變式（guarded == validated == executed == recorded 同一份 brief）。
+
+**Requirement**:
+- detached 下：先產 augmented brief（原 brief + `auto_context:`），把 augmented 路徑寫入 run-spec 作為 trusted `brief_file`，supervisor 重跑 preflight 時 guard/validate 的就是 augmented 那份。
+- 維持 [[CC-398]] run-spec v2 的 trusted-scalar 契約，不得讓 passthrough 夾帶第二個 `--brief-file`。
+- 解禁後評估把 `dispatch.auto_pack = on` 設為預設。
+
+**Non-goals**: 不改 reuse-scan 內容（仍 repo-only，見 [[CC-403]]）；不改 auto-pack 的 pointer-only 上限（5 筆）。
+
+**Sequencing**: 排在 [[CC-399]] detached 完成之後（已 done）。HARD security/risk gate（動 supervisor brief 來源）。
+
+**Priority**: P3.
+
+**Status (2026-06-21)**: ✅ **closed**. Shipped the full coherent slice (not just the compat unblock): (1) detached + auto-pack no longer rejected, and BOTH lifecycles land the augmented brief at the guardable `/tmp/brief-<run_id>.md` path so one brief is guarded == validated == executed == recorded — detached records it as the run-spec trusted `brief_file` and the supervisor re-guards it (no second `--brief-file` passthrough), foreground snapshots the pack to `/tmp`, guards it, and forwards it; the authored `--brief-file` is guarded first for path policy; (2) the dispatch gate now validates the **effective** (post-auto-pack) brief so an appended `auto_context:` block counts as evidence; (3) `dispatch.auto_pack` built-in default flipped off → on; (4) `BRIEF_VALIDATE_RETRIEVAL` default flipped warn → fail (CC-401's fail-flip). Honest edge kept: a file-writing brief with 0 reuse hits and no hand-authored `context:`/`retrieval_skip_reason:` is still rejected — auto-pack does not stamp empty evidence. Tests: `test-dispatch-lifecycle.sh` (augmented-snapshot + trusted-scalar), `test-pmctl-dispatch.sh` (default-on + `--no-auto-pack` override), `test-brief-validate.sh` (default-fail + explicit-warn). Docs: `docs/dispatch-brief.md`, `docs/context-retrieval.md`.
+
+**Cross-link**: [[CC-398]]、[[CC-399]]、[[CC-391]]（lifecycle 軸）、[[CC-403]]（reuse-scan 隔離）、`docs/context-retrieval.md` §Dispatch auto-pack。
+
+**See**: pr:#309、decisions:2026-06-21 retrieval-first-defaults-on-and-fail、[[CC-401]]（fail-flip 前置）、[[CC-398]]（trusted-scalar 契約）。
+
+## CC-408 — next-step router: 自動把「下一步做什麼」送到 /discover · /research · spike ✅ 2026-06-19
+
+**See**: pr:#302
+
+**Problem**: `/discover`（[[CC-343]]，已建）、`/research`（[[CC-344]]，未建）、spike agent（[[CC-220]]，deferred）是三把處理「不確定性」的工具，但**沒有調度器**——只能由使用者手動打字呼叫。使用者問「下一步建議做什麼」時，PM 只能憑感覺讀一點 backlog 回答，三個能力都不會自動接線。`commands/discover.md` 輸出又是「給人看的 menu」，缺結構化欄位讓後續路由能接著用。
+
+**Why**: 三方獨立分析（main-thread opus + codex gpt-5.5 + 外部 ChatGPT，見 `docs/spikes/CC-408-next-step-router.md`）一致認定真正缺口是 router，且純 prompt 軟 reflex 會退化（DECISIONS 鐵證：context-pack/reuse-scan 上線時無 caller，最後得靠 deterministic auto-pack 才有人用；同一失敗模式會打中這裡——見 [[feedback_cut_capability_close_all_paths]]）。自動觸發方向對，但 `/discover`（廉價/內部/非承諾）可條件式 auto-fire，`/research`（需 topic + 定向問題 + WebSearch fan-out）只能 auto-offer 並掛在選定的 discover 候選上，不能對裸問題盲 fire。
+
+**Requirement**:
+- `agents/project-pm.md` Classify 表新增「Uncertainty routing」路由（或鄰接小表）：
+  - open-ended 專案級「下一步做什麼」且無 active scope（票/PR/bug）→ 自動跑 `/discover`。
+  - external-method / prior-art / 「別人怎麼做」→ auto-offer `/research`，先問 CC-344 定向問題再跑。
+  - 已選候選但卡在 durable 決策未知 → spike（確保/建立 spike 票後跑 `/spike CC-NNN`）。
+  - 已 scoped 的實作 → Planning/Brief，不啟動 uncertainty mode。
+- `commands/pm.md` 加 main-thread orchestration 規則：PM 回傳 route，**main thread** 跑 `/discover` 並把報告回灌給 PM 後才產最終建議（subagent 不能巢狀呼叫 agent，比照 `/pr-gate` fan-out）。
+- `commands/discover.md` 輸出升級為 routing input：每個 pick 加 `suggested_next_action`（`Next` 欄：pm|spike|research|defer，此即該 pick 的 per-pick 路由決策）+ `refs`/anchors；**top-pick** 附一行 `Why not a direct brief`（全域，非每列一欄，避免表格過寬）。CC-343 已關閉，此升級併入本票。
+- Done-when：問「下一步建議做什麼」會引用 `/discover` 輸出並明說下一步是 pm/spike/research/defer；active-scope guard 有測試（戰術型「這張票下一步」不得誤觸 auto-discover）。
+
+**Non-goals**:
+- 不自動開票、不自動 dispatch、未經使用者確認不改檔。
+- 不強制每次都跑完整 pipeline——三者是 siblings 可組成 pipeline，非強制鏈（小工作 discover 完可直接 plan）。
+
+**Status (2026-06-19, user-adjusted bundle)**: 原規劃 router 純文件先行、`/research`（[[CC-344]]）與 spike agent（[[CC-220]]）另案。**user 拍板把三者併入同一 PR（pr:#302）一次出**——本 PR 同時 ship router（`agents/project-pm.md` Uncertainty routing + `commands/pm.md` Discovery route + `commands/discover.md` Next/Refs 輸出）、`/research`（`commands/research.md`）、spike agent（`agents/spike.md` + `commands/spike.md`）。三票於本 PR 一併 closed。Done-when 的 active-scope guard 回歸鎖已落地於 `scripts/test-commands.sh`（含 tactical false-path 斷言）。
+
+**Relationship**: 統御 [[CC-343]]（discover，輸出升級併入）、[[CC-344]]（research，本 PR 一併 ship）、[[CC-220]]（spike，本 PR 一併 ship）。CC-403 為 `/research` memory 錨定的前向整合（非阻塞）。
+
+**Priority**: P2.
+
+## CC-409 — test-infra: `run-all-tests` 並行執行 + dispatch-wait poll 可設定 ✅ 2026-06-22
+
+**Problem**: `run-all-tests.sh` 以單迴圈順序執行 70 suite，整套約 10 分鐘。`test-dispatch-lifecycle.sh` 的 detached lifecycle 案例使用 `dispatch wait`，而 `dispatch wait` 內部 `sleep 2` 硬編使這些 case 每次至少等 2 秒——純 I/O 死時間。
+
+**Fix**:
+- `run-all-tests.sh` 加 `--jobs N` / `-j N`：背台 subshell pool 最多 N suite 並行，每 suite stdout/stderr 打入 temp file，完成即整塊印出（不混流）。預設 `JOBS=$(nproc)` 充分利用多核，`nproc` 不可用時 fallback 到 `1`（sequential）。
+- `scripts/lib/pmctl-dispatch.sh` 的 dispatch wait `sleep 2` 改 `sleep "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"`，讓測試環境可注入 0.1 等間隔。
+- `scripts/test-dispatch-lifecycle.sh` 匯出 `PM_DISPATCH_WAIT_POLL_INTERVAL=0.1`，消除 lifecycle 案例的 polling dead time。
+- 順帶修 CC-384 BACKLOG body 遺漏關閉標記（`pm/scripts/test` lint + `test-pmctl-backlog` 雙 suite 失敗根因）。
+
+**Done-when**:
+- `run-all-tests.sh --jobs 8` 成功跑完所有 suite 且 pass/fail 計數正確
+- `run-all-tests.sh`（無 `--jobs`）預設以 `nproc` 並行執行，`nproc` 不可用時 fallback sequential，結果與序列執行一致
+- `test-dispatch-lifecycle.sh` lifecycle 案例在 `PM_DISPATCH_WAIT_POLL_INTERVAL=0.1` 下正確通過
+
+**See**: pr:#311
+
+---
+
+## CC-410 — hook: guard audit log 對唯讀 hooks.log fail-silent ✅ 2026-06-22
+
+**Problem**: `scripts/lib/guard-framework.sh` 的 `g_audit` 以 `printf ... >> "$LOG_FILE" 2>/dev/null || true` 追加審計行。這是 bash 的經典陷阱：`2>/dev/null` 無法抑制「重導向開檔失敗」的錯誤——當 `>> "$LOG_FILE"` 因 `$LOG_FILE` 唯讀而開檔失敗時，bash 在重導向設定階段就把 `Permission denied` 印到 shell 的 stderr，`2>/dev/null` 來不及套用。在 codex sandbox（`~/.claude/logs/hooks.log` 唯讀）下，reviewer 的 `pmctl guard check` 因此洩漏一行警告到 guard 輸出，污染 gate reviewer 觀察到的訊號。CC-409 的 pr-gate 期間發現。
+
+**Fix**:
+- `g_audit` 的 append 改用 brace group：`{ printf ...; } 2>/dev/null || true`，把 `2>/dev/null` 套在外層，使「開檔失敗」也被靜默。審計為 best-effort，永不影響 allow/deny 決策或 guard 的 exit code。
+- `scripts/test-guards.sh` 新增回歸案例 `rw_readonly_log_no_leak`：把 `hooks.log` 設唯讀後跑 reviewer guard 的 allow 路徑，斷言 exit 0 且 stderr 完全無洩漏。
+
+**Done-when**:
+- `$LOG_FILE` 唯讀時 reviewer guard check 仍 exit 0、決策不變、stderr 無 `Permission denied` 洩漏
+- `test-guards.sh` 新增的唯讀 audit log 案例通過
+
+**See**: pr:#311
 
 ---
 
