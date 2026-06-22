@@ -131,7 +131,7 @@ declare -A SUITE_PATHS=(
 
 declare -A SKIP_REQUESTED=()
 LIST=0
-JOBS=1
+JOBS="$(nproc 2>/dev/null || echo 4)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
