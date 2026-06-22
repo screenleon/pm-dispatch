@@ -95,6 +95,37 @@ class TaskRunner:
 PY
 }
 
+# ── Memory-plane fixtures (CC-403) ─────────────────────────────────────────────
+# Stand up a fake project-memory directory that find_memory_dir resolves for
+# <repo> when CLAUDE_CONFIG_DIR points at <cfg>. Echoes the memory dir path.
+# Mirrors scripts/lib/memory.sh encode_path: "/a/b" → "-a-b".
+mem_encode_path() {
+  printf '%s' "-${1#/}" | tr '/' '-'
+}
+
+make_fixture_memory() {
+  local repo="$1" cfg="$2"
+  local mdir
+  mdir="$cfg/projects/$(mem_encode_path "$repo")/memory"
+  mkdir -p "$mdir"
+
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [gate executor codex](feedback_gate_executor.md) — pr-gate prefers codex executor
+MD
+
+  cat > "$mdir/feedback_gate_executor.md" <<'MD'
+---
+name: gate-executor-codex
+---
+The pr-gate flow should prefer the codex executor for separation.
+zebraword appears only in this curated card body.
+MD
+
+  printf '{"ts":"2026-06-22","summary":"worked on quokkatask parallelism"}\n' > "$mdir/episodes.jsonl"
+  printf '%s' "$mdir"
+}
+
 # ── Test cases ─────────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo() {
@@ -2125,6 +2156,264 @@ case_context_emit_event_failure_observable() {
   pass "$name"
 }
 
+# ── Memory-plane cases (CC-403) ────────────────────────────────────────────────
+
+case_context_query_source_memory_finds_card() {
+  local name="pmctl context query --source memory: finds memory card with source_domain memory"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-find-repo" cfg="$tmp_root/mem-find-cfg"
+  mkdir -p "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  local out err status=0
+  out="$tmp_root/mem-find.out"; err="$tmp_root/mem-find.err"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "query exited $status: $(<"$err")"; return 0; fi
+  if grep -q 'ref: feedback_gate_executor.md' "$out" && grep -q 'source_domain: memory' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected memory card hit with source_domain: memory; got: $(<"$out")"
+  fi
+}
+
+case_context_query_source_memory_trust_tiers() {
+  local name="pmctl context query --source memory: card trust=high, episode trust=medium"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-trust-repo" cfg="$tmp_root/mem-trust-cfg"
+  mkdir -p "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  local card_out epi_out
+  card_out="$tmp_root/mem-trust-card.out"; epi_out="$tmp_root/mem-trust-epi.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$card_out" 2>/dev/null || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory quokkatask > "$epi_out" 2>/dev/null || true
+  # The card hit block must carry trust_level: high; the episode hit must be medium.
+  if grep -q 'ref: feedback_gate_executor.md' "$card_out" \
+    && awk '/ref: feedback_gate_executor.md/{c=1} c&&/trust_level: high/{ok=1} END{exit !ok}' "$card_out" \
+    && grep -q 'ref: episodes.jsonl' "$epi_out" \
+    && awk '/ref: episodes.jsonl/{c=1} c&&/trust_level: medium/{ok=1} END{exit !ok}' "$epi_out"; then
+    pass "$name"
+  else
+    fail "$name" "expected card=high / episode=medium; card=$(<"$card_out") epi=$(<"$epi_out")"
+  fi
+}
+
+case_context_memory_db_out_of_repo() {
+  local name="pmctl context query --source memory: memory DB lives under memory dir, never in repo checkout (privacy)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-priv-repo" cfg="$tmp_root/mem-priv-cfg"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$repo" "$cfg")"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex >/dev/null 2>&1 || true
+  if [[ ! -f "$mdir/.pm-dispatch/context.db" ]]; then
+    fail "$name" "expected memory DB at $mdir/.pm-dispatch/context.db (not found)"; return 0
+  fi
+  if [[ -e "$repo/.pm-dispatch" ]]; then
+    fail "$name" "memory query created repo-local .pm-dispatch — private memory must not land in the repo checkout"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_source_all_merges() {
+  local name="pmctl context query --source all: merges repo + memory hits"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-all-repo" cfg="$tmp_root/mem-all-cfg"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  # Index repo so a repo hit exists; use a term present in both planes is hard,
+  # so assert both a repo-domain and a memory-domain hit appear across two terms.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  local out="$tmp_root/mem-all.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source all my_func_alpha > "$out" 2>/dev/null || true
+  local out2="$tmp_root/mem-all2.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source all codex > "$out2" 2>/dev/null || true
+  if grep -q 'source_domain: repo' "$out" && grep -q 'source_domain: memory' "$out2"; then
+    pass "$name"
+  else
+    fail "$name" "expected repo hit (out1) and memory hit (out2); out1=$(<"$out") out2=$(<"$out2")"
+  fi
+}
+
+case_context_query_source_repo_excludes_memory() {
+  local name="pmctl context query --source repo (default): never returns memory hits"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-repoonly-repo" cfg="$tmp_root/mem-repoonly-cfg"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  local out="$tmp_root/mem-repoonly.out"
+  # "codex" only exists in memory; default repo source must miss it.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" codex > "$out" 2>/dev/null || true
+  if grep -q 'source_domain: memory' "$out"; then
+    fail "$name" "default --source repo leaked memory hits: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_query_source_memory_no_dir_graceful() {
+  local name="pmctl context query --source memory: missing memory dir degrades to # no hits"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-nodir-repo" cfg="$tmp_root/mem-nodir-cfg"
+  mkdir -p "$repo" "$cfg/projects"   # cfg exists but no memory dir for this repo
+  local out err status=0
+  out="$tmp_root/mem-nodir.out"; err="$tmp_root/mem-nodir.err"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "expected exit 0; got $status err=$(<"$err")"; return 0; fi
+  if grep -q '# no hits' "$out"; then pass "$name"; else fail "$name" "expected '# no hits'; got: $(<"$out")"; fi
+}
+
+case_context_query_source_memory_domain_rejected() {
+  local name="pmctl context query: --domain with --source memory is rejected (exit 2)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-domrej-repo"; mkdir -p "$repo"
+  local err status=0
+  err="$tmp_root/mem-domrej.err"
+  "$PMCTL" context query "$repo" --source memory --domain knowledge codex >/dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'only valid with --source repo' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + guidance; got $status err=$(<"$err")"
+  fi
+}
+
+case_context_query_source_invalid_rejected() {
+  local name="pmctl context query: invalid --source value is rejected (exit 2)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-srcrej-repo"; mkdir -p "$repo"
+  local err status=0
+  err="$tmp_root/mem-srcrej.err"
+  "$PMCTL" context query "$repo" --source bogus codex >/dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'must be "repo", "memory", or "all"' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + guidance; got $status err=$(<"$err")"
+  fi
+}
+
+case_context_index_source_memory_builds_db() {
+  local name="pmctl context index --source memory: builds memory DB under memory dir"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-idx-repo" cfg="$tmp_root/mem-idx-cfg"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$repo" "$cfg")"
+  local out err status=0
+  out="$tmp_root/mem-idx.out"; err="$tmp_root/mem-idx.err"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" --source memory > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "index exited $status: $(<"$err")"; return 0; fi
+  if [[ -f "$mdir/.pm-dispatch/context.db" ]] && grep -q "^db: $mdir/.pm-dispatch/context.db" "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected memory DB + db: line; out=$(<"$out")"
+  fi
+}
+
+case_context_index_source_invalid_rejected() {
+  local name="pmctl context index: invalid --source value is rejected with repo|memory guidance"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-idxrej-repo"; mkdir -p "$repo"
+  local err status=0
+  err="$tmp_root/mem-idxrej.err"
+  "$PMCTL" context index "$repo" --source bogus >/dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'expected repo|memory' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'expected repo|memory'; got $status err=$(<"$err")"
+  fi
+}
+
+case_context_pack_source_memory_pointer_only() {
+  local name="pmctl context pack --source memory: populates memories[] pointer-only (no card snippet leak)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-pack-repo" cfg="$tmp_root/mem-pack-cfg"
+  mkdir -p "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  local out err status=0
+  out="$tmp_root/mem-pack.out"; err="$tmp_root/mem-pack.err"
+  # "zebraword" appears ONLY in the card body — a pointer-only pack must reference
+  # the card but must NOT copy the matched body text into the pack JSON.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query zebraword --source memory > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "pack exited $status: $(<"$err")"; return 0; fi
+  if ! command -v jq >/dev/null 2>&1; then
+    fail "$name" "jq required for this assertion"; return 0
+  fi
+  local mem_count leaked
+  mem_count="$(jq '.memories | length' "$out" 2>/dev/null || printf 'ERR')"
+  leaked="$(jq -r '.memories[].source_domain' "$out" 2>/dev/null | grep -vc '^memory$' || true)"
+  if [[ "$mem_count" -ge 1 ]] \
+    && jq -e '.memories[0].source_domain == "memory"' "$out" >/dev/null 2>&1 \
+    && [[ "$leaked" == "0" ]] \
+    && ! grep -q 'zebraword' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected pointer-only memories (count=$mem_count, no 'zebraword'); got: $(<"$out")"
+  fi
+}
+
+case_context_pack_source_repo_memories_empty() {
+  local name="pmctl context pack --source repo (default): memories[] stays empty (byte-compatible)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-packrepo-repo" cfg="$tmp_root/mem-packrepo-cfg"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  local out="$tmp_root/mem-packrepo.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query codex > "$out" 2>/dev/null || true
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e '.memories == []' "$out" >/dev/null 2>&1; then pass "$name"; else fail "$name" "expected memories []; got: $(<"$out")"; fi
+  else
+    if grep -q '"memories":\[\]' "$out"; then pass "$name"; else fail "$name" "expected empty memories; got: $(<"$out")"; fi
+  fi
+}
+
+case_context_pack_source_all_populates_both() {
+  local name="pmctl context pack --source all: files/symbols from repo AND memories from memory"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-packall-repo" cfg="$tmp_root/mem-packall-cfg"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  local out="$tmp_root/mem-packall.out"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context pack "$repo" --task-id CC-403 --query my_func_alpha --query codex --source all > "$out" 2>/dev/null || true
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e '(.symbols | length) >= 1 and (.memories | length) >= 1' "$out" >/dev/null 2>&1; then
+      pass "$name"
+    else
+      fail "$name" "expected both symbols and memories populated; got: $(<"$out")"
+    fi
+  else
+    pass "$name (skipped: jq absent)"
+  fi
+}
+
+case_context_pack_source_invalid_rejected() {
+  local name="pmctl context pack: invalid --source value is rejected (exit 2)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-packrej-repo"; mkdir -p "$repo"
+  local err status=0
+  err="$tmp_root/mem-packrej.err"
+  "$PMCTL" context pack "$repo" --task-id CC-403 --query codex --source bogus >/dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 ]] && grep -q 'must be "repo", "memory", or "all"' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + guidance; got $status err=$(<"$err")"
+  fi
+}
+
+case_context_reuse_scan_never_returns_memory() {
+  local name="pmctl context reuse-scan: repo-only by construction — never surfaces memory hits (regression lock)"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-reuse-repo" cfg="$tmp_root/mem-reuse-cfg"
+  make_fixture_repo "$repo"
+  make_fixture_memory "$repo" "$cfg" >/dev/null
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  local out="$tmp_root/mem-reuse.out"
+  # Description uses memory-only terms; reuse-scan echoes them in its terms: line
+  # (expected), but must never reach the memory plane — so assert on leak markers
+  # that only appear in actual HITS: a memory source_domain or a memory file ref.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context reuse-scan "$repo" "codex executor preference gate" > "$out" 2>/dev/null || true
+  if grep -qE 'source_domain: memory|ref: feedback_gate_executor|ref: episodes.jsonl|ref: MEMORY.md' "$out"; then
+    fail "$name" "reuse-scan leaked memory-plane content: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -2197,5 +2486,20 @@ case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir
 case_context_emit_event_failure_observable
+case_context_query_source_memory_finds_card
+case_context_query_source_memory_trust_tiers
+case_context_memory_db_out_of_repo
+case_context_query_source_all_merges
+case_context_query_source_repo_excludes_memory
+case_context_query_source_memory_no_dir_graceful
+case_context_query_source_memory_domain_rejected
+case_context_query_source_invalid_rejected
+case_context_index_source_memory_builds_db
+case_context_index_source_invalid_rejected
+case_context_pack_source_memory_pointer_only
+case_context_pack_source_repo_memories_empty
+case_context_pack_source_all_populates_both
+case_context_pack_source_invalid_rejected
+case_context_reuse_scan_never_returns_memory
 
 th_summary

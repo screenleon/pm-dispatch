@@ -15,6 +15,33 @@ For code symbols, omit --domain or use --domain repo:
 
     pmctl context query <symbol-name>
 
+## Source planes — repo and memory
+
+`--source` selects which **index plane** is searched and is orthogonal to
+`--domain` (which classifies paths *within* the repo plane):
+
+| `--source` | Searches                                                                 |
+|------------|--------------------------------------------------------------------------|
+| `repo`     | The repo index (default). Behaviour is unchanged from before this flag.   |
+| `memory`   | The project-memory plane — cards, `MEMORY.md`, and `episodes.jsonl` under `~/.claude/projects/<id>/memory/`. |
+| `all`      | Repo **and** memory hits, merged.                                        |
+
+    pmctl context query --source memory <term>      # decisions / rules / preferences
+    pmctl context query --source all <term>          # repo + memory
+
+Memory hits carry `source_domain: memory` and a trust tier: curated cards and
+`MEMORY.md` rank `high`, raw `episodes.jsonl` ranks `medium`. `--domain` is a
+repo-plane path classifier and is **only valid with `--source repo`** — pairing
+it with `memory`/`all` is rejected.
+
+`reuse-scan` stays **repo-only by construction** (it surfaces reusable repo
+prior-art for executors; memory decisions/preferences would crowd out real
+helpers) and has no `--source` flag.
+
+`pmctl context pack --source memory|all` populates the pack's `memories[]` array
+**pointer-only**: the ref and trust tier travel, never the matched card body —
+private memory must not be copied into a repo-bound (and possibly archived) pack.
+
 ## Prior-art scan before authoring a brief
 
 Before writing the `files:` / `context:` sections of a dispatch brief, run a
@@ -94,6 +121,15 @@ database is never committed.
 Auto-pack files are written under the same repo-local context directory at
 `<repo-root>/.pm-dispatch/ctx/packs/<run_id>.md`; they are derived dispatch
 artifacts and are not committed.
+
+The **memory** plane has a separate, out-of-repo DB at
+`<memory-dir>/.pm-dispatch/context.db` (where `<memory-dir>` is the
+`find_memory_dir`-resolved `~/.claude/projects/<id>/memory/`). This is a
+load-bearing privacy boundary: the memory index lives beside the cards it is
+built from and is **never** written into the repo checkout — even a gitignored
+repo-local copy could be carried out by tooling or an archive. Memory honours the
+same `PM_DISPATCH_CONTEXT_AUTOBUILD` / `AUTOREFRESH` env vars and degrades to
+`# no hits` when no memory directory exists for the working dir.
 
 `pmctl context query`, `pmctl context pack`, and `pmctl context reuse-scan` are
 self-sufficient readers: if the repo-local DB is missing and `sqlite3` is
