@@ -489,6 +489,31 @@ $LIST || printf '%s' '{"agent_type":"critic","tool_name":"Write","tool_input":{"
 assert_log "rw: audit log contains bypass line" "decision=bypass"
 assert_log "rw: bypass line records agent=critic" "agent=critic"
 
+# --- read-only audit log must not leak a redirection error ---
+# Regression: when $LOG_FILE (e.g. a sandboxed read-only ~/.claude/logs/hooks.log)
+# cannot be opened for append, g_audit must stay silent and the allow/deny
+# decision must be unaffected. A bare `printf >> "$LOG_FILE" 2>/dev/null` leaks
+# the open-failure ("Permission denied") because bash reports a redirection-open
+# error before the inner 2>/dev/null applies; the brace-group wrap silences it.
+rw_readonly_log_no_leak() {
+  local name="rw: read-only audit log → allow exits 0 with no stderr leak"
+  should_run "$name" || return 0
+  local stderr_file actual_exit actual_stderr
+  stderr_file="$(mktemp)"
+  chmod 0444 "$TEST_LOG_FILE"
+  printf '%s' "{\"agent_type\":\"critic\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_gate_dir/output.md\"}}" \
+    | "$RWHOOK" >/dev/null 2>"$stderr_file"
+  actual_exit=$?
+  chmod 0644 "$TEST_LOG_FILE"
+  actual_stderr="$(cat "$stderr_file")"; rm -f "$stderr_file"
+  if [[ "$actual_exit" == "0" && -z "$actual_stderr" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$(printf '        exit=%s stderr=%q' "$actual_exit" "${actual_stderr:0:200}")"
+  fi
+}
+rw_readonly_log_no_leak
+
 rm -rf "$_gate_dir" "$(dirname "$_gate_dir")"
 unset _gate_dir
 

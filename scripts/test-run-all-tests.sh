@@ -195,7 +195,63 @@ make_path_without_codex() {
   mkdir -p "$bin"
   ln -s /usr/bin/bash "$bin/bash"
   ln -s /usr/bin/dirname "$bin/dirname"
+  # Parallel path in run-all-tests needs these external tools:
+  ln -s "$(command -v mktemp)" "$bin/mktemp"
+  ln -s "$(command -v mkdir)"  "$bin/mkdir"
+  ln -s "$(command -v cat)"    "$bin/cat"
+  ln -s "$(command -v rm)"     "$bin/rm"
+  ln -s "$(command -v sleep)"  "$bin/sleep"
+  if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
   printf '%s\n' "$bin"
+}
+
+# Build a PATH whose `codex` is a no-op stub and whose `nproc` is a stub with a
+# caller-supplied body (real PATH appended). Lets a test pin the default-jobs
+# detection: `echo N` makes nproc report N; `exit 1` makes `nproc||echo 1` fall
+# back to the sequential default. The stub bin is prepended so it shadows any
+# real nproc/codex on the host.
+make_path_codex_nproc_stub() {
+  local bin="$1" nproc_body="$2"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nexit 0\n' > "$bin/codex"
+  chmod +x "$bin/codex"
+  printf '#!/bin/sh\n%s\n' "$nproc_body" > "$bin/nproc"
+  chmod +x "$bin/nproc"
+  printf '%s:%s\n' "$bin" "$PATH"
+}
+
+# Write a suite stub that records a "started" marker then blocks until a matching
+# "release" marker appears, so a test can deterministically observe how many
+# suites the aggregator launches concurrently. A 30s safety bound prevents an
+# orphaned stub from blocking forever if the test bails before releasing it.
+write_gated_stub() {
+  local repo="$1" sname="$2" marker="$3"
+  local path
+  path="$repo/$(suite_path "$sname")"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<EOF
+#!/bin/sh
+echo started > "$marker/started-$sname"
+i=0
+while [ ! -e "$marker/release-$sname" ]; do
+  i=\$((i + 1)); [ "\$i" -ge 1500 ] && break
+  sleep 0.02
+done
+exit 0
+EOF
+  chmod +x "$path"
+}
+
+# Poll (bounded) until a file exists. Returns 1 on timeout so callers fail loudly
+# instead of hanging when the aggregator never reaches the expected state.
+wait_for_file() {
+  local f="$1" tries="${2:-200}" i=0
+  while [[ ! -e "$f" ]]; do
+    i=$((i + 1))
+    [[ "$i" -ge "$tries" ]] && return 1
+    sleep 0.02
+  done
+  return 0
 }
 
 run_aggregator() {
@@ -459,6 +515,293 @@ test_dispatch_pm_scripts_via_bash() {
   fi
 }
 
+test_jobs_parallel_all_pass() {
+  # Behavior: --jobs 2 runs all suites in parallel and exits 0 with correct totals.
+  # Steps: write pass stubs for all suites; run aggregator --jobs 2; assert exit 0 and
+  #        total line shows SUITE_TOTAL passed.
+  local name="jobs-parallel-all-pass"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_parallel_one_fail() {
+  # Behavior: --jobs 2 with one failing suite exits 1 and names the failed suite.
+  # Steps: write pass stubs; override lint-agents stub to exit 1; run --jobs 2;
+  #        assert exit != 0, FAIL lint-agents in output, and failed suites line names it.
+  local name="jobs-parallel-one-fail"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  write_suite_stub "$repo" lint-agents 1
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"FAIL lint-agents"* && "$out" == *"failed suites:"*"lint-agents"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_parallel_skip_accounting() {
+  # Behavior: --jobs 2 with --skip reflects the skipped suite in totals.
+  # Steps: write pass stubs; run --jobs 2 --skip lint-agents; assert SKIP message and
+  #        total shows SUITE_TOTAL-1 passed and 1 skipped.
+  local name="jobs-parallel-skip-accounting"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 2 --skip lint-agents 2>&1) || status=$?
+  local expected_pass=$(( SUITE_TOTAL - 1 ))
+  if [[ "$status" -eq 0 &&
+        "$out" == *"SKIP lint-agents (requested)"* &&
+        "$out" == *"$expected_pass passed, 0 failed, 1 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_invalid_zero() {
+  # Behavior: --jobs 0 exits 2 with an error message.
+  # Steps: invoke run-all-tests.sh --jobs 0; assert exit 2 and error message contains
+  #        "--jobs requires a positive integer".
+  local name="jobs-invalid-zero"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs 0 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--jobs requires a positive integer"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_invalid_string() {
+  # Behavior: --jobs with a non-numeric argument exits 2 with an error message.
+  # Steps: invoke run-all-tests.sh --jobs abc; assert exit 2 and error message contains
+  #        "--jobs requires a positive integer".
+  local name="jobs-invalid-string"
+  local out status=0
+  out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs abc 2>&1) || status=$?
+  if [[ "$status" -eq 2 && "$out" == *"--jobs requires a positive integer"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_no_arg_default() {
+  # Behavior: no --jobs flag uses default parallelism (nproc or 1 fallback); exits 0.
+  # Steps: write pass stubs; run aggregator without --jobs; assert exit 0 and correct totals.
+  local name="jobs-no-arg-default"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_larger_than_suite_count() {
+  # Behavior: --jobs N where N exceeds total suite count runs all suites without error.
+  # Steps: write pass stubs; run --jobs 9999; assert exit 0 and correct totals.
+  local name="jobs-larger-than-suite-count"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 9999 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_explicit_sequential() {
+  # Behavior: --jobs 1 forces the sequential code path and preserves pass/fail/skip accounting.
+  # Steps: write pass stubs; run --jobs 1; assert exit 0 and total line shows SUITE_TOTAL passed;
+  #        write a failing stub for lint-agents; run --jobs 1 again; assert exit 1 and
+  #        "FAIL lint-agents" plus "failed suites: lint-agents" in output.
+  local name="jobs-explicit-sequential"
+  local repo="$TMP_ROOT/$name" path out status=0
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  path="$(make_path_with_codex "$repo/bin")"
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    fail_case "$name (all-pass)" "status=$status out=$out"
+    return
+  fi
+  write_suite_stub "$repo" lint-agents 1
+  status=0
+  out=$(PATH="$path" run_aggregator "$repo" --jobs 1 2>&1) || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"FAIL lint-agents"* && "$out" == *"failed suites:"*"lint-agents"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name (one-fail)" "status=$status out=$out"
+  fi
+}
+
+test_jobs_concurrency_and_max_inflight() {
+  # Behavior: --jobs 2 launches exactly 2 suites concurrently and holds further
+  #           launches until a slot frees (max-in-flight enforcement + drain/launch).
+  # Steps: gate the first 3 registered suites; run aggregator --jobs 2 in background;
+  #        assert suites 1 and 2 both start (concurrency) while suite 3 stays held
+  #        (max=2); release suite 1 and assert suite 3 then starts (drain frees a slot);
+  #        release the rest; assert exit 0 and full pass totals.
+  local name="jobs-concurrency-max-inflight"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" lint-agents "$marker"
+  write_gated_stub "$repo" lint-scripts "$marker"
+  write_gated_stub "$repo" test-guards "$marker"
+  path="$(make_path_with_codex "$repo/bin")"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" run_aggregator "$repo" --jobs 2 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  if ! wait_for_file "$marker/started-lint-agents" 300 || \
+     ! wait_for_file "$marker/started-lint-scripts" 300; then
+    fail_case "$name" "two suites did not start concurrently (parallel path not taken)"
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" "$marker/release-test-guards"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  # Both slots occupied by blocked stubs -> the third suite must not have launched.
+  if [[ -e "$marker/started-test-guards" ]]; then
+    fail_case "$name" "third suite started while 2 slots busy (max-JOBS not enforced)"
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" "$marker/release-test-guards"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  # Free one slot -> the held suite should now launch.
+  touch "$marker/release-lint-agents"
+  if ! wait_for_file "$marker/started-test-guards" 300; then
+    fail_case "$name" "third suite never launched after a slot freed (drain broken)"
+    touch "$marker/release-lint-scripts" "$marker/release-test-guards"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-scripts" "$marker/release-test-guards"
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  local out; out="$(cat "$logf" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_default_fallback_no_nproc() {
+  # Behavior: when nproc is unavailable, no-arg default falls back to JOBS=1 (sequential),
+  #           running suites strictly one at a time while still producing correct totals.
+  # Steps: gate the first 2 suites; prepend a failing nproc stub so `nproc||echo 1` -> 1;
+  #        run aggregator with no --jobs in background; assert suite 1 starts but suite 2
+  #        stays held while suite 1 runs (sequential proof); release suite 1 and assert
+  #        suite 2 then starts; release all; assert exit 0 and full pass totals.
+  local name="jobs-default-fallback-no-nproc"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" lint-agents "$marker"
+  write_gated_stub "$repo" lint-scripts "$marker"
+  path="$(make_path_codex_nproc_stub "$repo/bin" 'exit 1')"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" run_aggregator "$repo" > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  if ! wait_for_file "$marker/started-lint-agents" 300; then
+    fail_case "$name" "first suite never started"
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  # Sequential: while suite 1 blocks, no slot frees, so suite 2 can never launch.
+  if [[ -e "$marker/started-lint-scripts" ]]; then
+    fail_case "$name" "second suite started concurrently; fallback is not sequential (JOBS!=1)"
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-agents"
+  if ! wait_for_file "$marker/started-lint-scripts" 300; then
+    fail_case "$name" "second suite never ran after first finished (sequential path broken)"
+    touch "$marker/release-lint-scripts"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-scripts"
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  local out; out="$(cat "$logf" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
+test_jobs_default_uses_detected_nproc() {
+  # Behavior: with no --jobs, default parallelism equals the detected nproc value.
+  # Steps: gate the first 4 suites; prepend an nproc stub reporting 3; run aggregator with
+  #        no --jobs in background; assert exactly suites 1-3 start concurrently and suite 4
+  #        stays held (max=3 from nproc, not a hardcoded 1 or unbounded); release one slot
+  #        and assert suite 4 then starts; release all; assert exit 0 and full pass totals.
+  local name="jobs-default-detected-nproc"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" lint-agents "$marker"
+  write_gated_stub "$repo" lint-scripts "$marker"
+  write_gated_stub "$repo" test-guards "$marker"
+  write_gated_stub "$repo" test-guard-framework "$marker"
+  path="$(make_path_codex_nproc_stub "$repo/bin" 'echo 3')"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" run_aggregator "$repo" > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  _release_all_gated() {
+    touch "$marker/release-lint-agents" "$marker/release-lint-scripts" \
+          "$marker/release-test-guards" "$marker/release-test-guard-framework"
+  }
+  if ! wait_for_file "$marker/started-lint-agents" 300 || \
+     ! wait_for_file "$marker/started-lint-scripts" 300 || \
+     ! wait_for_file "$marker/started-test-guards" 300; then
+    fail_case "$name" "fewer than 3 suites started; default did not honor nproc=3"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  if [[ -e "$marker/started-test-guard-framework" ]]; then
+    fail_case "$name" "4th suite started; default exceeded detected nproc=3"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-lint-agents"
+  if ! wait_for_file "$marker/started-test-guard-framework" 300; then
+    fail_case "$name" "4th suite never launched after a slot freed"
+    _release_all_gated; wait "$agg_pid" 2>/dev/null; return
+  fi
+  _release_all_gated
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  local out; out="$(cat "$logf" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
 test_list
 test_known_suite_count
 test_skip_unknown_suite
@@ -473,6 +816,17 @@ test_skip_option_like_arg
 test_dispatch_hooks_home_override
 test_dispatch_install_running_flag
 test_dispatch_pm_scripts_via_bash
+test_jobs_parallel_all_pass
+test_jobs_parallel_one_fail
+test_jobs_parallel_skip_accounting
+test_jobs_invalid_zero
+test_jobs_invalid_string
+test_jobs_no_arg_default
+test_jobs_larger_than_suite_count
+test_jobs_explicit_sequential
+test_jobs_concurrency_and_max_inflight
+test_jobs_default_fallback_no_nproc
+test_jobs_default_uses_detected_nproc
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

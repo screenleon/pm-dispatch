@@ -93,6 +93,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-408 | ✅ closed 2026-06-19 | **[next-step router: 自動把「下一步做什麼」送到 /discover · /research · spike]** `/discover`（CC-343 已建）、`/research`（CC-344）、spike（CC-220）是三把無調度器的工具，只能手動呼叫。把 routing 寫進 `agents/project-pm.md` Classify 表 + `commands/pm.md` main-thread orchestration：strategic「下一步」自動跑 /discover（廉價內部非承諾）、external-method gap 才 auto-offer /research（需 topic+定向問題）、選定候選遇 durable 決策未知才 spike。並升級 `commands/discover.md` 輸出加 suggested_next_action+refs 使 menu 變 routing input。純文件零風險先行。三方統整見 docs/spikes/CC-408-next-step-router.md。 | process/DX | 2026-06-19 | pr:#302 | P2 | design |
+| CC-409 | ✅ closed 2026-06-22 | **[test: `run-all-tests` 並行執行（`--jobs N`）+ dispatch-wait poll 可設定]** `run-all-tests.sh` 順序跑 70 suite 約 10 分鐘；加 `--jobs N` / `-j N` 背台 subshell pool 並行最多 N suite，輸出每 suite 完成即整塊印出；預設 `nproc` 充分利用多核（nproc 不可用 fallback 1）。`pmctl-dispatch.sh` dispatch-wait `sleep 2` 硬編改 `sleep "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"` 使測試可設 0.1 加速；`test-dispatch-lifecycle.sh` 匯出 0.1 預設值。順帶修 CC-384 BACKLOG body 遺漏關閉標記（lint 連帶失敗根因）。 | test | 2026-06-22 | pr:#311 | P3 | hygiene |
+| CC-410 | ✅ closed 2026-06-22 | **[hook: guard audit log 對唯讀 hooks.log fail-silent]** `g_audit` 的 `printf >> "$LOG_FILE" 2>/dev/null` 無法抑制「重導向開檔失敗」錯誤——唯讀的 `~/.claude/logs/hooks.log`（codex sandbox）會洩漏 Permission denied 到 guard 輸出，污染 reviewer guard check。改用 brace-group 把 `2>/dev/null` 套外層使開檔失敗也靜默；審計為 best-effort，永不影響 allow/deny 決策。CC-409 gate 期間發現。 | hook | 2026-06-22 | pr:#311 | P2 | hygiene |
 
 ---
 
@@ -142,7 +144,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）🟢 someday
+## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）✅ 2026-06-22
 
 **Problem（user 2026-06-14）**: `scripts/hook-*.sh`（8 檔）、`scripts/lib/hook-framework.sh`、`hk_*`/`HK_*` 函式與變數、`PM_HOOK_*` env 都沿用 Claude 平台的「hook」術語。但它們本質是 **PreToolUse 協定的策略腳本**：輸入是 PreToolUse 形狀的 JSON、輸出是 exit code，可由 (a) Claude 活 PreToolUse 觸發，**或** (b) `pmctl guard check` 合成同樣的 JSON 餵入。後者（尤其 [[CC-374]] 收口後 claude 的 cli-only 路徑）**根本不是平台 hook**，只是被餵合成輸入的策略評估器——「hook」對這一半名實不符。
 
@@ -157,7 +159,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Sequencing**: 排在真 adapter [[CC-376]]/[[CC-377]] 之後；可與 [[CC-335]] deprecation 清掃同期評估。
 
-**See**: [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。
+**See**: pr:#310; [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。
 
 ---
 
@@ -1461,6 +1463,41 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Relationship**: 統御 [[CC-343]]（discover，輸出升級併入）、[[CC-344]]（research，本 PR 一併 ship）、[[CC-220]]（spike，本 PR 一併 ship）。CC-403 為 `/research` memory 錨定的前向整合（非阻塞）。
 
 **Priority**: P2.
+
+## CC-409 — test-infra: `run-all-tests` 並行執行 + dispatch-wait poll 可設定 ✅ 2026-06-22
+
+**Problem**: `run-all-tests.sh` 以單迴圈順序執行 70 suite，整套約 10 分鐘。`test-dispatch-lifecycle.sh` 的 detached lifecycle 案例使用 `dispatch wait`，而 `dispatch wait` 內部 `sleep 2` 硬編使這些 case 每次至少等 2 秒——純 I/O 死時間。
+
+**Fix**:
+- `run-all-tests.sh` 加 `--jobs N` / `-j N`：背台 subshell pool 最多 N suite 並行，每 suite stdout/stderr 打入 temp file，完成即整塊印出（不混流）。預設 `JOBS=$(nproc)` 充分利用多核，`nproc` 不可用時 fallback 到 `1`（sequential）。
+- `scripts/lib/pmctl-dispatch.sh` 的 dispatch wait `sleep 2` 改 `sleep "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"`，讓測試環境可注入 0.1 等間隔。
+- `scripts/test-dispatch-lifecycle.sh` 匯出 `PM_DISPATCH_WAIT_POLL_INTERVAL=0.1`，消除 lifecycle 案例的 polling dead time。
+- 順帶修 CC-384 BACKLOG body 遺漏關閉標記（`pm/scripts/test` lint + `test-pmctl-backlog` 雙 suite 失敗根因）。
+
+**Done-when**:
+- `run-all-tests.sh --jobs 8` 成功跑完所有 suite 且 pass/fail 計數正確
+- `run-all-tests.sh`（無 `--jobs`）預設以 `nproc` 並行執行，`nproc` 不可用時 fallback sequential，結果與序列執行一致
+- `test-dispatch-lifecycle.sh` lifecycle 案例在 `PM_DISPATCH_WAIT_POLL_INTERVAL=0.1` 下正確通過
+
+**See**: pr:#311
+
+---
+
+## CC-410 — hook: guard audit log 對唯讀 hooks.log fail-silent ✅ 2026-06-22
+
+**Problem**: `scripts/lib/guard-framework.sh` 的 `g_audit` 以 `printf ... >> "$LOG_FILE" 2>/dev/null || true` 追加審計行。這是 bash 的經典陷阱：`2>/dev/null` 無法抑制「重導向開檔失敗」的錯誤——當 `>> "$LOG_FILE"` 因 `$LOG_FILE` 唯讀而開檔失敗時，bash 在重導向設定階段就把 `Permission denied` 印到 shell 的 stderr，`2>/dev/null` 來不及套用。在 codex sandbox（`~/.claude/logs/hooks.log` 唯讀）下，reviewer 的 `pmctl guard check` 因此洩漏一行警告到 guard 輸出，污染 gate reviewer 觀察到的訊號。CC-409 的 pr-gate 期間發現。
+
+**Fix**:
+- `g_audit` 的 append 改用 brace group：`{ printf ...; } 2>/dev/null || true`，把 `2>/dev/null` 套在外層，使「開檔失敗」也被靜默。審計為 best-effort，永不影響 allow/deny 決策或 guard 的 exit code。
+- `scripts/test-guards.sh` 新增回歸案例 `rw_readonly_log_no_leak`：把 `hooks.log` 設唯讀後跑 reviewer guard 的 allow 路徑，斷言 exit 0 且 stderr 完全無洩漏。
+
+**Done-when**:
+- `$LOG_FILE` 唯讀時 reviewer guard check 仍 exit 0、決策不變、stderr 無 `Permission denied` 洩漏
+- `test-guards.sh` 新增的唯讀 audit log 案例通過
+
+**See**: pr:#311
+
+---
 
 ## CC-355 — knowledge index: HTML semantic chunking（`<h1-6>` sections）🟢 someday
 

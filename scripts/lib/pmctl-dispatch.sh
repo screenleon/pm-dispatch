@@ -1041,7 +1041,7 @@ pmctl_dispatch_wait() {
       printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
       return 124
     fi
-    sleep 2
+    sleep "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"
   done
 }
 

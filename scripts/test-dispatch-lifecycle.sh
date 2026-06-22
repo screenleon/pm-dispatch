@@ -33,6 +33,10 @@ _TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
 mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
 export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
 
+# Accelerate dispatch wait polling in tests: the fake codex exits immediately,
+# so a 2s polling interval is pure dead time. Tests may override via the env.
+export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf
@@ -1391,6 +1395,56 @@ case_supervisor_die_restricted_cleanup() {
   rm -rf "$work"
 }
 
+case_dispatch_wait_poll_interval_honored() {
+  # Behavior: PM_DISPATCH_WAIT_POLL_INTERVAL is passed directly to sleep in the poll loop.
+  # Steps: create a fake sentinel key file and a bash sleep override that records its
+  #        first argument then writes the sentinel (so the next poll exits 0); call
+  #        pmctl_dispatch_wait directly as a bash function with a unique custom interval;
+  #        assert sleep was called with that exact interval and the function returned 0.
+  local name="lifecycle/dispatch wait honors PM_DISPATCH_WAIT_POLL_INTERVAL"
+  should_run "$name" || return 0
+  local work run_id nonce key_dir key_file sentinel sleep_log wait_rc custom_interval
+
+  work="$(mktemp -d)"; git init -q "$work"
+  run_id="run-lifecycle-testpollinterval"
+  nonce="testpollnonce$(printf '%s' "$$")"
+  key_dir="${XDG_RUNTIME_DIR}/pm-dispatch"
+  mkdir -p "$key_dir" && chmod 700 "$key_dir"
+  key_file="${key_dir}/${run_id}"
+  printf '%s\n' "$nonce" > "$key_file"
+  sentinel="/tmp/pm-supervisor-sentinel-${run_id}-${nonce}"
+  sleep_log="$(mktemp)"
+
+  # Override sleep as a bash function: records the interval on first call, then
+  # writes the sentinel file so the next pmctl_dispatch_wait poll finds it and exits 0.
+  # shellcheck disable=SC2317
+  sleep() {
+    if [[ ! -s "$sleep_log" ]]; then
+      printf '%s\n' "$1" >> "$sleep_log"
+      printf 'final_state=complete\nexit_code=0\n' > "$sentinel"
+    fi
+  }
+
+  custom_interval="0.037"
+  set +e
+  PM_DISPATCH_WAIT_POLL_INTERVAL="$custom_interval" \
+    pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$run_id" >/dev/null 2>&1
+  wait_rc=$?
+  set -e
+
+  unset -f sleep
+
+  local recorded
+  recorded="$(cat "$sleep_log" 2>/dev/null || true)"
+
+  if [[ "$wait_rc" -eq 0 && "$recorded" == "$custom_interval" ]]; then
+    pass "$name"
+  else
+    fail "$name" "wait_rc=$wait_rc recorded=$(printf '%q' "$recorded") expected=$custom_interval"
+  fi
+  rm -rf "$work"; rm -f "$key_file" "$sentinel" "$sleep_log" 2>/dev/null || true
+}
+
 case_detached_is_default
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
@@ -1428,4 +1482,5 @@ case_dispatch_wait_same_user_nonce_forgery_documented
 case_dispatch_wait_fallback_adversarial_key_removal
 case_dispatch_wait_second_call_uses_record
 case_supervisor_die_restricted_cleanup
+case_dispatch_wait_poll_interval_honored
 th_summary

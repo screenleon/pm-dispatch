@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Standalone test aggregator - run all pm-dispatch test suites.
-# Usage: scripts/run-all-tests.sh [--skip <name>] [--list]
+# Usage: scripts/run-all-tests.sh [--skip <name>] [--list] [--jobs N]
 # Requires a complete developer checkout: registered suites that are missing or
 # non-executable fail loudly (exit 1). Use --skip <name> to opt out of a specific suite.
+# Use --jobs N (or -j N) to set parallelism (default: nproc; falls back to 1 if nproc unavailable).
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -131,12 +132,13 @@ declare -A SUITE_PATHS=(
 
 declare -A SKIP_REQUESTED=()
 LIST=0
+JOBS="$(nproc 2>/dev/null || echo 1)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip)
       if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
-        printf 'usage: %s [--skip <suite-name>] [--list]\n' "$0" >&2
+        printf 'usage: %s [--skip <suite-name>] [--list] [--jobs N]\n' "$0" >&2
         printf 'error: --skip requires a non-empty suite name (got: %q)\n' "${2:-}" >&2
         exit 2
       fi
@@ -146,6 +148,14 @@ while [[ $# -gt 0 ]]; do
     --list)
       LIST=1
       shift
+      ;;
+    --jobs|-j)
+      if [[ -z "${2:-}" || ! "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+        printf 'run-all-tests: --jobs requires a positive integer\n' >&2
+        exit 2
+      fi
+      JOBS="$2"
+      shift 2
       ;;
     *)
       echo "run-all-tests: unknown flag $1" >&2
@@ -184,43 +194,143 @@ run_suite() {
   esac
 }
 
-for name in "${SUITE_NAMES[@]}"; do
+# ── Suite eligibility check (shared by sequential and parallel paths) ─────────
+_suite_skip_reason() {
+  local name="$1"
   if [[ -n "${SKIP_REQUESTED[$name]:-}" ]]; then
-    printf 'SKIP %s (requested)\n' "$name"
-    skipped=$((skipped + 1))
-    continue
+    printf 'requested'
+    return 0
   fi
-
   if [[ "$name" == "test-codex-dispatch" ]] &&
     [[ "${CODEX_SKIP_IF_MISSING:-1}" != "0" ]] &&
     ! command -v codex >/dev/null 2>&1; then
-    printf 'SKIP %s (codex not on PATH)\n' "$name"
-    skipped=$((skipped + 1))
-    continue
+    printf 'codex not on PATH'
+    return 0
   fi
+  return 1
+}
 
-  script="$REPO_ROOT/${SUITE_PATHS[$name]}"
-  if [[ ! -x "$script" ]]; then
-    printf 'FAIL %s (not found or not executable)\n' "$name"
-    failed=$((failed + 1))
-    FAILED_SUITE_NAMES+=("$name")
-    continue
-  fi
+# ── Sequential path (JOBS=1, used when nproc unavailable or --jobs 1) ─────────
+if [[ "$JOBS" -eq 1 ]]; then
+  for name in "${SUITE_NAMES[@]}"; do
+    if reason="$(_suite_skip_reason "$name")"; then
+      printf 'SKIP %s (%s)\n' "$name" "$reason"
+      skipped=$((skipped + 1))
+      continue
+    fi
 
-  set +e
-  run_suite "$name"
-  rc=$?
-  set -e
+    script="$REPO_ROOT/${SUITE_PATHS[$name]}"
+    if [[ ! -x "$script" ]]; then
+      printf 'FAIL %s (not found or not executable)\n' "$name"
+      failed=$((failed + 1))
+      FAILED_SUITE_NAMES+=("$name")
+      continue
+    fi
 
-  if [[ "$rc" -eq 0 ]]; then
-    printf 'PASS %s\n' "$name"
-    passed=$((passed + 1))
-  else
-    printf 'FAIL %s\n' "$name"
-    failed=$((failed + 1))
-    FAILED_SUITE_NAMES+=("$name")
-  fi
-done
+    set +e
+    run_suite "$name"
+    rc=$?
+    set -e
+
+    if [[ "$rc" -eq 0 ]]; then
+      printf 'PASS %s\n' "$name"
+      passed=$((passed + 1))
+    else
+      printf 'FAIL %s\n' "$name"
+      failed=$((failed + 1))
+      FAILED_SUITE_NAMES+=("$name")
+    fi
+  done
+else
+  # ── Parallel path (--jobs N) ───────────────────────────────────────────────
+  # Each in-flight suite gets a temp dir: <tmpdir>/out (stdout+stderr) and
+  # <tmpdir>/rc (exit code written on completion). We poll at ~50ms intervals
+  # and drain finished jobs to keep at most JOBS running concurrently. Output
+  # is buffered per suite and printed atomically when the suite completes.
+
+  _tmpbase="$(mktemp -d)"
+  trap 'rm -rf "$_tmpbase"' EXIT
+
+  # In-flight tracking arrays (indexed together by position)
+  _if_names=()
+  _if_pids=()
+  _if_dirs=()
+
+  _launch() {
+    local name="$1" script="$2" d
+    d="$_tmpbase/$name"
+    mkdir -p "$d"
+    printf '255\n' > "$d/rc"
+    (
+      set +e
+      run_suite "$name" > "$d/out" 2>&1
+      printf '%s\n' "$?" > "$d/rc"
+    ) &
+    _if_names+=("$name")
+    _if_pids+=($!)
+    _if_dirs+=("$d")
+  }
+
+  _drain() {
+    local i new_names=() new_pids=() new_dirs=()
+    for ((i = 0; i < ${#_if_pids[@]}; i++)); do
+      local pid="${_if_pids[$i]}" name="${_if_names[$i]}" d="${_if_dirs[$i]}"
+      if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" 2>/dev/null || true
+        local rc
+        rc="$(cat "$d/rc" 2>/dev/null || printf '1')"
+        [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+        # Print buffered suite output then its result line
+        [[ -s "$d/out" ]] && cat "$d/out"
+        if [[ "$rc" -eq 0 ]]; then
+          printf 'PASS %s\n' "$name"
+          passed=$((passed + 1))
+        else
+          printf 'FAIL %s\n' "$name"
+          failed=$((failed + 1))
+          FAILED_SUITE_NAMES+=("$name")
+        fi
+      else
+        new_names+=("$name")
+        new_pids+=("$pid")
+        new_dirs+=("$d")
+      fi
+    done
+    _if_names=("${new_names[@]+"${new_names[@]}"}")
+    _if_pids=("${new_pids[@]+"${new_pids[@]}"}")
+    _if_dirs=("${new_dirs[@]+"${new_dirs[@]}"}")
+  }
+
+  for name in "${SUITE_NAMES[@]}"; do
+    if reason="$(_suite_skip_reason "$name")"; then
+      printf 'SKIP %s (%s)\n' "$name" "$reason"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    script="$REPO_ROOT/${SUITE_PATHS[$name]}"
+    if [[ ! -x "$script" ]]; then
+      printf 'FAIL %s (not found or not executable)\n' "$name"
+      failed=$((failed + 1))
+      FAILED_SUITE_NAMES+=("$name")
+      continue
+    fi
+
+    # Wait for an open slot
+    while [[ ${#_if_pids[@]} -ge "$JOBS" ]]; do
+      _drain
+      [[ ${#_if_pids[@]} -ge "$JOBS" ]] && sleep 0.05
+    done
+
+    _launch "$name" "$script"
+  done
+
+  # Drain remaining in-flight suites
+  while [[ ${#_if_pids[@]} -gt 0 ]]; do
+    _drain
+    [[ ${#_if_pids[@]} -gt 0 ]] && sleep 0.05
+  done
+fi
 
 printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
 if [[ "${#FAILED_SUITE_NAMES[@]}" -gt 0 ]]; then
