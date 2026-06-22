@@ -664,7 +664,7 @@ pmctl dispatch run --adapter codex --cd <abs path> --isolation workspace-write -
 Commit is always delegated to the main thread after dispatch-post-verify succeeds. This is a structural rule, not a style preference:
 
 - The executor runs sandboxed (e.g. codex's `--sandbox workspace-write`), which blocks `git commit`. Any brief that includes a commit step will cause the executor to report `status: partial` — even when every code change landed correctly. This is a false partial that pollutes the signal.
-- `hook-executor-write-guard.sh` (the unified executor write-guard) prevents an executor from writing to the repo outside its allowed brief-file surface at dispatch time.
+- `guard-executor-write.sh` (the unified executor write-guard) prevents an executor from writing to the repo outside its allowed brief-file surface at dispatch time.
 - The main thread is always the commit authority: it runs `git diff`, reviews changes, and commits when satisfied.
 
 **What to write instead:**

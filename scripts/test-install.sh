@@ -17,7 +17,7 @@ REAL_HOME="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
 . "$SCRIPT_DIR/lib/portable.sh"
 th_init "$@"
 
-# --group core|hooks — run only one subset so CI can fan out two parallel jobs
+# --group core|guards — run only one subset so CI can fan out two parallel jobs
 # while run-all-tests.sh (no --group) still runs the full suite unchanged.
 # th_init silently ignores unknown flags, so --group passes through without error.
 GROUP=""
@@ -31,13 +31,13 @@ for _ti_a in "$@"; do
   _ti_prev="$_ti_a"
 done
 if [[ "$_ti_group_seen" -eq 1 && -z "$GROUP" ]]; then
-  printf 'test-install: --group requires a value (core or hooks)\n' >&2
+  printf 'test-install: --group requires a value (core or guards)\n' >&2
   exit 2
 fi
 unset _ti_a _ti_prev _ti_group_seen
 case "$GROUP" in
   ""|core|hooks) ;;
-  *) printf 'test-install: --group must be core or hooks (got: %s)\n' "$GROUP" >&2; exit 2 ;;
+  *) printf 'test-install: --group must be core or guards (got: %s)\n' "$GROUP" >&2; exit 2 ;;
 esac
 
 _TI_PLATFORM="$(detect_platform)"
@@ -67,8 +67,8 @@ _ti_skip_win() {
   return 0
 }
 
-# The path form install-hooks.sh writes into settings.json commands: on Windows
-# it stores the native form (C:/...) via cygpath, which is what uninstall-hooks.sh
+# The path form install-guards.sh writes into settings.json commands: on Windows
+# it stores the native form (C:/...) via cygpath, which is what uninstall-guards.sh
 # matches against; on POSIX it stores the path unchanged. Fixtures that hand-write
 # hook commands must use this form so removal matching behaves like a real install.
 _ti_hook_cmd_path() {
@@ -80,7 +80,7 @@ _ti_hook_cmd_path() {
   fi
 }
 
-# CC-102 introduced install-hooks.sh profile auto-detection via
+# CC-102 introduced install-guards.sh profile auto-detection via
 # `command -v codex`. Tests in this file written before that change
 # expect "full" profile (all six hooks wired). On CI runners codex is
 # absent, so without a stub auto-detect picks "minimal" and the
@@ -109,13 +109,13 @@ should_run() {
   if [[ -n "$GROUP" ]]; then
     case "$_ti_name" in
       install-sh-wires-hooks*|install-sh-profile-*|\
-      install-hooks-*|hooks-*|uninstall-hooks-*|\
+      install-guards-*|hooks-*|uninstall-guards-*|\
       dispatch-allowlist-*|\
       test_install_adds_dispatch_allowlist|\
       test_install_dispatch_allowlist_*|\
       test_dispatch_allowlist_*|\
       userpromptsubmit-*|session-stop-*|statusline-*)
-        [[ "$GROUP" == "hooks" ]] || return 1 ;;
+        [[ "$GROUP" == "guards" ]] || return 1 ;;
       *)
         [[ "$GROUP" == "core" ]] || return 1 ;;
     esac
@@ -730,13 +730,13 @@ test_legacy_stale_symlinks_removed() {
   pass "$name"
 }
 
-# ── install-hooks / uninstall-hooks lifecycle ─────────────────────────────────
-# Proves that install-hooks.sh wires managed hooks and that
-# uninstall-hooks.sh removes each of them completely, leaving no orphaned entries.
+# ── install-guards / uninstall-guards lifecycle ─────────────────────────────────
+# Proves that install-guards.sh wires managed hooks and that
+# uninstall-guards.sh removes each of them completely, leaving no orphaned entries.
 
 test_install_sh_wires_hooks() {
   # Proves that the primary install.sh path wires managed hooks
-  # into settings.json automatically — no manual install-hooks.sh step needed.
+  # into settings.json automatically — no manual install-guards.sh step needed.
   # Passes --profile full explicitly to assert the full managed hook set is
   # wired regardless of host codex availability. No adapter ships a bash guard
   # today (codex's was retired with the codex-executor agent), so the settings
@@ -752,13 +752,13 @@ test_install_sh_wires_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
     return
@@ -781,11 +781,11 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile minimal > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -805,7 +805,7 @@ test_install_sh_profile_full_wires_no_adapter_bash_guard() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
@@ -949,13 +949,13 @@ test_dispatch_allowlist_lib_parity() {
 }
 
 test_dispatch_allowlist_uninstall_removes_entries() {
-  # Verifies uninstall-hooks.sh removes all four dispatch Bash allowlist
+  # Verifies uninstall-guards.sh removes all four dispatch Bash allowlist
   # entries while leaving unrelated permissions.allow entries intact.
   #
   # Steps:
   #   1. Run install.sh to populate the four allowlist entries.
   #   2. Manually inject an unrelated allow entry.
-  #   3. Run uninstall-hooks.sh.
+  #   3. Run uninstall-guards.sh.
   #   4. Assert the four managed entries are gone; unrelated entry remains.
   local name="dispatch-allowlist-uninstall-removes-entries"
   should_run "$name" || return 0
@@ -971,7 +971,7 @@ test_dispatch_allowlist_uninstall_removes_entries() {
     bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
   jq --arg u "$unrelated" '.permissions.allow += [$u]' "$settings" > "${settings}.tmp" && mv "${settings}.tmp" "$settings"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   local entry
   while IFS= read -r entry; do
@@ -990,7 +990,7 @@ test_dispatch_allowlist_uninstall_dryrun() {
   # Steps:
   #   1. Run install.sh to populate the four allowlist entries.
   #   2. Capture the settings checksum.
-  #   3. Run uninstall-hooks.sh --dry-run.
+  #   3. Run uninstall-guards.sh --dry-run.
   #   4. Assert settings.json is byte-identical to before.
   local name="dispatch-allowlist-uninstall-dryrun"
   should_run "$name" || return 0
@@ -1006,7 +1006,7 @@ test_dispatch_allowlist_uninstall_dryrun() {
   local before after
   before="$(md5sum "$settings" | awk '{print $1}')"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" --dry-run > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" --dry-run > /dev/null
 
   after="$(md5sum "$settings" | awk '{print $1}')"
   if [[ "$before" != "$after" ]]; then
@@ -1021,7 +1021,7 @@ test_dispatch_allowlist_uninstall_dryrun() {
 test_install_hooks_gate_perms_fresh() {
   # Fresh settings gains the three CC-334 permissions.allow entries when
   # PM_DISPATCH_GATE_WORKSPACE is set to a known path.
-  local name="install-hooks-gate-perms-fresh"
+  local name="install-guards-gate-perms-fresh"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1031,7 +1031,7 @@ test_install_hooks_gate_perms_fresh() {
 
   HOME="$home" CLAUDE_HOME="$home/.claude" \
     PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
   for entry in "$write_entry" "Bash(pmctl guard check:*)" \
@@ -1046,8 +1046,8 @@ test_install_hooks_gate_perms_fresh() {
 }
 
 test_install_hooks_gate_perms_idempotent() {
-  # Re-running install-hooks.sh does not duplicate the three CC-334 entries.
-  local name="install-hooks-gate-perms-idempotent"
+  # Re-running install-guards.sh does not duplicate the three CC-334 entries.
+  local name="install-guards-gate-perms-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1056,9 +1056,9 @@ test_install_hooks_gate_perms_idempotent() {
   printf '{"hooks":{}}\n' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
   local count
@@ -1076,7 +1076,7 @@ test_install_hooks_gate_perms_idempotent() {
 
 test_install_hooks_gate_perms_dry_run() {
   # --dry-run shows a diff but does not mutate settings.json.
-  local name="install-hooks-gate-perms-dry-run"
+  local name="install-guards-gate-perms-dry-run"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1087,7 +1087,7 @@ test_install_hooks_gate_perms_dry_run() {
   before="$(md5sum "$settings" | awk '{print $1}')"
 
   CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run >/dev/null 2>&1
 
   after="$(md5sum "$settings" | awk '{print $1}')"
   if [[ "$before" != "$after" ]]; then
@@ -1099,7 +1099,7 @@ test_install_hooks_gate_perms_dry_run() {
 
 test_install_hooks_gate_perms_preserves_existing() {
   # Existing unrelated permissions.allow entries survive the CC-334 merge.
-  local name="install-hooks-gate-perms-preserves-existing"
+  local name="install-guards-gate-perms-preserves-existing"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1108,7 +1108,7 @@ test_install_hooks_gate_perms_preserves_existing() {
   printf '{"hooks":{},"permissions":{"allow":["Bash(git status:*)","Read(/tmp/*)"]}}\n' > "$settings"
 
   CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   for pre_entry in "Bash(git status:*)" "Read(/tmp/*)"; do
     if ! jq -e --arg e "$pre_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1122,7 +1122,7 @@ test_install_hooks_gate_perms_preserves_existing() {
 test_install_hooks_gate_perms_workspace_override() {
   # PM_DISPATCH_GATE_WORKSPACE is honoured verbatim — the Write glob uses the
   # override path, not the auto-detected repo parent.
-  local name="install-hooks-gate-perms-workspace-override"
+  local name="install-guards-gate-perms-workspace-override"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1131,7 +1131,7 @@ test_install_hooks_gate_perms_workspace_override() {
   printf '{"hooks":{}}\n' > "$settings"
 
   CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$custom_ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local expected="Write(${custom_ws}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1145,7 +1145,7 @@ test_install_hooks_gate_perms_home_fallback() {
   # When the auto-detected git root's parent equals HOME, the Write glob falls
   # back to $HOME/**/.gate-results/**. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a
   # fake git root whose parent is the test HOME, exercising the real fallback branch.
-  local name="install-hooks-gate-perms-home-fallback"
+  local name="install-guards-gate-perms-home-fallback"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1154,7 +1154,7 @@ test_install_hooks_gate_perms_home_fallback() {
 
   # dirname("$home/fake-pm") == "$home" == $HOME → triggers HOME fallback
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$home/fake-pm" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local expected="Write(${home}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1167,7 +1167,7 @@ test_install_hooks_gate_perms_home_fallback() {
 test_install_hooks_gate_perms_git_failure_fallback() {
   # When git rev-parse fails (non-git install, tarball), workspace root falls
   # back to $HOME. Uses PM_DISPATCH_GATE_GIT_ROOT="" to simulate git failure.
-  local name="install-hooks-gate-perms-git-failure-fallback"
+  local name="install-guards-gate-perms-git-failure-fallback"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1175,7 +1175,7 @@ test_install_hooks_gate_perms_git_failure_fallback() {
   printf '{"hooks":{}}\n' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local expected="Write(${home}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1189,7 +1189,7 @@ test_install_hooks_gate_perms_normal_git_parent() {
   # Normal path: git rev-parse succeeds, parent is not HOME → workspace root is
   # the parent directory. Uses PM_DISPATCH_GATE_GIT_ROOT to inject a fake git
   # root under a non-HOME subdirectory, exercising the main auto-detection branch.
-  local name="install-hooks-gate-perms-normal-git-parent"
+  local name="install-guards-gate-perms-normal-git-parent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1200,7 +1200,7 @@ test_install_hooks_gate_perms_normal_git_parent() {
   printf '{"hooks":{}}\n' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_GIT_ROOT="$fake_git_root" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local expected="Write(${fake_ws}/**/.gate-results/**)"
   if ! jq -e --arg e "$expected" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1211,9 +1211,9 @@ test_install_hooks_gate_perms_normal_git_parent() {
 }
 
 test_install_hooks_gate_perms_uninstall_removes() {
-  # Lifecycle: uninstall-hooks.sh removes the three CC-334 permissions entries
-  # that install-hooks.sh added, and leaves unrelated entries intact.
-  local name="install-hooks-gate-perms-uninstall-removes"
+  # Lifecycle: uninstall-guards.sh removes the three CC-334 permissions entries
+  # that install-guards.sh added, and leaves unrelated entries intact.
+  local name="install-guards-gate-perms-uninstall-removes"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local settings="$home/.claude/settings.json"
@@ -1223,7 +1223,7 @@ test_install_hooks_gate_perms_uninstall_removes() {
 
   # Install
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/install-guards.sh" >/dev/null 2>&1
 
   local write_entry="Write(${ws}/**/.gate-results/**)"
   if ! jq -e --arg e "$write_entry" '(.permissions.allow // [] | index($e)) != null' "$settings" >/dev/null; then
@@ -1233,7 +1233,7 @@ test_install_hooks_gate_perms_uninstall_removes() {
 
   # Uninstall
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
-    bash "$REPO_ROOT/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+    bash "$REPO_ROOT/scripts/uninstall-guards.sh" >/dev/null 2>&1
 
   for entry in "$write_entry" "Bash(pmctl guard check:*)" \
       "Bash($home/.local/bin/pmctl guard check:*)" \
@@ -1255,7 +1255,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile full downgrades to minimal.
   # Codex hooks are not wired; base managed hooks still are. The expected warning
   # about fallback to minimal is also required.
-  local name="install-hooks-windows-full-downgraded-to-minimal"
+  local name="install-guards-windows-full-downgraded-to-minimal"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local out err
@@ -1268,7 +1268,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
   HOME="$home" \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     PM_DISPATCH_PLATFORM=windows \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full >"$out" 2>"$err"
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile full >"$out" 2>"$err"
   local code=$?
   set -e
 
@@ -1282,11 +1282,11 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
     return
   fi
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
@@ -1295,7 +1295,7 @@ test_install_hooks_windows_profile_full_downgrades_to_minimal() {
 test_install_hooks_windows_profile_minimal_silent() {
   # Proves PM_DISPATCH_PLATFORM=windows and --profile minimal does not emit the
   # full-profile downgrade warning and does not wire codex hooks.
-  local name="install-hooks-windows-minimal-silent"
+  local name="install-guards-windows-minimal-silent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local out err
@@ -1308,7 +1308,7 @@ test_install_hooks_windows_profile_minimal_silent() {
   HOME="$home" \
     CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 \
     PM_DISPATCH_PLATFORM=windows \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" --profile minimal >"$out" 2>"$err"
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >"$out" 2>"$err"
   local code=$?
   set -e
 
@@ -1322,13 +1322,13 @@ test_install_hooks_windows_profile_minimal_silent() {
     return
   fi
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-executor-write-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return
   pass "$name"
 }
 
@@ -1336,10 +1336,10 @@ test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
   # file) must have that orphaned PreToolUse Bash entry pruned on the next
-  # install-hooks run, regardless of profile — no adapter manifest declares a
+  # install-guards run, regardless of profile — no adapter manifest declares a
   # bash guard anymore, so the manifest-driven orphan cleanup removes it. Other
   # managed hooks must survive.
-  local name="install-hooks-orphan-cleanup-removes-retired-adapter-guard"
+  local name="install-guards-orphan-cleanup-removes-retired-adapter-guard"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1355,12 +1355,12 @@ test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
 }
 EOF
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   # The other managed hooks must still be present after cleanup.
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -1369,7 +1369,7 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   # and installs cleanly. No adapter ships a bash guard (codex's was retired),
   # so full wires the managed hooks but no adapter bash guard. Uses a stub codex
   # binary so the test does not depend on the host having codex installed.
-  local name="install-hooks-auto-detect-codex-present-wires-full"
+  local name="install-guards-auto-detect-codex-present-wires-full"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1381,9 +1381,9 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   chmod +x "$stub_bin/codex"
 
   HOME="$home" PATH="$stub_bin:$PATH" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+    bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
@@ -1392,7 +1392,7 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
   # Proves omitted --profile flag + codex absent from PATH resolves to
   # minimal (skips codex-* guards). Uses a minimal PATH that excludes
   # any user-local bin dirs where codex might live.
-  local name="install-hooks-auto-detect-codex-absent-wires-minimal"
+  local name="install-guards-auto-detect-codex-absent-wires-minimal"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1409,22 +1409,22 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
     return
   fi
   if ! PATH="$minimal_path" command -v jq >/dev/null 2>&1; then
-    fail "$name" "precondition failed: jq missing from minimal PATH (install-hooks.sh needs it)"
+    fail "$name" "precondition failed: jq missing from minimal PATH (install-guards.sh needs it)"
     return
   fi
 
   HOME="$home" PATH="$minimal_path" \
-    bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+    bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   pass "$name"
 }
 
 test_install_hooks_dry_run_does_not_modify() {
   # Proves --dry-run prints a diff but does not modify settings.json.
-  local name="install-hooks-dry-run-does-not-modify-settings"
+  local name="install-guards-dry-run-does-not-modify-settings"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1432,7 +1432,7 @@ test_install_hooks_dry_run_does_not_modify() {
   local before_hash
   before_hash="$(sha256sum < "$home/.claude/settings.json" | awk '{print $1}')"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile minimal > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile minimal > /dev/null
 
   local after_hash
   after_hash="$(sha256sum < "$home/.claude/settings.json" | awk '{print $1}')"
@@ -1446,29 +1446,29 @@ test_install_hooks_dry_run_does_not_modify() {
 test_install_hooks_platform_linux_explicit() {
   # Proves --platform linux works (explicit, not auto) and wires hooks
   # the same way auto-detect on a Linux host would.
-  local name="install-hooks-platform-linux-explicit-wires-normally"
+  local name="install-guards-platform-linux-explicit-wires-normally"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform linux --profile full > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --platform linux --profile full > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   pass "$name"
 }
 
 test_install_hooks_platform_invalid_value_rejected() {
   # Proves --platform with an unknown value is rejected with exit 2.
-  local name="install-hooks-platform-invalid-value-rejected"
+  local name="install-guards-platform-invalid-value-rejected"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   local out rc
-  out="$(HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --platform xtreme 2>&1)" && rc=0 || rc=$?
+  out="$(HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --platform xtreme 2>&1)" && rc=0 || rc=$?
   if [[ $rc -ne 0 ]] && [[ "$out" == *"platform"* ]]; then
     pass "$name"
   else
@@ -1477,16 +1477,16 @@ test_install_hooks_platform_invalid_value_rejected() {
 }
 
 test_install_hooks_profile_invalid_value_rejected() {
-  # Proves install-hooks.sh rejects an unknown profile value with exit 2
+  # Proves install-guards.sh rejects an unknown profile value with exit 2
   # and a clear stderr message.
-  local name="install-hooks-profile-invalid-value-rejected"
+  local name="install-guards-profile-invalid-value-rejected"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   local out rc
-  out="$(HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile bogus 2>&1)" && rc=0 || rc=$?
+  out="$(HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile bogus 2>&1)" && rc=0 || rc=$?
   if [[ $rc -ne 0 ]] && [[ "$out" == *"profile"* ]] && [[ "$out" == *"minimal or full"* ]]; then
     pass "$name"
   else
@@ -1495,14 +1495,14 @@ test_install_hooks_profile_invalid_value_rejected() {
 }
 
 test_install_hooks_jq_missing_prints_platform_hints() {
-  # Proves install-hooks.sh exits non-zero with platform-aware install
+  # Proves install-guards.sh exits non-zero with platform-aware install
   # hints (winget / brew / apt / etc.) when jq is missing on PATH.
   # Stub PATH must contain the small set of utilities the script uses
   # before its jq check (cd / dirname / uname / command / cat etc.); we
   # symlink them from the live PATH into stub_bin, excluding jq.
-  local name="install-hooks-jq-missing-prints-platform-hints"
+  local name="install-guards-jq-missing-prints-platform-hints"
   should_run "$name" || return 0
-  # The artificial stub PATH (only a few coreutils, no jq) prevents install-hooks.sh
+  # The artificial stub PATH (only a few coreutils, no jq) prevents install-guards.sh
   # from resolving its own SCRIPT_DIR on MSYS (readlink/realpath absent), so it fails
   # before reaching the jq check this test asserts. The jq-hint path is POSIX-CI-covered.
   if _ti_skip_win "$name" "stub PATH breaks MSYS SCRIPT_DIR resolution before the jq check"; then return 0; fi
@@ -1521,7 +1521,7 @@ test_install_hooks_jq_missing_prints_platform_hints() {
   # Deliberately do NOT symlink jq into stub_bin.
 
   local out rc
-  out="$(HOME="$home" PATH="$stub_bin" /bin/bash "$REPO_ROOT/scripts/install-hooks.sh" 2>&1)" && rc=0 || rc=$?
+  out="$(HOME="$home" PATH="$stub_bin" /bin/bash "$REPO_ROOT/scripts/install-guards.sh" 2>&1)" && rc=0 || rc=$?
   if [[ $rc -ne 0 ]] \
     && [[ "$out" == *"jq is required"* ]] \
     && [[ "$out" == *"apt install jq"* ]] \
@@ -1552,13 +1552,13 @@ test_install_sh_wires_hooks_no_settings() {
     fail "$name" "settings.json was not created during first-time install"
     return
   fi
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   pass "$name"
 }
 
@@ -1569,24 +1569,24 @@ test_hooks_install_uninstall_lifecycle() {
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
 
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "statusLine should be deleted when no chain target exists"
     return
@@ -1596,14 +1596,14 @@ test_hooks_install_uninstall_lifecycle() {
 }
 
 test_uninstall_hooks_removes_unlisted_hooks() {
-  # Verifies that uninstall-hooks.sh removes hooks that were NOT in the old
+  # Verifies that uninstall-guards.sh removes hooks that were NOT in the old
   # hardcoded removal list.
   #
   # Steps:
   #   1. Write settings.json with retired PreToolUse and PostToolUse hooks.
-  #   2. Run uninstall-hooks.sh.
+  #   2. Run uninstall-guards.sh.
   #   3. Assert both hooks are gone and no hooks block remains.
-  local name="uninstall-hooks-removes-unlisted-hooks"
+  local name="uninstall-guards-removes-unlisted-hooks"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1623,7 +1623,7 @@ test_uninstall_hooks_removes_unlisted_hooks() {
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1635,14 +1635,14 @@ JSON
 }
 
 test_install_hooks_prunes_retired_hooks() {
-  # Verifies that re-running install-hooks.sh on an existing install removes
+  # Verifies that re-running install-guards.sh on an existing install removes
   # retired hook registrations while preserving the rest of the managed hook set.
   #
   # Steps:
   #   1. Write settings.json with retired hooks plus active hook registrations.
-  #   2. Run install-hooks.sh.
+  #   2. Run install-guards.sh.
   #   3. Assert retired hooks are absent and active hooks remain present.
-  local name="install-hooks-prunes-retired-hooks"
+  local name="install-guards-prunes-retired-hooks"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1653,7 +1653,7 @@ test_install_hooks_prunes_retired_hooks() {
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/guard-pm-write.sh"}]},
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/$_TI_RETIRED_CODEX_WRITE"}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-codex-bash-guard.sh"}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "$REPO_ROOT/adapters/codex/bash-guard.sh"}]},
@@ -1663,18 +1663,18 @@ test_install_hooks_prunes_retired_hooks() {
       {"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": "$_rl_cmd"}]}
     ],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "$REPO_ROOT/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"command": "$REPO_ROOT/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"command": "$REPO_ROOT/scripts/guard-save-rate-limits.sh"}
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
@@ -1684,23 +1684,23 @@ JSON
   # (no adapter manifest declares a bash guard anymore).
   assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-log-claude-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hook-save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   pass "$name"
 }
 
 test_install_hooks_updates_stale_paths_after_rename() {
-  # Verifies that install-hooks.sh updates stale full-paths (e.g. from a repo
+  # Verifies that install-guards.sh updates stale full-paths (e.g. from a repo
   # rename claude-config -> pm-dispatch) without creating duplicate entries.
   #
   # Steps:
   #   1. Create settings.json pre-populated with hooks pointing at /fake/old-repo/scripts/
-  #   2. Run install-hooks.sh (current repo_root)
+  #   2. Run install-guards.sh (current repo_root)
   #   3. Assert each hook appears exactly once and with the current path
-  local name="install-hooks-updates-stale-paths-after-rename"
+  local name="install-guards-updates-stale-paths-after-rename"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1712,26 +1712,26 @@ test_install_hooks_updates_stale_paths_after_rename() {
   "permissions": {},
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-pm-write.sh"}]}
     ],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/guard-save-rate-limits.sh"}
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   # Each managed hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
-  for hook in hook-pm-write-guard.sh hook-log-claude-usage.sh hook-session-summary.sh \
-              hook-inject-memory.sh hook-save-rate-limits.sh; do
+  for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
+              guard-inject-memory.sh guard-save-rate-limits.sh; do
     local count
     count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
     if [[ "$count" -ne 1 ]]; then
@@ -1750,28 +1750,28 @@ JSON
     fail "$name" "stale /fake/old-repo/ path still present after re-install"
     return
   fi
-  assert_file_contains "$name" "$settings" "$REPO_ROOT/scripts/hook-pm-write-guard.sh" || return
+  assert_file_contains "$name" "$settings" "$REPO_ROOT/scripts/guard-pm-write.sh" || return
 
   pass "$name"
 }
 
 test_install_hooks_preserves_unrelated_same_basename_hook() {
-  # Verifies that install-hooks.sh does NOT overwrite hooks from unrelated tools
+  # Verifies that install-guards.sh does NOT overwrite hooks from unrelated tools
   # that share a managed hook basename but live at a non-standard path (parent
   # directory is not "scripts/"). Such entries must be preserved unchanged.
   #
   # Steps:
-  #   1. Create settings.json with an unrelated Stop hook at /some/tool/hook-log-claude-usage.sh
+  #   1. Create settings.json with an unrelated Stop hook at /some/tool/guard-log-claude-usage.sh
   #      (basename matches managed hook; parent dir is "tool", not "scripts")
-  #   2. Run install-hooks.sh
+  #   2. Run install-guards.sh
   #   3. Assert the unrelated hook is still present at its original path (not overwritten)
   #   4. Assert our managed hook was appended as a separate entry (not collapsed into the unrelated one)
-  local name="install-hooks-preserves-unrelated-same-basename-hook"
+  local name="install-guards-preserves-unrelated-same-basename-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
 
-  local unrelated_path="/some/unrelated/tool/hook-log-claude-usage.sh"
+  local unrelated_path="/some/unrelated/tool/guard-log-claude-usage.sh"
 
   cat > "$home/.claude/settings.json" <<JSON
 {
@@ -1784,7 +1784,7 @@ test_install_hooks_preserves_unrelated_same_basename_hook() {
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   local settings="$home/.claude/settings.json"
 
@@ -1792,14 +1792,14 @@ JSON
   assert_file_contains "$name" "$settings" "$unrelated_path" || return
 
   # Our managed hook must also be present (appended, not merged)
-  assert_file_contains "$name" "$settings" "hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$settings" "guard-log-claude-usage.sh" || return
 
   # Count occurrences of the basename — must be exactly 2
   # (unrelated path + our managed path)
   local count
-  count=$(grep -o "hook-log-claude-usage.sh" "$settings" | wc -l | tr -d ' ')
+  count=$(grep -o "guard-log-claude-usage.sh" "$settings" | wc -l | tr -d ' ')
   if [[ "$count" -ne 2 ]]; then
-    fail "$name" "hook-log-claude-usage.sh appears $count times (want 2: unrelated + managed)"
+    fail "$name" "guard-log-claude-usage.sh appears $count times (want 2: unrelated + managed)"
     return
   fi
 
@@ -1807,16 +1807,16 @@ JSON
 }
 
 test_install_hooks_uninstall_stale_paths_after_rename() {
-  # Verifies the rename lifecycle: install-hooks.sh first refreshes stale
-  # managed hook paths, then uninstall-hooks.sh removes the refreshed repo-local
+  # Verifies the rename lifecycle: install-guards.sh first refreshes stale
+  # managed hook paths, then uninstall-guards.sh removes the refreshed repo-local
   # hooks by repo-root prefix.
   #
   # Steps:
   #   1. Create settings.json with managed hooks at /fake/old-repo/scripts/
-  #   2. Run install-hooks.sh to refresh paths to the current repo_root
-  #   3. Run uninstall-hooks.sh
+  #   2. Run install-guards.sh to refresh paths to the current repo_root
+  #   3. Run uninstall-guards.sh
   #   4. Assert all managed hook basenames are gone from settings.json
-  local name="install-hooks-uninstall-stale-paths-after-rename"
+  local name="install-guards-uninstall-stale-paths-after-rename"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
@@ -1826,34 +1826,34 @@ test_install_hooks_uninstall_stale_paths_after_rename() {
   "permissions": {},
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-pm-write-guard.sh"}]},
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-pm-write.sh"}]},
       {"matcher": "Bash",       "hooks": [{"type": "command", "command": "/fake/old-repo/adapters/codex/bash-guard.sh"}]}
     ],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-log-claude-usage.sh"}]},
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-session-summary.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-log-claude-usage.sh"}]},
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-session-summary.sh"}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/hook-inject-memory.sh"}]}
+      {"hooks": [{"type": "command", "command": "/fake/old-repo/scripts/guard-inject-memory.sh"}]}
     ]
   },
-  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/hook-save-rate-limits.sh"}
+  "statusLine": {"type": "command", "command": "/fake/old-repo/scripts/guard-save-rate-limits.sh"}
 }
 JSON
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile full > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
   if grep -q "/fake/old-repo/" "$home/.claude/settings.json"; then
     fail "$name" "stale /fake/old-repo/ path still present after re-install"
     return
   fi
 
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   local settings="$home/.claude/settings.json"
 
   # All managed hook basenames must be gone after uninstall
-  for hook in hook-pm-write-guard.sh hook-log-claude-usage.sh hook-session-summary.sh \
-              hook-inject-memory.sh hook-save-rate-limits.sh; do
+  for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
+              guard-inject-memory.sh guard-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
       return
@@ -1875,21 +1875,21 @@ JSON
 }
 
 test_userpromptsubmit_install_wires_hook() {
-  # Verifies install-hooks.sh wires hook-inject-memory.sh into UserPromptSubmit.
+  # Verifies install-guards.sh wires guard-inject-memory.sh into UserPromptSubmit.
   # Steps:
   #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-hooks.sh directly
+  #   2. Run install-guards.sh directly
   #   3. Assert UserPromptSubmit exists and contains the memory injection hook path
   local name="userpromptsubmit-install-wires-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  # install-hooks writes the native path form (C:/... on Windows); match it.
+  # install-guards writes the native path form (C:/... on Windows); match it.
   local inject
-  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-inject-memory.sh")"
+  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-memory.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "$inject" || return
@@ -1903,21 +1903,21 @@ test_userpromptsubmit_install_wires_hook() {
 }
 
 test_userpromptsubmit_uninstall_removes_hook() {
-  # Verifies uninstall-hooks.sh removes the managed UserPromptSubmit hook cleanly.
+  # Verifies uninstall-guards.sh removes the managed UserPromptSubmit hook cleanly.
   # Steps:
-  #   1. Create a sandbox settings.json, then run install-hooks.sh
-  #   2. Run uninstall-hooks.sh
-  #   3. Assert hook-inject-memory.sh and the UserPromptSubmit key are gone
+  #   1. Create a sandbox settings.json, then run install-guards.sh
+  #   2. Run uninstall-guards.sh
+  #   3. Assert guard-inject-memory.sh and the UserPromptSubmit key are gone
   local name="userpromptsubmit-uninstall-removes-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   if ! jq -e '((.hooks // {}) | has("UserPromptSubmit") | not) or ((.hooks.UserPromptSubmit // []) | length == 0)' \
     "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "UserPromptSubmit should be absent or empty"
@@ -1927,22 +1927,22 @@ test_userpromptsubmit_uninstall_removes_hook() {
 }
 
 test_userpromptsubmit_install_idempotent() {
-  # Verifies repeated install-hooks.sh runs do not duplicate UserPromptSubmit hooks.
+  # Verifies repeated install-guards.sh runs do not duplicate UserPromptSubmit hooks.
   # Steps:
   #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-hooks.sh twice
-  #   3. Assert exactly one hook-inject-memory.sh command is present
+  #   2. Run install-guards.sh twice
+  #   3. Assert exactly one guard-inject-memory.sh command is present
   local name="userpromptsubmit-install-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local inject
-  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-inject-memory.sh")"
+  inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-memory.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   count="$(jq --arg inject "$inject" \
     '[.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)] | length' \
@@ -1955,11 +1955,11 @@ test_userpromptsubmit_install_idempotent() {
 }
 
 test_userpromptsubmit_uninstall_preserves_unrelated() {
-  # Verifies uninstall-hooks.sh removes only the managed UserPromptSubmit hook.
+  # Verifies uninstall-guards.sh removes only the managed UserPromptSubmit hook.
   # Steps:
   #   1. Create settings.json with an unrelated UserPromptSubmit hook
-  #   2. Run install-hooks.sh, then uninstall-hooks.sh
-  #   3. Assert the unrelated hook remains and hook-inject-memory.sh is gone
+  #   2. Run install-guards.sh, then uninstall-guards.sh
+  #   3. Assert the unrelated hook remains and guard-inject-memory.sh is gone
   local name="userpromptsubmit-uninstall-preserves-unrelated"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
@@ -1968,11 +1968,11 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
   printf '{"permissions":{},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$unrelated" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
   pass "$name"
 }
 
@@ -1981,18 +1981,18 @@ test_stop_hook_migration() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  # Write the stale entry in the same path form install-hooks matches against
+  # Write the stale entry in the same path form install-guards matches against
   # (native C:/... on Windows) so migration recognizes and rewrites it.
   local old_stop
-  old_stop="$(_ti_hook_cmd_path "$REPO_ROOT/hooks/hook-log-claude-usage.sh")"
+  old_stop="$(_ti_hook_cmd_path "$REPO_ROOT/hooks/guard-log-claude-usage.sh")"
   printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$old_stop" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" \
-    "hooks/hook-log-claude-usage.sh" || return
+    "hooks/guard-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" \
-    "scripts/hook-log-claude-usage.sh" || return
+    "scripts/guard-log-claude-usage.sh" || return
   pass "$name"
 }
 
@@ -2007,24 +2007,24 @@ test_stop_hook_preservation() {
     "$unrelated" > "$home/.claude/settings.json"
 
   # After install: unrelated hook preserved, managed hook added
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "scripts/guard-log-claude-usage.sh" || return
 
   # After uninstall: managed hook removed, unrelated hook still present
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "scripts/hook-log-claude-usage.sh" || return
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
+  assert_not_contains "$name" "$home/.claude/settings.json" "scripts/guard-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   pass "$name"
 }
 
 test_statusline_install_chains_previous() {
   # Verifies that when a previous statusLine.command exists, install saves it to
-  # statusline-chain.conf and replaces it with hook-save-rate-limits.sh; a second
+  # statusline-chain.conf and replaces it with guard-save-rate-limits.sh; a second
   # install run is idempotent and preserves the chain conf.
   # Steps:
   #   1. Write settings.json with a bare-path statusLine.command
-  #   2. Run install; assert statusLine.command is now hook-save-rate-limits.sh
+  #   2. Run install; assert statusLine.command is now guard-save-rate-limits.sh
   #   3. Assert statusline-chain.conf contains the previous command path
   #   4. Run install again; assert "already wired" and chain conf unchanged
   local name="statusline-install-chains-previous"
@@ -2038,16 +2038,16 @@ test_statusline_install_chains_previous() {
   printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
     "$previous" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
   assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > "$out"
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > "$out"
   assert_file_contains "$name" "$out" "already wired, nothing to do" || return
   assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
   pass "$name"
@@ -2065,7 +2065,7 @@ test_statusline_install_preserves_existing_chain() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local other_dir="$tmp_root/$name-other/scripts"
-  local other_hook="$other_dir/hook-save-rate-limits.sh"
+  local other_hook="$other_dir/guard-save-rate-limits.sh"
   local display_cmd="bash /home/screenleon/.claude/abtop-statusline.sh"
   mkdir -p "$home/.claude" "$other_dir"
   printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$other_hook"
@@ -2074,7 +2074,7 @@ test_statusline_install_preserves_existing_chain() {
     "$other_hook" > "$home/.claude/settings.json"
   printf '%s\n' "$display_cmd" > "$home/.claude/statusline-chain.conf"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got expected
   got="$(cat "$home/.claude/statusline-chain.conf")"
   expected="$(printf '%s\n%s' "$other_hook" "$display_cmd")"
@@ -2090,7 +2090,7 @@ test_statusline_install_chains_previous_with_args() {
   # is stored verbatim in statusline-chain.conf so bash -c can invoke it correctly.
   # Steps:
   #   1. Write settings.json with a statusLine.command that includes a flag argument
-  #   2. Run install; assert statusLine.command is replaced with hook-save-rate-limits.sh
+  #   2. Run install; assert statusLine.command is replaced with guard-save-rate-limits.sh
   #   3. Assert statusline-chain.conf contains the full original command string with args
   local name="statusline-install-chains-previous-with-args"
   should_run "$name" || return 0
@@ -2104,10 +2104,10 @@ test_statusline_install_chains_previous_with_args() {
   printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
     "$previous_with_args" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -2133,8 +2133,8 @@ test_statusline_uninstall_restores() {
   printf '{"permissions":{},"statusLine":{"type":"command","command":"%s"}}\n' \
     "$previous" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
   if [[ "$got" != "$(_ti_hook_cmd_path "$previous")" ]]; then
@@ -2149,20 +2149,20 @@ test_statusline_uninstall_restores() {
 }
 
 test_session_stop_install_wires_hook() {
-  # Verifies install-hooks.sh wires hook-session-summary.sh into the Stop event.
+  # Verifies install-guards.sh wires guard-session-summary.sh into the Stop event.
   # Steps:
   #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-hooks.sh
+  #   2. Run install-guards.sh
   #   3. Assert Stop exists and contains the session summary hook path
   local name="session-stop-install-wires-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "$session" || return
   if ! jq -e --arg session "$session" \
@@ -2175,43 +2175,43 @@ test_session_stop_install_wires_hook() {
 }
 
 test_session_stop_uninstall_removes_hook() {
-  # Verifies uninstall-hooks.sh removes the managed session-summary Stop hook.
+  # Verifies uninstall-guards.sh removes the managed session-summary Stop hook.
   # Steps:
-  #   1. Create a sandbox settings.json, run install-hooks.sh
-  #   2. Run uninstall-hooks.sh
-  #   3. Assert hook-session-summary.sh is gone from settings.json
+  #   1. Create a sandbox settings.json, run install-guards.sh
+  #   2. Run uninstall-guards.sh
+  #   3. Assert guard-session-summary.sh is gone from settings.json
   local name="session-stop-uninstall-removes-hook"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   pass "$name"
 }
 
 test_session_stop_install_idempotent() {
-  # Verifies repeated install-hooks.sh runs do not duplicate the session-summary hook.
+  # Verifies repeated install-guards.sh runs do not duplicate the session-summary hook.
   # Steps:
   #   1. Create a sandbox settings.json with no hooks
-  #   2. Run install-hooks.sh twice
-  #   3. Assert exactly one hook-session-summary.sh command is present
+  #   2. Run install-guards.sh twice
+  #   3. Assert exactly one guard-session-summary.sh command is present
   local name="session-stop-install-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   local session
-  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/hook-session-summary.sh")"
+  session="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-session-summary.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
   count="$(jq --arg session "$session" \
     '[.hooks.Stop[]? | (.hooks // [])[]? | select(.command == $session)] | length' \
@@ -2224,12 +2224,12 @@ test_session_stop_install_idempotent() {
 }
 
 test_session_stop_uninstall_preserves_stop() {
-  # Verifies uninstall-hooks.sh removes only the managed session-summary hook,
+  # Verifies uninstall-guards.sh removes only the managed session-summary hook,
   # leaving unrelated Stop hooks intact.
   # Steps:
   #   1. Create settings.json with an unrelated Stop hook
-  #   2. Run install-hooks.sh, then uninstall-hooks.sh
-  #   3. Assert the unrelated hook remains and hook-session-summary.sh is gone
+  #   2. Run install-guards.sh, then uninstall-guards.sh
+  #   3. Assert the unrelated hook remains and guard-session-summary.sh is gone
   local name="session-stop-uninstall-preserves-stop"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
@@ -2238,11 +2238,11 @@ test_session_stop_uninstall_preserves_stop() {
   printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$unrelated" > "$home/.claude/settings.json"
 
-  HOME="$home" bash "$REPO_ROOT/scripts/install-hooks.sh" > /dev/null
-  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-hooks.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
+  HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-session-summary.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   pass "$name"
 }
 
@@ -2899,7 +2899,7 @@ test_install_claude_home_override() {
   # Verifies an explicit CLAUDE_HOME env override redirects the install to a
   # sandbox dir (NOT $HOME/.claude), so install changes can be rehearsed without
   # touching the real config. Covers the cross-script consistency: agents/commands
-  # (install.sh), the manifest, AND the hook settings.json (install-hooks.sh) must
+  # (install.sh), the manifest, AND the hook settings.json (install-guards.sh) must
   # all land in the override.
   #
   # Steps:
@@ -2933,8 +2933,8 @@ test_install_claude_home_override() {
     fail "$name" "manifest not written under CLAUDE_HOME override"
     return
   fi
-  if ! grep -q "hook-pm-write-guard.sh" "$override/settings.json" 2>/dev/null; then
-    fail "$name" "hooks not wired into the override settings.json (install-hooks ignored CLAUDE_HOME)"
+  if ! grep -q "guard-pm-write.sh" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "hooks not wired into the override settings.json (install-guards ignored CLAUDE_HOME)"
     return
   fi
   if [[ -e "$home/.claude" ]]; then
@@ -2946,10 +2946,10 @@ test_install_claude_home_override() {
 
 test_uninstall_claude_home_override() {
   # Verifies uninstall.sh honors the same CLAUDE_HOME override end-to-end: it
-  # removes the sandbox install (including hook cleanup via uninstall-hooks.sh)
+  # removes the sandbox install (including hook cleanup via uninstall-guards.sh)
   # while leaving a pre-existing REAL $HOME/.claude config completely untouched.
   # The real-home sentinel is the exact boundary CC-294 depends on — a regression
-  # where uninstall-hooks.sh edits $HOME/.claude/settings.json must fail this test.
+  # where uninstall-guards.sh edits $HOME/.claude/settings.json must fail this test.
   #
   # Steps:
   #   1. Install into a CLAUDE_HOME override.
@@ -3001,10 +3001,10 @@ test_uninstall_claude_home_override() {
     return
   fi
   # Override hook cleanup: the override settings.json must have its managed hooks
-  # removed. With the pre-CC-294 bug (uninstall-hooks.sh resolving $HOME/.claude),
+  # removed. With the pre-CC-294 bug (uninstall-guards.sh resolving $HOME/.claude),
   # override hooks would survive while real home was edited instead.
-  if grep -q "hook-pm-write-guard.sh" "$override/settings.json" 2>/dev/null; then
-    fail "$name" "override settings.json still has managed hooks (uninstall-hooks ignored CLAUDE_HOME)"
+  if grep -q "guard-pm-write.sh" "$override/settings.json" 2>/dev/null; then
+    fail "$name" "override settings.json still has managed hooks (uninstall-guards ignored CLAUDE_HOME)"
     return
   fi
   # Real-home boundary: sentinel settings + marker must survive unchanged.
@@ -3013,7 +3013,7 @@ test_uninstall_claude_home_override() {
     return
   fi
   if [[ "$(md5sum "$sentinel_settings" | awk '{print $1}')" != "$sentinel_sum" ]]; then
-    fail "$name" "real-home \$HOME/.claude/settings.json was mutated by override uninstall (uninstall-hooks ignored CLAUDE_HOME)"
+    fail "$name" "real-home \$HOME/.claude/settings.json was mutated by override uninstall (uninstall-guards ignored CLAUDE_HOME)"
     return
   fi
   pass "$name"
@@ -3023,10 +3023,10 @@ test_install_hooks_spaced_repo_root() {
   # Regression: a repo checked out under a path containing a space (e.g. a Windows
   # home like C:/Users/First Last/) must still produce RUNNABLE hooks. Claude Code
   # runs each hook `command` through the shell; an unquoted spaced path is word-
-  # split and fails ("No such file or directory"). install-hooks.sh shell-escapes
+  # split and fails ("No such file or directory"). install-guards.sh shell-escapes
   # the command paths so they survive; doctor must recognise the escaped form as
   # the current checkout (not flag a spurious "different checkout").
-  local name="install-hooks-spaced-repo-root"
+  local name="install-guards-spaced-repo-root"
   should_run "$name" || return 0
   local home override spaced
   home="$tmp_root/$name-home"
@@ -3036,7 +3036,7 @@ test_install_hooks_spaced_repo_root() {
   # Symlink the checkout under a spaced path and drive install/doctor/uninstall
   # THROUGH it, so every script self-derives the same spaced repo_root — exactly
   # how a real checkout under "C:/Users/First Last/" behaves. (Do not pass
-  # PM_DISPATCH_REPO: install-hooks honors it but uninstall-hooks does not, so an
+  # PM_DISPATCH_REPO: install-guards honors it but uninstall-guards does not, so an
   # override here would make the two disagree and mask a removal failure.)
   if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
     printf '  (skip) %s — no directory symlink support here\n' "$name"
@@ -3118,11 +3118,11 @@ test_install_hooks_spaced_repo_root() {
 
   set +e
   HOME="$home" CLAUDE_HOME="$override" \
-    bash "$spaced/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+    bash "$spaced/scripts/uninstall-guards.sh" >/dev/null 2>&1
   local urc=$?
   set -e
   if [[ $urc -ne 0 ]]; then
-    fail "$name" "uninstall-hooks.sh exited $urc against a spaced-repo install"
+    fail "$name" "uninstall-guards.sh exited $urc against a spaced-repo install"
     return
   fi
   # No managed (escaped) hook command or statusLine may survive.
@@ -3141,8 +3141,8 @@ test_install_hooks_spaced_repo_root() {
 }
 
 test_install_hooks_msys_native_jq_boundary() {
-  # Regression for the MSYS/native-jq argument path-conversion bug: install-hooks
-  # passes printf %q-escaped command paths as jq --arg values, and uninstall-hooks
+  # Regression for the MSYS/native-jq argument path-conversion bug: install-guards
+  # passes printf %q-escaped command paths as jq --arg values, and uninstall-guards
   # passes the escaped repo root the same way. A native jq.exe on Git-Bash rewrites
   # the escape backslash (Lien\ Chen -> Lien/ Chen) unless the call disables MSYS
   # argument conversion. The existing spaced-repo test uses the real (Linux) jq,
@@ -3150,7 +3150,7 @@ test_install_hooks_msys_native_jq_boundary() {
   # Here a fake jq emulates the rewrite UNLESS MSYS2_ARG_CONV_EXCL/MSYS_NO_PATHCONV
   # is set, making both guards load-bearing: install must store backslash-escaped
   # spaces, and uninstall must still match and remove the escaped entries.
-  local name="install-hooks-msys-native-jq-boundary"
+  local name="install-guards-msys-native-jq-boundary"
   should_run "$name" || return 0
   local home override spaced fake_bin real_jq
   home="$tmp_root/$name-home"
@@ -3234,11 +3234,11 @@ FAKEJQ
   set +e
   HOME="$home" CLAUDE_HOME="$override" REAL_JQ="$real_jq" \
     PATH="$fake_bin:$PATH" \
-    bash "$spaced/scripts/uninstall-hooks.sh" >/dev/null 2>&1
+    bash "$spaced/scripts/uninstall-guards.sh" >/dev/null 2>&1
   local urc=$?
   set -e
   if [[ $urc -ne 0 ]]; then
-    fail "$name" "uninstall-hooks.sh exited $urc under the fake native-jq boundary"
+    fail "$name" "uninstall-guards.sh exited $urc under the fake native-jq boundary"
     return
   fi
   if [[ "$("$real_jq" "$managed_q" "$override/settings.json")" -ne 0 ]]; then

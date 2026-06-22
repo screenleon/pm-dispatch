@@ -181,8 +181,7 @@ thread's environment including Docker and localhost.
 ## Pattern 4: git commit blocked in executor sandbox
 
 `git add` and `git commit` inside the executor sandbox are blocked by
-`hook-codex-bash-guard` (or the equivalent write-guard hook for the active
-executor). This is by design: the executor must not push to the branch
+`bash-guard.sh` (the adapter bash-guard for the active executor). This is by design: the executor must not push to the branch
 autonomously.
 
 **Impact**: A brief that ends with a `git commit` step will always fail that

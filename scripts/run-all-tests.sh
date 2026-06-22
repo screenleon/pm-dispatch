@@ -12,8 +12,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SUITE_NAMES=(
   lint-agents
   lint-scripts
-  test-hooks
-  test-hook-framework
+  test-guards
+  test-guard-framework
   test-migrate
   test-migrate-to-events
   test-install
@@ -72,8 +72,8 @@ SUITE_NAMES=(
 declare -A SUITE_PATHS=(
   [lint-agents]="scripts/lint-agents.sh"
   [lint-scripts]="scripts/lint-scripts.sh"
-  [test-hooks]="scripts/test-hooks.sh"
-  [test-hook-framework]="scripts/test-hook-framework.sh"
+  [test-guards]="scripts/test-guards.sh"
+  [test-guard-framework]="scripts/test-guard-framework.sh"
   [test-migrate]="scripts/test-migrate-routing-log.sh"
   [test-migrate-to-events]="scripts/test-migrate-routing-to-events.sh"
   [test-install]="scripts/test-install.sh"
@@ -169,7 +169,7 @@ run_suite() {
   local script="$REPO_ROOT/${SUITE_PATHS[$name]}"
 
   case "$name" in
-    test-hooks)
+    test-guards)
       HOME="${CLAUDE_CONFIG_TEST_PREFLIGHT_HOME:-$HOME}" "$script"
       ;;
     test-install)

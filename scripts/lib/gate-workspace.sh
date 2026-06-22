@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared workspace-root detection for install-hooks.sh / uninstall-hooks.sh.
+# Shared workspace-root detection for install-guards.sh / uninstall-guards.sh.
 #
 # gate_workspace_root <repo_root> <home>
 #   Prints the workspace root used for the reviewer permissions Write glob.

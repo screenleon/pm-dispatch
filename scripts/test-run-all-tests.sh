@@ -15,8 +15,8 @@ FAILED_CASES=()
 SUITE_NAMES=(
   lint-agents
   lint-scripts
-  test-hooks
-  test-hook-framework
+  test-guards
+  test-guard-framework
   test-migrate
   test-migrate-to-events
   test-install
@@ -98,8 +98,8 @@ suite_path() {
   case "$1" in
     lint-agents) printf 'scripts/lint-agents.sh\n' ;;
     lint-scripts) printf 'scripts/lint-scripts.sh\n' ;;
-    test-hooks) printf 'scripts/test-hooks.sh\n' ;;
-    test-hook-framework) printf 'scripts/test-hook-framework.sh\n' ;;
+    test-guards) printf 'scripts/test-guards.sh\n' ;;
+    test-guard-framework) printf 'scripts/test-guard-framework.sh\n' ;;
     test-migrate) printf 'scripts/test-migrate-routing-log.sh\n' ;;
     test-migrate-to-events) printf 'scripts/test-migrate-routing-to-events.sh\n' ;;
     test-install) printf 'scripts/test-install.sh\n' ;;
@@ -382,15 +382,15 @@ test_skip_option_like_arg() {
 }
 
 test_dispatch_hooks_home_override() {
-  # Behavior: aggregator sets HOME to CLAUDE_CONFIG_TEST_PREFLIGHT_HOME when invoking test-hooks.
-  # Steps: write a test-hooks stub that echoes its HOME; run aggregator with
+  # Behavior: aggregator sets HOME to CLAUDE_CONFIG_TEST_PREFLIGHT_HOME when invoking test-guards.
+  # Steps: write a test-guards stub that echoes its HOME; run aggregator with
   #        CLAUDE_CONFIG_TEST_PREFLIGHT_HOME=/sentinel/home; assert stub output contains the sentinel.
   local name="dispatch-hooks-home-override"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
-  write_pass_stubs "$repo" test-hooks
+  write_pass_stubs "$repo" test-guards
 
-  local hooks_path="$repo/scripts/test-hooks.sh"
+  local hooks_path="$repo/scripts/test-guards.sh"
   mkdir -p "$(dirname "$hooks_path")"
   cat > "$hooks_path" <<'STUB'
 #!/bin/sh

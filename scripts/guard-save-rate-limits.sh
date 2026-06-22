@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hook-save-rate-limits.sh — StatusLine hook: save Claude rate-limit data.
+# guard-save-rate-limits.sh — StatusLine hook: save Claude rate-limit data.
 # Receives JSON payload via stdin from Claude Code StatusLine event.
 # Writes ~/.claude/rate-limits.json for use by token-usage.sh --remaining.
 # Chains to the previous statusLine command if statusline-chain.conf exists.

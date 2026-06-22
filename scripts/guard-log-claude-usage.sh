@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hook-log-claude-usage.sh — Stop hook: auto-log Claude session tokens.
+# guard-log-claude-usage.sh — Stop hook: auto-log Claude session tokens.
 # Receives JSON payload via stdin from Claude Code Stop event.
 set -euo pipefail
 
@@ -34,17 +34,18 @@ if [[ -f "$_tracker" && -n "${session_id:-}" ]]; then
 fi
 [[ "${_tokens_to_log:-0}" -gt 0 ]] || exit 0
 
-_log_file="${PM_HOOK_LOG_DIR:+${PM_HOOK_LOG_DIR}/hooks.log}"
+: "${PM_GUARD_LOG_DIR:=${PM_HOOK_LOG_DIR:-}}"  # deprecated alias
+_log_file="${PM_GUARD_LOG_DIR:+${PM_GUARD_LOG_DIR}/hooks.log}"
 _log_file="${_log_file:-${HOME}/.claude/logs/hooks.log}"
 mkdir -p "$(dirname "$_log_file")"
 if ! bash "${HOME}/.claude/scripts/log-usage.sh" \
      "session_total" "$_tokens_to_log" "auto: stop hook" "${session_id:-}" "claude" \
      2>>"$_log_file"; then
-  echo "[$(date -Is)] hook-log-claude-usage: log-usage.sh failed (session=${session_id:-?})" \
+  echo "[$(date -Is)] guard-log-claude-usage: log-usage.sh failed (session=${session_id:-?})" \
     >> "$_log_file"
 else
-  [[ -n "${PM_HOOK_LOG_DIR:-}" ]] && \
-    echo "[$(date -Is)] hook-log-claude-usage: logged ${_tokens_to_log} tokens (session=${session_id:-?})" \
+  [[ -n "${PM_GUARD_LOG_DIR:-}" ]] && \
+    echo "[$(date -Is)] guard-log-claude-usage: logged ${_tokens_to_log} tokens (session=${session_id:-?})" \
       >> "$_log_file"
 fi
 

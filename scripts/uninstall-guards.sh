@@ -3,8 +3,8 @@
 # Idempotent: skips entries that aren't present.
 #
 # Usage:
-#   scripts/uninstall-hooks.sh           # apply
-#   scripts/uninstall-hooks.sh --dry-run # show what would change
+#   scripts/uninstall-guards.sh           # apply
+#   scripts/uninstall-guards.sh --dry-run # show what would change
 
 set -euo pipefail
 
@@ -36,12 +36,12 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 settings="$CLAUDE_HOME/settings.json"
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "uninstall-hooks: jq is required" >&2
+  echo "uninstall-guards: jq is required" >&2
   exit 2
 fi
 
 if [ ! -f "$settings" ]; then
-  echo "uninstall-hooks: $settings not found — nothing to do"
+  echo "uninstall-guards: $settings not found — nothing to do"
   exit 0
 fi
 
@@ -62,10 +62,10 @@ else
   _gate_ws="${PM_DISPATCH_GATE_WORKSPACE:-$HOME}"
 fi
 # The reviewer permission entries are managed install artifacts: they are added
-# by install-hooks.sh and removed here. Write(.gate-results), Bash(mkdir -p:*),
+# by install-guards.sh and removed here. Write(.gate-results), Bash(mkdir -p:*),
 # and the pmctl guard-check forms are treated as pm-dispatch-owned; re-add
 # manually if needed for other tools after uninstall. The guard check is
-# allow-listed in bare, absolute, and tilde forms (mirror install-hooks.sh: an
+# allow-listed in bare, absolute, and tilde forms (mirror install-guards.sh: an
 # in-session reviewer subagent may invoke pmctl by absolute path when its PATH
 # lacks the bin dir) — remove all three.
 _pmctl_bin_dir="${PMCTL_BIN_DIR:-$HOME/.local/bin}"
@@ -79,7 +79,7 @@ _managed_json="$({
   printf 'Bash(mkdir -p:*)\n'
 } | jq -Rn '[inputs]')"
 
-# install-hooks.sh shell-escapes managed command paths (printf %q) so a repo
+# install-guards.sh shell-escapes managed command paths (printf %q) so a repo
 # checked out under a path with a space still produces a runnable hook. Match
 # BOTH forms here: $repo_root (legacy unescaped installs) and its escaped prefix
 # (current installs). printf %q escapes each char identically regardless of
@@ -134,12 +134,12 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ' > "$tmp_new" < "$settings"
 
 if cmp -s "$settings" "$tmp_new"; then
-  echo "uninstall-hooks: not wired, nothing to do"
+  echo "uninstall-guards: not wired, nothing to do"
   exit 0
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "uninstall-hooks: would apply the following change:"
+  echo "uninstall-guards: would apply the following change:"
   diff -u "$settings" "$tmp_new" || true
   exit 0
 fi
@@ -151,5 +151,5 @@ trap - EXIT
 if [[ "$DRY_RUN" -eq 0 ]]; then
     rm -f "$statusline_chain_conf"
 fi
-echo "uninstall-hooks: wrote $settings"
-echo "uninstall-hooks: backup at $backup"
+echo "uninstall-guards: wrote $settings"
+echo "uninstall-guards: backup at $backup"

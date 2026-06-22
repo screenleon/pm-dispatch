@@ -51,7 +51,7 @@ The behavior below describes the pre-CC-383 handover route and no longer occurs;
   contains an explicit `pmctl guard check --role reviewer --runtime claude
   --event pre-write` constraint (CC-297) — the executor calls it before
   writing, enforcing the `.gate-results/`-only rule via the same policy hook
-  (`hook-reviewer-write-guard.sh`) used by the codex route.
+  (`guard-reviewer-write.sh`) used by the codex route.
 - The caller must then dispatch the `role: synthesis` Agent when present.
 - The caller must continue writing final output to the shared `output_file` path
   that the gate script also prints as `result:`.

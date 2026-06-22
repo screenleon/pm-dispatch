@@ -47,15 +47,15 @@ _tpg_needs_symlink() {
 }
 
 PMCTL="$REPO_ROOT/cli/pmctl"
-PMHOOK="$SCRIPT_DIR/hook-pm-write-guard.sh"
-EXWHOOK="$SCRIPT_DIR/hook-executor-write-guard.sh"
+PMHOOK="$SCRIPT_DIR/guard-pm-write.sh"
+EXWHOOK="$SCRIPT_DIR/guard-executor-write.sh"
 
 # Sandbox audit logs + pin codex read roots so path-based cases are deterministic
-# regardless of the host's $HOME (mirrors scripts/test-hooks.sh).
-PM_HOOK_LOG_DIR="$(mktemp -d)"
-export PM_HOOK_LOG_DIR
-export PM_HOOK_CODEX_READ_ROOTS="$HOME/github:/tmp"
-trap 'rm -rf "$PM_HOOK_LOG_DIR"' EXIT
+# regardless of the host's $HOME (mirrors scripts/test-guards.sh).
+PM_GUARD_LOG_DIR="$(mktemp -d)"
+export PM_GUARD_LOG_DIR
+export PM_GUARD_CODEX_READ_ROOTS="$HOME/github:/tmp"
+trap 'rm -rf "$PM_GUARD_LOG_DIR"' EXIT
 
 MEM_PATH="$HOME/.claude/projects/test-guard-proj/memory/note.md"
 
@@ -111,7 +111,7 @@ if should_run "claude-prewrite-nonbrief-deny"; then
   name="claude-prewrite-nonbrief-deny"
   run_guard --event pre-write --role executor --runtime claude --file "$HOME/not-a-brief.md"
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-executor-write-guard"; then
+    assert_string_contains "$name" "$GUARD_OUT" "guard-executor-write"; then
     pass "$name"
   fi
 fi
@@ -167,7 +167,7 @@ if should_run "reviewer-prewrite-deny-outside-gate-results"; then
 fi
 
 if should_run "reviewer-prewrite-allow-any-gate-results"; then
-  # CC-319: without PM_HOOK_GATE_REPO_ROOT, guard allows writes to any
+  # CC-319: without PM_GUARD_GATE_REPO_ROOT, guard allows writes to any
   # .gate-results/ directory — pr-gate runs on any project, not just pm-dispatch.
   _rw_guard_dir="$(mktemp -d)/.gate-results"
   mkdir -p "$_rw_guard_dir"
@@ -412,10 +412,10 @@ if should_run "hook-not-executable"; then
   # Point the function at a fake repo root whose guard hook is non-executable so
   # the fail-closed "hook not executable" usage-error branch (exit 2) is exercised.
   name="hook-not-executable"
-  fake_root="$PM_HOOK_LOG_DIR/fake-root"
+  fake_root="$PM_GUARD_LOG_DIR/fake-root"
   mkdir -p "$fake_root/scripts"
-  : > "$fake_root/scripts/hook-executor-write-guard.sh"
-  chmod -x "$fake_root/scripts/hook-executor-write-guard.sh"
+  : > "$fake_root/scripts/guard-executor-write.sh"
+  chmod -x "$fake_root/scripts/guard-executor-write.sh"
   set +e
   out="$(pmctl_guard_check "$fake_root" --event pre-write --role executor --runtime codex --file /tmp/brief-x.md 2>&1)"
   st=$?
@@ -449,7 +449,7 @@ if should_run "codex-prewrite-deny"; then
   name="codex-prewrite-deny"
   run_guard --event pre-write --role executor --runtime codex --file /etc/passwd
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-executor-write-guard"; then
+    assert_string_contains "$name" "$GUARD_OUT" "guard-executor-write"; then
     pass "$name"
   fi
 fi
@@ -458,7 +458,7 @@ if should_run "pm-prewrite-deny"; then
   name="pm-prewrite-deny"
   run_guard --event pre-write --role pm --runtime claude --file /tmp/oops.md
   if assert_exit "$name" "$GUARD_EXIT" "2" &&
-    assert_string_contains "$name" "$GUARD_OUT" "hook-pm-write-guard"; then
+    assert_string_contains "$name" "$GUARD_OUT" "guard-pm-write"; then
     pass "$name"
   fi
 fi
@@ -469,7 +469,7 @@ fi
 
 if should_run "prewrite-no-mutation"; then
   name="prewrite-no-mutation"
-  target="$PM_HOOK_LOG_DIR/should-not-exist-brief-x.md"
+  target="$PM_GUARD_LOG_DIR/should-not-exist-brief-x.md"
   run_guard --event pre-write --role executor --runtime codex --file "$target"
   if [[ ! -e "$target" ]]; then
     pass "$name"
@@ -551,7 +551,7 @@ fi
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # 12. R2 equivalence — the CLI must produce identical allow/deny to the proven
-#     hooks. For each scenario, drive the hook DIRECTLY (the path test-hooks.sh
+#     hooks. For each scenario, drive the hook DIRECTLY (the path test-guards.sh
 #     exercises) and via pmctl, then assert identical exit codes.
 # ---------------------------------------------------------------------------
 

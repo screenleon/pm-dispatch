@@ -21,7 +21,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-026 | 🔵 active | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
 | CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — | P3 | — |
 | CC-033 | 🔵 active | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — | P3 | — |
-| CC-035 | 🔵 active | install/uninstall-hooks basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
+| CC-035 | 🔵 active | install/uninstall-guards basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-038 | ⏸ deferred | Windows / cross-platform 鎖機制：`flock` Linux-only，未來支援 Windows/macOS 需替代方案 | ops/portability | 2026-05-15 | — | — | — |
 | CC-044 | ⏸ deferred | **[infra: tool-trace reliability, retention, data-quality bundle]** `tool-trace.jsonl` 三階段升級（吸收 CC-027b + CC-027c）：Phase 1 rotation/retention multi-window policy；Phase 2 bounded error counter + health signal；Phase 3 async post-validation for malformed JSON。分 phase 實作但同一 epic。 | ux/memory | 2026-05-15 | — | — | — |
 | CC-045 | ⏸ deferred | brief timeout heuristic：依 target repo playbook depth 設 timeout，不能只看 edit size；brief context 可加「skip playbook re-read」短路指令；codex-dispatch.sh 可選 warn 當 repo 有 `rules/`/`AGENTS.md` 且 timeout < 900s | process/DX | 2026-05-16 | — | — | — |
@@ -47,13 +47,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-238 | ✅ closed 2026-06-19 | **[/pr-gate claude-route fan-out hardening]** CC-217 made the `/pr-gate` claude-executor reviewer/synthesis fan-out run detached (`run_in_background`). Gate advisories on the new flow (CC-217 gate, gate-20260523): (a) no timeout/fallback if a reviewer agent never reports completion → indefinite wait; (b) single fan-out step weakens per-reviewer failure attribution on partial failure; (c) no test artifact validates background completion / relay ordering. Add a completion timeout + partial-failure attribution + test coverage for the claude-route fan-out. | gate | 2026-05-23 | pr:#124 | P3 | oss |
 | CC-240 | ⏸ deferred | **[test-suite reliability follow-ups]** Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129). Remaining: `[low]` `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` (pre-existing; conflicts with the qa AGENT.md red line on `sleep` for async sync) → CI-timing flakiness. Fix with an IPC / event-driven lock-hold. | test | 2026-05-23 | pr:#127 | P3 | oss |
 | CC-244 | 🟢 someday | **[Typed artifact pipeline — spike → brief → handover schema]** Define `spike_v1` schema mirroring existing `dispatch_handover_v1`: frontmatter (`spike_id`, `status`, `decisions_resolved`, `branch_base`, `ticket_ids_consumed`, `project_tooling`) + named sections (`scope`, `findings`, `constraints`, `decisions`, `phase3_handover`). Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-brief-from-spike.sh` (mechanical brief extraction). Reduces main-thread courier cost, makes spike→brief authoring mechanical, gives invariant checkpoints (`decisions_resolved=true` ⇒ no re-asking Q1/Q2). Defer until 3+ spike docs exist and the brief-extraction pattern repeats; only one spike (CC-060) today, so schema would be premature overhead. CC-243 field names chosen to align with this future schema (no re-wash needed at upgrade time). | arch | 2026-05-23 | — | — | design |
-| CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-hooks.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-hooks.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
+| CC-224 | ⏸ deferred | **[shared hook-profile inventory: doctor.sh ↔ install-guards.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-guards.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-054 | ⏸ deferred | CC-025 M2 — `/skill-refine` diff generation and Claude-assisted refinement；scope deferred when CC-025b was closed in `feat/cc039-cc025b-v2` | ux/memory | 2026-05-18 | pr:#67 | — | — |
 | CC-063 | 🟡 deferred | Trace / token / gate metrics dashboard：`.agent-trace/*.jsonl` + `rate-limits*.json` + `.gate-results/*.md` 已有足夠資料；可視化 per-session token、gate pass rate、routing_log 校準趨勢 | ux/ops | 2026-05-18 | — | P3 | — |
 | CC-064 | 🟡 deferred | **[P2]** Project bootstrap wizard：互動式 `scripts/setup-project.sh --init` 引導新 repo 建立 memory、rules、PM schema；取代目前「手讀 GETTING_STARTED.md 再手跑指令」流程 | ux | 2026-05-18 | roadmap:CC-031 | P2 | — |
 | CC-065 | 🟡 deferred | Per-repo configurable gate pipeline：不同 repo 可設定不同 reviewer 組合與 tier 預設（例如 `.pm-dispatch/gate.toml`）；現在所有 repo 共用同一 gate config | ops/gate | 2026-05-18 | — | P3 | — |
 | CC-253 | 🔵 active | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
-| CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/hook-pm-write-guard.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-hooks.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
+| CC-258 | ⏸ deferred | **[pm-write-guard hook policy revision]** Current `scripts/guard-pm-write.sh` denies 3 legitimate PM-author patterns (12/207 deny audit hits over 10 days): (A) `/tmp/<task-slug>/*.md` verbatim-as-attached-file (Pattern 2 of `[[feedback_codex_brief_discipline]]`), (B) `<repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md` PM-author surface, (C) memory writes that resolve through the `memory-private/` symlink (`realpath_m` chases the symlink before the allow-pattern match — hook bug). Three new allow rules + `realpath_m_lex` (or `-s`) helper + ~15 new test cases in `scripts/test-guards.sh`. Not blocking M1; deferred until user prioritizes. | process | 2026-05-24 | pr:#156 | P3 | hygiene |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-270 | 🟡 deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-273 | 🟡 deferred | **[arch: unified lifecycle hook event spec]** CC-206 只在 gate 層加了 pre/post-gate hooks。如果未來多個工具（dispatch、validate 等）都需要 hook 點，應定義統一的 lifecycle event 命名規範（如 `.pm-dispatch/hooks/<event>.sh`）和呼叫合約，而非在每個腳本各自加 pre/post block。目前無需求，等有第二個 hook 點需求時再設計。 | arch/gate | 2026-05-28 | — | P3 | — |
@@ -77,18 +77,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-369 | 🟡 deferred | **[Windows state store 真實 ACL via icacls]** CC-368 #2 在 NTFS 上以 SKIP-with-reason 處理 0700 斷言（chmod 是 no-op）；state store 目前僅靠 `%USERPROFILE%` 既有 ACL 保護。真正等價 0700 需在 Windows 用 `icacls` 限定目前使用者繼承移除 + 授權，要寫 Windows 專屬分支與測試。邊際安全收益相對 profile ACL 不高，故 deferred；gated behind [[CC-370]] 平台階段。 | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
-| CC-371 | ✅ closed 2026-06-19 | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-hooks.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
+| CC-371 | ✅ closed 2026-06-19 | **[uninstall: prune empty `~/.claude/adapters/` dir]** `uninstall.sh` / `uninstall-guards.sh` 的 empty-dir prune 清單涵蓋 agents/commands/skills/scripts/share，但漏了 `adapters/`：移除 `adapters/claude`+`adapters/codex` symlink 後留下空的 `~/.claude/adapters/` 父目錄。空目錄、無 dangling link、無功能影響，屬清潔瑕疵。Fix：將 `adapters` 加入 prune 清單，並補 uninstall 回歸斷言（leftover-dir 檢查）。v0.5.0 釋出 §2a 手動驗證時發現。 | ops/install | 2026-06-13 | — | P3 | hygiene |
 | CC-377 | 🟡 deferred | **[adapter: Google Antigravity (`agy`) executor]** 新增 `adapters/antigravity/`（cli binary `agy`；最終 adapter 命名 impl 時定）。與 [[CC-376]] 對稱：宣告 `runner_kind`、map sandbox/permission/model-alias、統一輸出契約。注意 Google **Gemini CLI 已棄用**，目標是 Antigravity `agy` 而非 gemini。第二個真 adapter，驗證抽象在 N≥2 下成立。相依 [[CC-373]]、[[CC-374]]、[[CC-389]]（non-interactive 契約基準）。**DEFERRED — 待 agy 版本更新（spike 2026-06-16）**：agy **有免費額度**（Gemini 3.x / Claude 4.6 / GPT-OSS 經 OAuth，成本非阻因）；暫緩原因是 **headless CLI 尚未成熟**——1.0.8 無結構化輸出旗標（--output-format/-o/--format/--log-level/--stream-format 實測皆被拒）、無 run 子命令、--print 吐 prose narration 無語意終止事件、headless 不穩（3/3 探針 timeout）；無 machine 契約可建乾淨 adapter。**agy 仍為首選第二 adapter**，resume = 較新 agy 出可用的 headless stream-json。見 `docs/spikes/CC-377-agy-headless-feasibility.md`。umbrella [[CC-333]]。 | arch/portability | 2026-06-13 | — | P2 | design |
-| CC-381 | 🟡 deferred | **[arch: install host-PM-aware — 每個可當主 PM 的 host runtime 都對應寫入設定，不只 claude]** `install.sh`/`install-hooks.sh` 目前寫死 claude harness（`~/.claude/settings.json` 的 hook 接線＋permissions allow-list＋statusline＋agents/commands 介面）——只有「claude 當 host PM」時才正確。codex（或未來 host）當主 PM 時設定面不同（`~/.codex/`、AGENTS.md、自有 sandbox/permission 模型，無 `~/.claude` PreToolUse hook），[[CC-334]]/[[CC-380]] 寫進 `~/.claude` 的 guard/權限接線在 codex-host 下完全不生效 → codex-PM 安裝拿不到任何 gate/guard plumbing。這是 [[CC-333]] 硬耦合 **layer 4（install 路徑）+ layer 3/5（hook 機制/設定格式）**，且是「誰當 host PM」這條軸，與 [[CC-373]]/[[CC-374]]（PM→executor 軸）正交。要求：install 變 host-PM-aware，對每個支援的 host runtime 由 manifest（關聯 [[CC-372]] runner_kind、[[CC-375]] manifest 衍生接線）衍生該 host 的等價設定（hook/guard、allow-list 或 sandbox policy、PM 介面），每 host 維持 install/uninstall/doctor 三方一致（[[CC-368]]）。排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後。umbrella [[CC-333]]。 | arch/install | 2026-06-14 | — | P2 | design |
+| CC-381 | 🟡 deferred | **[arch: install host-PM-aware — 每個可當主 PM 的 host runtime 都對應寫入設定，不只 claude]** `install.sh`/`install-guards.sh` 目前寫死 claude harness（`~/.claude/settings.json` 的 hook 接線＋permissions allow-list＋statusline＋agents/commands 介面）——只有「claude 當 host PM」時才正確。codex（或未來 host）當主 PM 時設定面不同（`~/.codex/`、AGENTS.md、自有 sandbox/permission 模型，無 `~/.claude` PreToolUse hook），[[CC-334]]/[[CC-380]] 寫進 `~/.claude` 的 guard/權限接線在 codex-host 下完全不生效 → codex-PM 安裝拿不到任何 gate/guard plumbing。這是 [[CC-333]] 硬耦合 **layer 4（install 路徑）+ layer 3/5（hook 機制/設定格式）**，且是「誰當 host PM」這條軸，與 [[CC-373]]/[[CC-374]]（PM→executor 軸）正交。要求：install 變 host-PM-aware，對每個支援的 host runtime 由 manifest（關聯 [[CC-372]] runner_kind、[[CC-375]] manifest 衍生接線）衍生該 host 的等價設定（hook/guard、allow-list 或 sandbox policy、PM 介面），每 host 維持 install/uninstall/doctor 三方一致（[[CC-368]]）。排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後。umbrella [[CC-333]]。 | arch/install | 2026-06-14 | — | P2 | design |
 | CC-390 | 🟡 deferred | **[infra: codex dispatch trace-capture 強化 — trace 不依賴繼承 FD 跨 sandbox 存活]** codex 0.139.0 在 session 冷啟動最初 1–2 次 dispatch 偶發 trace-capture flake：wrapper 把 codex stdout 經**繼承 FD** 重導向到 `<work_dir>/.agent-trace/<ts>.jsonl`，該檔在 codex sandbox 邊界偶失（`.last` 由 codex 依路徑自開故存活、`.jsonl` 與 run-time stderr 經繼承 FD 偶失）。8 次 run 證**非確定性**、且 **fail-closed 安全**（trace 缺→post-verify 正確判 FAIL、不誤判 PASS）。`workspace-write` 與 `sandboxed` isolation 實 map 到同一 codex 指令（皆 `--sandbox workspace-write`、無 override）。候選修法：trace 寫 `<work_dir>` 外（XDG state／temp），或經 wrapper 控制的 pipe（tee）而非繼承 FD，使 trace 不跨 codex sandbox 邊界。**需可穩定複現才能驗證修法**。發現於 [[CC-387]] 真實驗收。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P3 | design |
-| CC-384 | 🟢 someday | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `hook-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。 | arch/portability | 2026-06-14 | — | P3 | design |
+| CC-384 | ✅ closed 2026-06-22 | **[arch: guard 腳本術語脫鉤 — `hook-*` → 平台中性 `guard-*`]** `scripts/hook-*.sh`（8 檔）＋ `guard-framework.sh` ＋ `hk_*`/`HK_*` 函式/變數 ＋ `PM_HOOK_*` env 沿用 Claude 平台的「hook」術語，但這些其實是 **PreToolUse 協定的策略腳本**：被 Claude 活 hook 觸發、**或**被 `pmctl guard check` 餵合成 JSON 驅動（cli-only 模式根本不是平台 hook）。[[CC-374]] 收口後 cli-only 那半讓「hook」更名實不符（user 2026-06-14 提出）。將整族改名為平台中性的 `guard-*`（如 `guard-executor-write.sh`），連同 framework/helper/env 前綴一起掃；保留 settings.json 的 `PreToolUse` 鍵（那是 Claude 平台自有、改不得）。純命名/機械改動但跨 install/uninstall/doctor 接線＋parity scanner＋測試＋文件——須與安全邊界改動分開的獨立 PR，不混進 guard 行為票。[[CC-333]] layer 2（hook 機制）/ 6（術語）；可與 [[CC-335]] deprecation 清掃同期。排在真 adapter [[CC-376]]/[[CC-377]] 之後。**See**: pr:#310 | arch/portability | 2026-06-14 | pr:#310 | P3 | design |
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
 | CC-396 | ✅ closed 2026-06-19 | **[chore: 清理 operational 檔內的 CC-provenance 註解]** scripts/adapters/cli/core 等非文件檔殘留「設計沿革票號」註解（如 `pmctl-guard.sh` 的 `# ...(CC-288; keying CC-291)`），違反 No-CC-in-operational 慣例，應搬去 docs/DECISIONS 或刪除。**明確排除**：測試 fixture data（如 `test-pmctl-task.sh` 用 `task create CC-101` 當輸入）與 ID 格式範例（如 `task.schema.json` 的 `e.g. CC-229`）——皆為合法測試輸入/說明，非違規。需逐處判斷非機械替換；估真違規子集遠小於原始 grep 計數。發現於 [[CC-395]] 退場工作。 | process/DX | 2026-06-17 | — | P3 | — |
 | CC-400 | ✅ closed 2026-06-20 | **[retrieval-first: prompt/docs 檢索順序強制]** 把 context-first 從軟 reflex 升級為 workflow invariant。`agents/project-pm.md` Principle 3 改成硬性檢索順序——找既有票/決策/規則/prior-art 一律先 `pmctl context query` →（`# no hits` 才）Read/Grep/full-file open；`docs/context-retrieval.md` 標題從「Query before grep」升級為「Query before Read/Grep/full-file open」。純 prompt/command/docs，零程式風險，可獨立於本 milestone 提前落地。發現於 2026-06-18 memory+context retrieval 統整（opus+codex+外部研究）。 | process/DX | 2026-06-18 | pr:#308 | P2 | retrieval |
 | CC-401 | ✅ closed 2026-06-20 | **[retrieval-first: brief-validate `retrieval:` 證據 chokepoint]** 在 dispatch brief 加 `retrieval:` 區段、`brief-validate.sh` 對非 trivial brief 檢查（先 warn 後 fail）：須含 `pmctl_context:` refs、或 `auto_pack: true`、或 `skip_reason:`。把「reflex」變成被檢查的合約，符合本 repo 單一 chokepoint enforce 哲學（見 [[feedback_cut_capability_close_all_paths]]）。非 pmctl-context.sh，動 brief schema+validator+docs。最高行為槓桿。相依 [[CC-400]]。 | process/gate | 2026-06-18 | pr:#308 | P2 | retrieval |
 | CC-402 | ✅ closed 2026-06-21 | **[retrieval-first: auto-pack 與 detached lifecycle 相容]** 目前唯一結構性 context-first 機制 dispatch `--auto-pack` 預設 off，且與預設 detached lifecycle（[[CC-398]]/[[CC-399]]）不相容（augmented brief 偏離 guarded /tmp brief 故 pre-launch 被拒）。修法：detached 下先產 augmented brief、記為 run-spec 的 trusted `brief_file`，確保 guarded==validated==executed==recorded 同一份；之後 `dispatch.auto_pack = on` 才實際可預設。動 pmctl-dispatch.sh，HARD security/risk gate。 | arch | 2026-06-18 | pr:#309 | P3 | retrieval |
 | CC-403 | 🟢 someday | **[retrieval-first: `pmctl context --source memory` 讓 memory 可被檢索（supersede/吸收 [[CC-340]]）]** 今天 pmctl context 只掃 repo 內檔，memory（`~/.claude/projects/<id>/memory/`）完全搜不到 → 對「決策/規則/偏好」這類最常找的特定資料「優先用 pmctl context」物理上不可能。新增 source 軸 `query --source repo/memory/all`（不 overload `--domain`；memory 是不同平面非 repo 路徑類），memory DB 落 memory 目錄下而非 repo-local（避免私有 memory 進 checkout），schema `source_domain` enum 補 `memory`、pack `memories[]` 真正填值、reuse-scan 維持 repo-only。吸收 CC-340 MVP（FTS5-optional + LIKE/grep fallback、no embeddings）；embeddings/語意後端留作 follow-up。動 pmctl-context.sh。 | memory | 2026-06-18 | — | P2 | retrieval |
-| CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `hook-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-405 | 🟢 someday | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
@@ -124,7 +124,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-381 — arch: install host-PM-aware 🟡 deferred
 
-**Problem**: `install.sh` / `install-hooks.sh` 把整個安裝面寫死成 claude harness：PreToolUse/SessionEnd 等 hook 接進 `~/.claude/settings.json`、reviewer 與 dispatch 的 `permissions.allow`、statusline、以及 `agents/` `commands/` 的 PM 介面，全部假設「claude 是 host PM」。一旦 codex（或未來 host）當主 PM，這些都不對：codex 的設定面是 `~/.codex/` ＋ `AGENTS.md` ＋自有 sandbox/approval 模型，沒有 `~/.claude` 那套 PreToolUse hook。[[CC-334]]/[[CC-380]] 把 reviewer guard 與 allow-list 寫進 `~/.claude/settings.json`——在 codex-host 下根本不載入，等於 codex-PM 安裝拿不到任何 gate/guard plumbing。
+**Problem**: `install.sh` / `install-guards.sh` 把整個安裝面寫死成 claude harness：PreToolUse/SessionEnd 等 hook 接進 `~/.claude/settings.json`、reviewer 與 dispatch 的 `permissions.allow`、statusline、以及 `agents/` `commands/` 的 PM 介面，全部假設「claude 是 host PM」。一旦 codex（或未來 host）當主 PM，這些都不對：codex 的設定面是 `~/.codex/` ＋ `AGENTS.md` ＋自有 sandbox/approval 模型，沒有 `~/.claude` 那套 PreToolUse hook。[[CC-334]]/[[CC-380]] 把 reviewer guard 與 allow-list 寫進 `~/.claude/settings.json`——在 codex-host 下根本不載入，等於 codex-PM 安裝拿不到任何 gate/guard plumbing。
 
 **這是哪條軸**: 「誰當 host PM」的軸，與目前 v0.6.0 在做的「PM→executor」軸（[[CC-373]]/[[CC-374]]）**正交**。runner_kind（[[CC-372]]）解的是「被驅動的 executor 怎麼到達」；本票解的是「驅動者（host PM runtime）的安裝/設定面」。對應 [[CC-333]] 七耦合的 **layer 4（install 路徑 `~/.claude/`）＋ layer 3/5（hook 機制／設定格式）**，memory 已標記為「later」。
 
@@ -142,14 +142,14 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）🟢 someday
+## CC-384 — arch: guard 腳本術語脫鉤（`hook-*` → `guard-*`）✅ 2026-06-22
 
-**Problem（user 2026-06-14）**: `scripts/hook-*.sh`（8 檔）、`scripts/lib/hook-framework.sh`、`hk_*`/`HK_*` 函式與變數、`PM_HOOK_*` env 都沿用 Claude 平台的「hook」術語。但它們本質是 **PreToolUse 協定的策略腳本**：輸入是 PreToolUse 形狀的 JSON、輸出是 exit code，可由 (a) Claude 活 PreToolUse 觸發，**或** (b) `pmctl guard check` 合成同樣的 JSON 餵入。後者（尤其 [[CC-374]] 收口後 claude 的 cli-only 路徑）**根本不是平台 hook**，只是被餵合成輸入的策略評估器——「hook」對這一半名實不符。
+**Problem（user 2026-06-14）**: `scripts/hook-*.sh`（8 檔）、`scripts/lib/guard-framework.sh`、`hk_*`/`HK_*` 函式與變數、`PM_HOOK_*` env 都沿用 Claude 平台的「hook」術語。但它們本質是 **PreToolUse 協定的策略腳本**：輸入是 PreToolUse 形狀的 JSON、輸出是 exit code，可由 (a) Claude 活 PreToolUse 觸發，**或** (b) `pmctl guard check` 合成同樣的 JSON 餵入。後者（尤其 [[CC-374]] 收口後 claude 的 cli-only 路徑）**根本不是平台 hook**，只是被餵合成輸入的策略評估器——「hook」對這一半名實不符。
 
 **Why**: 這是 [[CC-333]] layer 2（hook 機制）/ layer 6（術語）的硬耦合：Claude 平台詞漏進想做 runtime-agnostic 的核心。對齊 runner_kind/manifest 之後，命名也應該中性化。
 
 **Requirement**:
-- `hook-*.sh` → 平台中性 `guard-*`（如 `guard-executor-write.sh`、`guard-pm-write.sh`、`guard-codex-bash.sh`）；`hook-framework.sh` → `guard-framework.sh`；`hk_*`/`HK_*` → `g_*`/`G_*`（或等價）；`PM_HOOK_*` env 評估是否改名（保 deprecated alias）。
+- `hook-*.sh` → 平台中性 `guard-*`（如 `guard-executor-write.sh`、`guard-pm-write.sh`、`guard-codex-bash.sh`）；`guard-framework.sh` → `guard-framework.sh`；`hk_*`/`HK_*` → `g_*`/`G_*`（或等價）；`PM_HOOK_*` env 評估是否改名（保 deprecated alias）。
 - **保留** settings.json 的 `PreToolUse` 鍵——那是 Claude 平台自有、不可改；被接進去的腳本對 Claude 而言確實是 hook。
 - 三方一致：install/uninstall/doctor 接線 + doctor parity scanner + 測試 + 文件同步改。
 
@@ -157,7 +157,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Sequencing**: 排在真 adapter [[CC-376]]/[[CC-377]] 之後；可與 [[CC-335]] deprecation 清掃同期評估。
 
-**See**: [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。
+**See**: [[CC-374]]（收口後讓 cli-only 名實不符浮現）、[[CC-372]]（runner_kind/write_guard_mode）、[[CC-335]]（deprecation sweep）、umbrella [[CC-333]]。**See**: pr:#310
 
 ---
 
@@ -232,7 +232,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-371 — uninstall: prune empty `~/.claude/adapters/` dir ✅ 2026-06-19
 
-**Problem**: `uninstall.sh` (via `uninstall-hooks.sh`) prunes the managed parent dirs `agents/`, `commands/`, `skills/`, `scripts/`, and `share/` once empty, but the prune list omits `adapters/`. After the `adapters/claude` + `adapters/codex` symlinks are removed, an empty `~/.claude/adapters/` directory is left behind.
+**Problem**: `uninstall.sh` (via `uninstall-guards.sh`) prunes the managed parent dirs `agents/`, `commands/`, `skills/`, `scripts/`, and `share/` once empty, but the prune list omits `adapters/`. After the `adapters/claude` + `adapters/codex` symlinks are removed, an empty `~/.claude/adapters/` directory is left behind.
 **Why**: Cosmetic only — the directory is empty, there are no dangling symlinks, and nothing functional remains. The `docs/RELEASE_CHECKLIST.md` §2a "no leftover dir" intent (which it states explicitly for `share/`) is not fully met.
 **Requirement**: Add `adapters` to the empty-dir prune list in the uninstall path so a clean uninstall leaves no managed parent dirs; extend the uninstall regression coverage with a leftover-dir assertion (no managed parent dir survives a full uninstall).
 **Source**: surfaced during v0.5.0 release §2a manual verification (2026-06-13); `~/.claude/adapters/` observed empty after `uninstall.sh`, hand-cleaned to restore the test environment.
@@ -296,13 +296,13 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-018 — Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）
 
-**Problem**: (A) CC-006 解決了 Claude 5h rate-limit 自動讀取，但 Codex 無等效 hook 機制；目前 Codex 使用量只靠 `log-usage.sh` 手動寫入，用戶無法即時得知剩餘額度。(B) CC-269（已合併）：`scripts/hook-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等工具衝突；pm-dispatch 不應寫入 `~/.claude/` 共用路徑。
+**Problem**: (A) CC-006 解決了 Claude 5h rate-limit 自動讀取，但 Codex 無等效 hook 機制；目前 Codex 使用量只靠 `log-usage.sh` 手動寫入，用戶無法即時得知剩餘額度。(B) CC-269（已合併）：`scripts/guard-save-rate-limits.sh` 寫到 `~/.claude/rate-limits.json`，與 claude-account-switcher 等工具衝突；pm-dispatch 不應寫入 `~/.claude/` 共用路徑。
 **Why**: Codex 走 OpenAI API 路徑，quota 資訊需要主動查詢（response header 或 `/v1/organization/usage`），架構不同於 Claude StatusLine hook。rate-limit 寫入應集中到 pm-dispatch 自己的 state 目錄以避免多工具衝突。
 **Requirement**:
 1. 研究 Codex API response headers（`x-ratelimit-remaining-requests` / `x-ratelimit-remaining-tokens`）
 2. 若有：`scripts/codex-dispatch.sh` dispatch 後解析 headers，寫入 `~/.local/share/pm-dispatch/state/rate-limits.json`（對齊 CC-230 state store）
 3. 若無：呼叫 `/v1/organization/usage` 或記錄技術限制
-4. `scripts/hook-save-rate-limits.sh` 改寫到同一 `~/.local/share/pm-dispatch/state/rate-limits.json`（Claude pool + Codex pool 合一），停止寫 `~/.claude/rate-limits.json`
+4. `scripts/guard-save-rate-limits.sh` 改寫到同一 `~/.local/share/pm-dispatch/state/rate-limits.json`（Claude pool + Codex pool 合一），停止寫 `~/.claude/rate-limits.json`
 5. 更新所有讀取 rate-limit 的腳本（doctor.sh、usage 相關、statusline consumers）
 6. `token-usage.sh` 加入 Codex pool 剩餘顯示
 **Note**: 實作前需先手動驗證 Codex API header 行為。CC-063 dashboard 之後可吃此 state，但不在本票範圍。
@@ -342,7 +342,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Note**: 依賴 **CC-031**, **CC-032** 完成；本條為「最後一哩」與後續評估。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 
-## CC-035 — install/uninstall-hooks basename+scripts/ collision edge case
+## CC-035 — install/uninstall-guards basename+scripts/ collision edge case
 
 **Problem**: install/uninstall hooks 目前以 basename + `scripts/` heuristic 判斷既有 hook 是否屬於 pm-dispatch，但另一個工具若也在 `scripts/` 下使用同名 hook，仍可能 collision。
 **Why**: CC-034 修掉 full-path 比對造成的 append-not-replace bug，但 basename heuristic 仍不是完整 ownership model。
@@ -354,7 +354,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Problem**: CC-037 用 `flock -x -w 2` 序列化 `hook-routing-log.sh` 的 append/rotation 路徑。`flock` 是 Linux util-linux 工具，Windows（純 PowerShell / Git Bash 無 util-linux）與 macOS（預設不裝 util-linux，需 `brew install flock`）都不能直接使用。除了 hook-routing-log，整個 `scripts/` 樹大量依賴 Linux-isms（GNU awk、GNU sed、`printf -v`、`procfs`、`/dev/null` 重導向細節等），整體 portability 是一塊待面對的工作面，不只這一支腳本。
 **Why**: 使用者後續可能需要在 Windows 系統開發 / 跑 pm-dispatch（WSL 不算 native Windows）。在那之前，所有 Linux-only 依賴都是 latent block。CC-037 引入 `flock` 沒有惡化現況（其他 hook 已依賴大量 Linux-only 工具），但每多一個依賴點，將來 portability work 範圍就多一塊。現在不修不影響任何 Linux user，所以這是 latent / blocked-on-windows-demand 條目，不是 active bug。
 **Requirement**: 任一方向皆可：(1) 抽象層 `scripts/lib/lock.sh`，依平台選 `flock` (Linux) / `shlock` (macOS 內建) / PowerShell `Mutex` 或 atomic file create loop (Windows)，hook 透過 wrapper 取得鎖；(2) Portable 替代：用 `mkdir`-based atomic locking 取代 flock，所有平台 portable，但需顯式 stale-lock cleanup；(3) 限制範圍：明確聲明 pm-dispatch 僅支援 POSIX（Linux + macOS via Homebrew util-linux），Windows 走 WSL2，寫進 `README.md` + `docs/platform-support.md`。
-**Cross-link**: triggered by CC-037 implementation choice (flock). 不阻塞當前 release。所有 hook scripts (`hook-routing-log.sh`, `hook-tool-trace.sh`, `hook-codex-bash-guard.sh`, `hook-pm-write-guard.sh` 等) 共用同一個 portability 平面，啟動時應一次性盤點所有 Linux-isms。
+**Cross-link**: triggered by CC-037 implementation choice (flock). 不阻塞當前 release。所有 hook scripts (`hook-routing-log.sh`, `hook-tool-trace.sh`, `hook-codex-bash-guard.sh`, `guard-pm-write.sh` 等) 共用同一個 portability 平面，啟動時應一次性盤點所有 Linux-isms。
 **Source**: 2026-05-15 user 在 CC-037 收尾階段點出「之後可能需要支援 Windows」。
 
 ## CC-044 — `tool-trace.jsonl` reliability, retention, data-quality bundle（deferred；吸收 CC-027b + CC-027c）
@@ -626,13 +626,13 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Priority**: P3.
 
-## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh（deferred）
+## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-guards.sh（deferred）
 
-**Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-hooks.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
+**Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-guards.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
 
 **Why**: Raised by critic and architecture-reviewer as [medium] advise in PR-gate `gate-20260522-100348`. The duplication became structurally significant once `--profile minimal|full|auto` was added and both files enumerate hooks by profile.
 
-**Requirement**: Extract the managed hook list and profile classification into a shared shell helper (e.g. `scripts/hook-profile.sh`) sourced by both `doctor.sh` and `install-hooks.sh`. Alternatively, add a parity test (e.g. `test-hook-profile-parity.sh`) that parses both files and asserts the hook sets are identical for each profile tier.
+**Requirement**: Extract the managed hook list and profile classification into a shared shell helper (e.g. `scripts/hook-profile.sh`) sourced by both `doctor.sh` and `install-guards.sh`. Alternatively, add a parity test (e.g. `test-hook-profile-parity.sh`) that parses both files and asserts the hook sets are identical for each profile tier.
 
 **Dependencies**: CC-058（profile flag already landed）
 
@@ -770,7 +770,7 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 
 ## CC-258 — pm-write-guard hook policy revision（deferred）
 
-**Problem**: `scripts/hook-pm-write-guard.sh` currently allows only `~/.claude/projects/<project>/memory/**`. Audit of 207 denies over 10 days identified 3 legitimate PM-author patterns being incorrectly denied (12 hits; the rest are red-team / regression-test traffic).
+**Problem**: `scripts/guard-pm-write.sh` currently allows only `~/.claude/projects/<project>/memory/**`. Audit of 207 denies over 10 days identified 3 legitimate PM-author patterns being incorrectly denied (12 hits; the rest are red-team / regression-test traffic).
 
 **Why**:
 - `/tmp/<task-slug>/*.md` is the verbatim-as-attached-file pattern from `[[feedback_codex_brief_discipline]]` (Pattern 2). Current deny forces PM to fall back to inline embedding — the exact failure mode the pattern was written to avoid (apply_patch debug-loop hang).
@@ -780,7 +780,7 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Requirement**:
 - Three new allow rules (A: `/tmp/[a-z][!/]*/[!/]*.md`, B: `*/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md`, C: dual-normalization for symlinked memory dir via lex_path-vs-abs_path).
 - New `realpath_m_lex` helper (or `realpath -s` flag) in `scripts/lib/portable.sh`.
-- ~50 LoC in `hook-pm-write-guard.sh`, ~20 LoC in `portable.sh`, ~15 new test cases in `scripts/test-hooks.sh`.
+- ~50 LoC in `guard-pm-write.sh`, ~20 LoC in `portable.sh`, ~15 new test cases in `scripts/test-guards.sh`.
 - `BACKLOG.md`, `DECISIONS.md`, `agents/*.md`, `commands/*.md`, `scripts/**`, `/tmp/brief-*.md` continue to deny (verified by audit).
 
 **Acceptance**:
@@ -1234,9 +1234,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 | 層面 | 具體耦合 | 代表檔案 |
 |------|---------|---------|
 | 1. Memory 路徑 | `~/.claude/projects/<claude-project-id>/memory/` 硬寫在 agent 指令與 docs | `agents/project-pm.md`, `agents/critic.md`, `agents/architecture-reviewer.md`, `commands/mem-*.md` |
-| 2. Hook 機制 | PreToolUse / PostToolUse / SessionStart / SessionStop 是 Claude Code 特有 primitive | 所有 `scripts/hook-*.sh`, `scripts/install-hooks.sh`, `docs/CONCEPTS.md` |
-| 3. 設定格式 | `~/.claude/settings.json` 結構（`.hooks.PreToolUse[]` 等）與 Claude Code 版本綁定 | `scripts/install-hooks.sh`, `scripts/doctor.sh`, `scripts/test-install.sh` |
-| 4. 安裝路徑 | `~/.claude/` 作為所有 assets 安裝目標（雖有 `CLAUDE_HOME` override，但 fallback 仍 Claude-specific） | `install.sh`, `uninstall.sh`, `scripts/install-hooks.sh` |
+| 2. Hook 機制 | PreToolUse / PostToolUse / SessionStart / SessionStop 是 Claude Code 特有 primitive | 所有 `scripts/hook-*.sh`, `scripts/install-guards.sh`, `docs/CONCEPTS.md` |
+| 3. 設定格式 | `~/.claude/settings.json` 結構（`.hooks.PreToolUse[]` 等）與 Claude Code 版本綁定 | `scripts/install-guards.sh`, `scripts/doctor.sh`, `scripts/test-install.sh` |
+| 4. 安裝路徑 | `~/.claude/` 作為所有 assets 安裝目標（雖有 `CLAUDE_HOME` override，但 fallback 仍 Claude-specific） | `install.sh`, `uninstall.sh`, `scripts/install-guards.sh` |
 | 5. Env var 前綴 | `CLAUDE_HOOK_*` / `CLAUDE_CONFIG_DIR` 前綴（CC-321 已完成重命名 `CLAUDE_HOOK_*` → `PM_HOOK_*`；shims 至 v0.5.0 移除） | `scripts/hook-*.sh`, `scripts/lib/memory.sh` |
 | 6. Dispatch 術語 | `dispatch_handover_v1` 區塊格式、`Agent tool` 呼叫約定、`claude --print` CLI 假設 | `docs/dispatch-brief.md`, `adapters/claude/dispatch.sh`, `commands/pm.md` |
 | 7. Reviewer memory 讀取 | Reviewer agents 直接讀 `~/.claude/projects/<id>/memory/` 而非透過 handover brief | `agents/critic.md`, `agents/architecture-reviewer.md`, `agents/risk-reviewer.md`, `agents/security-reviewer.md` |
@@ -1369,7 +1369,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ## CC-404 — memory: MEMORY.md 注入預算 + priority metadata 🟢 someday → v0.7.0
 
-**Problem**: `scripts/hook-inject-memory.sh` 把 `MEMORY.md` 所有 `^- ` 行全注入，>=50 條才印警告，且 `scripts/test-hooks.sh` 明確斷言 60 條不截斷。結果：index bloat 必然發生，每個 session 都付 stale / 不相關條目的 token，與 memory「keep index short, high-signal」的設計目標相反。
+**Problem**: `scripts/guard-inject-memory.sh` 把 `MEMORY.md` 所有 `^- ` 行全注入，>=50 條才印警告，且 `scripts/test-guards.sh` 明確斷言 60 條不截斷。結果：index bloat 必然發生，每個 session 都付 stale / 不相關條目的 token，與 memory「keep index short, high-signal」的設計目標相反。
 
 **Why**: 注入是每 session 固定成本的最大來源；把它從「全注入」改成「預算 + 排序」是 memory 端最高 token 槓桿。但若無 priority metadata 直接截斷，可能蓋掉關鍵 user 約束——故須與 [[CC-405]] metadata 同捆或在其後。
 
@@ -1383,7 +1383,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3.
 
 
-**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/hook-inject-memory.sh`、`scripts/test-hooks.sh`。
+**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/guard-inject-memory.sh`、`scripts/test-guards.sh`。
 
 ## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 🟢 someday → v0.7.0
 

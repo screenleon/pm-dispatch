@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hook-inject-memory.sh — UserPromptSubmit hook: inject MEMORY.md index.
+# guard-inject-memory.sh — UserPromptSubmit hook: inject MEMORY.md index.
 # Receives JSON payload via stdin from Claude Code UserPromptSubmit event.
 set -euo pipefail
 

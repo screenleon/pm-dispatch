@@ -271,7 +271,7 @@ check_settings_file() {
   if command -v jq >/dev/null 2>&1 && ! jq . "$settings" >/dev/null 2>&1; then
     _SETTINGS_FILE_INVALID=1
     emit_check settings-file fail "settings.json exists but is not valid JSON" \
-      "printf '{}\\n' > ~/.claude/settings.json  then re-run install-hooks.sh"
+      "printf '{}\\n' > ~/.claude/settings.json  then re-run install-guards.sh"
     return
   fi
 
@@ -281,7 +281,7 @@ check_settings_file() {
 hook_present() {
   local basename="$1" settings="$2"
   jq -e --arg basename "$basename" '
-    # install-hooks.sh shell-escapes managed command paths (printf %q), so a repo
+    # install-guards.sh shell-escapes managed command paths (printf %q), so a repo
     # under a path with a space stores a backslash-escaped command. Strip those
     # shell-escape backslashes (a backslash before any non-alphanumeric char)
     # BEFORE the Windows backslash->slash conversion, which only applies to native
@@ -303,7 +303,7 @@ hook_present() {
     ] | length > 0)
     or
     (
-      $basename == "hook-save-rate-limits.sh" and
+      $basename == "guard-save-rate-limits.sh" and
       ((.statusLine.command? // "") as $cmd |
         ($cmd | normalize_path) as $ncmd |
         (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts"))
@@ -359,11 +359,11 @@ stale_hook_commands() {
           (
             ($ncmd | split("/") | .[-2]) == "scripts" and
             (($ncmd | split("/") | last) | IN(
-              "hook-pm-write-guard.sh",
-              "hook-log-claude-usage.sh",
-              "hook-session-summary.sh",
-              "hook-inject-memory.sh",
-              "hook-save-rate-limits.sh"
+              "guard-pm-write.sh",
+              "guard-log-claude-usage.sh",
+              "guard-session-summary.sh",
+              "guard-inject-memory.sh",
+              "guard-save-rate-limits.sh"
             ))
           ) or
           (
@@ -394,11 +394,11 @@ check_hooks() {
 
   local profile
   local -a hooks=(
-    hook-pm-write-guard.sh
-    hook-log-claude-usage.sh
-    hook-session-summary.sh
-    hook-inject-memory.sh
-    hook-save-rate-limits.sh
+    guard-pm-write.sh
+    guard-log-claude-usage.sh
+    guard-session-summary.sh
+    guard-inject-memory.sh
+    guard-save-rate-limits.sh
   )
   local _want_full=0
   case "$PROFILE" in
@@ -464,7 +464,7 @@ check_hooks() {
     _total_hooks=$(( _total_hooks + ${#_adapter_bg_names[@]} ))
   fi
   if [[ "${#missing[@]}" -gt 0 ]]; then
-    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-hooks.sh'"
+    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
   elif [[ "${#_stale[@]}" -gt 0 ]]; then
     emit_check hooks warn \
       "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
@@ -519,12 +519,12 @@ check_dispatch_allowlist() {
 
 check_scripts_executable() {
   local -a scripts=(
-    hook-pm-write-guard.sh
-    hook-reviewer-write-guard.sh
-    hook-log-claude-usage.sh
-    hook-session-summary.sh
-    hook-inject-memory.sh
-    hook-save-rate-limits.sh
+    guard-pm-write.sh
+    guard-reviewer-write.sh
+    guard-log-claude-usage.sh
+    guard-session-summary.sh
+    guard-inject-memory.sh
+    guard-save-rate-limits.sh
     token-usage.sh
     log-usage.sh
     pr-gate.sh

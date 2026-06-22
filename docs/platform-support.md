@@ -63,7 +63,7 @@ cd "${PM_DISPATCH_REPO}"
 bash install.sh
 
 # 3. Wire Claude Code hooks into ~/.claude/settings.json
-bash scripts/install-hooks.sh
+bash scripts/install-guards.sh
 ```
 
 `install.sh` symlinks each file individually into `~/.claude/agents/`,
@@ -90,7 +90,7 @@ git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 
 bash install.sh
-bash scripts/install-hooks.sh
+bash scripts/install-guards.sh
 ```
 
 Add the repo CLI directory to PATH so `pmctl` can run in place:
@@ -179,9 +179,9 @@ Removes pm-dispatch hooks from `~/.claude/settings.json`. Safe to run at any tim
 leaves all other settings untouched.
 
 ```bash
-bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh"
+bash "${PM_DISPATCH_REPO}/scripts/uninstall-guards.sh"
 # or with preview:
-bash "${PM_DISPATCH_REPO}/scripts/uninstall-hooks.sh" --dry-run
+bash "${PM_DISPATCH_REPO}/scripts/uninstall-guards.sh" --dry-run
 ```
 
 ### Part 2 — remove managed files from ~/.claude
@@ -265,7 +265,7 @@ fi
 brew install jq coreutils
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
-bash install.sh && bash scripts/install-hooks.sh
+bash install.sh && bash scripts/install-guards.sh
 ```
 
 ### Windows Git Bash minimal
@@ -278,7 +278,7 @@ winget install jqlang.jq Git.Git
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 bash install.sh
-bash scripts/install-hooks.sh --profile minimal
+bash scripts/install-guards.sh --profile minimal
 ```
 
 ### WSL2
@@ -287,7 +287,7 @@ bash scripts/install-hooks.sh --profile minimal
 sudo apt update && sudo apt install -y jq
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
-bash install.sh && bash scripts/install-hooks.sh
+bash install.sh && bash scripts/install-guards.sh
 ```
 
 ---
@@ -304,6 +304,6 @@ bash install.sh && bash scripts/install-hooks.sh
 - `README.md` — overview and quick install
 - `CONCEPTS.md` — architecture concepts
 - `scripts/lib/portable.sh` — `link_or_copy()` and install manifest
-- `scripts/install-hooks.sh` — hook wiring
-- `scripts/uninstall-hooks.sh` — hook removal
+- `scripts/install-guards.sh` — hook wiring
+- `scripts/uninstall-guards.sh` — hook removal
 - `docs/platform-support.md` (this document)

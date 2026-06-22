@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared allowlist path helpers - sourced by install.sh, doctor.sh, uninstall-hooks.sh.
+# Shared allowlist path helpers - sourced by install.sh, doctor.sh, uninstall-guards.sh.
 
 dispatch_allowlist_entries() {
   # REPO_ROOT and HOME must be set by the caller.

@@ -314,14 +314,14 @@ test_empty_dir_removed() {
   pass "$name"
 }
 
-# Verifies that uninstall-hooks.sh is invoked and removes pm-dispatch hook entries
+# Verifies that uninstall-guards.sh is invoked and removes pm-dispatch hook entries
 # from $HOME/.claude/settings.json.
 #
 # Steps:
 #   1. Write settings.json containing a pm-dispatch hook entry.
 #   2. Run uninstall.sh.
-#   3. Assert output contains "==> hooks" and "uninstall-hooks: wrote"; assert
-#      hook-pm-write-guard.sh is no longer referenced in settings.json.
+#   3. Assert output contains "==> hooks" and "uninstall-guards: wrote"; assert
+#      guard-pm-write.sh is no longer referenced in settings.json.
 test_hooks_called() {
   local name="TC-08 hooks-called"
   _tu_needs_symlink "$name" || return 0
@@ -345,7 +345,7 @@ test_hooks_called() {
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          {"type": "command", "command": "$REPO_ROOT/scripts/hook-pm-write-guard.sh"}
+          {"type": "command", "command": "$REPO_ROOT/scripts/guard-pm-write.sh"}
         ]
       }
     ]
@@ -358,8 +358,8 @@ JSON
     return
   fi
   assert_contains "$name" "$out" "==> hooks" || return
-  assert_contains "$name" "$out" "uninstall-hooks: wrote" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-pm-write-guard.sh" || return
+  assert_contains "$name" "$out" "uninstall-guards: wrote" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   pass "$name"
 }
 
@@ -680,12 +680,12 @@ test_dot_dot_traversal_rejected() {
   pass "$name"
 }
 
-# Verifies that when uninstall-hooks.sh exits non-zero, the script exits non-zero
+# Verifies that when uninstall-guards.sh exits non-zero, the script exits non-zero
 # before deleting the manifest, leaving it available for a recovery rerun; and that
 # after the hook dependency is fixed a second run successfully cleans up.
 #
 # Steps:
-#   1. Set up a mock repo with a failing uninstall-hooks.sh (always exit 1).
+#   1. Set up a mock repo with a failing uninstall-guards.sh (always exit 1).
 #   2. Run mock uninstall.sh; assert non-zero exit and manifest preserved.
 #   3. Fix mock hooks to exit 0; rerun; assert manifest is deleted (clean state).
 test_hooks_failure_preserves_manifest() {
@@ -700,8 +700,8 @@ test_hooks_failure_preserves_manifest() {
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
 
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/scripts/uninstall-hooks.sh"
-  chmod +x "$mock_repo/scripts/uninstall-hooks.sh"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/scripts/uninstall-guards.sh"
+  chmod +x "$mock_repo/scripts/uninstall-guards.sh"
 
   src19="$tmp_root/src19.md"
   printf 'hello' > "$src19"
@@ -721,7 +721,7 @@ test_hooks_failure_preserves_manifest() {
   else
     # First run correct: hooks failed, manifest preserved.
     # Now fix the mock hooks and rerun — recovery should succeed.
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-hooks.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-guards.sh"
     HOME="$fake_home" bash "$mock_repo/uninstall.sh" > /dev/null 2>&1 || true
     # Entries are "already gone" (removed in first run) → safety_skipped=0 → manifest deleted
     if [[ -f "$manifest19" ]]; then
@@ -824,8 +824,8 @@ test_symlink_parent_no_realpath_rejected() {
   # Set up a mock repo with a real uninstall.sh, portable helpers, and working hooks.
   cp "$REPO_ROOT/uninstall.sh" "$mock_repo/uninstall.sh"
   cp "$REPO_ROOT/scripts/lib/portable.sh" "$mock_repo/scripts/lib/portable.sh"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-hooks.sh"
-  chmod +x "$mock_repo/scripts/uninstall-hooks.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$mock_repo/scripts/uninstall-guards.sh"
+  chmod +x "$mock_repo/scripts/uninstall-guards.sh"
 
   # Inject a fake realpath that always exits 1 with no output.
   printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_repo/bin/realpath"

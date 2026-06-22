@@ -80,7 +80,7 @@ because they mutate the real `~/.claude` environment.
 
 ```bash
 bash install.sh --verify          # runs preflight suites, then installs
-bash scripts/install-hooks.sh     # wire hooks into ~/.claude/settings.json
+bash scripts/install-guards.sh     # wire hooks into ~/.claude/settings.json
 bash scripts/doctor.sh            # Linux / WSL2: profile auto
 bash uninstall.sh                 # confirm clean removal, no leftover share/ dir
 ```
@@ -159,7 +159,7 @@ covering check has passed this cycle.
 | isolation policy: `isolation_level:none` rejected for codex (v0.6.0) | §1 Phase 2 (`test-*-handover`) + §1 Phase 3b |
 | isolation policy: legacy trio (`sandbox`/`approval`/`skip_git_check`) removed (v0.6.0) | §1 Phase 2 (`test-*-handover`) + §1 Phase 3b |
 | install / uninstall / doctor | §1 Phase 2 (`test-install/uninstall/doctor`) + §2a (real) |
-| hooks (write-guard, routing, memory, usage…) | §1 Phase 2 (`test-hooks`, `test-hook-framework`) + §2d (live) |
+| hooks (write-guard, routing, memory, usage…) | §1 Phase 2 (`test-guards`, `test-guard-framework`) + §2d (live) |
 | brief-validate + handover contract | §1 Phase 2 (`test-brief-validate`, `test-*-handover`) |
 | reviewer fan-out / pr-gate | §1 Phase 2 (`test-pr-gate*`) + §2c (real) |
 | commands / skills frontmatter | §1 Phase 2 (`lint-agents`, `lint-frontmatter`, `test-commands*`) |

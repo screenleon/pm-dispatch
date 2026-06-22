@@ -30,11 +30,11 @@
 # Wired into settings.json as a PreToolUse hook with matcher "Edit|Write" for
 # hook-mode runtimes; no-op for any non-executor agent.
 #
-# Bypass: set PM_HOOK_<RUNTIME>_WRITE_GUARD=off in the environment (logged), e.g.
-# PM_HOOK_CODEX_WRITE_GUARD=off.
+# Bypass: set PM_GUARD_<RUNTIME>_WRITE=off in the environment (logged), e.g.
+# PM_GUARD_CODEX_WRITE=off.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# $PM_HOOK_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
+# $PM_GUARD_LOG_DIR/hooks.log (default ~/.claude/logs/hooks.log).
 
 set -euo pipefail
 
@@ -45,28 +45,29 @@ _REPO_ROOT="$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/runner-kind.sh
 . "$_SCRIPT_DIR/lib/runner-kind.sh"
 
-HOOK_NAME="hook-executor-write-guard"
-LOG_DIR="${PM_HOOK_LOG_DIR:-$HOME/.claude/logs}"
+GUARD_NAME="guard-executor-write"
+: "${PM_GUARD_LOG_DIR:=${PM_HOOK_LOG_DIR:-}}"  # deprecated alias
+LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
-HK_BYPASS_ENV=""   # set per-runtime after agent_type is known
-# shellcheck source=scripts/lib/hook-framework.sh
-. "$_SCRIPT_DIR/lib/hook-framework.sh"
+G_BYPASS_ENV=""   # set per-runtime after agent_type is known
+# shellcheck source=scripts/lib/guard-framework.sh
+. "$_SCRIPT_DIR/lib/guard-framework.sh"
 
 # ---------- helpers ----------
 
-hk_deny_message() {
+g_deny_message() {
   local reason="$1"
   cat >&2 <<EOF
-${RUNTIME:-executor}-executor: blocked by $HOOK_NAME — $reason
+${RUNTIME:-executor}-executor: blocked by $GUARD_NAME — $reason
 
-  attempted: $HK_TOOL_NAME on ${file_path:-(empty)}
+  attempted: $G_TOOL_NAME on ${file_path:-(empty)}
   allowed:   /tmp/brief-<task>.md
 
 Executor Write/Edit is restricted to brief temp files at dispatch time.
 Write the brief to /tmp/brief-<task>.md, then dispatch via
 pmctl dispatch run --adapter ${RUNTIME:-<runtime>}.
 
-Bypass for one turn: set ${HK_BYPASS_ENV:-PM_HOOK_<RUNTIME>_WRITE_GUARD}=off (logged).
+Bypass for one turn: set ${G_BYPASS_ENV:-PM_GUARD_<RUNTIME>_WRITE}=off (logged).
 EOF
 }
 
@@ -76,25 +77,25 @@ EOF
 refuse() {
   local reason="$1"
   if [[ -n "${PM_GUARD_CHECK_CLI:-}" ]]; then
-    hk_deny "$reason" "${file_path:-}"
+    g_deny "$reason" "${file_path:-}"
   fi
   exit 0
 }
 
 # ---------- preflight ----------
 
-hk_require_jq
-hk_require_realpath
+g_require_jq
+g_require_realpath
 
 # ---------- parse input ----------
 
-hk_read_json
+g_read_json
 
 # No-op for any caller that is not an <runtime>-executor on Edit/Write.
-[[ "$HK_AGENT_TYPE" == *-executor ]] || exit 0
-[[ "$HK_TOOL_NAME" == "Edit" || "$HK_TOOL_NAME" == "Write" ]] || exit 0
+[[ "$G_AGENT_TYPE" == *-executor ]] || exit 0
+[[ "$G_TOOL_NAME" == "Edit" || "$G_TOOL_NAME" == "Write" ]] || exit 0
 
-RUNTIME="${HK_AGENT_TYPE%-executor}"
+RUNTIME="${G_AGENT_TYPE%-executor}"
 [[ "$RUNTIME" =~ ^[a-z][a-z0-9_-]*$ ]] || exit 0
 
 # Resolve the runtime's write-guard mode from its adapter manifest. The
@@ -114,44 +115,48 @@ if [[ -z "${PM_GUARD_CHECK_CLI:-}" && "$write_guard_mode" != "hook" ]]; then
   exit 0
 fi
 
-# Per-runtime bypass env (PM_HOOK_<RUNTIME>_WRITE_GUARD; '-' → '_' for validity).
+# Per-runtime bypass env (PM_GUARD_<RUNTIME>_WRITE; '-' → '_' for validity).
 _bypass_suffix="${RUNTIME^^}"
-HK_BYPASS_ENV="PM_HOOK_${_bypass_suffix//-/_}_WRITE_GUARD"
+G_BYPASS_ENV="PM_GUARD_${_bypass_suffix//-/_}_WRITE"
+# Accept deprecated PM_HOOK_<RUNTIME>_WRITE_GUARD if new var is unset.
+_old_bypass="PM_HOOK_${_bypass_suffix//-/_}_WRITE_GUARD"
+[[ -z "${!G_BYPASS_ENV:-}" && -n "${!_old_bypass:-}" ]] && export "${G_BYPASS_ENV}=${!_old_bypass}"
+unset _old_bypass _bypass_suffix
 
-file_path="$(hk_jq '.tool_input.file_path // ""')" || {
-  hk_audit deny "jq failed on tool_input.file_path" ""
-  echo "$HOOK_NAME: malformed JSON on stdin — denying" >&2
+file_path="$(g_jq '.tool_input.file_path // ""')" || {
+  g_audit deny "jq failed on tool_input.file_path" ""
+  echo "$GUARD_NAME: malformed JSON on stdin — denying" >&2
   exit 2
 }
-HK_TARGET="$file_path"
+G_TARGET="$file_path"
 
 # Bypass AFTER parse so the audit line records the actual call being bypassed.
-hk_check_bypass "$HK_BYPASS_ENV"
+g_check_bypass "$G_BYPASS_ENV"
 
-hk_validate_path "$file_path"
-abs_path="$HK_ABS_PATH"
+g_validate_path "$file_path"
+abs_path="$G_ABS_PATH"
 
 # Pattern check: must match /tmp/brief-<something>.md
 case "$abs_path" in
   /tmp/brief-*.md) ;;
-  *) hk_deny "path outside allowed brief pattern (resolved to $abs_path)" "$file_path" ;;
+  *) g_deny "path outside allowed brief pattern (resolved to $abs_path)" "$file_path" ;;
 esac
 
 # Reject existing symlinks — a symlink at /tmp/brief-task.md pointing to a source
 # or config file would pass the pattern check but redirect the write to the
 # symlink target, bypassing the guard's intent.
 if [[ -L "$abs_path" ]]; then
-  hk_deny "brief path is an existing symlink (symlink attack vector: $abs_path)" "$file_path"
+  g_deny "brief path is an existing symlink (symlink attack vector: $abs_path)" "$file_path"
 fi
 
 # Verify the parent directory resolves to /tmp (guards against /tmp itself being a
 # symlink or path traversal via dirname).
 if ! [[ -d "$(dirname "$abs_path")" ]]; then
-  hk_deny "parent directory does not exist (resolved to $(dirname "$abs_path"))" "$file_path"
+  g_deny "parent directory does not exist (resolved to $(dirname "$abs_path"))" "$file_path"
 fi
 real_parent="$(realpath_m "$(dirname "$abs_path")" 2>/dev/null)" || {
-  hk_deny "realpath of parent directory failed" "$file_path"
+  g_deny "realpath of parent directory failed" "$file_path"
 }
-[[ "$real_parent" == "/tmp" ]] || hk_deny "parent directory resolves outside /tmp (got: $real_parent)" "$file_path"
+[[ "$real_parent" == "/tmp" ]] || g_deny "parent directory resolves outside /tmp (got: $real_parent)" "$file_path"
 
-hk_allow "brief temp file" "$file_path"
+g_allow "brief temp file" "$file_path"

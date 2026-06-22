@@ -33,7 +33,7 @@ Most users think of hooks as "automation" — *do X every time Y happens*. `pm-d
 
 Two examples:
 
-- **`hook-pm-write-guard.sh`** — blocks the `project-pm` subagent from writing to anywhere except the memory directory and a small allowlist. The PM agent is supposed to plan and write briefs, not edit production code. If a PM session tries to `Write(src/api.go)`, the hook denies the call and the user sees why. Without the hook this is a strong suggestion in the prompt; with the hook it is structural.
+- **`guard-pm-write.sh`** — blocks the `project-pm` subagent from writing to anywhere except the memory directory and a small allowlist. The PM agent is supposed to plan and write briefs, not edit production code. If a PM session tries to `Write(src/api.go)`, the hook denies the call and the user sees why. Without the hook this is a strong suggestion in the prompt; with the hook it is structural.
 
 The general shape is: identify a recurring "you should not have done that" moment in your workflow, write the rule once as a hook, and the harness enforces it forever after. The cost of writing the hook is paid once; the policy then applies to every future session, including the ones you don't remember.
 
@@ -41,12 +41,12 @@ The general shape is: identify a recurring "you should not have done that" momen
 
 A prompt rule lives in one agent's context window. A hook lives in the harness. If three agents could in principle make the same mistake, you write one hook instead of three prompt rules and you get the rule back even after a context compaction.
 
-The trade-off is that hooks are shell, not English. They are harder to write and harder to test. `scripts/test-hooks.sh` is how this repo keeps them honest — every hook has at least one test case that drives a JSON fixture and asserts the exit code and stderr shape.
+The trade-off is that hooks are shell, not English. They are harder to write and harder to test. `scripts/test-guards.sh` is how this repo keeps them honest — every hook has at least one test case that drives a JSON fixture and asserts the exit code and stderr shape.
 
 ### Where to look
 
 - `scripts/hook-*.sh` — every hook in this repo
-- `scripts/test-hooks.sh` — the test harness for them
+- `scripts/test-guards.sh` — the test harness for them
 - `~/.claude/settings.json` after `bash install.sh` — the registration
 
 ---
@@ -149,7 +149,7 @@ This three-way write path is on purpose: not every fact wants the same author.
 
 - `MEMORY.md` — the index for the current session
 - `commands/mem-recall.md` / `mem-log.md` / `mem-distill.md` / `mem-search.md` — the four memory skills
-- `scripts/hook-session-summary.sh` — the SessionStop hook that writes episodes
+- `scripts/guard-session-summary.sh` — the SessionStop hook that writes episodes
 
 ---
 
@@ -161,7 +161,7 @@ Suppose you ask Claude: *"please plan the next milestone for project X."*
 
 2. **Subagent.** The main thread calls `Agent(subagent_type="project-pm", prompt="…")`. A fresh Claude session opens. Its tool allowlist (declared in `agents/project-pm.md`) gives it Read/Write/Edit/Bash/Glob/Grep — enough to read code, edit briefs, and grep the backlog. No tools that could write to production code, because of the next item.
 
-3. **Hook.** When the PM subagent tries to `Write(src/some-file.go)`, the `hook-pm-write-guard.sh` hook fires in `PreToolUse`. It reads the JSON, sees the target is outside the memory/brief allowlist, and exits non-zero. The harness denies the tool call and tells the agent why. The PM cannot accidentally edit production code; the rule is structural.
+3. **Hook.** When the PM subagent tries to `Write(src/some-file.go)`, the `guard-pm-write.sh` hook fires in `PreToolUse`. It reads the JSON, sees the target is outside the memory/brief allowlist, and exits non-zero. The harness denies the tool call and tells the agent why. The PM cannot accidentally edit production code; the rule is structural.
 
 4. **Memory.** When the PM starts thinking, the `MEMORY.md` injected into its context tells it that the user prefers terse responses, that the project is mid-refactor, and that a similar question was asked yesterday. The PM doesn't ask the user to re-explain.
 
@@ -178,8 +178,8 @@ Every step uses one of the four concepts. None of them is "magic" — each is a 
 - **Set up the repo on your machine** → `docs/GETTING_STARTED.md`
 - **Understand the dispatch flow used by `/pm` and `/pr-gate`** → `docs/dispatch-brief.md`
 - **Query the repo index before writing a brief** → `docs/context-retrieval.md`
-- **Add a new slash command** → look at any existing `commands/*.md` and `scripts/test-hooks.sh`
-- **Write a new hook** → read `scripts/hook-pm-write-guard.sh` as a reference and add a test in `scripts/test-hooks.sh`
+- **Add a new slash command** → look at any existing `commands/*.md` and `scripts/test-guards.sh`
+- **Write a new hook** → read `scripts/guard-pm-write.sh` as a reference and add a test in `scripts/test-guards.sh`
 - **Add a memory card** → see `~/.claude/projects/<id>/memory/MEMORY.md` for the index format; cards have YAML frontmatter (`name:` / `description:` / `metadata.type:`) and live next to the index
 - **Platform support** → `docs/platform-support.md`
 

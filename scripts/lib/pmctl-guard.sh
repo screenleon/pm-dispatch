@@ -7,7 +7,7 @@
 # synthesizes the canonical PreToolUse stdin JSON for a (role, runtime, event)
 # cell and drives the existing, battle-tested guard hook scripts. Reusing the
 # proven hooks verbatim makes the CLI surface equivalent-by-construction
-# (architecture R2: the engine is the same code path the test-hooks.sh suite
+# (architecture R2: the engine is the same code path the test-guards.sh suite
 # already covers).
 #
 # Trigger asymmetry is inherent, not a flaw: Claude fires the guard automatically
@@ -141,7 +141,7 @@ pmctl_guard_check() {
 
   # Runtime validation differs by role:
   #   executor — open-ended bare identifier: adding a runtime is an adapter concern
-  #     (drop in adapters/<runtime>/); the unified hook-executor-write-guard.sh fails
+  #     (drop in adapters/<runtime>/); the unified guard-executor-write.sh fails
   #     closed (deny) when driven via the CLI for a runtime with no valid manifest, so
   #     we don't allowlist here.
   #   pm / reviewer — fixed hook (runtime does not select a hook); validate against the
@@ -168,7 +168,7 @@ pmctl_guard_check() {
   # (<runtime>-executor), so adding a runtime needs no edit here; `reviewer`
   # uses the synthetic identity "reviewer" — the hook recognises this alongside
   # the five named reviewer agent types.
-  # CRITICAL: each hook self-gates on HK_AGENT_TYPE and no-ops (exit 0 =
+  # CRITICAL: each hook self-gates on G_AGENT_TYPE and no-ops (exit 0 =
   # ALLOW) for any other identity. Because agent_type AND the physical pre-write
   # hook below are BOTH derived from $role/$runtime, they cannot drift — a
   # fail-OPEN from an identity/hook mismatch is impossible by construction.
@@ -220,18 +220,18 @@ pmctl_guard_check() {
       case "$role" in
         pm)
           # [role-based] pm policy is fixed regardless of runtime (currently claude-only).
-          hook="hook-pm-write-guard.sh"
+          hook="guard-pm-write.sh"
           ;;
         reviewer)
           # [role-based] One fixed rule (.gate-results/) across runtimes.
-          hook="hook-reviewer-write-guard.sh"
+          hook="guard-reviewer-write.sh"
           ;;
         executor)
           # [role-based] ONE unified wrapper across all executor runtimes.
           # It derives the runtime from agent_type (<runtime>-executor) and reads the
           # runtime's write_guard_mode from its manifest, so adding a runtime only
           # requires dropping in adapters/<runtime>/ — no new guard file.
-          hook="hook-executor-write-guard.sh"
+          hook="guard-executor-write.sh"
           ;;
       esac
       ;;

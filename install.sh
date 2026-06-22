@@ -7,7 +7,7 @@
 # Usage:
 #   ./install.sh [--dry-run] [--profile minimal|full] [--verify]
 #
-# --profile is forwarded to install-hooks.sh and selects whether to wire adapter
+# --profile is forwarded to install-guards.sh and selects whether to wire adapter
 # bash guards (adapters/<name>/bash-guard.sh, manifest-driven via needs_bash_guard).
 # No adapter ships a bash guard today, so both profiles currently wire the same
 # hook set; the flag is retained for forward compatibility with future adapters.
@@ -42,7 +42,7 @@ case "$PROFILE" in
   *) echo "install: --profile must be minimal or full (got: $PROFILE)" >&2; exit 2 ;;
 esac
 
-# jq is required by hooks and install-hooks.sh; fail early with actionable hint.
+# jq is required by hooks and install-guards.sh; fail early with actionable hint.
 if ! command -v jq >/dev/null 2>&1; then
   echo "install: jq not found — install it first:" >&2
   echo "  Linux/WSL2: sudo apt install jq" >&2
@@ -388,7 +388,7 @@ remove_legacy_symlink "$SCRIPTS_DEST/codex-dispatch.sh" "$REPO_ROOT/scripts/code
 us_count=0; us_conflicts=0
 # Allowlist: user-facing scripts only. Excluded intentionally:
 #   test-*.sh   — run as install preflights above, not user tools
-#   hook-*.sh   — wired by install-hooks.sh, not standalone user tools
+#   hook-*.sh   — wired by install-guards.sh, not standalone user tools
 #   lint-*.sh   — internal CI helpers
 for script in token-usage.sh log-usage.sh pr-gate.sh setup-project.sh patch-gitignore.sh doctor.sh; do
   if link "$REPO_ROOT/scripts/$script" "$SCRIPTS_DEST/$script"; then
@@ -464,9 +464,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     # and does NOT leak into --verify's run-all-tests preflight (which spawns
     # nested installs that must default CLAUDE_HOME to their own HOME).
     if [[ -n "$PROFILE" ]]; then
-      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run --profile "$PROFILE"
+      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
     else
-      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --dry-run
+      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
     fi
   fi
 else
@@ -477,9 +477,9 @@ else
   fi
   # CLAUDE_HOME passed per-call (see dry-run branch above) — scoped, not exported.
   if [[ -n "$PROFILE" ]]; then
-    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh" --profile "$PROFILE"
+    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
   else
-    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-hooks.sh"
+    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh"
   fi
 fi
 echo
