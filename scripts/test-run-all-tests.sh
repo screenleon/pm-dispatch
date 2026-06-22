@@ -468,6 +468,8 @@ test_dispatch_pm_scripts_via_bash() {
 
 test_jobs_parallel_all_pass() {
   # Behavior: --jobs 2 runs all suites in parallel and exits 0 with correct totals.
+  # Steps: write pass stubs for all suites; run aggregator --jobs 2; assert exit 0 and
+  #        total line shows SUITE_TOTAL passed.
   local name="jobs-parallel-all-pass"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
@@ -482,7 +484,9 @@ test_jobs_parallel_all_pass() {
 }
 
 test_jobs_parallel_one_fail() {
-  # Behavior: --jobs 2 with one failing suite exits 1 and reports the failed suite name.
+  # Behavior: --jobs 2 with one failing suite exits 1 and names the failed suite.
+  # Steps: write pass stubs; override lint-agents stub to exit 1; run --jobs 2;
+  #        assert exit != 0, FAIL lint-agents in output, and failed suites line names it.
   local name="jobs-parallel-one-fail"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
@@ -498,7 +502,9 @@ test_jobs_parallel_one_fail() {
 }
 
 test_jobs_parallel_skip_accounting() {
-  # Behavior: --jobs 2, one suite --skip'd; totals show 1 skipped.
+  # Behavior: --jobs 2 with --skip reflects the skipped suite in totals.
+  # Steps: write pass stubs; run --jobs 2 --skip lint-agents; assert SKIP message and
+  #        total shows SUITE_TOTAL-1 passed and 1 skipped.
   local name="jobs-parallel-skip-accounting"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
@@ -516,7 +522,9 @@ test_jobs_parallel_skip_accounting() {
 }
 
 test_jobs_invalid_zero() {
-  # Behavior: --jobs 0 exits 2 with an error message (zero is not a positive integer).
+  # Behavior: --jobs 0 exits 2 with an error message.
+  # Steps: invoke run-all-tests.sh --jobs 0; assert exit 2 and error message contains
+  #        "--jobs requires a positive integer".
   local name="jobs-invalid-zero"
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs 0 2>&1) || status=$?
@@ -528,7 +536,9 @@ test_jobs_invalid_zero() {
 }
 
 test_jobs_invalid_string() {
-  # Behavior: --jobs abc exits 2 with an error message.
+  # Behavior: --jobs with a non-numeric argument exits 2 with an error message.
+  # Steps: invoke run-all-tests.sh --jobs abc; assert exit 2 and error message contains
+  #        "--jobs requires a positive integer".
   local name="jobs-invalid-string"
   local out status=0
   out=$(bash "$REPO_ROOT/scripts/run-all-tests.sh" --jobs abc 2>&1) || status=$?
@@ -540,7 +550,8 @@ test_jobs_invalid_string() {
 }
 
 test_jobs_no_arg_default() {
-  # Behavior: no --jobs flag uses default parallelism (nproc or 1); exits 0 with correct totals.
+  # Behavior: no --jobs flag uses default parallelism (nproc or 1 fallback); exits 0.
+  # Steps: write pass stubs; run aggregator without --jobs; assert exit 0 and correct totals.
   local name="jobs-no-arg-default"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"
@@ -555,7 +566,8 @@ test_jobs_no_arg_default() {
 }
 
 test_jobs_larger_than_suite_count() {
-  # Behavior: --jobs N where N > total suites runs all suites without error.
+  # Behavior: --jobs N where N exceeds total suite count runs all suites without error.
+  # Steps: write pass stubs; run --jobs 9999; assert exit 0 and correct totals.
   local name="jobs-larger-than-suite-count"
   local repo="$TMP_ROOT/$name" path out status=0
   make_fixture_repo "$repo"

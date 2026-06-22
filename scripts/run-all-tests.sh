@@ -210,7 +210,7 @@ _suite_skip_reason() {
   return 1
 }
 
-# ── Sequential path (JOBS=1, default) ─────────────────────────────────────────
+# ── Sequential path (JOBS=1, used when nproc unavailable or --jobs 1) ─────────
 if [[ "$JOBS" -eq 1 ]]; then
   for name in "${SUITE_NAMES[@]}"; do
     if reason="$(_suite_skip_reason "$name")"; then
