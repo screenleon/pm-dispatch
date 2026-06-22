@@ -195,6 +195,13 @@ make_path_without_codex() {
   mkdir -p "$bin"
   ln -s /usr/bin/bash "$bin/bash"
   ln -s /usr/bin/dirname "$bin/dirname"
+  # Parallel path in run-all-tests needs these external tools:
+  ln -s "$(command -v mktemp)" "$bin/mktemp"
+  ln -s "$(command -v mkdir)"  "$bin/mkdir"
+  ln -s "$(command -v cat)"    "$bin/cat"
+  ln -s "$(command -v rm)"     "$bin/rm"
+  ln -s "$(command -v sleep)"  "$bin/sleep"
+  if command -v nproc >/dev/null 2>&1; then ln -s "$(command -v nproc)" "$bin/nproc"; fi
   printf '%s\n' "$bin"
 }
 
