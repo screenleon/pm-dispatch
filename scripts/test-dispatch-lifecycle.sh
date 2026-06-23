@@ -37,6 +37,14 @@ export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
 # so a 2s polling interval is pure dead time. Tests may override via the env.
 export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"
 
+# Ceiling for SUCCESS-path `dispatch wait` calls (the ones that expect the
+# detached supervisor to resolve). Generous so a CPU-saturated parallel run
+# (this suite spawns detached supervisors) cannot starve the supervisor past
+# the deadline and flake a passing case. The happy path still returns in ms via
+# the 0.1s poll above; this is only an upper bound. Intentional timeout-behavior
+# cases keep their own short literals (1/3/5s) and are NOT routed through this.
+_WAIT_OK="${PM_DISPATCH_TEST_WAIT_TIMEOUT:-30}"
+
 _BRIEFS=()
 _mk_brief() {
   local work="$1" bf
@@ -249,7 +257,7 @@ case_detached_is_default() {
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
   set +e
   run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   if [[ "$code" -eq 0 ]] \
     && [[ "$run_id" =~ ^run-[A-Za-z0-9]+-[A-Za-z0-9]+$ ]] \
@@ -303,7 +311,7 @@ case_default_detach_terminal_record_is_ok() {
     rm -rf "$work" "$bindir"; return
   fi
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   record="$(_record_for_run "$work" "$run_id")"
   if [[ "$wait_code" -eq 0 && -n "$record" ]] \
@@ -373,7 +381,7 @@ case_detached_true_detach() {
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
 
   set +e
-  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 2>&1)"; wait_code=$?
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; wait_code=$?
   set -e
   record="$(_record_for_run "$work" "$run_id")"
 
@@ -403,7 +411,7 @@ case_dispatch_wait_failure_propagates() {
   bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 7
   set +e
   run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"; code=$?
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   record="$(_record_for_run "$work" "$run_id")"
   if [[ "$code" -eq 0 && "$wait_code" -eq 7 ]] \
@@ -440,7 +448,7 @@ case_dispatch_wait_timeout() {
   fi
   # Wait for the detached supervisor to finish before cleanup so that
   # rm -rf does not race with the supervisor still writing to .agent-trace.
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1 || true
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
@@ -573,7 +581,7 @@ case_config_lifecycle_detached() {
   cfg="$(mktemp)"; printf 'dispatch.lifecycle = detached\n' > "$cfg"
   set +e
   run_id="$(PM_DISPATCH_CONFIG_FILE="$cfg" PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   if [[ "$code" -eq 0 && "$wait_code" -eq 0 ]] && [[ -n "$(_first_runspec "$work")" ]]; then
     pass "$name"
@@ -624,7 +632,7 @@ case_detached_brief_snapshot_survives_cleanup() {
   rm -f "$brief"
   # The supervisor must still complete from its durable snapshot.
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   if [[ "$code" -eq 0 && "$wait_code" -eq 0 ]]; then
     pass "$name"
@@ -948,7 +956,7 @@ EOF
   else
     fail "$name" "code=$code run_id=${run_id:-missing} runspec=${runspec:-missing} snap=${snap:-missing} native_brief=$native_brief autoctx=$(grep -c '^auto_context:' "${snap:-/dev/null}" 2>/dev/null || echo 0)"
   fi
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1 || true
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
   rm -rf "$work" "$bindir"
 }
 
@@ -983,7 +991,7 @@ case_supervisor_preflight_failure() {
   set -e
   record="$(_record_for_run "$work" "$run_id")"
   set +e
-  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>&1)"; wait_code=$?
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; wait_code=$?
   set -e
   if [[ "$supervisor_code" -ne 0 ]] \
     && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record" \
@@ -1033,7 +1041,7 @@ case_supervisor_tail_failure_writes_fallback_record() {
   chmod 755 "$bad_state_root"
   record="$(_record_for_run "$work" "$run_id")"
   set +e
-  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>&1)"; wait_code=$?
+  wait_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; wait_code=$?
   set -e
   if [[ "$supervisor_code" -ne 0 ]] \
     && [[ -n "$record" ]] && grep -q '^final_state: "failed"$' "$record" \
@@ -1065,7 +1073,7 @@ case_supervisor_fallback_covers_ok_run_with_poisoned_results() {
     rm -f "$work/.dispatch-results"; rm -rf "$work" "$bindir"; return
   fi
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
   supervisor_log="$work/.agent-trace/$run_id.supervisor.log"
   _log_ok=0
@@ -1131,7 +1139,7 @@ case_dispatch_wait_ignores_forged_workspace_record() {
 
   # Now dispatch wait should resolve with the real exit code (7).
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 2>&1; wait_code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1; wait_code=$?
   set -e
   record="$(_record_for_run "$work" "$run_id")"
 
@@ -1196,7 +1204,7 @@ case_dispatch_wait_ignores_forged_sentinel() {
 
   # Now dispatch wait should resolve with the real exit code (7).
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 15 >/dev/null 2>&1
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
   wait_code=$?
   set -e
 
@@ -1247,7 +1255,7 @@ case_dispatch_wait_same_user_nonce_forgery_documented() {
   # Same-user process wrote a valid nonce sentinel; dispatch wait resolves it.
   # By the trusted-executor model, a same-user process can read the key directory.
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 3 >/dev/null 2>&1
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
   wait_code=$?
   set -e
   local nonce_resolved=0
@@ -1342,7 +1350,7 @@ case_dispatch_wait_second_call_uses_record() {
   fi
   # First wait: resolves from sentinel, cleans up key + sentinel.
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 10 >/dev/null 2>&1
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
   first_code=$?
   set -e
   # Second wait: sentinel key is gone; no authenticated signal → indeterminate (3).
