@@ -50,6 +50,86 @@ The curated cards are split by purpose so the index can stay compact and the loa
 
 `episodes.jsonl` remains the episodic layer (append-only session summaries) and feeds `/mem-recall` and `/mem-distill` when needed.
 
+## Card frontmatter schema (CC-405)
+
+Card frontmatter is **additive**. The legacy block — `name`, `description`, and
+the `metadata:` map (`node_type`, `type`, `originSessionId`) — is preserved
+byte-for-byte; the standardized fields append as **top-level YAML after the
+`metadata:` block**. The `metadata:` block must never be removed or renamed: the
+external memory-graph tool keys off `metadata.node_type`/`type`, and
+`/memory-compress` reads `metadata.type` for merge-by-tier.
+
+| Field | Type | Notes |
+|---|---|---|
+| `topics` | list<str> | retrieval/trust ranking facets (consumed by `pmctl context --source memory`) |
+| `priority` | enum | exactly one of `always` / `normal` / `low` |
+| `status` | str | lifecycle, e.g. `active` |
+| `updated_at` | str | `"YYYY-MM-DD"` |
+| `expires_at` | str | optional expiry date |
+| `repo_refs` | list<str> | machine-checkable refs (may be empty `[]`) — see grammar below |
+
+Example (additive — legacy block unchanged):
+
+```yaml
+---
+name: development-workflow
+description: …
+metadata:
+  node_type: memory
+  type: feedback
+  originSessionId: …
+topics:
+  - workflow
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs:
+  - flag:pmctl gate run --executor codex
+---
+```
+
+### `repo_refs` grammar
+
+Each ref is a machine-checkable pointer so the health check can detect staleness.
+
+| Kind | Syntax | Fresh when |
+|---|---|---|
+| file | `path:<repo-root-relative>` (no leading `/`) | `test -f "$REPO_ROOT/<path>"` |
+| symbol | `fn:<rel-path>#<symbol>` | file exists AND a shell def `^<symbol>()` / `^function <symbol>` is found |
+| flag | `flag:<invocation> <--flag-token>` | the `--token` is found under `scripts/` |
+
+A ref that fails its check is **stale** and surfaces in `pmctl memory doctor`.
+An out-of-grammar ref is also reported stale rather than silently fresh: a
+`path:`/`fn:` path that is absolute or contains a `..` segment (it must stay
+repo-root-relative), or an `fn:` symbol that is not a shell identifier. `repo_refs`
+accepts both block-style (one `- ` item per line) and flow-style (`[a, b]`) YAML
+lists; the doctor parses and staleness-checks both.
+
+## Health check: `pmctl memory doctor`
+
+`pmctl memory doctor` is a **read-only** reporter over the memory dir — it
+mutates nothing. It is the warn-mode surface of the staged warn→enforce plan;
+write-time enforcement (in `/mem-distill` and `/memory-compress`) is a sequenced
+follow-up that lands only after a clean warn-scan.
+
+```sh
+pmctl memory doctor [--json] [--repo-root <path>]
+```
+
+Report fields (ordered): `memory_dir`, `entry_count`, `memory_bytes`,
+`episodes_bytes` (0 if absent), `dead_links` (MEMORY.md link → missing file),
+`orphan_cards` (card present but unreferenced, MEMORY.md excluded),
+`duplicate_hooks` (hook text on ≥2 index lines), `stale_repo_refs`
+(`{card, ref}` per the grammar above), `cards_missing_fields`
+(`{card, missing: [...]}` for any card lacking a required field —
+`topics`/`priority`/`status`/`updated_at`/`repo_refs`; `repo_refs` may be `[]`
+but the key must exist), `issues_count`. `--json` emits a single object carrying
+`schema_version: 1`. Exit codes: `0` healthy, `1` issues found, `2` usage error.
+
+Until the live cards are backfilled, `cards_missing_fields` will list every
+not-yet-migrated card — that is the warn surface that drives the one-time
+backfill before write-time enforce is enabled.
+
 ## Bootstrap-empty pattern for fork users
 
 Fork users can start with no cards and still keep the setup stable:

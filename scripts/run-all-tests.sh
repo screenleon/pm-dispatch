@@ -64,6 +64,7 @@ SUITE_NAMES=(
   test-brief-validate
   test-archive-closed-backlog
   test-pmctl-context
+  test-pmctl-memory
   test-pmctl-backlog
   test-pmctl-guard
   test-release-verify
@@ -124,6 +125,7 @@ declare -A SUITE_PATHS=(
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
   [test-pmctl-context]="scripts/test-pmctl-context.sh"
+  [test-pmctl-memory]="scripts/test-pmctl-memory.sh"
   [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"
   [test-pmctl-guard]="scripts/test-pmctl-guard.sh"
   [test-release-verify]="scripts/test-release-verify.sh"
@@ -163,6 +165,39 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# ── Registry-sync guard ──────────────────────────────────────────────────────
+# SUITE_NAMES (ordered) and SUITE_PATHS (name→script) are two parallel registries.
+# A name added to one but not the other previously surfaced only as a deep
+# `SUITE_PATHS[$name]: unbound variable` crash mid-run. Assert both registries
+# agree up front so any future drift fails loud and obvious at startup.
+_registry_drift=()
+for _name in "${SUITE_NAMES[@]}"; do
+  [[ -n "${SUITE_PATHS[$_name]:-}" ]] || _registry_drift+=("name without path: $_name")
+done
+for _name in "${!SUITE_PATHS[@]}"; do
+  _found=0
+  for _n in "${SUITE_NAMES[@]}"; do [[ "$_n" == "$_name" ]] && { _found=1; break; }; done
+  [[ "$_found" -eq 1 ]] || _registry_drift+=("path without name: $_name")
+done
+if [[ "${#_registry_drift[@]}" -gt 0 ]]; then
+  printf 'run-all-tests: SUITE_NAMES/SUITE_PATHS registry drift:\n' >&2
+  printf '  - %s\n' "${_registry_drift[@]}" >&2
+  exit 2
+fi
+unset _name _n _found _registry_drift
+
+# ── Live-context-db mutual exclusion ─────────────────────────────────────────
+# These suites both contend on the developer's live $REPO_ROOT/.pm-dispatch/ctx/
+# context.db: test-pmctl-context asserts it is unchanged for the suite's
+# duration (its no-live-db-mutation guard), while test-release-verify runs
+# release-verify.sh Phase 3 which indexes THIS repo and rebuilds that same db.
+# Run concurrently, the writer trips the reader's guard (a false failure). The
+# parallel scheduler below never lets two of these run at the same time.
+declare -A LIVE_DB_EXCLUSIVE=(
+  [test-pmctl-context]=1
+  [test-release-verify]=1
+)
 
 if [[ "$LIST" -eq 1 ]]; then
   printf '%s\n' "${SUITE_NAMES[@]}"
@@ -271,6 +306,15 @@ else
     _if_dirs+=("$d")
   }
 
+  # True while any live-db-exclusive suite is currently in-flight.
+  _exclusive_inflight() {
+    local i
+    for ((i = 0; i < ${#_if_names[@]}; i++)); do
+      [[ -n "${LIVE_DB_EXCLUSIVE[${_if_names[$i]}]:-}" ]] && return 0
+    done
+    return 1
+  }
+
   _drain() {
     local i new_names=() new_pids=() new_dirs=()
     for ((i = 0; i < ${#_if_pids[@]}; i++)); do
@@ -321,6 +365,14 @@ else
       _drain
       [[ ${#_if_pids[@]} -ge "$JOBS" ]] && sleep 0.05
     done
+
+    # A live-db-exclusive suite must not start while another one is in-flight.
+    if [[ -n "${LIVE_DB_EXCLUSIVE[$name]:-}" ]]; then
+      while _exclusive_inflight; do
+        _drain
+        _exclusive_inflight && sleep 0.05
+      done
+    fi
 
     _launch "$name" "$script"
   done
