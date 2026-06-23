@@ -82,7 +82,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-405 | 🟢 someday | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
-| CC-411 | 🟢 someday | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 與 `*_autorefresh_*` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | — | P3 | hygiene |
+| CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
 
 ---
 
@@ -1198,7 +1198,11 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Refs**: 延伸 [[CC-234]]（memory v2 寫側）、[[CC-405]]（mem-doctor 報告 episodes 大小）。
 
-## CC-411 — test: context 測試並行安全隔離（拔除對活 repo 的耦合）🟢 someday
+## CC-411 — test: context 測試並行安全隔離（拔除對活 repo 的耦合）✅ 2026-06-23
+
+**See**: pr:#314
+
+**Resolution**: 實際耦合僅 2 個 `*_on_real_repo` 案例（`case_context_query_on_real_repo`、`case_context_reuse_scan_on_real_repo`）——它們索引活 `$REPO_ROOT` 並寫共享 `.pm-dispatch/ctx/context.db`。`*_autorefresh_*` 案例已用隔離 fixture，未動。兩案改為把真實 lib 檔（`pmctl-validate.sh` / `pmctl-context.sh`）`cp` 進 `$tmp_root` fixture 後索引該 fixture，保留「真檔可被內容詞命中」的行為保證但不再碰活 DB；另加 `case_context_no_live_db_mutation` guard——套件起跑前快照活 DB fingerprint，末尾斷言未變，防任何案例未來再耦合活 repo。`case_context_index_unknown_flag` 順手改用 throwaway 路徑消除殘留 `$REPO_ROOT` 引用。89/0 綠，shellcheck 乾淨。
 
 **Problem**: `scripts/test-pmctl-context.sh` 有一批案例（`case_context_query_on_real_repo`、`case_context_reuse_scan_on_real_repo`、`case_context_query_autorefresh_existing_db`、`case_context_reuse_scan_autorefresh_existing_db` 等）直接對**活的** `$REPO_ROOT` 做 `context index` / `query` / `reuse-scan`，因此讀寫**共享的** `<repo>/.pm-dispatch/ctx/context.db`。單獨跑時穩定（85/0），但在 [[CC-409]] 把 `run-all-tests.sh` 並行化（`--jobs nproc`）後，這些案例在 8-way 高 CPU/IO 負載下偶發失敗：對 180KB `BACKLOG.md` 的整包索引使 sqlite `busy_timeout=5000` 被觸發、`_ctx_fts_rebuild` 的 DROP+CREATE+INSERT 被 starve（錯誤被 `2>/dev/null` 吞），留下暫態不完整索引 → reuse-scan 找不到預期 ref。實測 `reuse-scan-on-real-repo` 在兩次相同 `run-all-tests` 間 fail→pass。這批案例同時也是單檔最慢的部分。
 
