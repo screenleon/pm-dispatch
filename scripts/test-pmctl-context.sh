@@ -24,6 +24,21 @@ fi
 # root override this locally.
 export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 
+# Snapshot the developer's live repo context DB up-front so a dedicated guard
+# case can prove the suite never indexes/queries/scans the real repo root (which
+# would write or rebuild this DB and, under parallel runs, cause sqlite-busy /
+# FTS-rebuild flakiness). Every context case must operate on an isolated fixture
+# under $tmp_root, never $REPO_ROOT.
+LIVE_DB="$REPO_ROOT/.pm-dispatch/ctx/context.db"
+_live_db_fingerprint() {
+  if [[ -e "$LIVE_DB" ]]; then
+    stat -c '%Y:%s' "$LIVE_DB" 2>/dev/null || stat -f '%m:%z' "$LIVE_DB"
+  else
+    printf 'ABSENT\n'
+  fi
+}
+LIVE_DB_BASELINE="$(_live_db_fingerprint)"
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 # Set up a minimal fixture repo in a temp dir for index/update tests.
@@ -145,7 +160,13 @@ case_context_index_unknown_flag() {
   should_run "$name" || return 0
   local out err status=0
   out="$tmp_root/idx-uf.out"; err="$tmp_root/idx-uf.err"
-    "$PMCTL" context index "$REPO_ROOT" --frobnicate > "$out" 2> "$err" || status=$?
+  # Use an isolated (existing) fixture dir as the index target so the case never
+  # names $REPO_ROOT. The dir must EXIST: pmctl_context_index only consumes the
+  # positional repo arg when it is a directory, otherwise it falls back to
+  # $REPO_ROOT — which would index the live repo before the unknown flag is seen.
+  local uf_repo="$tmp_root/idx-uf-repo"
+  mkdir -p "$uf_repo"
+    "$PMCTL" context index "$uf_repo" --frobnicate > "$out" 2> "$err" || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
@@ -706,23 +727,31 @@ MD
 }
 
 case_context_query_on_real_repo() {
-  local name="pmctl context query: pmctl_validate_brief found in real repo index"
+  local name="pmctl context query: pmctl_validate_brief found in isolated fixture of real lib file"
+  # Behavior: a real lib file's symbol is findable via context query. Seed an
+  # isolated fixture with an actual copy of the lib file and index THAT — never
+  # $REPO_ROOT, whose DB the suite must not write.
   should_run "$name" || return 0
 
-  if [[ ! -f "$REPO_ROOT/scripts/lib/pmctl-validate.sh" ]]; then
+  local src="$REPO_ROOT/scripts/lib/pmctl-validate.sh"
+  if [[ ! -f "$src" ]]; then
     fail "$name" "scripts/lib/pmctl-validate.sh not found in repo"; return 0
   fi
 
+  local fix="$tmp_root/fix-real-query"
+  mkdir -p "$fix/scripts/lib"
+  cp "$src" "$fix/scripts/lib/pmctl-validate.sh"
+
   local out err status=0
   out="$tmp_root/q-real-idx.out"; err="$tmp_root/q-real-idx.err"
-    "$PMCTL" context index "$REPO_ROOT" > "$out" 2> "$err" || status=$?
+    "$PMCTL" context index "$fix" > "$out" 2> "$err" || status=$?
   if [[ "$status" -ne 0 ]]; then
-    fail "$name" "real repo index failed: $(<"$err")"; return 0
+    fail "$name" "fixture index failed: $(<"$err")"; return 0
   fi
 
   status=0
   out="$tmp_root/q-real.out"; err="$tmp_root/q-real.err"
-    "$PMCTL" context query "$REPO_ROOT" "pmctl_validate_brief" > "$out" 2> "$err" || status=$?
+    "$PMCTL" context query "$fix" "pmctl_validate_brief" > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "query exited $status: $(<"$err")"; return 0
@@ -1343,21 +1372,29 @@ case_context_reuse_scan_dedup() {
 }
 
 case_context_reuse_scan_on_real_repo() {
-  local name="pmctl context reuse-scan: finds pmctl-context.sh ref in real repo"
-  # Behavior: reuse-scan on the actual pm-dispatch repo must find pmctl-context.sh in results.
-  # Steps: index the real repo; run reuse-scan with context-domain terms; assert pmctl-context.sh appears.
+  local name="pmctl context reuse-scan: finds pmctl-context.sh ref in isolated fixture of real lib file"
+  # Behavior: a real lib file is findable via reuse-scan. Seed an isolated fixture
+  # with an actual copy of the lib file and scan THAT — never $REPO_ROOT, whose DB
+  # the suite must not write.
+  # Steps: copy the real lib file into a $tmp_root fixture; index the fixture;
+  # run reuse-scan with context-domain terms; assert pmctl-context.sh appears.
   should_run "$name" || return 0
 
-  if [[ ! -f "$REPO_ROOT/scripts/lib/pmctl-context.sh" ]]; then
+  local src="$REPO_ROOT/scripts/lib/pmctl-context.sh"
+  if [[ ! -f "$src" ]]; then
     fail "$name" "scripts/lib/pmctl-context.sh not found in repo"; return 0
   fi
 
+  local fix="$tmp_root/fix-real-scan"
+  mkdir -p "$fix/scripts/lib"
+  cp "$src" "$fix/scripts/lib/pmctl-context.sh"
+
   local out err status=0
-    "$PMCTL" context index "$REPO_ROOT" > /dev/null 2> "$tmp_root/index-setup.err" \
+    "$PMCTL" context index "$fix" > /dev/null 2> "$tmp_root/index-setup.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
 
   out="$tmp_root/scan-real.out"; err="$tmp_root/scan-real.err"
-    "$PMCTL" context reuse-scan "$REPO_ROOT" "emit context hit yaml" \
+    "$PMCTL" context reuse-scan "$fix" "emit context hit yaml" \
     > "$out" 2> "$err" || status=$?
 
   if [[ "$status" -ne 0 ]]; then
@@ -1368,6 +1405,22 @@ case_context_reuse_scan_on_real_repo() {
     pass "$name"
   else
     fail "$name" "no pmctl-context.sh ref in output; got: $(<"$out")"
+  fi
+}
+
+case_context_no_live_db_mutation() {
+  local name="pmctl context suite: never creates or mutates the live repo context DB"
+  # Regression guard: the suite must operate only on isolated $tmp_root fixtures.
+  # Compares the live repo DB fingerprint against the baseline captured before any
+  # case ran; any change means a case indexed/queried/scanned $REPO_ROOT directly.
+  should_run "$name" || return 0
+
+  local now
+  now="$(_live_db_fingerprint)"
+  if [[ "$now" == "$LIVE_DB_BASELINE" ]]; then
+    pass "$name"
+  else
+    fail "$name" "live repo DB changed during suite (a case operated on \$REPO_ROOT): baseline=$LIVE_DB_BASELINE now=$now"
   fi
 }
 
@@ -2560,5 +2613,6 @@ case_context_reuse_scan_never_returns_memory
 case_context_index_source_missing_value
 case_context_memory_source_attribution
 case_context_pack_repo_sources_no_memory_index
+case_context_no_live_db_mutation
 
 th_summary
