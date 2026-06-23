@@ -561,6 +561,95 @@ test_artifact_filter_handles_rename_origin() {
   pass "$name"
 }
 
+test_copy_mode_artifact_filter_no_false_abort() {
+  # Behavioral coverage for the copy-mode inline artifact_filter_porcelain fallback
+  # in pr-gate.sh: when scripts/lib/artifact-paths.sh is ABSENT (copy-mode via
+  # create_runner) AND the target repo has NOT gitignored the gate's artifact dirs
+  # (a "healthy repo that was never setup" -- the exact CC-413 bug condition), the
+  # gate must still complete instead of false-aborting as prompt injection. This
+  # exercises the fallback as a load-bearing filter, not just the lib copy.
+  local name="copy-mode/artifact-filter-no-false-abort"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/copy-mode-artifact-filter-no-false-abort"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  # copy-mode precondition: the artifact-paths lib must be absent so the inline
+  # fallback (not the lib) is the code under test.
+  if [[ -f "$runner/lib/artifact-paths.sh" ]]; then
+    fail "$name" "lib/artifact-paths.sh present -- copy-mode not in effect"
+    return
+  fi
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  # Repo deliberately does NOT gitignore the artifact dirs -- so without the filter
+  # the gate's own .agent-trace/.gate-briefs/.gate-results would appear as new
+  # untracked files between the pre/post status snapshots and trip the guard.
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    printf '*.log\n' > .gitignore
+    git add README.md .gitignore
+    git commit -q -m initial
+    printf 'docs change\n' >> README.md
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "copy-mode gate exited $code (expected 0); fallback filter did not suppress artifact false-abort"
+    return
+  fi
+  # The injection-abort message must NOT appear -- proves the filter, not gitignore,
+  # kept the worktree fingerprint stable across the gate's own artifact writes.
+  assert_not_contains "$name" "$err" "modified working tree -- possible prompt injection" || return
+  # Sanity: the scenario is real -- the gate actually created an artifact dir that
+  # the repo does NOT gitignore (so the filter genuinely had to exclude it).
+  if [[ ! -d "$repo/.gate-results" ]]; then
+    fail "$name" "gate did not create .gate-results -- scenario did not exercise the filter"
+    return
+  fi
+  if grep -q '\.gate-results' "$repo/.gitignore"; then
+    fail "$name" ".gate-results is gitignored -- filter was not load-bearing in this test"
+    return
+  fi
+  pass "$name"
+}
+
+test_copy_mode_artifact_leaves_parity() {
+  # Drift guard: the copy-mode inline fallback in pr-gate.sh MUST declare the same
+  # artifact leaves as the canonical scripts/lib/artifact-paths.sh. A leaf added to
+  # the lib but not the fallback would silently stop being filtered in copy-mode.
+  local name="copy-mode/artifact-leaves-parity"
+  should_run "$name" || return 0
+  local lib_line gate_line
+  lib_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/scripts/lib/artifact-paths.sh" | sed 's/^[[:space:]]*//' | head -1)"
+  gate_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/scripts/pr-gate.sh" | sed 's/^[[:space:]]*//' | head -1)"
+  if [[ -z "$lib_line" ]]; then
+    fail "$name" "no PM_ARTIFACT_LEAVES definition in scripts/lib/artifact-paths.sh"
+    return
+  fi
+  if [[ -z "$gate_line" ]]; then
+    fail "$name" "no PM_ARTIFACT_LEAVES fallback definition in scripts/pr-gate.sh"
+    return
+  fi
+  if [[ "$lib_line" != "$gate_line" ]]; then
+    fail "$name" "leaf-list drift: lib='$lib_line' fallback='$gate_line'"
+    return
+  fi
+  # And the fallback must actually define the filter function (not just the array).
+  if ! grep -qE '^[[:space:]]*artifact_filter_porcelain\(\)' "$REPO_ROOT/scripts/pr-gate.sh"; then
+    fail "$name" "scripts/pr-gate.sh copy-mode fallback missing artifact_filter_porcelain definition"
+    return
+  fi
+  pass "$name"
+}
+
 test_missing_reviewer_agent() {
   local name="missing-reviewer-agent"
   should_run "$name" || return 0
@@ -2412,6 +2501,8 @@ run_test test_artifact_filter_keeps_real_sources
 run_test test_artifact_filter_symmetry_ignores_artifacts
 run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
+run_test test_copy_mode_artifact_filter_no_false_abort
+run_test test_copy_mode_artifact_leaves_parity
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
