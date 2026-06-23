@@ -7,6 +7,18 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-06-23: dispatch-gate-artifacts-relocate-out-of-repo
+
+Relates: CC-003, CC-413, CC-414, CC-415, CC-416, CC-417, CC-418, CC-419
+
+**Context**: dispatch 與 pr-gate 把 scratch artifact 寫進使用者 repo 工作目錄：`.agent-trace/`（每次 dispatch 的 executor JSONL 事件流 + footer/runspec/supervisor log，`adapters/*/dispatch.sh` 把 `TRACE_DIR` 寫死成 `$WORK_DIR/.agent-trace`）、`.gate-briefs/`、`.gate-results/`。這造成兩層問題：(L1) pr-gate `--parallel` 的 integrity check（`pr-gate.sh:895/1093`）對 `git status --porcelain` 取 dispatch 前後 hash 偵測 prompt-injection，但 gate 自己的寫入若未被 `.gitignore` 蓋掉就會改變 status hash → 在健康 repo 誤判 abort（這是 CC-003 原始症狀）；(L2) 即使 gitignore 蓋掉，檔案仍實體落在使用者專案資料夾（本 repo 實測 `.agent-trace` 已累積 93MB/552 檔），且問題跨所有被 dispatch/gate 作用過的 repo——使用者視為污染。根因是 adapter 把「執行 cwd」與「trace 落點」綁死，gate reviewer 又走同一批 adapter，所以單改 gate 無法讓 repo 不被碰。關鍵事實（驗證 `scripts/lib/state-writer.sh`）：out-of-repo state 慣例**已存在**——`_sw_store_root`（`PM_DISPATCH_STATE_ROOT` > `$XDG_DATA_HOME/pm-dispatch/state` > `~/.local/share/pm-dispatch/state`）+ `_sw_project_key`（canonical git toplevel → SHA-1 → `projects/<hash>/`）+ 0700 安全模型 + `_sw_write_repo_json`；run-records/events/tasks 早已走這條。
+
+**Decision**: 採方向 D-wide——把 dispatch 與 gate 的全部 artifact 搬出 repo，**複用既有 `state-writer.sh` seam**（不另開 `XDG_STATE_HOME` 或 `PM_STATE_DIR`）。目標布局 `$PM_DISPATCH_STATE_ROOT/projects/<repo-sha1>/runs/<run_id>/{trace/.agent-trace,gate/.gate-briefs,gate/.gate-results,dispatch/...}`，保留 `.gate-results` 葉名以維持 `guard-reviewer-write.sh` 的綁名語義。cwd 與 trace-root 用 `--trace-dir <abs>` flag + `PM_DISPATCH_TRACE_DIR` env 解耦（precedence flag > env > legacy default）；orchestrator 算一次傳給 adapter，adapter 保持笨。containment guard（`dispatch-post-verify.sh`）信任邊界從「在 repo 內」改成「在 caller 供給的本次 run trace dir 內」（canonical realpath 前綴比對）——新邊界更安全（state root 0700、非攻擊者可影響，repo 工作樹反而含被審 diff）。verdict 檔視為 human-facing：預設也出 repo，但 stdout 印路徑 + 提供 `--output` 顯式匯回。**分階段落地**（CC-413..419，見 BACKLOG），第一切片為「引入 seam、預設不變、零行為改動」，最後才翻預設。既有散落副產物（含本 repo 與其他被作用過的 repo）以一次性遷移/清理子票處理（CC-419）。規模上這是橫跨 dispatch 子系統的結構性改動，故將 CC-003 重定義為 epic umbrella、其餘為 phase 子票。決策依據：Opus + Codex（有 repo 存取）+ ChatGPT/Gemini/Grok（外部）五方獨立分析一致選 D-wide；唯一分歧（state root 用 `XDG_STATE_HOME` vs 複用 state-writer）由兩個有 repo 存取的來源裁決為複用既有 seam。Approver: screenleon（2026-06-23）。
+
+**Alternatives considered**: (a) **方向 A（filter）**——integrity check 計算 status hash 時排除三個已知 artifact 路徑。只解 L1 誤判，L2 污染仍在（檔案還在 repo）。保留為 CC-413 Phase 0 止血切片，非最終架構。(b) **方向 B（auto-patch .gitignore）**——gate 主動補 `.gitignore`。解 L1、`git status` 乾淨但檔案仍在 repo（L2 部分）；且打破既有刻意不變量測試 `test_pr_gate_does_not_mutate_gitignore`。否決。(c) **方向 C（preflight abort）**——只把「莫名卡死」換成「明確卡死」，健康 repo 首跑仍被擋，未真正解問題。否決。(d) **D-narrow（只搬 gate）**——因 gate reviewer 走同一批 adapter，仍須解耦 adapter trace-root，等於碰 dispatch；且造成「兩套 artifact 世界」每個 adapter/observer/guard/doc 都要解釋兩種行為。否決，改 D-wide。(e) **新建 `XDG_STATE_HOME` 根**——外部三家建議（規範上 state log 正位），但與 repo 既有 `state-writer.sh`（`XDG_DATA_HOME`）不一致；一致性 + 既有安全模型與測試 > 規範純度，否決。
+
+**Constraints introduced**: `.gate-results` 葉目錄名必須保留為 run dir 下最後一段，否則 `guard-reviewer-write.sh` 綁名 injection guard 失效。post-verify containment 必須對 canonical 化的 trusted run-dir 做前綴比對（不可再以 `$WORK_DIR` 為界）。trace 寫入非 optional——CI 無可寫 HOME 時須 fail loud（明確指引設 `PM_DISPATCH_TRACE_DIR`/`PM_DISPATCH_STATE_ROOT`），不可靜默掉資料。run id 不可只用秒級 timestamp（並發會撞，須加 PID/隨機）。`latest.*` symlink 降級為人類便利、非權威；per-run 目錄為唯一權威來源。state store 須有 GC/retention（JSONL trace 很大），否則無限增長。翻預設前須保留 in-repo opt-in（`--artifact-root in-repo` / `PM_DISPATCH_ARTIFACT_MODE=in-repo`）至少一個 release，並提供可發現性指令（`pmctl artifacts list/show`）。
+
 ## 2026-06-21: retrieval-first-defaults-on-and-fail
 
 Closes: BACKLOG.md#CC-402

@@ -10,7 +10,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-003 | 🔵 active | parallel-gate artifact-ignore 前置檢查 | ops/arch | 2026-05-12 | pr:#38 | P3 | — |
+| CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
+| CC-413 | 🔵 active | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | — | P2 | design |
+| CC-414 | 🔵 active | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | — | P2 | design |
+| CC-415 | 🔵 active | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
+| CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
+| CC-417 | 🔵 active | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | — | P2 | design |
+| CC-418 | 🔵 active | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | — | P3 | design |
+| CC-419 | 🔵 active | Phase 5：翻 out-of-repo 預設（保留 in-repo opt-in 一 release）+ GC/retention + 跨 repo 既有副產物一次性遷移/清理工具 | ops | 2026-06-23 | — | P3 | design |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
@@ -199,11 +206,54 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: 待 Windows = Supported flag flip 前評估：`state-writer.sh` 在 Windows 偵測下以 `icacls "<store_root>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` 等價設定收斂保護，並補對應能力測試。
 **Source**: 2026-06-13 CC-368 #2 收尾時分出的 follow-up。
 
-## CC-003 — parallel-gate artifact-ignore 前置檢查
+## CC-003 — [artifact-relocation epic umbrella] dispatch/gate 副產物搬出 repo
 
-**Problem**: scripts/pr-gate.sh parallel mode 在 line 410/414 對 git status --porcelain 取 fingerprint，但 fingerprint 取樣後 gate 本身會寫入 .agent-trace/ / .gate-briefs/ / .gate-results/。若 target repo 沒跑過 setup-project.sh 或這三個路徑未在 .gitignore，gate 自己的寫入就會改動 status hash，觸發 line 575 的 fail-closed integrity check，在原本健康的 repo 卡住 PR review。
-**Why**: parallel mode 整體假設「gate 執行期間 git status 不會被 gate 自己污染」。這假設只在 .gitignore 已含三個 artifact 路徑時成立，但 setup-project.sh 是否跑過、是否完整，gate 沒有 preflight 驗證。Cross-reviewer overlap (qa-tester + risk-reviewer 同點)，代表不是單一 reviewer 視角偏見。Loud + reversible (不會默默過 gate)，但屬於把工作流卡死的 ops 問題。
-**Requirement**: parallel mode 啟動時必須能在 target repo 確認 gate artifact 路徑已被 ignore，或結構性排除這些路徑使其不影響 integrity check。可接受任一方向：preflight ignore-coverage 檢查（缺則明確指引跑 setup-project.sh）；或 integrity check 計算 status hash 時排除 known gate artifact paths；或文件 + test 明示 setup-project.sh 是 parallel mode precondition，並讓未滿足時的失敗訊息直接指向修復步驟。
+**Decision**: 見 DECISIONS.md 2026-06-23 `dispatch-gate-artifacts-relocate-out-of-repo`（五方分析統整裁決）。
+**Problem**: dispatch 與 pr-gate 把 scratch artifact 寫進使用者 repo：`.agent-trace/`（adapter `TRACE_DIR=$WORK_DIR/.agent-trace` 寫死）、`.gate-briefs/`、`.gate-results/` + footer/runspec/supervisor log。(L1) pr-gate parallel integrity check（`pr-gate.sh:895/1093`）對 `git status --porcelain` 取 dispatch 前後 hash，gate 自己的寫入若未被 ignore 就改動 hash → 健康 repo 誤判 abort（原始症狀）。(L2) 即使 ignore，檔案仍實體污染 repo（本 repo 已累積 93MB；且跨所有被作用過的 repo）。
+**Why**: 根因是 adapter 把「執行 cwd」與「trace 落點」綁死，gate reviewer 又走同一批 adapter，單改 gate 無法讓 repo 不被碰。out-of-repo state 慣例已存在於 `state-writer.sh`，應延伸而非新發明。
+**Requirement**: D-wide——dispatch + gate 全部 artifact 搬到 `$PM_DISPATCH_STATE_ROOT/projects/<repo-sha1>/runs/<run_id>/`（複用 state-writer seam，保留 `.gate-results` 葉名）。分階段：CC-413（Phase 0 止血）、CC-414（seam）、CC-415（containment guard）、CC-416（gate 搬遷=原始 bug 修復）、CC-417（dispatch 搬遷）、CC-418（observer+可發現性）、CC-419（翻預設+GC+跨 repo 既有副產物遷移）。本 umbrella 在全部 phase 完成後關閉。
+
+## CC-413 — Phase 0 止血：integrity check 排除 artifact 路徑
+
+**Problem**: pr-gate parallel integrity check 把 gate 自身寫入的 artifact 目錄算進 status hash，在未 setup 的健康 repo 誤判 prompt-injection abort。
+**Why**: 在完整搬遷（CC-416）落地前，使用者需要可立即合併的止血，且不引入 `.gitignore` mutation（既有不變量 `test_pr_gate_does_not_mutate_gitignore` 須保留）。
+**Requirement**: `pr-gate.sh` 計算 `_PRE/_POST_DISPATCH_STATUS` 前，過濾掉 `.agent-trace/`、`.gate-briefs/`、`.gate-results/`（NUL-delimited porcelain 較安全）。修正 `:897-898/1091` 誤導性註解。零 `.gitignore` mutation、零行為預設改動、既有測試全綠 + 新增過濾測試。
+
+## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）
+
+**Problem**: 三個 adapter 寫死 `TRACE_DIR=$WORK_DIR/.agent-trace`，cwd 與 trace 落點綁死，無法把 trace 移出 repo。
+**Why**: 這是真正解 L2 的地基；先引入 seam 而不改預設，可把結構改動與行為改動拆成可獨立 review 的 PR。
+**Requirement**: 抽 `_sw_store_root`/`_sw_project_key` 成共用 lib（如 `state-paths.sh`）+ 公開 helper `sw_project_run_dir`；`adapters/{codex,claude,opencode}/dispatch.sh`、`dispatch_via`、`dispatch-post-verify.sh` 加 `--trace-dir <abs>` 與 `PM_DISPATCH_TRACE_DIR`（precedence flag > env > legacy `$WORK_DIR/.agent-trace`）。預設仍 in-repo。測試：precedence、絕對路徑驗證、snapshot re-exec 保留 flag。
+
+## CC-415 — Phase 2：post-verify containment guard 重設計
+
+**Problem**: `dispatch-post-verify.sh` 以「在 `$WORK_DIR` 內」為 trace 的 containment 信任邊界，trace 一旦移出 repo 此 guard 會誤殺。
+**Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
+**Requirement**: 加 `--trace-dir`/`--run-dir`，canonical 化後對 `latest.*` 與 `--last/--jsonl/--stderr` 解析路徑做前綴比對；拒絕缺失、非預期 symlink、group/world-writable、非 owner 擁有、或逃出 run dir 的情形。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。
+
+## CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體）
+
+**Problem**: gate 的 briefs/results/trace 落在 repo，造成 L1 誤判與 L2 污染。
+**Why**: 這是 CC-003 原始 ticket 的真正修復；依賴 CC-414 seam 與 CC-415 guard。
+**Requirement**: `pmctl` 配 `runs/<run_id>/` 並把 `.gate-briefs`/`.gate-results`/reviewer trace 路由進去（保留 `.gate-results` 葉名）；integrity check 因 repo 天生乾淨而無需過濾（CC-413 的過濾可保留為防禦）；verdict 預設出 repo，stdout 印路徑 + `--output` 顯式匯回。更新假設「結果在 repo 內」的測試/docs。
+
+## CC-417 — Phase 3b：normal dispatch artifacts 搬出 repo
+
+**Problem**: `pmctl dispatch run` 的 trace/footer/runspec/supervisor log 仍落在 repo `.agent-trace/`。
+**Why**: 與 gate 共用同一 seam，避免「兩套 artifact 世界」。
+**Requirement**: `pmctl-dispatch.sh` 配 run dir 傳 `--trace-dir`；footer/runspec/supervisor log（含 detached 監督路徑）改寫到 run dir；`dispatch-record.sh` 記錄新路徑。注意 detached supervisor recovery 不可因 runspec 移出 workspace 而失效。
+
+## CC-418 — Phase 4：observer + 可發現性
+
+**Problem**: 搬出 repo 後，`codex-watch.sh:24`（tail `$WORK_DIR/.agent-trace/latest.jsonl`）失效，使用者也無法再 `ls .gate-results`。
+**Why**: 可發現性是搬遷的最大 UX 風險，須補齊。
+**Requirement**: codex-watch 改由 pmctl 印出的 trace 路徑或 run-record 解析（加 `--trace <path>`/`--run <id>`）；gate 與 dispatch 結束印 `results:`/`trace:` 絕對路徑；新增 `pmctl artifacts list/show`（與 gate verdict 查看入口）。
+
+## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移
+
+**Problem**: 預設仍 in-repo；state store 無 GC 會無限增長；且各 repo 已有大量既有副產物（本 repo 93MB+）。
+**Why**: 收尾——讓 out-of-repo 成預設並控管生命週期，同時清理歷史污染。
+**Requirement**: 翻 `--artifact-root`/`PM_DISPATCH_ARTIFACT_MODE` 預設為 out-of-repo，保留 in-repo opt-in ≥1 release + 首跑遷移提示；加 retention（keep last N / age-based）+ `pmctl artifacts gc`；提供跨 repo 遷移/清理工具（掃 `~/github/*` 或可設根的 `.agent-trace`/`.gate-*`，可選保留 verdict 摘要後刪除 trace）。**多機器可攜**：清理/遷移須為 committed、idempotent、可在任意機器重複執行的指令（每台各跑同一 `pmctl artifacts gc --all-repos`/migrate，不可依賴單機一次性手刪）；dry-run 列出待刪目錄、絕不誤刪 `.pm-dispatch/`（active context DB）。run id 加 PID/隨機防並發撞；`latest.*` 降級為非權威。
 
 ## CC-004 — test-pr-gate.sh docstring 格式統一
 
