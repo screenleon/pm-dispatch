@@ -460,6 +460,107 @@ test_pr_gate_does_not_mutate_gitignore() {
   pass "$name"
 }
 
+# artifact_filter_porcelain unit tests (CC-413 stopgap): the worktree-integrity
+# guard must exclude the gate's OWN artifact leaves from its status fingerprint so a
+# repo that has not had them gitignored is not misread as prompt-injected. These
+# exercise scripts/lib/artifact-paths.sh directly -- the canonical leaf source.
+
+test_artifact_filter_drops_gate_artifacts() {
+  local name="artifact-filter-drops-gate-artifacts"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local out
+  out="$(printf '%s\0' \
+    '?? .agent-trace/gate-1.log' \
+    '?? .gate-briefs/pr-gate-x.md' \
+    '?? .gate-results/reviewer-critic.md' \
+    ' M README.md' | artifact_filter_porcelain | tr '\0' '\n')"
+  # Positive control: every gate-artifact leaf is removed.
+  if printf '%s\n' "$out" | grep -qE '\.agent-trace|\.gate-briefs|\.gate-results'; then
+    fail "$name" "gate artifacts survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_keeps_real_sources() {
+  local name="artifact-filter-keeps-real-sources"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local out
+  out="$(printf '%s\0' \
+    '?? scripts/foo.sh' \
+    ' M README.md' \
+    '?? .agent-trace/noise.log' | artifact_filter_porcelain | tr '\0' '\n')"
+  # Negative control: real source changes must NOT be over-filtered.
+  assert_string_contains "$name" "$out" 'scripts/foo.sh' || return
+  assert_string_contains "$name" "$out" 'README.md' || return
+  pass "$name"
+}
+
+test_artifact_filter_symmetry_ignores_artifacts() {
+  local name="artifact-filter-symmetry-ignores-artifacts"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local with_artifacts without_artifacts
+  # "post" snapshot: real change plus gate artifacts the reviewer sessions wrote.
+  with_artifacts="$(printf '%s\0' \
+    ' M README.md' \
+    '?? .agent-trace/gate.log' \
+    '?? .gate-results/r.md' | artifact_filter_porcelain | sha256sum)"
+  # "pre" snapshot: same real change, no artifacts yet.
+  without_artifacts="$(printf '%s\0' \
+    ' M README.md' | artifact_filter_porcelain | sha256sum)"
+  # Symmetry: filtered fingerprints match, so the integrity guard does NOT abort
+  # merely because the gate wrote its own artifacts between pre and post.
+  if [[ "$with_artifacts" != "$without_artifacts" ]]; then
+    fail "$name" "pre/post fingerprints differ after artifact filtering"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_handles_special_filenames() {
+  local name="artifact-filter-handles-special-filenames"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local out
+  # NUL-delimited input keeps a space-bearing filename intact through the filter.
+  out="$(printf '%s\0' \
+    '?? a file with spaces.txt' \
+    '?? .agent-trace/drop me.log' | artifact_filter_porcelain | tr '\0' '\n')"
+  assert_string_contains "$name" "$out" 'a file with spaces.txt' || return
+  if printf '%s\n' "$out" | grep -q '\.agent-trace'; then
+    fail "$name" "artifact with space-bearing name survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_handles_rename_origin() {
+  local name="artifact-filter-handles-rename-origin"
+  should_run "$name" || return 0
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local out
+  # Rename record is followed by a bare origin-path record under -z; both sides of
+  # an artifact rename must drop, a real-source rename must survive.
+  out="$(printf '%s\0' \
+    'R  .gate-results/new.md' '.gate-results/old.md' \
+    'R  docs/new.md' 'docs/old.md' | artifact_filter_porcelain | tr '\0' '\n')"
+  assert_string_contains "$name" "$out" 'docs/new.md' || return
+  assert_string_contains "$name" "$out" 'docs/old.md' || return
+  if printf '%s\n' "$out" | grep -q '\.gate-results'; then
+    fail "$name" "artifact rename survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
 test_missing_reviewer_agent() {
   local name="missing-reviewer-agent"
   should_run "$name" || return 0
@@ -2306,6 +2407,11 @@ test_untracked_binary_routes_to_standard() {
 
 run_test test_tier_detection
 run_test test_pr_gate_does_not_mutate_gitignore
+run_test test_artifact_filter_drops_gate_artifacts
+run_test test_artifact_filter_keeps_real_sources
+run_test test_artifact_filter_symmetry_ignores_artifacts
+run_test test_artifact_filter_handles_special_filenames
+run_test test_artifact_filter_handles_rename_origin
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files
