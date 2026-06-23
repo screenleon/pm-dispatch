@@ -64,6 +64,7 @@ SUITE_NAMES=(
   test-brief-validate
   test-archive-closed-backlog
   test-pmctl-context
+  test-pmctl-memory
   test-pmctl-backlog
   test-pmctl-guard
   test-release-verify

@@ -1163,7 +1163,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3.
 
 
-**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。
+**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。Phase A 落地：read-only `pmctl memory doctor`（`scripts/lib/pmctl-memory.sh` + `memory/doctor` case + frozen schema/`--json schema_version:1`/exit 0-1-2 + `path:`/`fn:`/`flag:` staleness）＋ additive frontmatter schema docs（`docs/memory-system.md`）＋ fixture-isolated 測試（`scripts/test-pmctl-memory.sh`，正負控）。**仍待辦（不關票）**：write-time enforce（`/mem-distill`+`/memory-compress` Step 6，須清完 warn-scan 後）＋ 35 張 live card 一次性 backfill。
 
 **Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
 
