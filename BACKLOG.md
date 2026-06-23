@@ -11,7 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
-| CC-413 | 🔵 active | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | — | P2 | design |
+| CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
 | CC-414 | 🔵 active | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | — | P2 | design |
 | CC-415 | 🔵 active | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
@@ -213,7 +213,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 根因是 adapter 把「執行 cwd」與「trace 落點」綁死，gate reviewer 又走同一批 adapter，單改 gate 無法讓 repo 不被碰。out-of-repo state 慣例已存在於 `state-writer.sh`，應延伸而非新發明。
 **Requirement**: D-wide——dispatch + gate 全部 artifact 搬到 `$PM_DISPATCH_STATE_ROOT/projects/<repo-sha1>/runs/<run_id>/`（複用 state-writer seam，保留 `.gate-results` 葉名）。分階段：CC-413（Phase 0 止血）、CC-414（seam）、CC-415（containment guard）、CC-416（gate 搬遷=原始 bug 修復）、CC-417（dispatch 搬遷）、CC-418（observer+可發現性）、CC-419（翻預設+GC+跨 repo 既有副產物遷移）。本 umbrella 在全部 phase 完成後關閉。
 
-## CC-413 — Phase 0 止血：integrity check 排除 artifact 路徑
+## CC-413 — Phase 0 止血：integrity check 排除 artifact 路徑 ✅ 2026-06-23
+
+**See**: pr:#318
 
 **Problem**: pr-gate parallel integrity check 把 gate 自身寫入的 artifact 目錄算進 status hash，在未 setup 的健康 repo 誤判 prompt-injection abort。
 **Why**: 在完整搬遷（CC-416）落地前，使用者需要可立即合併的止血，且不引入 `.gitignore` mutation（既有不變量 `test_pr_gate_does_not_mutate_gitignore` 須保留）。
