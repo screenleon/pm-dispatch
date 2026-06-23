@@ -79,21 +79,38 @@ _mem_card_top_keys() {
   ' "$card"
 }
 
+# True (0) when a repo-relative path is unsafe: absolute, or contains a `..`
+# segment that could escape the repo root. The grammar is repo-root-relative
+# only, so such a ref is invalid — callers treat it as stale, never fresh.
+_mem_ref_path_unsafe() {
+  local p="$1"
+  [[ "$p" == /* ]] && return 0
+  [[ "$p" =~ (^|/)\.\.(/|$) ]] && return 0
+  return 1
+}
+
 # Verdict on a single repo_ref. Returns 0 when STALE, 1 when fresh.
 # Grammar (see docs/memory-system.md → repo_refs grammar):
-#   file   → path:<repo-root-relative>           stale when path absent
+#   file   → path:<repo-root-relative>           stale when path absent/invalid
 #   symbol → fn:<rel-path>#<symbol>              stale when file missing OR def absent (shell symbols)
 #   flag   → flag:<invocation> <--flag-token>    stale when token absent under scripts/
+# An out-of-grammar ref (path escape, non-identifier symbol) is treated as STALE
+# rather than silently fresh, so the report never green-lights an invalid ref.
 _mem_ref_is_stale() {
   local ref="$1" root="$2"
   local kind="${ref%%:*}" rest="${ref#*:}"
   case "$kind" in
     path)
+      _mem_ref_path_unsafe "$rest" && return 0
       [[ -f "$root/$rest" ]] && return 1 || return 0
       ;;
     fn)
       local relpath="${rest%%#*}" symbol="${rest#*#}"
       [[ -n "$symbol" && "$symbol" != "$rest" ]] || return 0
+      _mem_ref_path_unsafe "$relpath" && return 0
+      # Restrict to shell-identifier symbols so a metacharacter-laden ref cannot
+      # turn the grep -E pattern into a wildcard that matches an absent symbol.
+      [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
       [[ -f "$root/$relpath" ]] || return 0
       grep -qE "^${symbol}\(\)|^function ${symbol}" "$root/$relpath" 2>/dev/null && return 1 || return 0
       ;;

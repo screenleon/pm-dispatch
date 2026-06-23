@@ -75,6 +75,22 @@ run_doctor_json() {
   return "$status"
 }
 
+# Parser-backed JSON assertion (spike a3 requires jq -e, not substring matching).
+# Returns 0 when the jq filter is truthy; calls fail() and returns 1 otherwise.
+_HAVE_JQ=0
+command -v jq >/dev/null 2>&1 && _HAVE_JQ=1
+assert_jq() {
+  local name="$1" file="$2" filter="$3"
+  if [[ "$_HAVE_JQ" -ne 1 ]]; then
+    return 0  # jq absent: skip parser-backed check, substring asserts still run
+  fi
+  if jq -e "$filter" "$file" >/dev/null 2>&1; then
+    return 0
+  fi
+  fail "$name" "assert_jq: filter failed [$filter] on $(cat "$file" 2>/dev/null)"
+  return 1
+}
+
 # ── Test cases ─────────────────────────────────────────────────────────────────
 
 case_memory_doctor_clean_fixture() {
@@ -106,6 +122,12 @@ MD
   # finding #2: assert memory_dir + memory_bytes schema fields directly.
   if ! assert_file_contains "$name" "$out" "\"memory_dir\":\"$mdir\""; then return 0; fi
   if ! assert_file_matches "$name" "$out" '"memory_bytes":[1-9][0-9]*'; then return 0; fi
+  # Parser-backed schema assertions (spike a3): types + exit-code contract.
+  if ! assert_jq "$name" "$out" '.schema_version == 1'; then return 0; fi
+  if ! assert_jq "$name" "$out" '(.dead_links | type) == "array"'; then return 0; fi
+  if ! assert_jq "$name" "$out" '(.stale_repo_refs | type) == "array"'; then return 0; fi
+  if ! assert_jq "$name" "$out" '(.cards_missing_fields | type) == "array"'; then return 0; fi
+  if ! assert_jq "$name" "$out" '.issues_count == 0'; then return 0; fi
   pass "$name"
 }
 
@@ -461,6 +483,107 @@ MD
   pass "$name"
 }
 
+case_memory_doctor_no_memory_dir() {
+  local name="pmctl memory doctor: no memory dir → empty healthy report + exit 0"
+  should_run "$name" || return 0
+
+  # cfg has NO projects/<repo>/memory dir → find_memory_dir resolves nothing.
+  local cfg="$tmp_root/nodir-cfg" repo="$tmp_root/nodir-repo"
+  mkdir -p "$cfg/projects" "$repo"
+
+  local out="$tmp_root/nodir.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then
+    fail "$name" "expected 0 for absent memory dir but got $status: $(<"$out")"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" '"memory_dir":""'; then return 0; fi
+  if ! assert_jq "$name" "$out" '.schema_version == 1 and .issues_count == 0 and .entry_count == 0'; then return 0; fi
+  if ! assert_jq "$name" "$out" '(.dead_links | length) == 0 and (.cards_missing_fields | length) == 0'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_doctor_repo_refs_unsafe_path() {
+  local name="pmctl memory doctor: path: ref escaping the repo (../ or absolute) → stale, not fresh"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/unsafe-cfg" repo="$tmp_root/unsafe-repo"
+  mkdir -p "$repo"
+  # A real file ABOVE the repo root: a naive `test -f "$repo/../escape.md"` would
+  # find it and call the ref fresh. The grammar is repo-relative, so it must be stale.
+  printf 'x\n' > "$tmp_root/escape.md"
+
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [unsafe](card_unsafe.md) — unsafe hook
+MD
+  cat > "$mdir/card_unsafe.md" <<'MD'
+---
+name: unsafe
+topics: [x]
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs:
+  - path:../escape.md
+  - path:/etc/hosts
+---
+body
+MD
+
+  local out="$tmp_root/unsafe.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 1; then
+    fail "$name" "expected 1 (both refs invalid→stale) but got $status: $(<"$out")"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" '{"card":"card_unsafe.md","ref":"path:../escape.md"}'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '{"card":"card_unsafe.md","ref":"path:/etc/hosts"}'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_doctor_fn_symbol_injection() {
+  local name="pmctl memory doctor: fn: ref with regex metachars → stale, not falsely fresh"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/inj-cfg" repo="$tmp_root/inj-repo"
+  mkdir -p "$repo/scripts"
+  # File contains a real function; a malicious symbol '.*' would match it via
+  # grep -E if interpolated raw. A non-identifier symbol must be treated stale.
+  printf 'real_fn() {\n  :\n}\n' > "$repo/scripts/lib.sh"
+
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [inj](card_inj.md) — inj hook
+MD
+  cat > "$mdir/card_inj.md" <<'MD'
+---
+name: inj
+topics: [x]
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs:
+  - fn:scripts/lib.sh#.*
+---
+body
+MD
+
+  local out="$tmp_root/inj.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 1; then
+    fail "$name" "expected 1 (non-identifier symbol → stale) but got $status: $(<"$out")"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" '{"card":"card_inj.md","ref":"fn:scripts/lib.sh#.*"}'; then return 0; fi
+  pass "$name"
+}
+
 case_memory_doctor_no_live_dir_mutation() {
   local name="pmctl memory doctor suite: never mutates the live project-memory dir"
   should_run "$name" || return 0
@@ -487,6 +610,9 @@ case_memory_doctor_repo_root_missing_operand_exit2
 case_memory_doctor_help_exit0
 case_memory_doctor_repo_root_override
 case_memory_doctor_missing_required_fields
+case_memory_doctor_no_memory_dir
+case_memory_doctor_repo_refs_unsafe_path
+case_memory_doctor_fn_symbol_injection
 case_memory_doctor_no_live_dir_mutation
 
 th_summary

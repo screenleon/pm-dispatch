@@ -99,8 +99,11 @@ Each ref is a machine-checkable pointer so the health check can detect staleness
 | flag | `flag:<invocation> <--flag-token>` | the `--token` is found under `scripts/` |
 
 A ref that fails its check is **stale** and surfaces in `pmctl memory doctor`.
-`repo_refs` accepts both block-style (one `- ` item per line) and flow-style
-(`[a, b]`) YAML lists; the doctor parses and staleness-checks both.
+An out-of-grammar ref is also reported stale rather than silently fresh: a
+`path:`/`fn:` path that is absolute or contains a `..` segment (it must stay
+repo-root-relative), or an `fn:` symbol that is not a shell identifier. `repo_refs`
+accepts both block-style (one `- ` item per line) and flow-style (`[a, b]`) YAML
+lists; the doctor parses and staleness-checks both.
 
 ## Health check: `pmctl memory doctor`
 
