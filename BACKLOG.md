@@ -1163,7 +1163,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3.
 
 
-**Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`。
+**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。
+
+**Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
 
 ## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` 🟢 someday → v0.7.0
 
