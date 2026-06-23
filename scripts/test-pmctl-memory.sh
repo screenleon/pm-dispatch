@@ -271,6 +271,51 @@ MD
   pass "$name"
 }
 
+case_memory_doctor_repo_refs_flow_style() {
+  local name="pmctl memory doctor: flow-style repo_refs [a, b] are parsed + staleness-checked"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/flow-cfg" repo="$tmp_root/flow-repo"
+  mkdir -p "$repo"
+  printf 'present\n' > "$repo/present.md"  # path:present.md fresh; path:gone.md stale
+
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [flowcard](card_flow.md) — flow card hook
+MD
+  # Flow-style YAML lists for both topics and repo_refs.
+  cat > "$mdir/card_flow.md" <<'MD'
+---
+name: flowcard
+topics: [x]
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs: [path:present.md, path:gone.md]
+---
+body
+MD
+
+  local out="$tmp_root/flow.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 1; then
+    fail "$name" "expected 1 (one stale flow ref) but got $status: $(<"$out")"
+    return 0
+  fi
+  # The stale flow item is detected; the card is NOT flagged for missing fields
+  # (flow-style topics/repo_refs keys are recognized).
+  if ! assert_file_contains "$name" "$out" '{"card":"card_flow.md","ref":"path:gone.md"}'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '"cards_missing_fields":[]'; then return 0; fi
+  local body; body="$(<"$out")"
+  if [[ "$body" == *'path:present.md'* ]]; then
+    fail "$name" "fresh flow ref path:present.md must not be flagged stale: $body"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_doctor_episodes_bytes() {
   local name="pmctl memory doctor: episodes.jsonl present → bytes>0; absent → 0"
   should_run "$name" || return 0
@@ -435,6 +480,7 @@ case_memory_doctor_orphan_card
 case_memory_doctor_duplicate_hooks
 case_memory_doctor_repo_refs_fresh_not_flagged
 case_memory_doctor_repo_refs_stale_flagged
+case_memory_doctor_repo_refs_flow_style
 case_memory_doctor_episodes_bytes
 case_memory_doctor_unknown_flag_exit2
 case_memory_doctor_repo_root_missing_operand_exit2

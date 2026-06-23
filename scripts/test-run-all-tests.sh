@@ -804,6 +804,56 @@ test_jobs_default_uses_detected_nproc() {
   fi
 }
 
+test_live_db_exclusive_suites_never_overlap() {
+  # Behavior: test-pmctl-context and test-release-verify both touch the live
+  #           $REPO_ROOT/.pm-dispatch/ctx/context.db, so the parallel scheduler
+  #           must never run them concurrently even when slots are free.
+  # Steps: gate both exclusive suites; pass-stub the rest; run --jobs 4 (slots
+  #        are NOT the limiter); assert the earlier suite (test-pmctl-context)
+  #        starts but test-release-verify stays held while it runs; release the
+  #        first and assert the second then starts; release it; assert exit 0.
+  local name="live-db-exclusive-no-overlap"
+  local repo="$TMP_ROOT/$name" path status
+  make_fixture_repo "$repo"
+  write_pass_stubs "$repo"
+  local marker="$TMP_ROOT/$name-markers"; mkdir -p "$marker"
+  write_gated_stub "$repo" test-pmctl-context "$marker"
+  write_gated_stub "$repo" test-release-verify "$marker"
+  path="$(make_path_with_codex "$repo/bin")"
+  local logf="$TMP_ROOT/$name.log"
+  ( PATH="$path" run_aggregator "$repo" --jobs 4 > "$logf" 2>&1; echo $? > "$marker/rc" ) &
+  local agg_pid=$!
+
+  if ! wait_for_file "$marker/started-test-pmctl-context" 300; then
+    fail_case "$name" "first exclusive suite (test-pmctl-context) never started"
+    touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  # Slots are free (--jobs 4) yet the second exclusive suite must stay held while
+  # the first is in-flight. If exclusion is broken it would start within ~2s.
+  if wait_for_file "$marker/started-test-release-verify" 100; then
+    fail_case "$name" "test-release-verify started while test-pmctl-context in-flight (exclusion broken)"
+    touch "$marker/release-test-pmctl-context" "$marker/release-test-release-verify"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  # Release the first exclusive suite -> the second must now launch.
+  touch "$marker/release-test-pmctl-context"
+  if ! wait_for_file "$marker/started-test-release-verify" 300; then
+    fail_case "$name" "test-release-verify never launched after test-pmctl-context finished"
+    touch "$marker/release-test-release-verify"
+    wait "$agg_pid" 2>/dev/null; return
+  fi
+  touch "$marker/release-test-release-verify"
+  wait "$agg_pid" 2>/dev/null
+  status="$(cat "$marker/rc" 2>/dev/null || echo 1)"
+  local out; out="$(cat "$logf" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$out" == *"$SUITE_TOTAL passed, 0 failed, 0 skipped"* ]]; then
+    pass_case "$name"
+  else
+    fail_case "$name" "status=$status out=$out"
+  fi
+}
+
 test_list
 test_known_suite_count
 test_skip_unknown_suite
@@ -829,6 +879,7 @@ test_jobs_explicit_sequential
 test_jobs_concurrency_and_max_inflight
 test_jobs_default_fallback_no_nproc
 test_jobs_default_uses_detected_nproc
+test_live_db_exclusive_suites_never_overlap
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

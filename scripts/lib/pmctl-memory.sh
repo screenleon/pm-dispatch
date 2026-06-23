@@ -38,8 +38,23 @@ _mem_card_repo_refs() {
   awk '
     /^---[[:space:]]*$/ { fm++; if (fm >= 2) exit; next }
     fm == 1 {
+      # flow-style: repo_refs: [a, b] (also empty []). Split on commas; a
+      # flag-ref may contain spaces but never a comma, so this is safe.
+      if ($0 ~ /^repo_refs:[[:space:]]*\[.*\]/) {
+        line = $0
+        sub(/^repo_refs:[[:space:]]*\[/, "", line)
+        sub(/\][[:space:]]*$/, "", line)
+        n = split(line, items, ",")
+        for (i = 1; i <= n; i++) {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", items[i])
+          gsub(/^"|"$/, "", items[i])
+          if (items[i] != "") print items[i]
+        }
+        inref = 0
+        next
+      }
+      # block-style: repo_refs: then one "  - item" per line.
       if ($0 ~ /^repo_refs:[[:space:]]*$/) { inref = 1; next }
-      if ($0 ~ /^repo_refs:[[:space:]]*\[\]/) { inref = 0; next }
       if (inref && $0 ~ /^[[:space:]]+-[[:space:]]/) {
         sub(/^[[:space:]]+-[[:space:]]*/, "")
         sub(/[[:space:]]+$/, "")
