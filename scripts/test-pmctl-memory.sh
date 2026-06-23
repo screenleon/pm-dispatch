@@ -584,6 +584,53 @@ MD
   pass "$name"
 }
 
+case_memory_doctor_fn_function_keyword_boundary() {
+  local name="pmctl memory doctor: fn: with 'function name' form requires exact symbol boundary"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/fnkw-cfg" repo="$tmp_root/fnkw-repo"
+  mkdir -p "$repo/scripts"
+  # Only the RENAMED function exists, defined with the `function` keyword form.
+  # fn:...#g_audit must be STALE (no exact g_audit); a naive ^function g_audit
+  # prefix-match would wrongly call it fresh. fn:...#g_audit_renamed is fresh.
+  printf 'function g_audit_renamed() {\n  :\n}\n' > "$repo/scripts/f.sh"
+
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [fnkw](card_fnkw.md) — fnkw hook
+MD
+  cat > "$mdir/card_fnkw.md" <<'MD'
+---
+name: fnkw
+topics: [x]
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs:
+  - fn:scripts/f.sh#g_audit
+  - fn:scripts/f.sh#g_audit_renamed
+---
+body
+MD
+
+  local out="$tmp_root/fnkw.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 1; then
+    fail "$name" "expected 1 (g_audit stale via boundary) but got $status: $(<"$out")"
+    return 0
+  fi
+  # The renamed-prefix ref is stale; the exact ref is fresh (not flagged).
+  if ! assert_file_contains "$name" "$out" '{"card":"card_fnkw.md","ref":"fn:scripts/f.sh#g_audit"}'; then return 0; fi
+  local body; body="$(<"$out")"
+  if [[ "$body" == *'#g_audit_renamed"'* ]]; then
+    fail "$name" "exact symbol g_audit_renamed must be fresh, not flagged stale: $body"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_doctor_no_live_dir_mutation() {
   local name="pmctl memory doctor suite: never mutates the live project-memory dir"
   should_run "$name" || return 0
@@ -613,6 +660,7 @@ case_memory_doctor_missing_required_fields
 case_memory_doctor_no_memory_dir
 case_memory_doctor_repo_refs_unsafe_path
 case_memory_doctor_fn_symbol_injection
+case_memory_doctor_fn_function_keyword_boundary
 case_memory_doctor_no_live_dir_mutation
 
 th_summary

@@ -112,7 +112,11 @@ _mem_ref_is_stale() {
       # turn the grep -E pattern into a wildcard that matches an absent symbol.
       [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
       [[ -f "$root/$relpath" ]] || return 0
-      grep -qE "^${symbol}\(\)|^function ${symbol}" "$root/$relpath" 2>/dev/null && return 1 || return 0
+      # Match `name()` / `name ()` or `function name` with an exact symbol
+      # boundary. The trailing class/anchor is load-bearing: without it
+      # `^function g_audit` would prefix-match `function g_audit_renamed` and
+      # falsely report a renamed (stale) symbol as fresh.
+      grep -qE "^${symbol}[[:space:]]*\(\)|^function[[:space:]]+${symbol}([^A-Za-z0-9_]|\$)" "$root/$relpath" 2>/dev/null && return 1 || return 0
       ;;
     flag)
       local tok token=""
