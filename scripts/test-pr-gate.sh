@@ -460,6 +460,292 @@ test_pr_gate_does_not_mutate_gitignore() {
   pass "$name"
 }
 
+# artifact_filter_porcelain unit tests (CC-413 stopgap): the worktree-integrity
+# guard must exclude the gate's OWN artifact leaves from its status fingerprint so a
+# repo that has not had them gitignored is not misread as prompt-injected. These
+# exercise scripts/lib/artifact-paths.sh directly -- the canonical leaf source.
+
+test_artifact_filter_drops_gate_artifacts() {
+  # artifact_filter_porcelain drops every gate-artifact leaf record from a
+  # porcelain -z status stream (positive control for CC-413).
+  # Steps:
+  # 1. Source the canonical lib and build a -z stream of three artifact records + one real change.
+  # 2. Run the stream through artifact_filter_porcelain.
+  # 3. Assert no .agent-trace/.gate-briefs/.gate-results record survives.
+  local name="artifact-filter-drops-gate-artifacts"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local records=(
+    '?? .agent-trace/gate-1.log'
+    '?? .gate-briefs/pr-gate-x.md'
+    '?? .gate-results/reviewer-critic.md'
+    ' M README.md'
+  )
+  local out
+
+  # Act -- pipe NUL records straight into the filter (a variable would drop NUL bytes).
+  out="$(printf '%s\0' "${records[@]}" | artifact_filter_porcelain | tr '\0' '\n')"
+
+  # Assert
+  if printf '%s\n' "$out" | grep -qE '\.agent-trace|\.gate-briefs|\.gate-results'; then
+    fail "$name" "gate artifacts survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_keeps_real_sources() {
+  # artifact_filter_porcelain preserves real source records and does not
+  # over-filter (negative control for CC-413).
+  # Steps:
+  # 1. Build a -z stream mixing two real changes with one artifact record.
+  # 2. Run the stream through artifact_filter_porcelain.
+  # 3. Assert both real-source paths remain in the output.
+  local name="artifact-filter-keeps-real-sources"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local records=(
+    '?? scripts/foo.sh'
+    ' M README.md'
+    '?? .agent-trace/noise.log'
+  )
+  local out
+
+  # Act
+  out="$(printf '%s\0' "${records[@]}" | artifact_filter_porcelain | tr '\0' '\n')"
+
+  # Assert
+  assert_string_contains "$name" "$out" 'scripts/foo.sh' || return
+  assert_string_contains "$name" "$out" 'README.md' || return
+  pass "$name"
+}
+
+test_artifact_filter_symmetry_ignores_artifacts() {
+  # A status stream with gate artifacts and one without hash identically after
+  # filtering, so the pre/post integrity guard never false-aborts (CC-413 core).
+  # Steps:
+  # 1. Build a "post" stream (real change + artifacts) and a "pre" stream (real change only).
+  # 2. Filter and sha256 each stream.
+  # 3. Assert the two fingerprints are byte-identical.
+  local name="artifact-filter-symmetry-ignores-artifacts"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local post_records=(
+    ' M README.md'
+    '?? .agent-trace/gate.log'
+    '?? .gate-results/r.md'
+  )
+  local pre_records=(' M README.md')
+  local with_artifacts without_artifacts
+
+  # Act
+  with_artifacts="$(printf '%s\0' "${post_records[@]}" | artifact_filter_porcelain | sha256sum)"
+  without_artifacts="$(printf '%s\0' "${pre_records[@]}" | artifact_filter_porcelain | sha256sum)"
+
+  # Assert
+  if [[ "$with_artifacts" != "$without_artifacts" ]]; then
+    fail "$name" "pre/post fingerprints differ after artifact filtering"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_handles_special_filenames() {
+  # artifact_filter_porcelain keeps a space-bearing real filename intact while
+  # still dropping a space-bearing artifact path, proving NUL-delimited parsing.
+  # Steps:
+  # 1. Build a -z stream with a space-bearing real file and a space-bearing artifact file.
+  # 2. Run the stream through artifact_filter_porcelain.
+  # 3. Assert the real file survives whole and the artifact is dropped.
+  local name="artifact-filter-handles-special-filenames"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local records=(
+    '?? a file with spaces.txt'
+    '?? .agent-trace/drop me.log'
+  )
+  local out
+
+  # Act
+  out="$(printf '%s\0' "${records[@]}" | artifact_filter_porcelain | tr '\0' '\n')"
+
+  # Assert
+  assert_string_contains "$name" "$out" 'a file with spaces.txt' || return
+  if printf '%s\n' "$out" | grep -q '\.agent-trace'; then
+    fail "$name" "artifact with space-bearing name survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
+test_artifact_filter_handles_rename_origin() {
+  # artifact_filter_porcelain evaluates the bare origin-path record that follows
+  # a rename: an artifact rename drops both sides, a real-source rename survives.
+  # Steps:
+  # 1. Build a -z stream with an artifact rename (record + origin) and a real rename (record + origin).
+  # 2. Run the stream through artifact_filter_porcelain.
+  # 3. Assert both real-rename paths survive and neither artifact path does.
+  local name="artifact-filter-handles-rename-origin"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$REPO_ROOT/scripts/lib/artifact-paths.sh"
+  local records=(
+    'R  .gate-results/new.md' '.gate-results/old.md'
+    'R  docs/new.md' 'docs/old.md'
+  )
+  local out
+
+  # Act
+  out="$(printf '%s\0' "${records[@]}" | artifact_filter_porcelain | tr '\0' '\n')"
+
+  # Assert
+  assert_string_contains "$name" "$out" 'docs/new.md' || return
+  assert_string_contains "$name" "$out" 'docs/old.md' || return
+  if printf '%s\n' "$out" | grep -q '\.gate-results'; then
+    fail "$name" "artifact rename survived filter: $out"
+    return
+  fi
+  pass "$name"
+}
+
+# _extract_artifact_filter_body <file>: print the executable lines of the
+# artifact_filter_porcelain function body with per-line leading whitespace
+# stripped and comment-only / blank lines dropped, so the canonical lib
+# definition and the indented copy-mode fallback compare on logic alone
+# (cosmetic comment differences do not trip the guard, logic drift does).
+_extract_artifact_filter_body() {
+  awk '
+    /artifact_filter_porcelain\(\)[[:space:]]*\{/ { cap=1 }
+    cap {
+      line=$0
+      sub(/^[[:space:]]+/, "", line)
+      done = (line == "}")
+      if (line != "" && line !~ /^#/) print line
+      if (done) exit
+    }
+  ' "$1"
+}
+
+test_copy_mode_artifact_filter_no_false_abort() {
+  # The copy-mode inline artifact_filter_porcelain fallback in pr-gate.sh filters
+  # the gate's own artifacts load-bearingly: a healthy repo that never gitignored
+  # the artifact dirs (the exact CC-413 bug condition) must not false-abort.
+  # Steps:
+  # 1. Build a copy-mode runner (lib absent) and a repo whose .gitignore omits the artifact dirs.
+  # 2. Run a full gate so it writes .agent-trace/.gate-briefs/.gate-results into that repo.
+  # 3. Assert the gate exits 0, prints no injection abort, and the artifact dir was created un-gitignored.
+  local name="copy-mode/artifact-filter-no-false-abort"
+  should_run "$name" || return 0
+
+  # Arrange
+  local dir="$TMP_ROOT/copy-mode-artifact-filter-no-false-abort"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  # copy-mode precondition: the artifact-paths lib must be absent so the inline
+  # fallback (not the lib) is the code under test.
+  if [[ -f "$runner/lib/artifact-paths.sh" ]]; then
+    fail "$name" "lib/artifact-paths.sh present -- copy-mode not in effect"
+    return
+  fi
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  # Repo deliberately does NOT gitignore the artifact dirs -- so without the filter
+  # the gate's own .agent-trace/.gate-briefs/.gate-results would appear as new
+  # untracked files between the pre/post status snapshots and trip the guard.
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    printf '*.log\n' > .gitignore
+    git add README.md .gitignore
+    git commit -q -m initial
+    printf 'docs change\n' >> README.md
+  )
+
+  # Act
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+
+  # Assert
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "copy-mode gate exited $code (expected 0); fallback filter did not suppress artifact false-abort"
+    return
+  fi
+  # The injection-abort message must NOT appear -- proves the filter, not gitignore,
+  # kept the worktree fingerprint stable across the gate's own artifact writes.
+  assert_not_contains "$name" "$err" "modified working tree -- possible prompt injection" || return
+  # Sanity: the scenario is real -- the gate actually created an artifact dir that
+  # the repo does NOT gitignore (so the filter genuinely had to exclude it).
+  if [[ ! -d "$repo/.gate-results" ]]; then
+    fail "$name" "gate did not create .gate-results -- scenario did not exercise the filter"
+    return
+  fi
+  if grep -q '\.gate-results' "$repo/.gitignore"; then
+    fail "$name" ".gate-results is gitignored -- filter was not load-bearing in this test"
+    return
+  fi
+  pass "$name"
+}
+
+test_copy_mode_artifact_fallback_body_parity() {
+  # The copy-mode inline fallback in pr-gate.sh is byte-for-byte (whitespace-
+  # normalized) identical to the canonical artifact_filter_porcelain in the lib,
+  # so any drift in its NUL/rename/drop-keep logic is caught -- not just the leaf list.
+  # Steps:
+  # 1. Extract the whitespace-normalized function body from the lib and from the pr-gate fallback.
+  # 2. Extract the leaf-array definition line from each file.
+  # 3. Assert both the function bodies and the leaf lines match exactly.
+  local name="copy-mode/artifact-fallback-body-parity"
+  should_run "$name" || return 0
+
+  # Arrange
+  local lib_body gate_body lib_line gate_line
+  lib_body="$(_extract_artifact_filter_body "$REPO_ROOT/scripts/lib/artifact-paths.sh")"
+  gate_body="$(_extract_artifact_filter_body "$REPO_ROOT/scripts/pr-gate.sh")"
+  lib_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/scripts/lib/artifact-paths.sh" | sed 's/^[[:space:]]*//' | head -1)"
+  gate_line="$(grep -E '^[[:space:]]*PM_ARTIFACT_LEAVES=\(' "$REPO_ROOT/scripts/pr-gate.sh" | sed 's/^[[:space:]]*//' | head -1)"
+
+  # Act -- (extraction above is the work; assertions below)
+
+  # Assert
+  if [[ -z "$lib_body" || "$lib_body" != *"artifact_filter_porcelain()"* ]]; then
+    fail "$name" "could not extract artifact_filter_porcelain body from the lib"
+    return
+  fi
+  if [[ -z "$gate_body" || "$gate_body" != *"artifact_filter_porcelain()"* ]]; then
+    fail "$name" "could not extract copy-mode artifact_filter_porcelain fallback body from pr-gate.sh"
+    return
+  fi
+  if [[ "$lib_body" != "$gate_body" ]]; then
+    fail "$name" "copy-mode fallback body drifted from canonical lib (NUL/rename/drop-keep logic differs)"
+    return
+  fi
+  if [[ -z "$lib_line" || "$lib_line" != "$gate_line" ]]; then
+    fail "$name" "leaf-list drift: lib='$lib_line' fallback='$gate_line'"
+    return
+  fi
+  pass "$name"
+}
+
 test_missing_reviewer_agent() {
   local name="missing-reviewer-agent"
   should_run "$name" || return 0
@@ -2306,6 +2592,13 @@ test_untracked_binary_routes_to_standard() {
 
 run_test test_tier_detection
 run_test test_pr_gate_does_not_mutate_gitignore
+run_test test_artifact_filter_drops_gate_artifacts
+run_test test_artifact_filter_keeps_real_sources
+run_test test_artifact_filter_symmetry_ignores_artifacts
+run_test test_artifact_filter_handles_special_filenames
+run_test test_artifact_filter_handles_rename_origin
+run_test test_copy_mode_artifact_filter_no_false_abort
+run_test test_copy_mode_artifact_fallback_body_parity
 run_test test_missing_reviewer_agent
 run_test test_invalid_base_ref
 run_test test_no_changed_files

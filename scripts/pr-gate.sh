@@ -315,6 +315,42 @@ else
   }
 fi
 
+ARTIFACT_PATHS_PATH="$SCRIPT_DIR/lib/artifact-paths.sh"
+if [[ -r "$ARTIFACT_PATHS_PATH" ]]; then
+  # shellcheck source=scripts/lib/artifact-paths.sh
+  . "$ARTIFACT_PATHS_PATH"
+else
+  # Inline fallback for copy-mode (pr-gate.sh run standalone without scripts/lib/).
+  # MUST stay in sync with scripts/lib/artifact-paths.sh -- the canonical
+  # artifact-leaf source of truth. See that file for the full rationale.
+  PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
+
+  artifact_filter_porcelain() {
+    local rec path code leaf drop expect_orig=0
+    while IFS= read -r -d '' rec; do
+      if [[ "$expect_orig" -eq 1 ]]; then
+        expect_orig=0
+        path="$rec"
+      else
+        code="${rec:0:2}"
+        path="${rec:3}"
+        [[ "$code" == R* || "$code" == C* ]] && expect_orig=1
+      fi
+
+      drop=0
+      for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+        if [[ "$path" == "$leaf" || "$path" == "$leaf/"* ]]; then
+          drop=1
+          break
+        fi
+      done
+
+      [[ "$drop" -eq 0 ]] && printf '%s\0' "$rec"
+    done
+    return 0
+  }
+fi
+
 # Executor-name validation is delegated to resolve_executor (below): it is the
 # single, data-driven authority — `auto` autodetects and any other value must be a
 # routable adapter (a valid on-disk manifest), fail-closed on unknown. A hardcoded
@@ -894,10 +930,13 @@ else
 
   # Capture working-tree content fingerprints before dispatch.
   # git diff HEAD: content-level changes to tracked files (catches already-dirty mutations).
-  # git status --porcelain: new untracked source files (gate artifacts are gitignored
-  # by the patch above and excluded from this snapshot).
+  # git status --porcelain -z: new untracked source files. The gate's own artifacts
+  # (.agent-trace/ .gate-briefs/ .gate-results/) are excluded explicitly via
+  # artifact_filter_porcelain -- the canonical artifact-leaf source of truth in
+  # scripts/lib/artifact-paths.sh -- so a repo that has NOT had these paths gitignored
+  # is not misread as prompt-injected. NUL-delimited (-z) so special filenames survive.
   _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-  _PRE_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
+  _PRE_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
@@ -1088,9 +1127,11 @@ RBRIEF_EOF
 
   # Worktree integrity check -- detect prompt-injected tracked-file modifications.
   # Content-hash catches mutations to already-dirty tracked files; status hash
-  # catches new untracked source files (gate artifacts are gitignored, excluded).
+  # catches new untracked source files. Gate artifacts are excluded explicitly via
+  # artifact_filter_porcelain (scripts/lib/artifact-paths.sh) -- the pre/post sides
+  # MUST use the same filter or the hashes can never match. -z keeps special filenames intact.
   _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-  _POST_DISPATCH_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
+  _POST_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
   if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
     printf 'Error: reviewer sessions modified working tree -- possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
@@ -1313,8 +1354,10 @@ SBRIEF_P2
   fi
 
   # Post-synthesis integrity check -- same dual-hash guard for tracked files.
+  # Same artifact_filter_porcelain exclusion as the pre/post-dispatch snapshots so
+  # this hash stays comparable with _POST_DISPATCH_STATUS below.
   _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-  _POST_SYNTHESIS_STATUS=$(git status --porcelain 2>/dev/null | $_HASH_CMD)
+  _POST_SYNTHESIS_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
   if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then
     printf 'Error: synthesis session modified working tree -- possible prompt injection.\n' >&2
     exit 1
