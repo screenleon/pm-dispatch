@@ -83,6 +83,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
+| CC-412 | 🟢 someday | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API） | arch/memory | 2026-06-23 | — | P3 | retrieval |
 
 ---
 
@@ -1322,3 +1323,26 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **See**: pr:#270
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
+
+## CC-412 — memory substrate 跨工具可攜（decouple from Claude-specific location + injection）
+
+**Problem**: 專案記憶目前綁兩處 Claude 專屬實作，使「跨 AI 工具/agent（codex、opencode、未來 host）共用同一份專案記憶」困難：(1) `find_memory_dir`（`scripts/lib/memory.sh`）的目錄慣例寫死 `CLAUDE_CONFIG_DIR/projects/<encode(cwd)>/memory/`；(2) MEMORY.md 的每-session 注入靠 Claude Code 的 UserPromptSubmit hook，其他工具沒有等價 hook，既無法定位也無法注入。
+
+**Why / 決策分析（此 ticket 即 decision record）**:
+- **已可攜的部分**（CC-405 剛強化，刻意做成工具中立）：卡片＝純 Markdown+YAML；`pmctl memory doctor`、`pmctl context --source memory`（[[CC-403]] 的中立檢索 API）；memory 衍生 DB；[[CC-405]] frontmatter schema（topics/priority/status/...）。標準化反而**降低** Claude 耦合——把記憶從「memory-graph 工具的不透明附屬品」變成 pmctl 可檢查、可檢索的結構化資料。
+- **真正耦合僅兩處**：位置 resolver + 注入機制。`metadata.node_type`/`originSessionId` 是 Claude memory-graph 的 additive 標籤，YAML 忽略未知鍵，**不阻礙**其他工具（[[CC-405]] spike 已明訂禁止移除 `metadata` block，正是為了不鎖死）。
+- **決策方向**：不打掉重練、不移除任何東西；**加兩個 seam**。
+
+**Requirement**:
+- **位置 seam**：`find_memory_dir` 支援顯式 `PM_MEMORY_DIR`（或 config `dispatch.memory_dir`）覆寫，解析優先序明確（env > config > `CLAUDE_CONFIG_DIR` 慣例）；`memory doctor` / `context --source memory` / `mem-*` 全部走同一解析。未設時行為與今天 byte-identical（向後相容 load-bearing）。
+- **注入 adapter 化**：文件化「**可攜核心＝pmctl retrieval API**；注入＝per-tool adapter」。Claude UserPromptSubmit hook 為現成 adapter；其他工具不靠 hook，改主動呼叫 `pmctl context --source memory` 取記憶。
+- 下游 [[CC-404]]/[[CC-406]]/[[CC-407]] 應建在 retrieval API 上、而非 Claude 注入機制上。
+
+**Acceptance**:
+- 設 `PM_MEMORY_DIR` 後 `pmctl memory doctor` / `pmctl context --source memory` 解析到該目錄；未設時與今天行為一致。
+- docs 說明跨工具取記憶走 `pmctl context --source memory`（注入為 per-tool adapter）。
+- 不破壞 Claude 路徑預設；`metadata` block 維持不動。
+
+**Sequencing / relation**: 與 [[CC-011]]/[[CC-012]]（記憶**跨裝置** sync：symlink/pull）**正交**——那是同一份 memory 跨機器，本票是同一份 memory **跨工具**可攜；兩者可共用「位置不再硬綁 ~/.claude」這個 seam。建在 [[CC-403]] retrieval API 上。
+
+**Priority**: P3（someday）。
