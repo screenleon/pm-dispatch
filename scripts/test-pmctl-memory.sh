@@ -15,10 +15,11 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/memory.sh"
 th_init "$@"
 
-# Snapshot the developer's live project-memory dir up front so a dedicated guard
-# case proves the suite never reads/writes it (doctor must stay read-only AND no
-# case may accidentally point doctor at the live dir). Every case operates on an
-# isolated fixture under $tmp_root via a fake CLAUDE_CONFIG_DIR.
+# Snapshot the developer's live project-memory dir up front (a read, for the
+# baseline) so a dedicated guard case proves the suite never MUTATES it — doctor
+# must stay read-only AND no case may accidentally point doctor at the live dir.
+# Every case operates on an isolated fixture under $tmp_root via a fake
+# CLAUDE_CONFIG_DIR.
 _LIVE_MEM_DIR="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
 _live_mem_fingerprint() {
   if [[ -n "$_LIVE_MEM_DIR" && -d "$_LIVE_MEM_DIR" ]]; then
@@ -321,7 +322,7 @@ MD
 }
 
 case_memory_doctor_no_live_dir_mutation() {
-  local name="pmctl memory doctor suite: never reads/mutates the live project-memory dir"
+  local name="pmctl memory doctor suite: never mutates the live project-memory dir"
   should_run "$name" || return 0
   local now; now="$(_live_mem_fingerprint)"
   if [[ "$now" == "$_LIVE_MEM_BASELINE" ]]; then

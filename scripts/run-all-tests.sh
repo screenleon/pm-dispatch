@@ -125,6 +125,7 @@ declare -A SUITE_PATHS=(
   [test-brief-validate]="scripts/test-brief-validate.sh"
   [test-archive-closed-backlog]="scripts/test-archive-closed-backlog.sh"
   [test-pmctl-context]="scripts/test-pmctl-context.sh"
+  [test-pmctl-memory]="scripts/test-pmctl-memory.sh"
   [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"
   [test-pmctl-guard]="scripts/test-pmctl-guard.sh"
   [test-release-verify]="scripts/test-release-verify.sh"
@@ -164,6 +165,27 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# ── Registry-sync guard ──────────────────────────────────────────────────────
+# SUITE_NAMES (ordered) and SUITE_PATHS (name→script) are two parallel registries.
+# A name added to one but not the other previously surfaced only as a deep
+# `SUITE_PATHS[$name]: unbound variable` crash mid-run. Assert both registries
+# agree up front so any future drift fails loud and obvious at startup.
+_registry_drift=()
+for _name in "${SUITE_NAMES[@]}"; do
+  [[ -n "${SUITE_PATHS[$_name]:-}" ]] || _registry_drift+=("name without path: $_name")
+done
+for _name in "${!SUITE_PATHS[@]}"; do
+  _found=0
+  for _n in "${SUITE_NAMES[@]}"; do [[ "$_n" == "$_name" ]] && { _found=1; break; }; done
+  [[ "$_found" -eq 1 ]] || _registry_drift+=("path without name: $_name")
+done
+if [[ "${#_registry_drift[@]}" -gt 0 ]]; then
+  printf 'run-all-tests: SUITE_NAMES/SUITE_PATHS registry drift:\n' >&2
+  printf '  - %s\n' "${_registry_drift[@]}" >&2
+  exit 2
+fi
+unset _name _n _found _registry_drift
 
 if [[ "$LIST" -eq 1 ]]; then
   printf '%s\n' "${SUITE_NAMES[@]}"
