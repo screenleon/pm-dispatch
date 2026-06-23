@@ -115,9 +115,15 @@ Report fields (ordered): `memory_dir`, `entry_count`, `memory_bytes`,
 `episodes_bytes` (0 if absent), `dead_links` (MEMORY.md link → missing file),
 `orphan_cards` (card present but unreferenced, MEMORY.md excluded),
 `duplicate_hooks` (hook text on ≥2 index lines), `stale_repo_refs`
-(`{card, ref}` per the grammar above), `issues_count`. `--json` emits a single
-object carrying `schema_version: 1`. Exit codes: `0` healthy, `1` issues found,
-`2` usage error.
+(`{card, ref}` per the grammar above), `cards_missing_fields`
+(`{card, missing: [...]}` for any card lacking a required field —
+`topics`/`priority`/`status`/`updated_at`/`repo_refs`; `repo_refs` may be `[]`
+but the key must exist), `issues_count`. `--json` emits a single object carrying
+`schema_version: 1`. Exit codes: `0` healthy, `1` issues found, `2` usage error.
+
+Until the live cards are backfilled, `cards_missing_fields` will list every
+not-yet-migrated card — that is the warn surface that drives the one-time
+backfill before write-time enforce is enabled.
 
 ## Bootstrap-empty pattern for fork users
 

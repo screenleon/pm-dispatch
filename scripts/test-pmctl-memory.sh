@@ -48,6 +48,24 @@ make_fixture_memory() {
   printf '%s' "$mdir"
 }
 
+# Write a card carrying all required frontmatter fields (compliant card).
+# $1 = path, $2 = name. repo_refs is empty so the card is fresh on every check.
+write_compliant_card() {
+  local path="$1" cardname="$2"
+  cat > "$path" <<MD
+---
+name: $cardname
+topics:
+  - x
+priority: normal
+status: active
+updated_at: "2026-06-23"
+repo_refs: []
+---
+body
+MD
+}
+
 # Run doctor against a fixture; writes JSON to $1, returns doctor exit code.
 run_doctor_json() {
   local out="$1" cfg="$2" repo="$3"; shift 3
@@ -71,16 +89,23 @@ case_memory_doctor_clean_fixture() {
 - [alpha](card_alpha.md) — hook text one
 - [beta](card_beta.md) — hook text two
 MD
-  printf -- '---\nname: alpha\n---\nbody\n' > "$mdir/card_alpha.md"
-  printf -- '---\nname: beta\n---\nbody\n' > "$mdir/card_beta.md"
+  write_compliant_card "$mdir/card_alpha.md" alpha
+  write_compliant_card "$mdir/card_beta.md" beta
 
   local out="$tmp_root/clean.json" status=0
   run_doctor_json "$out" "$cfg" "$repo" || status=$?
 
-  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if ! assert_exit "$name" "$status" 0; then
+    fail "$name" "expected 0 but got $status: $(<"$out")"
+    return 0
+  fi
   if ! assert_file_contains "$name" "$out" '"schema_version":1'; then return 0; fi
   if ! assert_file_contains "$name" "$out" '"issues_count":0'; then return 0; fi
   if ! assert_file_contains "$name" "$out" '"entry_count":2'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '"cards_missing_fields":[]'; then return 0; fi
+  # finding #2: assert memory_dir + memory_bytes schema fields directly.
+  if ! assert_file_contains "$name" "$out" "\"memory_dir\":\"$mdir\""; then return 0; fi
+  if ! assert_file_matches "$name" "$out" '"memory_bytes":[1-9][0-9]*'; then return 0; fi
   pass "$name"
 }
 
@@ -183,6 +208,9 @@ metadata:
   type: feedback
 topics:
   - x
+priority: normal
+status: active
+updated_at: "2026-06-23"
 repo_refs:
   - path:agents-file.md
   - fn:scripts/lib-frame.sh#g_audit
@@ -304,6 +332,11 @@ MD
   cat > "$mdir/card_refs.md" <<'MD'
 ---
 name: refcard
+topics:
+  - x
+priority: normal
+status: active
+updated_at: "2026-06-23"
 repo_refs:
   - path:target.md
 ---
@@ -318,6 +351,39 @@ MD
     return 0
   fi
   if ! assert_file_contains "$name" "$out" '"stale_repo_refs":[]'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_doctor_missing_required_fields() {
+  local name="pmctl memory doctor: card missing required frontmatter → cards_missing_fields + exit 1"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/miss-cfg" repo="$tmp_root/miss-repo"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  cat > "$mdir/MEMORY.md" <<'MD'
+# Memory Index
+- [full](card_full.md) — full hook
+- [bare](card_bare.md) — bare hook
+MD
+  # Compliant card: not flagged. Bare card: only name → all 5 fields missing.
+  write_compliant_card "$mdir/card_full.md" full
+  printf -- '---\nname: bare\n---\nbody\n' > "$mdir/card_bare.md"
+
+  local out="$tmp_root/miss.json" status=0
+  run_doctor_json "$out" "$cfg" "$repo" || status=$?
+
+  if ! assert_exit "$name" "$status" 1; then
+    fail "$name" "expected 1 (issues) but got $status: $(<"$out")"
+    return 0
+  fi
+  # The bare card is flagged with all required fields; the compliant card is not.
+  if ! assert_file_contains "$name" "$out" '{"card":"card_bare.md","missing":["topics","priority","status","updated_at","repo_refs"]}'; then return 0; fi
+  local body; body="$(<"$out")"
+  if [[ "$body" == *'card_full.md'* ]]; then
+    fail "$name" "compliant card_full.md must not appear in cards_missing_fields: $body"
+    return 0
+  fi
   pass "$name"
 }
 
@@ -343,6 +409,7 @@ case_memory_doctor_repo_refs_stale_flagged
 case_memory_doctor_episodes_bytes
 case_memory_doctor_unknown_flag_exit2
 case_memory_doctor_repo_root_override
+case_memory_doctor_missing_required_fields
 case_memory_doctor_no_live_dir_mutation
 
 th_summary

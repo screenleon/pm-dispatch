@@ -51,6 +51,19 @@ _mem_card_repo_refs() {
   ' "$card"
 }
 
+# Print the top-level frontmatter keys of a card (one per line), scoped to the
+# first --- … --- fence. Nested map keys (indented) are not top-level and are
+# excluded, so `metadata:` is reported but `metadata.node_type` is not.
+_mem_card_top_keys() {
+  local card="$1"
+  awk '
+    /^---[[:space:]]*$/ { fm++; if (fm >= 2) exit; next }
+    fm == 1 && /^[A-Za-z_][A-Za-z0-9_-]*:/ {
+      key = $0; sub(/:.*/, "", key); print key
+    }
+  ' "$card"
+}
+
 # Verdict on a single repo_ref. Returns 0 when STALE, 1 when fresh.
 # Grammar (see docs/memory-system.md → repo_refs grammar):
 #   file   → path:<repo-root-relative>           stale when path absent
@@ -127,7 +140,7 @@ pmctl_memory_doctor() {
   # No memory dir → nothing to check; report an empty, healthy result.
   if [[ -z "$mem_dir" || ! -d "$mem_dir" ]]; then
     if [[ "$json" -eq 1 ]]; then
-      printf '{"schema_version":1,"memory_dir":"","entry_count":0,"memory_bytes":0,"episodes_bytes":0,"dead_links":[],"orphan_cards":[],"duplicate_hooks":[],"stale_repo_refs":[],"issues_count":0}\n'
+      printf '{"schema_version":1,"memory_dir":"","entry_count":0,"memory_bytes":0,"episodes_bytes":0,"dead_links":[],"orphan_cards":[],"duplicate_hooks":[],"stale_repo_refs":[],"cards_missing_fields":[],"issues_count":0}\n'
     else
       printf 'memory_dir:      (none found for %s)\n' "$repo_root"
       printf 'issues_count:    0\n'
@@ -182,12 +195,18 @@ pmctl_memory_doctor() {
     [[ "$is_ref" -eq 0 ]] && orphan_cards+=("$base")
   done
 
-  # ── stale_repo_refs: verify each card's repo_refs against the grammar ──────
+  # ── per-card checks: stale_repo_refs + missing required frontmatter fields ──
+  # Required fields (additive schema): topics/priority/status/updated_at/repo_refs.
+  # A card lacking any is flagged in cards_missing_fields (warn-phase surface for
+  # the pre-enforce backfill); repo_refs may be empty [] but the key must exist.
   local -a stale_cards=() stale_refs=()
+  local -a missing_field_cards=() missing_field_lists=()
+  local -a required_fields=(topics priority status updated_at repo_refs)
   for card in "$mem_dir"/*.md; do
     [[ -e "$card" ]] || continue
     base="$(basename "$card")"
     [[ "$base" == "MEMORY.md" ]] && continue
+
     local r
     while IFS= read -r r; do
       [[ -n "$r" ]] || continue
@@ -196,6 +215,16 @@ pmctl_memory_doctor() {
         stale_refs+=("$r")
       fi
     done < <(_mem_card_repo_refs "$card")
+
+    local keys req missing=""
+    keys="$(_mem_card_top_keys "$card")"
+    for req in "${required_fields[@]}"; do
+      printf '%s\n' "$keys" | grep -qx "$req" || missing+="${missing:+,}$req"
+    done
+    if [[ -n "$missing" ]]; then
+      missing_field_cards+=("$base")
+      missing_field_lists+=("$missing")
+    fi
   done
 
   # ── aggregate ─────────────────────────────────────────────────────────────
@@ -206,7 +235,7 @@ pmctl_memory_doctor() {
   done
   episodes_bytes="$(_mem_file_bytes "$episodes")"
 
-  local issues_count=$(( ${#dead_links[@]} + ${#orphan_cards[@]} + ${#duplicate_hooks[@]} + ${#stale_refs[@]} ))
+  local issues_count=$(( ${#dead_links[@]} + ${#orphan_cards[@]} + ${#duplicate_hooks[@]} + ${#stale_refs[@]} + ${#missing_field_cards[@]} ))
 
   if [[ "$json" -eq 1 ]]; then
     _mem_doctor_emit_json
@@ -229,6 +258,7 @@ _mem_doctor_emit_json() {
   out+=",\"orphan_cards\":$(_mem_json_str_array ${orphan_cards[@]+"${orphan_cards[@]}"})"
   out+=",\"duplicate_hooks\":$(_mem_json_str_array ${duplicate_hooks[@]+"${duplicate_hooks[@]}"})"
   out+=",\"stale_repo_refs\":$(_mem_json_stale_array)"
+  out+=",\"cards_missing_fields\":$(_mem_json_missing_array)"
   out+=",\"issues_count\":$issues_count}"
   printf '%s\n' "$out"
 }
@@ -257,6 +287,28 @@ _mem_json_stale_array() {
   printf '%s' "$out"
 }
 
+# Build the cards_missing_fields array of {card, missing:[...]} from caller's scope.
+_mem_json_missing_array() {
+  local i first=1 out="[" field flist farr
+  for ((i = 0; i < ${#missing_field_cards[@]}; i++)); do
+    [[ "$first" -eq 1 ]] || out+=","
+    # missing_field_lists[i] is a comma-joined list → emit as a JSON string array.
+    farr="["
+    local ffirst=1
+    IFS=',' read -ra flist <<< "${missing_field_lists[$i]}"
+    for field in "${flist[@]}"; do
+      [[ "$ffirst" -eq 1 ]] || farr+=","
+      farr+="\"$(_mem_json_esc "$field")\""
+      ffirst=0
+    done
+    farr+="]"
+    out+="{\"card\":\"$(_mem_json_esc "${missing_field_cards[$i]}")\",\"missing\":$farr}"
+    first=0
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
 # Emit the label-aligned human report. Reads doctor locals from caller's scope.
 _mem_doctor_emit_human() {
   printf 'memory_dir:      %s\n' "$mem_dir"
@@ -273,6 +325,15 @@ _mem_doctor_emit_human() {
     local i
     for ((i = 0; i < ${#stale_refs[@]}; i++)); do
       printf '  - %s: %s\n' "${stale_cards[$i]}" "${stale_refs[$i]}"
+    done
+  fi
+  if [[ "${#missing_field_cards[@]}" -eq 0 ]]; then
+    printf 'cards_missing_fields: (none)\n'
+  else
+    printf 'cards_missing_fields:\n'
+    local j
+    for ((j = 0; j < ${#missing_field_cards[@]}; j++)); do
+      printf '  - %s: %s\n' "${missing_field_cards[$j]}" "${missing_field_lists[$j]}"
     done
   fi
   printf 'issues_count:    %s\n' "$issues_count"

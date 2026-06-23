@@ -66,6 +66,7 @@ SUITE_NAMES=(
   test-brief-validate
   test-archive-closed-backlog
   test-pmctl-context
+  test-pmctl-memory
   test-pmctl-backlog
   test-pmctl-guard
   test-release-verify
@@ -149,6 +150,7 @@ suite_path() {
     test-brief-validate) printf 'scripts/test-brief-validate.sh\n' ;;
     test-archive-closed-backlog) printf 'scripts/test-archive-closed-backlog.sh\n' ;;
     test-pmctl-context)  printf 'scripts/test-pmctl-context.sh\n' ;;
+    test-pmctl-memory)   printf 'scripts/test-pmctl-memory.sh\n' ;;
     test-pmctl-backlog)   printf 'scripts/test-pmctl-backlog.sh\n' ;;
     test-pmctl-guard)     printf 'scripts/test-pmctl-guard.sh\n' ;;
     test-release-verify)  printf 'scripts/test-release-verify.sh\n' ;;
