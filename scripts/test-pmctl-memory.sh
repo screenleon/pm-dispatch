@@ -316,6 +316,35 @@ case_memory_doctor_unknown_flag_exit2() {
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
+case_memory_doctor_repo_root_missing_operand_exit2() {
+  local name="pmctl memory doctor: --repo-root without a value → exit 2 + error"
+  should_run "$name" || return 0
+
+  local err="$tmp_root/rr-missing.err" status=0
+  # --repo-root is the last token, so no operand follows it.
+  "$PMCTL" memory doctor --repo-root >/dev/null 2>"$err" || status=$?
+  if ! assert_exit "$name" "$status" 2; then return 0; fi
+  if ! assert_file_contains "$name" "$err" '--repo-root requires a value'; then return 0; fi
+  pass "$name"
+}
+
+case_memory_doctor_help_exit0() {
+  local name="pmctl memory doctor: --help → exit 0 + usage contract"
+  should_run "$name" || return 0
+
+  local out="$tmp_root/help.out" status=0
+  "$PMCTL" memory doctor --help >"$out" 2>&1 || status=$?
+  if ! assert_exit "$name" "$status" 0; then
+    fail "$name" "expected 0 but got $status: $(<"$out")"
+    return 0
+  fi
+  if ! assert_file_contains "$name" "$out" 'Usage: pmctl memory doctor'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '--json'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '--repo-root'; then return 0; fi
+  if ! assert_file_contains "$name" "$out" '0 healthy, 1 issues found, 2 usage error'; then return 0; fi
+  pass "$name"
+}
+
 case_memory_doctor_repo_root_override() {
   local name="pmctl memory doctor: --repo-root resolves repo_refs against the given root"
   should_run "$name" || return 0
@@ -408,6 +437,8 @@ case_memory_doctor_repo_refs_fresh_not_flagged
 case_memory_doctor_repo_refs_stale_flagged
 case_memory_doctor_episodes_bytes
 case_memory_doctor_unknown_flag_exit2
+case_memory_doctor_repo_root_missing_operand_exit2
+case_memory_doctor_help_exit0
 case_memory_doctor_repo_root_override
 case_memory_doctor_missing_required_fields
 case_memory_doctor_no_live_dir_mutation
