@@ -173,6 +173,7 @@ jobs:
             test-brief-validate.sh
             dispatch-post-verify.sh
             test-dispatch-post-verify.sh
+            test-state-paths.sh
             archive-closed-backlog.sh
             test-archive-closed-backlog.sh
             migrate-routing-to-events.sh

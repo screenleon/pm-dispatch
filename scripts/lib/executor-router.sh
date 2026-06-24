@@ -173,6 +173,12 @@ dispatch_via() {
   fi
   cmd+=(--timeout "$timeout" --brief-file "$brief_file")
   [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+  # Forward the trace-dir seam EXPLICITLY when set, so the printed command is
+  # self-documenting and the adapter's trace location does not silently depend
+  # on inherited env. Default (env unset) appends nothing — behavior unchanged,
+  # trace stays in-repo. Precedence at the adapter is flag > env, and the value
+  # here IS the env, so forwarding it as a flag is consistent either way.
+  [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && cmd+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
 
   for arg in "${cmd[@]}"; do
     if [[ "$first" -eq 1 ]]; then

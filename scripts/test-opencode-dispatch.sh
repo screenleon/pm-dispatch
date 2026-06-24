@@ -579,4 +579,41 @@ case_timeout_too_low_rejected
 case_legacy_flags_warn
 case_latest_symlinks_created
 
+# ---- trace-dir/--trace-dir routes trace out of repo ----
+case_trace_dir_flag_routes_out_of_repo() {
+  # Behavior: --trace-dir <abs> writes trace to that dir and leaves the repo's
+  # in-repo .agent-trace untouched (relocation seam, parity with codex/claude).
+  local name="trace-dir/--trace-dir routes trace out of repo"; should_run "$name" || return 0
+  local bindir work bf tdir
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  tdir="$(mktemp -d)/explicit-trace"
+  _fake_opencode_success "$bindir" "hello"
+  set +e
+  PATH="$bindir:$PATH" "$DISPATCH" --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free --timeout 120 --trace-dir "$tdir" >/dev/null 2>&1
+  set -e
+  if compgen -G "$tdir/opencode-*.jsonl" >/dev/null && [[ ! -d "$work/.agent-trace" ]]; then
+    pass "$name"; else fail "$name" "override=$(ls "$tdir" 2>/dev/null) inrepo=$(ls "$work/.agent-trace" 2>/dev/null)"; fi
+  rm -rf "$bindir" "$work" "$tdir"; rm -f "$bf"
+}
+
+# ---- trace-dir/relative --trace-dir rejected ----
+case_trace_dir_relative_rejected() {
+  # Behavior: a relative --trace-dir is rejected (exit 2) — parity with codex/claude.
+  local name="trace-dir/relative --trace-dir rejected"; should_run "$name" || return 0
+  local bindir work bf rc
+  bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
+  _fake_opencode_success "$bindir" "hello"
+  set +e
+  PATH="$bindir:$PATH" "$DISPATCH" --cd "$work" --brief-file "$bf" \
+    --model opencode/nemotron-3-ultra-free --timeout 120 --trace-dir "rel/trace" >/dev/null 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+  rm -rf "$bindir" "$work"; rm -f "$bf"
+}
+
+case_trace_dir_flag_routes_out_of_repo
+case_trace_dir_relative_rejected
+
 th_summary

@@ -53,6 +53,7 @@ SUITE_NAMES=(
   test-pm-prep-snapshot
   test-schema-task-mirrors-backlog
   test-state-store
+  test-state-paths
   test-state-layout-parity
   test-state-store-rotation
   test-pmctl-trace
@@ -114,6 +115,7 @@ declare -A SUITE_PATHS=(
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"
   [test-schema-task-mirrors-backlog]="scripts/test-schema-task-mirrors-backlog.sh"
   [test-state-store]="scripts/test-state-store.sh"
+  [test-state-paths]="scripts/test-state-paths.sh"
   [test-state-layout-parity]="scripts/test-state-layout-parity.sh"
   [test-state-store-rotation]="scripts/test-state-store-rotation.sh"
   [test-pmctl-trace]="scripts/test-pmctl-trace.sh"

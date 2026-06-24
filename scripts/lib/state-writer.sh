@@ -19,28 +19,14 @@ if [[ "$(type -t serialize_with_lock 2>/dev/null)" != function || "$(type -t _po
   unset _SW_SHELL_FLAGS _SW_PIPEFAIL
 fi
 
-_sw_log_error() {
-  {
-    local log_dir="${HOME:-}/.claude/logs"
-    [[ -n "$log_dir" ]] || return 0
-    mkdir -p "$log_dir"
-    printf '[%s] %s\n' "$(date -Is 2>/dev/null || date)" "$*" >> "$log_dir/state-writer.err"
-  } 2>/dev/null || true
-  return 0
-}
-
-_sw_store_root() {
-  {
-    if [[ -n "${PM_DISPATCH_STATE_ROOT:-}" ]]; then
-      printf '%s\n' "$PM_DISPATCH_STATE_ROOT"
-    elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
-      printf '%s\n' "$XDG_DATA_HOME/pm-dispatch/state"
-    else
-      printf '%s\n' "${HOME:-}/.local/share/pm-dispatch/state"
-    fi
-  } 2>/dev/null || true
-  return 0
-}
+# Shared PATH resolvers (_sw_log_error, _sw_store_root, _sw_project_key,
+# _sw_project_dir, sw_project_run_dir) live in state-paths.sh — the single
+# source of truth for the store-root / project-key layout. Source it (guarded)
+# so this writer and every artifact-relocation caller resolve the same paths.
+# shellcheck source=scripts/lib/state-paths.sh
+if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+  . "$SCRIPT_DIR_SW/state-paths.sh" 2>/dev/null || true
+fi
 
 _sw_store_root_leaf() {
   local root="$1"
@@ -120,43 +106,6 @@ _sw_ensure_store_root_safe() {
   if _sw_store_root_mode_allows_write "$store_root"; then
     _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
   fi
-  return 0
-}
-
-_sw_project_key() {
-  {
-    local repo_root project_key
-    if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
-      # Resolve to git top-level so subdirectory dispatches hash the same key.
-      repo_root="$(git -C "${_SW_REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null \
-        || printf '%s\n' "${_SW_REPO_ROOT}")"
-    elif repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
-      :
-    else
-      printf 'global\n'
-      return 0
-    fi
-    # Canonicalize before hashing so the same repo reached via different path
-    # spellings (Windows C:/ vs /c/ vs drive-letter case) lands in one partition.
-    # POSIX paths are unchanged, so existing keys stay stable.
-    repo_root="$(_portable_canonical_path "$repo_root")"
-    if ! project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null)"; then
-      _sw_log_error "_sw_project_key: failed to hash repo root; falling back to global: $repo_root"
-      project_key=""
-    fi
-    if [[ -n "$project_key" ]]; then
-      printf '%s\n' "$project_key"
-    else
-      printf 'global\n'
-    fi
-  } 2>/dev/null || true
-  return 0
-}
-
-_sw_project_dir() {
-  {
-    printf '%s/projects/%s/\n' "$(_sw_store_root)" "$(_sw_project_key)"
-  } 2>/dev/null || true
   return 0
 }
 

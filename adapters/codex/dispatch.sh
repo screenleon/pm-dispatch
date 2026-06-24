@@ -82,6 +82,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
   mkdir -p -- "$__codex_dispatch_snapshot_dir/lib"
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-paths.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/state-paths.sh" "$__codex_dispatch_snapshot_dir/lib/state-paths.sh" || true
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
@@ -109,6 +111,7 @@ BRIEF=""
 BRIEF_FILE=""
 BRIEF_FROM_ARGV=0
 PRINT_CMD=0
+TRACE_DIR_OVERRIDE=""
 # pm-dispatch's OWN default model, decoupled from the user's interactive
 # ~/.codex/config.toml `model` setting (which may be a spark/other variant).
 # This is the `default` ALIAS — its wire id (gpt-5.5) lives only in
@@ -187,6 +190,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) TIMEOUT="$2"; shift 2;;
     --print-cmd) PRINT_CMD=1; shift;;
     --brief-file) BRIEF_FILE="$2"; shift 2;;
+    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     --) shift; BRIEF="$*"; BRIEF_FROM_ARGV=1; break;;
     -h|--help)
       sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -260,7 +264,16 @@ STDERR_LOG="/dev/null"
 TRACE="<print-only>"
 
 if [[ "$PRINT_CMD" -ne 1 ]]; then
-  TRACE_DIR="$WORK_DIR/.agent-trace"
+  # Trace output location: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy
+  # in-repo $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path
+  # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
+  # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
+  # when trace is actually written (--print-cmd writes none, so it needs no lib).
+  if ! declare -F sw_resolve_trace_dir >/dev/null 2>&1; then
+    echo "Error: trace-path helper unavailable (state-paths.sh not loaded)" >&2
+    exit 2
+  fi
+  TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
   mkdir -p "$TRACE_DIR"
   TRACE="$TRACE_DIR/codex-$TS.jsonl"
   LAST="$TRACE_DIR/codex-$TS.last"

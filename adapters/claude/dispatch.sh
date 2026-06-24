@@ -59,6 +59,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
   mkdir -p -- "$__claude_dispatch_snapshot_dir/lib"
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" "$__claude_dispatch_snapshot_dir/lib/state-writer.sh" || true
+  [[ -r "$__claude_dispatch_source_repo/scripts/lib/state-paths.sh" ]] && \
+    cp -- "$__claude_dispatch_source_repo/scripts/lib/state-paths.sh" "$__claude_dispatch_snapshot_dir/lib/state-paths.sh" || true
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/portable.sh" "$__claude_dispatch_snapshot_dir/lib/portable.sh" || true
   chmod +x -- "$__claude_dispatch_snapshot"
@@ -77,6 +79,7 @@ TIMEOUT=""
 BRIEF=""
 BRIEF_FILE=""
 PRINT_CMD=0
+TRACE_DIR_OVERRIDE=""
 PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
@@ -160,6 +163,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) TIMEOUT="$2"; shift 2;;
     --print-cmd) PRINT_CMD=1; shift;;
     --brief-file) BRIEF_FILE="$2"; shift 2;;
+    --trace-dir) TRACE_DIR_OVERRIDE="$2"; shift 2;;
     # Codex-only flags accepted as no-ops (claude has no equivalents).
     --sandbox) shift 2;;
     --approval) shift 2;;
@@ -219,7 +223,16 @@ LAST="/dev/null"
 STDERR_LOG="/dev/null"
 TRACE="<print-only>"
 if [[ "$PRINT_CMD" -ne 1 ]]; then
-  TRACE_DIR="$WORK_DIR/.agent-trace"
+  # Trace output location: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy
+  # in-repo $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path
+  # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
+  # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
+  # when trace is actually written (--print-cmd writes none, so it needs no lib).
+  if ! declare -F sw_resolve_trace_dir >/dev/null 2>&1; then
+    echo "Error: trace-path helper unavailable (state-paths.sh not loaded)" >&2
+    exit 2
+  fi
+  TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
   mkdir -p "$TRACE_DIR"
   TRACE="$TRACE_DIR/claude-$TS.jsonl"
   LAST="$TRACE_DIR/claude-$TS.last"

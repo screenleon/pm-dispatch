@@ -465,4 +465,34 @@ case_model_pm_cfg_default_model
 case_model_alias_malformed_tsv_warns
 case_no_result_event_fallback
 
+# ---- trace-dir/--trace-dir routes trace out of repo ----
+case_trace_dir_flag_routes_out_of_repo() {
+  # Behavior: --trace-dir <abs> writes trace to that dir and leaves the repo's
+  # in-repo .agent-trace untouched (relocation seam, parity with codex adapter).
+  local name="trace-dir/--trace-dir routes trace out of repo"; should_run "$name" || return 0
+  local bin work brief tdir
+  bin="$(mktemp -d)"; _install_fake_claude "$bin"
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  tdir="$(mktemp -d)/explicit-trace"
+  set +e; PATH="$bin:$PATH" "$DISPATCH" --cd "$work" --brief-file "$brief" --trace-dir "$tdir" >/dev/null 2>&1; set -e
+  if compgen -G "$tdir/claude-*.jsonl" >/dev/null && [[ ! -d "$work/.agent-trace" ]]; then
+    pass "$name"; else fail "$name" "override=$(ls "$tdir" 2>/dev/null) inrepo=$(ls "$work/.agent-trace" 2>/dev/null)"; fi
+  rm -rf "$bin" "$work" "$tdir"; rm -f "$brief"
+}
+
+# ---- trace-dir/relative --trace-dir rejected ----
+case_trace_dir_relative_rejected() {
+  # Behavior: a relative --trace-dir is rejected (exit 2) — parity with codex adapter.
+  local name="trace-dir/relative --trace-dir rejected"; should_run "$name" || return 0
+  local bin work brief rc
+  bin="$(mktemp -d)"; _install_fake_claude "$bin"
+  work="$(mktemp -d)"; git init -q "$work"; brief="$(_mk_brief "$work")"
+  set +e; PATH="$bin:$PATH" "$DISPATCH" --cd "$work" --brief-file "$brief" --trace-dir "rel/trace" >/dev/null 2>&1; rc=$?; set -e
+  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+  rm -rf "$bin" "$work"; rm -f "$brief"
+}
+
+case_trace_dir_flag_routes_out_of_repo
+case_trace_dir_relative_rejected
+
 th_summary

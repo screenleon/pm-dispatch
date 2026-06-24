@@ -255,4 +255,31 @@ if should_run "dispatch_via: rejects unroutable executor"; then
   [[ "$rc" -ne 0 ]] && pass "dispatch_via: rejects unroutable executor" || fail "dispatch_via: rejects unroutable executor" "expected non-zero"
 fi
 
+# Trace-dir seam: dispatch_via forwards PM_DISPATCH_TRACE_DIR as an EXPLICIT
+# --trace-dir flag so the built command is self-documenting (and the adapter does
+# not silently depend on inherited env). Default (env unset) appends nothing.
+if should_run "dispatch_via: forwards --trace-dir when PM_DISPATCH_TRACE_DIR set"; then
+  with_fixture_root via-trace-set-fixture
+  write_fixture_adapter "$FIXTURE_ROOT" opencode cli-subprocess
+  result="$(PM_DISPATCH_TRACE_DIR=/srv/trace dispatch_via opencode "/tmp/brief.md" "/repo" default workspace-write never 1200)"
+  EXECUTOR_ROUTER_SCRIPT_DIR="$ORIGINAL_ROUTER_SCRIPT_DIR"
+  if printf '%s\n' "$result" | grep -q -- '--trace-dir /srv/trace'; then
+    pass "dispatch_via: forwards --trace-dir when PM_DISPATCH_TRACE_DIR set"
+  else
+    fail "dispatch_via: forwards --trace-dir when PM_DISPATCH_TRACE_DIR set" "$result"
+  fi
+fi
+
+if should_run "dispatch_via: omits --trace-dir when PM_DISPATCH_TRACE_DIR unset"; then
+  with_fixture_root via-trace-unset-fixture
+  write_fixture_adapter "$FIXTURE_ROOT" opencode cli-subprocess
+  result="$(unset PM_DISPATCH_TRACE_DIR; dispatch_via opencode "/tmp/brief.md" "/repo" default workspace-write never 1200)"
+  EXECUTOR_ROUTER_SCRIPT_DIR="$ORIGINAL_ROUTER_SCRIPT_DIR"
+  if ! printf '%s\n' "$result" | grep -q -- '--trace-dir'; then
+    pass "dispatch_via: omits --trace-dir when PM_DISPATCH_TRACE_DIR unset"
+  else
+    fail "dispatch_via: omits --trace-dir when PM_DISPATCH_TRACE_DIR unset" "$result"
+  fi
+fi
+
 th_summary

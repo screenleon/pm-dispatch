@@ -1065,4 +1065,52 @@ case_model_alias_light() {
 
 case_model_alias_light
 
+# ---- trace-dir/--trace-dir routes trace out of repo ----
+case_trace_dir_flag_routes_out_of_repo() {
+  # Behavior: --trace-dir <abs> writes the run's trace files to that dir and
+  # leaves the repo's in-repo .agent-trace untouched (the relocation seam).
+  # Steps: fake codex; run with --trace-dir to a temp dir; assert trace lands
+  # there and NOT under $work/.agent-trace.
+  local name="trace-dir/--trace-dir routes trace out of repo"
+  local fake work brief tdir
+  should_run "$name" || return 0
+  fake="$(mktemp -d)"
+  cat > "$fake/codex" << 'FAKEOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1,"cached_input_tokens":0,"reasoning_output_tokens":0}}'
+exit 0
+FAKEOF
+  chmod +x "$fake/codex"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(mktemp --suffix=.md)"; printf 'goal: trace-dir test\n' > "$brief"
+  tdir="$(mktemp -d)/explicit-trace"
+  PATH="$fake:$PATH" "$DISPATCH" --cd "$work" --brief-file "$brief" --trace-dir "$tdir" >/dev/null 2>&1 || true
+  if compgen -G "$tdir/codex-*.jsonl" >/dev/null && [[ ! -d "$work/.agent-trace" ]]; then
+    pass "$name"
+  else
+    fail "$name" "override=$(ls "$tdir" 2>/dev/null) inrepo=$(ls "$work/.agent-trace" 2>/dev/null)"
+  fi
+  rm -rf "$fake" "$work" "$tdir"; rm -f "$brief"
+}
+
+# ---- trace-dir/relative --trace-dir rejected ----
+case_trace_dir_relative_rejected() {
+  # Behavior: a relative --trace-dir is rejected (exit 2) so trace location never
+  # depends on cwd. Steps: run with a relative --trace-dir; assert non-zero exit.
+  local name="trace-dir/relative --trace-dir rejected"
+  local work brief rc
+  should_run "$name" || return 0
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(mktemp --suffix=.md)"; printf 'goal: t\n' > "$brief"
+  set +e
+  "$DISPATCH" --cd "$work" --brief-file "$brief" --trace-dir "rel/trace" >/dev/null 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 2 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+  rm -rf "$work"; rm -f "$brief"
+}
+
+case_trace_dir_flag_routes_out_of_repo
+case_trace_dir_relative_rejected
+
 th_summary
