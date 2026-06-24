@@ -4270,4 +4270,78 @@ run_test test_override_file_missing_operand_controlled_error
 run_test test_override_provenance_neutralizes_hostile_content
 run_test test_autodiscovered_branch_file_changes_reviewer_instructions
 
+test_gate_run_dir_flag_rejected_if_relative() {
+  # --run-dir must be an absolute path; a relative value must cause exit 2.
+  local name="gate-run-dir/relative-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-relative-rejected"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir relative/path
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for relative --run-dir, got $code"
+    return
+  fi
+  assert_file_contains "$name" "$err" "absolute" || return
+  pass "$name"
+}
+
+test_gate_artifacts_land_out_of_repo() {
+  # When --run-dir <abs> is passed, gate artifacts (briefs, results) land under
+  # <run_dir>/  and NOT under the repo itself.
+  local name="gate-run-dir/artifacts-land-out-of-repo"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-artifacts-out-of-repo"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exited $code (expected 0) with --run-dir"
+    return
+  fi
+  # Result file must be under the run_dir, not the repo.
+  local result_line
+  result_line="$(grep '^result: ' "$out" 2>/dev/null | head -1 || true)"
+  if [[ -z "$result_line" ]]; then
+    fail "$name" "no 'result: ' line in gate stdout"
+    return
+  fi
+  local result_path="${result_line#result: }"
+  if [[ "$result_path" != "$run_dir"/* ]]; then
+    fail "$name" "result file '$result_path' is not under run_dir '$run_dir'"
+    return
+  fi
+  # repo must NOT have a .gate-results dir (--run-dir should have redirected it).
+  if [[ -d "$repo/.gate-results" ]]; then
+    fail "$name" ".gate-results appeared inside repo -- --run-dir did not redirect results"
+    return
+  fi
+  # repo must NOT have a .gate-briefs dir.
+  if [[ -d "$repo/.gate-briefs" ]]; then
+    fail "$name" ".gate-briefs appeared inside repo -- --run-dir did not redirect briefs"
+    return
+  fi
+  pass "$name"
+}
+
+run_test test_gate_run_dir_flag_rejected_if_relative
+run_test test_gate_artifacts_land_out_of_repo
+
 th_summary

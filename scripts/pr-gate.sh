@@ -61,6 +61,8 @@ _kill_process_tree() {
 #   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
+#   --run-dir <abs>      out-of-repo dir for gate artifacts (briefs/results/trace); optional,
+#                        defaults to in-repo paths under --cd when absent (backward compat)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
 #   --model <id>         dispatch model (default: "default" → adapter's pinned default,
@@ -78,6 +80,7 @@ _kill_process_tree() {
 #                        and content are recorded in the gate result (## Gate Overrides Applied).
 
 WORK_DIR=""
+GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
 TIER_OVERRIDE=""
 REVIEWERS_OVERRIDE=""
 SCOPE=""
@@ -102,6 +105,7 @@ BRIEF_FILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd)         WORK_DIR="$2";           shift 2;;
+    --run-dir)    GATE_RUN_DIR_OVERRIDE="$2"; shift 2;;
     --tier)       TIER_OVERRIDE="$2";      shift 2;;
     --brief)      BRIEF_FILE="$2";         shift 2;;
     --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
@@ -128,7 +132,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -138,6 +142,9 @@ if [[ -z "$WORK_DIR" ]]; then
 fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
+fi
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
+  printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
 fi
 
 _self="$0"
@@ -608,10 +615,11 @@ done
 
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BRIEF_DIR="$WORK_DIR/.gate-briefs"
+_ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
+BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 
-OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
+OUTPUT_FILE="${OUTPUT_OVERRIDE:-$_ARTIFACT_ROOT/.gate-results/gate-${TIMESTAMP}.md}"
 # Normalize to an absolute path. The reviewer write-guard (guard-reviewer-write.sh)
 # requires an absolute file_path, and the pr-gate-handover_v1 schema mandates an absolute
 # output_file. A relative --output (or a relative --cd default) would otherwise be embedded
@@ -911,7 +919,7 @@ else
   DISPATCH_PIDS=()
   REVIEWER_NAMES=()
 
-  mkdir -p "$WORK_DIR/.agent-trace"
+  mkdir -p "$_ARTIFACT_ROOT/.agent-trace"
 
   # Resolve a portable hash command; fail-closed if none is available or usable.
   # sha256sum (GNU coreutils) is preferred; shasum -a 256 covers macOS/BSD.
@@ -940,9 +948,9 @@ else
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
-    REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
+    REVIEWER_OUTPUT="$_ARTIFACT_ROOT/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
     REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
-    DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
+    DISPATCH_LOG="$_ARTIFACT_ROOT/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
     BRIEF_FILES+=("$REVIEWER_BRIEF")
     REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")

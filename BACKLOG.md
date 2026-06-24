@@ -14,7 +14,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
 | CC-414 | ✅ closed 2026-06-24 | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | pr:#319 | P2 | design |
 | CC-415 | ✅ done | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
-| CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
+| CC-416 | ✅ closed 2026-06-24 | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | pr:#321 | P2 | design |
 | CC-417 | 🔵 active | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | — | P2 | design |
 | CC-418 | 🔵 active | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | — | P3 | design |
 | CC-419 | 🔵 active | Phase 5：翻 out-of-repo 預設（保留 in-repo opt-in 一 release）+ GC/retention + 跨 repo 既有副產物一次性遷移/清理工具 | ops | 2026-06-23 | — | P3 | design |
@@ -240,11 +240,12 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
 **Requirement**: 加 `--run-dir <abs>`，canonical 化後對 `.agent-trace`（symlink 與 regular dir 均適用）做前綴比對，拒絕逃出 run-dir boundary 的情形。無 `--run-dir` 時退回 `$WORK_DIR` 邊界（行為不變）。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。Owner/group/world-writable 防護 deferred（另開票追蹤）。
 
-## CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體）
+## ✅ 2026-06-24 CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體）
 
 **Problem**: gate 的 briefs/results/trace 落在 repo，造成 L1 誤判與 L2 污染。
 **Why**: 這是 CC-003 原始 ticket 的真正修復；依賴 CC-414 seam 與 CC-415 guard。
 **Requirement**: `pmctl` 配 `runs/<run_id>/` 並把 `.gate-briefs`/`.gate-results`/reviewer trace 路由進去（保留 `.gate-results` 葉名）；integrity check 因 repo 天生乾淨而無需過濾（CC-413 的過濾可保留為防禦）；verdict 預設出 repo，stdout 印路徑 + `--output` 顯式匯回。更新假設「結果在 repo 內」的測試/docs。
+**See**: pr:#321
 
 ## CC-417 — Phase 3b：normal dispatch artifacts 搬出 repo
 

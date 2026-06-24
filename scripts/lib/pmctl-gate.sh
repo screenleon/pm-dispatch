@@ -19,10 +19,29 @@ pmctl_gate_run() {
     [[ "$arg" == "--cd" ]] && { has_cd=true; break; }
   done
 
+  # Compute an out-of-repo run dir via sw_project_run_dir (state-paths seam).
+  # Guarded source: load only if sw_project_run_dir is not already declared.
+  local gate_run_dir=""
+  local _sp_lib="$repo_root/scripts/lib/state-paths.sh"
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function && -r "$_sp_lib" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    . "$_sp_lib" 2>/dev/null || true
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    local _gate_ts; _gate_ts="$(date +%Y%m%d-%H%M%S)"
+    local _gate_run_id="gate-${_gate_ts}-$$"
+    gate_run_dir="$(sw_project_run_dir "$_gate_run_id" 2>/dev/null)" || gate_run_dir=""
+  fi
+
+  local run_dir_args=()
+  if [[ -n "$gate_run_dir" ]]; then
+    run_dir_args=(--run-dir "$gate_run_dir")
+  fi
+
   if [[ "$has_cd" == false ]]; then
-    exec "$gate_script" --cd "$PWD" "$@"
+    exec "$gate_script" "${run_dir_args[@]}" --cd "$PWD" "$@"
   else
-    exec "$gate_script" "$@"
+    exec "$gate_script" "${run_dir_args[@]}" "$@"
   fi
 }
 
