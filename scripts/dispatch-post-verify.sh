@@ -99,17 +99,28 @@ if [[ ! -d "$TRACE_DIR" ]]; then
   exit 1
 fi
 
+# Containment boundary: --run-dir when supplied (CC-415 seam), else WORK_DIR
+# (existing behavior for the symlink check). Computed once; applies to both
+# symlink and regular-directory cases below.
+if [[ -n "$RUN_DIR_OVERRIDE" ]]; then
+  CONTAINMENT_ABS="$(realpath_m "$RUN_DIR_OVERRIDE" 2>/dev/null || echo "$RUN_DIR_OVERRIDE")"
+else
+  CONTAINMENT_ABS="$(realpath_m "$WORK_DIR" 2>/dev/null || echo "$WORK_DIR")"
+fi
+
 if [[ -L "$TRACE_DIR" ]]; then
   TRACE_DIR_RESOLVED="$(realpath_m "$TRACE_DIR" 2>/dev/null || true)"
-  # Containment boundary: --run-dir when supplied (CC-415 seam), else WORK_DIR
-  # (existing behavior). Both are canonicalized so symlink chains cannot escape.
-  if [[ -n "$RUN_DIR_OVERRIDE" ]]; then
-    CONTAINMENT_ABS="$(realpath_m "$RUN_DIR_OVERRIDE" 2>/dev/null || echo "$RUN_DIR_OVERRIDE")"
-  else
-    CONTAINMENT_ABS="$(realpath_m "$WORK_DIR" 2>/dev/null || echo "$WORK_DIR")"
-  fi
   if [[ -z "$TRACE_DIR_RESOLVED" || "${TRACE_DIR_RESOLVED#"$CONTAINMENT_ABS/"}" == "$TRACE_DIR_RESOLVED" ]]; then
     printf 'FAILED: .agent-trace symlink target is outside containment boundary: %s\n' "$TRACE_DIR_RESOLVED"
+    exit 1
+  fi
+elif [[ -n "$RUN_DIR_OVERRIDE" ]]; then
+  # Regular directory: when --run-dir is supplied, verify the resolved trace dir
+  # also falls inside the boundary (symlink chains are already resolved by
+  # realpath_m, so this also catches indirect escapes via intermediate symlinks).
+  TRACE_DIR_REAL="$(realpath_m "$TRACE_DIR" 2>/dev/null || echo "$TRACE_DIR")"
+  if [[ "${TRACE_DIR_REAL#"$CONTAINMENT_ABS/"}" == "$TRACE_DIR_REAL" ]]; then
+    printf 'FAILED: .agent-trace directory is outside containment boundary: %s\n' "$TRACE_DIR_REAL"
     exit 1
   fi
 fi

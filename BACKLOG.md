@@ -238,7 +238,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Problem**: `dispatch-post-verify.sh` 以「在 `$WORK_DIR` 內」為 trace 的 containment 信任邊界，trace 一旦移出 repo 此 guard 會誤殺。
 **Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
-**Requirement**: 加 `--trace-dir`/`--run-dir`，canonical 化後對 `latest.*` 與 `--last/--jsonl/--stderr` 解析路徑做前綴比對；拒絕缺失、非預期 symlink、group/world-writable、非 owner 擁有、或逃出 run dir 的情形。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。
+**Requirement**: 加 `--run-dir <abs>`，canonical 化後對 `.agent-trace`（symlink 與 regular dir 均適用）做前綴比對，拒絕逃出 run-dir boundary 的情形。無 `--run-dir` 時退回 `$WORK_DIR` 邊界（行為不變）。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。Owner/group/world-writable 防護 deferred（另開票追蹤）。
 
 ## CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體）
 

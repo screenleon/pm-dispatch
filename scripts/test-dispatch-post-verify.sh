@@ -1571,6 +1571,30 @@ case_run_dir_trace_escape_rejected() {
   pass "$name"
 }
 
+# --run-dir: a regular (non-symlink) --trace-dir outside the run-dir boundary is rejected.
+# Steps:
+# 1. Create a run-dir and a separate trace dir outside it, both outside work_dir.
+# 2. Put a valid latest.last in the external trace dir.
+# 3. Run dispatch-post-verify.sh with --run-dir <run-dir> --trace-dir <external-trace>.
+# 4. Assert exit 1 and output containing FAILED.
+case_run_dir_regular_trace_outside_rejected() {
+  local name="run-dir-regular-trace-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir run_dir outside_trace out rc
+
+  work_dir="$(make_work_dir "$name")"
+  run_dir="$tmpdir/${name}-run"
+  outside_trace="$tmpdir/${name}-outside-trace"
+  mkdir -p "$run_dir" "$outside_trace"
+  printf 'status: ok\n' > "$outside_trace/latest.last"
+
+  run_validator rc out "$work_dir" --run-dir "$run_dir" --trace-dir "$outside_trace"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  pass "$name"
+}
+
 # --run-dir absent: old work-dir boundary is preserved (regression guard).
 # Steps:
 # 1. Create a trace dir outside work_dir; symlink work_dir/.agent-trace to it.
@@ -1603,6 +1627,7 @@ case_flag_trace_dir_relative_rejected
 case_run_dir_relative_rejected
 case_run_dir_trace_inside_pass
 case_run_dir_trace_escape_rejected
+case_run_dir_regular_trace_outside_rejected
 case_run_dir_absent_fallback_work_dir
 case_selfverify_pass
 case_trace_jsonl_valid_complete_passes
