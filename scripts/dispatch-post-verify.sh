@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/lib/portable.sh"
 source "$SCRIPT_DIR/lib/state-paths.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file] [--trace-dir <path>] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--run-dir <abs>] [--trace-dir <path>] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
 }
 
 # Path resolution is the only thing the flags change: --last/--jsonl/--stderr
@@ -24,6 +24,7 @@ STDERR_OVERRIDE=""
 BASE_OVERRIDE=""
 TERMINAL_EVENT=""
 TRACE_DIR_OVERRIDE=""
+RUN_DIR_OVERRIDE=""
 positional=()
 
 # A value-taking flag must be followed by a real value — not end-of-args and not
@@ -45,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
     --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
     --trace-dir)  need_val --trace-dir "${2:-}";  TRACE_DIR_OVERRIDE="$2"; shift 2 ;;
+    --run-dir)    need_val --run-dir "${2:-}";    RUN_DIR_OVERRIDE="$2"; shift 2 ;;
     --base)       need_val --base "${2:-}";       BASE_OVERRIDE="$2";   shift 2 ;;
     --terminal-event) need_val --terminal-event "${2:-}"; TERMINAL_EVENT="$2"; shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
@@ -73,12 +75,20 @@ if [[ -n "$BRIEF_FILE" && ! -f "$BRIEF_FILE" ]]; then
   exit 1
 fi
 
+# --run-dir <abs>: when supplied, the caller declares a trusted run-dir whose
+# canonical prefix replaces WORK_DIR as the containment boundary for the
+# .agent-trace symlink guard (Guard 1). Must be absolute; relative values are
+# rejected (exit 2). Absent → boundary falls back to WORK_DIR (existing behavior).
+if [[ -n "$RUN_DIR_OVERRIDE" && "$RUN_DIR_OVERRIDE" != /* ]]; then
+  printf 'ERROR: --run-dir must be an absolute path: %s\n' "$RUN_DIR_OVERRIDE" >&2
+  exit 2
+fi
+
 # Trace base: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy in-repo
 # $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path validation
 # are shared with the adapters via sw_resolve_trace_dir. The per-path --last/--jsonl
 # /--stderr overrides still win over this base for their specific file (existing
-# precedence preserved). The containment boundary itself stays $WORK_DIR-relative
-# in this phase; a later phase re-bases the guard onto the supplied run dir.
+# precedence preserved).
 TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
 LATEST_LAST="${LAST_OVERRIDE:-$TRACE_DIR/latest.last}"
 LATEST_JSONL="${JSONL_OVERRIDE:-$TRACE_DIR/latest.jsonl}"
@@ -89,11 +99,28 @@ if [[ ! -d "$TRACE_DIR" ]]; then
   exit 1
 fi
 
+# Containment boundary: --run-dir when supplied (CC-415 seam), else WORK_DIR
+# (existing behavior for the symlink check). Computed once; applies to both
+# symlink and regular-directory cases below.
+if [[ -n "$RUN_DIR_OVERRIDE" ]]; then
+  CONTAINMENT_ABS="$(realpath_m "$RUN_DIR_OVERRIDE" 2>/dev/null || echo "$RUN_DIR_OVERRIDE")"
+else
+  CONTAINMENT_ABS="$(realpath_m "$WORK_DIR" 2>/dev/null || echo "$WORK_DIR")"
+fi
+
 if [[ -L "$TRACE_DIR" ]]; then
   TRACE_DIR_RESOLVED="$(realpath_m "$TRACE_DIR" 2>/dev/null || true)"
-  WORK_ABS="$(realpath_m "$WORK_DIR" 2>/dev/null || echo "$WORK_DIR")"
-  if [[ -z "$TRACE_DIR_RESOLVED" || "${TRACE_DIR_RESOLVED#"$WORK_ABS/"}" == "$TRACE_DIR_RESOLVED" ]]; then
-    printf 'FAILED: .agent-trace symlink target is outside work dir: %s\n' "$TRACE_DIR_RESOLVED"
+  if [[ -z "$TRACE_DIR_RESOLVED" || "${TRACE_DIR_RESOLVED#"$CONTAINMENT_ABS/"}" == "$TRACE_DIR_RESOLVED" ]]; then
+    printf 'FAILED: .agent-trace symlink target is outside containment boundary: %s\n' "$TRACE_DIR_RESOLVED"
+    exit 1
+  fi
+elif [[ -n "$RUN_DIR_OVERRIDE" ]]; then
+  # Regular directory: when --run-dir is supplied, verify the resolved trace dir
+  # also falls inside the boundary (symlink chains are already resolved by
+  # realpath_m, so this also catches indirect escapes via intermediate symlinks).
+  TRACE_DIR_REAL="$(realpath_m "$TRACE_DIR" 2>/dev/null || echo "$TRACE_DIR")"
+  if [[ "${TRACE_DIR_REAL#"$CONTAINMENT_ABS/"}" == "$TRACE_DIR_REAL" ]]; then
+    printf 'FAILED: .agent-trace directory is outside containment boundary: %s\n' "$TRACE_DIR_REAL"
     exit 1
   fi
 fi

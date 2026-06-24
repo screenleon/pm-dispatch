@@ -1503,11 +1503,132 @@ case_flag_trace_dir_relative_rejected() {
   pass "$name"
 }
 
+# --run-dir: a relative path is rejected (exit 2) before any guard runs.
+# Steps:
+# 1. Create a work dir with a valid latest.last.
+# 2. Run dispatch-post-verify.sh with --run-dir relative/path.
+# 3. Assert exit 2.
+case_run_dir_relative_rejected() {
+  local name="run-dir-relative-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --run-dir "relative/run"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
+# --run-dir: a .agent-trace symlink pointing into the run-dir subtree passes guard 1.
+# Steps:
+# 1. Create a run-dir outside work_dir; put the real trace dir inside it.
+# 2. Symlink work_dir/.agent-trace → run-dir/trace with a valid latest.last inside.
+# 3. Run dispatch-post-verify.sh with --run-dir <abs-run-dir>.
+# 4. Assert exit 0.
+case_run_dir_trace_inside_pass() {
+  local name="run-dir-trace-inside-pass"
+  should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -s has no real-symlink support on Windows MSYS"; then return 0; fi
+  local work_dir run_dir out rc
+
+  work_dir="$(make_work_dir "$name")"
+  run_dir="$tmpdir/${name}-run"
+  mkdir -p "$run_dir/trace"
+  printf 'status: ok\n' > "$run_dir/trace/latest.last"
+  ln -s "$run_dir/trace" "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir" --run-dir "$run_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  pass "$name"
+}
+
+# --run-dir: a .agent-trace symlink pointing outside the run-dir subtree is rejected.
+# Steps:
+# 1. Create a run-dir and a separate escape-dir outside it, both outside work_dir.
+# 2. Symlink work_dir/.agent-trace → escape-dir with a valid latest.last inside.
+# 3. Run dispatch-post-verify.sh with --run-dir <abs-run-dir>.
+# 4. Assert exit 1 and output containing FAILED.
+case_run_dir_trace_escape_rejected() {
+  local name="run-dir-trace-escape-rejected"
+  should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -s has no real-symlink support on Windows MSYS"; then return 0; fi
+  local work_dir run_dir escape_dir out rc
+
+  work_dir="$(make_work_dir "$name")"
+  run_dir="$tmpdir/${name}-run"
+  escape_dir="$tmpdir/${name}-escape"
+  mkdir -p "$run_dir" "$escape_dir"
+  printf 'status: ok\n' > "$escape_dir/latest.last"
+  ln -s "$escape_dir" "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir" --run-dir "$run_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  pass "$name"
+}
+
+# --run-dir: a regular (non-symlink) --trace-dir outside the run-dir boundary is rejected.
+# Steps:
+# 1. Create a run-dir and a separate trace dir outside it, both outside work_dir.
+# 2. Put a valid latest.last in the external trace dir.
+# 3. Run dispatch-post-verify.sh with --run-dir <run-dir> --trace-dir <external-trace>.
+# 4. Assert exit 1 and output containing FAILED.
+case_run_dir_regular_trace_outside_rejected() {
+  local name="run-dir-regular-trace-outside-rejected"
+  should_run "$name" || return 0
+  local work_dir run_dir outside_trace out rc
+
+  work_dir="$(make_work_dir "$name")"
+  run_dir="$tmpdir/${name}-run"
+  outside_trace="$tmpdir/${name}-outside-trace"
+  mkdir -p "$run_dir" "$outside_trace"
+  printf 'status: ok\n' > "$outside_trace/latest.last"
+
+  run_validator rc out "$work_dir" --run-dir "$run_dir" --trace-dir "$outside_trace"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  pass "$name"
+}
+
+# --run-dir absent: old work-dir boundary is preserved (regression guard).
+# Steps:
+# 1. Create a trace dir outside work_dir; symlink work_dir/.agent-trace to it.
+# 2. Run dispatch-post-verify.sh WITHOUT --run-dir.
+# 3. Assert exit 1 (outside work-dir is still rejected when no --run-dir supplied).
+case_run_dir_absent_fallback_work_dir() {
+  local name="run-dir-absent-fallback-work-dir"
+  should_run "$name" || return 0
+  if _dpv_skip_win "$name" "ln -s has no real-symlink support on Windows MSYS"; then return 0; fi
+  local work_dir outside_trace out rc
+
+  work_dir="$(make_work_dir "$name")"
+  outside_trace="$tmpdir/${name}-outside"
+  mkdir -p "$outside_trace"
+  printf 'status: ok\n' > "$outside_trace/latest.last"
+  ln -s "$outside_trace" "$work_dir/.agent-trace"
+
+  run_validator rc out "$work_dir"
+
+  assert_eq "$name" "$rc" 1 || return 0
+  assert_string_contains "$name" "$out" "FAILED" || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
 case_flag_trace_dir_rebases_latest
 case_env_trace_dir_rebases_latest
 case_flag_trace_dir_relative_rejected
+case_run_dir_relative_rejected
+case_run_dir_trace_inside_pass
+case_run_dir_trace_escape_rejected
+case_run_dir_regular_trace_outside_rejected
+case_run_dir_absent_fallback_work_dir
 case_selfverify_pass
 case_trace_jsonl_valid_complete_passes
 case_trace_jsonl_claude_single_object_passes
