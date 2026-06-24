@@ -650,7 +650,46 @@ cleanup_briefs() {
     rm -f "$bf"
   done
 }
-trap cleanup_briefs EXIT
+
+# Relocate gate result artifacts out of the repo when a run dir was supplied.
+# OUTPUT_FILE (and parallel reviewer outputs) must be written under WORK_DIR for the
+# executor's workspace-write sandbox, so they start repo-local. This helper moves them
+# to $GATE_RUN_DIR_OVERRIDE/.gate-results and drops the now-empty in-repo dir.
+# Idempotent and safe to call repeatedly:
+#   - no-op in legacy mode (no --run-dir) or with an explicit --output override, so the
+#     in-repo default path and verbatim --output behavior are preserved (backward compat);
+#   - no-op once WORK_DIR/.gate-results has been drained.
+# Called BOTH on the success path (before the result: print, so the printed path and the
+# NO-GO grep read the relocated copy) AND from the EXIT trap (so every failure path that
+# already created the in-repo result relocates it out instead of leaking repo artifacts).
+relocate_gate_artifacts() {
+  [[ -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]] || return 0
+  [[ -d "$WORK_DIR/.gate-results" ]] || return 0
+  local _result_dest_dir="$GATE_RUN_DIR_OVERRIDE/.gate-results" _rf
+  mkdir -p "$_result_dest_dir"
+  # Move only this run's artifacts (all carry $TIMESTAMP in the filename) so a concurrent
+  # gate run sharing WORK_DIR/.gate-results keeps its own in-flight files.
+  for _rf in "$WORK_DIR/.gate-results/"*"${TIMESTAMP}"*; do
+    [[ -e "$_rf" ]] || continue
+    mv "$_rf" "$_result_dest_dir/"
+  done
+  # Repoint OUTPUT_FILE to the relocated primary result so later reads (result: print,
+  # NO-GO grep) follow it out of the repo.
+  if [[ "$OUTPUT_FILE" == "$WORK_DIR/.gate-results/"* ]]; then
+    OUTPUT_FILE="$_result_dest_dir/$(basename "$OUTPUT_FILE")"
+  fi
+  # Drop the in-repo dir only if now empty (tolerate a concurrent run's files).
+  rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
+}
+
+gate_exit_cleanup() {
+  # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
+  # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
+  # where relocation already ran inline.
+  relocate_gate_artifacts
+  cleanup_briefs
+}
+trap gate_exit_cleanup EXIT
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
 BRIEF_FILES+=("$SYNTHESIS_BRIEF")
@@ -1440,22 +1479,12 @@ fi
 
 # ── Relocate result to run dir (post-verification) ───────────────────────────
 # OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox
-# constraint). Now that it is verified, move it to _ARTIFACT_ROOT/.gate-results/
-# if a run dir was supplied. --output explicit overrides are never moved.
-if [[ -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]]; then
-  _result_dest_dir="$GATE_RUN_DIR_OVERRIDE/.gate-results"
-  mkdir -p "$_result_dest_dir"
-  mv "$OUTPUT_FILE" "$_result_dest_dir/$(basename "$OUTPUT_FILE")"
-  OUTPUT_FILE="$_result_dest_dir/$(basename "$OUTPUT_FILE")"
-  # Move parallel reviewer outputs too (synthesis has already read them).
-  if [[ "$SEQUENTIAL" == false ]]; then
-    for _rf in "$WORK_DIR/.gate-results/reviewer-"*"-${TIMESTAMP}.md"; do
-      if [[ -f "$_rf" ]]; then mv "$_rf" "$_result_dest_dir/"; fi
-    done
-  fi
-  # Remove now-empty .gate-results from WORK_DIR so no in-repo dir survives.
-  rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
-fi
+# constraint). Now that it is verified, move it (and any parallel reviewer outputs,
+# already read by synthesis) to _ARTIFACT_ROOT/.gate-results/ if a run dir was supplied.
+# Relocation is centralized in relocate_gate_artifacts(), which the EXIT trap also calls
+# so failure paths relocate too; calling it here updates OUTPUT_FILE before the prints
+# below, and the trap's later call is then a no-op. --output overrides are never moved.
+relocate_gate_artifacts
 
 # ── Print result path for caller ─────────────────────────────────────────────
 # The result was written by the dispatched subprocess and already integrity-checked

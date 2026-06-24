@@ -4413,9 +4413,113 @@ test_gate_parallel_trace_lands_out_of_repo() {
   pass "$name"
 }
 
+# Assert the repo is free of every gate artifact directory after a --run-dir run.
+# On failure paths the gate exits before the inline success-path relocation, so the
+# EXIT trap's relocate_gate_artifacts() must still have drained the in-repo
+# .gate-results (and .gate-briefs/.agent-trace stay out-of-repo by construction).
+_assert_no_repo_gate_artifacts() {
+  local name="$1" repo="$2" d
+  for d in .gate-results .gate-briefs .agent-trace; do
+    if [[ -d "$repo/$d" ]]; then
+      fail "$name" "$d survived inside repo after --run-dir failure path (should be relocated/cleaned)"
+      return 1
+    fi
+  done
+  return 0
+}
+
+test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts() {
+  # Failure path: sequential dispatch exits 0 without writing the result. The gate
+  # touch'd $repo/.gate-results/gate-*.md before dispatch (sandbox-write seam), then
+  # aborts on missing output -- BEFORE the inline relocation. The EXIT trap must
+  # still relocate it out so no repo-local gate artifacts survive.
+  local name="gate-run-dir/no-output-failure-leaves-no-repo-artifacts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-no-output-failure"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-output \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit on no-output failure path"
+    return
+  fi
+  _assert_no_repo_gate_artifacts "$name" "$repo" || return
+  pass "$name"
+}
+
+test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts() {
+  # Failure path: sequential dispatch writes malformed output (no Final line), so the
+  # gate aborts in verification with a non-empty $repo/.gate-results result already on
+  # disk. The EXIT trap must relocate it out -- this is the strongest leak case since
+  # an actual (non-empty) artifact exists at exit time.
+  local name="gate-run-dir/no-verdict-failure-leaves-no-repo-artifacts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-no-verdict-failure"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-verdict \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit on no-verdict failure path"
+    return
+  fi
+  _assert_no_repo_gate_artifacts "$name" "$repo" || return
+  pass "$name"
+}
+
+test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts() {
+  # Failure path in parallel mode: a reviewer/synthesis dispatch produces no output,
+  # aborting the gate before inline relocation. The EXIT trap must keep the repo free
+  # of .gate-results / .gate-briefs / .agent-trace.
+  local name="gate-run-dir/parallel-failure-leaves-no-repo-artifacts"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-parallel-failure"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=no-output \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir" --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit on parallel no-output failure path"
+    return
+  fi
+  _assert_no_repo_gate_artifacts "$name" "$repo" || return
+  pass "$name"
+}
+
 run_test test_gate_run_dir_flag_rejected_if_relative
 run_test test_gate_run_dir_passes_trace_dir_to_adapter
 run_test test_gate_artifacts_land_out_of_repo
 run_test test_gate_parallel_trace_lands_out_of_repo
+run_test test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts
+run_test test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts
+run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 
 th_summary
