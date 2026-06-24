@@ -4294,6 +4294,44 @@ test_gate_run_dir_flag_rejected_if_relative() {
   pass "$name"
 }
 
+test_gate_run_dir_passes_trace_dir_to_adapter() {
+  # When --run-dir is set, dispatch_via must forward --trace-dir to the adapter
+  # so the executor's own trace files land under the run dir, not in the repo.
+  local name="gate-run-dir/trace-dir-forwarded-to-adapter"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-trace-dir-forward"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" dispatch_args="$dir/dispatch_args"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_DISPATCH_ARGS="$dispatch_args" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exited $code (expected 0)"
+    return
+  fi
+  if [[ ! -f "$dispatch_args" ]]; then
+    fail "$name" "dispatch args file not written -- CODEX_GATE_CAPTURE_DISPATCH_ARGS not honored"
+    return
+  fi
+  if ! grep -q -- "--trace-dir" "$dispatch_args"; then
+    fail "$name" "--trace-dir not forwarded to adapter (dispatch args: $(cat "$dispatch_args"))"
+    return
+  fi
+  if ! grep -q "$run_dir" "$dispatch_args"; then
+    fail "$name" "--trace-dir value does not reference run_dir (dispatch args: $(cat "$dispatch_args"))"
+    return
+  fi
+  pass "$name"
+}
+
 test_gate_artifacts_land_out_of_repo() {
   # When --run-dir <abs> is passed, gate artifacts (briefs, results) land under
   # <run_dir>/  and NOT under the repo itself.
@@ -4376,6 +4414,7 @@ test_gate_parallel_trace_lands_out_of_repo() {
 }
 
 run_test test_gate_run_dir_flag_rejected_if_relative
+run_test test_gate_run_dir_passes_trace_dir_to_adapter
 run_test test_gate_artifacts_land_out_of_repo
 run_test test_gate_parallel_trace_lands_out_of_repo
 

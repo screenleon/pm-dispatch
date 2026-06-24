@@ -287,15 +287,17 @@ case_verify_usage() {
 
 # ---- 11: pmctl gate run forwards --run-dir to pr-gate.sh --------------------
 case_run_dir_forwarded_to_gate() {
-  # Verifies that pmctl_gate_run computes a run dir and passes --run-dir <abs>
-  # to pr-gate.sh when the state-paths lib is available.
+  # Verifies that pmctl_gate_run computes a run dir keyed to the --cd target repo
+  # and passes it as --run-dir <abs> to pr-gate.sh, and that different --cd targets
+  # produce different run dir partitions (proving the key is target-repo-specific).
   #
   # Steps:
   #   1. Install a fake pr-gate.sh that echoes its argv.
   #   2. Copy state-paths.sh and its dependencies into the fixture lib dir.
-  #   3. Call pmctl_gate_run.
-  #   4. Assert the echoed args contain --run-dir <abs>.
-  local name="gate/run: --run-dir forwarded to pr-gate.sh when state-paths available"
+  #   3. Call pmctl_gate_run with --cd <dir1> and --cd <dir2> separately.
+  #   4. Assert both echoed arg sets contain --run-dir <abs>.
+  #   5. Assert the two --run-dir values differ (different partition keys).
+  local name="gate/run: --run-dir forwarded keyed to target repo partition"
   should_run "$name" || return 0
 
   local fixture="$tmp_root/f11" wrapper="$tmp_root/b11/wrapper"
@@ -311,16 +313,31 @@ case_run_dir_forwarded_to_gate() {
     fi
   done
 
-  local run_target; run_target="$(mktemp -d)"
-  local out code
-  set +e; out="$("$wrapper" --cd "$run_target" 2>&1)"; code=$?; set -e
-  rm -rf "$run_target"
+  local dir1 dir2; dir1="$(mktemp -d)"; dir2="$(mktemp -d)"
+  local out1 out2 code1 code2
+  set +e
+  out1="$("$wrapper" --cd "$dir1" 2>&1)"; code1=$?
+  out2="$("$wrapper" --cd "$dir2" 2>&1)"; code2=$?
+  set -e
+  rm -rf "$dir1" "$dir2"
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"--run-dir /"* ]]; then
-    pass "$name"
-  else
-    fail "$name" "expected --run-dir <abs> in gate args; code=$code out=$out"
+  if [[ "$code1" -ne 0 || "$code2" -ne 0 ]]; then
+    fail "$name" "wrapper failed (code1=$code1 code2=$code2)"
+    return
   fi
+  if [[ "$out1" != *"--run-dir /"* || "$out2" != *"--run-dir /"* ]]; then
+    fail "$name" "expected --run-dir <abs> in both calls; out1=$out1 out2=$out2"
+    return
+  fi
+  # Extract the --run-dir values and verify they differ (different partition keys).
+  local rundir1 rundir2
+  rundir1="$(printf '%s\n' "$out1" | grep -o -- '--run-dir [^ ]*' | awk '{print $2}' || true)"
+  rundir2="$(printf '%s\n' "$out2" | grep -o -- '--run-dir [^ ]*' | awk '{print $2}' || true)"
+  if [[ "$rundir1" == "$rundir2" ]]; then
+    fail "$name" "--run-dir values are identical for different --cd targets: $rundir1"
+    return
+  fi
+  pass "$name"
 }
 
 case_explicit_cd_passthrough

@@ -309,6 +309,7 @@ else
     fi
     cmd+=(--timeout "$timeout" --brief-file "$brief_file")
     [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+    [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && cmd+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
 
     for arg in "${cmd[@]}"; do
       if [[ "$first" -eq 1 ]]; then
@@ -618,6 +619,12 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
+# Route executor traces (adapter JSONL/last/stderr) to the run dir when provided.
+# PM_DISPATCH_TRACE_DIR is read by dispatch_via (lib and copy-mode) to forward
+# --trace-dir to the adapter, so the adapter's own trace files follow the run dir.
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" ]]; then
+  export PM_DISPATCH_TRACE_DIR="$GATE_RUN_DIR_OVERRIDE/.agent-trace"
+fi
 
 # OUTPUT_FILE must be in WORK_DIR so the executor (codex/claude, workspace-write sandbox)
 # can write it. After final verification the gate moves it to _ARTIFACT_ROOT if a run dir
