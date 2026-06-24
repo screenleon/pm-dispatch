@@ -619,7 +619,10 @@ _ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
 BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
 
-OUTPUT_FILE="${OUTPUT_OVERRIDE:-$_ARTIFACT_ROOT/.gate-results/gate-${TIMESTAMP}.md}"
+# OUTPUT_FILE must be in WORK_DIR so the executor (codex/claude, workspace-write sandbox)
+# can write it. After final verification the gate moves it to _ARTIFACT_ROOT if a run dir
+# was supplied. --output explicit override is always used verbatim, no move.
+OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 # Normalize to an absolute path. The reviewer write-guard (guard-reviewer-write.sh)
 # requires an absolute file_path, and the pr-gate-handover_v1 schema mandates an absolute
 # output_file. A relative --output (or a relative --cd default) would otherwise be embedded
@@ -948,7 +951,7 @@ else
 
   for r in $REVIEWERS; do
     AGENT_PATH="$AGENT_DIR/${r}.md"
-    REVIEWER_OUTPUT="$_ARTIFACT_ROOT/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
+    REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
     REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
     DISPATCH_LOG="$_ARTIFACT_ROOT/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
@@ -1426,6 +1429,25 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
     fi
     say 'post-gate hook completed.\n'
   fi
+fi
+
+# ── Relocate result to run dir (post-verification) ───────────────────────────
+# OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox
+# constraint). Now that it is verified, move it to _ARTIFACT_ROOT/.gate-results/
+# if a run dir was supplied. --output explicit overrides are never moved.
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]]; then
+  _result_dest_dir="$GATE_RUN_DIR_OVERRIDE/.gate-results"
+  mkdir -p "$_result_dest_dir"
+  mv "$OUTPUT_FILE" "$_result_dest_dir/$(basename "$OUTPUT_FILE")"
+  OUTPUT_FILE="$_result_dest_dir/$(basename "$OUTPUT_FILE")"
+  # Move parallel reviewer outputs too (synthesis has already read them).
+  if [[ "$SEQUENTIAL" == false ]]; then
+    for _rf in "$WORK_DIR/.gate-results/reviewer-"*"-${TIMESTAMP}.md"; do
+      if [[ -f "$_rf" ]]; then mv "$_rf" "$_result_dest_dir/"; fi
+    done
+  fi
+  # Remove now-empty .gate-results from WORK_DIR so no in-repo dir survives.
+  rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
 fi
 
 # ── Print result path for caller ─────────────────────────────────────────────

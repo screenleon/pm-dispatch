@@ -4341,7 +4341,42 @@ test_gate_artifacts_land_out_of_repo() {
   pass "$name"
 }
 
+test_gate_parallel_trace_lands_out_of_repo() {
+  # In parallel mode with --run-dir, the DISPATCH_LOG (.agent-trace) must land
+  # under the run dir, not in the repo itself.
+  local name="gate-run-dir/parallel-trace-lands-out-of-repo"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/gate-run-dir-parallel-trace"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  local run_dir="$dir/gate-run"
+  mkdir -p "$dir" "$run_dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --run-dir "$run_dir" --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "gate exited $code (expected 0) with --run-dir --parallel"
+    return
+  fi
+  # .agent-trace should be under run_dir, not in the repo.
+  if [[ -d "$repo/.agent-trace" ]]; then
+    fail "$name" ".agent-trace appeared inside repo with --run-dir --parallel"
+    return
+  fi
+  if [[ ! -d "$run_dir/.agent-trace" ]]; then
+    fail "$name" ".agent-trace not found under run_dir"
+    return
+  fi
+  pass "$name"
+}
+
 run_test test_gate_run_dir_flag_rejected_if_relative
 run_test test_gate_artifacts_land_out_of_repo
+run_test test_gate_parallel_trace_lands_out_of_repo
 
 th_summary

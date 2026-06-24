@@ -285,6 +285,44 @@ case_verify_usage() {
   fi
 }
 
+# ---- 11: pmctl gate run forwards --run-dir to pr-gate.sh --------------------
+case_run_dir_forwarded_to_gate() {
+  # Verifies that pmctl_gate_run computes a run dir and passes --run-dir <abs>
+  # to pr-gate.sh when the state-paths lib is available.
+  #
+  # Steps:
+  #   1. Install a fake pr-gate.sh that echoes its argv.
+  #   2. Copy state-paths.sh and its dependencies into the fixture lib dir.
+  #   3. Call pmctl_gate_run.
+  #   4. Assert the echoed args contain --run-dir <abs>.
+  local name="gate/run: --run-dir forwarded to pr-gate.sh when state-paths available"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f11" wrapper="$tmp_root/b11/wrapper"
+  mkdir -p "$(dirname "$wrapper")"
+  _mk_fake_gate "$fixture" 0
+  _mk_gate_wrapper "$fixture" "$wrapper"
+
+  # Provide the real state-paths lib (and its dependencies) so sw_project_run_dir is available.
+  mkdir -p "$fixture/scripts/lib"
+  for _lib in state-paths.sh portable.sh; do
+    if [[ -f "$REPO_ROOT/scripts/lib/$_lib" ]]; then
+      cp "$REPO_ROOT/scripts/lib/$_lib" "$fixture/scripts/lib/$_lib"
+    fi
+  done
+
+  local run_target; run_target="$(mktemp -d)"
+  local out code
+  set +e; out="$("$wrapper" --cd "$run_target" 2>&1)"; code=$?; set -e
+  rm -rf "$run_target"
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"--run-dir /"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected --run-dir <abs> in gate args; code=$code out=$out"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
@@ -295,5 +333,6 @@ case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch
 case_verify_usage
+case_run_dir_forwarded_to_gate
 
 th_summary
