@@ -5,9 +5,11 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/portable.sh
 source "$SCRIPT_DIR/lib/portable.sh"
+# shellcheck source=scripts/lib/state-paths.sh
+source "$SCRIPT_DIR/lib/state-paths.sh"
 
 usage() {
-  printf 'usage: %s <work_dir> [brief_file] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
+  printf 'usage: %s <work_dir> [brief_file] [--trace-dir <path>] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
 }
 
 # Path resolution is the only thing the flags change: --last/--jsonl/--stderr
@@ -21,6 +23,7 @@ JSONL_OVERRIDE=""
 STDERR_OVERRIDE=""
 BASE_OVERRIDE=""
 TERMINAL_EVENT=""
+TRACE_DIR_OVERRIDE=""
 positional=()
 
 # A value-taking flag must be followed by a real value — not end-of-args and not
@@ -41,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --jsonl)      need_val --jsonl "${2:-}";      JSONL_OVERRIDE="$2";  shift 2 ;;
     --stderr)     need_val --stderr "${2:-}";     STDERR_OVERRIDE="$2"; shift 2 ;;
     --brief-file) need_val --brief-file "${2:-}"; BRIEF_FILE="$2";      shift 2 ;;
+    --trace-dir)  need_val --trace-dir "${2:-}";  TRACE_DIR_OVERRIDE="$2"; shift 2 ;;
     --base)       need_val --base "${2:-}";       BASE_OVERRIDE="$2";   shift 2 ;;
     --terminal-event) need_val --terminal-event "${2:-}"; TERMINAL_EVENT="$2"; shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done ;;
@@ -69,7 +73,13 @@ if [[ -n "$BRIEF_FILE" && ! -f "$BRIEF_FILE" ]]; then
   exit 1
 fi
 
-TRACE_DIR="$WORK_DIR/.agent-trace"
+# Trace base: --trace-dir flag > PM_DISPATCH_TRACE_DIR env > legacy in-repo
+# $WORK_DIR/.agent-trace (default UNCHANGED). Precedence + absolute-path validation
+# are shared with the adapters via sw_resolve_trace_dir. The per-path --last/--jsonl
+# /--stderr overrides still win over this base for their specific file (existing
+# precedence preserved). The containment boundary itself stays $WORK_DIR-relative
+# in this phase; a later phase re-bases the guard onto the supplied run dir.
+TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
 LATEST_LAST="${LAST_OVERRIDE:-$TRACE_DIR/latest.last}"
 LATEST_JSONL="${JSONL_OVERRIDE:-$TRACE_DIR/latest.jsonl}"
 LATEST_STDERR="${STDERR_OVERRIDE:-$TRACE_DIR/latest.stderr}"

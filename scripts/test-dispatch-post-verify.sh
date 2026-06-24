@@ -1447,8 +1447,67 @@ case_terminal_event_structural_fail_short_circuits() {
   pass "$name"
 }
 
+# Behavior: --trace-dir <abs> re-bases the latest.* lookup onto an out-of-repo
+# trace dir, so verification reads the relocated trace and the work dir need not
+# contain .agent-trace at all (the relocation seam, shared with the adapters).
+# Steps: write latest.last into an external trace dir; run with --trace-dir; assert OK.
+case_flag_trace_dir_rebases_latest() {
+  local name="flag-trace-dir-rebases-latest"
+  should_run "$name" || return 0
+  local work_dir trace_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  trace_dir="$tmpdir/$name-ext-trace"
+  mkdir -p "$trace_dir"
+  printf '%s\n' "status: ok" > "$trace_dir/latest.last"
+
+  run_validator rc out "$work_dir" --trace-dir "$trace_dir"
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "OK" || return 0
+  pass "$name"
+}
+
+# Behavior: PM_DISPATCH_TRACE_DIR env re-bases latest.* the same way (precedence
+# below an explicit --trace-dir, covered by the state-paths unit tests).
+case_env_trace_dir_rebases_latest() {
+  local name="env-trace-dir-rebases-latest"
+  should_run "$name" || return 0
+  local work_dir trace_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  trace_dir="$tmpdir/$name-ext-trace"
+  mkdir -p "$trace_dir"
+  printf '%s\n' "status: ok" > "$trace_dir/latest.last"
+
+  set +e
+  out="$(PM_DISPATCH_TRACE_DIR="$trace_dir" bash "$VALIDATOR" "$work_dir" 2>&1)"
+  rc=$?
+  set -e
+
+  assert_eq "$name" "$rc" 0 || return 0
+  assert_string_contains "$name" "$out" "OK" || return 0
+  pass "$name"
+}
+
+# Behavior: a relative --trace-dir is rejected (exit 2) so the trace base never
+# depends on cwd — parity with the adapter validation.
+case_flag_trace_dir_relative_rejected() {
+  local name="flag-trace-dir-relative-rejected"
+  should_run "$name" || return 0
+  local work_dir out rc
+  work_dir="$(make_work_dir "$name")"
+  write_latest_last "$work_dir" "status: ok"
+
+  run_validator rc out "$work_dir" --trace-dir "rel/trace"
+
+  assert_eq "$name" "$rc" 2 || return 0
+  pass "$name"
+}
+
 case_valid_latest_last_exists
 case_valid_no_brief_arg
+case_flag_trace_dir_rebases_latest
+case_env_trace_dir_rebases_latest
+case_flag_trace_dir_relative_rejected
 case_selfverify_pass
 case_trace_jsonl_valid_complete_passes
 case_trace_jsonl_claude_single_object_passes

@@ -12,7 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
 | CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
-| CC-414 | 🔵 active | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | — | P2 | design |
+| CC-414 | ✅ closed 2026-06-24 | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | pr:#319 | P2 | design |
 | CC-415 | 🔵 active | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
 | CC-417 | 🔵 active | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | — | P2 | design |
@@ -91,6 +91,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
 | CC-412 | 🟢 someday | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API） | arch/memory | 2026-06-23 | — | P3 | retrieval |
+| CC-420 | 🟢 someday | refactor: adapter 共用 model alias TSV 解析抽 lib（claude/codex/opencode 三者 ~30行重複）→ `scripts/lib/model-aliases.sh` | arch | 2026-06-24 | — | P3 | — |
+| CC-421 | 🟢 someday | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | — | P3 | — |
+| CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 
 ---
 
@@ -221,7 +224,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 在完整搬遷（CC-416）落地前，使用者需要可立即合併的止血，且不引入 `.gitignore` mutation（既有不變量 `test_pr_gate_does_not_mutate_gitignore` 須保留）。
 **Requirement**: `pr-gate.sh` 計算 `_PRE/_POST_DISPATCH_STATUS` 前，過濾掉 `.agent-trace/`、`.gate-briefs/`、`.gate-results/`（NUL-delimited porcelain 較安全）。修正 `:897-898/1091` 誤導性註解。零 `.gitignore` mutation、零行為預設改動、既有測試全綠 + 新增過濾測試。
 
-## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）
+## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）✅ 2026-06-24
+
+**See**: pr:#319
 
 **Problem**: 三個 adapter 寫死 `TRACE_DIR=$WORK_DIR/.agent-trace`，cwd 與 trace 落點綁死，無法把 trace 移出 repo。
 **Why**: 這是真正解 L2 的地基；先引入 seam 而不改預設，可把結構改動與行為改動拆成可獨立 review 的 PR。
@@ -1396,5 +1401,51 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 不破壞 Claude 路徑預設；`metadata` block 維持不動。
 
 **Sequencing / relation**: 與 [[CC-011]]/[[CC-012]]（記憶**跨裝置** sync：symlink/pull）**正交**——那是同一份 memory 跨機器，本票是同一份 memory **跨工具**可攜；兩者可共用「位置不再硬綁 ~/.claude」這個 seam。建在 [[CC-403]] retrieval API 上。
+
+**Priority**: P3（someday）。
+
+## CC-420 — refactor: adapter 共用 model alias TSV 解析抽 lib 🟢 someday
+
+**Problem**: claude/codex/opencode 三個 adapter 各自重複相同的 model alias TSV 解析邏輯（約 30 行 × 3）。
+
+**Why**: 三份複製體確保任何欄位調整或 alias 格式變化都要改三處，且測試覆蓋分散——實際上三個 adapter 讀同一份 TSV 格式，解析邏輯 byte-identical。
+
+**Requirement**: 抽 `scripts/lib/model-aliases.sh` 提供 `ma_resolve_alias <adapter> <alias>` 函式；三個 adapter source 該 lib 並刪除各自的重複邏輯；`test-model-aliases.sh` 直接測試 lib；現有 adapter 測試的 alias 行為路徑不得退化。不改 TSV schema 或 alias 語意。
+
+**Acceptance**:
+- `bash scripts/test-model-aliases.sh` 通過。
+- 三個 adapter 的 model alias 行為與今天 byte-identical（現有 adapter 測試綠）。
+- `lint-model-aliases.sh` 仍通過。
+
+**Priority**: P3（someday）。
+
+## CC-421 — refactor: adapter 共用 timeout 優先序邏輯抽 lib 🟢 someday
+
+**Problem**: 三個 adapter 與 `dispatch-post-verify.sh` 均有相同的 timeout 優先序模式（flag > env > config > default），約 15 行 × 4 處重複。
+
+**Why**: timeout 優先序若需調整（例如加 config 層級或改 default 值），須改 4 處且各處行為需保持一致；目前缺乏單一 source of truth。
+
+**Requirement**: 抽 `scripts/lib/timeout-resolve.sh` 提供 `tr_resolve_timeout <flag_val> <env_var_name> <config_key> <default>` 函式；四個呼叫方改用此函式；現有測試的 timeout 行為路徑不得退化。不改 timeout 語意或預設值。
+
+**Acceptance**:
+- 四個呼叫方（claude/codex/opencode adapter + dispatch-post-verify）行為與今天 byte-identical。
+- 新增 `test-timeout-resolve.sh` 覆蓋 flag > env > config > default 四層優先序。
+
+**Priority**: P3（someday）。
+
+## CC-422 — refactor: adapter 共用 dispatch 初始化邏輯抽 lib 🟢 someday
+
+**Problem**: claude/codex 兩個 adapter 有約 200 行高度相似的 dispatch 初始化邏輯（snapshot、isolation map 解析、brief 讀取、run-dir 建立）。
+
+**Why**: 兩份複製體讓 dispatch 核心流程改動需同步兩處，且介面不一致時 bug 只在一個 adapter 出現——歷史上 CC-414 的 trace-dir seam 就因此需要在三個 adapter 各自加一次。opencode 在此已有部分分歧（isolation 翻譯不同），須仔細界定共用邊界。
+
+**Requirement**: 分析 claude/codex/opencode 三個 adapter 的 dispatch 初始化，識別可安全共用的部分（純 setup：snapshot、brief parse、run-dir 建立）與必須保持 per-adapter 的部分（isolation 翻譯、native flag 傳遞）；抽出前者到 `scripts/lib/dispatch-common.sh`；後者維持 per-adapter。不改任何可見行為。
+
+**Acceptance**:
+- 三個 adapter 的 dispatch 行為與今天 byte-identical（現有 adapter 測試全綠）。
+- 新增 `test-dispatch-common.sh` 覆蓋被抽出的共用函式。
+- `dispatch-common.sh` 不引入跨 adapter 的隱式耦合（isolation 翻譯仍 per-adapter）。
+
+**Note**: dispatch-common 涉及 adapter 核心邏輯，重構前須先確認三個 adapter 的分歧點；建議在實作前做 spike 確認介面邊界。
 
 **Priority**: P3（someday）。
