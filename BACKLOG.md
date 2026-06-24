@@ -13,7 +13,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
 | CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
 | CC-414 | ✅ closed 2026-06-24 | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | pr:#319 | P2 | design |
-| CC-415 | 🔵 active | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
+| CC-415 | ✅ done | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
 | CC-417 | 🔵 active | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | — | P2 | design |
 | CC-418 | 🔵 active | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | — | P3 | design |
@@ -232,7 +232,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 這是真正解 L2 的地基；先引入 seam 而不改預設，可把結構改動與行為改動拆成可獨立 review 的 PR。
 **Requirement**: 抽 `_sw_store_root`/`_sw_project_key` 成共用 lib（如 `state-paths.sh`）+ 公開 helper `sw_project_run_dir`；`adapters/{codex,claude,opencode}/dispatch.sh`、`dispatch_via`、`dispatch-post-verify.sh` 加 `--trace-dir <abs>` 與 `PM_DISPATCH_TRACE_DIR`（precedence flag > env > legacy `$WORK_DIR/.agent-trace`）。預設仍 in-repo。測試：precedence、絕對路徑驗證、snapshot re-exec 保留 flag。
 
-## CC-415 — Phase 2：post-verify containment guard 重設計
+## CC-415 — Phase 2：post-verify containment guard 重設計 ✅ 2026-06-24
+
+**See**: pr:#320
 
 **Problem**: `dispatch-post-verify.sh` 以「在 `$WORK_DIR` 內」為 trace 的 containment 信任邊界，trace 一旦移出 repo 此 guard 會誤殺。
 **Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
