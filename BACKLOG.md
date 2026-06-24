@@ -12,7 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
 | CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
-| CC-414 | 🔵 active | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | — | P2 | design |
+| CC-414 | ✅ closed 2026-06-24 | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | pr:#319 | P2 | design |
 | CC-415 | 🔵 active | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | 🔵 active | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | — | P2 | design |
 | CC-417 | 🔵 active | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | — | P2 | design |
@@ -221,7 +221,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 在完整搬遷（CC-416）落地前，使用者需要可立即合併的止血，且不引入 `.gitignore` mutation（既有不變量 `test_pr_gate_does_not_mutate_gitignore` 須保留）。
 **Requirement**: `pr-gate.sh` 計算 `_PRE/_POST_DISPATCH_STATUS` 前，過濾掉 `.agent-trace/`、`.gate-briefs/`、`.gate-results/`（NUL-delimited porcelain 較安全）。修正 `:897-898/1091` 誤導性註解。零 `.gitignore` mutation、零行為預設改動、既有測試全綠 + 新增過濾測試。
 
-## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）
+## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）✅ 2026-06-24
+
+**See**: pr:#319
 
 **Problem**: 三個 adapter 寫死 `TRACE_DIR=$WORK_DIR/.agent-trace`，cwd 與 trace 落點綁死，無法把 trace 移出 repo。
 **Why**: 這是真正解 L2 的地基；先引入 seam 而不改預設，可把結構改動與行為改動拆成可獨立 review 的 PR。
