@@ -463,6 +463,52 @@ pmctl_dispatch_auto_pack() {
   return 0
 }
 
+# _pmctl_dispatch_trace_dir <work_dir> <run_id> [explicit_trace_dir]
+# Single source of truth for where a dispatch's harness/adapter artifacts
+# (footer, executor trace, runspec, supervisor.log/pid) land. Pure computation —
+# deterministic in (work_dir, run_id) so the parent (which writes the runspec)
+# and the detached supervisor (which re-runs execute_tail) independently derive
+# the SAME directory without threading a value through the run-spec.
+# Precedence:
+#   explicit --trace-dir flag on THIS dispatch (per-dispatch caller opt-in)
+#   > out-of-repo $(sw_project_run_dir)/.agent-trace
+#   > legacy in-repo $work_dir/.agent-trace (fail-soft when the helper is absent).
+# It deliberately does NOT read the ambient PM_DISPATCH_TRACE_DIR env: that var is
+# adapter-facing (where the adapter writes its trace) and is inherited across
+# nested dispatches, so consuming it here would route a CHILD pmctl run's footer/
+# runspec into an unrelated PARENT's (possibly read-only) trace dir — e.g. a test
+# suite's dispatch inheriting a pr-gate sandbox's gate trace dir. pmctl's own
+# artifact location derives from (work_dir, run_id) or an explicit per-dispatch
+# flag only. The partition key is bound to work_dir (NOT the caller's cwd) by
+# computing the run dir from inside work_dir — same fix CC-416's pmctl-gate
+# applies — so a dispatch invoked from a different directory still lands under the
+# target repo's partition.
+_pmctl_dispatch_trace_dir() {
+  local work_dir="${1:-}" run_id="${2:-}" explicit="${3:-}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s\n' "$explicit"
+    return 0
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+    # ${repo_root:-} so a caller without repo_root in scope degrades to the legacy
+    # fallback instead of tripping set -u; the dispatch core always binds it.
+    local _sp_lib="${repo_root:-}/scripts/lib/state-paths.sh"
+    if [[ -r "$_sp_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091  # dynamic repo-root path.
+      . "$_sp_lib" 2>/dev/null || true
+    fi
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    local _rd
+    _rd="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$run_id" 2>/dev/null)" || _rd=""
+    if [[ -n "$_rd" ]]; then
+      printf '%s\n' "$_rd/.agent-trace"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$work_dir/.agent-trace"
+}
+
 pmctl_dispatch_execute_tail() {
   local repo_root="${1:-}" work_dir="${2:-}" adapter="${3:-}" adapter_path="${4:-}"
   local _dispatch_run_id="${5:-}" _dispatch_model="${6:-}" brief_file="${7:-}"
@@ -484,9 +530,31 @@ pmctl_dispatch_execute_tail() {
   # the adapter-declared paths after the adapter has exited.
   local exit_code=0 _footer_dir="" _footer_path=""
   local -a _pst=(0 0)
-  _footer_dir="$work_dir/.agent-trace"
+  # Route harness/adapter artifacts to the out-of-repo run dir (CC-417). The footer
+  # lands here; the adapter's own trace follows via the forwarded --trace-dir below
+  # (a flag, NOT an exported env — so no ambient state leaks to nested/later runs),
+  # and post-verify's containment boundary follows via --run-dir/--trace-dir.
+  # An explicit caller --trace-dir on this dispatch is the per-dispatch override and
+  # drives the footer too, so footer and adapter trace stay colocated. _run_dir is
+  # the trace dir's parent (the post-verify containment boundary).
+  local _trace_dir _run_dir _explicit_td="" _tf_i
+  for ((_tf_i = 0; _tf_i < ${#_forward[@]}; _tf_i += 1)); do
+    if [[ "${_forward[$_tf_i]}" == "--trace-dir" ]]; then
+      _explicit_td="${_forward[$((_tf_i + 1))]:-}"
+      break
+    fi
+  done
+  _trace_dir="$(_pmctl_dispatch_trace_dir "$work_dir" "$_dispatch_run_id" "$_explicit_td")"
+  _run_dir="$(dirname "$_trace_dir")"
+  _footer_dir="$_trace_dir"
   _footer_path="$_footer_dir/$_dispatch_run_id.footer"
   mkdir -p "$_footer_dir" || { printf 'pmctl dispatch run: mkdir failed: %s\n' "$_footer_dir" >&2; return 2; }
+  # Forward the resolved trace dir to the adapter (flag wins over any inherited
+  # PM_DISPATCH_TRACE_DIR env in sw_resolve_trace_dir) so its trace/last/stderr
+  # land alongside the footer. Append only when the caller did not already pass
+  # one — in which case _explicit_td already drove _trace_dir, so the adapter has
+  # the matching flag.
+  [[ -z "$_explicit_td" ]] && _forward+=(--trace-dir "$_trace_dir")
   # Capture PIPESTATUS before any subsequent command clobbers it.  The { } group
   # is the LHS of ||, so set -e is suppressed for a non-zero pipeline exit.
   { bash "$adapter_path" "${_forward[@]}" | tee "$_footer_path"; _pst=("${PIPESTATUS[@]}"); } || true
@@ -548,6 +616,9 @@ pmctl_dispatch_execute_tail() {
   fi
 
   local -a _pv_args=("$work_dir" "$brief_file")
+  # Containment boundary + trace base follow the relocated artifacts (CC-417/CC-415
+  # seam) so the post-verify .agent-trace guard checks the out-of-repo run dir.
+  _pv_args+=(--run-dir "$_run_dir" --trace-dir "$_trace_dir")
   [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
   [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
@@ -820,7 +891,22 @@ pmctl_dispatch_run_detached() {
   fi
 
   local spec_dir spec_path supervisor_log pid_file
-  spec_dir="$work_dir/.agent-trace"
+  # Relocate the runspec + supervisor log/pid to the out-of-repo run dir (CC-417).
+  # The supervisor re-runs execute_tail with the same (work_dir, run_id) and the
+  # helper is deterministic, so it independently derives this exact dir for the
+  # footer/trace — no need to thread the location through the run-spec. An explicit
+  # --trace-dir survives in `native` and is re-read by the supervisor's execute_tail,
+  # so honour the same value here to keep parent and supervisor agreeing. The
+  # supervisor is launched with an absolute --run-spec path, so reading the
+  # relocated spec from outside the workspace is unaffected.
+  local _explicit_td="" _nt_i
+  for ((_nt_i = 0; _nt_i < ${#native[@]}; _nt_i += 1)); do
+    if [[ "${native[$_nt_i]}" == "--trace-dir" ]]; then
+      _explicit_td="${native[$((_nt_i + 1))]:-}"
+      break
+    fi
+  done
+  spec_dir="$(_pmctl_dispatch_trace_dir "$work_dir" "$run_id" "$_explicit_td")"
   spec_path="$spec_dir/$run_id.runspec"
   supervisor_log="$spec_dir/$run_id.supervisor.log"
   pid_file="$spec_dir/$run_id.supervisor.pid"

@@ -142,7 +142,19 @@ else
   record "dispatch exits 0" PASS ""
   rm -f "$e2e_log"; e2e_log=""
 
+  # CC-417: dispatch artifacts land in the out-of-repo run dir under the work's
+  # project partition, not $smoke_dir/.agent-trace. Resolve the newest run's trace
+  # dir via the same state-paths seam the dispatch core uses.
   trace_dir="$smoke_dir/.agent-trace"
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+    # shellcheck source=scripts/lib/state-paths.sh
+    . "$REPO_ROOT/scripts/lib/state-paths.sh" 2>/dev/null || true
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    _e2e_part="$(cd "$smoke_dir" && dirname "$(sw_project_run_dir __probe__)")"
+    _e2e_trace="$(find "$_e2e_part" -type d -name .agent-trace 2>/dev/null | sort | tail -1)"
+    [[ -n "$_e2e_trace" ]] && trace_dir="$_e2e_trace"
+  fi
 
   if [[ -f "$trace_dir/latest.last" && -s "$trace_dir/latest.last" ]]; then
     record "latest.last non-empty" PASS ""

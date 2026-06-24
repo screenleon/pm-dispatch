@@ -240,7 +240,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
 **Requirement**: 加 `--run-dir <abs>`，canonical 化後對 `.agent-trace`（symlink 與 regular dir 均適用）做前綴比對，拒絕逃出 run-dir boundary 的情形。無 `--run-dir` 時退回 `$WORK_DIR` 邊界（行為不變）。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。Owner/group/world-writable 防護 deferred（另開票追蹤）。
 
-## ✅ 2026-06-24 CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體）
+## CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體） ✅ 2026-06-24
 
 **Problem**: gate 的 briefs/results/trace 落在 repo，造成 L1 誤判與 L2 污染。
 **Why**: 這是 CC-003 原始 ticket 的真正修復；依賴 CC-414 seam 與 CC-415 guard。

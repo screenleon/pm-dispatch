@@ -44,6 +44,13 @@ th_init() {
   tmp_root="$(mktemp -d)"
   trap 'rm -rf "$tmp_root"' EXIT
 
+  # Hermeticity: drop any ambient PM_DISPATCH_TRACE_DIR inherited from the caller
+  # (e.g. a pr-gate sandbox exports it pointing at the gate's read-only trace dir).
+  # It is adapter-facing env; a suite that lets it leak into its dispatches would
+  # route trace/footer into a foreign — possibly read-only — directory and false-
+  # fail. Cases that exercise the variable set it inline per-invocation.
+  unset PM_DISPATCH_TRACE_DIR
+
   PASS=0
   FAIL=0
   FAILED_CASES=()

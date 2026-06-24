@@ -17,7 +17,6 @@ DISPATCH="$REPO_ROOT/adapters/claude/dispatch.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-SNAP_DIR="$(dirname "$(mktemp -u -t claude-dispatch.XXXXXX)")"
 SNAP_RE="exec [^ ]*claude-dispatch\.[A-Za-z0-9]+/claude-dispatch\.sh"
 
 # Fake claude honoring the output contract: drains the prompt on stdin and emits
@@ -72,10 +71,17 @@ case_snapshot_structural() {
 # ---- 4: cleanup leaves no snapshot dir behind ----
 case_cleanup() {
   local name="snapshot/cleanup — no leak"; should_run "$name" || return 0
-  local before after
-  before=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'claude-dispatch.*' 2>/dev/null | wc -l)
-  "$DISPATCH" --help >/dev/null 2>&1
-  after=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'claude-dispatch.*' 2>/dev/null | wc -l)
+  # Hermetic count: a CONCURRENT suite's in-flight claude-dispatch.* snapshot in
+  # the shared system tmp would otherwise inflate this count and false-fail under
+  # parallel runs (the global SNAP_DIR namespace is shared by every claude-adapter
+  # invocation). Point TMPDIR at a private dir so only THIS invocation's snapshot
+  # can appear in the counted dir; mktemp -t in the adapter honours TMPDIR.
+  local snapdir before after
+  snapdir="$(mktemp -d)"
+  before=$(find "$snapdir" -maxdepth 1 -type d -name 'claude-dispatch.*' 2>/dev/null | wc -l)
+  TMPDIR="$snapdir" "$DISPATCH" --help >/dev/null 2>&1
+  after=$(find "$snapdir" -maxdepth 1 -type d -name 'claude-dispatch.*' 2>/dev/null | wc -l)
+  rm -rf "$snapdir"
   [[ "$after" -le "$before" ]] && pass "$name" || fail "$name" ""
 }
 

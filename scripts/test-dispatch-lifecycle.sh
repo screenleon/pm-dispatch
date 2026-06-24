@@ -20,6 +20,11 @@ SUPERVISOR="$REPO_ROOT/scripts/dispatch-supervisor.sh"
 . "$SCRIPT_DIR/lib/pmctl-guard.sh"
 # shellcheck source=scripts/lib/pmctl-dispatch.sh
 . "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
+# CC-417: dispatch artifacts land in the out-of-repo run dir. The dispatch core
+# loads state-paths lazily (inside pmctl_dispatch_run); the test helpers below
+# resolve the same partition at top level, so source it here explicitly.
+# shellcheck source=scripts/lib/state-paths.sh
+. "$SCRIPT_DIR/lib/state-paths.sh"
 th_init "$@"
 export PM_DISPATCH_STATE_ROOT="$tmp_root/lifecycle-state"
 
@@ -127,7 +132,8 @@ _work=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
 done
-_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_part="\$(cd "\$_work" 2>/dev/null && . "$REPO_ROOT/scripts/lib/state-paths.sh" 2>/dev/null && dirname "\$(sw_project_run_dir __probe__ 2>/dev/null)")"
+_rspec="\$(find "\${_part:-\$_work/.agent-trace}" -name 'run-*.runspec' 2>/dev/null | head -1)"
 _rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
 if [[ -n "\$_rid" && -n "\$_work" ]]; then
   mkdir -p "\$_work/.dispatch-results"
@@ -168,7 +174,8 @@ _work=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
 done
-_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_part="\$(cd "\$_work" 2>/dev/null && . "$REPO_ROOT/scripts/lib/state-paths.sh" 2>/dev/null && dirname "\$(sw_project_run_dir __probe__ 2>/dev/null)")"
+_rspec="\$(find "\${_part:-\$_work/.agent-trace}" -name 'run-*.runspec' 2>/dev/null | head -1)"
 _rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
 if [[ -n "\$_rid" ]]; then
   printf 'final_state=ok\nexit_code=0\n' > "/tmp/pm-supervisor-sentinel-\$_rid"
@@ -206,7 +213,8 @@ _work=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in --cd) _work="\$2"; shift 2 ;; *) shift ;; esac
 done
-_rspec="\$(find "\$_work/.agent-trace" -name 'run-*.runspec' 2>/dev/null | head -1)"
+_part="\$(cd "\$_work" 2>/dev/null && . "$REPO_ROOT/scripts/lib/state-paths.sh" 2>/dev/null && dirname "\$(sw_project_run_dir __probe__ 2>/dev/null)")"
+_rspec="\$(find "\${_part:-\$_work/.agent-trace}" -name 'run-*.runspec' 2>/dev/null | head -1)"
 _rid="\$(grep '^run_id=' "\$_rspec" 2>/dev/null | cut -d= -f2-)"
 _uid="\$(id -u 2>/dev/null)"
 if [[ -n "\${XDG_RUNTIME_DIR:-}" && -d "\${XDG_RUNTIME_DIR}" ]]; then
@@ -240,7 +248,14 @@ FAKEOF
 }
 
 _first_record() { find "$1/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1; }
-_first_runspec() { find "$1/.agent-trace" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
+# CC-417: runspec + supervisor log/pid + footer/trace land in the out-of-repo run
+# dir under the work's project partition, not $work/.agent-trace. Resolve those
+# locations through the same deterministic helper the dispatch core uses.
+# Resolve via sw_project_run_dir bound to the work dir (cd), mirroring the core's
+# _pmctl_dispatch_trace_dir partition binding so probe and real dispatch agree.
+_run_trace_dir() { ( cd "$1" 2>/dev/null && printf '%s/.agent-trace\n' "$(sw_project_run_dir "$2")" ); }
+_run_partition() { ( cd "$1" 2>/dev/null && dirname "$(sw_project_run_dir __probe__)" ); }
+_first_runspec() { local p; p="$(_run_partition "$1")" || return 0; [[ -n "$p" ]] && find "$p" -type f -name 'run-*.runspec' 2>/dev/null | sort | head -1; }
 _record_for_run() {
   if [[ -f "$1/.dispatch-results/$2.md" ]]; then
     printf '%s/.dispatch-results/%s.md\n' "$1" "$2"
@@ -346,8 +361,9 @@ case_detached_true_detach() {
   set -e
 
   runspec="$(_first_runspec "$work")"
-  pid_file="$work/.agent-trace/$run_id.supervisor.pid"
-  log_file="$work/.agent-trace/$run_id.supervisor.log"
+  local _td_detach; _td_detach="$(_run_trace_dir "$work" "$run_id")"
+  pid_file="$_td_detach/$run_id.supervisor.pid"
+  log_file="$_td_detach/$run_id.supervisor.log"
 
   # Block until adapter signals it started via FIFO — no sleep. Adapter opens
   # started_fifo O_RDWR (non-blocking) then writes "started" before blocking on
@@ -393,10 +409,11 @@ case_detached_true_detach() {
     && grep -q "state: ok  exit: 0" <<<"$wait_out" \
     && [[ -n "$record" ]] && grep -q '^final_state: "ok"$' "$record" \
     && [[ -s "$pid_file" ]] \
-    && [[ -s "$log_file" ]]; then
+    && [[ -s "$log_file" ]] \
+    && [[ ! -e "$work/.agent-trace" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} blocked_record=${record_while_blocked:-absent} snap_ok=$snap_ok record=${record:-missing} runspec=${runspec:-missing} err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
+    fail "$name" "code=$code wait=$wait_code run_id=${run_id:-missing} blocked_record=${record_while_blocked:-absent} snap_ok=$snap_ok record=${record:-missing} runspec=${runspec:-missing} repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean) err=$(tail -3 "$err" | tr '\n' '|') wait=$(tail -3 <<<"$wait_out" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"; rm -f "$err" "$started_fifo" "$release_fifo"
 }
@@ -1075,7 +1092,7 @@ case_supervisor_fallback_covers_ok_run_with_poisoned_results() {
   set +e
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1; wait_code=$?
   set -e
-  supervisor_log="$work/.agent-trace/$run_id.supervisor.log"
+  supervisor_log="$(_run_trace_dir "$work" "$run_id")/$run_id.supervisor.log"
   _log_ok=0
   if [[ -f "$supervisor_log" ]] && grep -q "fallback" "$supervisor_log" 2>/dev/null; then
     _log_ok=1
