@@ -12,17 +12,47 @@ pmctl_gate_run() {
     return 2
   fi
 
-  # If caller omits --cd, default to the current working directory so the
-  # gate always has a working directory without forcing callers to spell it out.
+  # Extract --cd value first so the run dir is keyed to the TARGET repo's partition,
+  # not the caller's cwd. Fall back to $PWD when --cd is absent.
+  local effective_cd="$PWD"
   local has_cd=false
-  for arg in "$@"; do
-    [[ "$arg" == "--cd" ]] && { has_cd=true; break; }
+  local _i=0
+  local _args=("$@")
+  while [[ "$_i" -lt "${#_args[@]}" ]]; do
+    if [[ "${_args[$_i]}" == "--cd" ]]; then
+      has_cd=true
+      _i=$((_i + 1))
+      [[ "$_i" -lt "${#_args[@]}" ]] && effective_cd="${_args[$_i]}"
+      break
+    fi
+    _i=$((_i + 1))
   done
 
+  # Compute an out-of-repo run dir via sw_project_run_dir (state-paths seam).
+  # Partition key is derived from effective_cd so artifacts land under the target
+  # repo's partition even when pmctl is invoked from a different directory.
+  # Guarded source: load only if sw_project_run_dir is not already declared.
+  local gate_run_dir=""
+  local _sp_lib="$repo_root/scripts/lib/state-paths.sh"
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function && -r "$_sp_lib" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    . "$_sp_lib" 2>/dev/null || true
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    local _gate_ts; _gate_ts="$(date +%Y%m%d-%H%M%S)"
+    local _gate_run_id="gate-${_gate_ts}-$$"
+    gate_run_dir="$(cd "$effective_cd" 2>/dev/null && sw_project_run_dir "$_gate_run_id" 2>/dev/null)" || gate_run_dir=""
+  fi
+
+  local run_dir_args=()
+  if [[ -n "$gate_run_dir" ]]; then
+    run_dir_args=(--run-dir "$gate_run_dir")
+  fi
+
   if [[ "$has_cd" == false ]]; then
-    exec "$gate_script" --cd "$PWD" "$@"
+    exec "$gate_script" "${run_dir_args[@]}" --cd "$PWD" "$@"
   else
-    exec "$gate_script" "$@"
+    exec "$gate_script" "${run_dir_args[@]}" "$@"
   fi
 }
 

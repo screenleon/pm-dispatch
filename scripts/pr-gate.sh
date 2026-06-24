@@ -61,6 +61,8 @@ _kill_process_tree() {
 #   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
+#   --run-dir <abs>      out-of-repo dir for gate artifacts (briefs/results/trace); optional,
+#                        defaults to in-repo paths under --cd when absent (backward compat)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
 #   --executor <mode>    codex|claude|auto (default: auto; auto uses `command -v codex`)
 #   --model <id>         dispatch model (default: "default" → adapter's pinned default,
@@ -78,6 +80,7 @@ _kill_process_tree() {
 #                        and content are recorded in the gate result (## Gate Overrides Applied).
 
 WORK_DIR=""
+GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
 TIER_OVERRIDE=""
 REVIEWERS_OVERRIDE=""
 SCOPE=""
@@ -102,6 +105,7 @@ BRIEF_FILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cd)         WORK_DIR="$2";           shift 2;;
+    --run-dir)    GATE_RUN_DIR_OVERRIDE="$2"; shift 2;;
     --tier)       TIER_OVERRIDE="$2";      shift 2;;
     --brief)      BRIEF_FILE="$2";         shift 2;;
     --reviewers)  REVIEWERS_OVERRIDE="$2"; shift 2;;
@@ -128,7 +132,7 @@ while [[ $# -gt 0 ]]; do
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -138,6 +142,9 @@ if [[ -z "$WORK_DIR" ]]; then
 fi
 if [[ ! -d "$WORK_DIR" ]]; then
   printf 'Error: working dir not found: %s\n' "$WORK_DIR" >&2; exit 2
+fi
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
+  printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
 fi
 
 _self="$0"
@@ -302,6 +309,7 @@ else
     fi
     cmd+=(--timeout "$timeout" --brief-file "$brief_file")
     [[ -n "$isolation_level" ]] && cmd+=(--isolation "$isolation_level")
+    [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && cmd+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
 
     for arg in "${cmd[@]}"; do
       if [[ "$first" -eq 1 ]]; then
@@ -608,9 +616,19 @@ done
 
 # ── Prepare output paths ─────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BRIEF_DIR="$WORK_DIR/.gate-briefs"
+_ARTIFACT_ROOT="${GATE_RUN_DIR_OVERRIDE:-$WORK_DIR}"
+BRIEF_DIR="$_ARTIFACT_ROOT/.gate-briefs"
 mkdir -p "$BRIEF_DIR"
+# Route executor traces (adapter JSONL/last/stderr) to the run dir when provided.
+# PM_DISPATCH_TRACE_DIR is read by dispatch_via (lib and copy-mode) to forward
+# --trace-dir to the adapter, so the adapter's own trace files follow the run dir.
+if [[ -n "$GATE_RUN_DIR_OVERRIDE" ]]; then
+  export PM_DISPATCH_TRACE_DIR="$GATE_RUN_DIR_OVERRIDE/.agent-trace"
+fi
 
+# OUTPUT_FILE must be in WORK_DIR so the executor (codex/claude, workspace-write sandbox)
+# can write it. After final verification the gate moves it to _ARTIFACT_ROOT if a run dir
+# was supplied. --output explicit override is always used verbatim, no move.
 OUTPUT_FILE="${OUTPUT_OVERRIDE:-$WORK_DIR/.gate-results/gate-${TIMESTAMP}.md}"
 # Normalize to an absolute path. The reviewer write-guard (guard-reviewer-write.sh)
 # requires an absolute file_path, and the pr-gate-handover_v1 schema mandates an absolute
@@ -632,7 +650,46 @@ cleanup_briefs() {
     rm -f "$bf"
   done
 }
-trap cleanup_briefs EXIT
+
+# Relocate gate result artifacts out of the repo when a run dir was supplied.
+# OUTPUT_FILE (and parallel reviewer outputs) must be written under WORK_DIR for the
+# executor's workspace-write sandbox, so they start repo-local. This helper moves them
+# to $GATE_RUN_DIR_OVERRIDE/.gate-results and drops the now-empty in-repo dir.
+# Idempotent and safe to call repeatedly:
+#   - no-op in legacy mode (no --run-dir) or with an explicit --output override, so the
+#     in-repo default path and verbatim --output behavior are preserved (backward compat);
+#   - no-op once WORK_DIR/.gate-results has been drained.
+# Called BOTH on the success path (before the result: print, so the printed path and the
+# NO-GO grep read the relocated copy) AND from the EXIT trap (so every failure path that
+# already created the in-repo result relocates it out instead of leaking repo artifacts).
+relocate_gate_artifacts() {
+  [[ -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]] || return 0
+  [[ -d "$WORK_DIR/.gate-results" ]] || return 0
+  local _result_dest_dir="$GATE_RUN_DIR_OVERRIDE/.gate-results" _rf
+  mkdir -p "$_result_dest_dir"
+  # Move only this run's artifacts (all carry $TIMESTAMP in the filename) so a concurrent
+  # gate run sharing WORK_DIR/.gate-results keeps its own in-flight files.
+  for _rf in "$WORK_DIR/.gate-results/"*"${TIMESTAMP}"*; do
+    [[ -e "$_rf" ]] || continue
+    mv "$_rf" "$_result_dest_dir/"
+  done
+  # Repoint OUTPUT_FILE to the relocated primary result so later reads (result: print,
+  # NO-GO grep) follow it out of the repo.
+  if [[ "$OUTPUT_FILE" == "$WORK_DIR/.gate-results/"* ]]; then
+    OUTPUT_FILE="$_result_dest_dir/$(basename "$OUTPUT_FILE")"
+  fi
+  # Drop the in-repo dir only if now empty (tolerate a concurrent run's files).
+  rmdir "$WORK_DIR/.gate-results" 2>/dev/null || true
+}
+
+gate_exit_cleanup() {
+  # Relocate first (preserves the result artifact out-of-repo for post-mortem on failure
+  # paths), then drop transient briefs. Both are idempotent / no-ops on the success path
+  # where relocation already ran inline.
+  relocate_gate_artifacts
+  cleanup_briefs
+}
+trap gate_exit_cleanup EXIT
 
 SYNTHESIS_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-synthesis.md"
 BRIEF_FILES+=("$SYNTHESIS_BRIEF")
@@ -911,7 +968,7 @@ else
   DISPATCH_PIDS=()
   REVIEWER_NAMES=()
 
-  mkdir -p "$WORK_DIR/.agent-trace"
+  mkdir -p "$_ARTIFACT_ROOT/.agent-trace"
 
   # Resolve a portable hash command; fail-closed if none is available or usable.
   # sha256sum (GNU coreutils) is preferred; shasum -a 256 covers macOS/BSD.
@@ -942,7 +999,7 @@ else
     AGENT_PATH="$AGENT_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
     REVIEWER_BRIEF="$BRIEF_DIR/pr-gate-${TIMESTAMP}-${r}.md"
-    DISPATCH_LOG="$WORK_DIR/.agent-trace/gate-${TIMESTAMP}-${r}.log"
+    DISPATCH_LOG="$_ARTIFACT_ROOT/.agent-trace/gate-${TIMESTAMP}-${r}.log"
 
     BRIEF_FILES+=("$REVIEWER_BRIEF")
     REVIEWER_OUTPUT_FILES+=("$REVIEWER_OUTPUT")
@@ -1419,6 +1476,15 @@ elif [[ -x "$_POST_GATE_HOOK" ]]; then
     say 'post-gate hook completed.\n'
   fi
 fi
+
+# ── Relocate result to run dir (post-verification) ───────────────────────────
+# OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox
+# constraint). Now that it is verified, move it (and any parallel reviewer outputs,
+# already read by synthesis) to _ARTIFACT_ROOT/.gate-results/ if a run dir was supplied.
+# Relocation is centralized in relocate_gate_artifacts(), which the EXIT trap also calls
+# so failure paths relocate too; calling it here updates OUTPUT_FILE before the prints
+# below, and the trap's later call is then a no-op. --output overrides are never moved.
+relocate_gate_artifacts
 
 # ── Print result path for caller ─────────────────────────────────────────────
 # The result was written by the dispatched subprocess and already integrity-checked
