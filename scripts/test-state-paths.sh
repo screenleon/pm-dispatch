@@ -15,12 +15,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_PATHS="$REPO_ROOT/scripts/lib/state-paths.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
 # Source the unit under test directly. portable.sh is pulled in by state-paths.
 # shellcheck source=scripts/lib/state-paths.sh
-# shellcheck disable=SC1090
+# shellcheck disable=SC1091
 . "$STATE_PATHS"
 
 # ---- 1: store root honors PM_DISPATCH_STATE_ROOT ----
