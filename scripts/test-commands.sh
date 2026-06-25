@@ -127,6 +127,9 @@ should_run "mem-distill: Step 6 ADD names missing fields in error" && assert_fil
 should_run "mem-distill: Step 6 ADD error includes Cannot write prefix" && assert_file_contains "mem-distill: Step 6 ADD error includes Cannot write prefix" "$MEM_DISTILL" "Cannot write" && pass "mem-distill: Step 6 ADD error includes Cannot write prefix"
 should_run "mem-distill: Step 6 references memory-system.md schema" && assert_file_contains "mem-distill: Step 6 references memory-system.md schema" "$MEM_DISTILL" "docs/memory-system.md" && pass "mem-distill: Step 6 references memory-system.md schema"
 should_run "mem-distill: Step 6 lists topics as required field" && assert_file_contains "mem-distill: Step 6 lists topics as required field" "$MEM_DISTILL" "topics" && pass "mem-distill: Step 6 lists topics as required field"
+should_run "mem-distill: Step 6 lists priority as required field" && assert_file_contains "mem-distill: Step 6 lists priority as required field" "$MEM_DISTILL" "priority" && pass "mem-distill: Step 6 lists priority as required field"
+should_run "mem-distill: Step 6 lists status as required field" && assert_file_contains "mem-distill: Step 6 lists status as required field" "$MEM_DISTILL" "status" && pass "mem-distill: Step 6 lists status as required field"
+should_run "mem-distill: Step 6 lists updated_at as required field" && assert_file_contains "mem-distill: Step 6 lists updated_at as required field" "$MEM_DISTILL" "updated_at" && pass "mem-distill: Step 6 lists updated_at as required field"
 should_run "mem-distill: Step 6 lists repo_refs as required field" && assert_file_contains "mem-distill: Step 6 lists repo_refs as required field" "$MEM_DISTILL" "repo_refs" && pass "mem-distill: Step 6 lists repo_refs as required field"
 
 # ── mem-log.md contract ──────────────────────────────────────────────────────
@@ -162,10 +165,15 @@ should_run "memory-compress: Step 1 derives MEMORY.md candidate path" && assert_
 should_run "memory-compress: Step 1 guards MEMORY.md existence" && assert_file_contains "memory-compress: Step 1 guards MEMORY.md existence" "$MEMORY_COMPRESS" "No MEMORY.md found for this project" && pass "memory-compress: Step 1 guards MEMORY.md existence"
 should_run "memory-compress: Step 1 echoes candidate path" && assert_file_contains "memory-compress: Step 1 echoes candidate path" "$MEMORY_COMPRESS" 'echo "$candidate"' && pass "memory-compress: Step 1 echoes candidate path"
 # Step 6 frontmatter enforce contract
+should_run "memory-compress: Step 6 blocks write on missing fields" && assert_file_contains "memory-compress: Step 6 blocks write on missing fields" "$MEMORY_COMPRESS" "do NOT write" && pass "memory-compress: Step 6 blocks write on missing fields"
 should_run "memory-compress: Step 6 flags missing fields before compression" && assert_file_contains "memory-compress: Step 6 flags missing fields before compression" "$MEMORY_COMPRESS" "missing required frontmatter fields" && pass "memory-compress: Step 6 flags missing fields before compression"
 should_run "memory-compress: Step 6 enforce error includes Backfill before compression" && assert_file_contains "memory-compress: Step 6 enforce error includes Backfill before compression" "$MEMORY_COMPRESS" "Backfill before compression" && pass "memory-compress: Step 6 enforce error includes Backfill before compression"
 should_run "memory-compress: Step 6 references memory-system.md schema" && assert_file_contains "memory-compress: Step 6 references memory-system.md schema" "$MEMORY_COMPRESS" "docs/memory-system.md" && pass "memory-compress: Step 6 references memory-system.md schema"
 should_run "memory-compress: Step 6 lists topics as required field" && assert_file_contains "memory-compress: Step 6 lists topics as required field" "$MEMORY_COMPRESS" "topics" && pass "memory-compress: Step 6 lists topics as required field"
+should_run "memory-compress: Step 6 lists priority as required field" && assert_file_contains "memory-compress: Step 6 lists priority as required field" "$MEMORY_COMPRESS" "priority" && pass "memory-compress: Step 6 lists priority as required field"
+should_run "memory-compress: Step 6 lists status as required field" && assert_file_contains "memory-compress: Step 6 lists status as required field" "$MEMORY_COMPRESS" "status" && pass "memory-compress: Step 6 lists status as required field"
+should_run "memory-compress: Step 6 lists updated_at as required field" && assert_file_contains "memory-compress: Step 6 lists updated_at as required field" "$MEMORY_COMPRESS" "updated_at" && pass "memory-compress: Step 6 lists updated_at as required field"
+should_run "memory-compress: Step 6 lists repo_refs as required field" && assert_file_contains "memory-compress: Step 6 lists repo_refs as required field" "$MEMORY_COMPRESS" "repo_refs" && pass "memory-compress: Step 6 lists repo_refs as required field"
 
 # ── mem-search.md contract ───────────────────────────────────────────────────
 
