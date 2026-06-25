@@ -94,6 +94,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-420 | 🟢 someday | refactor: adapter 共用 model alias TSV 解析抽 lib（claude/codex/opencode 三者 ~30行重複）→ `scripts/lib/model-aliases.sh` | arch | 2026-06-24 | — | P3 | — |
 | CC-421 | 🟢 someday | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | — | P3 | — |
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
+| CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
 
 ---
 
@@ -1454,3 +1455,26 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Note**: dispatch-common 涉及 adapter 核心邏輯，重構前須先確認三個 adapter 的分歧點；建議在實作前做 spike 確認介面邊界。
 
 **Priority**: P3（someday）。
+
+## CC-423 — gate detached lifecycle 🟢 someday
+
+**Problem**: `pmctl gate run` 目前以 foreground 模式執行（無 lifecycle 選項），透過 Claude Code harness 的 `run_in_background: true` 監控。Session interrupt 會讓 harness 遺失對 gate process 的追蹤，回報錯誤的 exit code（同 CC-418 之前 dispatch 的問題）。
+
+**Why**: dispatch 已透過 `--lifecycle detached`（nohup/setsid + sentinel 機制）完全解耦，gate 應有對等能力。Gate 跑 3-5 分鐘，風險低於 dispatch（30+ 分鐘），但架構上仍是同一個缺陷：process 存活與否取決於 harness 是否在線。
+
+**Requirement**:
+- `pmctl gate run --lifecycle detached` 立即回傳 `gate_id`（格式：`gate-<ts>-<rand>`），exit 0
+- `scripts/gate-supervisor.sh`：以 `nohup/setsid` 啟動 `pr-gate.sh`，完成後寫 sentinel（複用 dispatch sentinel 機制：`/tmp/pm-gate-sentinel-<gate_id>-<nonce>`）
+- `pmctl gate wait <gate_id> --cd <work_dir>`：輪詢 sentinel，完成後輸出 `gate: <gate_id>  state: <GO/NO-GO>  exit: <N>`，exit 代碼等同 sentinel
+- `/pr-gate` skill 改為兩步：(1) detached launch → gate_id，(2) `pmctl gate wait` in background
+- 維持 `--lifecycle foreground` 作為 backward-compat 選項（預設改 detached）
+
+**Acceptance**:
+- `pmctl gate run --lifecycle detached` 回傳 gate_id 並立即退出
+- Session interrupt 後 gate 繼續執行，`pmctl gate wait` 在新 session 中可重新等待結果
+- gate result file 路徑仍從 gate run dir 讀取（已有 gate-20xxx 格式）
+- `pmctl gate run --lifecycle foreground` 行為不變（backward-compat）
+
+**See**: dispatch sentinel 實作於 `scripts/dispatch-supervisor.sh`、`scripts/lib/pmctl-dispatch.sh`（`pmctl_dispatch_run_detached`、`pmctl_dispatch_wait`）可參考複用。
+
+**Priority**: P3（someday）.
