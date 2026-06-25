@@ -130,7 +130,7 @@
 |----|------|------|
 | CC-403 | `pmctl context --source repo/memory/all`：memory 變可檢索 source（memory-local DB、schema `source_domain` 補 memory、pack `memories[]` 填值、reuse-scan 維持 repo-only）。**supersede/吸收 [[CC-340]] MVP**，embeddings 留 CC-340 | ✅ pr:#313 |
 | CC-404 | `MEMORY.md` 注入預算 + `priority: always`/`scope: active` metadata，取代「全注入 + >=50 才警告」。需與 CC-405 metadata 同捆或先行 | 🟢 |
-| CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | 🟢 |
+| CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | ✅ |
 | CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | 🟢 |
 | CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | 🟢 |
 
