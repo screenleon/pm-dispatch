@@ -630,6 +630,9 @@ pmctl_dispatch_execute_tail() {
     _pv_rc=$?
   fi
   printf '%s\n' "$_pv_out"
+  if [[ -n "$_trace_dir" ]]; then
+    printf 'trace-dir: %s\nrun-dir: %s\n' "$_trace_dir" "$_run_dir"
+  fi
   if [[ "$_pv_rc" -ne 0 ]]; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
     pmctl_dispatch_write_transition "$repo_root" "$work_dir" "$adapter" "$_dispatch_run_id" \

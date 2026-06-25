@@ -153,6 +153,7 @@ jobs:
             test-setup-project.sh
             test-skill-refine.sh
             test-state-store.sh
+            test-pmctl-artifacts.sh
             test-state-layout-parity.sh
             test-state-store-rotation.sh
             test-uninstall.sh
