@@ -35,6 +35,7 @@ while True:
     mem = os.path.join(projects, encoded, 'memory')
     if os.path.isdir(mem):
         print(mem)
+        print(current)
         break
     parent = os.path.dirname(current)
     if parent == current:
@@ -43,11 +44,11 @@ while True:
 "
 ```
 
-If nothing is printed, report "No memory directory found for this project" and stop.
+This prints two lines: `memory_dir` (first) and `project_root` (second — the matched directory). If nothing is printed, report "No memory directory found for this project" and stop.
 
 ## Step 2 — Index query via pmctl context (primary path)
 
-Run `pmctl context query --source memory <query>` via Python subprocess to avoid shell injection:
+Run `pmctl context query <project_root> --source memory <query>` via Python subprocess to avoid shell injection. Pass `project_root` (the second line from Step 1) as the first positional argument so the lookup is scoped to this project's memory, not pm-dispatch's.
 
 ```python
 python3 - << 'PYEOF'
@@ -56,11 +57,11 @@ import subprocess, sys
 # Claude: replace the placeholders below with actual values,
 # properly escaped for Python string syntax (use repr() if needed).
 query = "QUERY_PLACEHOLDER"
-memory_dir = "MEMORY_DIR_PLACEHOLDER"
+project_root = "PROJECT_ROOT_PLACEHOLDER"
 
 result = subprocess.run(
-    ['pmctl', 'context', 'query', '--source', 'memory', query],
-    capture_output=True, text=True, cwd=memory_dir
+    ['pmctl', 'context', 'query', project_root, '--source', 'memory', query],
+    capture_output=True, text=True
 )
 
 # Non-zero exit means the index query itself failed (not just no hits).
@@ -83,11 +84,11 @@ if refs:
 PYEOF
 ```
 
+Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `PROJECT_ROOT_PLACEHOLDER` with `project_root` (second line from Step 1).
+
 If refs are returned, these are the matching memory card paths. Proceed directly to Step 5 using these files — skip Steps 3 and 4.
 
 If no refs are printed (no hits → `# no hits for: …` in stdout) or the subprocess exited nonzero (query failure → warning on stderr), fall through to Step 3.
-
-Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
 
 ## Step 3 — Keyword search via rg/grep (fallback when index has no hits)
 
