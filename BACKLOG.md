@@ -1499,4 +1499,4 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `test-commands.sh` 新增 mem-log/mem-recall/mem-search/memory-compress 結構斷言 + behavior-level contract assertions
 - `test-pmctl-memory.sh` 新增 5 個 `pmctl memory dir` behavioral test cases
 
-**See**: pr:#NNN
+**See**: pr:#326
