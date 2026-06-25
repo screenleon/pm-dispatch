@@ -1534,10 +1534,10 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
 - 所有 ticket 的 BACKLOG index status 與 body heading status 一致
 
-**Layer 2 — 語義比對（AI 判斷，中信心；可 dispatch 分散 context 壓力）**
-- 逐 ticket 讀 Requirement/What 章節 + 對應 PR diff
-- 問：「這個 diff 是否滿足 ticket 說的所有要求？有沒有 ticket 提到但 diff 沒有觸及的地方？」
-- 大型 milestone（票數多、diff 大）時，每個 ticket 可 dispatch 為獨立 executor job，各自在獨立 context 讀 diff + ticket 回傳結論，主線程只收 per-ticket 結論再彙總
+**Layer 2 — 語義比對（AI 判斷，中信心；按改動類型批次 dispatch）**
+- milestone 的 ticket 按**改動類型**分組（commands/ 類、scripts/ 類、docs+tracking 類等），每組一個 dispatch job，固定 3–4 個 job 上限，不隨 ticket 數線性增長
+- 每個 executor 接收：該組所有 ticket 的 Requirement/What 章節 + 對應 PR diff 摘要，回傳 per-ticket 結論（需求是否滿足、具體疑問）
+- 主線程做 fan-out + synthesis，只讀回傳的結論，不自己讀所有 diff
 - 對有疑問的 ticket 列出具體問題，不猜測，明確說「需人工確認」
 - 利用 `pmctl context query --source memory` 取得相關 decision 背景輔助判斷（相依 [[CC-403]]）
 
@@ -1548,7 +1548,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **假設前提（相依 [[CC-404]] 完成後）**:
 - 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
-- 節省的 context window 可放 PR diff；若 dispatch 分散，每個 executor 各自只需負擔一個 ticket 的 diff
+- 節省的 context window 可放 PR diff；每個 dispatch executor 只負擔同類型的 3–5 個 ticket，不會 context 爆炸
 
 **Output format**:
 ```
@@ -1570,7 +1570,7 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 - 不輸出 GO/NO-GO；輸出是報告，判斷留給人
 - Layer 1 checks 必須 idempotent（不改任何檔案）
 - Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context
-- dispatch 分散時，每個 executor 只看單一 ticket，不跨 ticket 做比較
+- dispatch 按類型批次，每 job 上限 3–4 個，不按 ticket 數量線性增長
 - 工具名稱最終定案前暫用 `/pre-release`
 
 **Priority**: P3（someday）.
