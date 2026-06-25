@@ -197,6 +197,9 @@ case_codex_watch_auto_discover() {
 }
 
 case_gc_dry_run() {
+  # behavior: pmctl artifacts gc --dry-run lists would-delete candidates with exact count and leaves dirs intact
+  # Steps: create partition with 3 runs (1 keep, 2 old); run gc --dry-run --keep-last 1;
+  #        assert 2 "would delete" lines, final summary reports 2, no dirs removed
   local name="pmctl artifacts gc: --dry-run lists would-delete but deletes nothing"
   should_run "$name" || return 0
   local store work out err status=0
@@ -220,16 +223,22 @@ case_gc_dry_run() {
   PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_KEEP_LAST=1 "$PMCTL" artifacts gc \
     --dry-run --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
 
-  # Check: output has "would delete" lines and the dirs still exist
-  if [[ "$status" -eq 0 && "$(<"$out")" == *"would delete"* &&
+  local out_content; out_content="$(<"$out")"
+  local would_delete_count; would_delete_count="$(grep -c 'would delete:' "$out" 2>/dev/null || printf '0')"
+  # Check: 2 "would delete" lines, final summary says "would delete 2", dirs still exist
+  if [[ "$status" -eq 0 && "$would_delete_count" -eq 2 &&
+        "$out_content" == *"would delete 2 runs"* &&
         -d "$rd_old1" && -d "$rd_old2" && ! -s "$err" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") rd_old1_exists=$(test -d "$rd_old1" && echo y || echo n)"
+    fail "$name" "status=$status would_delete_count=$would_delete_count out=$out_content err=$(<"$err")"
   fi
 }
 
 case_gc_keep_last() {
+  # behavior: pmctl artifacts gc --keep-last N deletes eligible old runs, keeps newest N
+  # Steps: create 3 runs with different timestamps; gc --keep-last 1 --max-age-days 30;
+  #        assert oldest 2 are deleted and newest 1 survives
   local name="pmctl artifacts gc: --keep-last retains newest N runs"
   should_run "$name" || return 0
   local store work out err status=0
@@ -263,6 +272,9 @@ case_gc_keep_last() {
 }
 
 case_gc_max_age_zero() {
+  # behavior: pmctl artifacts gc --max-age-days 0 disables age filter; only keep-last applies
+  # Steps: create 2 runs (1 very old); gc --keep-last 2 --max-age-days 0;
+  #        assert both survive because keep-last covers them all
   local name="pmctl artifacts gc: --max-age-days 0 applies only keep-last (skips age filter)"
   should_run "$name" || return 0
   local store work out err status=0
@@ -292,6 +304,8 @@ case_gc_max_age_zero() {
 }
 
 case_gc_safety_rejects_pm_dispatch() {
+  # behavior: _pmctl_artifacts_safe_rm_check returns 1 and stderr error for .pm-dispatch paths
+  # Steps: call safety check with a path containing .pm-dispatch; assert exit 1 and error message
   local name="pmctl artifacts gc: safety check rejects path containing .pm-dispatch"
   should_run "$name" || return 0
   # Source the lib directly to test the safety function
@@ -306,6 +320,9 @@ case_gc_safety_rejects_pm_dispatch() {
 }
 
 case_gc_all_repos_removes_inrepo() {
+  # behavior: pmctl artifacts gc --all-repos deletes in-repo .agent-trace dirs and reports count
+  # Steps: create a git repo with a non-empty .agent-trace; run gc --all-repos --repos-root;
+  #        assert .agent-trace removed, output contains "found:" and "removed 1"
   local name="pmctl artifacts gc --all-repos: removes in-repo remnant .agent-trace dirs"
   should_run "$name" || return 0
   local repos_root work_repo trace_dir out err status=0
@@ -327,7 +344,37 @@ case_gc_all_repos_removes_inrepo() {
   fi
 }
 
+case_gc_all_repos_dry_run() {
+  # behavior: pmctl artifacts gc --all-repos --dry-run lists found dirs and reports count without deleting
+  # Steps: create a git repo with non-empty .agent-trace; run gc --all-repos --dry-run;
+  #        assert .agent-trace still exists and final line reports "found N" count > 0
+  local name="pmctl artifacts gc --all-repos: --dry-run lists found dirs without deleting"
+  should_run "$name" || return 0
+  local repos_root work_repo trace_dir out err status=0
+  repos_root="$tmp_root/all-repos-dry"
+  work_repo="$repos_root/dry-repo"
+  mkdir -p "$work_repo"
+  git init -q "$work_repo"
+  trace_dir="$work_repo/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf 'trace data\n' > "$trace_dir/some.jsonl"
+
+  out="$tmp_root/all-repos-dry.out"; err="$tmp_root/all-repos-dry.err"
+  "$PMCTL" artifacts gc --all-repos --repos-root "$repos_root" --dry-run > "$out" 2> "$err" || status=$?
+
+  local out_content; out_content="$(<"$out")"
+  if [[ "$status" -eq 0 && -d "$trace_dir" &&
+        "$out_content" == *"found:"* &&
+        "$out_content" == *"found 1 in-repo remnant directories"* && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) out=$out_content err=$(<"$err")"
+  fi
+}
+
 case_gc_all_repos_never_deletes_pm_dispatch() {
+  # behavior: pmctl artifacts gc --all-repos never touches .pm-dispatch directories
+  # Steps: create a git repo with .pm-dispatch; run gc --all-repos; assert .pm-dispatch survives
   local name="pmctl artifacts gc --all-repos: never deletes .pm-dispatch"
   should_run "$name" || return 0
   local repos_root work_repo pm_dir out err status=0
@@ -350,6 +397,10 @@ case_gc_all_repos_never_deletes_pm_dispatch() {
 }
 
 case_migrate_copies_leaves() {
+  # behavior: pmctl artifacts migrate copies in-repo .agent-trace to out-of-repo partition,
+  #           preserves original, and the destination contains the same files
+  # Steps: create .agent-trace with a file; run migrate; assert original preserved,
+  #        output contains "migrated:", destination dir exists with the copied file
   local name="pmctl artifacts migrate: copies in-repo leaves to out-of-repo partition"
   should_run "$name" || return 0
   local store work trace_dir out err status=0
@@ -363,15 +414,24 @@ case_migrate_copies_leaves() {
   out="$tmp_root/migrate.out"; err="$tmp_root/migrate.err"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts migrate --cd "$work" > "$out" 2> "$err" || status=$?
 
-  # Original should still exist (not deleted), and output says migrated
-  if [[ "$status" -eq 0 && -d "$trace_dir" && "$(<"$out")" == *"migrated:"* && ! -s "$err" ]]; then
+  # Verify destination was actually created with the copied file
+  local out_content; out_content="$(<"$out")"
+  local dest_path
+  dest_path="$(grep 'migrated:' "$out" | sed 's/.*-> //' | head -1)"
+
+  # cp -a .agent-trace $dest (when $dest doesn't exist) copies contents directly into $dest
+  if [[ "$status" -eq 0 && -d "$trace_dir" && "$out_content" == *"migrated:"* &&
+        -n "$dest_path" && -d "$dest_path" &&
+        -f "$dest_path/run.jsonl" && ! -s "$err" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) dest_path=$dest_path dest_exists=$(test -d "$dest_path" && echo y||echo n) out=$out_content err=$(<"$err")"
   fi
 }
 
 case_migrate_idempotent() {
+  # behavior: pmctl artifacts migrate skips already-migrated destinations on re-run
+  # Steps: run migrate twice on same work dir; first output contains "migrated:", second contains "skip"
   local name="pmctl artifacts migrate: idempotent on re-run (skips already-migrated)"
   should_run "$name" || return 0
   local store work trace_dir out1 out2 err status=0
@@ -394,6 +454,8 @@ case_migrate_idempotent() {
 }
 
 case_inrepo_notice_emitted() {
+  # behavior: sw_resolve_trace_dir emits one-time stderr notice when PM_DISPATCH_TRACE_DIR is inside work_dir
+  # Steps: call sw_resolve_trace_dir with env pointing inside work_dir; assert stderr contains migration hint
   local name="sw_resolve_trace_dir: emits stderr notice when PM_DISPATCH_TRACE_DIR points inside work_dir"
   should_run "$name" || return 0
   local work err status=0
@@ -422,6 +484,7 @@ case_gc_keep_last
 case_gc_max_age_zero
 case_gc_safety_rejects_pm_dispatch
 case_gc_all_repos_removes_inrepo
+case_gc_all_repos_dry_run
 case_gc_all_repos_never_deletes_pm_dispatch
 case_migrate_copies_leaves
 case_migrate_idempotent

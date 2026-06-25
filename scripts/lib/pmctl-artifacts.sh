@@ -315,7 +315,7 @@ pmctl_artifacts_gc() {
 
   # --all-repos: scan repos-root for in-repo remnant leaves
   if [[ "$all_repos" -eq 1 ]]; then
-    local total_removed=0 repo leaf_path leaf_size
+    local total_found=0 total_removed=0 repo leaf_path leaf_size
     if [[ ! -d "$repos_root" ]]; then
       printf 'pmctl artifacts gc: --repos-root does not exist: %s\n' "$repos_root" >&2
       return 2
@@ -332,6 +332,7 @@ pmctl_artifacts_gc() {
         fi
         leaf_size="$(_pmctl_artifacts_dir_size "$leaf_path")"
         printf 'found: %s  (approx %s bytes)\n' "$leaf_path" "$leaf_size"
+        (( total_found++ )) || true
         if [[ "$dry_run" -eq 0 ]]; then
           if _pmctl_artifacts_safe_rm_check "$leaf_path" "${leaves[@]}"; then
             rm -rf "$leaf_path"
@@ -341,7 +342,7 @@ pmctl_artifacts_gc() {
       done
     done
     if [[ "$dry_run" -eq 1 ]]; then
-      printf 'gc --all-repos: dry-run, found %d in-repo remnant directories\n' "$total_removed"
+      printf 'gc --all-repos: dry-run, found %d in-repo remnant directories\n' "$total_found"
     else
       printf 'gc --all-repos: removed %d in-repo remnant directories\n' "$total_removed"
     fi
@@ -402,6 +403,7 @@ pmctl_artifacts_gc() {
     run_size="$(_pmctl_artifacts_dir_size "$run_dir")"
     if [[ "$dry_run" -eq 1 ]]; then
       printf 'would delete: %s  (%s bytes)\n' "$run_id" "$run_size"
+      (( deleted++ )) || true
     else
       if _pmctl_artifacts_safe_rm_check "$run_dir"; then
         printf 'deleted: %s  (%s bytes)\n' "$run_id" "$run_size"
