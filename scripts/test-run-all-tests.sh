@@ -56,6 +56,7 @@ SUITE_NAMES=(
   test-schema-task-mirrors-backlog
   test-state-store
   test-state-paths
+  test-pmctl-artifacts
   test-state-layout-parity
   test-state-store-rotation
   test-pmctl-trace
@@ -141,6 +142,7 @@ suite_path() {
     test-schema-task-mirrors-backlog) printf 'scripts/test-schema-task-mirrors-backlog.sh\n' ;;
     test-state-store) printf 'scripts/test-state-store.sh\n' ;;
     test-state-paths) printf 'scripts/test-state-paths.sh\n' ;;
+    test-pmctl-artifacts) printf 'scripts/test-pmctl-artifacts.sh\n' ;;
     test-state-layout-parity) printf 'scripts/test-state-layout-parity.sh\n' ;;
     test-state-store-rotation) printf 'scripts/test-state-store-rotation.sh\n' ;;
     test-pmctl-trace) printf 'scripts/test-pmctl-trace.sh\n' ;;

@@ -48,6 +48,7 @@ Main-thread completion handling for both routes — codex and claude now share t
 1. Keep a small conversation-state row for `task_id`, slug, `brief_file`, `working_dir`, expected files, and status.
 2. When the completion notification arrives, read `BashOutput(bash_id: <id>)`; do not infer completion from `.agent-trace/latest.*` symlinks.
 3. Parse the footer lines `trace:`, `last:`, `stderr:`, and `exit:` from the captured output.
+   For live observation, prefer `scripts/codex-watch.sh --trace <abs_jsonl>` when the footer `trace:` path is known, or `scripts/codex-watch.sh --run <run_id> --cd <safe working_dir>` when only the run id is known. For post-run discovery, use `pmctl artifacts list --cd <safe working_dir>` to enumerate relocated run dirs and `pmctl artifacts show <run_id> --cd <safe working_dir>` to inspect artifact files and sizes.
 4. Run the shared post-verify against the **per-run** footer paths (never `latest.*` — those race across concurrent dispatches), passing the brief so `self_verify:` items are checked:
 
    ```text

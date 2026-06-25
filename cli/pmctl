@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory; do
+for _lib in pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -74,6 +74,18 @@ case "$cmd/$sub" in
       pmctl_die "dispatch wait unavailable"
     fi
     pmctl_dispatch_wait "$REPO_ROOT" "$@"
+    ;;
+  artifacts/list)
+    if ! declare -F pmctl_artifacts_list >/dev/null; then
+      pmctl_die "artifacts list unavailable"
+    fi
+    pmctl_artifacts_list "$REPO_ROOT" "" "$@"
+    ;;
+  artifacts/show)
+    if ! declare -F pmctl_artifacts_show >/dev/null; then
+      pmctl_die "artifacts show unavailable"
+    fi
+    pmctl_artifacts_show "$REPO_ROOT" "" "" "$@"
     ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then

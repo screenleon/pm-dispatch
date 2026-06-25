@@ -1491,6 +1491,9 @@ relocate_gate_artifacts
 # in-process (gate_result_verify above). `pmctl gate verify "$OUTPUT_FILE"` re-runs
 # the same contract on demand for callers that want to re-confirm out of band.
 say '\nresult: %s\n' "$OUTPUT_FILE"
+if [[ -n "${GATE_RUN_DIR_OVERRIDE:-}" ]]; then
+  say 'run-dir: %s\n' "${GATE_RUN_DIR_OVERRIDE:-}"
+fi
 
 _FINAL_EXIT_VERDICT=$(grep -m1 '^Final: ' "$OUTPUT_FILE" 2>/dev/null | awk '{print $2}' || true)
 if [[ "$_FINAL_EXIT_VERDICT" == "NO-GO" ]]; then

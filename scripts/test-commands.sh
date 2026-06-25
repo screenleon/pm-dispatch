@@ -201,6 +201,10 @@ should_run "project-pm: tactical named scope never auto-routes to Discovery" && 
 should_run "project-pm: tactical request does not auto-fire an uncertainty mode" && assert_file_contains "project-pm: tactical request does not auto-fire an uncertainty mode" "$PROJECT_PM" "do **not** auto-fire an uncertainty mode" && pass "project-pm: tactical request does not auto-fire an uncertainty mode"
 should_run "pm-cmd: named scope sets run_discover false (no fan-out)" && assert_file_contains "pm-cmd: named scope sets run_discover false (no fan-out)" "$PM_CMD" "run_discover: false" && pass "pm-cmd: named scope sets run_discover false (no fan-out)"
 should_run "pm-cmd: tactical request does not auto-run discover" && assert_file_contains "pm-cmd: tactical request does not auto-run discover" "$PM_CMD" "Do **not** auto-run \`/discover\` for tactical" && pass "pm-cmd: tactical request does not auto-run discover"
+should_run "pm-cmd: documents pmctl artifacts list" && assert_file_contains "pm-cmd: documents pmctl artifacts list" "$PM_CMD" "pmctl artifacts list --cd <safe working_dir>" && pass "pm-cmd: documents pmctl artifacts list"
+should_run "pm-cmd: documents pmctl artifacts show" && assert_file_contains "pm-cmd: documents pmctl artifacts show" "$PM_CMD" "pmctl artifacts show <run_id> --cd <safe working_dir>" && pass "pm-cmd: documents pmctl artifacts show"
+should_run "pm-cmd: documents codex-watch trace flag" && assert_file_contains "pm-cmd: documents codex-watch trace flag" "$PM_CMD" "scripts/codex-watch.sh --trace <abs_jsonl>" && pass "pm-cmd: documents codex-watch trace flag"
+should_run "pm-cmd: documents codex-watch run flag" && assert_file_contains "pm-cmd: documents codex-watch run flag" "$PM_CMD" "scripts/codex-watch.sh --run <run_id> --cd <safe working_dir>" && pass "pm-cmd: documents codex-watch run flag"
 
 # /discover per-pick routing contract: Next carries the per-pick route, why-not-direct-brief is the top-pick global line
 should_run "discover: per-pick route chosen one per row" && assert_file_contains "discover: per-pick route chosen one per row" "$DISCOVER" "Pick one per row" && pass "discover: per-pick route chosen one per row"
