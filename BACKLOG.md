@@ -97,6 +97,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
 | CC-424 | ✅ closed 2026-06-25 | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | pr:#326 | P2 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
+| CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
 
 ---
 
@@ -1516,3 +1517,62 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 文件 + `pmctl gate run --help` 說明新參數。
 
 **Priority**: P3（someday）.
+
+## CC-426 — release: `/pre-release` milestone 落地審查 🟢 someday
+
+**Problem**: BACKLOG/MILESTONES 只記錄「應該做的事」，但無法從文字層面確認每個 ticket 的改動是否完整落地——ticket 可能描述了 3 個要改的地方，commit 只改了 2 個；或 ticket 說「在 X 和 Y 都加 enforce」，只有 X 被改到。目前這個疏漏只能靠 gate 的 critic 隨機抓到（如 CC-405 的「仍待辦」文字）或人工回顧。
+
+**Why**: release 前有一個系統性的落地確認，可以在 tag 之前找出：ticket 關閉但實作未完整、CHANGELOG 未反映實際 commit、milestone scope 聲稱完成但有 ticket body 顯示遺留工作。比 gate 的 per-PR 視角更寬，比人工回顧更可靠。
+
+**Requirement**:
+
+`/pre-release [milestone-id]`（或 `pmctl pre-release v0.7.0`）：
+
+**Layer 1 — 結構檢查（機器可執行，高信心）**
+- 所有 milestone scope 內的 ticket 在 MILESTONES row 標 ✅ 且有 `**See**: pr:#NNN`
+- 所有 closed ticket body 無「仍待辦」/「待辦」/「TODO」殘留文字
+- CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
+- 所有 ticket 的 BACKLOG index status 與 body heading status 一致
+
+**Layer 2 — 語義比對（AI 判斷，中信心；可 dispatch 分散 context 壓力）**
+- 逐 ticket 讀 Requirement/What 章節 + 對應 PR diff
+- 問：「這個 diff 是否滿足 ticket 說的所有要求？有沒有 ticket 提到但 diff 沒有觸及的地方？」
+- 大型 milestone（票數多、diff 大）時，每個 ticket 可 dispatch 為獨立 executor job，各自在獨立 context 讀 diff + ticket 回傳結論，主線程只收 per-ticket 結論再彙總
+- 對有疑問的 ticket 列出具體問題，不猜測，明確說「需人工確認」
+- 利用 `pmctl context query --source memory` 取得相關 decision 背景輔助判斷（相依 [[CC-403]]）
+
+**Layer 3 — 盲點聲明（誠實邊界）**
+- 明確列出工具能確認什麼、不能確認什麼
+- 「我沒發現問題」≠「確定沒問題」，報告必須包含此聲明
+- 特別標注：Layer 2 掃描不到「應該改但 ticket 沒提到的地方」（system topology 知識缺口）
+
+**假設前提（相依 [[CC-404]] 完成後）**:
+- 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
+- 節省的 context window 可放 PR diff；若 dispatch 分散，每個 executor 各自只需負擔一個 ticket 的 diff
+
+**Output format**:
+```
+## /pre-release — <milestone-id> — <date>
+
+### Layer 1 — Structural (machine checks)
+✅ / ❌ per check with file:line reference
+
+### Layer 2 — Semantic coverage
+| Ticket | Requirement summary | Diff coverage | Confidence | Flag |
+
+### Layer 3 — Blind spots
+This scan cannot confirm: …
+
+Summary: N structural issues, M semantic flags, K blind spots declared.
+```
+
+**Constraints**:
+- 不輸出 GO/NO-GO；輸出是報告，判斷留給人
+- Layer 1 checks 必須 idempotent（不改任何檔案）
+- Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context
+- dispatch 分散時，每個 executor 只看單一 ticket，不跨 ticket 做比較
+- 工具名稱最終定案前暫用 `/pre-release`
+
+**Priority**: P3（someday）.
+
+**Refs**: [[CC-404]]（注入預算 + context 效率）、[[CC-403]]（memory source query）、[[CC-405]]（card frontmatter 品質基礎）、[[CC-425]]（gate ref-pair，可複用 commit range 解析邏輯）。
