@@ -23,24 +23,14 @@ Record what happened in this session to the episodic memory layer. Follow these 
 
 ## Step 1 — Find episodes.jsonl
 
-Run the same project-lookup as the memory inject hook:
+Run `pmctl memory dir` to locate the memory directory, then derive the episodes path:
 
 ```bash
-config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-current="$(pwd)"
-while [[ "$current" != "/" ]]; do
-    encoded="-${current#/}"
-    encoded="${encoded//\//-}"
-    ep="$config/projects/$encoded/memory/episodes.jsonl"
-    if [[ -d "$(dirname "$ep")" ]]; then
-        echo "$ep"
-        break
-    fi
-    current="$(dirname "$current")"
-done
+mem="$(pmctl memory dir)" || { echo "No memory directory found for this project"; exit 1; }
+ep="$mem/episodes.jsonl"
 ```
 
-If nothing is printed, report "No memory directory found for this project" and stop.
+If `pmctl memory dir` exits non-zero, report "No memory directory found for this project" and stop. The file `$ep` may not exist yet — that is expected when logging for the first time.
 
 ## Step 2 — Write the summary
 

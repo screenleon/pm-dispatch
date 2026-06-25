@@ -25,21 +25,13 @@ Compress the MEMORY.md index for the current project's memory directory. Follow 
 
 Run:
 ```bash
-config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-current="$(pwd)"
-while [[ "$current" != "/" ]]; do
-    encoded="-${current#/}"
-    encoded="${encoded//\//-}"
-    candidate="$config/projects/$encoded/memory/MEMORY.md"
-    if [[ -f "$candidate" ]]; then
-        echo "$candidate"
-        break
-    fi
-    current="$(dirname "$current")"
-done
+mem="$(pmctl memory dir)" || { echo "No MEMORY.md found for this project"; exit 1; }
+candidate="$mem/MEMORY.md"
+[[ -f "$candidate" ]] || { echo "No MEMORY.md found for this project"; exit 1; }
+echo "$candidate"
 ```
 
-If nothing is printed, report "No MEMORY.md found for this project" and stop.
+If `pmctl memory dir` exits non-zero, or `MEMORY.md` does not exist, report "No MEMORY.md found for this project" and stop.
 
 ## Step 2 — Read and inventory
 

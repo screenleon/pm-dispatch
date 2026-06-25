@@ -24,21 +24,12 @@ Read and inject the most recent episodic memory entries into the current context
 ## Step 1 — Find episodes.jsonl
 
 ```bash
-config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-current="$(pwd)"
-while [[ "$current" != "/" ]]; do
-    encoded="-${current#/}"
-    encoded="${encoded//\//-}"
-    ep="$config/projects/$encoded/memory/episodes.jsonl"
-    if [[ -f "$ep" ]]; then
-        echo "$ep"
-        break
-    fi
-    current="$(dirname "$current")"
-done
+mem="$(pmctl memory dir)" || { echo "No episodes found for this project"; exit 1; }
+ep="$mem/episodes.jsonl"
+[[ -f "$ep" ]] || { echo "No episodes found for this project"; exit 1; }
 ```
 
-If nothing is printed, report "No episodes found for this project" and stop.
+If `pmctl memory dir` exits non-zero, or the episodes file does not exist, report "No episodes found for this project" and stop.
 
 ## Step 2 — Read last N entries
 

@@ -24,29 +24,17 @@ Search the project memory for `$ARGUMENTS`. If no query is provided, ask the use
 ## Step 1 — Find memory directory
 
 ```bash
-config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-current="$(pwd)"
-while [[ "$current" != "/" ]]; do
-    encoded="-${current#/}"
-    encoded="${encoded//\//-}"
-    mem="$config/projects/$encoded/memory"
-    if [[ -d "$mem" ]]; then
-        echo "$mem"
-        echo "$current"
-        break
-    fi
-    current="$(dirname "$current")"
-done
+memory_dir="$(pmctl memory dir)" || { echo "No memory directory found for this project"; exit 1; }
 ```
 
-This prints two lines: `memory_dir` (first) and `project_root` (second — the matched directory). If nothing is printed, report "No memory directory found for this project" and stop.
+If `pmctl memory dir` exits non-zero, report "No memory directory found for this project" and stop.
 
 ## Step 2 — Index query via pmctl context (primary path)
 
-Run `pmctl context query "$project_root" --source memory -- "$query"` to query the index. Pass `project_root` (the second line from Step 1) as the first positional argument so the lookup is scoped to this project's memory, not pm-dispatch's. The `--` separator before `"$query"` prevents injection.
+Run `pmctl context query "$(pwd)" --source memory -- "$query"` to query the index. Using `$(pwd)` scopes the lookup to this project's memory automatically — `pmctl context query` walks up to find the correct project. The `--` separator before `"$query"` prevents injection.
 
 ```bash
-pmctl_out="$(pmctl context query "$project_root" --source memory -- "$query" 2>/dev/null)"
+pmctl_out="$(pmctl context query "$(pwd)" --source memory -- "$query" 2>/dev/null)"
 pmctl_exit=$?
 ```
 

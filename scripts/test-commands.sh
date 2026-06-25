@@ -128,8 +128,7 @@ MEM_LOG="$COMMANDS_DIR/mem-log.md"
 
 assert_frontmatter "mem-log: frontmatter valid" "$MEM_LOG"
 should_run "mem-log: no python3 calls" && assert_not_contains "mem-log: no python3 calls" "$MEM_LOG" "python3"
-should_run "mem-log: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-log: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_LOG" "CLAUDE_CONFIG_DIR" && pass "mem-log: Step 1 references CLAUDE_CONFIG_DIR"
-should_run "mem-log: Step 1 walks parent directories" && assert_file_contains "mem-log: Step 1 walks parent directories" "$MEM_LOG" "dirname" && pass "mem-log: Step 1 walks parent directories"
+should_run "mem-log: Step 1 uses pmctl memory dir" && assert_file_contains "mem-log: Step 1 uses pmctl memory dir" "$MEM_LOG" "pmctl memory dir" && pass "mem-log: Step 1 uses pmctl memory dir"
 
 # ── mem-recall.md contract ────────────────────────────────────────────────────
 
@@ -137,8 +136,7 @@ MEM_RECALL="$COMMANDS_DIR/mem-recall.md"
 
 assert_frontmatter "mem-recall: frontmatter valid" "$MEM_RECALL"
 should_run "mem-recall: no python3 calls" && assert_not_contains "mem-recall: no python3 calls" "$MEM_RECALL" "python3"
-should_run "mem-recall: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-recall: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_RECALL" "CLAUDE_CONFIG_DIR" && pass "mem-recall: Step 1 references CLAUDE_CONFIG_DIR"
-should_run "mem-recall: Step 1 walks parent directories" && assert_file_contains "mem-recall: Step 1 walks parent directories" "$MEM_RECALL" "dirname" && pass "mem-recall: Step 1 walks parent directories"
+should_run "mem-recall: Step 1 uses pmctl memory dir" && assert_file_contains "mem-recall: Step 1 uses pmctl memory dir" "$MEM_RECALL" "pmctl memory dir" && pass "mem-recall: Step 1 uses pmctl memory dir"
 
 # ── memory-compress.md contract ───────────────────────────────────────────────
 
@@ -146,8 +144,7 @@ MEMORY_COMPRESS="$COMMANDS_DIR/memory-compress.md"
 
 assert_frontmatter "memory-compress: frontmatter valid" "$MEMORY_COMPRESS"
 should_run "memory-compress: no python3 calls" && assert_not_contains "memory-compress: no python3 calls" "$MEMORY_COMPRESS" "python3"
-should_run "memory-compress: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "memory-compress: Step 1 references CLAUDE_CONFIG_DIR" "$MEMORY_COMPRESS" "CLAUDE_CONFIG_DIR" && pass "memory-compress: Step 1 references CLAUDE_CONFIG_DIR"
-should_run "memory-compress: Step 1 walks parent directories" && assert_file_contains "memory-compress: Step 1 walks parent directories" "$MEMORY_COMPRESS" "dirname" && pass "memory-compress: Step 1 walks parent directories"
+should_run "memory-compress: Step 1 uses pmctl memory dir" && assert_file_contains "memory-compress: Step 1 uses pmctl memory dir" "$MEMORY_COMPRESS" "pmctl memory dir" && pass "memory-compress: Step 1 uses pmctl memory dir"
 
 # ── mem-search.md contract ───────────────────────────────────────────────────
 
@@ -156,10 +153,8 @@ MEM_SEARCH="$COMMANDS_DIR/mem-search.md"
 assert_frontmatter "mem-search: frontmatter valid" "$MEM_SEARCH"
 should_run "mem-search: no python3 calls" && assert_not_contains "mem-search: no python3 calls" "$MEM_SEARCH" "python3"
 should_run "mem-search: has Step 1 (memory dir)" && assert_file_contains "mem-search: has Step 1 (memory dir)" "$MEM_SEARCH" "Step 1" && pass "mem-search: has Step 1 (memory dir)"
-should_run "mem-search: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-search: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_SEARCH" "CLAUDE_CONFIG_DIR" && pass "mem-search: Step 1 references CLAUDE_CONFIG_DIR"
-should_run "mem-search: Step 1 walks parent directories" && assert_file_contains "mem-search: Step 1 walks parent directories" "$MEM_SEARCH" "dirname" && pass "mem-search: Step 1 walks parent directories"
+should_run "mem-search: Step 1 uses pmctl memory dir" && assert_file_contains "mem-search: Step 1 uses pmctl memory dir" "$MEM_SEARCH" "pmctl memory dir" && pass "mem-search: Step 1 uses pmctl memory dir"
 should_run "mem-search: has Step 2 (pmctl context query)" && assert_file_contains "mem-search: has Step 2 (pmctl context query)" "$MEM_SEARCH" "Step 2" && pass "mem-search: has Step 2 (pmctl context query)"
-should_run "mem-search: Step 1 outputs project root as second line" && assert_file_contains "mem-search: Step 1 outputs project root as second line" "$MEM_SEARCH" "project_root" && pass "mem-search: Step 1 outputs project root as second line"
 should_run "mem-search: Step 2 uses pmctl context query" && assert_file_contains "mem-search: Step 2 uses pmctl context query" "$MEM_SEARCH" "pmctl context query" && pass "mem-search: Step 2 uses pmctl context query"
 should_run "mem-search: Step 2 uses --source memory flag" && assert_file_contains "mem-search: Step 2 uses --source memory flag" "$MEM_SEARCH" "--source" && pass "mem-search: Step 2 uses --source memory flag"
 should_run "mem-search: Step 2 uses -- separator before query" && assert_file_contains "mem-search: Step 2 uses -- separator before query" "$MEM_SEARCH" '-- "$query"' && pass "mem-search: Step 2 uses -- separator before query"
