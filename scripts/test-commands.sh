@@ -206,6 +206,8 @@ should_run "pm-cmd: uses pmctl dispatch wait for completion" && assert_file_cont
 should_run "pm-cmd: reads artifact paths from dispatch record" && assert_file_contains "pm-cmd: reads artifact paths from dispatch record" "$PM_CMD" ".dispatch-results/\$run_id.md" && pass "pm-cmd: reads artifact paths from dispatch record"
 should_run "pm-cmd: documents pmctl artifacts list" && assert_file_contains "pm-cmd: documents pmctl artifacts list" "$PM_CMD" "pmctl artifacts list --cd <safe working_dir>" && pass "pm-cmd: documents pmctl artifacts list"
 should_run "pm-cmd: documents pmctl artifacts show" && assert_file_contains "pm-cmd: documents pmctl artifacts show" "$PM_CMD" "pmctl artifacts show <run_id> --cd <safe working_dir>" && pass "pm-cmd: documents pmctl artifacts show"
+should_run "pm-cmd: documents pmctl artifacts gc" && assert_file_contains "pm-cmd: documents pmctl artifacts gc" "$PM_CMD" "pmctl artifacts gc" && pass "pm-cmd: documents pmctl artifacts gc"
+should_run "pm-cmd: documents pmctl artifacts migrate" && assert_file_contains "pm-cmd: documents pmctl artifacts migrate" "$PM_CMD" "pmctl artifacts migrate" && pass "pm-cmd: documents pmctl artifacts migrate"
 should_run "pm-cmd: documents codex-watch trace flag" && assert_file_contains "pm-cmd: documents codex-watch trace flag" "$PM_CMD" "scripts/codex-watch.sh --trace <abs_jsonl>" && pass "pm-cmd: documents codex-watch trace flag"
 should_run "pm-cmd: documents codex-watch run flag" && assert_file_contains "pm-cmd: documents codex-watch run flag" "$PM_CMD" "scripts/codex-watch.sh --run <run_id> --cd <safe working_dir>" && pass "pm-cmd: documents codex-watch run flag"
 

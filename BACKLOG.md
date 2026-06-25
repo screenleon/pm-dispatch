@@ -10,14 +10,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-003 | 🔵 active | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
+| CC-003 | ✅ closed 2026-06-25 | **[artifact-relocation epic umbrella]** dispatch/gate 副產物搬出 repo（D-wide，複用 state-writer seam）；原 parallel-gate artifact-ignore 前置檢查收斂為本 epic 的 gate 切片 | ops/arch | 2026-05-12 | pr:#38 | P2 | design |
 | CC-413 | ✅ closed 2026-06-23 | Phase 0 止血：pr-gate integrity check 計算 status hash 時排除已知 artifact 路徑，解誤判 abort，不改 .gitignore、不改行為預設 | ops/gate | 2026-06-23 | pr:#318 | P2 | design |
 | CC-414 | ✅ closed 2026-06-24 | Phase 1 seam：抽 state-writer 路徑邏輯成共用 lib + adapter/dispatch_via/post-verify 加 --trace-dir 與 PM_DISPATCH_TRACE_DIR，預設仍 in-repo、零行為改動 | arch | 2026-06-23 | pr:#319 | P2 | design |
 | CC-415 | ✅ done | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | ✅ closed 2026-06-24 | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | pr:#321 | P2 | design |
 | CC-417 | ✅ closed 2026-06-25 | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | pr:#322 | P2 | design |
 | CC-418 | ✅ closed 2026-06-25 | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | pr:#323 | P3 | design |
-| CC-419 | 🔵 active | Phase 5：翻 out-of-repo 預設（保留 in-repo opt-in 一 release）+ GC/retention + 跨 repo 既有副產物一次性遷移/清理工具 | ops | 2026-06-23 | — | P3 | design |
+| CC-419 | ✅ closed 2026-06-25 | Phase 5：翻 out-of-repo 預設（保留 in-repo opt-in 一 release）+ GC/retention + 跨 repo 既有副產物一次性遷移/清理工具 | ops | 2026-06-23 | — | P3 | design |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
@@ -210,7 +210,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: 待 Windows = Supported flag flip 前評估：`state-writer.sh` 在 Windows 偵測下以 `icacls "<store_root>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` 等價設定收斂保護，並補對應能力測試。
 **Source**: 2026-06-13 CC-368 #2 收尾時分出的 follow-up。
 
-## CC-003 — [artifact-relocation epic umbrella] dispatch/gate 副產物搬出 repo
+## CC-003 — [artifact-relocation epic umbrella] dispatch/gate 副產物搬出 repo ✅ 2026-06-25
+
+**See**: pr:#TBD
 
 **Decision**: 見 DECISIONS.md 2026-06-23 `dispatch-gate-artifacts-relocate-out-of-repo`（五方分析統整裁決）。
 **Problem**: dispatch 與 pr-gate 把 scratch artifact 寫進使用者 repo：`.agent-trace/`（adapter `TRACE_DIR=$WORK_DIR/.agent-trace` 寫死）、`.gate-briefs/`、`.gate-results/` + footer/runspec/supervisor log。(L1) pr-gate parallel integrity check（`pr-gate.sh:895/1093`）對 `git status --porcelain` 取 dispatch 前後 hash，gate 自己的寫入若未被 ignore 就改動 hash → 健康 repo 誤判 abort（原始症狀）。(L2) 即使 ignore，檔案仍實體污染 repo（本 repo 已累積 93MB；且跨所有被作用過的 repo）。
@@ -262,7 +264,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: codex-watch 改由 pmctl 印出的 trace 路徑或 run-record 解析（加 `--trace <path>`/`--run <id>`）；gate 與 dispatch 結束印 `results:`/`trace:` 絕對路徑；新增 `pmctl artifacts list/show`（與 gate verdict 查看入口）。
 **See**: pr:#323
 
-## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移
+## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移 ✅ 2026-06-25
+
+**See**: pr:#TBD
 
 **Problem**: 預設仍 in-repo；state store 無 GC 會無限增長；且各 repo 已有大量既有副產物（本 repo 93MB+）。
 **Why**: 收尾——讓 out-of-repo 成預設並控管生命週期，同時清理歷史污染。

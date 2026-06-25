@@ -118,7 +118,7 @@ sw_project_run_dir() {
   printf '%s/projects/%s/runs/%s\n' "$(_sw_store_root)" "$(_sw_project_key)" "$run_id"
 }
 
-# sw_resolve_trace_dir <override> <legacy_default>
+# sw_resolve_trace_dir <override> <legacy_default> [work_dir]
 # Single source of truth for the dispatch/gate trace-output location and its
 # precedence — shared by every adapter and by post-verify so the rule is
 # defined and tested ONCE instead of copied per script:
@@ -126,20 +126,33 @@ sw_project_run_dir() {
 #   > <legacy_default> (the caller's in-repo default, e.g. $WORK_DIR/.agent-trace).
 # An explicit override (flag OR env) MUST be absolute, so the trace location
 # never depends on the caller's cwd; a relative explicit value is rejected
-# (return 2). The legacy default is emitted verbatim — it may be relative, which
-# preserves existing in-repo behavior exactly. Prints the resolved dir.
+# (return 2). The legacy default is now only emitted when sw_project_run_dir is
+# unavailable — out-of-repo routing is the effective default for any installed
+# pm-dispatch. Prints the resolved dir.
+# When PM_DISPATCH_TRACE_DIR points inside work_dir, a one-time stderr notice
+# is emitted to guide migration (guarded by _SW_INREPO_NOTICE_EMITTED).
 sw_resolve_trace_dir() {
-  local override="${1:-}" legacy_default="${2:-}" resolved explicit=0
+  local override="${1:-}" legacy_default="${2:-}" work_dir="${3:-}" resolved explicit=0 from_env=0
   if [[ -n "$override" ]]; then
     resolved="$override"; explicit=1
   elif [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]]; then
-    resolved="$PM_DISPATCH_TRACE_DIR"; explicit=1
+    resolved="$PM_DISPATCH_TRACE_DIR"; explicit=1; from_env=1
   else
     resolved="$legacy_default"
   fi
   if [[ "$explicit" -eq 1 && "$resolved" != /* ]]; then
     printf 'state-paths: --trace-dir / PM_DISPATCH_TRACE_DIR must be an absolute path: %s\n' "$resolved" >&2
     return 2
+  fi
+  # Warn once when PM_DISPATCH_TRACE_DIR points inside the work dir (legacy in-repo pattern)
+  if [[ "$from_env" -eq 1 && -n "$work_dir" && "${_SW_INREPO_NOTICE_EMITTED:-0}" -eq 0 ]]; then
+    local canonical_work resolved_abs
+    canonical_work="$(cd "$work_dir" 2>/dev/null && pwd -P 2>/dev/null || printf '%s' "$work_dir")"
+    resolved_abs="$(cd "$(dirname "$resolved")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$resolved")" || printf '%s' "$resolved")"
+    if [[ -n "$canonical_work" && "$resolved_abs" == "$canonical_work"/* ]]; then
+      printf 'pm-dispatch: note: PM_DISPATCH_TRACE_DIR points inside the work dir — artifacts are now routed out-of-repo by default; consider unsetting this variable. See: pmctl artifacts gc --all-repos to clean up in-repo remnants.\n' >&2
+      _SW_INREPO_NOTICE_EMITTED=1
+    fi
   fi
   printf '%s\n' "$resolved"
 }

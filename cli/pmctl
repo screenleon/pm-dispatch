@@ -87,6 +87,18 @@ case "$cmd/$sub" in
     fi
     pmctl_artifacts_show "$REPO_ROOT" "" "" "$@"
     ;;
+  artifacts/gc)
+    if ! declare -F pmctl_artifacts_gc >/dev/null; then
+      pmctl_die "artifacts gc unavailable"
+    fi
+    pmctl_artifacts_gc "$REPO_ROOT" "" "$@"
+    ;;
+  artifacts/migrate)
+    if ! declare -F pmctl_artifacts_migrate >/dev/null; then
+      pmctl_die "artifacts migrate unavailable"
+    fi
+    pmctl_artifacts_migrate "$REPO_ROOT" "" "$@"
+    ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then
       pmctl_die "trace tail unavailable"

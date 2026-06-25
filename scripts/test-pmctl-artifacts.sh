@@ -196,6 +196,220 @@ case_codex_watch_auto_discover() {
   fi
 }
 
+case_gc_dry_run() {
+  local name="pmctl artifacts gc: --dry-run lists would-delete but deletes nothing"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-dry"
+  work="$tmp_root/work-gc-dry"
+  make_work_repo "$work"
+
+  # Create 3 runs; make 2 older than 30 days
+  local rd_keep rd_old1 rd_old2
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old1="$(run_dir_for "$store" "$work" run-old1)"
+  rd_old2="$(run_dir_for "$store" "$work" run-old2)"
+  mkdir -p "$rd_keep" "$rd_old1" "$rd_old2"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old1/a.footer"
+  printf 'b\n' > "$rd_old2/b.footer"
+  # Make old runs appear 40 days old
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old1" "$rd_old2" 2>/dev/null || true
+
+  out="$tmp_root/gc-dry.out"; err="$tmp_root/gc-dry.err"
+  PM_DISPATCH_STATE_ROOT="$store" PM_DISPATCH_GC_KEEP_LAST=1 "$PMCTL" artifacts gc \
+    --dry-run --keep-last 1 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  # Check: output has "would delete" lines and the dirs still exist
+  if [[ "$status" -eq 0 && "$(<"$out")" == *"would delete"* &&
+        -d "$rd_old1" && -d "$rd_old2" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") rd_old1_exists=$(test -d "$rd_old1" && echo y || echo n)"
+  fi
+}
+
+case_gc_keep_last() {
+  local name="pmctl artifacts gc: --keep-last retains newest N runs"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-keep"
+  work="$tmp_root/work-gc-keep"
+  make_work_repo "$work"
+
+  local rd1 rd2 rd3
+  rd1="$(run_dir_for "$store" "$work" run-1)"
+  rd2="$(run_dir_for "$store" "$work" run-2)"
+  rd3="$(run_dir_for "$store" "$work" run-3)"
+  mkdir -p "$rd1" "$rd2" "$rd3"
+  printf 'a\n' > "$rd1/a.footer"
+  printf 'b\n' > "$rd2/b.footer"
+  printf 'c\n' > "$rd3/c.footer"
+  # Assign distinct timestamps: rd3 newest, rd1 oldest
+  touch -t "$(date -d '50 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-50d +%Y%m%d%H%M)" "$rd1" 2>/dev/null || true
+  touch -t "$(date -d '45 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-45d +%Y%m%d%H%M)" "$rd2" 2>/dev/null || true
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd3" 2>/dev/null || true
+
+  out="$tmp_root/gc-keep.out"; err="$tmp_root/gc-keep.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --max-age-days 30 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  # rd3 (newest) should survive; rd1 and rd2 should be deleted
+  if [[ "$status" -eq 0 && -d "$rd3" && ! -d "$rd1" && ! -d "$rd2" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err") rd3=$(test -d "$rd3" && echo y||echo n) rd1=$(test -d "$rd1" && echo y||echo n)"
+  fi
+}
+
+case_gc_max_age_zero() {
+  local name="pmctl artifacts gc: --max-age-days 0 applies only keep-last (skips age filter)"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-gc-age0"
+  work="$tmp_root/work-gc-age0"
+  make_work_repo "$work"
+
+  local rd1 rd2
+  rd1="$(run_dir_for "$store" "$work" run-a)"
+  rd2="$(run_dir_for "$store" "$work" run-b)"
+  mkdir -p "$rd1" "$rd2"
+  printf 'a\n' > "$rd1/a.footer"
+  printf 'b\n' > "$rd2/b.footer"
+  # Make rd1 appear very old — should still survive if keep-last covers it
+  touch -t "$(date -d '365 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-365d +%Y%m%d%H%M)" "$rd1" 2>/dev/null || true
+
+  out="$tmp_root/gc-age0.out"; err="$tmp_root/gc-age0.err"
+  # keep-last=2 means both survive even with age=0 (no age filter)
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 2 --max-age-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && -d "$rd1" && -d "$rd2" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_safety_rejects_pm_dispatch() {
+  local name="pmctl artifacts gc: safety check rejects path containing .pm-dispatch"
+  should_run "$name" || return 0
+  # Source the lib directly to test the safety function
+  local status=0 out err
+  out="$tmp_root/safe-check.out"; err="$tmp_root/safe-check.err"
+  bash -c ". '$REPO_ROOT/scripts/lib/pmctl-artifacts.sh' && _pmctl_artifacts_safe_rm_check '/some/.pm-dispatch/runs/run-abc'" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 && "$(<"$err")" == *".pm-dispatch"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_all_repos_removes_inrepo() {
+  local name="pmctl artifacts gc --all-repos: removes in-repo remnant .agent-trace dirs"
+  should_run "$name" || return 0
+  local repos_root work_repo trace_dir out err status=0
+  repos_root="$tmp_root/all-repos-root"
+  work_repo="$repos_root/test-repo"
+  mkdir -p "$work_repo"
+  git init -q "$work_repo"
+  trace_dir="$work_repo/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf 'trace data\n' > "$trace_dir/some.jsonl"
+
+  out="$tmp_root/all-repos.out"; err="$tmp_root/all-repos.err"
+  "$PMCTL" artifacts gc --all-repos --repos-root "$repos_root" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && ! -d "$trace_dir" && "$(<"$out")" == *"found:"* && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_gc_all_repos_never_deletes_pm_dispatch() {
+  local name="pmctl artifacts gc --all-repos: never deletes .pm-dispatch"
+  should_run "$name" || return 0
+  local repos_root work_repo pm_dir out err status=0
+  repos_root="$tmp_root/all-repos-safe"
+  work_repo="$repos_root/safe-repo"
+  mkdir -p "$work_repo"
+  git init -q "$work_repo"
+  pm_dir="$work_repo/.pm-dispatch"
+  mkdir -p "$pm_dir"
+  printf 'state\n' > "$pm_dir/context.db"
+
+  out="$tmp_root/all-repos-safe.out"; err="$tmp_root/all-repos-safe.err"
+  "$PMCTL" artifacts gc --all-repos --repos-root "$repos_root" > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && -d "$pm_dir" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status pm_dir_exists=$(test -d "$pm_dir" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_migrate_copies_leaves() {
+  local name="pmctl artifacts migrate: copies in-repo leaves to out-of-repo partition"
+  should_run "$name" || return 0
+  local store work trace_dir out err status=0
+  store="$tmp_root/state-migrate"
+  work="$tmp_root/work-migrate"
+  make_work_repo "$work"
+  trace_dir="$work/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf 'old trace\n' > "$trace_dir/run.jsonl"
+
+  out="$tmp_root/migrate.out"; err="$tmp_root/migrate.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts migrate --cd "$work" > "$out" 2> "$err" || status=$?
+
+  # Original should still exist (not deleted), and output says migrated
+  if [[ "$status" -eq 0 && -d "$trace_dir" && "$(<"$out")" == *"migrated:"* && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status trace_exists=$(test -d "$trace_dir" && echo y||echo n) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_migrate_idempotent() {
+  local name="pmctl artifacts migrate: idempotent on re-run (skips already-migrated)"
+  should_run "$name" || return 0
+  local store work trace_dir out1 out2 err status=0
+  store="$tmp_root/state-migrate-idem"
+  work="$tmp_root/work-migrate-idem"
+  make_work_repo "$work"
+  trace_dir="$work/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf 'trace\n' > "$trace_dir/x.jsonl"
+
+  out1="$tmp_root/migrate-idem1.out"; out2="$tmp_root/migrate-idem2.out"; err="$tmp_root/migrate-idem.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts migrate --cd "$work" > "$out1" 2> "$err" || status=$?
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts migrate --cd "$work" > "$out2" 2> "$err" || status=$?
+
+  if [[ "$status" -eq 0 && "$(<"$out1")" == *"migrated:"* && "$(<"$out2")" == *"skip"* && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out1=$(<"$out1") out2=$(<"$out2") err=$(<"$err")"
+  fi
+}
+
+case_inrepo_notice_emitted() {
+  local name="sw_resolve_trace_dir: emits stderr notice when PM_DISPATCH_TRACE_DIR points inside work_dir"
+  should_run "$name" || return 0
+  local work err status=0
+  work="$tmp_root/work-notice"
+  mkdir -p "$work"
+  err="$tmp_root/notice.err"
+  PM_DISPATCH_TRACE_DIR="$work/.agent-trace" bash -c \
+    ". '$REPO_ROOT/scripts/lib/state-paths.sh' && sw_resolve_trace_dir '' '' '$work'" \
+    > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 0 && "$(<"$err")" == *"out-of-repo by default"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
 case_artifacts_list_newest_first
 case_artifacts_list_empty
 case_artifacts_show_files
@@ -203,5 +417,14 @@ case_artifacts_show_missing
 case_codex_watch_trace_flag
 case_codex_watch_run_flag
 case_codex_watch_auto_discover
+case_gc_dry_run
+case_gc_keep_last
+case_gc_max_age_zero
+case_gc_safety_rejects_pm_dispatch
+case_gc_all_repos_removes_inrepo
+case_gc_all_repos_never_deletes_pm_dispatch
+case_migrate_copies_leaves
+case_migrate_idempotent
+case_inrepo_notice_emitted
 
 th_summary

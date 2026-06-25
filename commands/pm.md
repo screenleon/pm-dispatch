@@ -77,3 +77,21 @@ Use `base` as the PR integration branch when the caller names one; otherwise res
 Relay PM's final recommendation. Do not open tickets, dispatch, or modify files from a discovery flow without explicit user confirmation.
 
 For PR-gate flows, use `/pr-gate` instead — that skill handles reviewer orchestration; do not re-implement it inline here.
+
+## Artifact garbage collection
+
+Run artifacts accumulate in the out-of-repo state store (`~/.local/share/pm-dispatch/state/projects/<key>/runs/`). Use `pmctl artifacts gc` to reclaim space:
+
+```bash
+pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D] [--cd <work_dir>]
+pmctl artifacts gc --all-repos [--repos-root <dir>] [--dry-run]
+pmctl artifacts migrate [--cd <work_dir>]
+```
+
+- `--dry-run`: list what would be deleted without removing anything.
+- `--keep-last N` (default 10): always retain the N newest runs per partition.
+- `--max-age-days D` (default 30): delete runs older than D days (0 disables the age filter — only keep-last applies).
+- `--all-repos`: scan `~/github/*/` (or `--repos-root <dir>`) for in-repo remnant directories (`.agent-trace`, `.gate-briefs`, `.gate-results`) and remove them. Never touches `.pm-dispatch/`.
+- `pmctl artifacts migrate --cd <work_dir>`: copy any remaining in-repo artifact leaves into the out-of-repo partition (idempotent; originals preserved for manual removal after verification).
+
+Overridable via env: `PM_DISPATCH_GC_KEEP_LAST`, `PM_DISPATCH_GC_MAX_AGE_DAYS`. Flag values always win over env.
