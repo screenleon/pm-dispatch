@@ -129,6 +129,9 @@ MEM_LOG="$COMMANDS_DIR/mem-log.md"
 assert_frontmatter "mem-log: frontmatter valid" "$MEM_LOG"
 should_run "mem-log: no python3 calls" && assert_not_contains "mem-log: no python3 calls" "$MEM_LOG" "python3"
 should_run "mem-log: Step 1 uses pmctl memory dir" && assert_file_contains "mem-log: Step 1 uses pmctl memory dir" "$MEM_LOG" "pmctl memory dir" && pass "mem-log: Step 1 uses pmctl memory dir"
+should_run "mem-log: Step 1 derives episodes.jsonl path" && assert_file_contains "mem-log: Step 1 derives episodes.jsonl path" "$MEM_LOG" "episodes.jsonl" && pass "mem-log: Step 1 derives episodes.jsonl path"
+should_run "mem-log: Step 1 handles no memory dir error" && assert_file_contains "mem-log: Step 1 handles no memory dir error" "$MEM_LOG" "No memory directory found for this project" && pass "mem-log: Step 1 handles no memory dir error"
+should_run "mem-log: Step 1 allows missing file on first log" && assert_file_contains "mem-log: Step 1 allows missing file on first log" "$MEM_LOG" "may not exist" && pass "mem-log: Step 1 allows missing file on first log"
 
 # ── mem-recall.md contract ────────────────────────────────────────────────────
 
@@ -137,6 +140,9 @@ MEM_RECALL="$COMMANDS_DIR/mem-recall.md"
 assert_frontmatter "mem-recall: frontmatter valid" "$MEM_RECALL"
 should_run "mem-recall: no python3 calls" && assert_not_contains "mem-recall: no python3 calls" "$MEM_RECALL" "python3"
 should_run "mem-recall: Step 1 uses pmctl memory dir" && assert_file_contains "mem-recall: Step 1 uses pmctl memory dir" "$MEM_RECALL" "pmctl memory dir" && pass "mem-recall: Step 1 uses pmctl memory dir"
+should_run "mem-recall: Step 1 derives episodes.jsonl path" && assert_file_contains "mem-recall: Step 1 derives episodes.jsonl path" "$MEM_RECALL" "episodes.jsonl" && pass "mem-recall: Step 1 derives episodes.jsonl path"
+should_run "mem-recall: Step 1 guards file existence" && assert_file_contains "mem-recall: Step 1 guards file existence" "$MEM_RECALL" '[[ -f "$ep" ]]' && pass "mem-recall: Step 1 guards file existence"
+should_run "mem-recall: Step 1 error message for missing episodes" && assert_file_contains "mem-recall: Step 1 error message for missing episodes" "$MEM_RECALL" "No episodes found for this project" && pass "mem-recall: Step 1 error message for missing episodes"
 
 # ── memory-compress.md contract ───────────────────────────────────────────────
 
@@ -145,6 +151,9 @@ MEMORY_COMPRESS="$COMMANDS_DIR/memory-compress.md"
 assert_frontmatter "memory-compress: frontmatter valid" "$MEMORY_COMPRESS"
 should_run "memory-compress: no python3 calls" && assert_not_contains "memory-compress: no python3 calls" "$MEMORY_COMPRESS" "python3"
 should_run "memory-compress: Step 1 uses pmctl memory dir" && assert_file_contains "memory-compress: Step 1 uses pmctl memory dir" "$MEMORY_COMPRESS" "pmctl memory dir" && pass "memory-compress: Step 1 uses pmctl memory dir"
+should_run "memory-compress: Step 1 derives MEMORY.md candidate path" && assert_file_contains "memory-compress: Step 1 derives MEMORY.md candidate path" "$MEMORY_COMPRESS" 'candidate="$mem/MEMORY.md"' && pass "memory-compress: Step 1 derives MEMORY.md candidate path"
+should_run "memory-compress: Step 1 guards MEMORY.md existence" && assert_file_contains "memory-compress: Step 1 guards MEMORY.md existence" "$MEMORY_COMPRESS" "No MEMORY.md found for this project" && pass "memory-compress: Step 1 guards MEMORY.md existence"
+should_run "memory-compress: Step 1 echoes candidate path" && assert_file_contains "memory-compress: Step 1 echoes candidate path" "$MEMORY_COMPRESS" 'echo "$candidate"' && pass "memory-compress: Step 1 echoes candidate path"
 
 # ── mem-search.md contract ───────────────────────────────────────────────────
 
@@ -158,6 +167,7 @@ should_run "mem-search: has Step 2 (pmctl context query)" && assert_file_contain
 should_run "mem-search: Step 2 uses pmctl context query" && assert_file_contains "mem-search: Step 2 uses pmctl context query" "$MEM_SEARCH" "pmctl context query" && pass "mem-search: Step 2 uses pmctl context query"
 should_run "mem-search: Step 2 uses --source memory flag" && assert_file_contains "mem-search: Step 2 uses --source memory flag" "$MEM_SEARCH" "--source" && pass "mem-search: Step 2 uses --source memory flag"
 should_run "mem-search: Step 2 uses -- separator before query" && assert_file_contains "mem-search: Step 2 uses -- separator before query" "$MEM_SEARCH" '-- "$query"' && pass "mem-search: Step 2 uses -- separator before query"
+should_run "mem-search: Step 2 captures pmctl exit code" && assert_file_contains "mem-search: Step 2 captures pmctl exit code" "$MEM_SEARCH" "pmctl_exit" && pass "mem-search: Step 2 captures pmctl exit code"
 should_run "mem-search: Step 2 success path skips fallback steps" && assert_file_contains "mem-search: Step 2 success path skips fallback steps" "$MEM_SEARCH" "skip Steps 3 and 4" && pass "mem-search: Step 2 success path skips fallback steps"
 should_run "mem-search: Step 2 parses ref lines" && assert_file_contains "mem-search: Step 2 parses ref lines" "$MEM_SEARCH" "- ref: " && pass "mem-search: Step 2 parses ref lines"
 should_run "mem-search: Step 2 handles nonzero exit" && assert_file_contains "mem-search: Step 2 handles nonzero exit" "$MEM_SEARCH" "nonzero exit" && pass "mem-search: Step 2 handles nonzero exit"
@@ -166,6 +176,8 @@ should_run "mem-search: Step 2 documents query-failure fallback path" && assert_
 should_run "mem-search: has Step 3 (rg/grep fallback)" && assert_file_contains "mem-search: has Step 3 (rg/grep fallback)" "$MEM_SEARCH" "Step 3" && pass "mem-search: has Step 3 (rg/grep fallback)"
 should_run "mem-search: Step 3 is rg/grep fallback" && assert_file_contains "mem-search: Step 3 is rg/grep fallback" "$MEM_SEARCH" "fallback" && pass "mem-search: Step 3 is rg/grep fallback"
 should_run "mem-search: Step 3 uses find for file list" && assert_file_contains "mem-search: Step 3 uses find for file list" "$MEM_SEARCH" "find " && pass "mem-search: Step 3 uses find for file list"
+should_run "mem-search: Step 3 uses fixed-string search flag" && assert_file_contains "mem-search: Step 3 uses fixed-string search flag" "$MEM_SEARCH" "-ilF" && pass "mem-search: Step 3 uses fixed-string search flag"
+should_run "mem-search: Step 3 selects episodes.jsonl in file list" && assert_file_contains "mem-search: Step 3 selects episodes.jsonl in file list" "$MEM_SEARCH" "episodes.jsonl" && pass "mem-search: Step 3 selects episodes.jsonl in file list"
 should_run "mem-search: has semantic search step" && assert_file_contains "mem-search: has semantic search step" "$MEM_SEARCH" "Semantic" && pass "mem-search: has semantic search step"
 
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
