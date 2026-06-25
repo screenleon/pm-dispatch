@@ -631,6 +631,117 @@ MD
   pass "$name"
 }
 
+# ── pmctl memory dir tests ─────────────────────────────────────────────────────
+
+case_memory_dir_happy_path() {
+  local name="pmctl memory dir: cwd with memory dir → prints dir path, exit 0"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/mdir-cfg" repo="$tmp_root/mdir-repo"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$mdir" ]]; then
+    fail "$name" "expected '$mdir' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_nested_subdir() {
+  local name="pmctl memory dir: nested subdir cwd → walks up to find memory dir"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/nested-cfg" repo="$tmp_root/nested-repo"
+  local subdir="$repo/a/b/c"
+  mkdir -p "$subdir"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$subdir" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$mdir" ]]; then
+    fail "$name" "expected '$mdir' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_uses_pwd_default() {
+  local name="pmctl memory dir: no arg uses \$PWD"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pwd-cfg" repo="$tmp_root/pwd-repo"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local out status=0
+  out="$(cd "$repo" && CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$mdir" ]]; then
+    fail "$name" "expected '$mdir' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_not_found() {
+  local name="pmctl memory dir: no memory dir → exit nonzero, no stdout"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/nomdir-cfg" repo="$tmp_root/nomdir-repo"
+  mkdir -p "$cfg/projects" "$repo"
+  # No memory dir created under cfg for this repo.
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "expected nonzero exit when no memory dir found, got 0"
+    return 0
+  fi
+  if [[ -n "$out" ]]; then
+    fail "$name" "expected empty stdout on miss, got: '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_no_mutation() {
+  local name="pmctl memory dir: does not create or mutate directories on hit or miss"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/nomut-cfg" repo="$tmp_root/nomut-repo"
+  mkdir -p "$cfg/projects" "$repo"
+  local before; before="$(find "$cfg" "$repo" -type f 2>/dev/null | sort)"
+
+  # Miss path: no mutation expected.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" >/dev/null 2>&1 || true
+
+  local after; after="$(find "$cfg" "$repo" -type f 2>/dev/null | sort)"
+  if [[ "$before" != "$after" ]]; then
+    fail "$name" "unexpected filesystem changes after miss"
+    return 0
+  fi
+
+  # Hit path: no mutation of the memory dir beyond what was set up.
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  local before_hit; before_hit="$(find "$cfg" "$repo" -type f 2>/dev/null | sort)"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" >/dev/null 2>&1 || true
+  local after_hit; after_hit="$(find "$cfg" "$repo" -type f 2>/dev/null | sort)"
+  if [[ "$before_hit" != "$after_hit" ]]; then
+    fail "$name" "unexpected filesystem changes after hit"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_doctor_no_live_dir_mutation() {
   local name="pmctl memory doctor suite: never mutates the live project-memory dir"
   should_run "$name" || return 0
@@ -644,6 +755,11 @@ case_memory_doctor_no_live_dir_mutation() {
 
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
+case_memory_dir_happy_path
+case_memory_dir_nested_subdir
+case_memory_dir_uses_pwd_default
+case_memory_dir_not_found
+case_memory_dir_no_mutation
 case_memory_doctor_clean_fixture
 case_memory_doctor_dead_link
 case_memory_doctor_orphan_card
