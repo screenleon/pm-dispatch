@@ -122,6 +122,23 @@ should_run "mem-distill: documents review.verdict event kind" && assert_file_con
 should_run "mem-distill: review.verdict payload.verdict documented" && assert_file_contains "mem-distill: review.verdict payload.verdict documented" "$MEM_DISTILL" "payload.verdict" && pass "mem-distill: review.verdict payload.verdict documented"
 should_run "mem-distill: gate block fallback to gate-results documented" && assert_file_contains "mem-distill: gate block fallback to gate-results documented" "$MEM_DISTILL" ".gate-results" && pass "mem-distill: gate block fallback to gate-results documented"
 
+# ── mem-search.md contract ───────────────────────────────────────────────────
+
+MEM_SEARCH="$COMMANDS_DIR/mem-search.md"
+
+assert_frontmatter "mem-search: frontmatter valid" "$MEM_SEARCH"
+should_run "mem-search: has Step 1 (memory dir)" && assert_file_contains "mem-search: has Step 1 (memory dir)" "$MEM_SEARCH" "Step 1" && pass "mem-search: has Step 1 (memory dir)"
+should_run "mem-search: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-search: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_SEARCH" "CLAUDE_CONFIG_DIR" && pass "mem-search: Step 1 references CLAUDE_CONFIG_DIR"
+should_run "mem-search: Step 1 walks parent directories" && assert_file_contains "mem-search: Step 1 walks parent directories" "$MEM_SEARCH" "dirname" && pass "mem-search: Step 1 walks parent directories"
+should_run "mem-search: has Step 2 (pmctl context query)" && assert_file_contains "mem-search: has Step 2 (pmctl context query)" "$MEM_SEARCH" "Step 2" && pass "mem-search: has Step 2 (pmctl context query)"
+should_run "mem-search: Step 2 uses pmctl context query" && assert_file_contains "mem-search: Step 2 uses pmctl context query" "$MEM_SEARCH" "pmctl context query" && pass "mem-search: Step 2 uses pmctl context query"
+should_run "mem-search: Step 2 uses --source memory flag" && assert_file_contains "mem-search: Step 2 uses --source memory flag" "$MEM_SEARCH" "--source" && pass "mem-search: Step 2 uses --source memory flag"
+should_run "mem-search: Step 2 parses ref lines" && assert_file_contains "mem-search: Step 2 parses ref lines" "$MEM_SEARCH" "- ref: " && pass "mem-search: Step 2 parses ref lines"
+should_run "mem-search: has Step 3 (rg/grep fallback)" && assert_file_contains "mem-search: has Step 3 (rg/grep fallback)" "$MEM_SEARCH" "Step 3" && pass "mem-search: has Step 3 (rg/grep fallback)"
+should_run "mem-search: Step 3 is rg/grep fallback" && assert_file_contains "mem-search: Step 3 is rg/grep fallback" "$MEM_SEARCH" "fallback" && pass "mem-search: Step 3 is rg/grep fallback"
+should_run "mem-search: Step 3 uses subprocess for injection safety" && assert_file_contains "mem-search: Step 3 uses subprocess for injection safety" "$MEM_SEARCH" "subprocess" && pass "mem-search: Step 3 uses subprocess for injection safety"
+should_run "mem-search: has semantic search step" && assert_file_contains "mem-search: has semantic search step" "$MEM_SEARCH" "Semantic" && pass "mem-search: has semantic search step"
+
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
 
 PRE_IMPL="$COMMANDS_DIR/pre-impl.md"

@@ -7,7 +7,7 @@ Search the project memory for `$ARGUMENTS`. If no query is provided, ask the use
 
 ## What
 
-`/mem-search` performs keyword and semantic lookup across the memory directory so you can answer "what did we learn" for a topic.
+`/mem-search` performs keyword and semantic lookup across the memory directory. It queries the `pmctl context` index first (structured, ranked), then falls back to direct rg/grep if the index returns no results.
 
 ## When to use
 
@@ -45,17 +45,48 @@ while True:
 
 If nothing is printed, report "No memory directory found for this project" and stop.
 
-## Step 2 — Keyword search (Layer 1)
+## Step 2 — Index query via pmctl context (primary path)
 
-**Do not embed `$ARGUMENTS` in any shell command string.** Use Python with `subprocess` so the query is never parsed by a shell:
+Run `pmctl context query --source memory <query>` via Python subprocess to avoid shell injection:
+
+```python
+python3 - << 'PYEOF'
+import subprocess, sys
+
+# Claude: replace the placeholders below with actual values,
+# properly escaped for Python string syntax (use repr() if needed).
+query = "QUERY_PLACEHOLDER"
+memory_dir = "MEMORY_DIR_PLACEHOLDER"
+
+result = subprocess.run(
+    ['pmctl', 'context', 'query', '--source', 'memory', query],
+    capture_output=True, text=True, cwd=memory_dir
+)
+
+refs = []
+for line in result.stdout.splitlines():
+    if line.startswith('- ref: '):
+        ref = line[len('- ref: '):].strip()
+        if ref:
+            refs.append(ref)
+
+if refs:
+    print('\n'.join(refs))
+PYEOF
+```
+
+Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
+
+If refs are returned, these are the matching memory card paths. Proceed directly to Step 4 using these files — skip Step 3.
+
+## Step 3 — Keyword search via rg/grep (fallback when index has no hits)
+
+Run this only when Step 2 returned no refs (index unavailable or no hits).
 
 ```python
 python3 - << 'PYEOF'
 import subprocess, os, sys
 
-# Assign query and memory_dir as Python string literals.
-# Claude: replace the placeholders below with the actual values,
-# properly escaped for Python string syntax (use repr() if needed).
 query = "QUERY_PLACEHOLDER"
 memory_dir = "MEMORY_DIR_PLACEHOLDER"
 
@@ -71,7 +102,6 @@ if not files or not query:
     sys.exit(0)
 
 # -F: fixed-string (not regex), -i: case-insensitive, -l: filenames only
-# Argument list — query is never parsed by a shell.
 # subprocess raises FileNotFoundError (not returncode 127) when the binary
 # is absent, so catch that explicitly before falling back to grep.
 try:
@@ -88,20 +118,20 @@ print(result.stdout.strip())
 PYEOF
 ```
 
-Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
+Replace `QUERY_PLACEHOLDER` and `MEMORY_DIR_PLACEHOLDER` with the actual values from Steps 1 and the original query.
 
-## Step 3 — Semantic search (Layer 2, fallback)
+## Step 4 — Semantic search (fallback when Steps 2 and 3 both empty)
 
-If no files were found in Step 2, read MEMORY.md and identify entries whose hook text or title is semantically related to the query — even if the exact words don't appear. Read those linked files.
+If no files were found in Steps 2 or 3, read MEMORY.md and identify entries whose hook text or title is semantically related to the query — even if the exact words don't appear. Read those linked files.
 
-## Step 4 — Read and synthesize
+## Step 5 — Read and synthesize
 
-Read all files found in Steps 2 or 3. Answer the question implied by the query:
+Read all files found in Steps 2, 3, or 4. Answer the question implied by the query:
 - What does the memory say about this topic?
 - Are there conflicting or overlapping entries?
 - Is the memory potentially stale (references old code/decisions)?
 
-## Step 5 — Report
+## Step 6 — Report
 
 ```
 ## Memory search: "<query>"
@@ -117,4 +147,4 @@ Found in <N> file(s):
 Source: <memory_dir>
 ```
 
-If nothing was found in either layer, say "No memory found for '<query>'. Consider running /mem-log if this session covers relevant ground."
+If nothing was found in any layer, say "No memory found for '<query>'. Consider running /mem-log if this session covers relevant ground."
