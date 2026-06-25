@@ -148,7 +148,7 @@
 
 - **CC-216 MCP server（DEFERRED，不排入 milestone）**——「通用橋」讓任意 MCP-aware host 透過單一協定使用 pm-dispatch。**2026-06-18 user 拍板：先 defer、不排入任何 milestone，待核心（executor 抽象 + retrieval/memory 基底）覺得**基本都穩定**後再考慮**。重型 net-new surface（Node/Python server + `pmctl --json`），需穩定 pmctl + 已收口 executor 抽象作下層。相依 [[CC-211]]、[[CC-215]]。
 - **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
-- **CC-003（artifact-relocation epic）**——Phase 0–4 已完成至 CC-418（observer + 可發現性 ✅ pr:#NNN）；剩 CC-419（翻預設 + GC + 跨 repo 既有副產物遷移）收尾。
+- **CC-003（artifact-relocation epic）**——✅ 2026-06-25 全部完成（Phase 0–5，CC-413〜CC-419）；gc + migrate + 預設 out-of-repo + 跨 repo 清理全到位。
 - **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程。
 - **CC-340 knowledge index 重型版**——**已被 [[CC-403]] supersede**：memory-index MVP 移入 Phase 2，CC-340 僅剩 embeddings / 語意後端 remainder，待 FTS/LIKE 證明不足再 resume。
 - **CC-026（/skill-distill）——continue defer**：前置 episode signal 層（CC-027b/c）仍 deferred；列入 someday 待 signal 層就緒再評估。
