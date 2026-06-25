@@ -85,7 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | 🟡 deferred | **[infra: codex dispatch trace-capture 強化 — trace 不依賴繼承 FD 跨 sandbox 存活]** codex 0.139.0 在 session 冷啟動最初 1–2 次 dispatch 偶發 trace-capture flake：wrapper 把 codex stdout 經**繼承 FD** 重導向到 `<work_dir>/.agent-trace/<ts>.jsonl`，該檔在 codex sandbox 邊界偶失（`.last` 由 codex 依路徑自開故存活、`.jsonl` 與 run-time stderr 經繼承 FD 偶失）。8 次 run 證**非確定性**、且 **fail-closed 安全**（trace 缺→post-verify 正確判 FAIL、不誤判 PASS）。`workspace-write` 與 `sandboxed` isolation 實 map 到同一 codex 指令（皆 `--sandbox workspace-write`、無 override）。候選修法：trace 寫 `<work_dir>` 外（XDG state／temp），或經 wrapper 控制的 pipe（tee）而非繼承 FD，使 trace 不跨 codex sandbox 邊界。**需可穩定複現才能驗證修法**。發現於 [[CC-387]] 真實驗收。umbrella [[CC-333]]。 | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
 | CC-403 | ✅ closed 2026-06-22 | **[retrieval-first: `pmctl context --source memory` 讓 memory 可被檢索（supersede/吸收 [[CC-340]]）]** 今天 pmctl context 只掃 repo 內檔，memory（`~/.claude/projects/<id>/memory/`）完全搜不到 → 對「決策/規則/偏好」這類最常找的特定資料「優先用 pmctl context」物理上不可能。新增 source 軸 `query --source repo/memory/all`（不 overload `--domain`；memory 是不同平面非 repo 路徑類），memory DB 落 memory 目錄下而非 repo-local（避免私有 memory 進 checkout），schema `source_domain` enum 補 `memory`、pack `memories[]` 真正填值、reuse-scan 維持 repo-only。吸收 CC-340 MVP（FTS5-optional + LIKE/grep fallback、no embeddings）；embeddings/語意後端留作 follow-up。動 pmctl-context.sh。 | memory | 2026-06-18 | pr:#313 | P2 | retrieval |
-| CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-404 | ✅ closed 2026-06-25 | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | pr:#328 | P3 | retrieval |
 | CC-405 | ✅ closed 2026-06-25 | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-406 | ✅ closed 2026-06-25 | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | pr:#325 | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
@@ -1202,7 +1202,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Cross-link**: supersedes [[CC-340]]（吸收 MVP）、[[CC-338]]（repo-index 對稱）、[[CC-237]]（shared interface）、[[CC-232]]（pack schema）、[[CC-406]]（消費者）、[[CC-400]]/[[CC-401]]（行為層）。
 
-## CC-404 — memory: MEMORY.md 注入預算 + priority metadata 🟢 someday → v0.7.0
+## CC-404 — memory: MEMORY.md 注入預算 + priority metadata ✅ 2026-06-25
 
 **Problem**: `scripts/hook-inject-memory.sh` 把 `MEMORY.md` 所有 `^- ` 行全注入，>=50 條才印警告，且 `scripts/test-hooks.sh` 明確斷言 60 條不截斷。結果：index bloat 必然發生，每個 session 都付 stale / 不相關條目的 token，與 memory「keep index short, high-signal」的設計目標相反。
 
@@ -1217,8 +1217,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3.
 
+**See**: pr:#328
 
-**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/hook-inject-memory.sh`、`scripts/test-hooks.sh`。
+**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/guard-inject-memory.sh`、`scripts/test-guards.sh`。
 
 ## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 ✅ 2026-06-25
 
