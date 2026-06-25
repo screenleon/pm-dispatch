@@ -523,11 +523,25 @@ case_pmctl_route() {
   executor="$(jq -r '.executor' "$runs_file" 2>/dev/null | tail -1 || true)"
   state="$(jq -r '.state' "$runs_file" 2>/dev/null | tail -1 || true)"
   exit_code="$(jq -r '.exit_code' "$runs_file" 2>/dev/null | tail -1 || true)"
+  # CC-417: latest.last lands in the out-of-repo run dir under the work's project
+  # partition, not $work/.agent-trace; the repo stays clean.
+  local trace_last="$work/.agent-trace/latest.last"
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+    # shellcheck source=scripts/lib/state-paths.sh
+    . "$REPO_ROOT/scripts/lib/state-paths.sh" 2>/dev/null || true
+  fi
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    local _part _rl
+    _part="$(cd "$work" && dirname "$(PM_DISPATCH_STATE_ROOT="$store" sw_project_run_dir __probe__)")"
+    _rl="$(find "$_part" \( -type f -o -type l \) -name latest.last 2>/dev/null | head -1)"
+    [[ -n "$_rl" ]] && trace_last="$_rl"
+  fi
   if [[ "$executor" == "opencode" && "$state" == "ok" && "$exit_code" == "0" ]] \
-     && [[ -s "$work/.agent-trace/latest.last" ]]; then
+     && [[ -s "$trace_last" ]] \
+     && [[ ! -e "$work/.agent-trace" ]]; then
     pass "$name"
   else
-    fail "$name" "executor=$executor state=$state exit=$exit_code last=$(ls "$work/.agent-trace/latest.last" 2>/dev/null || echo missing)"
+    fail "$name" "executor=$executor state=$state exit=$exit_code last=$trace_last present=$([[ -s "$trace_last" ]] && echo yes || echo no) repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean)"
   fi
   rm -rf "$store" "$bindir" "$work"; rm -f "$bf"
 }

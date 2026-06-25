@@ -90,7 +90,15 @@ if should_run "cli-default-output"; then
   marker="$tmp_root/default-marker"
   touch "$marker"
   if run_snapshot_default >/dev/null; then
-    snapshot_path="$(find /tmp -maxdepth 1 -name 'pm-snapshot-*.md' -type f -newer "$marker" -print | head -n 1)"
+    # This case verifies the DEFAULT output path, which pm-prep-snapshot.sh hard-codes
+    # under /tmp, so the scan must target the shared system tmp. Under a parallel test
+    # run a sibling suite churns /tmp/tmp.* entries; find can then hit a just-removed
+    # entry mid-scan and exit non-zero with a benign "No such file or directory" on
+    # stderr — which, under `set -euo pipefail`, would abort this suite. Suppress that
+    # transient stderr and tolerate the non-zero (the -maxdepth 1 scan still lists our
+    # file; only the vanished sibling is skipped). Only pm-prep-snapshot.sh writes
+    # pm-snapshot-*.md and only this suite runs it, so the match stays unambiguous.
+    snapshot_path="$(find /tmp -maxdepth 1 -name 'pm-snapshot-*.md' -type f -newer "$marker" -print 2>/dev/null | head -n 1 || true)"
     if [ -n "$snapshot_path" ]; then
       pass "cli-default-output"
       rm -f "$snapshot_path"

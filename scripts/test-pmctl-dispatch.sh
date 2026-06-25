@@ -21,8 +21,17 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/executor-router.sh"
 # shellcheck source=scripts/lib/pmctl-dispatch.sh
 . "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
+# CC-417: dispatch artifacts land in the out-of-repo run dir; source state-paths
+# at top level (the core loads it lazily) so assertions can resolve that location.
+# shellcheck source=scripts/lib/state-paths.sh
+. "$SCRIPT_DIR/lib/state-paths.sh"
 th_init "$@"
 export PM_DISPATCH_STATE_ROOT="$tmp_root/pmctl-dispatch-state"
+
+# Resolve a dispatch's out-of-repo trace dir for a work dir + run_id, binding the
+# partition to the work dir (cd) exactly as the dispatch core does.
+_run_trace_dir() { ( cd "$1" 2>/dev/null && printf '%s/.agent-trace\n' "$(sw_project_run_dir "$2")" ); }
+_run_partition()  { ( cd "$1" 2>/dev/null && dirname "$(sw_project_run_dir __probe__)" ); }
 
 # A guard-allowed brief path is /tmp/brief-<...>.md (codex pre-write allow-list).
 # Track created brief files so we always clean /tmp.
@@ -233,12 +242,19 @@ case_happy_path_post_verify_ok() {
   set +e
   out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
+  # CC-417: harness/adapter artifacts land in the out-of-repo run dir, NOT in the
+  # repo. The trace's latest.last now lives under the project partition's run dir;
+  # the repo's working tree must stay clean (no .agent-trace). Removing the run-dir
+  # routing re-pollutes $work/.agent-trace and fails this (mutation-grade).
+  local relocated
+  relocated="$(find "$PM_DISPATCH_STATE_ROOT" -path '*/runs/*/.agent-trace/latest.last' -size +0c 2>/dev/null | head -1)"
   if [[ "$code" -eq 0 ]] \
      && grep -q '^OK$' <<<"$out" \
-     && [[ -s "$work/.agent-trace/latest.last" ]]; then
+     && [[ -n "$relocated" ]] \
+     && [[ ! -e "$work/.agent-trace" ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code tail=$(tail -2 <<<"$out" | tr '\n' '|')"
+    fail "$name" "code=$code relocated=${relocated:-<none>} repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean) tail=$(tail -2 <<<"$out" | tr '\n' '|')"
   fi
   rm -rf "$work" "$bindir"
 }
@@ -602,29 +618,127 @@ case_footer_persisted_and_paths_parse() {
   set +e
   out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
-  footer="$(find "$work/.agent-trace" -maxdepth 1 -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
+  # CC-417: footer + per-run artifacts live in the out-of-repo run dir, not the
+  # repo. The footer-declared paths must point there, and the repo stays clean.
+  footer="$(find "$(_run_partition "$work")" -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
+  local td; td="$(dirname "$footer" 2>/dev/null)"
   last_path="$(sed -n 's/^last:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
   trace_path="$(sed -n 's/^trace:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
   stderr_path="$(sed -n 's/^stderr:[[:space:]]*//p' "$footer" 2>/dev/null | head -1)"
   record="$(find "$work/.dispatch-results" -type f -name 'run-*.md' 2>/dev/null | sort | head -1)"
   if [[ "$code" -eq 0 ]] \
      && grep -q '^OK' <<<"$out" \
-     && [[ "$footer" == "$work/.agent-trace/"run-*.footer ]] \
+     && [[ "$footer" == "$td/"run-*.footer ]] \
      && [[ -s "$footer" ]] \
-     && [[ "$last_path" == "$work/.agent-trace/"codex-*.last ]] \
-     && [[ "$trace_path" == "$work/.agent-trace/"codex-*.jsonl ]] \
-     && [[ "$stderr_path" == "$work/.agent-trace/"codex-*.stderr ]] \
+     && [[ "$last_path" == "$td/"codex-*.last ]] \
+     && [[ "$trace_path" == "$td/"codex-*.jsonl ]] \
+     && [[ "$stderr_path" == "$td/"codex-*.stderr ]] \
      && [[ -s "$last_path" ]] \
      && [[ -s "$trace_path" ]] \
      && [[ -e "$stderr_path" ]] \
+     && [[ ! -e "$work/.agent-trace" ]] \
      && grep -Fq "last_path: \"$last_path\"" "$record" \
      && grep -Fq "trace_path: \"$trace_path\"" "$record" \
      && grep -Fq "stderr_path: \"$stderr_path\"" "$record"; then
     pass "$name"
   else
-    fail "$name" "code=$code footer=$footer last=$last_path trace=$trace_path stderr=$stderr_path"
+    fail "$name" "code=$code footer=$footer last=$last_path trace=$trace_path stderr=$stderr_path repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean)"
   fi
   rm -rf "$work" "$bindir"
+}
+
+# CC-417: an explicit --trace-dir FLAG on the dispatch (per-dispatch caller
+# opt-in) must drive pmctl's own footer too, so footer + adapter trace stay
+# colocated under that dir and the repo stays clean.
+case_cc417_explicit_trace_dir_flag_wins() {
+  local name="dispatch/cc417 — explicit --trace-dir flag drives footer + trace"
+  should_run "$name" || return 0
+  local work brief bindir out code override footer
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  override="$(mktemp -d)/explicit-trace"   # absolute, out-of-repo
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run \
+    --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
+    --trace-dir "$override" 2>&1)"; code=$?
+  set -e
+  footer="$(find "$override" -maxdepth 1 -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ -s "$footer" ]] \
+     && [[ -n "$(find "$override" -maxdepth 1 -name 'codex-*.jsonl' 2>/dev/null | head -1)" ]] \
+     && [[ ! -e "$work/.agent-trace" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code footer=${footer:-none} override=$override repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean)"
+  fi
+  rm -rf "$work" "$bindir" "$(dirname "$override")"
+}
+
+# CC-417 gate regression: an INHERITED ambient PM_DISPATCH_TRACE_DIR (as a pr-gate
+# sandbox exports, pointing at the gate's read-only trace dir) must NOT hijack a
+# nested pmctl dispatch — pmctl derives its own run dir under the work's partition
+# and never writes into the inherited (here read-only) dir. This is the exact
+# shape that NO-GO'd the first gate run.
+case_cc417_inherited_env_ignored() {
+  local name="dispatch/cc417 — inherited PM_DISPATCH_TRACE_DIR ignored (gate-shape)"
+  should_run "$name" || return 0
+  local work brief bindir out code foreign footer
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  foreign="$(mktemp -d)/gate-trace"; mkdir -p "$foreign"; chmod 500 "$foreign"  # read-only, like the gate sandbox
+  set +e
+  out="$(PM_DISPATCH_TRACE_DIR="$foreign" PATH="$bindir:$PATH" "$PMCTL" dispatch run \
+    --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  # Footer lands under the work's own out-of-repo partition (PM_DISPATCH_STATE_ROOT),
+  # NOT the inherited foreign dir; the foreign dir stays empty; repo clean.
+  footer="$(find "$(_run_partition "$work")" -type f -name 'run-*.footer' 2>/dev/null | sort | head -1)"
+  local foreign_entries; foreign_entries="$(find "$foreign" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')"
+  chmod 700 "$foreign" 2>/dev/null || true
+  if [[ "$code" -eq 0 ]] \
+     && grep -q '^OK' <<<"$out" \
+     && [[ -s "$footer" ]] \
+     && [[ "$foreign_entries" -eq 0 ]] \
+     && [[ ! -e "$work/.agent-trace" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code footer=${footer:-none} foreign_entries=$foreign_entries repo_trace=$([[ -e "$work/.agent-trace" ]] && echo present || echo clean)"
+  fi
+  rm -rf "$work" "$bindir" "$(dirname "$foreign")"
+}
+
+# CC-417: unit test the trace-dir resolver's precedence + legacy fallback in one
+# place, the seam a future change is most likely to break. Precedence is explicit
+# --trace-dir flag (3rd arg) > out-of-repo $(sw_project_run_dir) > legacy; the
+# ambient PM_DISPATCH_TRACE_DIR env is deliberately NOT consulted.
+case_cc417_trace_dir_helper_precedence() {
+  local name="dispatch/cc417 — trace-dir resolver precedence + legacy fallback"
+  should_run "$name" || return 0
+  local work rid flag_v computed env_ignored legacy
+  work="$(mktemp -d)"; git init -q "$work"
+  rid="run-20260101T000000Z-abc123"
+  # 1) explicit flag (3rd arg) wins verbatim.
+  flag_v="$(_pmctl_dispatch_trace_dir "$work" "$rid" "/abs/explicit")"
+  # 2) no flag, helper available → out-of-repo $(sw_project_run_dir)/.agent-trace.
+  computed="$(_pmctl_dispatch_trace_dir "$work" "$rid")"
+  # 3) ambient env must be IGNORED (no flag) → still the computed run dir.
+  env_ignored="$(PM_DISPATCH_TRACE_DIR="/abs/should-be-ignored" _pmctl_dispatch_trace_dir "$work" "$rid")"
+  # 4) helper masked + repo_root unresolvable → legacy in-repo fallback.
+  legacy="$( unset -f sw_project_run_dir; repo_root="/nonexistent-$$"; \
+    _pmctl_dispatch_trace_dir "$work" "$rid" )"
+  if [[ "$flag_v" == "/abs/explicit" ]] \
+     && [[ "$computed" == "$(cd "$work" && sw_project_run_dir "$rid")/.agent-trace" ]] \
+     && [[ "$computed" != "$work/.agent-trace" ]] \
+     && [[ "$env_ignored" == "$computed" ]] \
+     && [[ "$legacy" == "$work/.agent-trace" ]]; then
+    pass "$name"
+  else
+    fail "$name" "flag=$flag_v computed=$computed env_ignored=$env_ignored legacy=$legacy"
+  fi
+  rm -rf "$work"
 }
 
 case_execute_tail_direct_lifecycle_identity() {
@@ -643,7 +757,7 @@ case_execute_tail_direct_lifecycle_identity() {
     "$REPO_ROOT/adapters/codex/dispatch.sh" "$run_id" "" "$brief" "$created_ts" 0 \
     "${forward[@]}" 2>&1)"; code=$?
   set -e
-  footer="$work/.agent-trace/$run_id.footer"
+  footer="$(_run_trace_dir "$work" "$run_id")/$run_id.footer"
   record="$work/.dispatch-results/$run_id.md"
   states="$(find "$PM_DISPATCH_STATE_ROOT" -type f -name events.jsonl \
     -exec jq -r --arg run "$run_id" 'select(.subject_id == $run) | .payload.state' {} + 2>/dev/null \
@@ -1273,6 +1387,9 @@ case_symlinked_adapter_rejected
 case_stale_latest_symlink_avoidance
 case_footer_trace_threaded_to_post_verify
 case_footer_persisted_and_paths_parse
+case_cc417_explicit_trace_dir_flag_wins
+case_cc417_inherited_env_ignored
+case_cc417_trace_dir_helper_precedence
 case_execute_tail_direct_lifecycle_identity
 case_manifest_terminal_event_threaded
 case_footer_exit_propagated_through_tee

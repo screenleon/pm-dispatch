@@ -24,8 +24,6 @@ DISPATCH="$REPO_ROOT/adapters/codex/dispatch.sh"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-# Resolve the actual tmp dir mktemp -t uses (respects TMPDIR if set).
-SNAP_DIR="$(dirname "$(mktemp -u -t codex-dispatch.XXXXXX)")"
 SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9]+/codex-dispatch\.sh"
 
 # ---- 1: --help exits 0 ----
@@ -110,12 +108,18 @@ case_ambient_path_defense() {
 
 # ---- 6: cleanup on normal exit (no leak in resolved tmp dir) ----
 case_cleanup_no_leak() {
-  local before after name
-  before=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
-  local name="snapshot/cleanup — no leak in $SNAP_DIR"
+  local before after name snapdir
+  local name="snapshot/cleanup — no leak in resolved tmp dir"
   should_run "$name" || return 0
-  "$DISPATCH" --help >/dev/null 2>&1
-  after=$(find "$SNAP_DIR" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
+  # Hermetic count: a CONCURRENT suite's in-flight codex-dispatch.* snapshot in the
+  # shared system tmp would otherwise inflate this count and false-fail under
+  # parallel runs. Point TMPDIR at a private dir so only THIS invocation's snapshot
+  # can appear in the counted dir; mktemp -t in the adapter honours TMPDIR.
+  snapdir="$(mktemp -d)"
+  before=$(find "$snapdir" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
+  TMPDIR="$snapdir" "$DISPATCH" --help >/dev/null 2>&1
+  after=$(find "$snapdir" -maxdepth 1 -type d -name 'codex-dispatch.*' 2>/dev/null | wc -l)
+  rm -rf "$snapdir"
   if [[ "$after" -le "$before" ]]; then
     pass "$name"
   else
