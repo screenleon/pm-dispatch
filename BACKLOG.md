@@ -95,7 +95,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-421 | 🟢 someday | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | — | P3 | — |
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
-| CC-424 | ✅ done | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | — | P2 | — |
+| CC-424 | ✅ closed 2026-06-25 | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | pr:#326 | P2 | — |
 
 ---
 
@@ -1485,7 +1485,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3（someday）.
 
-## ✅ 2026-06-25 CC-424 — refactor: memory commands 去 python3 化
+## CC-424 — refactor: memory commands 去 python3 化 ✅ 2026-06-25
 
 **Problem**: `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker 和 subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化並有 `assert_not_contains "no python3 calls"` 斷言保護，其他 memory commands 未對齊。
 
