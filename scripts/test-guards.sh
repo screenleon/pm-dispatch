@@ -1222,10 +1222,10 @@ write_inject_memory() {
 inject_hook_happy_path() {
   # Verifies MEMORY.md index lines are injected when cwd matches a project exactly.
   # Steps:
-  #   1. Create a sandbox project MEMORY.md with two "- " index lines
+  #   1. Create a sandbox project MEMORY.md with two "- " index lines (no card files)
   #   2. Run the hook with a UserPromptSubmit payload whose cwd matches the project
-  #   3. Assert stdout contains only the index lines wrapped in delimiters
-  local name="inject-hook/happy-path" dir cwd payload output expected status
+  #   3. Assert stdout contains delimiters, preamble lines, both index entries, no omission notice
+  local name="inject-hook/happy-path" dir cwd payload output status
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1234,8 +1234,14 @@ inject_hook_happy_path() {
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  expected=$'=== auto-memory: MEMORY.md index ===\n- alpha\n- beta\n=== end auto-memory ==='
-  if [[ "$status" == "0" && "$output" == "$expected" ]]; then
+  if [[ "$status" == "0" \
+      && "$output" == ===\ auto-memory:\ MEMORY.md\ index\ ===$'\n'* \
+      && "$output" == *$'\n'===\ end\ auto-memory\ === \
+      && "$output" == *"Memory dir:"* \
+      && "$output" == *"/mem-search"* \
+      && "$output" == *"- alpha"* \
+      && "$output" == *"- beta"* \
+      && "$output" != *"entries omitted"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -1251,8 +1257,8 @@ inject_hook_parent_fallback() {
   # Steps:
   #   1. Create MEMORY.md for a parent project directory only
   #   2. Run the hook with cwd set to a nested child directory
-  #   3. Assert stdout injects the parent project index line
-  local name="inject-hook/parent-fallback" dir parent child payload output expected status
+  #   3. Assert stdout contains the parent project index line
+  local name="inject-hook/parent-fallback" dir parent child payload output status
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   parent="$dir/repo"
@@ -1262,8 +1268,10 @@ inject_hook_parent_fallback() {
   payload="{\"cwd\":\"$child\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  expected=$'=== auto-memory: MEMORY.md index ===\n- parent index\n=== end auto-memory ==='
-  if [[ "$status" == "0" && "$output" == "$expected" ]]; then
+  if [[ "$status" == "0" \
+      && "$output" == ===\ auto-memory:\ MEMORY.md\ index\ ===$'\n'* \
+      && "$output" == *$'\n'===\ end\ auto-memory\ === \
+      && "$output" == *"- parent index"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -1414,14 +1422,14 @@ inject_hook_non_string_cwd() {
 }
 
 inject_hook_threshold_shows_directive() {
-  # Verifies that when MEMORY.md has >= 50 index entries, the hook injects
-  # ALL entries without truncation and appends a "run /memory-compress" directive.
+  # Verifies that when MEMORY.md has 60 index entries (no card files), the hook
+  # injects exactly MAX_INJECT_ENTRIES=20 entries and appends an omission notice.
   # Steps:
-  #   1. Create a matching project MEMORY.md with 60 index lines (> threshold of 50)
+  #   1. Create a matching project MEMORY.md with 60 plain index lines (no card files)
   #   2. Run the hook with a valid cwd payload and capture stdout
-  #   3. Assert all 60 lines appear (no truncation), delimiters present,
-  #      and a "⚠ MEMORY.md has N entries" directive appears before closing delimiter
-  local name="inject-hook/threshold-shows-directive" dir cwd payload output body status i directive_line
+  #   3. Assert first 20 entries appear, entry 021 does NOT appear,
+  #      omission notice "(40 entries omitted" appears, no old "memory-compress" warning
+  local name="inject-hook/threshold-shows-directive" dir cwd payload output status omission_line
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
@@ -1436,96 +1444,110 @@ inject_hook_threshold_shows_directive() {
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  body="$(printf '%s\n' "$output" | sed '1d;$d')"
-  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  omission_line="$(printf '%s\n' "$output" | grep 'entries omitted' || true)"
   if [[ "$status" == "0" \
       && "$output" == ===\ auto-memory:\ MEMORY.md\ index\ ===$'\n'* \
       && "$output" == *$'\n'===\ end\ auto-memory\ === \
-      && "$body" == *"memory index line 001"* \
-      && "$body" == *"memory index line 060"* \
-      && -n "$directive_line" \
-      && "$directive_line" == *"run /memory-compress"* ]]; then
+      && "$output" == *"memory index line 001"* \
+      && "$output" == *"memory index line 020"* \
+      && "$output" != *"memory index line 021"* \
+      && -n "$omission_line" \
+      && "$omission_line" == *"40 entries omitted"* \
+      && "$output" != *"memory-compress"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s directive=%q output_tail=%q\n' "$name" "$status" "$directive_line" "${output: -80}"
+    printf '  FAIL  %s — exit=%s omission=%q output_tail=%q\n' "$name" "$status" "$omission_line" "${output: -80}"
   fi
   rm -rf "$dir"
 }
 
 inject_hook_threshold_below_emits_no_directive() {
-  # Verifies that exactly 49 index entries (one below the threshold of 50) does
-  # NOT emit the /memory-compress directive — threshold is exclusive at 49.
+  # Verifies that 15 index entries (under budget of 20) injects all entries with no omission notice.
   # Steps:
-  #   1. Create a matching project MEMORY.md with exactly 49 index lines
+  #   1. Create a matching project MEMORY.md with 15 plain index lines (no card files)
   #   2. Run the hook and capture stdout
-  #   3. Assert all 49 lines present, no "⚠" directive line in output
-  local name="inject-hook/threshold-49-no-directive" dir cwd payload output body status i directive_line
+  #   3. Assert all 15 entries present and no omission notice
+  local name="inject-hook/under-budget-15-no-omission" dir cwd payload output status i
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
   {
     printf '# title\n'
-    for i in $(seq 1 49); do
+    for i in $(seq 1 15); do
       printf -- '- memory index line %03d\n' "$i"
     done
-  } > "$dir/memory49.md"
-  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory49.md")"
+  } > "$dir/memory15.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory15.md")"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  body="$(printf '%s\n' "$output" | sed '1d;$d')"
-  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
   if [[ "$status" == "0" \
-      && "$body" == *"memory index line 049"* \
-      && -z "$directive_line" ]]; then
+      && "$output" == *"memory index line 001"* \
+      && "$output" == *"memory index line 015"* \
+      && "$output" != *"entries omitted"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+    printf '  FAIL  %s — exit=%s output_tail=%q\n' "$name" "$status" "${output: -120}"
   fi
   rm -rf "$dir"
 }
 
 inject_hook_threshold_at_boundary_emits_directive() {
-  # Verifies that exactly 50 index entries (at the threshold) DOES emit the
-  # /memory-compress directive — threshold fires at >= 50.
+  # Verifies budget boundary: exactly 20 entries → all injected, no omission notice;
+  # exactly 21 entries → 20 injected + omission notice of 1.
   # Steps:
-  #   1. Create a matching project MEMORY.md with exactly 50 index lines
-  #   2. Run the hook and capture stdout
-  #   3. Assert all 50 lines present AND the "⚠" directive line appears
-  local name="inject-hook/threshold-50-emits-directive" dir cwd payload output body status i directive_line
+  #   1. 20 plain entries → assert all 20 present, no omission
+  #   2. 21 plain entries → assert 20 present, entry 021 missing, omission notice "(1 entries omitted"
+  local name="inject-hook/budget-boundary-20-21-emits-omission" dir cwd payload output status i
   should_run "$name" || return 0
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
+
+  # Part 1: exactly 20 entries — no omission
   {
     printf '# title\n'
-    for i in $(seq 1 50); do
-      printf -- '- memory index line %03d\n' "$i"
-    done
-  } > "$dir/memory50.md"
-  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory50.md")"
+    for i in $(seq 1 20); do printf -- '- memory index line %03d\n' "$i"; done
+  } > "$dir/memory20.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory20.md")"
   payload="{\"cwd\":\"$cwd\"}"
   output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
-  body="$(printf '%s\n' "$output" | sed '1d;$d')"
-  directive_line="$(printf '%s\n' "$body" | grep '^⚠' || true)"
+  if ! [[ "$status" == "0" \
+      && "$output" == *"memory index line 020"* \
+      && "$output" != *"entries omitted"* ]]; then
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s (20-entry part) — exit=%s output_tail=%q\n' "$name" "$status" "${output: -80}"
+    rm -rf "$dir"
+    return
+  fi
+
+  # Part 2: exactly 21 entries — 1 omitted
+  {
+    printf '# title\n'
+    for i in $(seq 1 21); do printf -- '- memory index line %03d\n' "$i"; done
+  } > "$dir/memory21.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/memory21.md")"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
   if [[ "$status" == "0" \
-      && "$body" == *"memory index line 050"* \
-      && -n "$directive_line" \
-      && "$directive_line" == *"run /memory-compress"* ]]; then
+      && "$output" == *"memory index line 020"* \
+      && "$output" != *"memory index line 021"* \
+      && "$output" == *"1 entries omitted"* ]]; then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s directive=%q\n' "$name" "$status" "$directive_line"
+    printf '  FAIL  %s (21-entry part) — exit=%s output_tail=%q\n' "$name" "$status" "${output: -80}"
   fi
   rm -rf "$dir"
 }
@@ -1561,6 +1583,132 @@ inject_hook_default_home_fallback() {
   fi
 }
 
+inject_hook_always_priority_bypasses_budget() {
+  # Verifies that a card with priority: always injects even when the entry budget is full.
+  # Steps:
+  #   1. Create MEMORY.md with 22 plain entries (no card files = tier2) and 1 entry
+  #      whose card file has priority: always (tier1)
+  #   2. Run the hook (budget = 20 total)
+  #   3. Assert the always-priority entry appears, total injected = 20, 3 omitted
+  local name="inject-hook/always-priority-bypasses-budget" dir cwd mem payload output status omission_line
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+
+  {
+    printf '# test\n'
+    for i in $(seq 1 22); do
+      printf -- '- [card%03d](card%03d.md) — normal card %d\n' "$i" "$i" "$i"
+    done
+    printf -- '- [always-card](always-card.md) — must always inject\n'
+  } > "$mem/MEMORY.md"
+
+  printf -- '---\npriority: always\nstatus: inactive\n---\nAlways content\n' > "$mem/always-card.md"
+
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  omission_line="$(printf '%s\n' "$output" | grep 'entries omitted' || true)"
+  if [[ "$status" == "0" \
+      && "$output" == *"always-card"* \
+      && -n "$omission_line" \
+      && "$omission_line" == *"3 entries omitted"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s omission=%q output_tail=%q\n' "$name" "$status" "$omission_line" "${output: -120}"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_prompt_aware_scoring() {
+  # Verifies that tier2 cards with topics matching prompt keywords rank above others.
+  # Steps:
+  #   1. Create MEMORY.md with 2 entries in order: card-b (no match) then card-a (match)
+  #      Both have status: inactive and priority: normal (tier2)
+  #   2. Run the hook with a prompt containing a keyword matching card-a's topics
+  #   3. Assert card-a appears before card-b in output (higher score wins over insertion order)
+  local name="inject-hook/prompt-aware-scoring" dir cwd mem payload output status pos_a pos_b
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+
+  printf '# test\n- [card-b](card-b.md) — general card\n- [card-a](card-a.md) — specialized card\n' > "$mem/MEMORY.md"
+
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - unrelated\n---\nCard B\n' > "$mem/card-b.md"
+  printf -- '---\npriority: normal\nstatus: inactive\ntopics:\n  - retrieval\n  - memory\n---\nCard A\n' > "$mem/card-a.md"
+
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"check the retrieval system\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  # Find line positions of each entry
+  pos_a=$(printf '%s\n' "$output" | grep -n 'card-a' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n 'card-b' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" \
+      && -n "$pos_a" && -n "$pos_b" \
+      && "$pos_a" -lt "$pos_b" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s output=%q\n' "$name" "$status" "$pos_a" "$pos_b" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_byte_cap_truncates_before_entry_cap() {
+  # Verifies the MAX_INJECT_BYTES budget truncates tier2 entries even when the
+  # entry count is well under MAX_INJECT_ENTRIES=20. Without a byte cap, all 10
+  # entries would inject (10 < 20); with it, ~400-byte lines exhaust 3000 bytes
+  # first, so the tail is omitted.
+  # Steps:
+  #   1. Create MEMORY.md with 10 plain entries (no card files = tier2), each ~400 bytes
+  #   2. Run the hook (entry budget = 20, so entry-cap cannot fire with only 10)
+  #   3. Assert entry 001 present, entry 010 absent, and an omission notice appears
+  #      — proving the byte cap (not the entry cap) did the truncation
+  local name="inject-hook/byte-cap-truncates-before-entry-cap" dir cwd payload output status omission_line pad
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  pad="$(printf 'x%.0s' $(seq 1 380))"
+  {
+    printf '# title\n'
+    for i in $(seq 1 10); do
+      printf -- '- entry %03d %s\n' "$i" "$pad"
+    done
+  } > "$dir/long-lines-memory.md"
+  write_inject_memory "$dir" "$cwd" "$(cat "$dir/long-lines-memory.md")"
+  payload="{\"cwd\":\"$cwd\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  omission_line="$(printf '%s\n' "$output" | grep 'entries omitted' || true)"
+  if [[ "$status" == "0" \
+      && "$output" == *"entry 001"* \
+      && "$output" != *"entry 010"* \
+      && -n "$omission_line" \
+      && "$omission_line" == *"entries omitted"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s omission=%q output_tail=%q\n' "$name" "$status" "$omission_line" "${output: -80}"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -1572,6 +1720,9 @@ inject_hook_non_string_cwd
 inject_hook_threshold_below_emits_no_directive
 inject_hook_threshold_at_boundary_emits_directive
 inject_hook_threshold_shows_directive
+inject_hook_always_priority_bypasses_budget
+inject_hook_prompt_aware_scoring
+inject_hook_byte_cap_truncates_before_entry_cap
 inject_hook_default_home_fallback
 
 # Episode reminder tests (CC-019 inject hook extension)
