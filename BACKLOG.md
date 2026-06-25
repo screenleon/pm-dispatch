@@ -87,7 +87,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-403 | ✅ closed 2026-06-22 | **[retrieval-first: `pmctl context --source memory` 讓 memory 可被檢索（supersede/吸收 [[CC-340]]）]** 今天 pmctl context 只掃 repo 內檔，memory（`~/.claude/projects/<id>/memory/`）完全搜不到 → 對「決策/規則/偏好」這類最常找的特定資料「優先用 pmctl context」物理上不可能。新增 source 軸 `query --source repo/memory/all`（不 overload `--domain`；memory 是不同平面非 repo 路徑類），memory DB 落 memory 目錄下而非 repo-local（避免私有 memory 進 checkout），schema `source_domain` enum 補 `memory`、pack `memories[]` 真正填值、reuse-scan 維持 repo-only。吸收 CC-340 MVP（FTS5-optional + LIKE/grep fallback、no embeddings）；embeddings/語意後端留作 follow-up。動 pmctl-context.sh。 | memory | 2026-06-18 | pr:#313 | P2 | retrieval |
 | CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-405 | 🟢 someday | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
-| CC-406 | 🟢 someday | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-406 | ✅ closed 2026-06-25 | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | pr:#325 | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
 | CC-412 | 🟢 someday | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API） | arch/memory | 2026-06-23 | — | P3 | retrieval |
@@ -95,6 +95,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-421 | 🟢 someday | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | — | P3 | — |
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
+| CC-424 | 🔵 active | **[refactor: memory commands 去 python3 化（mem-log/mem-recall/mem-search/memory-compress）]** 目前 `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker + subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化（`assert_not_contains "no python3 calls"` 斷言保護）。改用純 bash：memory dir walker 改 while 迴圈；rg/grep 呼叫改 `rg -ilF -- "$query" ...` 或 `grep -rilF -- "$query" ...`；pmctl 呼叫改 `pmctl context query "$project_root" --source memory -- "$query"`。`"$var"` + `--` 分隔符提供等效的 shell-injection 保護。各 command 改完後在 `test-commands.sh` 加 `assert_not_contains ... "python3"` 對齊 mem-distill 模式。 | arch/memory | 2026-06-25 | — | P2 | — |
 
 ---
 
@@ -1235,7 +1236,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
 
-## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` 🟢 someday → v0.7.0
+## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` ✅ 2026-06-25
 
 **Problem**: `commands/mem-search.md` 自刻一套（Step 2 `rg`/`grep`、Step 3 semantic fallback），**完全不經 `pmctl context`** → 與「優先用內建 context 指令」的目標直接衝突，且檢索品質受 MEMORY.md index 手感影響過大。
 
@@ -1248,6 +1249,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3.
 
+**See**: pr:#325
 
 **Refs**: 相依 [[CC-403]]、[[CC-400]]（檢索順序）、`commands/mem-search.md`。
 
@@ -1480,5 +1482,22 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `pmctl gate run --lifecycle foreground` 行為不變（backward-compat）
 
 **See**: dispatch sentinel 實作於 `scripts/dispatch-supervisor.sh`、`scripts/lib/pmctl-dispatch.sh`（`pmctl_dispatch_run_detached`、`pmctl_dispatch_wait`）可參考複用。
+
+**Priority**: P3（someday）.
+
+## CC-424 — refactor: memory commands 去 python3 化 🔵 active → next PR
+
+**Problem**: `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker 和 subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化並有 `assert_not_contains "no python3 calls"` 斷言保護，其他 memory commands 未對齊。
+
+**Why**: 減少外部直譯器依賴，與 mem-distill 已確立的純 bash 模式保持一致；bash `"$var"` + `--` 分隔符提供等效的 shell-injection 保護，不需要 Python subprocess。
+
+**Requirement**:
+- `commands/mem-log.md`：memory dir walker 改 bash while 迴圈
+- `commands/mem-recall.md`：memory dir walker 改 bash while 迴圈
+- `commands/mem-search.md`：Step 1 walker + Step 2 pmctl 呼叫 + Step 3 rg/grep 全改 bash
+- `commands/memory-compress.md`：移除 python3 呼叫
+- 各 command 在 `test-commands.sh` 加 `assert_not_contains ... "python3"` 對齊 mem-distill 模式
+- bash rg/grep 形式：`rg -ilF -- "$query" ...` 或 `grep -rilF -- "$query" ...`
+- bash pmctl 形式：`pmctl context query "$project_root" --source memory -- "$query"`
 
 **Priority**: P3（someday）.
