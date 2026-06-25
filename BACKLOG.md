@@ -212,7 +212,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-003 — [artifact-relocation epic umbrella] dispatch/gate 副產物搬出 repo ✅ 2026-06-25
 
-**See**: pr:#TBD
+**See**: pr:#324
 
 **Decision**: 見 DECISIONS.md 2026-06-23 `dispatch-gate-artifacts-relocate-out-of-repo`（五方分析統整裁決）。
 **Problem**: dispatch 與 pr-gate 把 scratch artifact 寫進使用者 repo：`.agent-trace/`（adapter `TRACE_DIR=$WORK_DIR/.agent-trace` 寫死）、`.gate-briefs/`、`.gate-results/` + footer/runspec/supervisor log。(L1) pr-gate parallel integrity check（`pr-gate.sh:895/1093`）對 `git status --porcelain` 取 dispatch 前後 hash，gate 自己的寫入若未被 ignore 就改動 hash → 健康 repo 誤判 abort（原始症狀）。(L2) 即使 ignore，檔案仍實體污染 repo（本 repo 已累積 93MB；且跨所有被作用過的 repo）。
@@ -266,7 +266,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移 ✅ 2026-06-25
 
-**See**: pr:#TBD
+**See**: pr:#324
 
 **Problem**: 預設仍 in-repo；state store 無 GC 會無限增長；且各 repo 已有大量既有副產物（本 repo 93MB+）。
 **Why**: 收尾——讓 out-of-repo 成預設並控管生命週期，同時清理歷史污染。

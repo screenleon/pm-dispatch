@@ -308,7 +308,7 @@ pmctl_artifacts_gc() {
   local artifact_paths_sh
   artifact_paths_sh="${repo_root}/scripts/lib/artifact-paths.sh"
   if [[ -r "$artifact_paths_sh" ]]; then
-    # shellcheck disable=SC1091
+    # shellcheck disable=SC1090,SC1091
     . "$artifact_paths_sh" 2>/dev/null || true
   fi
   local leaves=("${PM_ARTIFACT_LEAVES[@]-.agent-trace .gate-briefs .gate-results}")
@@ -447,7 +447,7 @@ pmctl_artifacts_migrate() {
   local artifact_paths_sh
   artifact_paths_sh="${repo_root}/scripts/lib/artifact-paths.sh"
   if [[ -r "$artifact_paths_sh" ]]; then
-    # shellcheck disable=SC1091
+    # shellcheck disable=SC1090,SC1091
     . "$artifact_paths_sh" 2>/dev/null || true
   fi
   local leaves=("${PM_ARTIFACT_LEAVES[@]-.agent-trace .gate-briefs .gate-results}")
