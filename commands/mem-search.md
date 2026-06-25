@@ -63,10 +63,18 @@ result = subprocess.run(
     capture_output=True, text=True, cwd=memory_dir
 )
 
+# Non-zero exit means the index query itself failed (not just no hits).
+# Print a warning and emit no refs so the caller falls back to rg/grep.
+if result.returncode != 0:
+    print(f"pmctl context query failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+    sys.exit(0)
+
+# Use lstrip() to tolerate optional leading whitespace in `- ref:` lines.
 refs = []
 for line in result.stdout.splitlines():
-    if line.startswith('- ref: '):
-        ref = line[len('- ref: '):].strip()
+    stripped = line.lstrip()
+    if stripped.startswith('- ref: '):
+        ref = stripped[len('- ref: '):].strip()
         if ref:
             refs.append(ref)
 
@@ -75,9 +83,11 @@ if refs:
 PYEOF
 ```
 
-Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
+If refs are returned, these are the matching memory card paths. Proceed directly to Step 5 using these files — skip Steps 3 and 4.
 
-If refs are returned, these are the matching memory card paths. Proceed directly to Step 4 using these files — skip Step 3.
+If no refs are printed (no hits → `# no hits for: …` in stdout) or the subprocess exited nonzero (query failure → warning on stderr), fall through to Step 3.
+
+Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `MEMORY_DIR_PLACEHOLDER` with the path from Step 1.
 
 ## Step 3 — Keyword search via rg/grep (fallback when index has no hits)
 
