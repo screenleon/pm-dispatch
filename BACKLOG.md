@@ -95,6 +95,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-421 | 🟢 someday | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | — | P3 | — |
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
+| CC-424 | 🔵 active | **[refactor: memory commands 去 python3 化（mem-log/mem-recall/mem-search/memory-compress）]** 目前 `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker + subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化（`assert_not_contains "no python3 calls"` 斷言保護）。改用純 bash：memory dir walker 改 while 迴圈；rg/grep 呼叫改 `rg -ilF -- "$query" ...` 或 `grep -rilF -- "$query" ...`；pmctl 呼叫改 `pmctl context query "$project_root" --source memory -- "$query"`。`"$var"` + `--` 分隔符提供等效的 shell-injection 保護。各 command 改完後在 `test-commands.sh` 加 `assert_not_contains ... "python3"` 對齊 mem-distill 模式。 | arch/memory | 2026-06-25 | — | P2 | — |
 
 ---
 
@@ -1481,5 +1482,22 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `pmctl gate run --lifecycle foreground` 行為不變（backward-compat）
 
 **See**: dispatch sentinel 實作於 `scripts/dispatch-supervisor.sh`、`scripts/lib/pmctl-dispatch.sh`（`pmctl_dispatch_run_detached`、`pmctl_dispatch_wait`）可參考複用。
+
+**Priority**: P3（someday）.
+
+## CC-424 — refactor: memory commands 去 python3 化 🔵 active → next PR
+
+**Problem**: `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker 和 subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化並有 `assert_not_contains "no python3 calls"` 斷言保護，其他 memory commands 未對齊。
+
+**Why**: 減少外部直譯器依賴，與 mem-distill 已確立的純 bash 模式保持一致；bash `"$var"` + `--` 分隔符提供等效的 shell-injection 保護，不需要 Python subprocess。
+
+**Requirement**:
+- `commands/mem-log.md`：memory dir walker 改 bash while 迴圈
+- `commands/mem-recall.md`：memory dir walker 改 bash while 迴圈
+- `commands/mem-search.md`：Step 1 walker + Step 2 pmctl 呼叫 + Step 3 rg/grep 全改 bash
+- `commands/memory-compress.md`：移除 python3 呼叫
+- 各 command 在 `test-commands.sh` 加 `assert_not_contains ... "python3"` 對齊 mem-distill 模式
+- bash rg/grep 形式：`rg -ilF -- "$query" ...` 或 `grep -rilF -- "$query" ...`
+- bash pmctl 形式：`pmctl context query "$project_root" --source memory -- "$query"`
 
 **Priority**: P3（someday）.
