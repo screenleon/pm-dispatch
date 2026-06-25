@@ -270,7 +270,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Problem**: 預設仍 in-repo；state store 無 GC 會無限增長；且各 repo 已有大量既有副產物（本 repo 93MB+）。
 **Why**: 收尾——讓 out-of-repo 成預設並控管生命週期，同時清理歷史污染。
-**Requirement**: 翻 `--artifact-root`/`PM_DISPATCH_ARTIFACT_MODE` 預設為 out-of-repo，保留 in-repo opt-in ≥1 release + 首跑遷移提示；加 retention（keep last N / age-based）+ `pmctl artifacts gc`；提供跨 repo 遷移/清理工具（掃 `~/github/*` 或可設根的 `.agent-trace`/`.gate-*`，可選保留 verdict 摘要後刪除 trace）。**多機器可攜**：清理/遷移須為 committed、idempotent、可在任意機器重複執行的指令（每台各跑同一 `pmctl artifacts gc --all-repos`/migrate，不可依賴單機一次性手刪）；dry-run 列出待刪目錄、絕不誤刪 `.pm-dispatch/`（active context DB）。run id 加 PID/隨機防並發撞；`latest.*` 降級為非權威。
+**Requirement**: out-of-repo 已為結構性預設（sw_project_run_dir 在所有 adapter 優先取用，legacy in-repo fallback 僅在 state-paths 不可用時觸發）；舊 PM_DISPATCH_TRACE_DIR 指向 work_dir 時一次性 stderr 提示（_SW_INREPO_NOTICE_EMITTED 防重複）；加 retention（keep last N / age-based）+ pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D] [--cd work_dir]；pmctl artifacts gc --all-repos [--repos-root dir] 掃 ~/github/*/ 清理既有副產物（勿在 active dispatch/gate 期間執行）；pmctl artifacts migrate 一次性遷移 in-repo 舊資料；全部 idempotent、dry-run 可見、絕不誤刪 .pm-dispatch/；PM_DISPATCH_GC_KEEP_LAST/PM_DISPATCH_GC_MAX_AGE_DAYS env 可設預設值。注意：--artifact-root/PM_DISPATCH_ARTIFACT_MODE env 切換未實作（不需要，結構性預設已達同等效果）。
 
 ## CC-004 — test-pr-gate.sh docstring 格式統一
 

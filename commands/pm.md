@@ -91,7 +91,7 @@ pmctl artifacts migrate [--cd <work_dir>]
 - `--dry-run`: list what would be deleted without removing anything.
 - `--keep-last N` (default 10): always retain the N newest runs per partition.
 - `--max-age-days D` (default 30): delete runs older than D days (0 disables the age filter — only keep-last applies).
-- `--all-repos`: scan `~/github/*/` (or `--repos-root <dir>`) for in-repo remnant directories (`.agent-trace`, `.gate-briefs`, `.gate-results`) and remove them. Never touches `.pm-dispatch/`.
+- `--all-repos`: scan `~/github/*/` (or `--repos-root <dir>`) for in-repo remnant directories (`.agent-trace`, `.gate-briefs`, `.gate-results`) and remove them. Never touches `.pm-dispatch/`. **Run only when no dispatch or gate is active** — an in-progress run may still be writing to its in-repo artifact directory.
 - `pmctl artifacts migrate --cd <work_dir>`: copy any remaining in-repo artifact leaves into the out-of-repo partition (idempotent; originals preserved for manual removal after verification).
 
 Overridable via env: `PM_DISPATCH_GC_KEEP_LAST`, `PM_DISPATCH_GC_MAX_AGE_DAYS`. Flag values always win over env.

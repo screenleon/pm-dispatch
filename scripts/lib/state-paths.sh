@@ -123,12 +123,15 @@ sw_project_run_dir() {
 # precedence — shared by every adapter and by post-verify so the rule is
 # defined and tested ONCE instead of copied per script:
 #   explicit <override> (a --trace-dir flag value) > PM_DISPATCH_TRACE_DIR env
-#   > <legacy_default> (the caller's in-repo default, e.g. $WORK_DIR/.agent-trace).
+#   > <legacy_default> (supplied by the caller; adapters now pass sw_project_run_dir
+#     output as the default, so out-of-repo routing is the effective behavior for
+#     any installed pm-dispatch; the legacy in-repo path is only reached when
+#     sw_project_run_dir is unavailable in the caller).
 # An explicit override (flag OR env) MUST be absolute, so the trace location
 # never depends on the caller's cwd; a relative explicit value is rejected
-# (return 2). The legacy default is now only emitted when sw_project_run_dir is
-# unavailable — out-of-repo routing is the effective default for any installed
-# pm-dispatch. Prints the resolved dir.
+# (return 2). The legacy_default argument is emitted verbatim when no override
+# or env value is present — callers are responsible for passing the right default.
+# Prints the resolved dir.
 # When PM_DISPATCH_TRACE_DIR points inside work_dir, a one-time stderr notice
 # is emitted to guide migration (guarded by _SW_INREPO_NOTICE_EMITTED).
 sw_resolve_trace_dir() {
