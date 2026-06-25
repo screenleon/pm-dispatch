@@ -26,23 +26,18 @@ Record what happened in this session to the episodic memory layer. Follow these 
 Run the same project-lookup as the memory inject hook:
 
 ```bash
-python3 -c "
-import os
-cwd = os.getcwd()
-config = os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude'))
-projects = os.path.join(config, 'projects')
-current = cwd.rstrip('/')
-while True:
-    encoded = '-' + current.lstrip('/').replace('/', '-')
-    ep = os.path.join(projects, encoded, 'memory', 'episodes.jsonl')
-    if os.path.exists(os.path.dirname(ep)):
-        print(ep)
+config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+current="$(pwd)"
+while [[ "$current" != "/" ]]; do
+    encoded="-${current#/}"
+    encoded="${encoded//\//-}"
+    ep="$config/projects/$encoded/memory/episodes.jsonl"
+    if [[ -d "$(dirname "$ep")" ]]; then
+        echo "$ep"
         break
-    parent = os.path.dirname(current)
-    if parent == current:
-        break
-    current = parent
-"
+    fi
+    current="$(dirname "$current")"
+done
 ```
 
 If nothing is printed, report "No memory directory found for this project" and stop.

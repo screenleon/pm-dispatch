@@ -25,23 +25,18 @@ Compress the MEMORY.md index for the current project's memory directory. Follow 
 
 Run:
 ```bash
-python3 -c "
-import os, sys
-cwd = os.getcwd()
-config = os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude'))
-projects = os.path.join(config, 'projects')
-current = cwd.rstrip('/')
-while True:
-    encoded = '-' + current.lstrip('/').replace('/', '-')
-    candidate = os.path.join(projects, encoded, 'memory', 'MEMORY.md')
-    if os.path.isfile(candidate):
-        print(candidate)
+config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+current="$(pwd)"
+while [[ "$current" != "/" ]]; do
+    encoded="-${current#/}"
+    encoded="${encoded//\//-}"
+    candidate="$config/projects/$encoded/memory/MEMORY.md"
+    if [[ -f "$candidate" ]]; then
+        echo "$candidate"
         break
-    parent = os.path.dirname(current)
-    if parent == current:
-        break
-    current = parent
-"
+    fi
+    current="$(dirname "$current")"
+done
 ```
 
 If nothing is printed, report "No MEMORY.md found for this project" and stop.

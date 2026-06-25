@@ -24,112 +24,57 @@ Search the project memory for `$ARGUMENTS`. If no query is provided, ask the use
 ## Step 1 — Find memory directory
 
 ```bash
-python3 -c "
-import os
-cwd = os.getcwd()
-config = os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude'))
-projects = os.path.join(config, 'projects')
-current = cwd.rstrip('/')
-while True:
-    encoded = '-' + current.lstrip('/').replace('/', '-')
-    mem = os.path.join(projects, encoded, 'memory')
-    if os.path.isdir(mem):
-        print(mem)
-        print(current)
+config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+current="$(pwd)"
+while [[ "$current" != "/" ]]; do
+    encoded="-${current#/}"
+    encoded="${encoded//\//-}"
+    mem="$config/projects/$encoded/memory"
+    if [[ -d "$mem" ]]; then
+        echo "$mem"
+        echo "$current"
         break
-    parent = os.path.dirname(current)
-    if parent == current:
-        break
-    current = parent
-"
+    fi
+    current="$(dirname "$current")"
+done
 ```
 
 This prints two lines: `memory_dir` (first) and `project_root` (second — the matched directory). If nothing is printed, report "No memory directory found for this project" and stop.
 
 ## Step 2 — Index query via pmctl context (primary path)
 
-Run `pmctl context query <project_root> --source memory <query>` via Python subprocess to avoid shell injection. Pass `project_root` (the second line from Step 1) as the first positional argument so the lookup is scoped to this project's memory, not pm-dispatch's.
+Run `pmctl context query "$project_root" --source memory -- "$query"` to query the index. Pass `project_root` (the second line from Step 1) as the first positional argument so the lookup is scoped to this project's memory, not pm-dispatch's. The `--` separator before `"$query"` prevents injection.
 
-```python
-python3 - << 'PYEOF'
-import subprocess, sys
-
-# Claude: replace the placeholders below with actual values,
-# properly escaped for Python string syntax (use repr() if needed).
-query = "QUERY_PLACEHOLDER"
-project_root = "PROJECT_ROOT_PLACEHOLDER"
-
-result = subprocess.run(
-    ['pmctl', 'context', 'query', project_root, '--source', 'memory', query],
-    capture_output=True, text=True
-)
-
-# Non-zero exit means the index query itself failed (not just no hits).
-# Print a warning and emit no refs so the caller falls back to rg/grep.
-if result.returncode != 0:
-    print(f"pmctl context query failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
-    sys.exit(0)
-
-# Use lstrip() to tolerate optional leading whitespace in `- ref:` lines.
-refs = []
-for line in result.stdout.splitlines():
-    stripped = line.lstrip()
-    if stripped.startswith('- ref: '):
-        ref = stripped[len('- ref: '):].strip()
-        if ref:
-            refs.append(ref)
-
-if refs:
-    print('\n'.join(refs))
-PYEOF
+```bash
+pmctl_out="$(pmctl context query "$project_root" --source memory -- "$query" 2>/dev/null)"
+pmctl_exit=$?
 ```
 
-Replace `QUERY_PLACEHOLDER` with the search query as a properly-escaped Python string literal. Replace `PROJECT_ROOT_PLACEHOLDER` with `project_root` (second line from Step 1).
+Parse `$pmctl_out` for lines starting with `- ref: ` (strip the prefix, trim whitespace) and collect the file paths as refs.
 
-If refs are returned, these are the matching memory card paths. Proceed directly to Step 5 using these files — skip Steps 3 and 4.
+On nonzero exit (query failure), print a warning to stderr and fall through to Step 3.
 
-If no refs are printed (no hits → `# no hits for: …` in stdout) or the subprocess exited nonzero (query failure → warning on stderr), fall through to Step 3.
+If the output contains `# no hits`, fall through to Step 3.
+
+If refs are found, these are the matching memory card paths. Proceed directly to Step 5 using these files — skip Steps 3 and 4.
+
+If no refs are printed (no hits → `# no hits for: …` in stdout) or `$pmctl_exit` is nonzero (query failure → warning on stderr), fall through to Step 3.
 
 ## Step 3 — Keyword search via rg/grep (fallback when index has no hits)
 
 Run this only when Step 2 returned no refs (index unavailable or no hits).
 
-```python
-python3 - << 'PYEOF'
-import subprocess, os, sys
-
-query = "QUERY_PLACEHOLDER"
-memory_dir = "MEMORY_DIR_PLACEHOLDER"
-
-files = []
-try:
-    for name in os.listdir(memory_dir):
-        if name.endswith('.md') or name == 'episodes.jsonl':
-            files.append(os.path.join(memory_dir, name))
-except OSError:
-    sys.exit(0)
-
-if not files or not query:
-    sys.exit(0)
-
-# -F: fixed-string (not regex), -i: case-insensitive, -l: filenames only
-# subprocess raises FileNotFoundError (not returncode 127) when the binary
-# is absent, so catch that explicitly before falling back to grep.
-try:
-    result = subprocess.run(
-        ['rg', '-ilF', '--', query] + files,
-        capture_output=True, text=True
-    )
-except FileNotFoundError:
-    result = subprocess.run(
-        ['grep', '-rilF', '--', query] + files,
-        capture_output=True, text=True
-    )
-print(result.stdout.strip())
-PYEOF
+```bash
+files=()
+while IFS= read -r f; do files+=("$f"); done < <(
+    find "$memory_dir" -maxdepth 1 \( -name "*.md" -o -name "episodes.jsonl" \) 2>/dev/null
+)
+if [[ ${#files[@]} -gt 0 ]] && [[ -n "$query" ]]; then
+    rg -ilF -- "$query" "${files[@]}" 2>/dev/null || grep -rilF -- "$query" "${files[@]}" 2>/dev/null
+fi
 ```
 
-Replace `QUERY_PLACEHOLDER` and `MEMORY_DIR_PLACEHOLDER` with the actual values from Steps 1 and the original query.
+Use `$memory_dir` (first line from Step 1) and `$query` (the original search query). The `--` separator prevents injection. `-F` uses fixed-string (not regex), `-i` is case-insensitive, `-l` returns filenames only.
 
 ## Step 4 — Semantic search (fallback when Steps 2 and 3 both empty)
 

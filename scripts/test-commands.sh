@@ -122,11 +122,39 @@ should_run "mem-distill: documents review.verdict event kind" && assert_file_con
 should_run "mem-distill: review.verdict payload.verdict documented" && assert_file_contains "mem-distill: review.verdict payload.verdict documented" "$MEM_DISTILL" "payload.verdict" && pass "mem-distill: review.verdict payload.verdict documented"
 should_run "mem-distill: gate block fallback to gate-results documented" && assert_file_contains "mem-distill: gate block fallback to gate-results documented" "$MEM_DISTILL" ".gate-results" && pass "mem-distill: gate block fallback to gate-results documented"
 
+# ── mem-log.md contract ──────────────────────────────────────────────────────
+
+MEM_LOG="$COMMANDS_DIR/mem-log.md"
+
+assert_frontmatter "mem-log: frontmatter valid" "$MEM_LOG"
+should_run "mem-log: no python3 calls" && assert_not_contains "mem-log: no python3 calls" "$MEM_LOG" "python3"
+should_run "mem-log: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-log: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_LOG" "CLAUDE_CONFIG_DIR" && pass "mem-log: Step 1 references CLAUDE_CONFIG_DIR"
+should_run "mem-log: Step 1 walks parent directories" && assert_file_contains "mem-log: Step 1 walks parent directories" "$MEM_LOG" "dirname" && pass "mem-log: Step 1 walks parent directories"
+
+# ── mem-recall.md contract ────────────────────────────────────────────────────
+
+MEM_RECALL="$COMMANDS_DIR/mem-recall.md"
+
+assert_frontmatter "mem-recall: frontmatter valid" "$MEM_RECALL"
+should_run "mem-recall: no python3 calls" && assert_not_contains "mem-recall: no python3 calls" "$MEM_RECALL" "python3"
+should_run "mem-recall: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-recall: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_RECALL" "CLAUDE_CONFIG_DIR" && pass "mem-recall: Step 1 references CLAUDE_CONFIG_DIR"
+should_run "mem-recall: Step 1 walks parent directories" && assert_file_contains "mem-recall: Step 1 walks parent directories" "$MEM_RECALL" "dirname" && pass "mem-recall: Step 1 walks parent directories"
+
+# ── memory-compress.md contract ───────────────────────────────────────────────
+
+MEMORY_COMPRESS="$COMMANDS_DIR/memory-compress.md"
+
+assert_frontmatter "memory-compress: frontmatter valid" "$MEMORY_COMPRESS"
+should_run "memory-compress: no python3 calls" && assert_not_contains "memory-compress: no python3 calls" "$MEMORY_COMPRESS" "python3"
+should_run "memory-compress: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "memory-compress: Step 1 references CLAUDE_CONFIG_DIR" "$MEMORY_COMPRESS" "CLAUDE_CONFIG_DIR" && pass "memory-compress: Step 1 references CLAUDE_CONFIG_DIR"
+should_run "memory-compress: Step 1 walks parent directories" && assert_file_contains "memory-compress: Step 1 walks parent directories" "$MEMORY_COMPRESS" "dirname" && pass "memory-compress: Step 1 walks parent directories"
+
 # ── mem-search.md contract ───────────────────────────────────────────────────
 
 MEM_SEARCH="$COMMANDS_DIR/mem-search.md"
 
 assert_frontmatter "mem-search: frontmatter valid" "$MEM_SEARCH"
+should_run "mem-search: no python3 calls" && assert_not_contains "mem-search: no python3 calls" "$MEM_SEARCH" "python3"
 should_run "mem-search: has Step 1 (memory dir)" && assert_file_contains "mem-search: has Step 1 (memory dir)" "$MEM_SEARCH" "Step 1" && pass "mem-search: has Step 1 (memory dir)"
 should_run "mem-search: Step 1 references CLAUDE_CONFIG_DIR" && assert_file_contains "mem-search: Step 1 references CLAUDE_CONFIG_DIR" "$MEM_SEARCH" "CLAUDE_CONFIG_DIR" && pass "mem-search: Step 1 references CLAUDE_CONFIG_DIR"
 should_run "mem-search: Step 1 walks parent directories" && assert_file_contains "mem-search: Step 1 walks parent directories" "$MEM_SEARCH" "dirname" && pass "mem-search: Step 1 walks parent directories"
@@ -134,18 +162,15 @@ should_run "mem-search: has Step 2 (pmctl context query)" && assert_file_contain
 should_run "mem-search: Step 1 outputs project root as second line" && assert_file_contains "mem-search: Step 1 outputs project root as second line" "$MEM_SEARCH" "project_root" && pass "mem-search: Step 1 outputs project root as second line"
 should_run "mem-search: Step 2 uses pmctl context query" && assert_file_contains "mem-search: Step 2 uses pmctl context query" "$MEM_SEARCH" "pmctl context query" && pass "mem-search: Step 2 uses pmctl context query"
 should_run "mem-search: Step 2 uses --source memory flag" && assert_file_contains "mem-search: Step 2 uses --source memory flag" "$MEM_SEARCH" "--source" && pass "mem-search: Step 2 uses --source memory flag"
-should_run "mem-search: Step 2 passes project_root to pmctl" && assert_file_contains "mem-search: Step 2 passes project_root to pmctl" "$MEM_SEARCH" "PROJECT_ROOT_PLACEHOLDER" && pass "mem-search: Step 2 passes project_root to pmctl"
-should_run "mem-search: Step 2 scopes query to correct project" && assert_file_contains "mem-search: Step 2 scopes query to correct project" "$MEM_SEARCH" "project_root, '--source', 'memory'" && pass "mem-search: Step 2 scopes query to correct project"
-should_run "mem-search: Step 2 uses subprocess.run for pmctl call" && assert_file_contains "mem-search: Step 2 uses subprocess.run for pmctl call" "$MEM_SEARCH" "subprocess.run" && pass "mem-search: Step 2 uses subprocess.run for pmctl call"
+should_run "mem-search: Step 2 uses -- separator before query" && assert_file_contains "mem-search: Step 2 uses -- separator before query" "$MEM_SEARCH" '-- "$query"' && pass "mem-search: Step 2 uses -- separator before query"
 should_run "mem-search: Step 2 success path skips fallback steps" && assert_file_contains "mem-search: Step 2 success path skips fallback steps" "$MEM_SEARCH" "skip Steps 3 and 4" && pass "mem-search: Step 2 success path skips fallback steps"
 should_run "mem-search: Step 2 parses ref lines" && assert_file_contains "mem-search: Step 2 parses ref lines" "$MEM_SEARCH" "- ref: " && pass "mem-search: Step 2 parses ref lines"
-should_run "mem-search: Step 2 parser uses lstrip for indented refs" && assert_file_contains "mem-search: Step 2 parser uses lstrip for indented refs" "$MEM_SEARCH" "lstrip" && pass "mem-search: Step 2 parser uses lstrip for indented refs"
-should_run "mem-search: Step 2 handles nonzero exit from pmctl" && assert_file_contains "mem-search: Step 2 handles nonzero exit from pmctl" "$MEM_SEARCH" "returncode" && pass "mem-search: Step 2 handles nonzero exit from pmctl"
+should_run "mem-search: Step 2 handles nonzero exit" && assert_file_contains "mem-search: Step 2 handles nonzero exit" "$MEM_SEARCH" "nonzero exit" && pass "mem-search: Step 2 handles nonzero exit"
 should_run "mem-search: Step 2 documents no-hits fallback path" && assert_file_contains "mem-search: Step 2 documents no-hits fallback path" "$MEM_SEARCH" "no hits" && pass "mem-search: Step 2 documents no-hits fallback path"
 should_run "mem-search: Step 2 documents query-failure fallback path" && assert_file_contains "mem-search: Step 2 documents query-failure fallback path" "$MEM_SEARCH" "query failure" && pass "mem-search: Step 2 documents query-failure fallback path"
 should_run "mem-search: has Step 3 (rg/grep fallback)" && assert_file_contains "mem-search: has Step 3 (rg/grep fallback)" "$MEM_SEARCH" "Step 3" && pass "mem-search: has Step 3 (rg/grep fallback)"
 should_run "mem-search: Step 3 is rg/grep fallback" && assert_file_contains "mem-search: Step 3 is rg/grep fallback" "$MEM_SEARCH" "fallback" && pass "mem-search: Step 3 is rg/grep fallback"
-should_run "mem-search: Step 3 uses subprocess for injection safety" && assert_file_contains "mem-search: Step 3 uses subprocess for injection safety" "$MEM_SEARCH" "subprocess" && pass "mem-search: Step 3 uses subprocess for injection safety"
+should_run "mem-search: Step 3 uses find for file list" && assert_file_contains "mem-search: Step 3 uses find for file list" "$MEM_SEARCH" "find " && pass "mem-search: Step 3 uses find for file list"
 should_run "mem-search: has semantic search step" && assert_file_contains "mem-search: has semantic search step" "$MEM_SEARCH" "Semantic" && pass "mem-search: has semantic search step"
 
 # ── pre-impl.md Q4 contract ──────────────────────────────────────────────────
