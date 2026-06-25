@@ -129,10 +129,11 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-403 | `pmctl context --source repo/memory/all`：memory 變可檢索 source（memory-local DB、schema `source_domain` 補 memory、pack `memories[]` 填值、reuse-scan 維持 repo-only）。**supersede/吸收 [[CC-340]] MVP**，embeddings 留 CC-340 | ✅ pr:#313 |
-| CC-404 | `MEMORY.md` 注入預算 + `priority: always`/`scope: active` metadata，取代「全注入 + >=50 才警告」。需與 CC-405 metadata 同捆或先行 | 🟢 |
+| CC-404 | `MEMORY.md` 注入硬預算（20 條/3000B）+ `priority: always` pin + prompt-keyword 排序，取代「全注入 + >=50 才警告」。usage-based 動態排序分流至 [[CC-427]] | ✅ pr:#328 |
 | CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | ✅ |
-| CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | 🟢 |
+| CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | ✅ pr:#325 |
 | CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | 🟢 |
+| CC-427 | tier1 只認 `priority: always`（pin），normal 卡改 usage-based recency+frequency frecency 排序（Firefox bucket `access_count×age_bucket` + W-TinyLFU 老化，純整數零 LLM）；修 [[CC-404]] 預算因 33 卡全 `status: active` 失效。Phase 1 spike → Phase 2 實作 | 🔵 P2 active |
 
 ### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
 
