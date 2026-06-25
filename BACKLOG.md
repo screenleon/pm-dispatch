@@ -16,7 +16,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-415 | ✅ done | Phase 2：post-verify containment guard 改以 caller 供給的 trusted run-dir 為界（canonical 前綴比對），取代 work-dir 界 | ops/security | 2026-06-23 | — | P2 | design |
 | CC-416 | ✅ closed 2026-06-24 | Phase 3a：pmctl 配 run dir 並把 gate briefs/results/trace 搬出 repo（CC-003 原始 bug 修復本體），保留 .gate-results 葉名 | arch/gate | 2026-06-23 | pr:#321 | P2 | design |
 | CC-417 | ✅ closed 2026-06-25 | Phase 3b：normal dispatch 的 trace/footer/runspec/supervisor log 搬出 repo（走同一 run dir seam） | arch | 2026-06-23 | pr:#322 | P2 | design |
-| CC-418 | ✅ closed 2026-06-25 | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | pr:#NNN | P3 | design |
+| CC-418 | ✅ closed 2026-06-25 | Phase 4：observer + 可發現性——codex-watch 解析新位置、gate 結束印 results/trace 路徑、新增 pmctl artifacts list/show | ux/ops | 2026-06-23 | pr:#323 | P3 | design |
 | CC-419 | 🔵 active | Phase 5：翻 out-of-repo 預設（保留 in-repo opt-in 一 release）+ GC/retention + 跨 repo 既有副產物一次性遷移/清理工具 | ops | 2026-06-23 | — | P3 | design |
 | CC-004 | 🔵 active | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
@@ -260,7 +260,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Problem**: 搬出 repo 後，`codex-watch.sh:24`（tail `$WORK_DIR/.agent-trace/latest.jsonl`）失效，使用者也無法再 `ls .gate-results`。
 **Why**: 可發現性是搬遷的最大 UX 風險，須補齊。
 **Requirement**: codex-watch 改由 pmctl 印出的 trace 路徑或 run-record 解析（加 `--trace <path>`/`--run <id>`）；gate 與 dispatch 結束印 `results:`/`trace:` 絕對路徑；新增 `pmctl artifacts list/show`（與 gate verdict 查看入口）。
-**See**: pr:#NNN
+**See**: pr:#323
 
 ## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移
 

@@ -631,7 +631,7 @@ pmctl_dispatch_execute_tail() {
   fi
   printf '%s\n' "$_pv_out"
   if [[ -n "$_trace_dir" ]]; then
-    printf 'trace: %s\nrun-dir: %s\n' "$_trace_dir" "$_run_dir"
+    printf 'trace-dir: %s\nrun-dir: %s\n' "$_trace_dir" "$_run_dir"
   fi
   if [[ "$_pv_rc" -ne 0 ]]; then
     printf 'pmctl dispatch run: post-verify failed\n' >&2
