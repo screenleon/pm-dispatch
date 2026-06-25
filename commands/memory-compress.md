@@ -25,26 +25,13 @@ Compress the MEMORY.md index for the current project's memory directory. Follow 
 
 Run:
 ```bash
-python3 -c "
-import os, sys
-cwd = os.getcwd()
-config = os.environ.get('CLAUDE_CONFIG_DIR', os.path.expanduser('~/.claude'))
-projects = os.path.join(config, 'projects')
-current = cwd.rstrip('/')
-while True:
-    encoded = '-' + current.lstrip('/').replace('/', '-')
-    candidate = os.path.join(projects, encoded, 'memory', 'MEMORY.md')
-    if os.path.isfile(candidate):
-        print(candidate)
-        break
-    parent = os.path.dirname(current)
-    if parent == current:
-        break
-    current = parent
-"
+mem="$(pmctl memory dir)" || { echo "No MEMORY.md found for this project"; exit 1; }
+candidate="$mem/MEMORY.md"
+[[ -f "$candidate" ]] || { echo "No MEMORY.md found for this project"; exit 1; }
+echo "$candidate"
 ```
 
-If nothing is printed, report "No MEMORY.md found for this project" and stop.
+If `pmctl memory dir` exits non-zero, or `MEMORY.md` does not exist, report "No MEMORY.md found for this project" and stop.
 
 ## Step 2 — Read and inventory
 

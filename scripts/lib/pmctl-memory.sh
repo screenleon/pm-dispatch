@@ -14,6 +14,15 @@
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
 
+# Print the memory directory for the given working directory (default: $PWD).
+# Exit 1 (no output) if no memory directory is found.
+pmctl_memory_dir() {
+  local cwd="${1:-$PWD}"
+  local mem_dir
+  mem_dir="$(find_memory_dir "$cwd")" || return 1
+  printf '%s\n' "$mem_dir"
+}
+
 _mem_json_esc() {
   local s="$1"
   s="${s//\\/\\\\}"

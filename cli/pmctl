@@ -213,6 +213,12 @@ case "$cmd/$sub" in
     fi
     pmctl_context_reuse_scan "$@"
     ;;
+  memory/dir)
+    if ! declare -F pmctl_memory_dir >/dev/null; then
+      pmctl_die "memory dir unavailable"
+    fi
+    pmctl_memory_dir "$@"
+    ;;
   memory/doctor)
     if ! declare -F pmctl_memory_doctor >/dev/null; then
       pmctl_die "memory doctor unavailable"
