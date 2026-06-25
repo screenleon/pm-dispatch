@@ -86,7 +86,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | **[design: portable-skill-substrate — CLI-agnostic skill 控制層]** 把 pm-dispatch 提升為 dispatch「skill-guided agents」：skill 為平台中立的 portable Markdown contract（方法），adapter 為平台轉譯層，core 管 task/context/permission/verify/memory，tool layer 為權限邊界。原則：capability-matching 非平台名、skill 不執行/不持狀態/不知平台、evidence-based completion、runtime 注入非全域安裝。重點：多數能力 pm-dispatch 已獨立長出（adapter manifest CC-372、post-verify CC-386、manifest guard CC-374/375），本票是替既有控制層命名/索引而非補洞。高槓桿子集＝control skills（guard-aware-brief、guard-result-review、markdown-drift-audit）。最小落地＝3 個 control skill＋thin Portable Skill v0 frontmatter，不做 marketplace/全域安裝/skill DSL。排程：v0.6.0（N≥2 抽象成立後）之後，與 [[CC-216]] v0.7.0 MCP 通用橋同層同期評估。設計捕捉見 `docs/notes/portable-skill-substrate.md`。umbrella [[CC-333]]。 | arch | 2026-06-16 | — | — | design |
 | CC-403 | ✅ closed 2026-06-22 | **[retrieval-first: `pmctl context --source memory` 讓 memory 可被檢索（supersede/吸收 [[CC-340]]）]** 今天 pmctl context 只掃 repo 內檔，memory（`~/.claude/projects/<id>/memory/`）完全搜不到 → 對「決策/規則/偏好」這類最常找的特定資料「優先用 pmctl context」物理上不可能。新增 source 軸 `query --source repo/memory/all`（不 overload `--domain`；memory 是不同平面非 repo 路徑類），memory DB 落 memory 目錄下而非 repo-local（避免私有 memory 進 checkout），schema `source_domain` enum 補 `memory`、pack `memories[]` 真正填值、reuse-scan 維持 repo-only。吸收 CC-340 MVP（FTS5-optional + LIKE/grep fallback、no embeddings）；embeddings/語意後端留作 follow-up。動 pmctl-context.sh。 | memory | 2026-06-18 | pr:#313 | P2 | retrieval |
 | CC-404 | 🟢 someday | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
-| CC-405 | 🟢 someday | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-405 | ✅ closed 2026-06-25 | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-406 | ✅ closed 2026-06-25 | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | pr:#325 | P3 | retrieval |
 | CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
@@ -96,6 +96,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
 | CC-424 | ✅ closed 2026-06-25 | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | pr:#326 | P2 | — |
+| CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
+| CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
 
 ---
 
@@ -1218,7 +1220,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Refs**: [[CC-405]]（priority metadata 來源）、`scripts/hook-inject-memory.sh`、`scripts/test-hooks.sh`。
 
-## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 🟢 someday → v0.7.0
+## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 ✅ 2026-06-25
 
 **Problem**: memory 檢索目前靠 filename tier（`feedback_`/`project_`/…）+ hook text 扛太多工作，缺結構化 metadata → 檢索精準度、staleness 偵測、跨專案分享都受限；也沒有便宜可常跑的健檢（`/memory-compress` 是手動重寫流程，需把卡片讀進對話）。
 
@@ -1232,9 +1234,11 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3.
 
 
-**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。Phase A 落地：read-only `pmctl memory doctor`（`scripts/lib/pmctl-memory.sh` + `memory/doctor` case + frozen schema/`--json schema_version:1`/exit 0-1-2 + `path:`/`fn:`/`flag:` staleness）＋ additive frontmatter schema docs（`docs/memory-system.md`）＋ fixture-isolated 測試（`scripts/test-pmctl-memory.sh`，正負控）。**仍待辦（不關票）**：write-time enforce（`/mem-distill`+`/memory-compress` Step 6，須清完 warn-scan 後）＋ 35 張 live card 一次性 backfill。
+**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。Phase A 落地：read-only `pmctl memory doctor`（`scripts/lib/pmctl-memory.sh` + `memory/doctor` case + frozen schema/`--json schema_version:1`/exit 0-1-2 + `path:`/`fn:`/`flag:` staleness）＋ additive frontmatter schema docs（`docs/memory-system.md`）＋ fixture-isolated 測試（`scripts/test-pmctl-memory.sh`，正負控）。Phase B 落地：`/mem-distill` + `/memory-compress` Step 6 加入 write-time frontmatter enforce（缺欄位阻擋寫入並列出差缺欄位，參照 `docs/memory-system.md`）；33 張 live card backfill 完成，`pmctl memory doctor` 確認 `cards_missing_fields: (none)`, `issues_count: 0`。
 
 **Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
+
+**See**: pr:#TBD
 
 ## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` ✅ 2026-06-25
 
@@ -1500,3 +1504,75 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `test-pmctl-memory.sh` 新增 5 個 `pmctl memory dir` behavioral test cases
 
 **See**: pr:#326
+
+## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 🟢 someday
+
+**Problem**: `pmctl gate run` 目前的 base 推斷邏輯綁死在 `git merge-base --fork-point origin/main HEAD`，gate result 也以 PR# 為 primary key——這意味著 gate 只能在已有 PR（或預設對 main）的情況下有意義地跑，無法在開 PR 前本地對任意兩個 branch 做 diff-gate，也無法比較 `v0.6.0..v0.7.0` 這類 tag-to-tag diff。
+
+**Why**: 讓 gate 成為通用的「diff 品質閘門」，不依賴 PR 存在。可用於：開 PR 前先本地跑確認、milestone boundary 差異審查、任意 feature branch 對 release branch 的 diff review。
+
+**Requirement**:
+- `pmctl gate run [--base <ref>] [--head <ref>]`：兩者均可省略（維持現有推斷行為作為 fallback）。
+- gate result 存放路徑從 PR# key 改為 `<base-slug>..<head-slug>` 或 run_id，PR# 僅在有 PR 時作為 optional metadata 加入。
+- 文件 + `pmctl gate run --help` 說明新參數。
+
+**Priority**: P3（someday）.
+
+## CC-426 — release: `/pre-release` milestone 落地審查 🟢 someday
+
+**Problem**: BACKLOG/MILESTONES 只記錄「應該做的事」，但無法從文字層面確認每個 ticket 的改動是否完整落地——ticket 可能描述了 3 個要改的地方，commit 只改了 2 個；或 ticket 說「在 X 和 Y 都加 enforce」，只有 X 被改到。目前這個疏漏只能靠 gate 的 critic 隨機抓到（如 CC-405 的「仍待辦」文字）或人工回顧。
+
+**Why**: release 前有一個系統性的落地確認，可以在 tag 之前找出：ticket 關閉但實作未完整、CHANGELOG 未反映實際 commit、milestone scope 聲稱完成但有 ticket body 顯示遺留工作。比 gate 的 per-PR 視角更寬，比人工回顧更可靠。
+
+**Requirement**:
+
+`/pre-release [milestone-id]`（或 `pmctl pre-release v0.7.0`）：
+
+**Layer 1 — 結構檢查（機器可執行，高信心）**
+- 所有 milestone scope 內的 ticket 在 MILESTONES row 標 ✅ 且有 `**See**: pr:#NNN`
+- 所有 closed ticket body 無「仍待辦」/「待辦」/「TODO」殘留文字
+- CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
+- 所有 ticket 的 BACKLOG index status 與 body heading status 一致
+
+**Layer 2 — 語義比對（AI 判斷，中信心；按改動類型批次 dispatch）**
+- milestone 的 ticket 按**改動類型**分組（commands/ 類、scripts/ 類、docs+tracking 類等），每組一個 dispatch job，固定 3–4 個 job 上限，不隨 ticket 數線性增長
+- 每個 executor 接收：該組所有 ticket 的 Requirement/What 章節 + 對應 PR diff 摘要，回傳 per-ticket 結論（需求是否滿足、具體疑問）
+- 主線程做 fan-out + synthesis，只讀回傳的結論，不自己讀所有 diff
+- 對有疑問的 ticket 列出具體問題，不猜測，明確說「需人工確認」
+- 利用 `pmctl context query --source memory` 取得相關 decision 背景輔助判斷（相依 [[CC-403]]）
+
+**Layer 3 — 盲點聲明（誠實邊界）**
+- 明確列出工具能確認什麼、不能確認什麼
+- 「我沒發現問題」≠「確定沒問題」，報告必須包含此聲明
+- 特別標注：Layer 2 掃描不到「應該改但 ticket 沒提到的地方」（system topology 知識缺口）
+
+**假設前提（相依 [[CC-404]] 完成後）**:
+- 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
+- 節省的 context window 可放 PR diff；每個 dispatch executor 只負擔同類型的 3–5 個 ticket，不會 context 爆炸
+
+**Output format**:
+```
+## /pre-release — <milestone-id> — <date>
+
+### Layer 1 — Structural (machine checks)
+✅ / ❌ per check with file:line reference
+
+### Layer 2 — Semantic coverage
+| Ticket | Requirement summary | Diff coverage | Confidence | Flag |
+
+### Layer 3 — Blind spots
+This scan cannot confirm: …
+
+Summary: N structural issues, M semantic flags, K blind spots declared.
+```
+
+**Constraints**:
+- 不輸出 GO/NO-GO；輸出是報告，判斷留給人
+- Layer 1 checks 必須 idempotent（不改任何檔案）
+- Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context
+- dispatch 按類型批次，每 job 上限 3–4 個，不按 ticket 數量線性增長
+- 工具名稱最終定案前暫用 `/pre-release`
+
+**Priority**: P3（someday）.
+
+**Refs**: [[CC-404]]（注入預算 + context 效率）、[[CC-403]]（memory source query）、[[CC-405]]（card frontmatter 品質基礎）、[[CC-425]]（gate ref-pair，可複用 commit range 解析邏輯）。

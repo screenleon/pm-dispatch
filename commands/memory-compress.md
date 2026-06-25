@@ -92,7 +92,7 @@ Do not proceed to Step 6 until the user replies "yes" (or equivalent affirmative
 
 1. **Backup first**: copy MEMORY.md to `MEMORY.md.bak.<YYYYMMDD-HHMMSS>` in the same directory.
 2. Write the compressed content to MEMORY.md (overwrite).
-3. If any entries were merged, update the surviving memory file's `description:` frontmatter to reflect the merged scope, then **rename** the redundant file(s) to `<filename>.archived` — do NOT delete them.
+3. If any entries were merged, update the surviving memory file's `description:` frontmatter to reflect the merged scope. Before writing the updated file, verify it contains all five required fields (see `docs/memory-system.md` § Card frontmatter schema): `topics`, `priority`, `status`, `updated_at`, `repo_refs`. If any field is missing, do NOT write the file — report: "Card `<filename>` is missing required frontmatter fields: `<field, …>`. Backfill before compression." Then **rename** the redundant file(s) to `<filename>.archived` — do NOT delete them.
 4. Report:
    ```
    Compressed: <N_before> → <N_after> entries. MEMORY.md updated.

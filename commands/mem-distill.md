@@ -156,7 +156,7 @@ Present the proposed changes from Step 4 to the user and ask:
 
 After explicit user confirmation, apply each change:
 
-- **ADD**: Create the new memory file in the memory directory (using the standard frontmatter format); add the entry to MEMORY.md index.
+- **ADD**: Before writing the new memory file, verify that the frontmatter contains all five required fields (see `docs/memory-system.md` § Card frontmatter schema): `topics` (non-empty list), `priority` (`always`/`normal`/`low`), `status`, `updated_at` (`"YYYY-MM-DD"`), `repo_refs` (list, may be `[]`). If any field is missing, do NOT write the file — report: "Cannot write `<filename>`: missing required frontmatter fields: `<field, …>`. Add them and retry." Once all fields are present, create the file and add the entry to MEMORY.md index.
 - **UPDATE**: Edit the hook line in MEMORY.md; update the `description:` field in the linked memory file if needed.
 - **REMOVE**: Remove the line from MEMORY.md index; do NOT delete the memory file (archive in place).
 
