@@ -96,6 +96,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-422 | 🟢 someday | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | — | P3 | — |
 | CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
 | CC-424 | ✅ closed 2026-06-25 | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | pr:#326 | P2 | — |
+| CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 
 ---
 
@@ -1502,3 +1503,16 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `test-pmctl-memory.sh` 新增 5 個 `pmctl memory dir` behavioral test cases
 
 **See**: pr:#326
+
+## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 🟢 someday
+
+**Problem**: `pmctl gate run` 目前的 base 推斷邏輯綁死在 `git merge-base --fork-point origin/main HEAD`，gate result 也以 PR# 為 primary key——這意味著 gate 只能在已有 PR（或預設對 main）的情況下有意義地跑，無法在開 PR 前本地對任意兩個 branch 做 diff-gate，也無法比較 `v0.6.0..v0.7.0` 這類 tag-to-tag diff。
+
+**Why**: 讓 gate 成為通用的「diff 品質閘門」，不依賴 PR 存在。可用於：開 PR 前先本地跑確認、milestone boundary 差異審查、任意 feature branch 對 release branch 的 diff review。
+
+**Requirement**:
+- `pmctl gate run [--base <ref>] [--head <ref>]`：兩者均可省略（維持現有推斷行為作為 fallback）。
+- gate result 存放路徑從 PR# key 改為 `<base-slug>..<head-slug>` 或 run_id，PR# 僅在有 PR 時作為 optional metadata 加入。
+- 文件 + `pmctl gate run --help` 說明新參數。
+
+**Priority**: P3（someday）.
