@@ -324,6 +324,39 @@ case_check13_coverage() {
   pass "$name"
 }
 
+case_check13_no_unreleased_section() {
+  local name="pre-release/check13-no-unreleased-section"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check13-nounreleased"
+  mkdir -p "$tmp"
+  cat > "$tmp/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [0.9.0] — 2026-01-01
+
+### Added
+
+- Old stuff.
+EOF
+
+  local scope_rows
+  scope_rows="$(printf 'CC-001\t✅ pr:#10\nCC-002\t✅')"
+
+  local out
+  out="$(_pra_check_13_changelog "$tmp/CHANGELOG.md" "$scope_rows")"
+
+  if ! printf '%s\n' "$out" | grep -q "^❌ CC-001"; then
+    fail "$name" "CC-001 should be ❌ when [Unreleased] missing: $out"
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -q "^❌ CC-002"; then
+    fail "$name" "CC-002 should be ❌ when [Unreleased] missing: $out"
+    return
+  fi
+  pass "$name"
+}
+
 case_check14_status_consistent() {
   local name="pre-release/check14-status-consistent"
   should_run "$name" || return 0
@@ -437,6 +470,7 @@ case_check12_detects_todo
 case_check12_skips_non_closed
 case_check12_skips_code_fence
 case_check13_coverage
+case_check13_no_unreleased_section
 case_check14_status_consistent
 case_audit_missing_milestone
 case_audit_happy_path

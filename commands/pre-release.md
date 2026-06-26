@@ -40,6 +40,10 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
     --base-ref)
       idx=$((idx + 1))
       BASE_REF="${TOKENS[$idx]:-}"
+      if [[ -z "$BASE_REF" || "$BASE_REF" == --* ]]; then
+        printf 'Error: --base-ref requires a value\n' >&2
+        exit 1
+      fi
       ;;
     *)
       [[ -z "$MILESTONE_ID" ]] && MILESTONE_ID="$tok"

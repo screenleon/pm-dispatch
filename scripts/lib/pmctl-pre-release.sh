@@ -256,7 +256,11 @@ _pra_check_13_changelog() {
   ' "$changelog")"
 
   if [[ -z "$unreleased" ]]; then
-    printf '⚠️  CHANGELOG has no [Unreleased] section — cannot verify coverage\n'
+    while IFS=$'\t' read -r ticket _status; do
+      [[ -z "$ticket" ]] && continue
+      output="${output}❌ $ticket — CHANGELOG has no [Unreleased] section; coverage unverifiable"$'\n'
+    done <<< "$scope_rows"
+    printf '%s' "$output"
     return
   fi
 
