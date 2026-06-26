@@ -157,12 +157,10 @@ _pra_check_11_pr_refs() {
         line="✅ $ticket — closed with canonical PR ref"
       elif printf '%s' "$status" | grep -qiE 'pr:#[Tt][Bb][Dd]'; then
         line="❌ $ticket — ✅ but PR ref is TBD (MILESTONES.md)"
-  
       elif printf '%s' "$status" | grep -qE '#[0-9]+'; then
         line="⚠️  $ticket — ✅ with PR# but non-canonical format (expected \`pr:#NNN\`)"
       else
         line="❌ $ticket — ✅ but no PR ref found (MILESTONES.md)"
-  
       fi
     else
       line="❌ $ticket — not marked ✅ in MILESTONES.md scope (status: $status)"

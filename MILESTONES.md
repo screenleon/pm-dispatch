@@ -74,7 +74,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-426 | `/pre-release v0.7.0` 三層審查工具：Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）；Layer 2 語義比對（diff 是否滿足 ticket requirement）；Layer 3 盲點聲明。輸出報告非 GO/NO-GO。相依 [[CC-404]] + [[CC-403]] | ✅ pr:#334 |
+| CC-426 | `/pre-release` milestone 落地審查工具 — Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）+ Layer 3 盲點聲明。輸出報告非 GO/NO-GO。Layer 2 語義比對移至 [[CC-430]]。 | ✅ pr:#334 |
 | CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | 🔵 active |
 
 ### 待後續 / 與本版正交

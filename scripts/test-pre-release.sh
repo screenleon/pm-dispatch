@@ -379,8 +379,28 @@ case_check14_status_consistent() {
   pass "$name"
 }
 
+case_check11_non_canonical_pr() {
+  local name="pre-release/check11-non-canonical-pr"
+  # Behavior: a scope ticket with ✅ and a bare #NNN ref (no pr: prefix) emits ⚠️.
+  # Steps: pass scope_rows with status "✅ #9"; assert output starts with ⚠️ for that ticket.
+  should_run "$name" || return 0
+
+  local scope_rows="CC-009	✅ #9"
+
+  local out
+  out="$(_pra_check_11_pr_refs "$scope_rows" "v1.0")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^⚠️.*CC-009"; then
+    fail "$name" "non-canonical '#9' format should emit ⚠️: $out"
+    return
+  fi
+  pass "$name"
+}
+
 case_check12_skips_japanese_quoted_mention() {
   local name="pre-release/check12-skips-japanese-quoted"
+  # Behavior: markers appearing only inside Japanese brackets 「」 in a closed body are not flagged.
+  # Steps: write BACKLOG.md with CC-006 body containing 「仍待辦」/「TODO」 as examples; assert ✅.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12-jquote"
@@ -415,6 +435,8 @@ EOF
 
 case_check12_body_missing() {
   local name="pre-release/check12-body-missing"
+  # Behavior: a closed ticket whose ## body section is absent in BACKLOG.md emits ⚠️.
+  # Steps: write BACKLOG.md with index row but no body section; assert ⚠️ for that ticket.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12-nomatch"
@@ -443,6 +465,8 @@ EOF
 
 case_check14_mismatch() {
   local name="pre-release/check14-status-mismatch"
+  # Behavior: index row ✅ and body heading 🔵 produces ❌ mismatch finding.
+  # Steps: write BACKLOG.md with CC-008 index=✅ but body heading=🔵; assert ❌.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check14-mismatch"
@@ -473,6 +497,8 @@ EOF
 
 case_audit_unknown_flag() {
   local name="pre-release/audit-unknown-flag"
+  # Behavior: passing an unrecognised flag to pmctl_pre_release_audit exits 2.
+  # Steps: call audit with --unknown-flag; assert exit code is 2.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/audit-unknown-flag"
@@ -493,6 +519,8 @@ case_audit_unknown_flag() {
 
 case_audit_missing_file() {
   local name="pre-release/audit-missing-file"
+  # Behavior: audit with a repo root that has no MILESTONES.md/BACKLOG.md/CHANGELOG.md exits 2.
+  # Steps: call audit against an empty tmp dir; assert exit code is 2.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/audit-missing-file"
@@ -591,8 +619,32 @@ EOF
   pass "$name"
 }
 
+case_check14_archive_only() {
+  local name="pre-release/check14-archive-only"
+  # Behavior: a ticket with no index row in BACKLOG.md but a heading in BACKLOG-ARCHIVE.md
+  #           produces ✅ archived (not ⚠️ not-found).
+  # Steps: write BACKLOG-ARCHIVE.md with CC-010 heading; omit it from BACKLOG.md; assert ✅ archived.
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check14-archive"
+  mkdir -p "$tmp"
+  write_backlog "$tmp/BACKLOG.md"
+  write_backlog_archive "$tmp/BACKLOG-ARCHIVE.md"
+
+  local out
+  out="$(_pra_check_14_status_consistency "$tmp/BACKLOG.md" "$tmp/BACKLOG-ARCHIVE.md" "CC-010")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^✅ CC-010.*archived"; then
+    fail "$name" "archive-only ticket should be ✅ archived: $out"
+    return
+  fi
+  pass "$name"
+}
+
 case_cli_route() {
   local name="pre-release/cli-route"
+  # Behavior: cli/pmctl pre-release audit dispatches to pmctl_pre_release_audit and produces a report.
+  # Steps: invoke cli/pmctl pre-release audit v0.7.0; assert exit ≠ 2 and output contains Layer 1 and Layer 3.
   should_run "$name" || return 0
 
   # Verify the CLI wiring by calling the actual binary against the real repo.
@@ -621,6 +673,7 @@ case_cli_route() {
 
 case_extract_scope_rows
 case_check11_canonical_pr
+case_check11_non_canonical_pr
 case_check12_no_residuals
 case_check12_detects_todo
 case_check12_skips_non_closed
@@ -631,6 +684,7 @@ case_check13_coverage
 case_check13_no_unreleased_section
 case_check14_status_consistent
 case_check14_mismatch
+case_check14_archive_only
 case_audit_unknown_flag
 case_audit_missing_file
 case_audit_missing_milestone
