@@ -1317,10 +1317,10 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 `/pre-release [milestone-id]`（或 `pmctl pre-release audit v0.7.0`）：
 
 **Layer 1 — 結構檢查（機器可執行，高信心）**
-- 所有 milestone scope 內的 ticket 在 MILESTONES row 標 ✅ 且有 `**See**: pr:#NNN`
-- 所有 closed ticket body 無「仍待辦」/「待辦」/「TODO」殘留文字
-- CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
-- 所有 ticket 的 BACKLOG index status 與 body heading status 一致
+- Check 1.1: 所有 milestone scope 內的 ticket 在 MILESTONES status 欄標 ✅ 且有 `pr:#NNN`（BACKLOG body 的 `**See**: pr:#NNN` 由 `lint-backlog` 負責，不在本工具範圍）
+- Check 1.2: 所有 closed ticket body 無「仍待辦」/「待辦」/「TODO」殘留文字
+- Check 1.3: CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
+- Check 1.4: 所有 ticket 的 BACKLOG index status 與 body heading status 一致
 
 **Layer 2 — 語義比對（未實作，移交 [[CC-430]]）**
 - Layer 2 在本 ticket 範圍內刻意未實作。設計細節見 [[CC-430]]。

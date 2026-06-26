@@ -43,7 +43,7 @@ fi
 
 | Check | What it verifies |
 |---|---|
-| 1.1 Milestone PR refs | Every scope ticket has ✅ in MILESTONES.md with a canonical `pr:#NNN` ref |
+| 1.1 Milestone PR refs | Every scope ticket has ✅ in MILESTONES.md with a canonical `pr:#NNN` ref in the status column. BACKLOG body `**See**: pr:#NNN` is validated separately by `lint-backlog`, not by this tool. |
 | 1.2 Body residuals | Closed ticket bodies contain no `TODO`/`仍待辦`/`待辦`/`pr:#TBD` markers (code fences excluded) |
 | 1.3 CHANGELOG coverage | Each scope ticket (by CC-NNN or PR#) appears in CHANGELOG `[Unreleased]` section |
 | 1.4 Index ↔ body status | BACKLOG.md index row status emoji matches the body heading status emoji |
