@@ -367,6 +367,39 @@ case_check13_coverage() {
   pass "$name"
 }
 
+case_check13_ticket_id_boundary() {
+  local name="pre-release/check13-ticket-id-boundary"
+  # Behavior: CC-42 in scope must NOT be marked covered when only CC-420 appears in CHANGELOG.
+  # Steps: write CHANGELOG.md [Unreleased] containing CC-420; pass CC-42 as scope ticket;
+  #        assert output is ❌ or ⚠️ (not ✅).
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check13-boundary"
+  mkdir -p "$tmp"
+  cat > "$tmp/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+- CC-420: some feature (pr:#420).
+
+## [0.9.0] — 2026-01-01
+
+- Old stuff.
+EOF
+
+  local scope_rows="CC-42	✅ pr:#42"
+
+  local out
+  out="$(_pra_check_13_changelog "$tmp/CHANGELOG.md" "$scope_rows")"
+
+  if printf '%s\n' "$out" | grep -q "^✅ CC-42"; then
+    fail "$name" "CC-42 must not be falsely matched by CC-420 in changelog: $out"
+    return
+  fi
+  pass "$name"
+}
+
 case_check13_no_unreleased_section() {
   local name="pre-release/check13-no-unreleased-section"
   # Behavior: check 1.3 emits ❌ for all scope tickets when CHANGELOG has no [Unreleased] section.
@@ -834,6 +867,7 @@ case_check12_skips_code_fence
 case_check12_skips_japanese_quoted_mention
 case_check12_body_missing
 case_check13_coverage
+case_check13_ticket_id_boundary
 case_check13_no_unreleased_section
 case_check13_file_line_ref
 case_check14_status_consistent

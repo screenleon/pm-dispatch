@@ -278,9 +278,11 @@ _pra_check_13_changelog() {
       pr_num="$(printf '%s' "$status" | grep -oE 'pr:#[0-9]+' | head -1 | sed 's/pr:#//')"
     fi
 
-    # Check CC-NNN mention; find line number if found
+    # Check CC-NNN mention; find line number if found.
+    # Use exact-boundary match: require non-digit after the ticket number so that
+    # "CC-42" does not falsely match a changelog line that only mentions "CC-420".
     local found_cc found_pr found_ln=""
-    found_cc="$(printf '%s\n' "$unreleased" | grep -c "$ticket" || true)"
+    found_cc="$(printf '%s\n' "$unreleased" | grep -cE "(^|[^[:alnum:]-])${ticket}([^0-9]|$)" || true)"
     found_pr=0
     if [[ -n "$pr_num" ]]; then
       found_pr="$(printf '%s\n' "$unreleased" | grep -cE "#${pr_num}[^0-9]|#${pr_num}$" || true)"
@@ -288,9 +290,13 @@ _pra_check_13_changelog() {
 
     if [[ "$found_cc" -gt 0 || "$found_pr" -gt 0 ]]; then
       # Find actual line number in changelog for found entry
-      local needle="$ticket"
-      [[ "$found_cc" -eq 0 && -n "$pr_num" ]] && needle="#${pr_num}"
-      found_ln="$(grep -n "$needle" "$changelog" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+      local needle_pat
+      if [[ "$found_cc" -gt 0 ]]; then
+        needle_pat="(^|[^[:alnum:]-])${ticket}([^0-9]|$)"
+      else
+        needle_pat="#${pr_num}[^0-9]|#${pr_num}$"
+      fi
+      found_ln="$(grep -nE "$needle_pat" "$changelog" 2>/dev/null | head -1 | cut -d: -f1 || true)"
       output="${output}✅ $ticket — mentioned in CHANGELOG [Unreleased] (${cl_base}${found_ln:+:$found_ln})"$'\n'
     elif [[ -z "$pr_num" ]]; then
       output="${output}⚠️  $ticket — no canonical PR ref; searched CC-NNN only (not found) (${cl_section_ref})"$'\n'
