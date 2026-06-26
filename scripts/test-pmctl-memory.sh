@@ -753,6 +753,641 @@ case_memory_doctor_no_live_dir_mutation() {
   fi
 }
 
+# ── Shard cases ───────────────────────────────────────────────────────────────
+
+case_memory_shard_below_limit() {
+  local name="pmctl memory shard: below limit — no shard files created"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  # Write 5 episodes (well below EP_SHARD_LINE_LIMIT=1000).
+  local ep="$mdir/episodes.jsonl"
+  local i
+  for i in $(seq 1 5); do
+    printf '{"date":"2026-05-%02d","cwd":"%s","session_id":"s%d","summary":"entry %d"}\n' \
+      "$i" "$repo" "$i" "$i" >> "$ep"
+  done
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl memory shard exited $status; output: $out"
+    return 0
+  fi
+  # Should report "no shard needed".
+  if ! printf '%s' "$out" | grep -q "no shard needed"; then
+    fail "$name" "expected 'no shard needed', got: $out"
+    return 0
+  fi
+  # No shard files should exist.
+  local shards
+  shards="$(find "$mdir" -name 'episodes.????-??.jsonl' 2>/dev/null | wc -l)"
+  if [[ "$shards" -ne 0 ]]; then
+    fail "$name" "expected 0 shard files, got $shards"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_above_limit() {
+  local name="pmctl memory shard: above limit — archives old months"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+
+  # Write EP_SHARD_LINE_LIMIT+1 entries spread across two old months + current.
+  # We use a fixed "current" month different from old months to avoid clock dependency.
+  # pmctl_memory_shard compares against `date -u +%Y-%m`; we write old entries for
+  # 2020-01 and 2020-02, which are safely in the past.
+  local i
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-01-%02d","cwd":"%s","session_id":"s%d","summary":"old entry %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-02-%02d","cwd":"%s","session_id":"s%d","summary":"old entry %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  # One entry for current month (should remain in main file).
+  local cur_ym
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current entry"}\n' \
+    "$cur_ym" "$repo" >> "$ep"
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl memory shard exited $status; output: $out"
+    return 0
+  fi
+
+  # Shard files for 2020-01 and 2020-02 should now exist (copy-only archive).
+  local shard_jan="$mdir/episodes.2020-01.jsonl"
+  local shard_feb="$mdir/episodes.2020-02.jsonl"
+  if [[ ! -f "$shard_jan" ]]; then
+    fail "$name" "expected shard file episodes.2020-01.jsonl to exist; output: $out"
+    return 0
+  fi
+  if [[ ! -f "$shard_feb" ]]; then
+    fail "$name" "expected shard file episodes.2020-02.jsonl to exist; output: $out"
+    return 0
+  fi
+
+  # shard is copy-only: main episodes.jsonl must NOT be modified (all 1201 lines remain).
+  local main_lines
+  main_lines="$(wc -l < "$ep")"
+  if [[ "$main_lines" -ne 1201 ]]; then
+    fail "$name" "shard must not modify main episodes.jsonl (expected 1201 lines, got $main_lines)"
+    return 0
+  fi
+  # Current-month entry must still be present in main file.
+  if ! grep -q '"scur"' "$ep"; then
+    fail "$name" "main episodes.jsonl should still contain the current-month entry"
+    return 0
+  fi
+  # Shard file for 2020-01 should have exactly 600 entries (copy of old entries).
+  local shard_jan_lines
+  shard_jan_lines="$(wc -l < "$shard_jan")"
+  if [[ "$shard_jan_lines" -ne 600 ]]; then
+    fail "$name" "expected 600 lines in shard 2020-01, got $shard_jan_lines"
+    return 0
+  fi
+  # Output should mention the archived count.
+  if ! printf '%s' "$out" | grep -q "copied"; then
+    fail "$name" "expected 'copied' in output, got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_idempotent() {
+  local name="pmctl memory shard: running shard twice leaves shard files unchanged (idempotent)"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  # Need >1000 lines to trigger shard: 600 (2020-01) + 500 (2020-02) + 1 current = 1101.
+  local ep="$mdir/episodes.jsonl"
+  local i
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-01-%02d","cwd":"%s","session_id":"s%d","summary":"old %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  for i in $(seq 1 500); do
+    printf '{"date":"2020-02-%02d","cwd":"%s","session_id":"t%d","summary":"old2 %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  local cur_ym
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current"}\n' "$cur_ym" "$repo" >> "$ep"
+
+  # First shard run.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  local lines_after_first
+  lines_after_first="$(wc -l < "$mdir/episodes.2020-01.jsonl" 2>/dev/null || printf '0')"
+
+  # Second shard run — shard file must have same line count (idempotent overwrite).
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  local lines_after_second
+  lines_after_second="$(wc -l < "$mdir/episodes.2020-01.jsonl" 2>/dev/null || printf '0')"
+
+  if [[ "$lines_after_first" -ne "$lines_after_second" ]]; then
+    fail "$name" "shard not idempotent: $lines_after_first lines after first run, $lines_after_second after second"
+    return 0
+  fi
+  if [[ "$lines_after_second" -ne 600 ]]; then
+    fail "$name" "expected 600 lines in shard file, got $lines_after_second"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_duplicate_after_shard() {
+  local name="pmctl memory rebuild-summary: no duplicate entries in summary after shard run"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  # Need >1000 lines to trigger shard: 600 (2020-01) + 500 (2020-02) + 1 current = 1101.
+  local ep="$mdir/episodes.jsonl"
+  local i
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-01-%02d","cwd":"%s","session_id":"s%d","summary":"old %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  for i in $(seq 1 500); do
+    printf '{"date":"2020-02-%02d","cwd":"%s","session_id":"t%d","summary":"old2 %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  local cur_ym
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current entry"}\n' "$cur_ym" "$repo" >> "$ep"
+
+  # Run shard first — verify it actually ran (shard file must exist).
+  local shard_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || shard_status=$?
+  if [[ "$shard_status" -ne 0 ]]; then
+    fail "$name" "pmctl memory shard failed with exit $shard_status"
+    return 0
+  fi
+  if [[ ! -f "$mdir/episodes.2020-01.jsonl" ]]; then
+    fail "$name" "shard did not create episodes.2020-01.jsonl; shard may not have run"
+    return 0
+  fi
+
+  # Then rebuild summary — verify it succeeded.
+  local rs_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || rs_status=$?
+  if [[ "$rs_status" -ne 0 ]]; then
+    fail "$name" "pmctl memory rebuild-summary failed with exit $rs_status"
+    return 0
+  fi
+
+  local summary="$mdir/episodes.summary.md"
+  if [[ ! -f "$summary" ]]; then
+    fail "$name" "episodes.summary.md not created"
+    return 0
+  fi
+
+  # Count how many entries appear under 2020-01 heading. Should be exactly 600.
+  local entry_count
+  entry_count="$(grep -c '^- 2020-01' "$summary" 2>/dev/null || printf '0')"
+  if [[ "$entry_count" -ne 600 ]]; then
+    fail "$name" "expected 600 entries for 2020-01, got $entry_count (duplicate entries?)"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_basic() {
+  local name="pmctl memory rebuild-summary: produces episodes.summary.md grouped by month"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+  {
+    printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"may entry one"}\n' "$repo"
+    printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"may entry two"}\n' "$repo"
+    printf '{"date":"2026-06-01","cwd":"%s","session_id":"c","summary":"june entry"}\n'   "$repo"
+  } >> "$ep"
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl memory rebuild-summary exited $status; output: $out"
+    return 0
+  fi
+
+  local summary="$mdir/episodes.summary.md"
+  if [[ ! -f "$summary" ]]; then
+    fail "$name" "episodes.summary.md not created; output: $out"
+    return 0
+  fi
+  # Should have two month sections.
+  local month_count
+  month_count="$(grep -c '^## ' "$summary")"
+  if [[ "$month_count" -ne 2 ]]; then
+    fail "$name" "expected 2 month sections in summary, got $month_count"
+    return 0
+  fi
+  # 2026-06 should appear before 2026-05 (newest first).
+  local june_line may_line
+  june_line="$(grep -n '^## 2026-06' "$summary" | cut -d: -f1)"
+  may_line="$(grep -n '^## 2026-05' "$summary" | cut -d: -f1)"
+  if [[ -z "$june_line" || -z "$may_line" ]]; then
+    fail "$name" "missing month sections in summary"
+    return 0
+  fi
+  if [[ "$june_line" -ge "$may_line" ]]; then
+    fail "$name" "2026-06 should appear before 2026-05 (newest first)"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_skips_empty_summary() {
+  local name="pmctl memory rebuild-summary: skips skeleton entries with empty summary"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":""}\n'         "$repo" >> "$ep"
+  printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"real entry"}\n' "$repo" >> "$ep"
+
+  local status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "pmctl memory rebuild-summary exited $status"
+    return 0
+  fi
+
+  local summary="$mdir/episodes.summary.md"
+  [[ -f "$summary" ]] || { fail "$name" "summary not created"; return 0; }
+  local entry_count
+  entry_count="$(grep -c '^- ' "$summary")"
+  if [[ "$entry_count" -ne 1 ]]; then
+    fail "$name" "expected 1 bullet (skeleton skipped), got $entry_count"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_deterministic() {
+  local name="pmctl memory rebuild-summary: rebuild is deterministic (same output on second run)"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+  printf '{"date":"2026-06-01","cwd":"%s","session_id":"a","summary":"first"}\n'  "$repo" >> "$ep"
+  printf '{"date":"2026-06-02","cwd":"%s","session_id":"b","summary":"second"}\n' "$repo" >> "$ep"
+
+  local status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "first rebuild-summary exited $status"; return 0; fi
+  local first_run
+  first_run="$(cat "$mdir/episodes.summary.md")"
+
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "second rebuild-summary exited $status"; return 0; fi
+  local second_run
+  second_run="$(cat "$mdir/episodes.summary.md")"
+
+  if [[ "$first_run" != "$second_run" ]]; then
+    fail "$name" "rebuild produced different output on second run"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_no_memory_dir() {
+  local name="pmctl memory shard: no memory directory → exits 1 with message"
+  should_run "$name" || return 0
+  local cfg repo
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects"  # no memory subdir
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 1 ]]; then
+    fail "$name" "expected exit 1 for no memory dir, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no memory directory"; then
+    fail "$name" "expected 'no memory directory' message; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_memory_dir() {
+  local name="pmctl memory rebuild-summary: no memory directory → exits 1 with message"
+  should_run "$name" || return 0
+  local cfg repo
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects"  # no memory subdir
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 1 ]]; then
+    fail "$name" "expected exit 1 for no memory dir, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no memory directory"; then
+    fail "$name" "expected 'no memory directory' message; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_index_not_produced() {
+  local name="pmctl memory shard+rebuild-summary: episodes.index.jsonl is not produced (deferred)"
+  should_run "$name" || return 0
+  # episodes.index.jsonl was mentioned in CC-407 spec but is explicitly deferred to a
+  # follow-up ticket. Asserting its absence documents the conscious deferral contract.
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  if [[ -f "$mdir/episodes.index.jsonl" ]]; then
+    fail "$name" "episodes.index.jsonl was created but is deferred to a follow-up"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_help_exit0() {
+  local name="pmctl memory shard: --help exits 0 with usage"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --help 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "--help exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -qi "usage"; then
+    fail "$name" "--help output lacks 'Usage'; output: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_at_exact_limit() {
+  local name="pmctl memory shard: exactly at EP_SHARD_LINE_LIMIT (1000) — no shard needed"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+  local cur_ym i
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  # Write exactly 1000 entries (the limit is -le 1000, so 1000 must NOT shard).
+  for i in $(seq 1 1000); do
+    printf '{"date":"%s-01","cwd":"%s","session_id":"s%d","summary":"entry %d"}\n' \
+      "$cur_ym" "$repo" "$i" "$i" >> "$ep"
+  done
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no shard needed"; then
+    fail "$name" "expected 'no shard needed' at exactly 1000 lines, got: $out"
+    return 0
+  fi
+  local shards
+  shards="$(find "$mdir" -name 'episodes.????-??.jsonl' 2>/dev/null | wc -l)"
+  if [[ "$shards" -ne 0 ]]; then
+    fail "$name" "expected 0 shard files at limit, got $shards"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_repo_root_missing_operand_exit2() {
+  local name="pmctl memory shard: --repo-root missing value exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --repo-root 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for missing --repo-root operand, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_repo_root_missing_operand_exit2() {
+  local name="pmctl memory rebuild-summary: --repo-root missing value exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --repo-root 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for missing --repo-root operand, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_unknown_arg_exit2() {
+  local name="pmctl memory shard: unknown argument exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --bogus-flag 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for unknown arg, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_no_episodes_file() {
+  local name="pmctl memory shard: no episodes.jsonl exits 0 with message"
+  should_run "$name" || return 0
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  # Do NOT create episodes.jsonl.
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no episodes"; then
+    fail "$name" "expected 'no episodes' in output; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_help_exit0() {
+  local name="pmctl memory rebuild-summary: --help exits 0 with usage"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --help 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "--help exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -qi "usage"; then
+    fail "$name" "--help output lacks 'Usage'; output: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_unknown_arg_exit2() {
+  local name="pmctl memory rebuild-summary: unknown argument exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --bogus-flag 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for unknown arg, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_episodes_file() {
+  local name="pmctl memory rebuild-summary: no episodes.jsonl exits 0 with message"
+  should_run "$name" || return 0
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  # Do NOT create episodes.jsonl.
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no episodes"; then
+    fail "$name" "expected 'no episodes' in output; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_doctor_ignores_episodes_summary() {
+  local name="pmctl memory doctor: episodes.summary.md is NOT reported as orphan or missing-fields card"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  write_compliant_card "$mdir/card.md" "card"
+  printf -- '- [Card](card.md) — some hook\n' > "$mdir/MEMORY.md"
+  printf '{"date":"2026-06-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
+
+  # Produce episodes.summary.md via rebuild-summary.
+  local rs_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || rs_status=$?
+  if [[ "$rs_status" -ne 0 ]]; then
+    fail "$name" "rebuild-summary failed with exit $rs_status"
+    return 0
+  fi
+  if [[ ! -f "$mdir/episodes.summary.md" ]]; then
+    fail "$name" "episodes.summary.md not created"
+    return 0
+  fi
+
+  # Doctor should report issues_count 0 (no orphan, no missing-fields for summary).
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || status=$?
+
+  local issues
+  issues="$(printf '%s' "$out" | grep -o '"issues_count":[0-9]*' | grep -o '[0-9]*')"
+  if [[ "$issues" != "0" ]]; then
+    fail "$name" "expected issues_count=0 but got $issues; doctor output: $out"
+    return 0
+  fi
+
+  local orphans
+  orphans="$(printf '%s' "$out" | grep -o '"orphan_cards":\[[^]]*\]')"
+  if printf '%s' "$orphans" | grep -q "episodes.summary.md"; then
+    fail "$name" "episodes.summary.md wrongly appeared in orphan_cards: $orphans"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_doctor_shard_count() {
+  local name="pmctl memory doctor: shard_count reflects episodes shard files"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  write_compliant_card "$mdir/card.md" "card"
+  printf -- '- [Card](card.md) — some hook\n' > "$mdir/MEMORY.md"
+  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
+
+  # No shard files yet — shard_count should be 0.
+  local out0
+  out0="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || true
+  local cnt0
+  cnt0="$(printf '%s' "$out0" | grep -o '"shard_count":[0-9]*' | grep -o '[0-9]*')"
+  if [[ "$cnt0" != "0" ]]; then
+    fail "$name" "expected shard_count=0 with no shard files, got: $cnt0"
+    return 0
+  fi
+
+  # Create two shard files.
+  printf '{"date":"2026-03-01","session_id":"x","summary":"old"}\n' > "$mdir/episodes.2026-03.jsonl"
+  printf '{"date":"2026-04-01","session_id":"y","summary":"old"}\n' > "$mdir/episodes.2026-04.jsonl"
+
+  local out2 status2=0
+  out2="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || status2=$?
+  local cnt2
+  cnt2="$(printf '%s' "$out2" | grep -o '"shard_count":[0-9]*' | grep -o '[0-9]*')"
+  if [[ "$cnt2" != "2" ]]; then
+    fail "$name" "expected shard_count=2 with two shard files, got: $cnt2"
+    return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_memory_dir_happy_path
@@ -778,5 +1413,26 @@ case_memory_doctor_repo_refs_unsafe_path
 case_memory_doctor_fn_symbol_injection
 case_memory_doctor_fn_function_keyword_boundary
 case_memory_doctor_no_live_dir_mutation
+case_memory_shard_below_limit
+case_memory_shard_above_limit
+case_memory_shard_idempotent
+case_memory_rebuild_summary_no_duplicate_after_shard
+case_memory_shard_no_memory_dir
+case_memory_rebuild_summary_no_memory_dir
+case_memory_index_not_produced
+case_memory_shard_at_exact_limit
+case_memory_shard_repo_root_missing_operand_exit2
+case_memory_rebuild_summary_repo_root_missing_operand_exit2
+case_memory_shard_help_exit0
+case_memory_shard_unknown_arg_exit2
+case_memory_shard_no_episodes_file
+case_memory_rebuild_summary_help_exit0
+case_memory_rebuild_summary_unknown_arg_exit2
+case_memory_rebuild_summary_no_episodes_file
+case_memory_rebuild_summary_basic
+case_memory_rebuild_summary_skips_empty_summary
+case_memory_rebuild_summary_deterministic
+case_memory_doctor_ignores_episodes_summary
+case_memory_doctor_shard_count
 
 th_summary

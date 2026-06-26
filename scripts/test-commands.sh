@@ -131,6 +131,11 @@ should_run "mem-distill: Step 6 lists priority as required field" && assert_file
 should_run "mem-distill: Step 6 lists status as required field" && assert_file_contains "mem-distill: Step 6 lists status as required field" "$MEM_DISTILL" "status" && pass "mem-distill: Step 6 lists status as required field"
 should_run "mem-distill: Step 6 lists updated_at as required field" && assert_file_contains "mem-distill: Step 6 lists updated_at as required field" "$MEM_DISTILL" "updated_at" && pass "mem-distill: Step 6 lists updated_at as required field"
 should_run "mem-distill: Step 6 lists repo_refs as required field" && assert_file_contains "mem-distill: Step 6 lists repo_refs as required field" "$MEM_DISTILL" "repo_refs" && pass "mem-distill: Step 6 lists repo_refs as required field"
+# Step 2b shard+summary contract
+should_run "mem-distill: Step 2b calls pmctl memory rebuild-summary" && assert_file_contains "mem-distill: Step 2b calls pmctl memory rebuild-summary" "$MEM_DISTILL" "pmctl memory rebuild-summary" && pass "mem-distill: Step 2b calls pmctl memory rebuild-summary"
+should_run "mem-distill: Step 2b calls pmctl memory shard" && assert_file_contains "mem-distill: Step 2b calls pmctl memory shard" "$MEM_DISTILL" "pmctl memory shard" && pass "mem-distill: Step 2b calls pmctl memory shard"
+should_run "mem-distill: Step 2b shard step falls back on failure" && assert_file_contains "mem-distill: Step 2b shard step falls back on failure" "$MEM_DISTILL" "|| true" && pass "mem-distill: Step 2b shard step falls back on failure"
+should_run "mem-distill: Step 2b documents episodes.summary.md" && assert_file_contains "mem-distill: Step 2b documents episodes.summary.md" "$MEM_DISTILL" "episodes.summary.md" && pass "mem-distill: Step 2b documents episodes.summary.md"
 
 # ── mem-log.md contract ──────────────────────────────────────────────────────
 
@@ -153,6 +158,10 @@ should_run "mem-recall: Step 1 uses pmctl memory dir" && assert_file_contains "m
 should_run "mem-recall: Step 1 derives episodes.jsonl path" && assert_file_contains "mem-recall: Step 1 derives episodes.jsonl path" "$MEM_RECALL" "episodes.jsonl" && pass "mem-recall: Step 1 derives episodes.jsonl path"
 should_run "mem-recall: Step 1 guards file existence" && assert_file_contains "mem-recall: Step 1 guards file existence" "$MEM_RECALL" '[[ -f "$ep" ]]' && pass "mem-recall: Step 1 guards file existence"
 should_run "mem-recall: Step 1 error message for missing episodes" && assert_file_contains "mem-recall: Step 1 error message for missing episodes" "$MEM_RECALL" "No episodes found for this project" && pass "mem-recall: Step 1 error message for missing episodes"
+should_run "mem-recall: Step 2b uses pmctl context query" && assert_file_contains "mem-recall: Step 2b uses pmctl context query" "$MEM_RECALL" "pmctl context query" && pass "mem-recall: Step 2b uses pmctl context query"
+should_run "mem-recall: Step 2b queries --source memory" && assert_file_contains "mem-recall: Step 2b queries --source memory" "$MEM_RECALL" "--source memory" && pass "mem-recall: Step 2b queries --source memory"
+should_run "mem-recall: Step 2b falls back gracefully on failure" && assert_file_contains "mem-recall: Step 2b falls back gracefully on failure" "$MEM_RECALL" "2>/dev/null" && pass "mem-recall: Step 2b falls back gracefully on failure"
+should_run "mem-recall: Step 3 merges recent and relevant" && assert_file_contains "mem-recall: Step 3 merges recent and relevant" "$MEM_RECALL" "relevant" && pass "mem-recall: Step 3 merges recent and relevant"
 
 # ── memory-compress.md contract ───────────────────────────────────────────────
 

@@ -88,7 +88,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-404 | ✅ closed 2026-06-25 | **[memory: MEMORY.md 注入預算 + priority metadata]** `guard-inject-memory.sh` 目前注入全部 `^- ` 行、>=50 才警告、測試明確斷言 60 條不截斷 → index bloat 必然發生，每 session 都付 stale 條目 token。改硬注入預算（max 條數+max bytes）：永遠注入固定前言（memory dir/條數/指令提示）+ `priority: always`／`scope: active` 條目，其餘依 prompt-aware 廉價比對，超量印「N 條省略；用 /mem-search <topic>」。動 hook + 改現有 no-truncation 測試。需先有 priority metadata（與 [[CC-405]] 同捆或先行）以免蓋掉關鍵約束。 | ux/memory | 2026-06-18 | pr:#328 | P3 | retrieval |
 | CC-405 | ✅ closed 2026-06-25 | **[memory: card frontmatter 標準化 + `/mem-doctor` 健檢]** 現在 filename tier + hook text 扛太多檢索工作。讓 card frontmatter 必填 topics/priority/status(active/stale/archived)/updated_at/optional expires_at/repo_refs，由 `/mem-distill`、`/memory-compress` 維護。新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale repo_refs（指向已不存在的檔/函式/flag）、episodes 大小與建議。additive、可先 warn 後 enforce。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-406 | ✅ closed 2026-06-25 | **[memory: `/mem-search` 改走 `pmctl context --source memory`（相依 [[CC-403]]）]** `/mem-search` 目前自刻一套 rg/grep、完全不經 pmctl context。待 [[CC-403]] memory source 落地後改為：定位 memory source → `pmctl context query --source memory` → 只讀回傳的 card/episode refs → index 不可用才 fallback 直接 rg。CC-403 之前 /mem-search 無法誠實「優先用 pmctl context」（它根本搜不到 memory）。command-only，小。 | ux/memory | 2026-06-18 | pr:#325 | P3 | retrieval |
-| CC-407 | 🟢 someday | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
+| CC-407 | ✅ closed 2026-06-26 | **[memory: episodes 衍生摘要/索引 + 歸檔策略]** `episodes.jsonl` append-only 利稽核但會無限長；`/mem-recall` 只讀最近 N 條、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已 promote 否則不可見。保留原始 append-only，加可重建衍生物：`episodes.summary.md`（月摘要，/mem-distill 產）、`episodes.index.jsonl`（keyword/date/cwd/promoted 狀態），超過大小/年齡門檻 shard/archive，清理空 skeleton。延伸 [[CC-234]] memory v2 寫側。優先度低於注入 bloat 與檢索強制。 | ux/memory | 2026-06-18 | — | P3 | retrieval |
 | CC-411 | ✅ closed 2026-06-23 | **[test: context 測試並行安全隔離（拔除對活 repo 的耦合）]** `test-pmctl-context.sh` 的 `*_on_real_repo` 案例直接對活的 `$REPO_ROOT` 做索引、讀寫共享的 `.pm-dispatch/ctx/context.db`。在 CC-409 把 run-all-tests 並行化後，這些案例在高 IO 負載下偶發失敗（sqlite busy_timeout/FTS rebuild 被 starve，留下不完整索引；實測 reuse-scan-on-real-repo fail→pass 跨兩次相同 run），也是單檔最慢的部分。改為索引隔離的 temp fixture 副本（seed 真實 lib 檔）而非共享活 repo DB，根除並行 flakiness 並順帶加速；加結構斷言禁止測試 mutate 活 repo 狀態防回歸。CC-403 期間發現，與 CC-403 程式碼無關。 | test | 2026-06-22 | pr:#314 | P3 | hygiene |
 | CC-412 | 🟢 someday | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API） | arch/memory | 2026-06-23 | — | P3 | retrieval |
 | CC-420 | 🟢 someday | refactor: adapter 共用 model alias TSV 解析抽 lib（claude/codex/opencode 三者 ~30行重複）→ `scripts/lib/model-aliases.sh` | arch | 2026-06-24 | — | P3 | — |
@@ -99,6 +99,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
 | CC-427 | ✅ closed 2026-06-26 | **[memory: MEMORY.md 注入 usage-based recency+frequency 排序]** tier1 改只認 `priority: always`（移除 status:active OR，解 33 卡零省略）；normal 卡 Firefox bucketed frecency（access_count × age_bucket 100/70/50/30/10）+ W-TinyLFU 全域 event-counter 老化；keyword 命中即記 access（截斷前）；sidecar TSV 寫回；複合 sort key keyword tier 主導。四決策經六-model 統整定案。研究見 memory reference_memory_injection_ranking。 | ux/memory | 2026-06-25 | pr:#329 | P2 | retrieval |
+| CC-428 | 🟢 someday | **[memory: lifecycle validity gate for injection ranking（PaperGuru 四約束 — lifecycle 優先 usage）]** 目前 CC-427 frecency 排序不過濾 `status: stale/superseded` card，致歷史高 usage 的 stale card 繼續排高被注入。PaperGuru-Benchmark 約束：lifecycle validity 必須優先於 usage frequency（stale/superseded card 不因高 usage 排前）。修法：`guard-inject-memory.sh` 排序前先 gate `status` field，stale/superseded 的 card bucket 降為 0 或移到注入清單末端；其餘 priority/frecency 邏輯不動。相依 [[CC-405]]（status 欄位已強制）+ [[CC-427]]（frecency 排序基礎）。影響範圍：guard-inject-memory.sh + test-pmctl-memory.sh 或 test-install-guards.sh 對應測試。 | ux/memory | 2026-06-26 | — | P3 | retrieval |
 
 ---
 
@@ -1259,7 +1260,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Refs**: 相依 [[CC-403]]、[[CC-400]]（檢索順序）、`commands/mem-search.md`。
 
-## CC-407 — memory: episodes 衍生摘要/索引 + 歸檔策略 🟢 someday → v0.7.0
+## CC-407 — memory: episodes 衍生摘要/索引 + 歸檔策略 ✅ 2026-06-26
+
+**See**: pr:#TBD
 
 **Problem**: `episodes.jsonl` append-only 利於稽核但會無限長；`/mem-recall` 只讀最近 N 條非空摘要、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已被 promote 否則不可見，Stop hook 又持續 append。
 
@@ -1272,7 +1275,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - `/mem-recall` 讀「最近 + 相關摘要」而非只讀最近 N 條。
 
 **Priority**: P3.
-
 
 **Refs**: 延伸 [[CC-234]]（memory v2 寫側）、[[CC-405]]（mem-doctor 報告 episodes 大小）。
 
@@ -1608,3 +1610,18 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 **Priority**: P2（✅ closed 2026-06-26，pr:#329）.
 
 **Refs**: [[CC-404]]（預算+pin+tier2 骨架）、[[CC-405]]（frontmatter schema）、memory `reference_memory_injection_ranking`（research 結論）、`scripts/guard-inject-memory.sh`。
+
+## CC-428 — memory: lifecycle validity gate for injection ranking 🟢 someday
+
+**Goal**: Guard injection ranking against stale/superseded cards surfacing at high priority due to historical usage. A card with `status: stale` or `status: superseded` should never rank above healthy cards regardless of its frecency score.
+
+**Context**: CC-427 introduced frecency-based sorting for MEMORY.md injection. The current sort key is `composite = keyword_tier × WEIGHT + frecency`, with `status` treated as "future staleness GC only, not injection-ranking input" (per Phase 1 committed decision). PaperGuru-Benchmark observes that lifecycle validity must gate before usage frequency — a frequently-used-but-expired card amplifies stale context. The CC-427 decision deferred this to a follow-up.
+
+**Scope**:
+- `scripts/guard-inject-memory.sh`: before computing frecency composite score, check each card's `status` field from its frontmatter; assign bucket=0 (or push to tail bucket) for `status: stale` or `status: superseded`; `status: active` and `status: archived` retain normal frecency.
+- Test: add case asserting a stale card with high access_count is injected after an active card with lower frecency.
+- Invariant: `priority: always` cards bypass this gate (they are always tier1 regardless of status).
+
+**Refs**: [[CC-427]] (frecency base), [[CC-405]] (status field enforcement), PaperGuru-Benchmark lifecycle constraint.
+
+**Priority**: P3（someday）.
