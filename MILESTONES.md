@@ -9,6 +9,88 @@
 
 ---
 
+## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
+> 最後排程更新：2026-06-26
+
+**主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
+
+> **設計依據**：2026-06-18 memory + `pmctl context` 統整（opus 獨立分析 + codex 獨立第二意見 + 外部 chatgpt/gemini/grok 研究對照）。核心洞察兩層：(1) **能力缺口**——`pmctl context` 的 index 只掃 repo 內檔，memory（repo 外 `~/.claude/projects/<id>/memory/`）**完全搜不到**，故對「決策/規則/偏好」這類最常找的特定資料，「優先用 pmctl context」物理上不可能；(2) **行為缺口**——即使能力補上，prompt 裡的「reflex」會在壓力下退化成 grep，必須在**單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。
+
+### Phase 1 — retrieval-first context discipline（P2；行為層，可先行）
+
+> 純 prompt/command/validator/dispatch，**不**碰 memory 索引引擎；風險低、最快改變行為。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-400 | prompt/docs 檢索順序強制：project-pm Principle 3 改硬性「context query →（no hits 才）Read/Grep」；context-retrieval.md 升級為「Query before Read/Grep/full-file open」。純文件，零程式風險 | ✅ pr:#308 |
+| CC-401 | brief-validate retrieval 證據 chokepoint：非 trivial brief 須有 `context:`／`auto_context:`／`retrieval_skip_reason:`，先 warn 後 fail（`BRIEF_VALIDATE_RETRIEVAL`）。把 reflex 釘成合約。相依 [[CC-400]] | ✅ pr:#308 |
+| CC-402 | auto-pack 與 detached lifecycle 相容（augmented brief 記為 run-spec trusted brief_file）+ gate 改驗 effective brief；`dispatch.auto_pack` 預設翻 on、`BRIEF_VALIDATE_RETRIEVAL` 預設翻 fail（CC-401 fail-flip）。HARD security/risk gate。相依 [[CC-399]] | ✅ pr:#309 |
+
+### Phase 2 — memory 檢索基底（P2-P3；能力層）
+
+> 讓 memory 成為 `pmctl context` 的可檢索 source，並收斂出單一檢索入口；同時治理 memory 本身的 inject bloat 與 staleness。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-403 | `pmctl context --source repo/memory/all`：memory 變可檢索 source（memory-local DB、schema `source_domain` 補 memory、pack `memories[]` 填值、reuse-scan 維持 repo-only）。**supersede/吸收 [[CC-340]] MVP**，embeddings 留 CC-340 | ✅ pr:#313 |
+| CC-404 | `MEMORY.md` 注入硬預算（20 條/3000B）+ `priority: always` pin + prompt-keyword 排序，取代「全注入 + >=50 才警告」。usage-based 動態排序分流至 [[CC-427]] | ✅ pr:#328 |
+| CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | ✅ pr:#315 pr:#327 |
+| CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | ✅ pr:#325 |
+| CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | ✅ pr:#330 |
+| CC-411 | context 測試並行安全隔離：拔除對活 repo 耦合，讓測試套件可在並行/隔離環境正確跑完 | ✅ pr:#314 |
+| CC-424 | memory commands 去 python3 化：純 bash 改寫 + `pmctl memory dir` 行為隔離 + 測試覆蓋 | ✅ pr:#326 |
+| CC-427 | tier1 只認 `priority: always`（pin），normal 卡改 usage-based recency+frequency frecency 排序（Firefox bucket `access_count×age_bucket` + W-TinyLFU 老化，純整數零 LLM）；修 [[CC-404]] 預算因 33 卡全 `status: active` 失效。Phase 1 spike → Phase 2 實作 | ✅ pr:#329 |
+| CC-428 | lifecycle validity gate：stale/superseded card 不因高 usage frecency 排前；`priority: always` bypass；bucket=0 降等 + 5 新測試。相依 [[CC-427]] | ✅ pr:#332 |
+
+### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
+
+> 純命名脫鉤，**零行為改動**：`hook-*.sh`（8 檔）/ `hook-framework.sh` / `hk_*`/`HK_*` 函式 / `PM_HOOK_*` env → 平台中性 `guard-*`；`settings.json` 的 `PreToolUse` 鍵保留（Claude 平台自有）。獨立 PR，不可與安全邊界票混搭。前置 [[CC-376]] ✅ 已達成；[[CC-377]] deferred 不阻本票。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-384 | `hook-*.sh` → `guard-*.sh`、framework/helper/env 前綴一起掃；install/uninstall/doctor 接線 + parity scanner + 測試 + 文件同步。[[CC-333]] layer 2/6 | ✅ pr:#310 |
+
+> **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
+
+### Phase 4 — artifact relocation + test infra（與 retrieval 正交；v0.6.0 後同期 ship）
+
+> CC-003 epic（artifact-relocation）與 CC-409/CC-410 在 v0.7.0 開發期間完成，功能主題與 retrieval 正交但為 v0.7.0 期間的 commit。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-409 | `run-all-tests` 並行執行（`--jobs N`，預設 nproc）+ dispatch-wait poll 可設定；大幅縮短本機測試時間 | ✅ pr:#311 |
+| CC-410 | guard audit log 對唯讀 `hooks.log` fail-silent：wrap append 在 subshell 以正確抑制 bash 重導向錯誤 | ✅ |
+| CC-413 | Phase 0 止血：pr-gate integrity check 排除自身 artifact 路徑，避免 gate 誤判 own outputs | ✅ pr:#318 |
+| CC-414 | Phase 1：trace-root seam（`--trace-dir` flag / env 優先序）——adapter 可覆蓋 trace 落點 | ✅ pr:#319 |
+| CC-415 | Phase 2：post-verify containment guard 改以 `--run-dir` 為界；退場 in-repo path 假設 | ✅ pr:#320 |
+| CC-416 | Phase 3a：gate artifacts 搬出 repo（`run-dir` seam 接線，原始 artifact 路徑 bug 修復） | ✅ pr:#321 |
+| CC-417 | Phase 3b：normal dispatch artifacts 搬出 repo（與 Phase 3a 對稱） | ✅ pr:#322 |
+| CC-418 | Phase 4：observer + `pmctl artifacts list/show` 可發現性介面 | ✅ pr:#323 |
+| CC-419 | Phase 5：翻預設 out-of-repo + GC + 跨 repo 既有副產物遷移；close CC-003 epic | ✅ pr:#324 |
+
+### Phase 5 — release closure（2026-06-26 追加；tag 前完成）
+
+> Phase 1–4 全部完成。Phase 5 是 release 的最後兩張：先建工具（CC-426）、再用工具對自己審查一次（CC-429）。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-426 | `/pre-release v0.7.0` 三層審查工具：Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）；Layer 2 語義比對（diff 是否滿足 ticket requirement）；Layer 3 盲點聲明。輸出報告非 GO/NO-GO。相依 [[CC-404]] + [[CC-403]] | 🔵 active |
+| CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | 🔵 active |
+
+### 待後續 / 與本版正交
+
+- **CC-216 MCP server（DEFERRED，不排入 milestone）**——「通用橋」讓任意 MCP-aware host 透過單一協定使用 pm-dispatch。**2026-06-18 user 拍板：先 defer、不排入任何 milestone，待核心（executor 抽象 + retrieval/memory 基底）覺得**基本都穩定**後再考慮**。重型 net-new surface（Node/Python server + `pmctl --json`），需穩定 pmctl + 已收口 executor 抽象作下層。相依 [[CC-211]]、[[CC-215]]。
+- **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
+- **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程。
+- **CC-340 knowledge index 重型版**——**已被 [[CC-403]] supersede**：memory-index MVP 移入 Phase 2，CC-340 僅剩 embeddings / 語意後端 remainder，待 FTS/LIKE 證明不足再 resume。
+- **CC-026（/skill-distill）——continue defer**：前置 episode signal 層（CC-027b/c）仍 deferred；列入 someday 待 signal 層就緒再評估。
+- **CC-018（rate-limit 統一）——continue defer**：ux/token 主題與 retrieval 正交；維持 P3 active 不排入 v0.7.0。
+- **CC-342（debt-auditor agent）——continue someday**：proactive 技術債掃描與本版主題無直接相關；待核心穩定後再評估。
+- **CC-357（skill as contract schema）——continue someday**：架構較大、無明確 trigger 條件，不排入 v0.7.0。
+- **CC-033（Public flip checklist）——blocked on CC-032**：CC-032（`[[feedback_*]]` 公開化）仍 🔵 active 未完成；CC-033 依賴其完成，不排入 v0.7.0。
+
+---
+
 ## v0.6.0 — executor abstraction（runtime 解耦合；released 2026-06-19）
 
 **主題**：把 dispatch / guard / 安裝三條路徑上「綁定特定 executor」的最後硬編碼收乾淨，讓 pm-dispatch 真正 **executor-agnostic**。一句話驗收標準：**「新增第三個 executor = 放 `adapters/<name>/` + 一份 manifest，核心零改動」**——router 自動路由、guard 自動套對、install 自動接線。並用 **opencode + Google Antigravity（`agy`）兩個真 adapter** 落地當抽象的驗收（N≥2 才算抽象成立，不是僥倖）。Umbrella epic：[[CC-333]]（runtime 解耦合）。
@@ -102,61 +184,6 @@
 - **CC-333 七層耦合中的 1/4/7**（memory 路徑 / 安裝路徑 / reviewer memory 讀取）——本版聚焦 dispatch+guard+install+lifecycle 的 executor 抽象；memory/install-target 軸（含 [[CC-104m]] 多目標投影）留待後續。
 - **CC-358 / CC-359**（runner telemetry / worktree batch dispatch）——建在抽象之上的能力層，抽象穩定後再做。
 - **完整 knowledge index（CC-340）**——**已被 [[CC-403]] supersede**（2026-06-18）：memory-index MVP 移入 v0.7.0 retrieval epic，CC-340 僅剩 embeddings remainder。
-
----
-
-## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
-> 最後排程更新：2026-06-19
-
-**主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
-
-> **設計依據**：2026-06-18 memory + `pmctl context` 統整（opus 獨立分析 + codex 獨立第二意見 + 外部 chatgpt/gemini/grok 研究對照）。核心洞察兩層：(1) **能力缺口**——`pmctl context` 的 index 只掃 repo 內檔，memory（repo 外 `~/.claude/projects/<id>/memory/`）**完全搜不到**，故對「決策/規則/偏好」這類最常找的特定資料，「優先用 pmctl context」物理上不可能；(2) **行為缺口**——即使能力補上，prompt 裡的「reflex」會在壓力下退化成 grep，必須在**單一 chokepoint 強制**（[[feedback_cut_capability_close_all_paths]]）。
-
-### Phase 1 — retrieval-first context discipline（P2；行為層，可先行）
-
-> 純 prompt/command/validator/dispatch，**不**碰 memory 索引引擎；風險低、最快改變行為。
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-400 | prompt/docs 檢索順序強制：project-pm Principle 3 改硬性「context query →（no hits 才）Read/Grep」；context-retrieval.md 升級為「Query before Read/Grep/full-file open」。純文件，零程式風險 | ✅ pr:#308 |
-| CC-401 | brief-validate retrieval 證據 chokepoint：非 trivial brief 須有 `context:`／`auto_context:`／`retrieval_skip_reason:`，先 warn 後 fail（`BRIEF_VALIDATE_RETRIEVAL`）。把 reflex 釘成合約。相依 [[CC-400]] | ✅ pr:#308 |
-| CC-402 | auto-pack 與 detached lifecycle 相容（augmented brief 記為 run-spec trusted brief_file）+ gate 改驗 effective brief；`dispatch.auto_pack` 預設翻 on、`BRIEF_VALIDATE_RETRIEVAL` 預設翻 fail（CC-401 fail-flip）。HARD security/risk gate。相依 [[CC-399]] | ✅ |
-
-### Phase 2 — memory 檢索基底（P2-P3；能力層）
-
-> 讓 memory 成為 `pmctl context` 的可檢索 source，並收斂出單一檢索入口；同時治理 memory 本身的 inject bloat 與 staleness。
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-403 | `pmctl context --source repo/memory/all`：memory 變可檢索 source（memory-local DB、schema `source_domain` 補 memory、pack `memories[]` 填值、reuse-scan 維持 repo-only）。**supersede/吸收 [[CC-340]] MVP**，embeddings 留 CC-340 | ✅ pr:#313 |
-| CC-404 | `MEMORY.md` 注入硬預算（20 條/3000B）+ `priority: always` pin + prompt-keyword 排序，取代「全注入 + >=50 才警告」。usage-based 動態排序分流至 [[CC-427]] | ✅ pr:#328 |
-| CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | ✅ |
-| CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | ✅ pr:#325 |
-| CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | ✅ |
-| CC-427 | tier1 只認 `priority: always`（pin），normal 卡改 usage-based recency+frequency frecency 排序（Firefox bucket `access_count×age_bucket` + W-TinyLFU 老化，純整數零 LLM）；修 [[CC-404]] 預算因 33 卡全 `status: active` 失效。Phase 1 spike → Phase 2 實作 | ✅ pr:#329 |
-
-### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
-
-> 純命名脫鉤，**零行為改動**：`hook-*.sh`（8 檔）/ `hook-framework.sh` / `hk_*`/`HK_*` 函式 / `PM_HOOK_*` env → 平台中性 `guard-*`；`settings.json` 的 `PreToolUse` 鍵保留（Claude 平台自有）。獨立 PR，不可與安全邊界票混搭。前置 [[CC-376]] ✅ 已達成；[[CC-377]] deferred 不阻本票。
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-384 | `hook-*.sh` → `guard-*.sh`、framework/helper/env 前綴一起掃；install/uninstall/doctor 接線 + parity scanner + 測試 + 文件同步。[[CC-333]] layer 2/6 | ✅ (#310) |
-
-> **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
-
-### 待後續 / 與本版正交
-
-- **CC-216 MCP server（DEFERRED，不排入 milestone）**——「通用橋」讓任意 MCP-aware host 透過單一協定使用 pm-dispatch。**2026-06-18 user 拍板：先 defer、不排入任何 milestone，待核心（executor 抽象 + retrieval/memory 基底）覺得**基本都穩定**後再考慮**。重型 net-new surface（Node/Python server + `pmctl --json`），需穩定 pmctl + 已收口 executor 抽象作下層。相依 [[CC-211]]、[[CC-215]]。
-- **CC-273（unified lifecycle *hook event* spec）**——tool-step hook 事件（user-extensibility seam），與 process lifecycle（v0.6.0 Phase 7）正交；待出現第二個 hook 點需求再做。
-- **CC-003（artifact-relocation epic）**——✅ 2026-06-25 全部完成（Phase 0–5，CC-413〜CC-419）；gc + migrate + 預設 out-of-repo + 跨 repo 清理全到位。
-- **CC-333 七層耦合 1/4/7**（memory / install-target / reviewer memory 讀取軸）——與 executor 抽象軸正交，獨立排程。
-- **CC-340 knowledge index 重型版**——**已被 [[CC-403]] supersede**：memory-index MVP 移入 Phase 2，CC-340 僅剩 embeddings / 語意後端 remainder，待 FTS/LIKE 證明不足再 resume。
-- **CC-026（/skill-distill）——continue defer**：前置 episode signal 層（CC-027b/c）仍 deferred；列入 someday 待 signal 層就緒再評估。
-- **CC-018（rate-limit 統一）——continue defer**：ux/token 主題與 retrieval 正交；維持 P3 active 不排入 v0.7.0。
-- **CC-342（debt-auditor agent）——continue someday**：proactive 技術債掃描與本版主題無直接相關；待核心穩定後再評估。
-- **CC-357（skill as contract schema）——continue someday**：架構較大、無明確 trigger 條件，不排入 v0.7.0。
-- **CC-033（Public flip checklist）——blocked on CC-032**：CC-032（`[[feedback_*]]` 公開化）仍 🔵 active 未完成；CC-033 依賴其完成，不排入 v0.7.0。
 
 ---
 
