@@ -880,9 +880,11 @@ case_memory_rebuild_summary_basic() {
   mdir="$(make_fixture_memory "$cfg" "$repo")"
 
   local ep="$mdir/episodes.jsonl"
-  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"may entry one"}\n' "$repo" >> "$ep"
-  printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"may entry two"}\n' "$repo" >> "$ep"
-  printf '{"date":"2026-06-01","cwd":"%s","session_id":"c","summary":"june entry"}\n'   "$repo" >> "$ep"
+  {
+    printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"may entry one"}\n' "$repo"
+    printf '{"date":"2026-05-02","cwd":"%s","session_id":"b","summary":"may entry two"}\n' "$repo"
+    printf '{"date":"2026-06-01","cwd":"%s","session_id":"c","summary":"june entry"}\n'   "$repo"
+  } >> "$ep"
 
   local out status=0
   out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
@@ -1039,8 +1041,8 @@ case_memory_doctor_shard_count() {
   printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
 
   # No shard files yet — shard_count should be 0.
-  local out0 status0=0
-  out0="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || status0=$?
+  local out0
+  out0="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || true
   local cnt0
   cnt0="$(printf '%s' "$out0" | grep -o '"shard_count":[0-9]*' | grep -o '[0-9]*')"
   if [[ "$cnt0" != "0" ]]; then
