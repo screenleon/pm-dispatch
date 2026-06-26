@@ -591,6 +591,32 @@ EOF
   pass "$name"
 }
 
+case_cli_route() {
+  local name="pre-release/cli-route"
+  should_run "$name" || return 0
+
+  # Verify the CLI wiring by calling the actual binary against the real repo.
+  # REPO_ROOT is resolved from the binary location, so we use a real milestone.
+  local pmctl_bin="$REPO_ROOT/cli/pmctl"
+  local out rc=0
+  out="$("$pmctl_bin" pre-release audit "v0.7.0" 2>&1)" || rc=$?
+
+  # Exit code 2 = dispatch/arg error; 0 or 1 = audit ran (found issues or not)
+  if [[ "$rc" -eq 2 ]]; then
+    fail "$name" "cli pmctl pre-release audit dispatch failed (exit 2): $out"
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -q 'Layer 1'; then
+    fail "$name" "cli output missing Layer 1 header (exit $rc): $out"
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -q 'Layer 3'; then
+    fail "$name" "cli output missing Layer 3 blind spots (exit $rc): $out"
+    return
+  fi
+  pass "$name"
+}
+
 # ---- run all ---------------------------------------------------------------
 
 case_extract_scope_rows
@@ -609,5 +635,6 @@ case_audit_unknown_flag
 case_audit_missing_file
 case_audit_missing_milestone
 case_audit_happy_path
+case_cli_route
 
 th_summary

@@ -68,7 +68,7 @@ pmctl_pre_release_audit() {
   # Check 1.1 — milestone scope: ✅ + PR refs
   local c11_out c11_issues=0
   c11_out="$(_pra_check_11_pr_refs "$scope_rows" "$milestone_id")"
-  c11_issues=$(printf '%s\n' "$c11_out" | grep -c '^❌' || true)
+  c11_issues=$(printf '%s\n' "$c11_out" | grep -cE '^(❌|⚠️)' || true)
 
   printf '#### 1.1 Milestone scope — ✅ and PR refs\n\n'
   printf '%s\n\n' "$c11_out"
@@ -76,7 +76,7 @@ pmctl_pre_release_audit() {
   # Check 1.2 — closed ticket body residuals (only scan ✅ tickets)
   local c12_out c12_issues=0
   c12_out="$(_pra_check_12_body_residuals "$backlog" "$backlog_archive" "$scope_rows")"
-  c12_issues=$(printf '%s\n' "$c12_out" | grep -c '^❌' || true)
+  c12_issues=$(printf '%s\n' "$c12_out" | grep -cE '^(❌|⚠️)' || true)
 
   printf '#### 1.2 Closed ticket body — residual unresolved markers\n\n'
   printf '%s\n\n' "$c12_out"
@@ -84,7 +84,7 @@ pmctl_pre_release_audit() {
   # Check 1.3 — CHANGELOG coverage
   local c13_out c13_issues=0
   c13_out="$(_pra_check_13_changelog "$changelog" "$scope_rows")"
-  c13_issues=$(printf '%s\n' "$c13_out" | grep -c '^❌' || true)
+  c13_issues=$(printf '%s\n' "$c13_out" | grep -cE '^(❌|⚠️)' || true)
 
   printf '#### 1.3 CHANGELOG [Unreleased] coverage\n\n'
   printf '%s\n\n' "$c13_out"
@@ -92,7 +92,7 @@ pmctl_pre_release_audit() {
   # Check 1.4 — BACKLOG index vs body heading status
   local c14_out c14_issues=0
   c14_out="$(_pra_check_14_status_consistency "$backlog" "$backlog_archive" "$tickets")"
-  c14_issues=$(printf '%s\n' "$c14_out" | grep -c '^❌' || true)
+  c14_issues=$(printf '%s\n' "$c14_out" | grep -cE '^(❌|⚠️)' || true)
 
   printf '#### 1.4 BACKLOG index ↔ body heading status\n\n'
   printf '%s\n\n' "$c14_out"

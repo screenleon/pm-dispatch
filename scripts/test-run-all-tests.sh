@@ -160,6 +160,7 @@ suite_path() {
     test-pmctl-guard)     printf 'scripts/test-pmctl-guard.sh\n' ;;
     test-release-verify)  printf 'scripts/test-release-verify.sh\n' ;;
     test-e2e-script)      printf 'scripts/test-e2e-script.sh\n' ;;
+    test-pre-release)     printf 'scripts/test-pre-release.sh\n' ;;
     *) return 1 ;;
   esac
 }
