@@ -5,9 +5,20 @@ set -euo pipefail
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/lib/memory.sh"
+# shellcheck disable=SC1091
+. "$(dirname "$0")/lib/portable.sh"
 
 MAX_INJECT_ENTRIES=20
 MAX_INJECT_BYTES=3000
+
+# Usage-based ranking knobs (integer-only; see lib/memory.sh).
+# Decay threshold: global keyword-hit events before W-TinyLFU halving.
+MEMORY_DECAY_THRESHOLD="${PM_MEMORY_DECAY_THRESHOLD:-256}"
+# Keyword tier weight: composite = keyword_score * WEIGHT + frecency. Keeping
+# WEIGHT above the max attainable frecency makes ranking layered — any card the
+# current prompt's keywords hit outranks every non-hit card, with frecency only
+# ordering within each tier.
+MEMORY_KEYWORD_WEIGHT="${PM_MEMORY_FRECENCY_KEYWORD_WEIGHT:-100000}"
 
 payload=$(cat)
 [[ -z "$payload" ]] && exit 0
@@ -24,6 +35,22 @@ cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/d
 memory_dir=$(find_memory_dir "$cwd" "$_config_dir") || exit 0
 memory_path="$memory_dir/MEMORY.md"
 [[ -f "$memory_path" ]] || exit 0
+
+# Load usage telemetry (read-only snapshot; ranking uses pre-access state).
+usage_sidecar=$(memory_usage_sidecar_path "$memory_dir")
+today_day=$(( $(date +%s) / 86400 ))
+declare -A _usage_acc=() _usage_last=()
+if [[ -f "$usage_sidecar" ]]; then
+  while IFS=$'\t' read -r _u_rel _u_acc _u_last; do
+    [[ -z "$_u_rel" || "$_u_rel" == \#* ]] && continue
+    [[ "$_u_acc"  =~ ^[0-9]+$ ]] || _u_acc=0
+    [[ "$_u_last" =~ ^[0-9]+$ ]] || _u_last=0
+    _usage_acc["$_u_rel"]="$_u_acc"
+    _usage_last["$_u_rel"]="$_u_last"
+  done < "$usage_sidecar"
+fi
+# Relpaths whose access_count should be incremented this run (keyword hits).
+usage_hits=()
 
 index_lines=()
 while IFS= read -r _line; do
@@ -71,20 +98,22 @@ tier1_lines=()
 tier2_count=0
 
 for _line in "${index_lines[@]}"; do
-  card_file=""
+  card_file="" card_rel=""
   # Extract card filename from markdown link: [name](file.md)
   _link_re='^\- \[([^]]*)\]\(([^)]*\.md)\)'
   if [[ "$_line" =~ $_link_re ]]; then
-    card_file="$memory_dir/${BASH_REMATCH[2]}"
+    card_rel="${BASH_REMATCH[2]}"
+    card_file="$memory_dir/$card_rel"
   fi
 
-  priority="" card_status=""
+  priority=""
   if [[ -n "$card_file" && -f "$card_file" ]]; then
     priority=$(_card_field "$card_file" "priority") || priority=""
-    card_status=$(_card_field "$card_file" "status") || card_status=""
   fi
 
-  if [[ "$priority" == "always" || "$card_status" == "active" ]]; then
+  # tier1 = manual pin only. `status` is lifecycle metadata (used for GC), not
+  # an injection priority, so it no longer forces always-inject.
+  if [[ "$priority" == "always" ]]; then
     tier1_lines+=("$_line")
   else
     topics_text=""
@@ -92,20 +121,54 @@ for _line in "${index_lines[@]}"; do
       topics_text=$(_card_topics "$card_file") || true
     fi
     score=$(_score "$_line $topics_text")
-    # Store as zero-padded score TAB sequence TAB line for stable sort
-    printf '%05d\t%05d\t%s\n' "$score" "$tier2_count" "$_line" >> "$_t2tmp"
+
+    # frecency = access_count * age_bucket(last_access); 0 for never-accessed
+    # cards. Clamp below the keyword weight so a hit always outranks a non-hit.
+    frecency=0
+    if [[ -n "$card_rel" ]]; then
+      _acc="${_usage_acc["$card_rel"]:-0}"
+      if (( _acc > 0 )); then
+        _bucket=$(memory_age_bucket "$today_day" "${_usage_last["$card_rel"]:-0}")
+        frecency=$(( _acc * _bucket ))
+        (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+      fi
+    fi
+    composite=$(( score * MEMORY_KEYWORD_WEIGHT + frecency ))
+
+    # Record a keyword-hit access (counted before budget truncation, so a
+    # relevant-but-cold card still accrues signal even when it does not make the
+    # cut this run). Pinned tier1 cards are orthogonal to usage and not counted.
+    if (( score > 0 )) && [[ -n "$card_rel" ]]; then
+      usage_hits+=("$card_rel")
+    fi
+
+    # Store as zero-padded composite TAB sequence TAB line for stable sort.
+    printf '%010d\t%05d\t%s\n' "$composite" "$tier2_count" "$_line" >> "$_t2tmp"
     tier2_count=$((tier2_count + 1))
   fi
 done
 
-# Sort tier2 entries by score descending
+# Sort tier2 entries by composite score descending (keyword tier first, then
+# frecency within tier), stable by original sequence.
 sorted_tier2=()
 if [[ "$tier2_count" -gt 0 ]]; then
   while IFS= read -r _pair; do
-    # Strip "SCORE\tSEQ\t" prefix to recover original line
+    # Strip "COMPOSITE\tSEQ\t" prefix to recover original line
     _rest="${_pair#*$'\t'}"
     sorted_tier2+=("${_rest#*$'\t'}")
   done < <(sort -t$'\t' -k1,1rn -k2,2n "$_t2tmp")
+fi
+
+# Persist this run's keyword-hit accesses (and apply periodic decay) under an
+# exclusive lock. Best-effort: a lock contention or write failure must never
+# block or fail the prompt hook.
+if [[ "${#usage_hits[@]}" -gt 0 ]]; then
+  # The lock file lives beside the sidecar; its directory must exist before
+  # serialize_with_lock opens it.
+  mkdir -p "$(dirname "$usage_sidecar")" 2>/dev/null || true
+  serialize_with_lock "$usage_sidecar" \
+    memory_usage_commit "$usage_sidecar" "$MEMORY_DECAY_THRESHOLD" "$today_day" \
+    "${usage_hits[@]}" >/dev/null 2>&1 || true
 fi
 
 # Determine how many tier2 slots remain after tier1
