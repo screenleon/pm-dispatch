@@ -1709,6 +1709,297 @@ inject_hook_byte_cap_truncates_before_entry_cap() {
   rm -rf "$dir"
 }
 
+inject_hook_status_active_no_longer_pins() {
+  # CC-427 core fix: status: active must NOT force tier1 (always-inject). With
+  # 25 normal cards all status: active, the budget (20) must still truncate,
+  # emitting 20 entries + a "5 entries omitted" notice. Pre-CC-427 these would
+  # all land in tier1 and bypass the budget (the "33 cards, zero omission" bug).
+  local name="inject-hook/status-active-no-longer-pins" dir cwd mem payload output status omission_line injected
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  {
+    printf '# test\n'
+    for i in $(seq 1 25); do
+      printf -- '---\npriority: normal\nstatus: active\n---\nCard %d\n' "$i" > "$mem/c$i.md"
+      printf -- '- [c%d](c%d.md) — active card %d\n' "$i" "$i" "$i"
+    done
+  } > "$mem/MEMORY.md"
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"zzz\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  injected="$(printf '%s\n' "$output" | grep -c '^- \[' || true)"
+  omission_line="$(printf '%s\n' "$output" | grep 'entries omitted' || true)"
+  if [[ "$status" == "0" \
+      && "$injected" == "20" \
+      && "$omission_line" == *"5 entries omitted"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s injected=%s omission=%q\n' "$name" "$status" "$injected" "$omission_line"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_keyword_hit_records_access() {
+  # A keyword-hit normal card records one access in the usage sidecar (counted
+  # before budget truncation). Pinned tier1 cards are not counted.
+  local name="inject-hook/keyword-hit-records-access" dir cwd mem payload status sidecar row
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n- [b](b.md) — other card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  printf -- '---\npriority: normal\ntopics:\n  - unrelated\n---\nB\n' > "$mem/b.md"
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"check the retrieval system\"}"
+  printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  status=$?
+  sidecar="$mem/.pm-dispatch/inject-usage.tsv"
+  row="$(grep '^a\.md' "$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" \
+      && "$row" == a.md$'\t'1$'\t'* \
+      && -z "$(grep '^b\.md' "$sidecar" 2>/dev/null || true)" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s row=%q sidecar=%q\n' "$name" "$status" "$row" "$(cat "$sidecar" 2>/dev/null)"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_frecency_ranks_accessed_above_cold() {
+  # With NO keyword hit this run, a card that accrued usage (frecency > 0) ranks
+  # above a never-accessed card, replacing the old fixed index order.
+  local name="inject-hook/frecency-ranks-accessed-above-cold" dir cwd mem status pos_a pos_b
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  # Order in index: b (cold) before a (will be warmed).
+  printf '# test\n- [b](b.md) — beta\n- [a](a.md) — alpha\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - alpha\n---\nA\n' > "$mem/a.md"
+  printf -- '---\npriority: normal\ntopics:\n  - beta\n---\nB\n' > "$mem/b.md"
+  # Warm a.md with a keyword-hit run.
+  printf '{"cwd":"%s","prompt":"alpha alpha"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  # Now a neutral prompt: no keyword hits → ranking driven by frecency.
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_a=$(printf '%s\n' "$output" | grep -n '\[a\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n '\[b\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" && "$pos_a" -lt "$pos_b" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s output=%q\n' "$name" "$status" "$pos_a" "$pos_b" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_keyword_tier_dominates_frecency() {
+  # A card the current prompt's keywords hit outranks a high-frecency card that
+  # the prompt does NOT hit (layered: keyword tier first, frecency within tier).
+  local name="inject-hook/keyword-tier-dominates-frecency" dir cwd mem status pos_a pos_b i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — alpha card\n- [b](b.md) — beta card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - alpha\n---\nA\n' > "$mem/a.md"
+  printf -- '---\npriority: normal\ntopics:\n  - beta\n---\nB\n' > "$mem/b.md"
+  # Warm b.md heavily so it has high frecency.
+  for i in 1 2 3 4 5; do
+    printf '{"cwd":"%s","prompt":"beta beta"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  done
+  # Prompt hits a (keyword) but not b; a must outrank high-frecency b.
+  output=$(printf '{"cwd":"%s","prompt":"alpha please"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_a=$(printf '%s\n' "$output" | grep -n '\[a\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_b=$(printf '%s\n' "$output" | grep -n '\[b\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" && -n "$pos_a" && -n "$pos_b" && "$pos_a" -lt "$pos_b" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_a=%s pos_b=%s output=%q\n' "$name" "$status" "$pos_a" "$pos_b" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+memory_usage_commit_decay_halves() {
+  # Unit: reaching the decay threshold halves every access_count and resets the
+  # global event counter to 0.
+  local name="memory-usage/commit-decay-halves" out acc te
+  should_run "$name" || return 0
+  out="$(
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/memory.sh"
+    sc="$(mktemp -d)/u.tsv"
+    # 4 hits on a.md at threshold 4 → access_count 4, then >>1 = 2; total_events 0.
+    memory_usage_commit "$sc" 4 100 a.md a.md a.md a.md
+    cat "$sc"
+  )"
+  acc="$(printf '%s\n' "$out" | awk -F'\t' '$1=="a.md"{print $2}')"
+  te="$(printf '%s\n' "$out" | awk -F= '/^# total_events=/{print $2}')"
+  if [[ "$acc" == "2" && "$te" == "0" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — acc=%q total_events=%q out=%q\n' "$name" "$acc" "$te" "$out"
+  fi
+}
+
+memory_usage_commit_concurrent_no_lost_updates() {
+  # Concurrency (mutation-grade): N simultaneous keyword-hit writers to the same
+  # sidecar, each serialized through serialize_with_lock, must not lose any
+  # increment — final access_count must equal exactly N. Removing the lock from
+  # the hook's persistence path turns the read-modify-write into a race that
+  # drops updates, so this test fails (the mutation is caught). Uses a private
+  # temp dir (no shared /tmp scanning) so the result is isolation-stable.
+  local name="memory-usage/concurrent-no-lost-updates" got n=25
+  should_run "$name" || return 0
+  got="$(
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/memory.sh"
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/portable.sh"
+    d="$(mktemp -d)"
+    sc="$d/.pm-dispatch/inject-usage.tsv"
+    mkdir -p "$(dirname "$sc")"
+    local i
+    for ((i = 0; i < n; i++)); do
+      # threshold high so decay never fires; one a.md hit per writer.
+      serialize_with_lock "$sc" memory_usage_commit "$sc" 1000000 100 a.md &
+    done
+    wait
+    awk -F'\t' '$1=="a.md"{print $2}' "$sc"
+    rm -rf "$d"
+  )"
+  if [[ "$got" == "$n" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — final access_count=%q want=%q\n' "$name" "$got" "$n"
+  fi
+}
+
+memory_age_bucket_mapping() {
+  # Unit: age bucket boundaries map to 100/70/50/30/10.
+  local name="memory-usage/age-bucket-mapping" got want ok=1
+  should_run "$name" || return 0
+  got="$(
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/memory.sh"
+    # today=100; last at diffs 0,4,5,14,31,90,91 and a future stamp (-3 diff).
+    for pair in 100:100 96:100 95:70 86:70 69:50 10:30 9:10 103:100; do
+      last="${pair%%:*}"
+      printf '%s ' "$(memory_age_bucket 100 "$last")"
+    done
+  )"
+  want="100 100 70 70 50 30 10 100 "
+  [[ "$got" == "$want" ]] && ok=1 || ok=0
+  if [[ "$ok" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — got=%q want=%q\n' "$name" "$got" "$want"
+  fi
+}
+
+inject_hook_sidecar_write_failure_is_best_effort() {
+  # Error path: when the usage sidecar cannot be written (here .pm-dispatch is a
+  # regular file, so the dir/lock cannot be created), the hook must still exit 0
+  # and emit the memory index — telemetry persistence is strictly best-effort.
+  local name="inject-hook/sidecar-write-failure-best-effort" dir cwd mem status output
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  # Occupy the .pm-dispatch path with a regular file so sidecar dir/lock creation fails.
+  printf 'blocker' > "$mem/.pm-dispatch"
+  output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" \
+      && "$output" == *"- [a](a.md)"* \
+      && "$output" == *"=== end auto-memory ==="* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_malformed_sidecar_degrades_to_zero() {
+  # Negative input: malformed existing sidecar rows (non-numeric counters /
+  # timestamps and a non-numeric total_events header) must degrade to zero
+  # without aborting. The hook still exits 0, emits the index, and a fresh
+  # keyword-hit access rewrites a well-formed row (a.md access_count=1) with a
+  # numeric total_events header.
+  local name="inject-hook/malformed-sidecar-degrades-to-zero" dir cwd mem status output sidecar row te
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  mkdir -p "$mem/.pm-dispatch"
+  sidecar="$mem/.pm-dispatch/inject-usage.tsv"
+  printf '# total_events=abc\na.md\tnotanum\txyz\n' > "$sidecar"
+  output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  row="$(grep '^a\.md' "$sidecar" 2>/dev/null || true)"
+  te="$(awk -F= '/^# total_events=/{print $2}' "$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" \
+      && "$output" == *"- [a](a.md)"* \
+      && "$row" == a.md$'\t'1$'\t'* \
+      && "$te" =~ ^[0-9]+$ ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s row=%q te=%q output=%q\n' "$name" "$status" "$row" "$te" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -1724,6 +2015,15 @@ inject_hook_always_priority_bypasses_budget
 inject_hook_prompt_aware_scoring
 inject_hook_byte_cap_truncates_before_entry_cap
 inject_hook_default_home_fallback
+inject_hook_status_active_no_longer_pins
+inject_hook_keyword_hit_records_access
+inject_hook_frecency_ranks_accessed_above_cold
+inject_hook_keyword_tier_dominates_frecency
+inject_hook_sidecar_write_failure_is_best_effort
+inject_hook_malformed_sidecar_degrades_to_zero
+memory_usage_commit_decay_halves
+memory_usage_commit_concurrent_no_lost_updates
+memory_age_bucket_mapping
 
 # Episode reminder tests (CC-019 inject hook extension)
 

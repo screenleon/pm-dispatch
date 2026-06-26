@@ -98,7 +98,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-424 | ✅ closed 2026-06-25 | refactor: memory commands 去 python3 化；新增 pmctl memory dir；test-commands + test-pmctl-memory 覆蓋 | arch/memory | 2026-06-25 | pr:#326 | P2 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
-| CC-427 | 🔵 active | **[memory: MEMORY.md 注入 usage-based recency+frequency 排序]** [[CC-404]]（PR#328）的硬注入預算因 33 張 live card 全 `status: active` → 全進 tier1 恆注入而失效（實測注入仍 33 條零省略）。本票把 tier1 改成只認 `priority: always`（手動 pin），其餘 normal 卡改 usage-based recency+frequency frecency 排序：Firefox bucket access_count × age_bucket（bucket 100/70/50/30/10 對應 age ≤4d/14d/31d/90d/更舊）+ W-TinyLFU 週期性 access_count 右移老化，純整數零 LLM。先 spike 定 access 訊號源（tier2 命中 vs 純注入）／寫回 frontmatter vs sidecar／老化時機，再實作。研究見 memory reference_memory_injection_ranking。 | ux/memory | 2026-06-25 | — | P2 | retrieval |
+| CC-427 | ✅ closed 2026-06-26 | **[memory: MEMORY.md 注入 usage-based recency+frequency 排序]** tier1 改只認 `priority: always`（移除 status:active OR，解 33 卡零省略）；normal 卡 Firefox bucketed frecency（access_count × age_bucket 100/70/50/30/10）+ W-TinyLFU 全域 event-counter 老化；keyword 命中即記 access（截斷前）；sidecar TSV 寫回；複合 sort key keyword tier 主導。四決策經六-model 統整定案。研究見 memory reference_memory_injection_ranking。 | ux/memory | 2026-06-25 | pr:#329 | P2 | retrieval |
 
 ---
 
@@ -1579,7 +1579,9 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 
 **Refs**: [[CC-404]]（注入預算 + context 效率）、[[CC-403]]（memory source query）、[[CC-405]]（card frontmatter 品質基礎）、[[CC-425]]（gate ref-pair，可複用 commit range 解析邏輯）。
 
-## CC-427 — memory: MEMORY.md 注入 usage-based recency+frequency 排序 🔵 active → v0.7.0
+## CC-427 — memory: MEMORY.md 注入 usage-based recency+frequency 排序 ✅ 2026-06-26
+
+**See**: pr:#329
 
 **Problem**: [[CC-404]]（PR#328）落地了硬注入預算（20 條 / 3000 bytes）+ `priority: always` pin + prompt-keyword tier2 排序，但 tier1 條件 `priority: always || status: active` 在「33 張 live card 全 `status: active`」（[[CC-405]] backfill 結果）下 → 全部進 tier1 恆注入、不受預算，實測注入仍 33 條、零省略，**預算實質失效**。`status` 三分法（active/stale/archived）語意是生命週期，不是注入優先級，拿來當恆注入條件是誤用。
 
@@ -1592,16 +1594,17 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 - `status` 降為未來 staleness GC 用，不參與注入排序。
 - 排除：HN-poly（需 pow）、MemGPT/Claude memory（LLM-judged）、embeddings/FTS（延 [[CC-340]]）。
 
-**Phase 1 — spike**（committed 決策後才寫實作 brief，產 `docs/spikes/CC-427.md`）:
-- `access` 事件定義：被 tier2 keyword 命中算一次？還是純被注入算一次？
-- usage 計數寫回 `frontmatter`（每次重寫 markdown，IO+並發）vs sidecar counter 檔（類 `episodes.jsonl` telemetry，markdown 維持 canonical）。
-- 老化觸發時機（每 N 次注入 / count 超 cap）。
-- frecency 分數與現有 prompt-keyword tier2 score 如何結合（相乘 / 相加 / 分層）。
+**Phase 1 — committed 決策**（六-model 統整定案：主線程 + codex + opencode + ChatGPT/Gemini/Grok）:
+- `access` 事件定義 → **keyword 命中（`_score>0`）即 +1**，在預算截斷前（冷門但相關卡也累積訊號）；純被注入不計，避免 self-reinforcing 霸榜。
+- usage 計數寫回 → **sidecar TSV**（`memory_dir/.pm-dispatch/inject-usage.tsv`），markdown 維持 canonical、零 git diff 噪音、`serialize_with_lock` 原子寫回。
+- 老化觸發 → **全域 event-counter**：`total_events` 累積命中達 `PM_MEMORY_DECAY_THRESHOLD`(256) → 全表 `access_count >>= 1` 並歸零（W-TinyLFU；age_bucket 已承擔 recency 軸，故老化綁操作次數而非時間）。
+- frecency × keyword 結合 → **複合 sort key** `composite = score × WEIGHT(100000) + frecency`，frecency 鉗在 WEIGHT 以下 → keyword tier 主導、組內 frecency 排序（等價分層、單 pass）。
 
-**Phase 2 — 實作**（依 spike 決策）:
-- `guard-inject-memory.sh`：tier1 移除 `status: active`、normal 卡套 frecency 排序、access 計數寫回 + 老化。
-- 測試：pin 必達 + frecency 排序（新近高分、久未觸及下沉）+ 老化 + access 計數累積。
+**Phase 2 — 實作**（✅ 完成）:
+- `scripts/lib/memory.sh`：`memory_usage_sidecar_path` / `memory_age_bucket` / `memory_usage_commit`（鎖內 RMW + 全域減半）。
+- `scripts/guard-inject-memory.sh`：tier1 只認 `priority: always`、normal 卡 frecency 複合排序、keyword 命中記 access、best-effort 寫回。
+- 測試（`test-guards.sh`，6 新增全綠）：status:active 不再恆注入（20+5 omitted）、access 記錄、frecency 排序、keyword tier 主導、decay 減半、age_bucket 映射。
 
-**Priority**: P2（active，下一個 PR 處理：Phase 1 spike → Phase 2 實作）.
+**Priority**: P2（✅ closed 2026-06-26，pr:#329）.
 
 **Refs**: [[CC-404]]（預算+pin+tier2 骨架）、[[CC-405]]（frontmatter schema）、memory `reference_memory_injection_ranking`（research 結論）、`scripts/guard-inject-memory.sh`。
