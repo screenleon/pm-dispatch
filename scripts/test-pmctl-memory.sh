@@ -939,9 +939,25 @@ case_memory_rebuild_summary_no_duplicate_after_shard() {
   cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
   printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current entry"}\n' "$cur_ym" "$repo" >> "$ep"
 
-  # Run shard first, then rebuild summary.
-  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
-  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || true
+  # Run shard first — verify it actually ran (shard file must exist).
+  local shard_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || shard_status=$?
+  if [[ "$shard_status" -ne 0 ]]; then
+    fail "$name" "pmctl memory shard failed with exit $shard_status"
+    return 0
+  fi
+  if [[ ! -f "$mdir/episodes.2020-01.jsonl" ]]; then
+    fail "$name" "shard did not create episodes.2020-01.jsonl; shard may not have run"
+    return 0
+  fi
+
+  # Then rebuild summary — verify it succeeded.
+  local rs_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || rs_status=$?
+  if [[ "$rs_status" -ne 0 ]]; then
+    fail "$name" "pmctl memory rebuild-summary failed with exit $rs_status"
+    return 0
+  fi
 
   local summary="$mdir/episodes.summary.md"
   if [[ ! -f "$summary" ]]; then
@@ -1071,6 +1087,104 @@ case_memory_rebuild_summary_deterministic() {
   pass "$name"
 }
 
+case_memory_shard_help_exit0() {
+  local name="pmctl memory shard: --help exits 0 with usage"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --help 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "--help exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -qi "usage"; then
+    fail "$name" "--help output lacks 'Usage'; output: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_unknown_arg_exit2() {
+  local name="pmctl memory shard: unknown argument exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --bogus-flag 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for unknown arg, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_no_episodes_file() {
+  local name="pmctl memory shard: no episodes.jsonl exits 0 with message"
+  should_run "$name" || return 0
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  # Do NOT create episodes.jsonl.
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no episodes"; then
+    fail "$name" "expected 'no episodes' in output; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_help_exit0() {
+  local name="pmctl memory rebuild-summary: --help exits 0 with usage"
+  should_run "$name" || return 0
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --help 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "--help exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -qi "usage"; then
+    fail "$name" "--help output lacks 'Usage'; output: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_unknown_arg_exit2() {
+  local name="pmctl memory rebuild-summary: unknown argument exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --bogus-flag 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for unknown arg, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_episodes_file() {
+  local name="pmctl memory rebuild-summary: no episodes.jsonl exits 0 with message"
+  should_run "$name" || return 0
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  # Do NOT create episodes.jsonl.
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no episodes"; then
+    fail "$name" "expected 'no episodes' in output; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_doctor_ignores_episodes_summary() {
   local name="pmctl memory doctor: episodes.summary.md is NOT reported as orphan or missing-fields card"
   should_run "$name" || return 0
@@ -1183,6 +1297,12 @@ case_memory_shard_below_limit
 case_memory_shard_above_limit
 case_memory_shard_idempotent
 case_memory_rebuild_summary_no_duplicate_after_shard
+case_memory_shard_help_exit0
+case_memory_shard_unknown_arg_exit2
+case_memory_shard_no_episodes_file
+case_memory_rebuild_summary_help_exit0
+case_memory_rebuild_summary_unknown_arg_exit2
+case_memory_rebuild_summary_no_episodes_file
 case_memory_rebuild_summary_basic
 case_memory_rebuild_summary_skips_empty_summary
 case_memory_rebuild_summary_deterministic

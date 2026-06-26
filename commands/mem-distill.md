@@ -53,7 +53,7 @@ pmctl memory rebuild-summary 2>/dev/null || true
 pmctl memory shard           2>/dev/null || true
 ```
 
-`pmctl memory rebuild-summary` regenerates `episodes.summary.md` from all entries in `episodes.jsonl` (and any `episodes.YYYY-MM.jsonl` shard files), grouping by year-month. If it fails (e.g., no episodes file), skip silently.
+`pmctl memory rebuild-summary` regenerates `episodes.summary.md` from entries in `episodes.jsonl`, grouping by year-month. If it fails (e.g., no episodes file), skip silently.
 
 `pmctl memory shard` archives entries older than the current month into `episodes.YYYY-MM.jsonl` shard files when `episodes.jsonl` exceeds 1000 lines. If it fails or the threshold is not reached, skip silently.
 
