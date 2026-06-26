@@ -280,6 +280,12 @@ pmctl_memory_doctor() {
   done
   episodes_bytes="$(_mem_file_bytes "$episodes")"
 
+  # Count shard files: episodes.YYYY-MM.jsonl pattern in the memory dir.
+  local shard_count=0
+  for f in "$mem_dir"/episodes.????-??.jsonl; do
+    [[ -e "$f" ]] && shard_count=$((shard_count + 1))
+  done
+
   local issues_count=$(( ${#dead_links[@]} + ${#orphan_cards[@]} + ${#duplicate_hooks[@]} + ${#stale_refs[@]} + ${#missing_field_cards[@]} ))
 
   if [[ "$json" -eq 1 ]]; then
@@ -299,6 +305,7 @@ _mem_doctor_emit_json() {
   out+=",\"entry_count\":$entry_count"
   out+=",\"memory_bytes\":$memory_bytes"
   out+=",\"episodes_bytes\":$episodes_bytes"
+  out+=",\"shard_count\":$shard_count"
   out+=",\"dead_links\":$(_mem_json_str_array ${dead_links[@]+"${dead_links[@]}"})"
   out+=",\"orphan_cards\":$(_mem_json_str_array ${orphan_cards[@]+"${orphan_cards[@]}"})"
   out+=",\"duplicate_hooks\":$(_mem_json_str_array ${duplicate_hooks[@]+"${duplicate_hooks[@]}"})"
@@ -360,6 +367,7 @@ _mem_doctor_emit_human() {
   printf 'entry_count:     %s\n' "$entry_count"
   printf 'memory_bytes:    %s\n' "$memory_bytes"
   printf 'episodes_bytes:  %s\n' "$episodes_bytes"
+  printf 'shard_count:     %s\n' "$shard_count"
   _mem_doctor_human_list 'dead_links' ${dead_links[@]+"${dead_links[@]}"}
   _mem_doctor_human_list 'orphan_cards' ${orphan_cards[@]+"${orphan_cards[@]}"}
   _mem_doctor_human_list 'duplicate_hooks' ${duplicate_hooks[@]+"${duplicate_hooks[@]}"}
@@ -395,4 +403,181 @@ _mem_doctor_human_list() {
   for item in "$@"; do
     printf '  - %s\n' "$item"
   done
+}
+
+# ── Episode shard + summary ───────────────────────────────────────────────────
+
+# Maximum lines in episodes.jsonl before shard is triggered.
+EP_SHARD_LINE_LIMIT=1000
+
+# Archive entries from months prior to the current month into
+# episodes.YYYY-MM.jsonl shard files when episodes.jsonl exceeds EP_SHARD_LINE_LIMIT.
+# Entries for the current month remain in episodes.jsonl.
+# Usage: pmctl_memory_shard [--repo-root <path>]
+pmctl_memory_shard() {
+  local repo_root="${REPO_ROOT:-$PWD}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root)
+        if [[ -z "${2:-}" ]]; then
+          printf 'pmctl memory shard: --repo-root requires a value\n' >&2
+          return 2
+        fi
+        repo_root="$2"; shift 2 ;;
+      --help|-h)
+        printf 'Usage: pmctl memory shard [--repo-root <path>]\n'
+        printf 'Archive old episodes to shard files when episodes.jsonl exceeds %d lines.\n' "$EP_SHARD_LINE_LIMIT"
+        return 0 ;;
+      *)
+        printf 'pmctl memory shard: unknown argument: %s\n' "$1" >&2
+        return 2 ;;
+    esac
+  done
+
+  local mem_dir=""
+  mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory shard: no memory directory found\n' >&2; return 1; }
+
+  local ep="$mem_dir/episodes.jsonl"
+  [[ -f "$ep" ]] || { printf 'pmctl memory shard: no episodes.jsonl found\n'; return 0; }
+
+  local line_count
+  line_count="$(wc -l < "$ep")"
+  if [[ "$line_count" -le "$EP_SHARD_LINE_LIMIT" ]]; then
+    printf 'pmctl memory shard: %d lines (limit %d) — no shard needed\n' "$line_count" "$EP_SHARD_LINE_LIMIT"
+    return 0
+  fi
+
+  # Determine the current year-month to keep entries from current month in main file.
+  local current_ym
+  current_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+
+  # Partition: lines whose date starts with current_ym stay; others go to shard files.
+  local tmp_keep tmp_old
+  tmp_keep="$(mktemp -p "$(dirname "$ep")" episodes-keep-XXXXXX.jsonl)"
+  tmp_old="$(mktemp -p "$(dirname "$ep")" episodes-old-XXXXXX.jsonl)"
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    # Extract date field: "date":"YYYY-MM-..." or "date": "YYYY-MM-..."
+    local entry_ym=""
+    entry_ym="$(printf '%s' "$line" | grep -oE '"date":"[0-9]{4}-[0-9]{2}' | head -1 | grep -oE '[0-9]{4}-[0-9]{2}' || true)"
+    if [[ "$entry_ym" == "$current_ym" || -z "$entry_ym" ]]; then
+      printf '%s\n' "$line" >> "$tmp_keep"
+    else
+      printf '%s\n' "$line" >> "$tmp_old"
+    fi
+  done < "$ep"
+
+  # Group old entries by their YYYY-MM and append to shard files.
+  local archived=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local entry_ym=""
+    entry_ym="$(printf '%s' "$line" | grep -oE '"date":"[0-9]{4}-[0-9]{2}' | head -1 | grep -oE '[0-9]{4}-[0-9]{2}' || true)"
+    [[ -z "$entry_ym" ]] && entry_ym="unknown"
+    printf '%s\n' "$line" >> "$mem_dir/episodes.${entry_ym}.jsonl"
+    archived=$((archived + 1))
+  done < "$tmp_old"
+
+  # Replace main file with kept entries only.
+  mv "$tmp_keep" "$ep"
+  rm -f "$tmp_old"
+
+  local kept
+  kept="$(wc -l < "$ep")"
+  printf 'pmctl memory shard: archived %d entries; %d remain in episodes.jsonl\n' "$archived" "$kept"
+}
+
+# Rebuild episodes.summary.md from episodes.jsonl and any shard files.
+# Groups entries by year-month, newest month first.
+# Usage: pmctl_memory_rebuild_summary [--repo-root <path>]
+pmctl_memory_rebuild_summary() {
+  local repo_root="${REPO_ROOT:-$PWD}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root)
+        if [[ -z "${2:-}" ]]; then
+          printf 'pmctl memory rebuild-summary: --repo-root requires a value\n' >&2
+          return 2
+        fi
+        repo_root="$2"; shift 2 ;;
+      --help|-h)
+        printf 'Usage: pmctl memory rebuild-summary [--repo-root <path>]\n'
+        printf 'Regenerate episodes.summary.md from episodes.jsonl and shard files.\n'
+        return 0 ;;
+      *)
+        printf 'pmctl memory rebuild-summary: unknown argument: %s\n' "$1" >&2
+        return 2 ;;
+    esac
+  done
+
+  local mem_dir=""
+  mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory rebuild-summary: no memory directory found\n' >&2; return 1; }
+
+  local ep="$mem_dir/episodes.jsonl"
+  [[ -f "$ep" ]] || { printf 'pmctl memory rebuild-summary: no episodes.jsonl found\n'; return 0; }
+
+  local summary="$mem_dir/episodes.summary.md"
+  local tmp_all
+  tmp_all="$(mktemp -p "$(dirname "$ep")" episodes-all-XXXXXX.jsonl)"
+
+  # Collect all entries: main file + shard files, sorted newest first.
+  # Shard files: episodes.YYYY-MM.jsonl (glob pattern).
+  for f in "$mem_dir"/episodes.????-??.jsonl "$ep"; do
+    [[ -f "$f" ]] && cat "$f" >> "$tmp_all"
+  done
+
+  # Build summary grouped by year-month using awk.
+  # Each group: "## YYYY-MM (N entries)\n- YYYY-MM-DD: <first line of summary>\n..."
+  awk '
+    BEGIN { ORS="" }
+    {
+      # Extract date field
+      match($0, /"date":"([^"]+)"/, d)
+      if (!d[1]) next
+      date = d[1]
+      ym = substr(date, 1, 7)
+
+      # Extract summary field (first line only)
+      match($0, /"summary":"([^"]*)"/, s)
+      summary = s[1]
+      if (!summary || summary == "") next
+
+      # Truncate to first logical line
+      n = split(summary, lines, "\\\\n")
+      first_line = lines[1]
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", first_line)
+
+      # Store: group[ym] += "- DATE: SUMMARY\n"; count[ym]++
+      groups[ym] = groups[ym] "- " date ": " first_line "\n"
+      counts[ym]++
+      if (!(ym in order_seen)) {
+        order[++order_n] = ym
+        order_seen[ym] = 1
+      }
+    }
+    END {
+      # Sort months descending (newest first)
+      n = order_n
+      for (i = 1; i <= n; i++) {
+        for (j = i+1; j <= n; j++) {
+          if (order[i] < order[j]) {
+            tmp = order[i]; order[i] = order[j]; order[j] = tmp
+          }
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        ym = order[i]
+        printf "## %s (%d %s)\n%s\n", ym, counts[ym], (counts[ym]==1?"entry":"entries"), groups[ym]
+      }
+    }
+  ' "$tmp_all" > "$summary"
+
+  rm -f "$tmp_all"
+
+  local month_count
+  month_count="$(grep -c '^## ' "$summary" 2>/dev/null || printf '0')"
+  printf 'pmctl memory rebuild-summary: wrote %s (%d month(s))\n' "$summary" "$month_count"
 }

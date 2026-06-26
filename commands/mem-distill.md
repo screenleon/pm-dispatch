@@ -44,7 +44,20 @@ Read both:
 1. **episodes.jsonl** — last 10 entries with non-empty summaries
 2. **MEMORY.md** — current index (all `- [Title](file.md) — hook` entries)
 
-## Step 2b — Read anomaly slice
+## Step 2b — Rebuild episodes summary and shard if needed
+
+Run the following to keep derived episode artifacts fresh:
+
+```bash
+pmctl memory rebuild-summary 2>/dev/null || true
+pmctl memory shard           2>/dev/null || true
+```
+
+`pmctl memory rebuild-summary` regenerates `episodes.summary.md` from all entries in `episodes.jsonl` (and any `episodes.YYYY-MM.jsonl` shard files), grouping by year-month. If it fails (e.g., no episodes file), skip silently.
+
+`pmctl memory shard` archives entries older than the current month into `episodes.YYYY-MM.jsonl` shard files when `episodes.jsonl` exceeds 1000 lines. If it fails or the threshold is not reached, skip silently.
+
+## Step 2c — Read anomaly slice
 
 Run these commands to fetch recent anomaly events:
 
