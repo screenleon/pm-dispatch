@@ -967,6 +967,51 @@ case_memory_rebuild_summary_deterministic() {
   pass "$name"
 }
 
+case_memory_doctor_ignores_episodes_summary() {
+  local name="pmctl memory doctor: episodes.summary.md is NOT reported as orphan or missing-fields card"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  write_compliant_card "$mdir/card.md" "card"
+  printf -- '- [Card](card.md) — some hook\n' > "$mdir/MEMORY.md"
+  printf '{"date":"2026-06-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
+
+  # Produce episodes.summary.md via rebuild-summary.
+  local rs_status=0
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || rs_status=$?
+  if [[ "$rs_status" -ne 0 ]]; then
+    fail "$name" "rebuild-summary failed with exit $rs_status"
+    return 0
+  fi
+  if [[ ! -f "$mdir/episodes.summary.md" ]]; then
+    fail "$name" "episodes.summary.md not created"
+    return 0
+  fi
+
+  # Doctor should report issues_count 0 (no orphan, no missing-fields for summary).
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json 2>&1)" || status=$?
+
+  local issues
+  issues="$(printf '%s' "$out" | grep -o '"issues_count":[0-9]*' | grep -o '[0-9]*')"
+  if [[ "$issues" != "0" ]]; then
+    fail "$name" "expected issues_count=0 but got $issues; doctor output: $out"
+    return 0
+  fi
+
+  local orphans
+  orphans="$(printf '%s' "$out" | grep -o '"orphan_cards":\[[^]]*\]')"
+  if printf '%s' "$orphans" | grep -q "episodes.summary.md"; then
+    fail "$name" "episodes.summary.md wrongly appeared in orphan_cards: $orphans"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_doctor_shard_count() {
   local name="pmctl memory doctor: shard_count reflects episodes shard files"
   should_run "$name" || return 0
@@ -1035,6 +1080,7 @@ case_memory_shard_above_limit
 case_memory_rebuild_summary_basic
 case_memory_rebuild_summary_skips_empty_summary
 case_memory_rebuild_summary_deterministic
+case_memory_doctor_ignores_episodes_summary
 case_memory_doctor_shard_count
 
 th_summary

@@ -228,11 +228,14 @@ pmctl_memory_doctor() {
   fi
 
   # ── orphan_cards: *.md present but not referenced by MEMORY.md (excl index) ─
+  # Derived episode artifacts (episodes.summary.md, episodes.*.md) are not cards
+  # and must be excluded from orphan and frontmatter checks.
   local card base is_ref ref
   for card in "$mem_dir"/*.md; do
     [[ -e "$card" ]] || continue
     base="$(basename "$card")"
     [[ "$base" == "MEMORY.md" ]] && continue
+    [[ "$base" == episodes.*.md ]] && continue
     is_ref=0
     for ref in ${referenced[@]+"${referenced[@]}"}; do
       if [[ "$ref" == "$base" ]]; then is_ref=1; break; fi
@@ -251,6 +254,7 @@ pmctl_memory_doctor() {
     [[ -e "$card" ]] || continue
     base="$(basename "$card")"
     [[ "$base" == "MEMORY.md" ]] && continue
+    [[ "$base" == episodes.*.md ]] && continue
 
     local r
     while IFS= read -r r; do
