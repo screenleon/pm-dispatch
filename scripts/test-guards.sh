@@ -2001,8 +2001,13 @@ inject_hook_malformed_sidecar_degrades_to_zero() {
 }
 
 inject_hook_stale_card_demoted_below_active() {
-  # lifecycle gate: a status:stale card with high frecency must rank AFTER a
-  # status:active card with zero frecency. Lifecycle validity gates before usage.
+  # Verifies that a status:stale card with high frecency ranks after a status:active
+  # card with zero frecency — lifecycle validity gates before usage.
+  # Steps:
+  #   1. Create MEMORY.md with stale.md (status:stale, warmable) and active.md (status:active)
+  #   2. Warm stale.md with 5 keyword-hit runs to accrue high frecency
+  #   3. Run with neutral prompt (no keyword hits)
+  #   4. Assert active.md appears before stale.md in output
   local name="inject-hook/stale-card-demoted-below-active" dir cwd mem status pos_stale pos_active i
   should_run "$name" || return 0
   dir="$(mktemp -d)"
@@ -2035,8 +2040,13 @@ inject_hook_stale_card_demoted_below_active() {
 }
 
 inject_hook_superseded_card_demoted_below_active() {
-  # lifecycle gate: a status:superseded card with high frecency must rank AFTER
-  # a status:active card with zero frecency.
+  # Verifies that a status:superseded card with high frecency ranks after a
+  # status:active card with zero frecency — superseded is a terminal lifecycle state.
+  # Steps:
+  #   1. Create MEMORY.md with sup.md (status:superseded, warmable) and active.md (status:active)
+  #   2. Warm sup.md with 5 keyword-hit runs to accrue high frecency
+  #   3. Run with neutral prompt (no keyword hits)
+  #   4. Assert active.md appears before sup.md in output
   local name="inject-hook/superseded-card-demoted-below-active" dir cwd mem status pos_sup pos_active i
   should_run "$name" || return 0
   dir="$(mktemp -d)"
@@ -2068,8 +2078,13 @@ inject_hook_superseded_card_demoted_below_active() {
 }
 
 inject_hook_missing_status_treated_as_active() {
-  # A card with no status field in frontmatter is NOT degraded — it ranks
-  # normally by frecency, same as an explicit status:active card.
+  # Verifies that a card with no status field in frontmatter is not degraded —
+  # it ranks normally by frecency as if status:active (defensive default).
+  # Steps:
+  #   1. Create MEMORY.md with warm.md (no status field, warmable) listed after cold.md (status:active)
+  #   2. Warm warm.md with 5 keyword-hit runs to accrue frecency
+  #   3. Run with neutral prompt (no keyword hits)
+  #   4. Assert warm.md (frecency > 0) appears before cold.md (frecency = 0)
   local name="inject-hook/missing-status-treated-as-active" dir cwd mem status pos_warm pos_cold i
   should_run "$name" || return 0
   dir="$(mktemp -d)"
@@ -2102,6 +2117,47 @@ inject_hook_missing_status_treated_as_active() {
   rm -rf "$dir"
 }
 
+inject_hook_priority_always_bypasses_lifecycle_gate() {
+  # Verifies that a priority:always card is NOT demoted by the lifecycle gate
+  # even when its status is stale or superseded — tier1 is orthogonal to status.
+  # Steps:
+  #   1. Create MEMORY.md with always-stale.md (priority:always, status:stale) and
+  #      active.md (priority:normal, status:active, budget-filling cards)
+  #   2. Fill budget with 20 normal cards so any tier1 bypass is visible
+  #   3. Run the hook
+  #   4. Assert always-stale.md appears in output (tier1 — not demoted or budget-cut)
+  local name="inject-hook/priority-always-bypasses-lifecycle-gate" dir cwd mem payload output status i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  {
+    printf '# test\n'
+    # 20 normal active cards to fill the tier2 budget
+    for i in $(seq 1 20); do
+      printf -- '---\npriority: normal\nstatus: active\n---\nCard %d\n' "$i" > "$mem/c$i.md"
+      printf -- '- [c%d](c%d.md) — normal active card %d\n' "$i" "$i" "$i"
+    done
+    printf -- '- [always-stale](always-stale.md) — must inject despite stale status\n'
+  } > "$mem/MEMORY.md"
+  printf -- '---\npriority: always\nstatus: stale\n---\nAlways stale content\n' > "$mem/always-stale.md"
+  payload="{\"cwd\":\"$cwd\",\"prompt\":\"zzz\"}"
+  output=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && "$output" == *"always-stale"* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "${output: -200}"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -2126,6 +2182,7 @@ inject_hook_malformed_sidecar_degrades_to_zero
 inject_hook_stale_card_demoted_below_active
 inject_hook_superseded_card_demoted_below_active
 inject_hook_missing_status_treated_as_active
+inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
 memory_age_bucket_mapping
