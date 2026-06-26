@@ -1896,6 +1896,74 @@ memory_age_bucket_mapping() {
   fi
 }
 
+inject_hook_sidecar_write_failure_is_best_effort() {
+  # Error path: when the usage sidecar cannot be written (here .pm-dispatch is a
+  # regular file, so the dir/lock cannot be created), the hook must still exit 0
+  # and emit the memory index — telemetry persistence is strictly best-effort.
+  local name="inject-hook/sidecar-write-failure-best-effort" dir cwd mem status output
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  # Occupy the .pm-dispatch path with a regular file so sidecar dir/lock creation fails.
+  printf 'blocker' > "$mem/.pm-dispatch"
+  output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" \
+      && "$output" == *"- [a](a.md)"* \
+      && "$output" == *"=== end auto-memory ==="* ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_malformed_sidecar_degrades_to_zero() {
+  # Negative input: malformed existing sidecar rows (non-numeric counters /
+  # timestamps and a non-numeric total_events header) must degrade to zero
+  # without aborting. The hook still exits 0, emits the index, and a fresh
+  # keyword-hit access rewrites a well-formed row (a.md access_count=1) with a
+  # numeric total_events header.
+  local name="inject-hook/malformed-sidecar-degrades-to-zero" dir cwd mem status output sidecar row te
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  mkdir -p "$mem/.pm-dispatch"
+  sidecar="$mem/.pm-dispatch/inject-usage.tsv"
+  printf '# total_events=abc\na.md\tnotanum\txyz\n' > "$sidecar"
+  output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  row="$(grep '^a\.md' "$sidecar" 2>/dev/null || true)"
+  te="$(awk -F= '/^# total_events=/{print $2}' "$sidecar" 2>/dev/null || true)"
+  if [[ "$status" == "0" \
+      && "$output" == *"- [a](a.md)"* \
+      && "$row" == a.md$'\t'1$'\t'* \
+      && "$te" =~ ^[0-9]+$ ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s row=%q te=%q output=%q\n' "$name" "$status" "$row" "$te" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -1915,6 +1983,8 @@ inject_hook_status_active_no_longer_pins
 inject_hook_keyword_hit_records_access
 inject_hook_frecency_ranks_accessed_above_cold
 inject_hook_keyword_tier_dominates_frecency
+inject_hook_sidecar_write_failure_is_best_effort
+inject_hook_malformed_sidecar_degrades_to_zero
 memory_usage_commit_decay_halves
 memory_age_bucket_mapping
 
