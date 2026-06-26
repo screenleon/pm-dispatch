@@ -1162,6 +1162,67 @@ case_memory_shard_help_exit0() {
   pass "$name"
 }
 
+case_memory_shard_at_exact_limit() {
+  local name="pmctl memory shard: exactly at EP_SHARD_LINE_LIMIT (1000) — no shard needed"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local ep="$mdir/episodes.jsonl"
+  local cur_ym i
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  # Write exactly 1000 entries (the limit is -le 1000, so 1000 must NOT shard).
+  for i in $(seq 1 1000); do
+    printf '{"date":"%s-01","cwd":"%s","session_id":"s%d","summary":"entry %d"}\n' \
+      "$cur_ym" "$repo" "$i" "$i" >> "$ep"
+  done
+
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exited $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no shard needed"; then
+    fail "$name" "expected 'no shard needed' at exactly 1000 lines, got: $out"
+    return 0
+  fi
+  local shards
+  shards="$(find "$mdir" -name 'episodes.????-??.jsonl' 2>/dev/null | wc -l)"
+  if [[ "$shards" -ne 0 ]]; then
+    fail "$name" "expected 0 shard files at limit, got $shards"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_shard_repo_root_missing_operand_exit2() {
+  local name="pmctl memory shard: --repo-root missing value exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory shard --repo-root 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for missing --repo-root operand, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_repo_root_missing_operand_exit2() {
+  local name="pmctl memory rebuild-summary: --repo-root missing value exits 2"
+  should_run "$name" || return 0
+  local status=0
+  CLAUDE_CONFIG_DIR="/dev/null" "$PMCTL" memory rebuild-summary --repo-root 2>/dev/null || status=$?
+  if [[ "$status" -ne 2 ]]; then
+    fail "$name" "expected exit 2 for missing --repo-root operand, got $status"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_shard_unknown_arg_exit2() {
   local name="pmctl memory shard: unknown argument exits 2"
   should_run "$name" || return 0
@@ -1359,6 +1420,9 @@ case_memory_rebuild_summary_no_duplicate_after_shard
 case_memory_shard_no_memory_dir
 case_memory_rebuild_summary_no_memory_dir
 case_memory_index_not_produced
+case_memory_shard_at_exact_limit
+case_memory_shard_repo_root_missing_operand_exit2
+case_memory_rebuild_summary_repo_root_missing_operand_exit2
 case_memory_shard_help_exit0
 case_memory_shard_unknown_arg_exit2
 case_memory_shard_no_episodes_file

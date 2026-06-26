@@ -99,6 +99,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
 | CC-427 | ✅ closed 2026-06-26 | **[memory: MEMORY.md 注入 usage-based recency+frequency 排序]** tier1 改只認 `priority: always`（移除 status:active OR，解 33 卡零省略）；normal 卡 Firefox bucketed frecency（access_count × age_bucket 100/70/50/30/10）+ W-TinyLFU 全域 event-counter 老化；keyword 命中即記 access（截斷前）；sidecar TSV 寫回；複合 sort key keyword tier 主導。四決策經六-model 統整定案。研究見 memory reference_memory_injection_ranking。 | ux/memory | 2026-06-25 | pr:#329 | P2 | retrieval |
+| CC-428 | 🟢 someday | **[memory: lifecycle validity gate for injection ranking（PaperGuru 四約束 — lifecycle 優先 usage）]** 目前 CC-427 frecency 排序不過濾 `status: stale/superseded` card，致歷史高 usage 的 stale card 繼續排高被注入。PaperGuru-Benchmark 約束：lifecycle validity 必須優先於 usage frequency（stale/superseded card 不因高 usage 排前）。修法：`guard-inject-memory.sh` 排序前先 gate `status` field，stale/superseded 的 card bucket 降為 0 或移到注入清單末端；其餘 priority/frecency 邏輯不動。相依 [[CC-405]]（status 欄位已強制）+ [[CC-427]]（frecency 排序基礎）。影響範圍：guard-inject-memory.sh + test-pmctl-memory.sh 或 test-install-guards.sh 對應測試。 | ux/memory | 2026-06-26 | — | P3 | retrieval |
 
 ---
 
@@ -1609,3 +1610,18 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 **Priority**: P2（✅ closed 2026-06-26，pr:#329）.
 
 **Refs**: [[CC-404]]（預算+pin+tier2 骨架）、[[CC-405]]（frontmatter schema）、memory `reference_memory_injection_ranking`（research 結論）、`scripts/guard-inject-memory.sh`。
+
+## CC-428 — memory: lifecycle validity gate for injection ranking 🟢 someday
+
+**Goal**: Guard injection ranking against stale/superseded cards surfacing at high priority due to historical usage. A card with `status: stale` or `status: superseded` should never rank above healthy cards regardless of its frecency score.
+
+**Context**: CC-427 introduced frecency-based sorting for MEMORY.md injection. The current sort key is `composite = keyword_tier × WEIGHT + frecency`, with `status` treated as "future staleness GC only, not injection-ranking input" (per Phase 1 committed decision). PaperGuru-Benchmark observes that lifecycle validity must gate before usage frequency — a frequently-used-but-expired card amplifies stale context. The CC-427 decision deferred this to a follow-up.
+
+**Scope**:
+- `scripts/guard-inject-memory.sh`: before computing frecency composite score, check each card's `status` field from its frontmatter; assign bucket=0 (or push to tail bucket) for `status: stale` or `status: superseded`; `status: active` and `status: archived` retain normal frecency.
+- Test: add case asserting a stale card with high access_count is injected after an active card with lower frecency.
+- Invariant: `priority: always` cards bypass this gate (they are always tier1 regardless of status).
+
+**Refs**: [[CC-427]] (frecency base), [[CC-405]] (status field enforcement), PaperGuru-Benchmark lifecycle constraint.
+
+**Priority**: P3（someday）.
