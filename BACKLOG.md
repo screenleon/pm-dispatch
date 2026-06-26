@@ -84,6 +84,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-426 | 🟢 someday | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。三層審查：Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）；Layer 2 語義比對（逐 ticket 讀 Requirement + PR diff，判斷 diff 是否滿足 ticket 說的事）；Layer 3 盲點聲明（明確說出工具無法確認的範圍）。輸出為報告，非 GO/NO-GO。相依 [[CC-404]]（注入預算讓 agent 有足夠 context window 放 diff 內容）+ [[CC-403]]（可 query memory 取得相關決策背景）。 | ops/process | 2026-06-25 | — | P3 | — |
 | CC-428 | ✅ closed 2026-06-26 | **[memory: lifecycle validity gate for injection ranking（PaperGuru 四約束 — lifecycle 優先 usage）]** 目前 CC-427 frecency 排序不過濾 `status: stale/superseded` card，致歷史高 usage 的 stale card 繼續排高被注入。PaperGuru-Benchmark 約束：lifecycle validity 必須優先於 usage frequency（stale/superseded card 不因高 usage 排前）。修法：`guard-inject-memory.sh` 排序前先 gate `status` field，stale/superseded 的 card bucket 降為 0 或移到注入清單末端；其餘 priority/frecency 邏輯不動。相依 [[CC-405]]（status 欄位已強制）+ [[CC-427]]（frecency 排序基礎）。影響範圍：guard-inject-memory.sh + test-pmctl-memory.sh 或 test-install-guards.sh 對應測試。 | ux/memory | 2026-06-26 | — | P2 | retrieval |
+| CC-429 | 🔵 active | **[release: v0.7.0 closure — dogfood /pre-release + release notes]** 對 v0.7.0 本身跑一次 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]]（/pre-release 工具就緒）。 | ops/process | 2026-06-26 | — | P1 | — |
 
 ---
 
@@ -1377,3 +1378,23 @@ Summary: N structural issues, M semantic flags, K blind spots declared.
 **Priority**: P2.
 
 **See**: pr:#332
+
+---
+
+## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes 🔵 active
+
+**Goal**: Close the v0.7.0 release loop by using the `/pre-release` tool (CC-426) on v0.7.0 itself, fixing any drift found, and producing the final release artefacts.
+
+**Context**: CC-426 builds the audit tool. CC-429 is the mandatory first real run of that tool — "eat your own dogfood." Without this ticket, the tool exists but is never exercised for the release it was built for. v0.5.0 surfaced the same pattern: capability present but never invoked at the right time.
+
+**Scope**:
+1. Run `/pre-release v0.7.0` (CC-426 Layer 1 + Layer 3) against the v0.7.0 milestone scope.
+2. For each finding: fix CHANGELOG/MILESTONES/BACKLOG drift or document why it is acceptable.
+3. Write release notes (what shipped, what was deferred, key decisions).
+4. Tag `v0.7.0` and create GitHub Release.
+
+**Non-goals**: Not a GO/NO-GO gate — CC-426 output is a report; release decision remains with the user.
+
+**Depends on**: [[CC-426]] (/pre-release audit tool complete).
+
+**Priority**: P1 (release blocking once CC-426 is done).
