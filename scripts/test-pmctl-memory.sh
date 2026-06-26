@@ -1087,6 +1087,65 @@ case_memory_rebuild_summary_deterministic() {
   pass "$name"
 }
 
+case_memory_shard_no_memory_dir() {
+  local name="pmctl memory shard: no memory directory → exits 1 with message"
+  should_run "$name" || return 0
+  local cfg repo
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects"  # no memory subdir
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 1 ]]; then
+    fail "$name" "expected exit 1 for no memory dir, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no memory directory"; then
+    fail "$name" "expected 'no memory directory' message; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_memory_dir() {
+  local name="pmctl memory rebuild-summary: no memory directory → exits 1 with message"
+  should_run "$name" || return 0
+  local cfg repo
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects"  # no memory subdir
+  local out status=0
+  out="$(CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+  if [[ "$status" -ne 1 ]]; then
+    fail "$name" "expected exit 1 for no memory dir, got $status; output: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no memory directory"; then
+    fail "$name" "expected 'no memory directory' message; got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_index_not_produced() {
+  local name="pmctl memory shard+rebuild-summary: episodes.index.jsonl is not produced (deferred)"
+  should_run "$name" || return 0
+  # episodes.index.jsonl was mentioned in CC-407 spec but is explicitly deferred to a
+  # follow-up ticket. Asserting its absence documents the conscious deferral contract.
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"entry"}\n' "$repo" > "$mdir/episodes.jsonl"
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  if [[ -f "$mdir/episodes.index.jsonl" ]]; then
+    fail "$name" "episodes.index.jsonl was created but is deferred to a follow-up"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_shard_help_exit0() {
   local name="pmctl memory shard: --help exits 0 with usage"
   should_run "$name" || return 0
@@ -1297,6 +1356,9 @@ case_memory_shard_below_limit
 case_memory_shard_above_limit
 case_memory_shard_idempotent
 case_memory_rebuild_summary_no_duplicate_after_shard
+case_memory_shard_no_memory_dir
+case_memory_rebuild_summary_no_memory_dir
+case_memory_index_not_produced
 case_memory_shard_help_exit0
 case_memory_shard_unknown_arg_exit2
 case_memory_shard_no_episodes_file
