@@ -318,6 +318,18 @@ should_run "research: filters external methods against internal constraints" && 
 should_run "research: output carries maps-to / conflicts-with verdict field" && assert_file_contains "research: output carries maps-to / conflicts-with verdict field" "$RESEARCH" "Maps to / conflicts with" && pass "research: output carries maps-to / conflicts-with verdict field"
 should_run "research: marks methods adoptable" && assert_file_contains "research: marks methods adoptable" "$RESEARCH" "adoptable" && pass "research: marks methods adoptable"
 
+# ── pre-release.md contract ───────────────────────────────────────────────────
+
+PRE_RELEASE="$COMMANDS_DIR/pre-release.md"
+assert_frontmatter "pre-release: frontmatter valid" "$PRE_RELEASE"
+should_run "pre-release: invokes pmctl pre-release audit" && assert_file_contains "pre-release: invokes pmctl pre-release audit" "$PRE_RELEASE" "pmctl pre-release audit" && pass "pre-release: invokes pmctl pre-release audit"
+should_run "pre-release: accepts milestone-id argument" && assert_file_contains "pre-release: accepts milestone-id argument" "$PRE_RELEASE" "MILESTONE_ID" && pass "pre-release: accepts milestone-id argument"
+should_run "pre-release: accepts --base-ref flag" && assert_file_contains "pre-release: accepts --base-ref flag" "$PRE_RELEASE" "base-ref" && pass "pre-release: accepts --base-ref flag"
+should_run "pre-release: output is report not GO/NO-GO" && assert_file_contains "pre-release: output is report not GO/NO-GO" "$PRE_RELEASE" "not a GO/NO-GO" && pass "pre-release: output is report not GO/NO-GO"
+should_run "pre-release: documents Layer 1 checks" && assert_file_contains "pre-release: documents Layer 1 checks" "$PRE_RELEASE" "Layer 1" && pass "pre-release: documents Layer 1 checks"
+should_run "pre-release: documents Layer 3 blind spots" && assert_file_contains "pre-release: documents Layer 3 blind spots" "$PRE_RELEASE" "Layer 3" && pass "pre-release: documents Layer 3 blind spots"
+should_run "pre-release: documents exit codes" && assert_file_contains "pre-release: documents exit codes" "$PRE_RELEASE" "Exit codes" && pass "pre-release: documents exit codes"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
