@@ -1871,6 +1871,42 @@ memory_usage_commit_decay_halves() {
   fi
 }
 
+memory_usage_commit_concurrent_no_lost_updates() {
+  # Concurrency (mutation-grade): N simultaneous keyword-hit writers to the same
+  # sidecar, each serialized through serialize_with_lock, must not lose any
+  # increment — final access_count must equal exactly N. Removing the lock from
+  # the hook's persistence path turns the read-modify-write into a race that
+  # drops updates, so this test fails (the mutation is caught). Uses a private
+  # temp dir (no shared /tmp scanning) so the result is isolation-stable.
+  local name="memory-usage/concurrent-no-lost-updates" got n=25
+  should_run "$name" || return 0
+  got="$(
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/memory.sh"
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/lib/portable.sh"
+    d="$(mktemp -d)"
+    sc="$d/.pm-dispatch/inject-usage.tsv"
+    mkdir -p "$(dirname "$sc")"
+    local i
+    for ((i = 0; i < n; i++)); do
+      # threshold high so decay never fires; one a.md hit per writer.
+      serialize_with_lock "$sc" memory_usage_commit "$sc" 1000000 100 a.md &
+    done
+    wait
+    awk -F'\t' '$1=="a.md"{print $2}' "$sc"
+    rm -rf "$d"
+  )"
+  if [[ "$got" == "$n" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — final access_count=%q want=%q\n' "$name" "$got" "$n"
+  fi
+}
+
 memory_age_bucket_mapping() {
   # Unit: age bucket boundaries map to 100/70/50/30/10.
   local name="memory-usage/age-bucket-mapping" got want ok=1
@@ -1986,6 +2022,7 @@ inject_hook_keyword_tier_dominates_frecency
 inject_hook_sidecar_write_failure_is_best_effort
 inject_hook_malformed_sidecar_degrades_to_zero
 memory_usage_commit_decay_halves
+memory_usage_commit_concurrent_no_lost_updates
 memory_age_bucket_mapping
 
 # Episode reminder tests (CC-019 inject hook extension)
