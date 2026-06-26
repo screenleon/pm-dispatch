@@ -2028,7 +2028,7 @@ inject_hook_stale_card_demoted_below_active() {
   status=$?
   pos_stale=$(printf '%s\n' "$output" | grep -n '\[stale\]' | cut -d: -f1 | head -1 || printf '0')
   pos_active=$(printf '%s\n' "$output" | grep -n '\[active\]' | cut -d: -f1 | head -1 || printf '0')
-  if [[ "$status" == "0" && -n "$pos_stale" && -n "$pos_active" && "$pos_active" -lt "$pos_stale" ]]; then
+  if [[ "$status" == "0" ]] && (( pos_active > 0 && pos_stale > 0 && pos_active < pos_stale )); then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -2066,7 +2066,7 @@ inject_hook_superseded_card_demoted_below_active() {
   status=$?
   pos_sup=$(printf '%s\n' "$output" | grep -n '\[sup\]' | cut -d: -f1 | head -1 || printf '0')
   pos_active=$(printf '%s\n' "$output" | grep -n '\[active\]' | cut -d: -f1 | head -1 || printf '0')
-  if [[ "$status" == "0" && -n "$pos_sup" && -n "$pos_active" && "$pos_active" -lt "$pos_sup" ]]; then
+  if [[ "$status" == "0" ]] && (( pos_active > 0 && pos_sup > 0 && pos_active < pos_sup )); then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
@@ -2106,13 +2106,51 @@ inject_hook_missing_status_treated_as_active() {
   pos_warm=$(printf '%s\n' "$output" | grep -n '\[warm\]' | cut -d: -f1 | head -1 || printf '0')
   pos_cold=$(printf '%s\n' "$output" | grep -n '\[cold\]' | cut -d: -f1 | head -1 || printf '0')
   # warm.md (no status, high frecency) must rank above cold.md (active, cold).
-  if [[ "$status" == "0" && -n "$pos_warm" && -n "$pos_cold" && "$pos_warm" -lt "$pos_cold" ]]; then
+  if [[ "$status" == "0" ]] && (( pos_warm > 0 && pos_cold > 0 && pos_warm < pos_cold )); then
     PASS=$((PASS+1))
     [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
     printf '  FAIL  %s — exit=%s pos_warm=%s pos_cold=%s output=%q\n' "$name" "$status" "$pos_warm" "$pos_cold" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_archived_card_treated_as_active() {
+  # Verifies that a status:archived card is NOT degraded — it ranks normally by
+  # frecency, same as status:active (archived is a historical record, not stale context).
+  # Steps:
+  #   1. Create MEMORY.md with arch.md (status:archived, warmable) listed after cold.md (status:active)
+  #   2. Warm arch.md with 5 keyword-hit runs to accrue frecency
+  #   3. Run with neutral prompt (no keyword hits)
+  #   4. Assert arch.md (frecency > 0) appears before cold.md (frecency = 0, no degradation)
+  local name="inject-hook/archived-card-treated-as-active" dir cwd mem status pos_arch pos_cold i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  # cold.md listed first; arch.md (archived, warmed) should rank above it via frecency.
+  printf '# test\n- [cold](cold.md) — beta card\n- [arch](arch.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: active\ntopics:\n  - beta\n---\nCold\n' > "$mem/cold.md"
+  printf -- '---\npriority: normal\nstatus: archived\ntopics:\n  - retrieval\n---\nArch\n' > "$mem/arch.md"
+  for i in $(seq 1 5); do
+    printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  done
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_arch=$(printf '%s\n' "$output" | grep -n '\[arch\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_cold=$(printf '%s\n' "$output" | grep -n '\[cold\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" ]] && (( pos_arch > 0 && pos_cold > 0 && pos_arch < pos_cold )); then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_arch=%s pos_cold=%s output=%q\n' "$name" "$status" "$pos_arch" "$pos_cold" "$output"
   fi
   rm -rf "$dir"
 }
@@ -2182,6 +2220,7 @@ inject_hook_malformed_sidecar_degrades_to_zero
 inject_hook_stale_card_demoted_below_active
 inject_hook_superseded_card_demoted_below_active
 inject_hook_missing_status_treated_as_active
+inject_hook_archived_card_treated_as_active
 inject_hook_priority_always_bypasses_lifecycle_gate
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
