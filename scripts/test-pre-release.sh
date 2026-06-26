@@ -16,9 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB="$REPO_ROOT/scripts/lib/pmctl-pre-release.sh"
 
-# shellcheck source=scripts/lib/test-harness.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
-# shellcheck source=scripts/lib/pmctl-pre-release.sh
+# shellcheck disable=SC1091,SC1090
 . "$LIB"
 
 tmp_root=""  # assigned by th_init
