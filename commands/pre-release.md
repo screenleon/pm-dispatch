@@ -1,6 +1,6 @@
 ---
 description: Run Layer 1 structural audit for a milestone release — checks PR refs, body residuals, CHANGELOG coverage, and index/body status consistency.
-argument-hint: "<milestone-id> [--base-ref <git-ref>]"
+argument-hint: "<milestone-id>"
 ---
 
 Run the pre-release audit via `pmctl pre-release audit <milestone-id>`.
@@ -25,42 +25,18 @@ fi
 
 ## Step 2 — Parse args and run audit
 
-Parse `$ARGUMENTS` for `<milestone-id>` and optional `--base-ref <ref>`.
+Parse `$ARGUMENTS` for `<milestone-id>`.
 
 ```bash
-RAW_ARGS="${ARGUMENTS:-}"
-MILESTONE_ID=""
-BASE_REF=""
-
-read -r -a TOKENS <<< "$RAW_ARGS"
-idx=0
-while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
-  tok="${TOKENS[$idx]}"
-  case "$tok" in
-    --base-ref)
-      idx=$((idx + 1))
-      BASE_REF="${TOKENS[$idx]:-}"
-      if [[ -z "$BASE_REF" || "$BASE_REF" == --* ]]; then
-        printf 'Error: --base-ref requires a value\n' >&2
-        exit 1
-      fi
-      ;;
-    *)
-      [[ -z "$MILESTONE_ID" ]] && MILESTONE_ID="$tok"
-      ;;
-  esac
-  idx=$((idx + 1))
-done
+MILESTONE_ID="${ARGUMENTS%% *}"
+MILESTONE_ID="${MILESTONE_ID:-}"
 
 if [[ -z "$MILESTONE_ID" ]]; then
-  printf 'Usage: /pre-release <milestone-id> [--base-ref <git-ref>]\n' >&2
+  printf 'Usage: /pre-release <milestone-id>\n' >&2
   exit 1
 fi
 
-AUDIT_ARGS=("$MILESTONE_ID")
-[[ -n "$BASE_REF" ]] && AUDIT_ARGS+=(--base-ref "$BASE_REF")
-
-"$PMCTL" pre-release audit "${AUDIT_ARGS[@]}"
+"$PMCTL" pre-release audit "$MILESTONE_ID"
 ```
 
 ## Layer 1 checks (machine-executable)

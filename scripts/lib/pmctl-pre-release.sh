@@ -3,21 +3,13 @@
 # Functions are sourced by cli/pmctl and called via `pmctl pre-release audit`.
 
 pmctl_pre_release_audit() {
-  local repo_root milestone_id base_ref="" rc=0
+  local repo_root milestone_id base_ref rc=0
   repo_root="${1:-}"
   milestone_id="${2:-}"
   shift 2 2>/dev/null || true
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --base-ref)
-        if [[ $# -lt 2 ]]; then
-          printf 'pmctl pre-release audit: missing value for --base-ref\n' >&2
-          return 2
-        fi
-        base_ref="$2"
-        shift 2
-        ;;
       *)
         printf 'pmctl pre-release audit: unknown flag: %s\n' "$1" >&2
         return 2
@@ -26,7 +18,7 @@ pmctl_pre_release_audit() {
   done
 
   if [[ -z "$repo_root" || -z "$milestone_id" ]]; then
-    printf 'Usage: pmctl pre-release audit <repo-root> <milestone-id> [--base-ref <ref>]\n' >&2
+    printf 'Usage: pmctl pre-release audit <repo-root> <milestone-id>\n' >&2
     return 2
   fi
 
@@ -42,10 +34,7 @@ pmctl_pre_release_audit() {
     fi
   done
 
-  # Fallback git range if --base-ref not provided
-  if [[ -z "$base_ref" ]]; then
-    base_ref="$(git -C "$repo_root" describe --tags --abbrev=0 2>/dev/null || true)"
-  fi
+  base_ref="$(git -C "$repo_root" describe --tags --abbrev=0 2>/dev/null || true)"
   local git_range="${base_ref:+${base_ref}..}HEAD"
 
   # Extract scope tickets (tab-separated: ticket_id <TAB> status_column)
@@ -223,7 +212,11 @@ _pra_check_12_body_residuals() {
       found && /^```/ { fence = !fence; next }
       found && !fence {
         if (/仍待辦|待辦|TODO|pr:#TBD/ || /\bTBD\b/) {
-          printf NR ": " $0 "\n"
+          line = $0
+          gsub(/「[^」]*」/, "", line)
+          if (line ~ /仍待辦|待辦|TODO|pr:#TBD/ || line ~ /\bTBD\b/) {
+            printf NR ": " $0 "\n"
+          }
         }
       }
     ' "$body_source")"

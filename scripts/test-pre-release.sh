@@ -379,6 +379,136 @@ case_check14_status_consistent() {
   pass "$name"
 }
 
+case_check12_skips_japanese_quoted_mention() {
+  local name="pre-release/check12-skips-japanese-quoted"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check12-jquote"
+  mkdir -p "$tmp"
+  cat > "$tmp/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-006 | ✅ closed 2026-01-06 | quoted test | ops | 2026-01-06 | pr:#6 | P2 | — |
+
+## CC-006 — quoted test ✅ 2026-01-06
+
+**Goal**: Requirement: closed body 無「仍待辦」/「待辦」/「TODO」殘留文字（僅需確認引號內不算）.
+
+**See**: pr:#6
+
+EOF
+
+  local scope_rows="CC-006	✅ pr:#6"
+
+  local out
+  out="$(_pra_check_12_body_residuals "$tmp/BACKLOG.md" "" "$scope_rows")"
+
+  if ! printf '%s\n' "$out" | grep -q "^✅ CC-006"; then
+    fail "$name" "Japanese-quoted TODO/仍待辦 should not trigger: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_check12_body_missing() {
+  local name="pre-release/check12-body-missing"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check12-nomatch"
+  mkdir -p "$tmp"
+  cat > "$tmp/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-007 | ✅ closed 2026-01-07 | no body | ops | 2026-01-07 | pr:#7 | P2 | — |
+
+EOF
+
+  local scope_rows="CC-007	✅ pr:#7"
+
+  local out
+  out="$(_pra_check_12_body_residuals "$tmp/BACKLOG.md" "" "$scope_rows")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^⚠️.*CC-007"; then
+    fail "$name" "missing body should emit warning: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_check14_mismatch() {
+  local name="pre-release/check14-status-mismatch"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check14-mismatch"
+  mkdir -p "$tmp"
+  cat > "$tmp/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-008 | ✅ closed 2026-01-08 | mismatch | ops | 2026-01-08 | pr:#8 | P2 | — |
+
+## CC-008 — mismatch 🔵 active
+
+**Goal**: body says active, index says closed.
+
+EOF
+
+  local out
+  out="$(_pra_check_14_status_consistency "$tmp/BACKLOG.md" "" "CC-008")"
+
+  if ! printf '%s\n' "$out" | grep -q "^❌ CC-008"; then
+    fail "$name" "index ✅ vs body 🔵 should be flagged as mismatch: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_audit_unknown_flag() {
+  local name="pre-release/audit-unknown-flag"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/audit-unknown-flag"
+  mkdir -p "$tmp"
+  write_milestones "$tmp/MILESTONES.md"
+  write_backlog "$tmp/BACKLOG.md"
+  write_changelog "$tmp/CHANGELOG.md"
+
+  local rc=0
+  pmctl_pre_release_audit "$tmp" "v1.0" --unknown-flag 2>/dev/null || rc=$?
+
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "unknown flag should exit 2, got $rc"
+    return
+  fi
+  pass "$name"
+}
+
+case_audit_missing_file() {
+  local name="pre-release/audit-missing-file"
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/audit-missing-file"
+  mkdir -p "$tmp"
+  # No files created — all required files missing
+
+  local rc=0
+  pmctl_pre_release_audit "$tmp" "v1.0" 2>/dev/null || rc=$?
+
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "missing files should exit 2, got $rc"
+    return
+  fi
+  pass "$name"
+}
+
 case_audit_missing_milestone() {
   local name="pre-release/audit-missing-milestone"
   should_run "$name" || return 0
@@ -469,9 +599,14 @@ case_check12_no_residuals
 case_check12_detects_todo
 case_check12_skips_non_closed
 case_check12_skips_code_fence
+case_check12_skips_japanese_quoted_mention
+case_check12_body_missing
 case_check13_coverage
 case_check13_no_unreleased_section
 case_check14_status_consistent
+case_check14_mismatch
+case_audit_unknown_flag
+case_audit_missing_file
 case_audit_missing_milestone
 case_audit_happy_path
 
