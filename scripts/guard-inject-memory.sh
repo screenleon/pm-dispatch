@@ -142,8 +142,18 @@ for _line in "${index_lines[@]}"; do
       usage_hits+=("$card_rel")
     fi
 
-    # Store as zero-padded composite TAB sequence TAB line for stable sort.
-    printf '%010d\t%05d\t%s\n' "$composite" "$tier2_count" "$_line" >> "$_t2tmp"
+    # Lifecycle validity gate: stale/superseded cards are demoted to the tail
+    # of tier2 regardless of frecency. is_degraded=1 sorts after is_degraded=0.
+    is_degraded=0
+    if [[ -n "$card_file" && -f "$card_file" ]]; then
+      _status=$(_card_field "$card_file" "status") || _status=""
+      if [[ "$_status" == "stale" || "$_status" == "superseded" ]]; then
+        is_degraded=1
+      fi
+    fi
+
+    # Store as degraded-flag TAB zero-padded composite TAB sequence TAB line.
+    printf '%d\t%010d\t%05d\t%s\n' "$is_degraded" "$composite" "$tier2_count" "$_line" >> "$_t2tmp"
     tier2_count=$((tier2_count + 1))
   fi
 done
@@ -153,10 +163,11 @@ done
 sorted_tier2=()
 if [[ "$tier2_count" -gt 0 ]]; then
   while IFS= read -r _pair; do
-    # Strip "COMPOSITE\tSEQ\t" prefix to recover original line
-    _rest="${_pair#*$'\t'}"
-    sorted_tier2+=("${_rest#*$'\t'}")
-  done < <(sort -t$'\t' -k1,1rn -k2,2n "$_t2tmp")
+    # Strip "DEGRADED\tCOMPOSITE\tSEQ\t" prefix to recover original line.
+    _rest="${_pair#*$'\t'}"   # drop is_degraded
+    _rest="${_rest#*$'\t'}"   # drop composite
+    sorted_tier2+=("${_rest#*$'\t'}")  # drop seq
+  done < <(sort -t$'\t' -k1,1n -k2,2rn -k3,3n "$_t2tmp")
 fi
 
 # Persist this run's keyword-hit accesses (and apply periodic decay) under an

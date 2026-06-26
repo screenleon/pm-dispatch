@@ -2000,6 +2000,108 @@ inject_hook_malformed_sidecar_degrades_to_zero() {
   rm -rf "$dir"
 }
 
+inject_hook_stale_card_demoted_below_active() {
+  # lifecycle gate: a status:stale card with high frecency must rank AFTER a
+  # status:active card with zero frecency. Lifecycle validity gates before usage.
+  local name="inject-hook/stale-card-demoted-below-active" dir cwd mem status pos_stale pos_active i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [stale](stale.md) — retrieval stale card\n- [active](active.md) — other card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: stale\ntopics:\n  - retrieval\n---\nStale\n' > "$mem/stale.md"
+  printf -- '---\npriority: normal\nstatus: active\ntopics:\n  - unrelated\n---\nActive\n' > "$mem/active.md"
+  # Warm stale.md with repeated keyword hits so it has high frecency.
+  for i in $(seq 1 5); do
+    printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  done
+  # Neutral prompt: no keyword hits → ranking should be frecency/lifecycle only.
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_stale=$(printf '%s\n' "$output" | grep -n '\[stale\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_active=$(printf '%s\n' "$output" | grep -n '\[active\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" && -n "$pos_stale" && -n "$pos_active" && "$pos_active" -lt "$pos_stale" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_active=%s pos_stale=%s output=%q\n' "$name" "$status" "$pos_active" "$pos_stale" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_superseded_card_demoted_below_active() {
+  # lifecycle gate: a status:superseded card with high frecency must rank AFTER
+  # a status:active card with zero frecency.
+  local name="inject-hook/superseded-card-demoted-below-active" dir cwd mem status pos_sup pos_active i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [sup](sup.md) — retrieval superseded card\n- [active](active.md) — other card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: superseded\ntopics:\n  - retrieval\n---\nSuperseded\n' > "$mem/sup.md"
+  printf -- '---\npriority: normal\nstatus: active\ntopics:\n  - unrelated\n---\nActive\n' > "$mem/active.md"
+  # Warm sup.md with repeated keyword hits.
+  for i in $(seq 1 5); do
+    printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  done
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_sup=$(printf '%s\n' "$output" | grep -n '\[sup\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_active=$(printf '%s\n' "$output" | grep -n '\[active\]' | cut -d: -f1 | head -1 || printf '0')
+  if [[ "$status" == "0" && -n "$pos_sup" && -n "$pos_active" && "$pos_active" -lt "$pos_sup" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_active=%s pos_sup=%s output=%q\n' "$name" "$status" "$pos_active" "$pos_sup" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+inject_hook_missing_status_treated_as_active() {
+  # A card with no status field in frontmatter is NOT degraded — it ranks
+  # normally by frecency, same as an explicit status:active card.
+  local name="inject-hook/missing-status-treated-as-active" dir cwd mem status pos_warm pos_cold i
+  should_run "$name" || return 0
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  # cold.md listed first in index; warm.md has no status field (just priority).
+  printf '# test\n- [cold](cold.md) — beta card\n- [warm](warm.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\nstatus: active\ntopics:\n  - beta\n---\nCold\n' > "$mem/cold.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nWarm\n' > "$mem/warm.md"
+  # Warm warm.md with keyword hits.
+  for i in $(seq 1 5); do
+    printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  done
+  output=$(printf '{"cwd":"%s","prompt":"zzz"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+  status=$?
+  pos_warm=$(printf '%s\n' "$output" | grep -n '\[warm\]' | cut -d: -f1 | head -1 || printf '0')
+  pos_cold=$(printf '%s\n' "$output" | grep -n '\[cold\]' | cut -d: -f1 | head -1 || printf '0')
+  # warm.md (no status, high frecency) must rank above cold.md (active, cold).
+  if [[ "$status" == "0" && -n "$pos_warm" && -n "$pos_cold" && "$pos_warm" -lt "$pos_cold" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s pos_warm=%s pos_cold=%s output=%q\n' "$name" "$status" "$pos_warm" "$pos_cold" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 inject_hook_happy_path
 inject_hook_parent_fallback
 inject_hook_no_memory_found
@@ -2021,6 +2123,9 @@ inject_hook_frecency_ranks_accessed_above_cold
 inject_hook_keyword_tier_dominates_frecency
 inject_hook_sidecar_write_failure_is_best_effort
 inject_hook_malformed_sidecar_degrades_to_zero
+inject_hook_stale_card_demoted_below_active
+inject_hook_superseded_card_demoted_below_active
+inject_hook_missing_status_treated_as_active
 memory_usage_commit_decay_halves
 memory_usage_commit_concurrent_no_lost_updates
 memory_age_bucket_mapping
