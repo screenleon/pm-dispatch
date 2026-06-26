@@ -133,7 +133,7 @@
 | CC-405 | memory card frontmatter 標準化（topics/priority/status/updated_at/repo_refs）+ read-only `/mem-doctor` 健檢（dead links、stale repo_refs、未引用 card、episodes 大小） | ✅ |
 | CC-406 | `/mem-search` 改走 `pmctl context --source memory`，rg 僅 fallback。相依 [[CC-403]]（之前 /mem-search 無法誠實「優先用 pmctl context」） | ✅ pr:#325 |
 | CC-407 | episodes 衍生摘要/索引 + 歸檔策略（append-only 保留，加可重建 summary/index、shard/archive）。延伸 [[CC-234]]。優先度最低 | ✅ |
-| CC-427 | tier1 只認 `priority: always`（pin），normal 卡改 usage-based recency+frequency frecency 排序（Firefox bucket `access_count×age_bucket` + W-TinyLFU 老化，純整數零 LLM）；修 [[CC-404]] 預算因 33 卡全 `status: active` 失效。Phase 1 spike → Phase 2 實作 | 🔵 P2 active |
+| CC-427 | tier1 只認 `priority: always`（pin），normal 卡改 usage-based recency+frequency frecency 排序（Firefox bucket `access_count×age_bucket` + W-TinyLFU 老化，純整數零 LLM）；修 [[CC-404]] 預算因 33 卡全 `status: active` 失效。Phase 1 spike → Phase 2 實作 | ✅ pr:#329 |
 
 ### Phase 3 — guard 術語 hygiene（P3；與 retrieval 主線正交，已解鎖可獨立 ship）
 

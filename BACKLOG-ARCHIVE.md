@@ -1,11 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-06-22 -->
+<!-- pm-dispatch: backlog-archive 2026-06-26 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
 BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
 working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-22
+Last archived: 2026-06-26
 
 ---
 
@@ -4159,4 +4159,238 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **See**: pr:#311
 
 ---
+
+## CC-003 — [artifact-relocation epic umbrella] dispatch/gate 副產物搬出 repo ✅ 2026-06-25
+
+**See**: pr:#324
+
+**Decision**: 見 DECISIONS.md 2026-06-23 `dispatch-gate-artifacts-relocate-out-of-repo`（五方分析統整裁決）。
+**Problem**: dispatch 與 pr-gate 把 scratch artifact 寫進使用者 repo：`.agent-trace/`（adapter `TRACE_DIR=$WORK_DIR/.agent-trace` 寫死）、`.gate-briefs/`、`.gate-results/` + footer/runspec/supervisor log。(L1) pr-gate parallel integrity check（`pr-gate.sh:895/1093`）對 `git status --porcelain` 取 dispatch 前後 hash，gate 自己的寫入若未被 ignore 就改動 hash → 健康 repo 誤判 abort（原始症狀）。(L2) 即使 ignore，檔案仍實體污染 repo（本 repo 已累積 93MB；且跨所有被作用過的 repo）。
+**Why**: 根因是 adapter 把「執行 cwd」與「trace 落點」綁死，gate reviewer 又走同一批 adapter，單改 gate 無法讓 repo 不被碰。out-of-repo state 慣例已存在於 `state-writer.sh`，應延伸而非新發明。
+**Requirement**: D-wide——dispatch + gate 全部 artifact 搬到 `$PM_DISPATCH_STATE_ROOT/projects/<repo-sha1>/runs/<run_id>/`（複用 state-writer seam，保留 `.gate-results` 葉名）。分階段：CC-413（Phase 0 止血）、CC-414（seam）、CC-415（containment guard）、CC-416（gate 搬遷=原始 bug 修復）、CC-417（dispatch 搬遷）、CC-418（observer+可發現性）、CC-419（翻預設+GC+跨 repo 既有副產物遷移）。本 umbrella 在全部 phase 完成後關閉。
+
+## CC-413 — Phase 0 止血：integrity check 排除 artifact 路徑 ✅ 2026-06-23
+
+**See**: pr:#318
+
+**Problem**: pr-gate parallel integrity check 把 gate 自身寫入的 artifact 目錄算進 status hash，在未 setup 的健康 repo 誤判 prompt-injection abort。
+**Why**: 在完整搬遷（CC-416）落地前，使用者需要可立即合併的止血，且不引入 `.gitignore` mutation（既有不變量 `test_pr_gate_does_not_mutate_gitignore` 須保留）。
+**Requirement**: `pr-gate.sh` 計算 `_PRE/_POST_DISPATCH_STATUS` 前，過濾掉 `.agent-trace/`、`.gate-briefs/`、`.gate-results/`（NUL-delimited porcelain 較安全）。修正 `:897-898/1091` 誤導性註解。零 `.gitignore` mutation、零行為預設改動、既有測試全綠 + 新增過濾測試。
+
+## CC-414 — Phase 1：trace-root seam（adapter --trace-dir，預設不變）✅ 2026-06-24
+
+**See**: pr:#319
+
+**Problem**: 三個 adapter 寫死 `TRACE_DIR=$WORK_DIR/.agent-trace`，cwd 與 trace 落點綁死，無法把 trace 移出 repo。
+**Why**: 這是真正解 L2 的地基；先引入 seam 而不改預設，可把結構改動與行為改動拆成可獨立 review 的 PR。
+**Requirement**: 抽 `_sw_store_root`/`_sw_project_key` 成共用 lib（如 `state-paths.sh`）+ 公開 helper `sw_project_run_dir`；`adapters/{codex,claude,opencode}/dispatch.sh`、`dispatch_via`、`dispatch-post-verify.sh` 加 `--trace-dir <abs>` 與 `PM_DISPATCH_TRACE_DIR`（precedence flag > env > legacy `$WORK_DIR/.agent-trace`）。預設仍 in-repo。測試：precedence、絕對路徑驗證、snapshot re-exec 保留 flag。
+
+## CC-415 — Phase 2：post-verify containment guard 重設計 ✅ 2026-06-24
+
+**See**: pr:#320
+
+**Problem**: `dispatch-post-verify.sh` 以「在 `$WORK_DIR` 內」為 trace 的 containment 信任邊界，trace 一旦移出 repo 此 guard 會誤殺。
+**Why**: guard 目的（防 executor 把 trace symlink 重導到攻擊者路徑偽造成功）須保留，但邊界要從 repo 改成本次 run 的 trace dir。
+**Requirement**: 加 `--run-dir <abs>`，canonical 化後對 `.agent-trace`（symlink 與 regular dir 均適用）做前綴比對，拒絕逃出 run-dir boundary 的情形。無 `--run-dir` 時退回 `$WORK_DIR` 邊界（行為不變）。純 refactor、behind in-repo 預設、加「拒絕逃逸」測試。Owner/group/world-writable 防護 deferred（另開票追蹤）。
+
+## CC-416 — Phase 3a：gate artifacts 搬出 repo（原始 bug 修復本體） ✅ 2026-06-24
+
+**Problem**: gate 的 briefs/results/trace 落在 repo，造成 L1 誤判與 L2 污染。
+**Why**: 這是 CC-003 原始 ticket 的真正修復；依賴 CC-414 seam 與 CC-415 guard。
+**Requirement**: `pmctl` 配 `runs/<run_id>/` 並把 `.gate-briefs`/`.gate-results`/reviewer trace 路由進去（保留 `.gate-results` 葉名）；integrity check 因 repo 天生乾淨而無需過濾（CC-413 的過濾可保留為防禦）；verdict 預設出 repo，stdout 印路徑 + `--output` 顯式匯回。更新假設「結果在 repo 內」的測試/docs。
+**See**: pr:#321
+
+## CC-417 — Phase 3b：normal dispatch artifacts 搬出 repo ✅ 2026-06-25
+
+**Problem**: `pmctl dispatch run` 的 trace/footer/runspec/supervisor log 仍落在 repo `.agent-trace/`。
+**Why**: 與 gate 共用同一 seam，避免「兩套 artifact 世界」。
+**Requirement**: `pmctl-dispatch.sh` 配 run dir 傳 `--trace-dir`；footer/runspec/supervisor log（含 detached 監督路徑）改寫到 run dir；`dispatch-record.sh` 記錄新路徑。注意 detached supervisor recovery 不可因 runspec 移出 workspace 而失效。
+**See**: pr:#322
+
+## CC-418 — Phase 4：observer + 可發現性 ✅ 2026-06-25
+
+**Problem**: 搬出 repo 後，`codex-watch.sh:24`（tail `$WORK_DIR/.agent-trace/latest.jsonl`）失效，使用者也無法再 `ls .gate-results`。
+**Why**: 可發現性是搬遷的最大 UX 風險，須補齊。
+**Requirement**: codex-watch 改由 pmctl 印出的 trace 路徑或 run-record 解析（加 `--trace <path>`/`--run <id>`）；gate 與 dispatch 結束印 `results:`/`trace:` 絕對路徑；新增 `pmctl artifacts list/show`（與 gate verdict 查看入口）。
+**See**: pr:#323
+
+## CC-419 — Phase 5：翻預設 + GC + 跨 repo 既有副產物遷移 ✅ 2026-06-25
+
+**See**: pr:#324
+
+**Problem**: 預設仍 in-repo；state store 無 GC 會無限增長；且各 repo 已有大量既有副產物（本 repo 93MB+）。
+**Why**: 收尾——讓 out-of-repo 成預設並控管生命週期，同時清理歷史污染。
+**Requirement**: out-of-repo 已為結構性預設（sw_project_run_dir 在所有 adapter 優先取用，legacy in-repo fallback 僅在 state-paths 不可用時觸發）；舊 PM_DISPATCH_TRACE_DIR 指向 work_dir 時一次性 stderr 提示（_SW_INREPO_NOTICE_EMITTED 防重複）；加 retention（keep last N / age-based）+ pmctl artifacts gc [--dry-run] [--keep-last N] [--max-age-days D] [--cd work_dir]；pmctl artifacts gc --all-repos [--repos-root dir] 掃 ~/github/*/ 清理既有副產物（勿在 active dispatch/gate 期間執行）；pmctl artifacts migrate 一次性遷移 in-repo 舊資料；全部 idempotent、dry-run 可見、絕不誤刪 .pm-dispatch/；PM_DISPATCH_GC_KEEP_LAST/PM_DISPATCH_GC_MAX_AGE_DAYS env 可設預設值。注意：--artifact-root/PM_DISPATCH_ARTIFACT_MODE env 切換未實作（不需要，結構性預設已達同等效果）。
+
+## CC-403 — retrieval-first: `pmctl context --source memory`（supersede/吸收 [[CC-340]]）✅ 2026-06-22
+
+**See**: pr:#313
+
+**Problem**: `pmctl context` 的 index 只 `find "$repo_root"` 掃 repo 內檔（`scripts/lib/pmctl-context.sh` index 段），而 memory 住在 repo 外的 `~/.claude/projects/<id>/memory/`，**完全不在索引內**。因此對使用者最常找的「特定資料」——過去決策、規則、偏好——「優先用 `pmctl context`」在能力上不可能；`pack` 的 `"memories":[]` 與 schema description 把 memory 列為 pluggable source，是個**留了縫但沒蓋好的接縫**。
+
+**Why**: memory 是與 repo **不同的檢索平面**，不是 repo 路徑類別。要讓「優先用 pmctl context 找決策/規則/偏好」成立，必須讓 memory 成為一等 source，且不能犧牲隱私或污染 repo prior-art 掃描。
+
+**Requirement**:
+- **新增 source 軸**而非 overload `--domain`：`pmctl context query --source repo|memory|all <term>`，`--domain knowledge|repo` 維持為 repo 平面內的路徑分類器。
+- pack 結果分流：memory hits 進 `memories[]`（`source: memory-index`、`source_domain: memory`）；schema `source_domain` enum 目前是 `["knowledge","repo","state"]`，**須補 `memory`**（[[CC-376]] 先例：enum/schema 加值是 additive registration footprint，非 structural core change）。
+- **reuse-scan 維持 repo-only**：它是 repo prior-art（給 executor 重用程式碼），memory（決策/偏好）混入會擠掉真正的 helper；若要含 memory 走獨立 `memory_candidates:` 或顯式 flag，預設 off。
+- **隱私（load-bearing）**：不把私有 memory 明文複製進 repo-local `<repo>/.pm-dispatch/ctx/context.db`（即使 gitignored 仍在 checkout 內、可被工具/封存帶出）。memory 的衍生 DB 落 memory 目錄下（如 `~/.claude/projects/<id>/memory/.pm-dispatch/context.db`），重用既有 `find_memory_dir`（`scripts/lib/memory.sh`）解析；auto-pack 對 memory 只用 pointer-only ref，snippet 需顯式 flag。
+- **MVP 範圍（吸收 [[CC-340]]）**：FTS5-optional + LIKE/grep fallback、trust-tier 標記（curated card > episode）、no embeddings。embeddings / 語意後端留 [[CC-340]] 作 follow-up。
+
+**Acceptance**:
+- `pmctl context query --source memory -- "<term>"` 能搜到 memory cards / MEMORY.md / episodes，輸出 `context_hit_v1`（含 `source_domain: memory`）。
+- `--source all` 合併 repo + memory；`--source repo`（預設）行為與今天 byte-identical。
+- memory DB **不**寫進 repo checkout；缺 memory dir 時 graceful（`# no hits`）。
+- `reuse-scan` 輸出不含 memory hits（回歸鎖定）。
+- schema 接受 `source_domain: memory`；pack `memories[]` 可被填值。
+
+**Sequencing**: retrieval epic 能力層核心；解鎖 [[CC-406]]（/mem-search 改走它）。動 `pmctl-context.sh` + schema + 測試 + docs。
+
+**Priority**: P2.
+
+**Cross-link**: supersedes [[CC-340]]（吸收 MVP）、[[CC-338]]（repo-index 對稱）、[[CC-237]]（shared interface）、[[CC-232]]（pack schema）、[[CC-406]]（消費者）、[[CC-400]]/[[CC-401]]（行為層）。
+
+## CC-404 — memory: MEMORY.md 注入預算 + priority metadata ✅ 2026-06-25
+
+**Problem**: `scripts/hook-inject-memory.sh` 把 `MEMORY.md` 所有 `^- ` 行全注入，>=50 條才印警告，且 `scripts/test-hooks.sh` 明確斷言 60 條不截斷。結果：index bloat 必然發生，每個 session 都付 stale / 不相關條目的 token，與 memory「keep index short, high-signal」的設計目標相反。
+
+**Why**: 注入是每 session 固定成本的最大來源；把它從「全注入」改成「預算 + 排序」是 memory 端最高 token 槓桿。但若無 priority metadata 直接截斷，可能蓋掉關鍵 user 約束——故須與 [[CC-405]] metadata 同捆或在其後。
+
+**Requirement**:
+- hook 加硬注入預算（max 條數 + max bytes）。
+- 永遠注入固定前言（memory dir、條數、`/mem-search` 指令提示）+ `priority: always` / `scope: active` 條目。
+- 其餘條目依 prompt-aware 廉價比對（title / hook text / tags）擇優注入。
+- 超量印「N 條省略；用 `/mem-search <topic>`」而非全倒。
+- 改現有 no-truncation 測試為「預算內 + always 條目必達 + 超量有省略提示」。
+
+**Priority**: P3.
+
+**See**: pr:#328
+
+**Refs**: [[CC-405]]（priority metadata 來源）、`scripts/guard-inject-memory.sh`、`scripts/test-guards.sh`。
+
+## CC-405 — memory: card frontmatter 標準化 + `/mem-doctor` 健檢 ✅ 2026-06-25
+
+**Problem**: memory 檢索目前靠 filename tier（`feedback_`/`project_`/…）+ hook text 扛太多工作，缺結構化 metadata → 檢索精準度、staleness 偵測、跨專案分享都受限；也沒有便宜可常跑的健檢（`/memory-compress` 是手動重寫流程，需把卡片讀進對話）。
+
+**Why**: 結構化 metadata 是 [[CC-404]] 注入排序與 [[CC-403]] memory 檢索 ranking 的共同前置；`/mem-doctor` 提供 read-only 可觀測面，讓 bloat / dead link / stale ref 在變成問題前被看到。
+
+**Requirement**:
+- card frontmatter 必填/建議：`topics`（檢索詞）、`priority`（always/normal/low）、`status`（active/stale/archived）、`updated_at`、optional `expires_at`、`repo_refs`（可被檢查的檔/函式/flag）。
+- `/mem-distill`、`/memory-compress` 維護這些欄位；先 warn 後 enforce。
+- 新增 read-only `/mem-doctor`（或 `pmctl memory doctor`）報告：MEMORY.md 條數/bytes、重複 hook、dead links、未被 MEMORY.md 引用的 card、stale `repo_refs`、episodes 大小與建議；預設不需讀全部卡片進對話。
+
+**Priority**: P3.
+
+
+**Result log**: design spike settled 4 blocking decisions → `docs/spikes/CC-405.md`（additive frontmatter GREEN／warn→enforce GREEN／repo_refs grammar GREEN／`pmctl memory doctor` subcommand+schema GREEN；外部 memory-graph 不透明為 decision 1 的 AMBER caveat）。Phase A 落地：read-only `pmctl memory doctor`（`scripts/lib/pmctl-memory.sh` + `memory/doctor` case + frozen schema/`--json schema_version:1`/exit 0-1-2 + `path:`/`fn:`/`flag:` staleness）＋ additive frontmatter schema docs（`docs/memory-system.md`）＋ fixture-isolated 測試（`scripts/test-pmctl-memory.sh`，正負控）。Phase B 落地：`/mem-distill` + `/memory-compress` Step 6 加入 write-time frontmatter enforce（缺欄位阻擋寫入並列出差缺欄位，參照 `docs/memory-system.md`）；33 張 live card backfill 完成，`pmctl memory doctor` 確認 `cards_missing_fields: (none)`, `issues_count: 0`。
+
+**Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
+
+**See**: pr:#TBD
+
+## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` ✅ 2026-06-25
+
+**Problem**: `commands/mem-search.md` 自刻一套（Step 2 `rg`/`grep`、Step 3 semantic fallback），**完全不經 `pmctl context`** → 與「優先用內建 context 指令」的目標直接衝突，且檢索品質受 MEMORY.md index 手感影響過大。
+
+**Why**: 要讓 `/mem-search` 誠實「優先用 pmctl context」，前提是 `pmctl context` 真的搜得到 memory——故本票**相依 [[CC-403]]**；在 CC-403 之前無法落地（pmctl context 根本沒有 memory source）。
+
+**Requirement**:
+- 改流程：定位 memory source → `pmctl context query --source memory -- "$ARGUMENTS"` → 只讀回傳的 card / episode refs → index 不可用才 fallback 直接 `rg`（保留現有 no-shell-injection 寫法）。
+- 顯示 `memory:<card>:<section>` 之類 ref，而非整檔倒出。
+- 更新 `scripts/test-commands.sh` 對 mem-search 的契約檢查。
+
+**Priority**: P3.
+
+**See**: pr:#325
+
+**Refs**: 相依 [[CC-403]]、[[CC-400]]（檢索順序）、`commands/mem-search.md`。
+
+## CC-407 — memory: episodes 衍生摘要/索引 + 歸檔策略 ✅ 2026-06-26
+
+**See**: pr:#TBD
+
+**Problem**: `episodes.jsonl` append-only 利於稽核但會無限長；`/mem-recall` 只讀最近 N 條非空摘要、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已被 promote 否則不可見，Stop hook 又持續 append。
+
+**Why**: 長期成長會稀釋 recall 訊號；衍生摘要/索引讓舊模式可被檢索，同時不破壞原始 append-only 稽核性（衍生物可重建）。優先度低於注入 bloat（[[CC-404]]）與檢索強制（[[CC-401]]）。
+
+**Requirement**:
+- 保留 `episodes.jsonl` 原始 append-only。
+- 加可重建衍生物：`episodes.summary.md`（月摘要，由 `/mem-distill` 產）、`episodes.index.jsonl`（keyword / date / cwd / promoted 狀態）。
+- 超過大小/年齡門檻 shard/archive；清理空 skeleton 或至少健檢警告（與 [[CC-405]] `/mem-doctor` 對接）。
+- `/mem-recall` 讀「最近 + 相關摘要」而非只讀最近 N 條。
+
+**Priority**: P3.
+
+**Refs**: 延伸 [[CC-234]]（memory v2 寫側）、[[CC-405]]（mem-doctor 報告 episodes 大小）。
+
+## CC-411 — test: context 測試並行安全隔離（拔除對活 repo 的耦合）✅ 2026-06-23
+
+**See**: pr:#314
+
+**Resolution**: 實際耦合僅 2 個 `*_on_real_repo` 案例（`case_context_query_on_real_repo`、`case_context_reuse_scan_on_real_repo`）——它們索引活 `$REPO_ROOT` 並寫共享 `.pm-dispatch/ctx/context.db`。`*_autorefresh_*` 案例已用隔離 fixture，未動。兩案改為把真實 lib 檔（`pmctl-validate.sh` / `pmctl-context.sh`）`cp` 進 `$tmp_root` fixture 後索引該 fixture，保留「真檔可被內容詞命中」的行為保證但不再碰活 DB；另加 `case_context_no_live_db_mutation` guard——套件起跑前快照活 DB fingerprint，末尾斷言未變，防任何案例未來再耦合活 repo。`case_context_index_unknown_flag` 順手改用 throwaway 路徑消除殘留 `$REPO_ROOT` 引用。89/0 綠，shellcheck 乾淨。
+
+**Problem**: `scripts/test-pmctl-context.sh` 有一批案例（`case_context_query_on_real_repo`、`case_context_reuse_scan_on_real_repo`、`case_context_query_autorefresh_existing_db`、`case_context_reuse_scan_autorefresh_existing_db` 等）直接對**活的** `$REPO_ROOT` 做 `context index` / `query` / `reuse-scan`，因此讀寫**共享的** `<repo>/.pm-dispatch/ctx/context.db`。單獨跑時穩定（85/0），但在 [[CC-409]] 把 `run-all-tests.sh` 並行化（`--jobs nproc`）後，這些案例在 8-way 高 CPU/IO 負載下偶發失敗：對 180KB `BACKLOG.md` 的整包索引使 sqlite `busy_timeout=5000` 被觸發、`_ctx_fts_rebuild` 的 DROP+CREATE+INSERT 被 starve（錯誤被 `2>/dev/null` 吞），留下暫態不完整索引 → reuse-scan 找不到預期 ref。實測 `reuse-scan-on-real-repo` 在兩次相同 `run-all-tests` 間 fail→pass。這批案例同時也是單檔最慢的部分。
+
+**Why**: 並行 flakiness 會間歇性污染 gate 的 qa-tester 訊號（flakiness 為 qa 硬閘），且每次都得重跑浪費時間。根因是測試 fixture 耦合活 repo 共享狀態，非生產程式碼問題（`pmctl-context.sh` repo 路徑乾淨）。
+
+**Fix**（範圍界定，prefer additive）:
+- 把上述案例改為索引**隔離的 temp fixture / repo 副本**（如 `cp` 必要檔到 `$tmp_root/real-repo-snapshot` 或既有 `make_fixture_repo` 擴充），不再讀寫共享的活 repo DB。保留行為斷言（reuse-scan/query 能由內容詞命中已知檔）。
+- 加一條結構斷言（`test-commands.sh` 或 suite 內）禁止 context 測試對 `$REPO_ROOT` 做寫入型 context 操作，防回歸。
+- 順帶確認加速效果（隔離後不再每案重索引全 repo）。
+
+**Done-when**:
+- `bash scripts/run-all-tests.sh`（並行預設）連續 ≥3 次無 `test-pmctl-context` flaky 失敗。
+- 無 context 測試案例對活 `$REPO_ROOT` 寫入 `.pm-dispatch/ctx`。
+- 單檔 `test-pmctl-context.sh` 執行時間較現況下降。
+
+**Refs**: [[CC-403]]（發現處，無關其程式碼）、[[CC-409]]（並行化暴露此 flakiness）、`scripts/test-pmctl-context.sh`、`scripts/lib/pmctl-context.sh`。
+
+---
+
+## CC-424 — refactor: memory commands 去 python3 化 ✅ 2026-06-25
+
+**Problem**: `commands/mem-log.md`、`commands/mem-recall.md`、`commands/mem-search.md`、`commands/memory-compress.md` 均含 `python3` 呼叫（memory dir walker 和 subprocess rg/grep）。`mem-distill.md` 已完成去 python3 化並有 `assert_not_contains "no python3 calls"` 斷言保護，其他 memory commands 未對齊。
+
+**Why**: 減少外部直譯器依賴，與 mem-distill 已確立的純 bash 模式保持一致；bash `"$var"` + `--` 分隔符提供等效的 shell-injection 保護，不需要 Python subprocess。
+
+**What was done**:
+- 四個 command files 移除所有 python3 呼叫
+- 新增 `pmctl memory dir` subcommand（封裝 canonical `find_memory_dir`）
+- memory dir walker 解耦合 `CLAUDE_CONFIG_DIR`，command files 改呼叫 `pmctl memory dir`
+- `mem-search` Step 2 改用 `$(pwd)` 直接傳給 `pmctl context query`，Step 3 改 bash find+rg/grep
+- `test-commands.sh` 新增 mem-log/mem-recall/mem-search/memory-compress 結構斷言 + behavior-level contract assertions
+- `test-pmctl-memory.sh` 新增 5 個 `pmctl memory dir` behavioral test cases
+
+**See**: pr:#326
+
+## CC-427 — memory: MEMORY.md 注入 usage-based recency+frequency 排序 ✅ 2026-06-26
+
+**See**: pr:#329
+
+**Problem**: [[CC-404]]（PR#328）落地了硬注入預算（20 條 / 3000 bytes）+ `priority: always` pin + prompt-keyword tier2 排序，但 tier1 條件 `priority: always || status: active` 在「33 張 live card 全 `status: active`」（[[CC-405]] backfill 結果）下 → 全部進 tier1 恆注入、不受預算，實測注入仍 33 條、零省略，**預算實質失效**。`status` 三分法（active/stale/archived）語意是生命週期，不是注入優先級，拿來當恆注入條件是誤用。
+
+**Why**: 注入是每 prompt 固定 token 成本；要讓預算真正生效，需要能區分「該卡現在值不值得注入」的訊號。靜態 `status` 沒有區分度（全 active）；改用動態使用訊號——最近用過 / 常用 → 排前面（recency + frequency）。
+
+**Decision direction**（`/research` 2026-06-25，見 memory `reference_memory_injection_ranking`）:
+- tier1 只認 `priority: always`（手動 pin，核心規則恆置頂，與打分正交）；移除 `status: active` OR。
+- normal 卡用 **Firefox bucketed frecency**：`score = access_count × age_bucket(last_access)`，bucket = 100/70/50/30/10（age ≤4d/14d/31d/90d/更舊）；純整數零浮點。
+- **W-TinyLFU 老化**：週期性 `access_count >>= 1`，避免舊卡高頻霸榜。
+- `status` 降為未來 staleness GC 用，不參與注入排序。
+- 排除：HN-poly（需 pow）、MemGPT/Claude memory（LLM-judged）、embeddings/FTS（延 [[CC-340]]）。
+
+**Phase 1 — committed 決策**（六-model 統整定案：主線程 + codex + opencode + ChatGPT/Gemini/Grok）:
+- `access` 事件定義 → **keyword 命中（`_score>0`）即 +1**，在預算截斷前（冷門但相關卡也累積訊號）；純被注入不計，避免 self-reinforcing 霸榜。
+- usage 計數寫回 → **sidecar TSV**（`memory_dir/.pm-dispatch/inject-usage.tsv`），markdown 維持 canonical、零 git diff 噪音、`serialize_with_lock` 原子寫回。
+- 老化觸發 → **全域 event-counter**：`total_events` 累積命中達 `PM_MEMORY_DECAY_THRESHOLD`(256) → 全表 `access_count >>= 1` 並歸零（W-TinyLFU；age_bucket 已承擔 recency 軸，故老化綁操作次數而非時間）。
+- frecency × keyword 結合 → **複合 sort key** `composite = score × WEIGHT(100000) + frecency`，frecency 鉗在 WEIGHT 以下 → keyword tier 主導、組內 frecency 排序（等價分層、單 pass）。
+
+**Phase 2 — 實作**（✅ 完成）:
+- `scripts/lib/memory.sh`：`memory_usage_sidecar_path` / `memory_age_bucket` / `memory_usage_commit`（鎖內 RMW + 全域減半）。
+- `scripts/guard-inject-memory.sh`：tier1 只認 `priority: always`、normal 卡 frecency 複合排序、keyword 命中記 access、best-effort 寫回。
+- 測試（`test-guards.sh`，6 新增全綠）：status:active 不再恆注入（20+5 omitted）、access 記錄、frecency 排序、keyword tier 主導、decay 減半、age_bucket 映射。
+
+**Priority**: P2（✅ closed 2026-06-26，pr:#329）.
+
+**Refs**: [[CC-404]]（預算+pin+tier2 骨架）、[[CC-405]]（frontmatter schema）、memory `reference_memory_injection_ranking`（research 結論）、`scripts/guard-inject-memory.sh`。
 
