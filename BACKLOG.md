@@ -1334,20 +1334,17 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
 - 節省的 context window 可放 PR diff；每個 dispatch executor 只負擔同類型的 3–5 個 ticket，不會 context 爆炸
 
-**Output format**:
+**Output format** (Layer 1 + Layer 3 delivered; Layer 2 → [[CC-430]]):
 ```
 ## /pre-release — <milestone-id> — <date>
 
 ### Layer 1 — Structural (machine checks)
 ✅ / ❌ per check with file:line reference
 
-### Layer 2 — Semantic coverage
-| Ticket | Requirement summary | Diff coverage | Confidence | Flag |
-
 ### Layer 3 — Blind spots
 This scan cannot confirm: …
 
-Summary: N structural issues, M semantic flags, K blind spots declared.
+Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots declared.
 ```
 
 **Constraints**:
