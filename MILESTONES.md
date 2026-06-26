@@ -52,16 +52,7 @@
 
 > **排序紅線**：Phase 1（CC-400→401）行為層可先做，立即回答「如何讓檢索優先用 pmctl context」。Phase 2 能力層中，[[CC-403]] 是 [[CC-406]] 的前置（memory source 不存在前 /mem-search 改不了）；[[CC-405]] metadata 宜先於或同捆 [[CC-404]] 注入預算（否則預算截斷可能蓋掉關鍵約束）。**逃生口**：Phase 1 可獨立提前到 v0.6.x 點版；Phase 2 若評估過重可單獨延 v0.7.x。
 
-### Phase 4 — release closure（2026-06-26 追加；tag 前完成）
-
-> Phase 1–3（含 CC-428）全部完成。Phase 4 是 release 的最後兩張：先建工具（CC-426）、再用工具對自己審查一次（CC-429）。
-
-| 票 | 摘要 | 狀態 |
-|----|------|------|
-| CC-426 | `/pre-release v0.7.0` 三層審查工具：Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）；Layer 2 語義比對（diff 是否滿足 ticket requirement）；Layer 3 盲點聲明。輸出報告非 GO/NO-GO。相依 [[CC-404]] + [[CC-403]] | 🔵 active |
-| CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | 🔵 active |
-
-### Phase 5 — artifact relocation + test infra（與 retrieval 正交；v0.6.0 後同期 ship）
+### Phase 4 — artifact relocation + test infra（與 retrieval 正交；v0.6.0 後同期 ship）
 
 > CC-003 epic（artifact-relocation）與 CC-409/CC-410 在 v0.7.0 開發期間完成，功能主題與 retrieval 正交但為 v0.7.0 期間的 commit。
 
@@ -76,6 +67,15 @@
 | CC-417 | Phase 3b：normal dispatch artifacts 搬出 repo（與 Phase 3a 對稱） | ✅ pr:#322 |
 | CC-418 | Phase 4：observer + `pmctl artifacts list/show` 可發現性介面 | ✅ pr:#323 |
 | CC-419 | Phase 5：翻預設 out-of-repo + GC + 跨 repo 既有副產物遷移；close CC-003 epic | ✅ pr:#324 |
+
+### Phase 5 — release closure（2026-06-26 追加；tag 前完成）
+
+> Phase 1–4 全部完成。Phase 5 是 release 的最後兩張：先建工具（CC-426）、再用工具對自己審查一次（CC-429）。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-426 | `/pre-release v0.7.0` 三層審查工具：Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）；Layer 2 語義比對（diff 是否滿足 ticket requirement）；Layer 3 盲點聲明。輸出報告非 GO/NO-GO。相依 [[CC-404]] + [[CC-403]] | 🔵 active |
+| CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | 🔵 active |
 
 ### 待後續 / 與本版正交
 
