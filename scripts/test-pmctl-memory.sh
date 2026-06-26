@@ -870,6 +870,95 @@ case_memory_shard_above_limit() {
   pass "$name"
 }
 
+case_memory_shard_idempotent() {
+  local name="pmctl memory shard: running shard twice leaves shard files unchanged (idempotent)"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  # Need >1000 lines to trigger shard: 600 (2020-01) + 500 (2020-02) + 1 current = 1101.
+  local ep="$mdir/episodes.jsonl"
+  local i
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-01-%02d","cwd":"%s","session_id":"s%d","summary":"old %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  for i in $(seq 1 500); do
+    printf '{"date":"2020-02-%02d","cwd":"%s","session_id":"t%d","summary":"old2 %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  local cur_ym
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current"}\n' "$cur_ym" "$repo" >> "$ep"
+
+  # First shard run.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  local lines_after_first
+  lines_after_first="$(wc -l < "$mdir/episodes.2020-01.jsonl" 2>/dev/null || printf '0')"
+
+  # Second shard run — shard file must have same line count (idempotent overwrite).
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  local lines_after_second
+  lines_after_second="$(wc -l < "$mdir/episodes.2020-01.jsonl" 2>/dev/null || printf '0')"
+
+  if [[ "$lines_after_first" -ne "$lines_after_second" ]]; then
+    fail "$name" "shard not idempotent: $lines_after_first lines after first run, $lines_after_second after second"
+    return 0
+  fi
+  if [[ "$lines_after_second" -ne 600 ]]; then
+    fail "$name" "expected 600 lines in shard file, got $lines_after_second"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_no_duplicate_after_shard() {
+  local name="pmctl memory rebuild-summary: no duplicate entries in summary after shard run"
+  should_run "$name" || return 0
+
+  local cfg repo mdir
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  # Need >1000 lines to trigger shard: 600 (2020-01) + 500 (2020-02) + 1 current = 1101.
+  local ep="$mdir/episodes.jsonl"
+  local i
+  for i in $(seq 1 600); do
+    printf '{"date":"2020-01-%02d","cwd":"%s","session_id":"s%d","summary":"old %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  for i in $(seq 1 500); do
+    printf '{"date":"2020-02-%02d","cwd":"%s","session_id":"t%d","summary":"old2 %d"}\n' \
+      "$(( (i % 28) + 1 ))" "$repo" "$i" "$i" >> "$ep"
+  done
+  local cur_ym
+  cur_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
+  printf '{"date":"%s-01","cwd":"%s","session_id":"scur","summary":"current entry"}\n' "$cur_ym" "$repo" >> "$ep"
+
+  # Run shard first, then rebuild summary.
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" >/dev/null 2>&1 || true
+  CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" >/dev/null 2>&1 || true
+
+  local summary="$mdir/episodes.summary.md"
+  if [[ ! -f "$summary" ]]; then
+    fail "$name" "episodes.summary.md not created"
+    return 0
+  fi
+
+  # Count how many entries appear under 2020-01 heading. Should be exactly 600.
+  local entry_count
+  entry_count="$(grep -c '^- 2020-01' "$summary" 2>/dev/null || printf '0')"
+  if [[ "$entry_count" -ne 600 ]]; then
+    fail "$name" "expected 600 entries for 2020-01, got $entry_count (duplicate entries?)"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_rebuild_summary_basic() {
   local name="pmctl memory rebuild-summary: produces episodes.summary.md grouped by month"
   should_run "$name" || return 0
@@ -1092,6 +1181,8 @@ case_memory_doctor_fn_function_keyword_boundary
 case_memory_doctor_no_live_dir_mutation
 case_memory_shard_below_limit
 case_memory_shard_above_limit
+case_memory_shard_idempotent
+case_memory_rebuild_summary_no_duplicate_after_shard
 case_memory_rebuild_summary_basic
 case_memory_rebuild_summary_skips_empty_summary
 case_memory_rebuild_summary_deterministic

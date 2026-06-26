@@ -453,24 +453,29 @@ pmctl_memory_shard() {
   fi
 
   # Copy-only archive: episodes.jsonl is NEVER modified (append-only invariant preserved).
-  # Each entry whose date year-month is not the current month is COPIED into
-  # episodes.YYYY-MM.jsonl. The main file is left intact. Shard files are additive
-  # archives; re-running is safe (idempotent via append to same shard file).
+  # Old-month entries are COPIED into episodes.YYYY-MM.jsonl via awk, which truncates
+  # each shard file at the start of the run (awk ">" semantics), so re-running always
+  # produces the same shard files — the operation is idempotent.
   local current_ym
   current_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
 
-  local archived=0
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    # Accept both compact ("date":"YYYY-MM") and spaced ("date": "YYYY-MM") JSON.
-    local entry_ym=""
-    entry_ym="$(printf '%s' "$line" | grep -oE '"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}' | grep -oE '[0-9]{4}-[0-9]{2}' | head -1 || true)"
-    [[ -z "$entry_ym" || "$entry_ym" == "$current_ym" ]] && continue
-    printf '%s\n' "$line" >> "$mem_dir/episodes.${entry_ym}.jsonl"
-    archived=$((archived + 1))
-  done < "$ep"
+  # awk ">" truncates each output file on first write within the run, so repeated
+  # runs overwrite shard files with identical content (idempotent).
+  # Accepts both compact ("date":"YYYY-MM") and spaced ("date": "YYYY-MM") JSON.
+  local archived
+  archived="$(awk -v mem_dir="$mem_dir" -v cur="$current_ym" '
+    {
+      match($0, /"date"[[:space:]]*:[[:space:]]*"([^"]+)"/, d)
+      if (!d[1]) next
+      ym = substr(d[1], 1, 7)
+      if (ym == cur || ym == "") next
+      print > (mem_dir "/episodes." ym ".jsonl")
+      count++
+    }
+    END { print count+0 }
+  ' "$ep")"
 
-  printf 'pmctl memory shard: copied %d old entries to shard files (episodes.jsonl unchanged)\n' "$archived"
+  printf 'pmctl memory shard: copied %s old entries to shard files (episodes.jsonl unchanged)\n' "$archived"
 }
 
 # Rebuild episodes.summary.md from episodes.jsonl and any shard files.
@@ -504,15 +509,10 @@ pmctl_memory_rebuild_summary() {
   [[ -f "$ep" ]] || { printf 'pmctl memory rebuild-summary: no episodes.jsonl found\n'; return 0; }
 
   local summary="$mem_dir/episodes.summary.md"
-  local tmp_all
-  tmp_all="$(mktemp -p "$(dirname "$ep")" episodes-all-XXXXXX.jsonl)"
 
-  # Collect all entries: main file + shard files, sorted newest first.
-  # Shard files: episodes.YYYY-MM.jsonl (glob pattern).
-  for f in "$mem_dir"/episodes.????-??.jsonl "$ep"; do
-    [[ -f "$f" ]] && cat "$f" >> "$tmp_all"
-  done
-
+  # Build summary from episodes.jsonl only (NOT from shard files).
+  # Shard files are archive snapshots for operator visibility; reading them here
+  # would double-count entries already present in the append-only main file.
   # Build summary grouped by year-month using awk.
   # Each group: "## YYYY-MM (N entries)\n- YYYY-MM-DD: <first line of summary>\n..."
   awk '
@@ -557,9 +557,7 @@ pmctl_memory_rebuild_summary() {
         printf "## %s (%d %s)\n%s\n", ym, counts[ym], (counts[ym]==1?"entry":"entries"), groups[ym]
       }
     }
-  ' "$tmp_all" > "$summary"
-
-  rm -f "$tmp_all"
+  ' "$ep" > "$summary"
 
   local month_count
   month_count="$(grep -c '^## ' "$summary" 2>/dev/null || printf '0')"
