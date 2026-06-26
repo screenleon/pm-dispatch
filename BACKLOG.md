@@ -1314,7 +1314,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Requirement**:
 
-`/pre-release [milestone-id]`（或 `pmctl pre-release v0.7.0`）：
+`/pre-release [milestone-id]`（或 `pmctl pre-release audit v0.7.0`）：
 
 **Layer 1 — 結構檢查（機器可執行，高信心）**
 - 所有 milestone scope 內的 ticket 在 MILESTONES row 標 ✅ 且有 `**See**: pr:#NNN`

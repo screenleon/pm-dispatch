@@ -163,7 +163,7 @@ case_check11_canonical_pr() {
   scope_rows="$(printf 'CC-001\t✅ pr:#10\nCC-002\t✅\nCC-003\t✅ pr:#TBD\nCC-004\t🔵 active')"
 
   local out
-  out="$(_pra_check_11_pr_refs "$scope_rows" "v1.0")"
+  out="$(_pra_check_11_pr_refs "$scope_rows" "")"
 
   if ! printf '%s\n' "$out" | grep -q "^✅ CC-001"; then
     fail "$name" "CC-001 with pr:#10 should pass: $out"
@@ -388,10 +388,89 @@ case_check11_non_canonical_pr() {
   local scope_rows="CC-009	✅ #9"
 
   local out
-  out="$(_pra_check_11_pr_refs "$scope_rows" "v1.0")"
+  out="$(_pra_check_11_pr_refs "$scope_rows" "")"
 
   if ! printf '%s\n' "$out" | grep -qE "^⚠️.*CC-009"; then
     fail "$name" "non-canonical '#9' format should emit ⚠️: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_check11_file_line_ref() {
+  local name="pre-release/check11-file-line-ref"
+  # Behavior: non-OK findings for check 1.1 include MILESTONES.md:line in the output.
+  # Steps: write MILESTONES.md with CC-002 (✅ no PR ref); extract real scope_rows; call
+  #        _pra_check_11_pr_refs with the file path; assert ❌ row contains MILESTONES.md:N.
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check11-file-line"
+  mkdir -p "$tmp"
+  write_milestones "$tmp/MILESTONES.md"
+
+  local scope_rows
+  scope_rows="$(_pra_extract_scope_rows "$tmp/MILESTONES.md" "v1.0")"
+
+  local out
+  out="$(_pra_check_11_pr_refs "$scope_rows" "$tmp/MILESTONES.md")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^❌ CC-002.*MILESTONES\.md:[0-9]+"; then
+    fail "$name" "check 1.1 ❌ finding must include MILESTONES.md:line reference: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_check13_file_line_ref() {
+  local name="pre-release/check13-file-line-ref"
+  # Behavior: ❌ findings for check 1.3 include CHANGELOG.md:line pointing to [Unreleased] section.
+  # Steps: write CHANGELOG.md; pass scope_rows for CC-005 (✅ pr:#5, absent from changelog);
+  #        assert ❌ row contains CHANGELOG.md:N.
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check13-file-line"
+  mkdir -p "$tmp"
+  write_changelog "$tmp/CHANGELOG.md"
+
+  local scope_rows="CC-005	✅ pr:#5"
+
+  local out
+  out="$(_pra_check_13_changelog "$tmp/CHANGELOG.md" "$scope_rows")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^❌ CC-005.*CHANGELOG\.md:[0-9]+"; then
+    fail "$name" "check 1.3 ❌ finding must include CHANGELOG.md:line reference: $out"
+    return
+  fi
+  pass "$name"
+}
+
+case_check14_file_line_ref() {
+  local name="pre-release/check14-file-line-ref"
+  # Behavior: ❌ mismatch findings for check 1.4 include BACKLOG.md:line for both index and body.
+  # Steps: write BACKLOG.md with CC-008 index=✅ but body=🔵; assert ❌ includes two BACKLOG.md:N refs.
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/check14-file-line"
+  mkdir -p "$tmp"
+  cat > "$tmp/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-008 | ✅ closed 2026-01-08 | mismatch | ops | 2026-01-08 | pr:#8 | P2 | — |
+
+## CC-008 — mismatch 🔵 active
+
+**Goal**: body says active, index says closed.
+
+EOF
+
+  local out
+  out="$(_pra_check_14_status_consistency "$tmp/BACKLOG.md" "" "CC-008")"
+
+  if ! printf '%s\n' "$out" | grep -qE "^❌ CC-008.*BACKLOG\.md:[0-9]+.*BACKLOG\.md:[0-9]+"; then
+    fail "$name" "check 1.4 ❌ finding must include two BACKLOG.md:line references: $out"
     return
   fi
   pass "$name"
@@ -666,6 +745,11 @@ case_cli_route() {
     fail "$name" "cli output missing Layer 3 blind spots (exit $rc): $out"
     return
   fi
+  # At least one finding must carry a file:line reference (covers the output contract)
+  if ! printf '%s\n' "$out" | grep -qE '\.md:[0-9]+'; then
+    fail "$name" "cli output must contain at least one file:line reference (exit $rc): $out"
+    return
+  fi
   pass "$name"
 }
 
@@ -674,6 +758,7 @@ case_cli_route() {
 case_extract_scope_rows
 case_check11_canonical_pr
 case_check11_non_canonical_pr
+case_check11_file_line_ref
 case_check12_no_residuals
 case_check12_detects_todo
 case_check12_skips_non_closed
@@ -682,9 +767,11 @@ case_check12_skips_japanese_quoted_mention
 case_check12_body_missing
 case_check13_coverage
 case_check13_no_unreleased_section
+case_check13_file_line_ref
 case_check14_status_consistent
 case_check14_mismatch
 case_check14_archive_only
+case_check14_file_line_ref
 case_audit_unknown_flag
 case_audit_missing_file
 case_audit_missing_milestone

@@ -67,7 +67,7 @@ pmctl_pre_release_audit() {
 
   # Check 1.1 — milestone scope: ✅ + PR refs
   local c11_out c11_issues=0
-  c11_out="$(_pra_check_11_pr_refs "$scope_rows" "$milestone_id")"
+  c11_out="$(_pra_check_11_pr_refs "$scope_rows" "$milestones")"
   c11_issues=$(printf '%s\n' "$c11_out" | grep -cE '^(❌|⚠️)' || true)
 
   printf '#### 1.1 Milestone scope — ✅ and PR refs\n\n'
@@ -145,26 +145,30 @@ _pra_extract_scope_rows() {
 
 # Check 1.1: each scope ticket has ✅ and a valid PR ref in MILESTONES scope table
 _pra_check_11_pr_refs() {
-  local scope_rows="$1"
+  local scope_rows="$1" milestones="${2:-}"
   local output=""
+  local ms_base=""
+  [[ -n "$milestones" ]] && ms_base="$(basename "$milestones")"
 
   while IFS=$'\t' read -r ticket status; do
     local line=""
-    # Classify status
+    # Look up source line in MILESTONES.md for non-OK findings
+    local ms_ln=""
+    [[ -n "$milestones" ]] && ms_ln="$(grep -n "| ${ticket} |" "$milestones" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    local ms_ref="${ms_base:-MILESTONES.md}${ms_ln:+:$ms_ln}"
+
     if printf '%s' "$status" | grep -qF '✅'; then
-      # Has done marker — check PR ref quality
       if printf '%s' "$status" | grep -qE 'pr:#[0-9]+'; then
         line="✅ $ticket — closed with canonical PR ref"
       elif printf '%s' "$status" | grep -qiE 'pr:#[Tt][Bb][Dd]'; then
-        line="❌ $ticket — ✅ but PR ref is TBD (MILESTONES.md)"
+        line="❌ $ticket — ✅ but PR ref is TBD (${ms_ref})"
       elif printf '%s' "$status" | grep -qE '#[0-9]+'; then
-        line="⚠️  $ticket — ✅ with PR# but non-canonical format (expected \`pr:#NNN\`)"
+        line="⚠️  $ticket — ✅ with PR# but non-canonical format (expected \`pr:#NNN\`) (${ms_ref})"
       else
-        line="❌ $ticket — ✅ but no PR ref found (MILESTONES.md)"
+        line="❌ $ticket — ✅ but no PR ref found (${ms_ref})"
       fi
     else
-      line="❌ $ticket — not marked ✅ in MILESTONES.md scope (status: $status)"
-
+      line="❌ $ticket — not marked ✅ in MILESTONES.md scope (status: $status) (${ms_ref})"
     fi
     output="${output}${line}"$'\n'
   done <<< "$scope_rows"
@@ -237,8 +241,15 @@ _pra_check_12_body_residuals() {
 _pra_check_13_changelog() {
   local changelog="$1" scope_rows="$2"
   local output=""
+  local cl_base
+  cl_base="$(basename "$changelog")"
 
-  # Extract [Unreleased] section
+  # Find [Unreleased] section start line for references
+  local unreleased_ln
+  unreleased_ln="$(grep -n "^## \[Unreleased\]" "$changelog" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+  local cl_section_ref="${cl_base}${unreleased_ln:+:$unreleased_ln}"
+
+  # Extract [Unreleased] section content
   local unreleased
   unreleased="$(awk '
     /^## \[Unreleased\]/ { in_section = 1; next }
@@ -249,7 +260,7 @@ _pra_check_13_changelog() {
   if [[ -z "$unreleased" ]]; then
     while IFS=$'\t' read -r ticket _status; do
       [[ -z "$ticket" ]] && continue
-      output="${output}❌ $ticket — CHANGELOG has no [Unreleased] section; coverage unverifiable"$'\n'
+      output="${output}❌ $ticket — CHANGELOG has no [Unreleased] section; coverage unverifiable (${cl_base})"$'\n'
     done <<< "$scope_rows"
     printf '%s' "$output"
     return
@@ -264,19 +275,24 @@ _pra_check_13_changelog() {
       pr_num="$(printf '%s' "$status" | grep -oE 'pr:#[0-9]+' | head -1 | sed 's/pr:#//')"
     fi
 
-    # Check CC-NNN mention
-    local found_cc found_pr
+    # Check CC-NNN mention; find line number if found
+    local found_cc found_pr found_ln=""
     found_cc="$(printf '%s\n' "$unreleased" | grep -c "$ticket" || true)"
     found_pr=0
-    [[ -n "$pr_num" ]] && found_pr="$(printf '%s\n' "$unreleased" | grep -cE "#${pr_num}[^0-9]|#${pr_num}$" || true)"
+    if [[ -n "$pr_num" ]]; then
+      found_pr="$(printf '%s\n' "$unreleased" | grep -cE "#${pr_num}[^0-9]|#${pr_num}$" || true)"
+    fi
 
     if [[ "$found_cc" -gt 0 || "$found_pr" -gt 0 ]]; then
-      output="${output}✅ $ticket — mentioned in CHANGELOG [Unreleased]"$'\n'
+      # Find actual line number in changelog for found entry
+      local needle="$ticket"
+      [[ "$found_cc" -eq 0 && -n "$pr_num" ]] && needle="#${pr_num}"
+      found_ln="$(grep -n "$needle" "$changelog" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+      output="${output}✅ $ticket — mentioned in CHANGELOG [Unreleased] (${cl_base}${found_ln:+:$found_ln})"$'\n'
     elif [[ -z "$pr_num" ]]; then
-      output="${output}⚠️  $ticket — no canonical PR ref; searched CC-NNN only (not found)"$'\n'
+      output="${output}⚠️  $ticket — no canonical PR ref; searched CC-NNN only (not found) (${cl_section_ref})"$'\n'
     else
-      output="${output}❌ $ticket — not mentioned in CHANGELOG [Unreleased] (searched $ticket, #${pr_num})"$'\n'
-
+      output="${output}❌ $ticket — not mentioned in CHANGELOG [Unreleased] (searched $ticket, #${pr_num}) (${cl_section_ref})"$'\n'
     fi
   done <<< "$scope_rows"
 
@@ -292,29 +308,34 @@ _pra_check_14_status_consistency() {
     [[ -z "$ticket" ]] && continue
 
     # Get index row status (second column) — search both BACKLOG.md and BACKLOG-ARCHIVE.md
-    local idx_status=""
+    local idx_status="" idx_src="" idx_ln=""
     for src in "$backlog" "$backlog_archive"; do
       [[ -z "$src" || ! -f "$src" ]] && continue
       local row
       row="$(grep -E "^\| ${ticket} \|" "$src" 2>/dev/null | head -1 || true)"
       if [[ -n "$row" ]]; then
         idx_status="$(printf '%s' "$row" | awk -F'|' '{s=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); print s}')"
+        idx_src="$(basename "$src")"
+        idx_ln="$(grep -n "^\| ${ticket} \|" "$src" 2>/dev/null | head -1 | cut -d: -f1 || true)"
         break
       fi
     done
 
     if [[ -z "$idx_status" ]]; then
       # Index rows are removed when tickets are archived — check body heading only
-      local archive_heading=""
+      local archive_heading="" arch_ln=""
       if [[ -f "$backlog_archive" ]]; then
         archive_heading="$(grep -E "^## ${ticket}[[:space:]]" "$backlog_archive" 2>/dev/null | head -1 || true)"
+        arch_ln="$(grep -n "^## ${ticket}[[:space:]]" "$backlog_archive" 2>/dev/null | head -1 | cut -d: -f1 || true)"
       fi
       if [[ -n "$archive_heading" ]]; then
         local arch_status
         arch_status="$(printf '%s' "$archive_heading" | sed 's/^## CC-[0-9]* — //' | \
           grep -oE '(✅|🔵|🟢|🟡|⏸|🚫|⚠️)[^🔵🟢🟡✅⏸🚫⚠️]*$' | \
           sed 's/[[:space:]]*$//' || true)"
-        output="${output}✅ $ticket — archived (no index row); body heading: ${arch_status:-unknown}"$'\n'
+        local arch_base
+        arch_base="$(basename "$backlog_archive")"
+        output="${output}✅ $ticket — archived (no index row); body heading: ${arch_status:-unknown} (${arch_base}${arch_ln:+:$arch_ln})"$'\n'
       else
         output="${output}⚠️  $ticket — not found in BACKLOG.md or BACKLOG-ARCHIVE.md index"$'\n'
       fi
@@ -322,24 +343,23 @@ _pra_check_14_status_consistency() {
     fi
 
     # Get body heading status — last word-group of the heading line
-    local heading_status=""
+    local heading_status="" heading_src="" heading_ln=""
     for src in "$backlog" "$backlog_archive"; do
       [[ -z "$src" || ! -f "$src" ]] && continue
       local heading
       heading="$(grep -E "^## ${ticket}[[:space:]]" "$src" 2>/dev/null | head -1 || true)"
       if [[ -n "$heading" ]]; then
-        # Extract trailing status: last space-separated token(s) after the title
-        # e.g. "## CC-428 — title ✅ 2026-06-26" → "✅ 2026-06-26"
-        # e.g. "## CC-426 — title 🟢 someday"   → "🟢 someday"
         heading_status="$(printf '%s' "$heading" | sed 's/^## CC-[0-9]* — //' | \
           grep -oE '(✅|🔵|🟢|🟡|⏸|🚫|⚠️)[^🔵🟢🟡✅⏸🚫⚠️]*$' | \
           sed 's/[[:space:]]*$//' || true)"
+        heading_src="$(basename "$src")"
+        heading_ln="$(grep -n "^## ${ticket}[[:space:]]" "$src" 2>/dev/null | head -1 | cut -d: -f1 || true)"
         break
       fi
     done
 
     if [[ -z "$heading_status" ]]; then
-      output="${output}⚠️  $ticket — body heading not found or status not parseable"$'\n'
+      output="${output}⚠️  $ticket — body heading not found or status not parseable (${idx_src:-BACKLOG.md}${idx_ln:+:$idx_ln})"$'\n'
       continue
     fi
 
@@ -351,8 +371,7 @@ _pra_check_14_status_consistency() {
     if [[ "$idx_emoji" == "$heading_emoji" ]]; then
       output="${output}✅ $ticket — index ($idx_status) ↔ body ($heading_status) consistent"$'\n'
     else
-      output="${output}❌ $ticket — status mismatch: index ($idx_status) ↔ body ($heading_status)"$'\n'
-
+      output="${output}❌ $ticket — status mismatch: index ($idx_status) ↔ body ($heading_status) (${idx_src:-BACKLOG.md}${idx_ln:+:$idx_ln} vs ${heading_src:-BACKLOG.md}${heading_ln:+:$heading_ln})"$'\n'
     fi
   done <<< "$tickets"
 
