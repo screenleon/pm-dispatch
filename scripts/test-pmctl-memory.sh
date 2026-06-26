@@ -831,7 +831,7 @@ case_memory_shard_above_limit() {
     return 0
   fi
 
-  # Shard files for 2020-01 and 2020-02 should now exist.
+  # Shard files for 2020-01 and 2020-02 should now exist (copy-only archive).
   local shard_jan="$mdir/episodes.2020-01.jsonl"
   local shard_feb="$mdir/episodes.2020-02.jsonl"
   if [[ ! -f "$shard_jan" ]]; then
@@ -843,15 +843,28 @@ case_memory_shard_above_limit() {
     return 0
   fi
 
-  # Main file should only contain the current-month entry.
+  # shard is copy-only: main episodes.jsonl must NOT be modified (all 1201 lines remain).
   local main_lines
   main_lines="$(wc -l < "$ep")"
-  if [[ "$main_lines" -ne 1 ]]; then
-    fail "$name" "expected 1 line in main episodes.jsonl after shard, got $main_lines"
+  if [[ "$main_lines" -ne 1201 ]]; then
+    fail "$name" "shard must not modify main episodes.jsonl (expected 1201 lines, got $main_lines)"
     return 0
   fi
+  # Current-month entry must still be present in main file.
   if ! grep -q '"scur"' "$ep"; then
-    fail "$name" "main episodes.jsonl should contain the current-month entry"
+    fail "$name" "main episodes.jsonl should still contain the current-month entry"
+    return 0
+  fi
+  # Shard file for 2020-01 should have exactly 600 entries (copy of old entries).
+  local shard_jan_lines
+  shard_jan_lines="$(wc -l < "$shard_jan")"
+  if [[ "$shard_jan_lines" -ne 600 ]]; then
+    fail "$name" "expected 600 lines in shard 2020-01, got $shard_jan_lines"
+    return 0
+  fi
+  # Output should mention the archived count.
+  if ! printf '%s' "$out" | grep -q "copied"; then
+    fail "$name" "expected 'copied' in output, got: $out"
     return 0
   fi
   pass "$name"

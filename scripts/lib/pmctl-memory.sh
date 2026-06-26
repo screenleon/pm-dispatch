@@ -452,45 +452,25 @@ pmctl_memory_shard() {
     return 0
   fi
 
-  # Determine the current year-month to keep entries from current month in main file.
+  # Copy-only archive: episodes.jsonl is NEVER modified (append-only invariant preserved).
+  # Each entry whose date year-month is not the current month is COPIED into
+  # episodes.YYYY-MM.jsonl. The main file is left intact. Shard files are additive
+  # archives; re-running is safe (idempotent via append to same shard file).
   local current_ym
   current_ym="$(date -u +%Y-%m 2>/dev/null || date +%Y-%m)"
 
-  # Partition: lines whose date starts with current_ym stay; others go to shard files.
-  local tmp_keep tmp_old
-  tmp_keep="$(mktemp -p "$(dirname "$ep")" episodes-keep-XXXXXX.jsonl)"
-  tmp_old="$(mktemp -p "$(dirname "$ep")" episodes-old-XXXXXX.jsonl)"
-
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    # Extract date field: "date":"YYYY-MM-..." or "date": "YYYY-MM-..."
-    local entry_ym=""
-    entry_ym="$(printf '%s' "$line" | grep -oE '"date":"[0-9]{4}-[0-9]{2}' | head -1 | grep -oE '[0-9]{4}-[0-9]{2}' || true)"
-    if [[ "$entry_ym" == "$current_ym" || -z "$entry_ym" ]]; then
-      printf '%s\n' "$line" >> "$tmp_keep"
-    else
-      printf '%s\n' "$line" >> "$tmp_old"
-    fi
-  done < "$ep"
-
-  # Group old entries by their YYYY-MM and append to shard files.
   local archived=0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
+    # Accept both compact ("date":"YYYY-MM") and spaced ("date": "YYYY-MM") JSON.
     local entry_ym=""
-    entry_ym="$(printf '%s' "$line" | grep -oE '"date":"[0-9]{4}-[0-9]{2}' | head -1 | grep -oE '[0-9]{4}-[0-9]{2}' || true)"
-    [[ -z "$entry_ym" ]] && entry_ym="unknown"
+    entry_ym="$(printf '%s' "$line" | grep -oE '"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}' | grep -oE '[0-9]{4}-[0-9]{2}' | head -1 || true)"
+    [[ -z "$entry_ym" || "$entry_ym" == "$current_ym" ]] && continue
     printf '%s\n' "$line" >> "$mem_dir/episodes.${entry_ym}.jsonl"
     archived=$((archived + 1))
-  done < "$tmp_old"
+  done < "$ep"
 
-  # Replace main file with kept entries only.
-  mv "$tmp_keep" "$ep"
-  rm -f "$tmp_old"
-
-  local kept
-  kept="$(wc -l < "$ep")"
-  printf 'pmctl memory shard: archived %d entries; %d remain in episodes.jsonl\n' "$archived" "$kept"
+  printf 'pmctl memory shard: copied %d old entries to shard files (episodes.jsonl unchanged)\n' "$archived"
 }
 
 # Rebuild episodes.summary.md from episodes.jsonl and any shard files.
@@ -538,14 +518,14 @@ pmctl_memory_rebuild_summary() {
   awk '
     BEGIN { ORS="" }
     {
-      # Extract date field
-      match($0, /"date":"([^"]+)"/, d)
+      # Extract date field (handles compact and spaced JSON)
+      match($0, /"date"[[:space:]]*:[[:space:]]*"([^"]+)"/, d)
       if (!d[1]) next
       date = d[1]
       ym = substr(date, 1, 7)
 
-      # Extract summary field (first line only)
-      match($0, /"summary":"([^"]*)"/, s)
+      # Extract summary field (first line only; handles compact and spaced JSON)
+      match($0, /"summary"[[:space:]]*:[[:space:]]*"([^"]*)"/, s)
       summary = s[1]
       if (!summary || summary == "") next
 
