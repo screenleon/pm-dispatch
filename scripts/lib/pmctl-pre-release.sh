@@ -128,7 +128,10 @@ _pra_extract_scope_rows() {
     /^## / {
       if (in_section) exit
       rest = substr($0, 4)
-      if (substr(rest, 1, length(mid)) == mid) in_section = 1
+      # Exact-boundary match: mid must be followed by space, dash, em-dash, or end of string.
+      # This prevents "v1.0" from silently matching "## v1.0.1 — ...".
+      tail = (length(rest) > length(mid)) ? substr(rest, length(mid)+1, 1) : ""
+      if (substr(rest, 1, length(mid)) == mid && (tail == "" || tail !~ /[a-zA-Z0-9._]/)) in_section = 1
       next
     }
     in_section && /^\| CC-[0-9]+ \|/ {

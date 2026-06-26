@@ -131,6 +131,9 @@ EOF
 
 case_extract_scope_rows() {
   local name="pre-release/extract-scope-rows"
+  # Behavior: _pra_extract_scope_rows returns only the tickets under the named milestone heading.
+  # Steps: write MILESTONES.md with v1.0 and v0.9 sections; call with v1.0;
+  #        assert 4 rows returned, CC-001 present, CC-099 (v0.9) absent.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/extract"
@@ -155,8 +158,38 @@ case_extract_scope_rows() {
   pass "$name"
 }
 
+case_extract_scope_rows_prefix_boundary() {
+  local name="pre-release/extract-scope-rows-prefix-boundary"
+  # Behavior: milestone_id v1.0 must not match ## v1.0.1 heading (exact boundary check).
+  # Steps: write MILESTONES.md with only a v1.0.1 section; call with v1.0; assert 0 rows returned.
+  should_run "$name" || return 0
+
+  local tmp="$tmp_root/extract-boundary"
+  mkdir -p "$tmp"
+  cat > "$tmp/MILESTONES.md" <<'EOF'
+# Milestones
+
+## v1.0.1 — patch release
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-050 | patch ticket | ✅ pr:#50 |
+EOF
+
+  local rows
+  rows="$(_pra_extract_scope_rows "$tmp/MILESTONES.md" "v1.0")"
+
+  if [[ -n "$rows" ]]; then
+    fail "$name" "v1.0 must not match v1.0.1 heading; got: $rows"
+    return
+  fi
+  pass "$name"
+}
+
 case_check11_canonical_pr() {
   local name="pre-release/check11-canonical-pr"
+  # Behavior: check 1.1 marks ✅ for canonical pr:#NNN, ❌ for missing ref, TBD ref, or non-✅ status.
+  # Steps: pass scope_rows with four tickets covering each classification; assert leading marker.
   should_run "$name" || return 0
 
   local scope_rows
@@ -186,6 +219,8 @@ case_check11_canonical_pr() {
 
 case_check12_no_residuals() {
   local name="pre-release/check12-no-residuals"
+  # Behavior: check 1.2 emits ✅ for closed tickets whose bodies contain no residual markers.
+  # Steps: write BACKLOG.md with CC-001/CC-002 clean bodies; assert both output ✅.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12"
@@ -212,6 +247,8 @@ case_check12_no_residuals() {
 
 case_check12_detects_todo() {
   local name="pre-release/check12-detects-todo"
+  # Behavior: check 1.2 emits ❌ when a closed ticket body contains a literal TODO marker.
+  # Steps: write BACKLOG.md with CC-003 body containing "TODO:"; assert ❌ output.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12-todo"
@@ -233,6 +270,8 @@ case_check12_detects_todo() {
 
 case_check12_skips_non_closed() {
   local name="pre-release/check12-skips-non-closed"
+  # Behavior: check 1.2 skips body scan for tickets that are not closed (not ✅ in scope status).
+  # Steps: pass CC-004 with 🔵 active status; assert output is ⏭ skipped, not ❌.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12-active"
@@ -258,6 +297,8 @@ case_check12_skips_non_closed() {
 
 case_check12_skips_code_fence() {
   local name="pre-release/check12-skips-code-fence"
+  # Behavior: check 1.2 does not flag TODO or 仍待辦 that appear inside a code fence.
+  # Steps: write BACKLOG.md with CC-005 body containing TODO inside ```bash fence; assert ✅.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check12-fence"
@@ -297,6 +338,8 @@ EOF
 
 case_check13_coverage() {
   local name="pre-release/check13-changelog-coverage"
+  # Behavior: check 1.3 marks ✅ for tickets mentioned in CHANGELOG [Unreleased], ❌/⚠️ for absent ones.
+  # Steps: write CHANGELOG.md with CC-001/CC-002 in [Unreleased] but not CC-003; assert markers.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check13"
@@ -326,6 +369,8 @@ case_check13_coverage() {
 
 case_check13_no_unreleased_section() {
   local name="pre-release/check13-no-unreleased-section"
+  # Behavior: check 1.3 emits ❌ for all scope tickets when CHANGELOG has no [Unreleased] section.
+  # Steps: write CHANGELOG.md with only a past release section; assert ❌ for every ticket.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check13-nounreleased"
@@ -359,6 +404,8 @@ EOF
 
 case_check14_status_consistent() {
   local name="pre-release/check14-status-consistent"
+  # Behavior: check 1.4 emits ✅ when BACKLOG index and body heading share the same leading emoji.
+  # Steps: write BACKLOG.md with CC-001 (✅/✅) and CC-004 (🔵/🔵); assert both ✅ consistent.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/check14"
@@ -596,6 +643,22 @@ case_audit_unknown_flag() {
   pass "$name"
 }
 
+case_audit_empty_args() {
+  local name="pre-release/audit-empty-args"
+  # Behavior: pmctl_pre_release_audit exits 2 with usage text when repo_root is empty.
+  # Steps: call audit with "" as repo_root; assert exit 2.
+  should_run "$name" || return 0
+
+  local rc=0
+  pmctl_pre_release_audit "" "v1.0" 2>/dev/null || rc=$?
+
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "empty repo_root should exit 2, got $rc"
+    return
+  fi
+  pass "$name"
+}
+
 case_audit_missing_file() {
   local name="pre-release/audit-missing-file"
   # Behavior: audit with a repo root that has no MILESTONES.md/BACKLOG.md/CHANGELOG.md exits 2.
@@ -618,6 +681,8 @@ case_audit_missing_file() {
 
 case_audit_missing_milestone() {
   local name="pre-release/audit-missing-milestone"
+  # Behavior: pmctl_pre_release_audit exits 2 when the requested milestone is not found in MILESTONES.md.
+  # Steps: write valid fixture files; call audit with v99.0 (absent); assert exit 2.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/audit-missing"
@@ -638,6 +703,8 @@ case_audit_missing_milestone() {
 
 case_audit_happy_path() {
   local name="pre-release/audit-happy-path"
+  # Behavior: pmctl_pre_release_audit exits 0 and emits Layer 1 + Layer 3 headers for a clean milestone.
+  # Steps: write minimal fixture with one clean closed ticket; assert exit 0, Source block, Layer 1, Layer 3.
   should_run "$name" || return 0
 
   local tmp="$tmp_root/audit-happy"
@@ -756,6 +823,7 @@ case_cli_route() {
 # ---- run all ---------------------------------------------------------------
 
 case_extract_scope_rows
+case_extract_scope_rows_prefix_boundary
 case_check11_canonical_pr
 case_check11_non_canonical_pr
 case_check11_file_line_ref
@@ -773,6 +841,7 @@ case_check14_mismatch
 case_check14_archive_only
 case_check14_file_line_ref
 case_audit_unknown_flag
+case_audit_empty_args
 case_audit_missing_file
 case_audit_missing_milestone
 case_audit_happy_path
