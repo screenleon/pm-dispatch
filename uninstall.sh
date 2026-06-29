@@ -181,7 +181,7 @@ is_under_managed_root() {
   fi
 
   case "$normalized" in
-    "$real_claude_home"/*|"$real_claude_home")
+    "$real_claude_home"/*)
       return 0
       ;;
     *)
