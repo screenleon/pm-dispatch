@@ -226,6 +226,63 @@ $LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"to
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
+# --- Rule A: /tmp/<slug>/*.md (PM task-slug brief pattern) ---
+run_case "pm: Write /tmp/slug-abc/brief.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug-abc/brief.md"}}'
+
+run_case "pm: Write /tmp/task-xyz/output.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/task-xyz/output.md"}}'
+
+run_case "pm: Edit /tmp/task-abc123/notes.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Edit","tool_input":{"file_path":"/tmp/task-abc123/notes.md"}}'
+
+run_case "pm: Write /tmp/My-task/brief.md → deny (uppercase start, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/My-task/brief.md"}}' \
+  "outside memory directory"
+
+run_case "pm: Write /tmp/slug/sub/deep.md → deny (nested subdir, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug/sub/deep.md"}}' \
+  "outside memory directory"
+
+run_case "pm: Write /tmp/slug-abc/file.txt → deny (not .md, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug-abc/file.txt"}}' \
+  "outside memory directory"
+
+# --- Rule B: docs/spikes PM-authored files ---
+run_case "pm: Write docs/spikes/CC-258-pm-write.md → allow (Rule B, CC-NNN*)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/CC-258-pm-write.md\"}}"
+
+run_case "pm: Write docs/spikes/pm-guard-scope.md → allow (Rule B, *-scope)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/pm-guard-scope.md\"}}"
+
+run_case "pm: Write docs/spikes/pm-guard-rfc.md → allow (Rule B, *-rfc)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/pm-guard-rfc.md\"}}"
+
+run_case "pm: Write docs/spikes/notes.md → deny (no pattern match, Rule B)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/notes.md\"}}" \
+  "outside memory directory"
+
+run_case "pm: Write docs/DECISIONS.md → deny (not spikes/, Rule B)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/DECISIONS.md\"}}" \
+  "outside memory directory"
+
+# --- Rule C: symlinked memory dir (lexical path dual-normalization) ---
+_pm_sym_real="$(mktemp -d "$PM_GUARD_LOG_DIR/sym-real.XXXXXX")"
+_pm_sym_proj="$HOME/.claude/projects/test-sym-project-$$"
+mkdir -p "$_pm_sym_proj"
+ln -sfn "$_pm_sym_real" "$_pm_sym_proj/memory" 2>/dev/null || true
+if [[ -L "$_pm_sym_proj/memory" ]]; then
+  run_case "pm: Write symlinked memory dir → allow (Rule C)" 0 "$PMHOOK" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_proj/memory/foo.md\"}}"
+  run_case "pm: Write symlinked memory/../../../etc/passwd → deny (Rule C traversal)" 2 "$PMHOOK" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_proj/memory/../../../etc/passwd\"}}" \
+    "outside memory directory"
+else
+  $LIST || printf '  SKIP  pm: symlink tests (symlink creation unsupported)\n'
+fi
+rm -rf "$_pm_sym_real" "$_pm_sym_proj"
+unset _pm_sym_real _pm_sym_proj
+
 # =============================================================================
 # codex-write-guard
 # =============================================================================

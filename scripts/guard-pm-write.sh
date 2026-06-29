@@ -76,10 +76,30 @@ g_check_bypass PM_GUARD_PM_WRITE
 g_validate_path "$file_path"
 abs_path="$G_ABS_PATH"
 
-# Pattern: $ALLOWED_BASE/<project>/memory/<file>
-# [!/]* = one path segment with no slashes, so memory-evil/ does NOT match.
-case "$abs_path" in
-  "$ALLOWED_BASE"/[!/]*/memory/*) g_allow "inside memory dir" "$file_path" ;;
-esac
+# Rule: memory dir — $ALLOWED_BASE/<project>/memory/<file>
+# Use regex so * cannot cross path boundaries (case * matches / in bash).
+if [[ "$abs_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
+  g_allow "inside memory dir" "$file_path"
+fi
+
+# Rule A: /tmp/<slug>/<file>.md — exactly two segments below /tmp, .md suffix.
+if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
+  g_allow "tmp task-slug brief" "$file_path"
+fi
+
+# Rule B: <repo>/docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
+if [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+  g_allow "docs/spikes PM-authored file" "$file_path"
+fi
+
+# Rule C: symlink dual-normalization — check the lexical (pre-realpath) path so
+# writes to $ALLOWED_BASE/<proj>/memory/ succeed even when 'memory' is a symlink
+# whose realpath target is outside ALLOWED_BASE.
+lex_path="$(realpath_m_lex "$file_path")" || lex_path=""
+if [[ -n "$lex_path" && "$lex_path" != "$abs_path" ]]; then
+  if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
+    g_allow "inside memory dir (lex)" "$file_path"
+  fi
+fi
 
 g_deny "outside memory directory (resolved to $abs_path)" "$file_path"
