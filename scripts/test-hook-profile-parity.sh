@@ -5,6 +5,7 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/lib/test-harness.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
@@ -28,7 +29,7 @@ _install_hooks() {
 #   3. Assert count >= 5.
 should_run "doctor-hook-list-nonempty"
 {
-  count=$((_doctor_hooks) | wc -l | tr -d ' ')
+  count=$( (_doctor_hooks) | wc -l | tr -d ' ')
   if [[ "$count" -ge 5 ]]; then
     pass "doctor-hook-list-nonempty" "found $count hooks in doctor.sh"
   else
@@ -43,7 +44,7 @@ should_run "doctor-hook-list-nonempty"
 #   3. Assert count >= 5.
 should_run "install-guards-hook-list-nonempty"
 {
-  count=$((_install_hooks) | wc -l | tr -d ' ')
+  count=$( (_install_hooks) | wc -l | tr -d ' ')
   if [[ "$count" -ge 5 ]]; then
     pass "install-guards-hook-list-nonempty" "found $count hooks in install-guards.sh"
   else
