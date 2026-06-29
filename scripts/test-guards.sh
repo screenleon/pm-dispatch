@@ -266,22 +266,59 @@ run_case "pm: Write docs/DECISIONS.md → deny (not spikes/, Rule B)" 2 "$PMHOOK
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/DECISIONS.md\"}}" \
   "outside memory directory"
 
+run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B outside repo)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
+  "outside memory directory"
+
 # --- Rule C: symlinked memory dir (lexical path dual-normalization) ---
+# Use a fake HOME under the sandboxed log dir so tests are isolated from the
+# live ~/.claude/projects tree.
+_pm_sym_fake_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home.XXXXXX")"
 _pm_sym_real="$(mktemp -d "$PM_GUARD_LOG_DIR/sym-real.XXXXXX")"
-_pm_sym_proj="$HOME/.claude/projects/test-sym-project-$$"
-mkdir -p "$_pm_sym_proj"
-ln -sfn "$_pm_sym_real" "$_pm_sym_proj/memory" 2>/dev/null || true
-if [[ -L "$_pm_sym_proj/memory" ]]; then
-  run_case "pm: Write symlinked memory dir → allow (Rule C)" 0 "$PMHOOK" \
-    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_proj/memory/foo.md\"}}"
+mkdir -p "$_pm_sym_fake_home/.claude/projects/test-proj"
+ln -sfn "$_pm_sym_real" "$_pm_sym_fake_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
+  run_case_env "pm: Write symlinked memory dir → allow (Rule C)" 0 \
+    "HOME=$_pm_sym_fake_home" "$PMHOOK" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/foo.md\"}}"
   run_case "pm: Write symlinked memory/../../../etc/passwd → deny (Rule C traversal)" 2 "$PMHOOK" \
-    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_proj/memory/../../../etc/passwd\"}}" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/../../../etc/passwd\"}}" \
     "outside memory directory"
 else
   $LIST || printf '  SKIP  pm: symlink tests (symlink creation unsupported)\n'
 fi
-rm -rf "$_pm_sym_real" "$_pm_sym_proj"
-unset _pm_sym_real _pm_sym_proj
+rm -rf "$_pm_sym_fake_home" "$_pm_sym_real"
+unset _pm_sym_fake_home _pm_sym_real
+
+# --- realpath_m_lex bash fallback ---
+# Shadow the system realpath with a stub that always fails so the bash-native
+# normalization branch is exercised on all platforms.
+_lex_fake_bin="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-bin.XXXXXX")"
+printf '#!/bin/bash\nexit 1\n' > "$_lex_fake_bin/realpath"
+chmod +x "$_lex_fake_bin/realpath"
+
+if should_run "pm: realpath_m_lex fallback collapses .."; then
+  _lex_got="$(PATH="$_lex_fake_bin:$PATH" bash -c \
+    ". '$SCRIPT_DIR/lib/portable.sh' && realpath_m_lex '/foo/bar/../baz'" 2>/dev/null)"
+  if [[ "$_lex_got" == "/foo/baz" ]]; then
+    pass "pm: realpath_m_lex fallback collapses .."
+  else
+    fail "pm: realpath_m_lex fallback collapses .." "expected /foo/baz, got '$_lex_got'"
+  fi
+fi
+
+if should_run "pm: realpath_m_lex fallback strips ."; then
+  _lex_got2="$(PATH="$_lex_fake_bin:$PATH" bash -c \
+    ". '$SCRIPT_DIR/lib/portable.sh' && realpath_m_lex '/a/./b/c'" 2>/dev/null)"
+  if [[ "$_lex_got2" == "/a/b/c" ]]; then
+    pass "pm: realpath_m_lex fallback strips ."
+  else
+    fail "pm: realpath_m_lex fallback strips ." "expected /a/b/c, got '$_lex_got2'"
+  fi
+fi
+
+rm -rf "$_lex_fake_bin"
+unset _lex_fake_bin
 
 # =============================================================================
 # codex-write-guard

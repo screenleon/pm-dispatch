@@ -26,6 +26,7 @@ GUARD_NAME="guard-pm-write"
 LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV="PM_GUARD_PM_WRITE"
+REPO_ROOT="$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/guard-framework.sh
 . "$_SCRIPT_DIR/lib/guard-framework.sh"
 unset _SCRIPT_DIR
@@ -87,8 +88,9 @@ if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
   g_allow "tmp task-slug brief" "$file_path"
 fi
 
-# Rule B: <repo>/docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
-if [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+# Rule B: this repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
+# Anchored to REPO_ROOT so paths in unrelated directories are not affected.
+if [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
   g_allow "docs/spikes PM-authored file" "$file_path"
 fi
 
