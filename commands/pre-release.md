@@ -56,21 +56,22 @@ Collect pairs of `(CC-NNN, PR#)`.
 
 1. Read the ticket body from `BACKLOG.md` — find `## CC-NNN` section and extract the
    `**Requirement**:` block (stop at the next `##` heading or `**Depends on**` line).
-   Summarise requirements in 1–2 sentences maximum.
+   Summarise requirements in 1–2 sentences maximum. If no `**Requirement**:` block
+   exists, record N/A and skip to the next ticket.
 
-2. First list changed files to identify which are relevant to the Requirement:
+2. List changed files without loading any diff content:
    ```bash
    gh pr diff <PR#> --name-only
    ```
+   Never skip the `--name-only` step — scope first, then read.
    From the file list, identify which files relate to the Requirement.
-   Then fetch the full patch and extract only the relevant sections:
+   Then fetch the patch for **each relevant file individually** using the API:
    ```bash
-   gh pr diff <PR#> --patch
+   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+   gh api "/repos/$REPO/pulls/<PR#>/files" \
+     --jq '.[] | select(.filename == "<relevant-file>") | .patch'
    ```
-   Read the patch output and focus on the `diff --git a/<relevant-file>` sections.
-   For small PRs (1–3 files, all relevant) read the full patch; for larger PRs
-   locate only the file sections named in the Requirement. Never skip the
-   `--name-only` step — scope first, then read.
+   Do not fetch the full PR patch dump. One API call per relevant file only.
 
 3. Compare: does the diff address each stated requirement? Record:
    - **Covered**: requirement clearly reflected in the diff
@@ -108,11 +109,13 @@ Do **not** output a GO/NO-GO verdict. The table is informational only.
 
 ## Layer 2 — Semantic coverage
 
-Main thread reads each scoped ticket's Requirement section from BACKLOG, fetches
-`gh pr diff <PR#> --name-only` to scope the relevant files, then reads
-`gh pr diff <PR#> --patch` and analyses coverage per ticket inline, outputting
-a per-ticket conclusion table with Covered / Partial / Gap / N/A, Confidence
-(High / Med / Low), and Flag columns. No sub-job dispatch.
+Main thread reads each scoped ticket's Requirement section from BACKLOG (stop at
+next `##` or `**Depends on**`; N/A if absent), fetches `gh pr diff <PR#> --name-only`
+to scope relevant files, then fetches each relevant file's patch individually via
+`gh api /repos/{owner}/{repo}/pulls/{PR#}/files`. Analyses coverage per ticket inline,
+outputting a per-ticket conclusion table with Covered / Partial / Gap / N/A, Confidence
+(High / Med / Low), and Flag columns. No sub-job dispatch. Never loads the full PR
+patch dump.
 
 Layer 2 output is appended after the Layer 1 + Layer 3 report produced by
 `pmctl pre-release audit`.
