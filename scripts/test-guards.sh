@@ -284,6 +284,22 @@ if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
   run_case "pm: Write symlinked memory/../../../etc/passwd → deny (Rule C traversal)" 2 "$PMHOOK" \
     "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/../../../etc/passwd\"}}" \
     "outside memory directory"
+
+  # File symlink escape: memory dir is legitimate, but the file itself is a
+  # symlink pointing outside — Rule C must deny this (not just the dir case).
+  _pm_file_sym_target="$(mktemp "$PM_GUARD_LOG_DIR/outside-XXXXXX")"
+  _pm_file_sym_link="$_pm_sym_real/escape.md"
+  ln -sfn "$_pm_file_sym_target" "$_pm_file_sym_link" 2>/dev/null || true
+  if [[ -L "$_pm_file_sym_link" ]]; then
+    run_case_env "pm: Write file symlink inside memory pointing outside → deny (Rule C escape)" 2 \
+      "HOME=$_pm_sym_fake_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/escape.md\"}}" \
+      "outside memory directory"
+  else
+    $LIST || printf '  SKIP  pm: file-symlink escape test (symlink creation unsupported)\n'
+  fi
+  rm -f "$_pm_file_sym_target" "$_pm_file_sym_link"
+  unset _pm_file_sym_target _pm_file_sym_link
 else
   $LIST || printf '  SKIP  pm: symlink tests (symlink creation unsupported)\n'
 fi
