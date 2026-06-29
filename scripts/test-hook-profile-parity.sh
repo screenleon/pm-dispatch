@@ -146,7 +146,7 @@ should_run "full-profile-bash-guard-sets-match"
   install_full=$(_install_full_guards)
   diff_out=$(diff <(echo "$doctor_full") <(echo "$install_full") || true)
   if [[ -z "$diff_out" ]]; then
-    count=$(printf '%s' "$doctor_full" | grep -c '.' 2>/dev/null || echo 0)
+    count=$(printf '%s' "$doctor_full" | wc -l | tr -d ' ')
     pass "full-profile-bash-guard-sets-match" \
       "doctor and install-guards agree on full-profile bash guards ($count adapter(s))"
   else
