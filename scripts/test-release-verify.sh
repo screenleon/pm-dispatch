@@ -235,6 +235,34 @@ test_phase3b_brief_validate() {
   assert_contains "phase3b-valid-brief"   "[PASS] brief-validate-valid"             "$out"
 }
 
+# ── Phase 3c: v0.7.0 feature smoke ───────────────────────────────────────────
+# Verifies that Phase 3c records appear in --no-suite output and that the
+# memory-source, doctor, artifacts-list, and pre-release-audit smoke cases pass.
+
+test_phase3c_memory_source() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3c-memory-source" "[PASS] context-memory-source" "$out"
+}
+
+test_phase3c_memory_doctor() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3c-memory-doctor" "[PASS] memory-doctor" "$out"
+}
+
+test_phase3c_artifacts_list() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3c-artifacts-list" "[PASS] artifacts-list" "$out"
+}
+
+test_phase3c_pre_release_audit() {
+  local out rc=0
+  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  assert_contains "phase3c-pre-release-audit" "[PASS] pre-release-audit" "$out"
+}
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 test_help_contains_usage
@@ -257,6 +285,10 @@ test_phase3_repo_local_db_smoke
 test_phase3b_adapter_manifests
 test_phase3b_guard_check
 test_phase3b_brief_validate
+test_phase3c_memory_source
+test_phase3c_memory_doctor
+test_phase3c_artifacts_list
+test_phase3c_pre_release_audit
 test_native_windows_refused
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
