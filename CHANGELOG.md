@@ -6,7 +6,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.7.0] — 2026-06-29
+## [Unreleased]
 
 ### Changed
 
@@ -44,6 +44,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`run-all-tests` now runs test suites in parallel (CC-409, PR#311).** `--jobs N` (default: `nproc`) controls concurrency. Dispatch-wait poll interval is now configurable. Significantly reduces local test cycle time.
 
 - **`/pre-release` milestone audit command (CC-426, PR#334).** `pmctl pre-release audit <milestone-id>` runs Layer 1 structural checks (PR ref completeness, ticket body residuals, CHANGELOG coverage, BACKLOG index/body status consistency) and appends a Layer 3 blind-spot declaration. Outputs a report — not a GO/NO-GO verdict. Layer 2 semantic diff coverage planned for CC-430.
+
+- **v0.7.0 release closure: first `/pre-release` dogfood run (CC-429, PR#335).** Applied the audit tool to v0.7.0 itself: found and fixed 25 structural drift issues (19 CHANGELOG entries missing, 1 MILESTONES PR ref, 2 BACKLOG-ARCHIVE `pr:#TBD` residuals), then tagged and published the release.
 
 - **Artifact relocation out-of-repo — CC-003 epic complete (CC-413–CC-419, PR#318–#324).** Six-phase migration:
   - Phase 0 (CC-413, PR#318): pr-gate integrity check excludes its own artifact paths — stops gate from flagging own outputs.
