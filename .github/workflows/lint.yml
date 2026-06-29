@@ -197,6 +197,13 @@ jobs:
       - name: doctor.sh regression suite
         run: ./scripts/test-doctor.sh
 
+  test-hook-profile-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: hook-profile parity regression suite
+        run: ./scripts/test-hook-profile-parity.sh
+
   test-portable:
     runs-on: ubuntu-latest
     steps:

@@ -37,6 +37,7 @@ SUITE_NAMES=(
   test-patch-gitignore
   test-portable
   test-doctor
+  test-hook-profile-parity
   test-lint-frontmatter
   test-test-harness
   test-commands
@@ -101,6 +102,7 @@ declare -A SUITE_PATHS=(
   [test-patch-gitignore]="scripts/test-patch-gitignore.sh"
   [test-portable]="scripts/test-portable.sh"
   [test-doctor]="scripts/test-doctor.sh"
+  [test-hook-profile-parity]="scripts/test-hook-profile-parity.sh"
   [test-lint-frontmatter]="scripts/test-lint-frontmatter.sh"
   [test-test-harness]="scripts/test-test-harness.sh"
   [test-commands]="scripts/test-commands.sh"

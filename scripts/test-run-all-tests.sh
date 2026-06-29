@@ -39,6 +39,7 @@ SUITE_NAMES=(
   test-patch-gitignore
   test-portable
   test-doctor
+  test-hook-profile-parity
   test-lint-frontmatter
   test-test-harness
   test-commands
@@ -126,6 +127,7 @@ suite_path() {
     test-patch-gitignore) printf 'scripts/test-patch-gitignore.sh\n' ;;
     test-portable) printf 'scripts/test-portable.sh\n' ;;
     test-doctor) printf 'scripts/test-doctor.sh\n' ;;
+    test-hook-profile-parity) printf 'scripts/test-hook-profile-parity.sh\n' ;;
     test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
     test-test-harness) printf 'scripts/test-test-harness.sh\n' ;;
     test-check-docs-freshness) printf 'scripts/test-check-docs-freshness.sh\n' ;;
