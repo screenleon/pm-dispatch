@@ -1016,6 +1016,33 @@ test_prune_feedback() {
   pass "$name"
 }
 
+# Verifies that a manifest entry whose dst equals CLAUDE_HOME itself is rejected
+# by the managed-root guard and the directory is left untouched.
+#
+# Steps:
+#   1. Write a manifest entry with dst = $HOME/.claude (the managed root itself).
+#   2. Run uninstall.sh.
+#   3. Assert the directory still exists and the guard error was reported.
+test_claude_home_dst_rejected() {
+  local name="TC-28 claude-home-dst-rejected"
+  local home="$tmp_root/home-claude-home-dst-rejected"
+  local claude_home="$home/.claude"
+  local manifest="$claude_home/.pm-dispatch/install-manifest.json"
+  local out="$tmp_root/claude-home-dst-rejected.out"
+  mkdir -p "$claude_home" "$(dirname "$manifest")"
+  # dst points to $HOME/.claude itself — must be rejected
+  printf '{\n  "entries": [\n    {"src":"/fake/src","dst":"%s","mode":"symlink"}\n  ]\n}\n' \
+    "$(manifest_escape "$claude_home")" > "$manifest"
+
+  run_uninstall "$home" "$out" || true
+  if [[ ! -d "$claude_home" ]]; then
+    fail "$name" "CLAUDE_HOME itself was deleted — blast-radius guard bypassed"
+    return
+  fi
+  assert_contains "$name" "$out" "dst outside managed root" || return
+  pass "$name"
+}
+
 run_case "TC-01 no-manifest" test_no_manifest
 run_case "TC-02 symlink-removed" test_symlink_removed
 run_case "TC-03 symlink-foreign" test_symlink_foreign
@@ -1043,5 +1070,6 @@ run_case "TC-24 pmctl-symlink-removed" test_pmctl_symlink_removed
 run_case "TC-25 pmctl-foreign-symlink-preserved" test_pmctl_foreign_symlink_preserved
 run_case "TC-26 pmctl-real-file-preserved" test_pmctl_real_file_preserved
 run_case "TC-27 prune-feedback" test_prune_feedback
+run_case "TC-28 claude-home-dst-rejected" test_claude_home_dst_rejected
 
 th_summary
