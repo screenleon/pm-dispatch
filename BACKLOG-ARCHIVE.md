@@ -1,11 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-06-26 -->
+<!-- pm-dispatch: backlog-archive 2026-06-29 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
 BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
 working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-06-26
+Last archived: 2026-06-29
 
 ---
 
@@ -4393,4 +4393,96 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 **Priority**: P2（✅ closed 2026-06-26，pr:#329）.
 
 **Refs**: [[CC-404]]（預算+pin+tier2 骨架）、[[CC-405]]（frontmatter schema）、memory `reference_memory_injection_ranking`（research 結論）、`scripts/guard-inject-memory.sh`。
+
+## CC-426 — release: `/pre-release` milestone 落地審查 ✅ 2026-06-26
+
+**See**: pr:#334
+
+**Problem**: BACKLOG/MILESTONES 只記錄「應該做的事」，但無法從文字層面確認每個 ticket 的改動是否完整落地——ticket 可能描述了 3 個要改的地方，commit 只改了 2 個；或 ticket 說「在 X 和 Y 都加 enforce」，只有 X 被改到。目前這個疏漏只能靠 gate 的 critic 隨機抓到（如 CC-405 的「仍待辦」文字）或人工回顧。
+
+**Why**: release 前有一個系統性的落地確認，可以在 tag 之前找出：ticket 關閉但實作未完整、CHANGELOG 未反映實際 commit、milestone scope 聲稱完成但有 ticket body 顯示遺留工作。比 gate 的 per-PR 視角更寬，比人工回顧更可靠。
+
+**Requirement**:
+
+`/pre-release [milestone-id]`（或 `pmctl pre-release audit v0.7.0`）：
+
+**Layer 1 — 結構檢查（機器可執行，高信心）**
+- Check 1.1: 所有 milestone scope 內的 ticket 在 MILESTONES status 欄標 ✅ 且有 `pr:#NNN`（BACKLOG body 的 `**See**: pr:#NNN` 由 `lint-backlog` 負責，不在本工具範圍）
+- Check 1.2: 所有 closed ticket body 無「仍待辦」/「待辦」/「TODO」殘留文字
+- Check 1.3: CHANGELOG 有涵蓋 milestone commit range 內每個有 PR# 的 ticket
+- Check 1.4: 所有 ticket 的 BACKLOG index status 與 body heading status 一致
+
+**Layer 2 — 語義比對（未實作，移交 [[CC-430]]）**
+- Layer 2 在本 ticket 範圍內刻意未實作。設計細節見 [[CC-430]]。
+
+**Layer 3 — 盲點聲明（誠實邊界）**
+- 明確列出工具能確認什麼、不能確認什麼
+- 「我沒發現問題」≠「確定沒問題」，報告必須包含此聲明
+- 特別標注：Layer 2 掃描不到「應該改但 ticket 沒提到的地方」（system topology 知識缺口）
+
+**假設前提（相依 [[CC-404]] 完成後）**:
+- 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
+- 節省的 context window 可放 PR diff；主線程逐 ticket targeted read，不整份 diff 塞入
+
+**Output format** (Layer 1 + Layer 3 delivered; Layer 2 → [[CC-430]]):
+```
+## /pre-release — <milestone-id> — <date>
+
+### Layer 1 — Structural (machine checks)
+✅ / ❌ per check with file:line reference
+
+### Layer 3 — Blind spots
+This scan cannot confirm: …
+
+Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots declared.
+```
+
+**Constraints**:
+- 不輸出 GO/NO-GO；輸出是報告，判斷留給人
+- Layer 1 checks 必須 idempotent（不改任何檔案）
+- Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context（主線程執行，見 [[CC-430]]）
+- 工具名稱最終定案前暫用 `/pre-release`
+
+**Priority**: P2（Layer 1+3 已交付；Layer 2 語義比對另開 [[CC-430]]）.
+
+**Refs**: [[CC-404]]（注入預算 + context 效率）、[[CC-403]]（memory source query）、[[CC-405]]（card frontmatter 品質基礎）、[[CC-425]]（gate ref-pair，可複用 commit range 解析邏輯）、[[CC-430]]（Layer 2 語義比對，後續票）。
+
+## CC-428 — memory: lifecycle validity gate for injection ranking ✅ 2026-06-26
+
+**Goal**: Guard injection ranking against stale/superseded cards surfacing at high priority due to historical usage. A card with `status: stale` or `status: superseded` should never rank above healthy cards regardless of its frecency score.
+
+**Context**: CC-427 introduced frecency-based sorting for MEMORY.md injection. The current sort key is `composite = keyword_tier × WEIGHT + frecency`, with `status` treated as "future staleness GC only, not injection-ranking input" (per Phase 1 committed decision). PaperGuru-Benchmark observes that lifecycle validity must gate before usage frequency — a frequently-used-but-expired card amplifies stale context. The CC-427 decision deferred this to a follow-up.
+
+**Scope**:
+- `scripts/guard-inject-memory.sh`: before computing frecency composite score, check each card's `status` field from its frontmatter; assign bucket=0 (or push to tail bucket) for `status: stale` or `status: superseded`; `status: active` and `status: archived` retain normal frecency.
+- Test: add case asserting a stale card with high access_count is injected after an active card with lower frecency.
+- Invariant: `priority: always` cards bypass this gate (they are always tier1 regardless of status).
+
+**Refs**: [[CC-427]] (frecency base), [[CC-405]] (status field enforcement), PaperGuru-Benchmark lifecycle constraint.
+
+**Priority**: P2.
+
+**See**: pr:#332
+
+---
+
+## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes ✅ 2026-06-29
+
+**Goal**: Close the v0.7.0 release loop by using the `/pre-release` tool (CC-426) on v0.7.0 itself, fixing any drift found, and producing the final release artefacts.
+
+**Context**: CC-426 builds the audit tool. CC-429 is the mandatory first real run of that tool — "eat your own dogfood." Without this ticket, the tool exists but is never exercised for the release it was built for. v0.5.0 surfaced the same pattern: capability present but never invoked at the right time.
+
+**Scope**:
+1. Run `/pre-release v0.7.0` (CC-426 Layer 1 + Layer 3) against the v0.7.0 milestone scope.
+2. For each finding: fix CHANGELOG/MILESTONES/BACKLOG drift or document why it is acceptable.
+3. Write release notes (what shipped, what was deferred, key decisions).
+4. Tag `v0.7.0` and create GitHub Release.
+
+**Non-goals**: Not a GO/NO-GO gate — CC-426 output is a report; release decision remains with the user.
+
+**Depends on**: [[CC-426]] (/pre-release audit tool complete).
+
+**Priority**: P1 (release blocking once CC-426 is done).
+
+**See**: pr:#335
 
