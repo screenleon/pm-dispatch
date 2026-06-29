@@ -29,7 +29,7 @@
 |----|------|------|
 | CC-210 | `uninstall.sh` blast-radius guard：加 `[[ "$dst" == "$managed_root" ]]` 精確路徑拒絕，防止 managed-root 本身被刪；補 test case。PR #110 gate [medium] advisory 遺留 | ✅ pr:#340 |
 | CC-258 | `pm-write-guard` hook 政策修訂：加三條合法 PM-author allow rule（`/tmp/<slug>/*.md`、`docs/spikes/{CC-NNN*,*-scope,*-rfc}.md`、symlink memory 雙正規化）；補 ~15 條迴歸測試 | ⏸ deferred |
-| CC-224 | `doctor.sh` ↔ `install-hooks.sh` hook-profile 一致性：抽共用 `scripts/hook-profile.sh` 或加 parity test，防止新 hook 加入只更新一處的靜默漂移 | ⏸ deferred |
+| CC-224 | `doctor.sh` ↔ `install-hooks.sh` hook-profile 一致性：抽共用 `scripts/hook-profile.sh` 或加 parity test，防止新 hook 加入只更新一處的靜默漂移 | ✅ pr:#341 |
 
 ### Phase 3 — test / ops 可靠性（P3；測試基礎建設）
 
