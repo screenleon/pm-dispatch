@@ -9,10 +9,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
-# Extract minimal hook set from doctor.sh hooks=() array
+# Extract minimal hook set from doctor.sh hooks=() array (POSIX awk, no GNU extensions)
 _doctor_hooks() {
-  awk '/local -a hooks=\(/{f=1} f && /guard-[a-z-]+\.sh/{match($0,"guard-[a-z-]+\\.sh",a); print a[0]} /^\s*\)/{f=0}' \
-    "$REPO_ROOT/scripts/doctor.sh" | sort
+  awk '/local -a hooks=\(/{f=1} f{if(/^[[:space:]]*\)/) f=0; else print}' \
+    "$REPO_ROOT/scripts/doctor.sh" | grep -oE 'guard-[a-z-]+\.sh' | sort
 }
 
 # Extract minimal hook set from install-guards.sh *_cmd= variables
@@ -22,9 +22,9 @@ _install_hooks() {
     "$REPO_ROOT/scripts/install-guards.sh" | grep -oE 'guard-[a-z-]+\.sh' | sort
 }
 
-# Scan adapter manifests using the same runner-kind lib logic both doctor.sh and
-# install-guards.sh use; returns sorted adapter names where needs_bash_guard=true.
-_full_profile_bash_guards() {
+# Simulates doctor.sh check_hooks(): adapter names from manifests where
+# needs_bash_guard resolves to true (manifest-only check, no file existence).
+_doctor_full_guards() {
   # shellcheck source=scripts/lib/runner-kind.sh
   # shellcheck disable=SC1091
   . "$REPO_ROOT/scripts/lib/runner-kind.sh"
@@ -40,9 +40,31 @@ _full_profile_bash_guards() {
   done | sort
 }
 
+# Simulates install-guards.sh: adapter names where needs_bash_guard=true AND
+# bash-guard.sh exists and is executable in the adapter directory.
+_install_full_guards() {
+  # shellcheck source=scripts/lib/runner-kind.sh
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/scripts/lib/runner-kind.sh"
+  local _manifest _adapter_dir _adapter_name _rk _nbg_override _nbg _guard_file
+  for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
+    [[ -f "$_manifest" ]] || continue
+    _adapter_dir="$(dirname "$_manifest")"
+    _adapter_name="$(basename "$_adapter_dir")"
+    _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
+    [[ -n "$_rk" ]] || continue
+    _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
+    _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
+    if [[ "$_nbg" == "true" ]]; then
+      _guard_file="$_adapter_dir/bash-guard.sh"
+      if [[ -x "$_guard_file" ]]; then printf '%s\n' "$_adapter_name"; fi
+    fi
+  done | sort
+}
+
 # Behavior: doctor.sh declares a non-empty minimal hook list.
 # Steps:
-#   1. Parse the hooks=() array in doctor.sh via awk.
+#   1. Parse the hooks=() array in doctor.sh via POSIX awk + grep.
 #   2. Count extracted guard-*.sh basenames.
 #   3. Assert count >= 5.
 should_run "doctor-hook-list-nonempty"
@@ -93,8 +115,6 @@ $diff_out"
 # Steps:
 #   1. Assert doctor.sh contains the needs_bash_guard manifest-scan pattern.
 #   2. Assert install-guards.sh contains the needs_bash_guard manifest-scan pattern.
-#   3. Run the manifest scan via runner-kind lib; assert results are identical
-#      regardless of which file's code path is simulated (both use same source).
 should_run "full-profile-uses-manifest-scan"
 {
   status=0
@@ -112,23 +132,27 @@ should_run "full-profile-uses-manifest-scan"
   fi
 }
 
-# Behavior: the full-profile bash-guard adapter sets from doctor.sh and
-# install-guards.sh are identical (both read the same manifests via runner-kind lib).
+# Behavior: doctor.sh's manifest-derived full-profile adapter set matches
+# install-guards.sh's set (adapters with needs_bash_guard=true must also have
+# bash-guard.sh present, otherwise doctor and installer disagree on the full profile).
 # Steps:
-#   1. Scan adapters/ manifests using runner-kind lib (same logic both files use).
-#   2. Diff the list against itself to confirm determinism.
-#   3. Assert the manifest scan completes without error (catches manifest parse failures).
+#   1. Extract doctor.sh's set: adapter names where needs_bash_guard=true (manifest only).
+#   2. Extract install-guards.sh's set: adapter names where needs_bash_guard=true AND
+#      bash-guard.sh exists and is executable in the adapter directory.
+#   3. Diff the two sets; assert no diff (catches missing bash-guard.sh files).
 should_run "full-profile-bash-guard-sets-match"
 {
-  set_a=$(_full_profile_bash_guards)
-  set_b=$(_full_profile_bash_guards)
-  diff_out=$(diff <(echo "$set_a") <(echo "$set_b") || true)
+  doctor_full=$(_doctor_full_guards)
+  install_full=$(_install_full_guards)
+  diff_out=$(diff <(echo "$doctor_full") <(echo "$install_full") || true)
   if [[ -z "$diff_out" ]]; then
-    count=$(printf '%s' "$set_a" | grep -c '.' 2>/dev/null || echo 0)
+    count=$(printf '%s' "$doctor_full" | grep -c '.' 2>/dev/null || echo 0)
     pass "full-profile-bash-guard-sets-match" \
-      "manifest scan is deterministic ($count adapter(s) with needs_bash_guard=true)"
+      "doctor and install-guards agree on full-profile bash guards ($count adapter(s))"
   else
-    fail "full-profile-bash-guard-sets-match" "manifest scan non-deterministic: $diff_out"
+    fail "full-profile-bash-guard-sets-match" \
+      "doctor/install-guards full-profile sets differ (missing bash-guard.sh?):
+$diff_out"
   fi
 }
 
