@@ -21,7 +21,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。Layer 2 不輸出 GO/NO-GO，判斷留給人 | 🔵 active |
+| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。Layer 2 不輸出 GO/NO-GO，判斷留給人 | ✅ pr:#339 |
 
 ### Phase 2 — guard / install hygiene（P3；guard 安全加固 + install 正確性）
 
