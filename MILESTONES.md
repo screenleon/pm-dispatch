@@ -9,6 +9,24 @@
 
 ---
 
+## v0.7.1 — `/pre-release` Layer 2 語義比對（規劃中 2026-06-29）
+
+> 最後排程更新：2026-06-29
+
+**主題**：補上 `/pre-release` 審計工具的「需求 vs 實作」語義比對層（Layer 2），讓報告從「tracking hygiene 乾淨」升級到「PR diff 實際覆蓋 Requirement 可追溯」。
+
+**Scope**:
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表 | 🔵 active |
+
+**依賴**：[[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。
+
+**Non-goals**：Layer 2 不輸出 GO/NO-GO，判斷留給人。Layer 3（embeddings / 全語意 backend）屬 CC-340 殘餘，不排入本版。
+
+---
+
 ## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
 > 最後排程更新：2026-06-26
 
@@ -59,7 +77,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-409 | `run-all-tests` 並行執行（`--jobs N`，預設 nproc）+ dispatch-wait poll 可設定；大幅縮短本機測試時間 | ✅ pr:#311 |
-| CC-410 | guard audit log 對唯讀 `hooks.log` fail-silent：wrap append 在 subshell 以正確抑制 bash 重導向錯誤 | ✅ |
+| CC-410 | guard audit log 對唯讀 `hooks.log` fail-silent：wrap append 在 subshell 以正確抑制 bash 重導向錯誤 | ✅ pr:#311 |
 | CC-413 | Phase 0 止血：pr-gate integrity check 排除自身 artifact 路徑，避免 gate 誤判 own outputs | ✅ pr:#318 |
 | CC-414 | Phase 1：trace-root seam（`--trace-dir` flag / env 優先序）——adapter 可覆蓋 trace 落點 | ✅ pr:#319 |
 | CC-415 | Phase 2：post-verify containment guard 改以 `--run-dir` 為界；退場 in-repo path 假設 | ✅ pr:#320 |
@@ -75,7 +93,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-426 | `/pre-release` milestone 落地審查工具 — Layer 1 結構檢查（ticket body 有無待辦、PR# 覆蓋、CHANGELOG range）+ Layer 3 盲點聲明。輸出報告非 GO/NO-GO。Layer 2 語義比對移至 [[CC-430]]。 | ✅ pr:#334 |
-| CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | 🔵 active |
+| CC-429 | v0.7.0 release closure：對自身跑 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]] | ✅ pr:#335 |
 
 ### 待後續 / 與本版正交
 

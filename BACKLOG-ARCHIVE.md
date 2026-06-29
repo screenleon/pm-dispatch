@@ -4287,7 +4287,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 **Refs**: [[CC-404]]（消費 priority/scope）、[[CC-403]]（消費 topics/trust ranking）、`docs/memory-system.md`、`docs/spikes/CC-405.md`。
 
-**See**: pr:#TBD
+**See**: pr:#315 pr:#327
 
 ## CC-406 — memory: `/mem-search` 改走 `pmctl context --source memory` ✅ 2026-06-25
 
@@ -4308,7 +4308,7 @@ reusing the same agent/fan-out primitives for a different cognitive mode.
 
 ## CC-407 — memory: episodes 衍生摘要/索引 + 歸檔策略 ✅ 2026-06-26
 
-**See**: pr:#TBD
+**See**: pr:#330
 
 **Problem**: `episodes.jsonl` append-only 利於稽核但會無限長；`/mem-recall` 只讀最近 N 條非空摘要、`/mem-distill` 只讀最後 10 條 → 較舊的反覆模式除非已被 promote 否則不可見，Stop hook 又持續 append。
 

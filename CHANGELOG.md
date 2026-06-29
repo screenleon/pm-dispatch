@@ -17,9 +17,48 @@ Versions follow [Semantic Versioning](https://semver.org/).
   - **`BRIEF_VALIDATE_RETRIEVAL` default flipped `warn` → `fail`.** A file-writing brief with no retrieval evidence (`context:` / `auto_context:` / `retrieval_skip_reason:`) is now **rejected**, not just warned. Set `BRIEF_VALIDATE_RETRIEVAL=warn` to restore the advisory behavior.
   - **Detached + auto-pack is now supported** (previously rejected before launch), and in **both** lifecycles the augmented brief is landed at the guardable `/tmp/brief-<run_id>.md` path so a single brief is guarded == validated == executed == recorded. Under `detached` it is recorded as the run-spec's trusted `brief_file` and the supervisor re-guards/validates/executes it (no second `--brief-file` passthrough); under `foreground` dispatch snapshots the pack to the same `/tmp` path, guards it, and forwards it. The authored `--brief-file` is still guarded first for path policy (a brief outside the `/tmp` pattern is denied before any pack derivation). The dispatch gate now validates the *effective* (post-auto-pack) brief so an appended `auto_context:` block counts as evidence under `fail` mode.
 
+- **`/mem-search` now routes through `pmctl context --source memory` (CC-406, PR#325).** Direct `rg` is kept only as a fallback when the memory index is unavailable. This aligns `/mem-search` with the retrieval-first contract; required CC-403's memory source to land first.
+
+- **MEMORY.md injection now uses usage-based frecency ranking (CC-427, PR#329).** Tier-1 (`priority: always`) cards are pinned unconditionally; normal cards are ranked by a Firefox-style bucket score (`access_count × age_bucket`) with W-TinyLFU aging — pure-integer, zero-LLM. Replaces the previous alphabetical/insertion-order injection that caused the 33-card budget failure.
+
+- **Lifecycle validity gate suppresses stale/superseded cards from frecency ranking (CC-428, PR#332).** Cards with `status: stale` or `status: superseded` are excluded from normal ranking regardless of usage score; `priority: always` pins bypass the gate. Cards with `access_count` bucket = 0 are demoted. Five new regression tests.
+
 ### Added
 
 - **`brief-validate.sh` now checks retrieval evidence for file-writing briefs.** Non-trivial briefs must carry a non-empty `context:` block (or the `auto_context:` block that `pmctl dispatch run --auto-pack` appends), or a non-empty `retrieval_skip_reason:` (CC-401). The check shipped at `BRIEF_VALIDATE_RETRIEVAL=warn` and is now **fail** by default — see the `Changed` entry above for the default flip (CC-402); set `BRIEF_VALIDATE_RETRIEVAL=warn` to restore advisory behavior.
+
+- **`pmctl context` now supports `--source memory|repo|all` (CC-403, PR#313).** Memory cards and episodes are a first-class queryable context source alongside the repo index. Memory-local DB backed by `source_domain: memory`; `pack memories[]` populated; reuse-scan remains repo-only. Supersedes/absorbs CC-340 MVP; embeddings remainder stays in CC-340.
+
+- **MEMORY.md injection budget: 20 entries / 3000B cap with `priority: always` pin (CC-404, PR#328).** Replaces the previous unbounded inject-all behavior. Prompt-keyword ordering places relevant cards at the top of the injected block. Usage-based dynamic ranking factored out to CC-427.
+
+- **Memory card frontmatter standardized; `/mem-doctor` read-only health check added (CC-405, PR#315, PR#327).** Schema fields: `topics`, `priority`, `status`, `updated_at`, `repo_refs`. `pmctl memory doctor` reports dead links, stale `repo_refs`, unreferenced cards, and `episodes.jsonl` size warnings. `status: active` enforced at write time by `/mem-distill` and `/memory-compress`; 33 live cards backfilled.
+
+- **Episodes derived summaries and archival strategy (CC-407, PR#330).** `episodes.jsonl` remains append-only (auditable). `/mem-distill` now produces a `episodes.summary.md` monthly summary. Shard/archive threshold configurable; integrates with `/mem-doctor` size warnings.
+
+- **Memory commands rewritten in pure bash — python3 dependency removed (CC-424, PR#326).** `pmctl memory dir` behavior isolated; fixture-isolated test coverage added.
+
+- **Context test suite is now parallel-safe (CC-411, PR#314).** Removed coupling to the live repo; tests run correctly in parallel and isolated environments without shared-state flakiness.
+
+- **Guard script terminology unified: `hook-*.sh` → `guard-*.sh` (CC-384, PR#310).** `framework/`, `helper/`, and `env` prefix scripts renamed consistently. `install.sh`, `uninstall.sh`, and `doctor` commands rewired; parity scanner and documentation updated.
+
+- **`run-all-tests` now runs test suites in parallel (CC-409, PR#311).** `--jobs N` (default: `nproc`) controls concurrency. Dispatch-wait poll interval is now configurable. Significantly reduces local test cycle time.
+
+- **`/pre-release` milestone audit command (CC-426, PR#334).** `pmctl pre-release audit <milestone-id>` runs Layer 1 structural checks (PR ref completeness, ticket body residuals, CHANGELOG coverage, BACKLOG index/body status consistency) and appends a Layer 3 blind-spot declaration. Outputs a report — not a GO/NO-GO verdict. Layer 2 semantic diff coverage planned for CC-430.
+
+- **v0.7.0 release closure: first `/pre-release` dogfood run (CC-429, PR#335).** Applied the audit tool to v0.7.0 itself: found and fixed 25 structural drift issues (19 CHANGELOG entries missing, 1 MILESTONES PR ref, 2 BACKLOG-ARCHIVE `pr:#TBD` residuals), then tagged and published the release.
+
+- **Artifact relocation out-of-repo — CC-003 epic complete (CC-413–CC-419, PR#318–#324).** Six-phase migration:
+  - Phase 0 (CC-413, PR#318): pr-gate integrity check excludes its own artifact paths — stops gate from flagging own outputs.
+  - Phase 1 (CC-414, PR#319): `--trace-dir` flag/env priority seam — adapters can override trace write location without touching core paths.
+  - Phase 2 (CC-415, PR#320): post-verify containment guard uses `--run-dir` as boundary; exits in-repo path assumption.
+  - Phase 3a (CC-416, PR#321): gate artifacts relocated to out-of-repo state store; original artifact path bug fixed.
+  - Phase 3b (CC-417, PR#322): dispatch artifacts relocated symmetrically.
+  - Phase 4 (CC-418, PR#323): artifact observer + `pmctl artifacts list/show` discoverability interface.
+  - Phase 5 (CC-419, PR#324): out-of-repo store is now the default; `pmctl artifacts gc` with `--keep-last`/`--max-age-days`; cross-repo migration via `pmctl artifacts migrate`. Closes CC-003 epic.
+
+### Fixed
+
+- **Guard audit log no longer leaks `Permission denied` to stderr when `hooks.log` is read-only (CC-410, PR#311).** `g_audit`'s append now wraps in a brace group (`{ printf ...; } 2>/dev/null || true`) so the redirect-open failure is silenced correctly. Audit remains best-effort and never affects allow/deny decisions or guard exit code. Regression test added to `test-guards.sh`.
 
 ---
 

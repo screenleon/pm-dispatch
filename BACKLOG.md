@@ -84,8 +84,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-426 | ✅ closed 2026-06-26 | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）+ Layer 3 盲點聲明（明確說出工具無法確認的範圍）。Layer 2 語義比對移至 [[CC-430]]。輸出為報告，非 GO/NO-GO。 | ops/process | 2026-06-25 | pr:#334 | P2 | — |
 | CC-428 | ✅ closed 2026-06-26 | **[memory: lifecycle validity gate for injection ranking（PaperGuru 四約束 — lifecycle 優先 usage）]** 目前 CC-427 frecency 排序不過濾 `status: stale/superseded` card，致歷史高 usage 的 stale card 繼續排高被注入。PaperGuru-Benchmark 約束：lifecycle validity 必須優先於 usage frequency（stale/superseded card 不因高 usage 排前）。修法：`guard-inject-memory.sh` 排序前先 gate `status` field，stale/superseded 的 card bucket 降為 0 或移到注入清單末端；其餘 priority/frecency 邏輯不動。相依 [[CC-405]]（status 欄位已強制）+ [[CC-427]]（frecency 排序基礎）。影響範圍：guard-inject-memory.sh + test-pmctl-memory.sh 或 test-install-guards.sh 對應測試。 | ux/memory | 2026-06-26 | — | P2 | retrieval |
-| CC-429 | 🔵 active | **[release: v0.7.0 closure — dogfood /pre-release + release notes]** 對 v0.7.0 本身跑一次 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]]（/pre-release 工具就緒）。 | ops/process | 2026-06-26 | — | P1 | — |
-| CC-430 | 🟢 someday | **[release: `/pre-release` Layer 2 — 語義比對]** 承接 [[CC-426]] Layer 2。主線程直接讀取各 ticket Requirement 章節（從 BACKLOG）+ 對應 PR diff 摘要（`gh pr diff <PR#>`），內聯分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。建議在 CC-429 dogfood run 完成後排入，以真實 drift 案例指導實作。 | ops/process | 2026-06-26 | — | P3 | — |
+| CC-429 | ✅ closed 2026-06-29 | **[release: v0.7.0 closure — dogfood /pre-release + release notes]** 對 v0.7.0 本身跑一次 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]]（/pre-release 工具就緒）。 | ops/process | 2026-06-26 | — | P1 | — |
+| CC-430 | 🔵 active | **[release: `/pre-release` Layer 2 — 語義比對]** 承接 [[CC-426]] Layer 2。主線程直接讀取各 ticket Requirement 章節（從 BACKLOG）+ 對應 PR diff 摘要（`gh pr diff <PR#>`），內聯分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。 | ops/process | 2026-06-26 | — | P1 | — |
 
 ---
 
@@ -1376,7 +1376,7 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 ---
 
-## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes 🔵 active
+## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes ✅ 2026-06-29
 
 **Goal**: Close the v0.7.0 release loop by using the `/pre-release` tool (CC-426) on v0.7.0 itself, fixing any drift found, and producing the final release artefacts.
 
@@ -1394,7 +1394,9 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 **Priority**: P1 (release blocking once CC-426 is done).
 
-## CC-430 — release: `/pre-release` Layer 2 — 語義比對 🟢 someday
+**See**: pr:#335
+
+## CC-430 — release: `/pre-release` Layer 2 — 語義比對 🔵 active
 
 **Problem**: CC-426 Layer 1 只驗結構標記（✅/PR ref/CHANGELOG mention），無法確認 PR diff 是否真的滿足 ticket 的 Requirement——ticket 說改 X/Y/Z，diff 只改了 X/Y 的情況在 Layer 1 完全偵測不到。
 
@@ -1423,4 +1425,4 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 **Depends on**: [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。
 
-**Priority**: P3（someday）. 建議在 [[CC-429]] dogfood run 完成後排入，以真實 drift 案例指導實作細節。
+**Priority**: P1（v0.7.1）. CC-429 dogfood run 完成後升 P1（2026-06-29）；CC-426 Layer 1 穩定、依賴 CC-403/CC-404 全 ✅。
