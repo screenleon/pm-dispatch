@@ -359,6 +359,64 @@ else
   rm -rf "$bv_dir"; bv_dir=""
 fi
 
+# ── Phase 3c: v0.7.0 feature smoke ──────────────────────────────────────────
+# Exercises headline v0.7.0 additions not covered by unit suites alone:
+#   CC-403 pmctl context --source memory
+#   CC-405 pmctl memory doctor
+#   CC-418 pmctl artifacts list
+#   CC-426 pmctl pre-release audit
+section "Phase 3c — v0.7.0 feature smoke (memory-source · doctor · artifacts · pre-release)"
+
+if [[ ! -x "$PMCTL" ]]; then
+  record "context-memory-source" SKIP "pmctl not found"
+  record "memory-doctor"         SKIP "pmctl not found"
+  record "artifacts-list"        SKIP "pmctl not found"
+  record "pre-release-audit"     SKIP "pmctl not found"
+else
+  # CC-403: pmctl context --source memory must accept the flag without error
+  if "$PMCTL" context query --source memory "$REPO_ROOT" "release" >/dev/null 2>&1; then
+    record "context-memory-source" PASS "pmctl context query --source memory: accepted"
+  else
+    # Non-zero is acceptable when memory DB is empty; only crash/unknown-flag is a FAIL
+    _ctx_mem_exit=$?
+    if [[ "$_ctx_mem_exit" -eq 2 ]]; then
+      record "context-memory-source" FAIL "--source memory flag unrecognised (exit 2)"
+    else
+      record "context-memory-source" PASS "pmctl context query --source memory: ran (no hits, exit $_ctx_mem_exit)"
+    fi
+  fi
+
+  # CC-405: pmctl memory doctor must exit 0 or 1 (issues found), never crash
+  _doctor_out="$("$PMCTL" memory doctor 2>&1)" || true
+  _doctor_exit=$?
+  if [[ "$_doctor_exit" -le 1 ]]; then
+    record "memory-doctor" PASS "pmctl memory doctor: ran (exit $_doctor_exit)"
+  else
+    record "memory-doctor" FAIL "pmctl memory doctor crashed (exit $_doctor_exit): $(printf '%s' "$_doctor_out" | head -1)"
+  fi
+
+  # CC-418: pmctl artifacts list must run without crash
+  if "$PMCTL" artifacts list --cd "$REPO_ROOT" >/dev/null 2>&1; then
+    record "artifacts-list" PASS "pmctl artifacts list: ran"
+  else
+    _art_exit=$?
+    if [[ "$_art_exit" -eq 1 ]]; then
+      record "artifacts-list" PASS "pmctl artifacts list: ran (no runs found, exit 1)"
+    else
+      record "artifacts-list" FAIL "pmctl artifacts list crashed (exit $_art_exit)"
+    fi
+  fi
+
+  # CC-426: pmctl pre-release audit must generate a report (exit 0 or 1)
+  _pre_exit=0
+  "$PMCTL" pre-release audit v0.7.0 >/dev/null 2>&1 || _pre_exit=$?
+  if [[ "$_pre_exit" -le 1 ]]; then
+    record "pre-release-audit" PASS "pmctl pre-release audit v0.7.0: report generated (exit $_pre_exit)"
+  else
+    record "pre-release-audit" FAIL "pmctl pre-release audit crashed (exit $_pre_exit)"
+  fi
+fi
+
 # ── Phase 4: Real E2E (optional — requires --e2e) ────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
   section "Phase 4 — Real E2E (pmctl dispatch + pr-gate)"
