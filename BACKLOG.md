@@ -532,7 +532,7 @@ format differences only.
 
 **Priority**: P4 within CC-211 roadmap. Evaluate at v0.3.0.
 
-## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh（deferred） ✅ 2026-06-29
+## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-hooks.sh ✅ 2026-06-29
 
 **Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-hooks.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
 

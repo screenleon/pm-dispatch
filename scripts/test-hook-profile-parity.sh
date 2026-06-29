@@ -21,6 +21,11 @@ _install_hooks() {
     "$REPO_ROOT/scripts/install-guards.sh" | grep -oE 'guard-[a-z-]+\.sh' | sort
 }
 
+# Behavior: doctor.sh declares a non-empty minimal hook list.
+# Steps:
+#   1. Parse the hooks=() array in doctor.sh via awk.
+#   2. Count extracted guard-*.sh basenames.
+#   3. Assert count >= 5.
 should_run "doctor-hook-list-nonempty"
 {
   count=$((_doctor_hooks) | wc -l | tr -d ' ')
@@ -31,6 +36,11 @@ should_run "doctor-hook-list-nonempty"
   fi
 }
 
+# Behavior: install-guards.sh declares a non-empty minimal hook list.
+# Steps:
+#   1. Parse *_cmd= lines referencing scripts/guard-*.sh in install-guards.sh.
+#   2. Count extracted guard-*.sh basenames.
+#   3. Assert count >= 5.
 should_run "install-guards-hook-list-nonempty"
 {
   count=$((_install_hooks) | wc -l | tr -d ' ')
@@ -41,6 +51,11 @@ should_run "install-guards-hook-list-nonempty"
   fi
 }
 
+# Behavior: the minimal hook sets in doctor.sh and install-guards.sh are identical.
+# Steps:
+#   1. Extract sorted hook lists from both files.
+#   2. Diff the two lists.
+#   3. Assert no diff output (sets are equal).
 should_run "hook-sets-match"
 {
   doctor_list=$(_doctor_hooks)
