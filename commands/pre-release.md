@@ -53,12 +53,18 @@ Collect pairs of `(CC-NNN, PR#)`.
    `**Requirement**:` block (stop at the next `##` heading or `**Depends on**` line).
    Summarise requirements in 1–2 sentences maximum.
 
-2. Fetch the PR diff targeted to relevant files only — do not load the entire diff at once:
+2. Always fetch the file list first — do not read the full patch dump:
    ```bash
-   gh pr diff <PR#> --patch | head -500
+   gh pr view <PR#> --json files --jq '[.files[].filename]'
    ```
-   If the diff is large, read the file list first (`gh pr view <PR#> --json files`) then
-   target only files mentioned in the Requirement.
+   From the file list, identify which files relate to the Requirement.
+   Then fetch only those files' diffs:
+   ```bash
+   gh pr diff <PR#> -- <relevant-file1> <relevant-file2>
+   ```
+   For simple PRs (1–3 files, all relevant) fetch all at once; for larger
+   PRs always scope to the files named in the Requirement. Never load the
+   full patch without first scoping.
 
 3. Compare: does the diff address each stated requirement? Record:
    - **Covered**: requirement clearly reflected in the diff
@@ -96,9 +102,12 @@ Do **not** output a GO/NO-GO verdict. The table is informational only.
 
 ## Layer 2 — Semantic coverage
 
-Main thread reads each scoped ticket's Requirement section from BACKLOG + the PR diff
-(`gh pr diff <PR#>`) and analyses coverage per ticket inline, outputting a per-ticket
-conclusion table. No sub-job dispatch. Does not produce GO/NO-GO.
+Main thread reads each scoped ticket's Requirement section from BACKLOG, fetches the
+file list first (`gh pr view <PR#> --json files`), then fetches only the relevant file
+diffs (`gh pr diff <PR#> -- <file…>`). Analyses coverage per ticket inline, outputting
+a per-ticket conclusion table. No sub-job dispatch.
+
+**Layer 2 is informational only and does not produce a GO/NO-GO verdict.**
 
 ## Layer 3 — Blind spots (always included in report)
 
