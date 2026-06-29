@@ -59,7 +59,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-409 | `run-all-tests` 並行執行（`--jobs N`，預設 nproc）+ dispatch-wait poll 可設定；大幅縮短本機測試時間 | ✅ pr:#311 |
-| CC-410 | guard audit log 對唯讀 `hooks.log` fail-silent：wrap append 在 subshell 以正確抑制 bash 重導向錯誤 | ✅ |
+| CC-410 | guard audit log 對唯讀 `hooks.log` fail-silent：wrap append 在 subshell 以正確抑制 bash 重導向錯誤 | ✅ pr:#311 |
 | CC-413 | Phase 0 止血：pr-gate integrity check 排除自身 artifact 路徑，避免 gate 誤判 own outputs | ✅ pr:#318 |
 | CC-414 | Phase 1：trace-root seam（`--trace-dir` flag / env 優先序）——adapter 可覆蓋 trace 落點 | ✅ pr:#319 |
 | CC-415 | Phase 2：post-verify containment guard 改以 `--run-dir` 為界；退場 in-repo path 假設 | ✅ pr:#320 |
