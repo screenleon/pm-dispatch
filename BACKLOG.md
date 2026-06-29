@@ -1317,7 +1317,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 主線程內聯分析覆蓋度，輸出 per-ticket 結論
 - 可取 `pmctl context query --source memory` 相關 decision 背景輔助判斷
 
-**Output 格式（追加至 Layer 1 報告後）**：
+**Output 格式（追加至 Layer 1 + Layer 3 報告後）**：
 ```
 ### Layer 2 — Semantic coverage
 | Ticket | Requirement summary | Diff coverage | Confidence | Flag |
