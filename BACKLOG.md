@@ -85,7 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-426 | ✅ closed 2026-06-26 | **[release: `/pre-release` milestone 落地審查]** release 前跑一次，確認 milestone scope 的 ticket 有沒有「說了但沒完整做到」的疏漏。Layer 1 結構檢查（closed ticket body 有無「仍待辦」、每個 ticket 有無 PR#、CHANGELOG 是否涵蓋 PR range，機器可跑）+ Layer 3 盲點聲明（明確說出工具無法確認的範圍）。Layer 2 語義比對移至 [[CC-430]]。輸出為報告，非 GO/NO-GO。 | ops/process | 2026-06-25 | pr:#334 | P2 | — |
 | CC-428 | ✅ closed 2026-06-26 | **[memory: lifecycle validity gate for injection ranking（PaperGuru 四約束 — lifecycle 優先 usage）]** 目前 CC-427 frecency 排序不過濾 `status: stale/superseded` card，致歷史高 usage 的 stale card 繼續排高被注入。PaperGuru-Benchmark 約束：lifecycle validity 必須優先於 usage frequency（stale/superseded card 不因高 usage 排前）。修法：`guard-inject-memory.sh` 排序前先 gate `status` field，stale/superseded 的 card bucket 降為 0 或移到注入清單末端；其餘 priority/frecency 邏輯不動。相依 [[CC-405]]（status 欄位已強制）+ [[CC-427]]（frecency 排序基礎）。影響範圍：guard-inject-memory.sh + test-pmctl-memory.sh 或 test-install-guards.sh 對應測試。 | ux/memory | 2026-06-26 | — | P2 | retrieval |
 | CC-429 | 🔵 active | **[release: v0.7.0 closure — dogfood /pre-release + release notes]** 對 v0.7.0 本身跑一次 `/pre-release v0.7.0`；修 CHANGELOG/MILESTONES/BACKLOG drift；寫 release notes；tag v0.7.0。相依 [[CC-426]]（/pre-release 工具就緒）。 | ops/process | 2026-06-26 | — | P1 | — |
-| CC-430 | 🟢 someday | **[release: `/pre-release` Layer 2 — 語義比對 diff fan-out]** 承接 [[CC-426]] Layer 2。milestone 的 ticket 按改動類型分組（commands/scripts/docs 三組，上限 4 job），每組一個 claude dispatch job 接收 Requirement 章節 + PR diff 摘要，回傳 per-ticket 結論；主線程 fan-out + synthesis。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。建議在 CC-429 dogfood run 完成後排入，以真實 drift 案例指導實作。 | ops/process | 2026-06-26 | — | P3 | — |
+| CC-430 | 🟢 someday | **[release: `/pre-release` Layer 2 — 語義比對]** 承接 [[CC-426]] Layer 2。主線程直接讀取各 ticket Requirement 章節（從 BACKLOG）+ 對應 PR diff 摘要（`gh pr diff <PR#>`），內聯分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。建議在 CC-429 dogfood run 完成後排入，以真實 drift 案例指導實作。 | ops/process | 2026-06-26 | — | P3 | — |
 
 ---
 
@@ -1332,7 +1332,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **假設前提（相依 [[CC-404]] 完成後）**:
 - 注入預算讓 agent 只拿到 priority:always + topic 相關的 memory cards（~7–10 張）
-- 節省的 context window 可放 PR diff；每個 dispatch executor 只負擔同類型的 3–5 個 ticket，不會 context 爆炸
+- 節省的 context window 可放 PR diff；主線程逐 ticket targeted read，不整份 diff 塞入
 
 **Output format** (Layer 1 + Layer 3 delivered; Layer 2 → [[CC-430]]):
 ```
@@ -1350,8 +1350,7 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 **Constraints**:
 - 不輸出 GO/NO-GO；輸出是報告，判斷留給人
 - Layer 1 checks 必須 idempotent（不改任何檔案）
-- Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context
-- dispatch 按類型批次，每 job 上限 3–4 個，不按 ticket 數量線性增長
+- Layer 2 每 ticket 用 targeted read，不整份 diff 塞進 context（主線程執行，見 [[CC-430]]）
 - 工具名稱最終定案前暫用 `/pre-release`
 
 **Priority**: P2（Layer 1+3 已交付；Layer 2 語義比對另開 [[CC-430]]）.
@@ -1395,7 +1394,7 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 **Priority**: P1 (release blocking once CC-426 is done).
 
-## CC-430 — release: `/pre-release` Layer 2 — 語義比對 diff fan-out 🟢 someday
+## CC-430 — release: `/pre-release` Layer 2 — 語義比對 🟢 someday
 
 **Problem**: CC-426 Layer 1 只驗結構標記（✅/PR ref/CHANGELOG mention），無法確認 PR diff 是否真的滿足 ticket 的 Requirement——ticket 說改 X/Y/Z，diff 只改了 X/Y 的情況在 Layer 1 完全偵測不到。
 
@@ -1405,20 +1404,11 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 承接 [[CC-426]] Layer 2 設計：
 
-**分組策略（≤ 4 dispatch job）**
-- Group A：commands/ 相關 ticket（新增/修改 command prompt）
-- Group B：scripts/lib/ + CLI 相關 ticket（新增腳本邏輯）
-- Group C：docs+tracking 相關 ticket（BACKLOG/MILESTONES/CHANGELOG/docs）
-- Group D：adapters/schema 相關（如有）
-
-**每個 dispatch job 接收**：
-- 該組所有 ticket 的 Requirement 章節（由 PM 主線程從 BACKLOG 取）
-- 各 ticket 對應 PR 的 diff 摘要（`gh pr diff <PR#>`，由 PM 主線程取）
-- `pmctl context query --source memory` 相關 decision 背景
-
-**輸出**：per-ticket 結論（需求是否滿足、具體疑問、需人工確認的項目）
-
-**主線程工作**：fan-out + synthesis，不自己讀所有 diff；只讀各 job 回傳的結論。
+**主線程執行策略**
+- 主線程逐 ticket 讀取 BACKLOG 的 Requirement 章節
+- 對應 PR diff 摘要由主線程取（`gh pr diff <PR#>`）
+- 主線程內聯分析覆蓋度，輸出 per-ticket 結論
+- 可取 `pmctl context query --source memory` 相關 decision 背景輔助判斷
 
 **Output 格式（追加至 Layer 1 報告後）**：
 ```
@@ -1427,9 +1417,8 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 ```
 
 **Constraints**:
-- Layer 2 executor：claude（閱讀理解任務，非程式碼生成）
-- 每 job 上限 3–4 個 ticket，不隨 ticket 數線性增長
-- PR diff 由 PM 主線程取，不讓 executor 自行拉（可控 context 量）
+- 主線程執行，不派發子 job（閱讀理解任務，主線程直接處理）
+- PR diff 由主線程自行取，每 ticket targeted read，不整份 diff 一次塞入
 - 不輸出 GO/NO-GO；報告判斷留給人
 
 **Depends on**: [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。

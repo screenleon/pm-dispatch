@@ -50,9 +50,9 @@ fi
 
 ## Layer 2 — Semantic coverage (not yet implemented)
 
-Layer 2 fan-out semantics: group scope tickets by change type (≤4 groups),
-dispatch one `claude` job per group with the ticket's Requirement section +
-the PR diff summary, PM synthesises per-ticket conclusions. Planned for Phase B.
+Layer 2 semantics: main thread reads each scope ticket's Requirement section
+from BACKLOG + the PR diff summary (`gh pr diff <PR#>`), analyses coverage
+per ticket inline, and outputs a per-ticket conclusion table. Planned for Phase B.
 
 ## Layer 3 — Blind spots (always included in report)
 
