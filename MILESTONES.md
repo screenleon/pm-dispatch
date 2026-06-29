@@ -9,21 +9,52 @@
 
 ---
 
-## v0.7.1 — `/pre-release` Layer 2 語義比對（規劃中 2026-06-29）
+## v0.7.1 — release 工具完整化 + 積累 hygiene 清掃（規劃中 2026-06-29）
 
 > 最後排程更新：2026-06-29
 
-**主題**：補上 `/pre-release` 審計工具的「需求 vs 實作」語義比對層（Layer 2），讓報告從「tracking hygiene 乾淨」升級到「PR diff 實際覆蓋 Requirement 可追溯」。
+**主題**：兩條主軸並行——(1) 完善 release 工具鏈：補上 `/pre-release` Layer 2 語義比對，讓報告從「tracking hygiene 乾淨」升級到「PR diff 實際覆蓋 Requirement 可追溯」；(2) 清掃 v0.4.0–v0.7.0 期間累積的 guard/test/ops P3 hygiene 票群。小而聚焦的點版本，**不引入新能力架構**。
 
-**Scope**:
+> **設計原則**：v0.7.1 是 v0.7.0 之後的穩定化版本，不開新能力前線。每張票都有明確 Requirement 且可獨立 ship。CC-422（dispatch-common spike）、CC-216（MCP）、CC-377（agy headless CLI）明確不排入。
+
+### Phase 1 — release 工具鏈完整化（P1；headline）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表 | 🔵 active |
+| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。Layer 2 不輸出 GO/NO-GO，判斷留給人 | 🔵 active |
 
-**依賴**：[[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。
+### Phase 2 — guard / install hygiene（P3；guard 安全加固 + install 正確性）
 
-**Non-goals**：Layer 2 不輸出 GO/NO-GO，判斷留給人。Layer 3（embeddings / 全語意 backend）屬 CC-340 殘餘，不排入本版。
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-210 | `uninstall.sh` blast-radius guard：加 `[[ "$dst" == "$managed_root" ]]` 精確路徑拒絕，防止 managed-root 本身被刪；補 test case。PR #110 gate [medium] advisory 遺留 | ⏸ deferred |
+| CC-258 | `pm-write-guard` hook 政策修訂：加三條合法 PM-author allow rule（`/tmp/<slug>/*.md`、`docs/spikes/{CC-NNN*,*-scope,*-rfc}.md`、symlink memory 雙正規化）；補 ~15 條迴歸測試 | ⏸ deferred |
+| CC-224 | `doctor.sh` ↔ `install-hooks.sh` hook-profile 一致性：抽共用 `scripts/hook-profile.sh` 或加 parity test，防止新 hook 加入只更新一處的靜默漂移 | ⏸ deferred |
+
+### Phase 3 — test / ops 可靠性（P3；測試基礎建設）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-240 | `test-portable.sh::case_mkdir_lock_contention` 替換固定 `sleep 1.2`：改用 FIFO-gated IPC 同步，消除 CI 時序不確定性（qa-testing-rules 紅線：不用 sleep 做非同步同步） | ⏸ deferred |
+| CC-285 | archiver safe-drop：terminal row 的 body 在 BACKLOG.md 與 BACKLOG-ARCHIVE.md 都不存在時，保留 row 並 emit 警告（不刪），供人工處置；加迴歸 fixture | 🟡 deferred |
+
+### Phase 4 — adapter 共用邏輯抽 lib（P3；可選；不依賴 Phase 1–3）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | 🟢 someday |
+| CC-421 | adapter 共用 timeout 優先序邏輯 → `scripts/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | 🟢 someday |
+
+> Phase 4 兩張票可獨立 ship，與 Phase 1–3 無依賴。CC-422（dispatch-common.sh）需先 spike 確認邊界，**不排入本版**。
+
+### 待後續 / 明確排除
+
+- **CC-422（adapter dispatch-common）**——需 spike 確認邊界再實作，不排入 v0.7.1。
+- **CC-032（`[[feedback_*]]` 公開化）+ CC-033（Public flip）**——CC-032 仍 🔵 active 但無明確時程；CC-033 依賴 CC-032，整組後置評估，若 CC-032 本版完成可順帶納入。
+- **CC-286（pmctl prefix-generic next-id）**——P3 arch 設計，不阻塞任何已排項目，後置評估。
+- **CC-216 MCP server**——明確不排入任何 milestone（2026-06-18 user 拍板）。
+- **CC-377 agy adapter**——等待 agy headless CLI 版本更新，不排入。
+- **Layer 3（embeddings / 全語意 backend）**——屬 CC-340 殘餘，不排入本版。
 
 ---
 
