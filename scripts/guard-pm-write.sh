@@ -95,17 +95,15 @@ if [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-
 fi
 
 # Rule C: symlink dual-normalization — allow when the memory/ DIRECTORY is a
-# symlink whose target is outside ALLOWED_BASE. Deny when a FILE inside memory
-# is itself a symlink pointing out (file-symlink escape).
-# Safety check: the resolved directory of the file must equal the resolved
-# parent of the lexical path, proving only the memory dir crossed a symlink.
+# symlink whose target is outside ALLOWED_BASE. Deny file-symlink and nested
+# directory-symlink escapes by checking that abs_path falls inside the resolved
+# memory directory target (not just the immediate parent match).
 lex_path="$(realpath_m_lex "$file_path")" || lex_path=""
 if [[ -n "$lex_path" && "$lex_path" != "$abs_path" ]]; then
-  if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
-    lex_dir="$(dirname "$lex_path")"
-    abs_dir="$(dirname "$abs_path")"
-    lex_dir_resolved="$(realpath_m "$lex_dir" 2>/dev/null)" || lex_dir_resolved=""
-    if [[ -n "$lex_dir_resolved" && "$lex_dir_resolved" == "$abs_dir" ]]; then
+  if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/([^/]+)/memory/.+ ]]; then
+    real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
+      || real_mem_dir=""
+    if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
       g_allow "inside memory dir (lex)" "$file_path"
     fi
   fi
