@@ -9,6 +9,24 @@
 
 ---
 
+## v0.7.1 — `/pre-release` Layer 2 語義比對（規劃中 2026-06-29）
+
+> 最後排程更新：2026-06-29
+
+**主題**：補上 `/pre-release` 審計工具的「需求 vs 實作」語義比對層（Layer 2），讓報告從「tracking hygiene 乾淨」升級到「PR diff 實際覆蓋 Requirement 可追溯」。
+
+**Scope**:
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-430 | `/pre-release` Layer 2：主線程逐 ticket 讀 BACKLOG Requirement + `gh pr diff` 分析覆蓋度，輸出 per-ticket 結論表 | 🔵 active |
+
+**依賴**：[[CC-426]]（Layer 1 ✅）、[[CC-403]]（memory context ✅）、[[CC-404]]（注入預算 ✅）。
+
+**Non-goals**：Layer 2 不輸出 GO/NO-GO，判斷留給人。Layer 3（embeddings / 全語意 backend）屬 CC-340 殘餘，不排入本版。
+
+---
+
 ## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
 > 最後排程更新：2026-06-26
 
