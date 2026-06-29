@@ -1376,7 +1376,7 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 
 ---
 
-## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes 🔵 active
+## CC-429 — release: v0.7.0 closure — dogfood /pre-release + release notes ✅ 2026-06-29
 
 **Goal**: Close the v0.7.0 release loop by using the `/pre-release` tool (CC-426) on v0.7.0 itself, fixing any drift found, and producing the final release artefacts.
 
@@ -1393,6 +1393,8 @@ Summary: N structural issues, 0 semantic flags (Layer 2 not run), K blind spots 
 **Depends on**: [[CC-426]] (/pre-release audit tool complete).
 
 **Priority**: P1 (release blocking once CC-426 is done).
+
+**See**: pr:#335
 
 ## CC-430 — release: `/pre-release` Layer 2 — 語義比對 🟢 someday
 
