@@ -464,9 +464,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     # and does NOT leak into --verify's run-all-tests preflight (which spawns
     # nested installs that must default CLAUDE_HOME to their own HOME).
     if [[ -n "$PROFILE" ]]; then
-      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
+      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run --profile "$PROFILE"
     else
-      CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
+      PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --dry-run
     fi
   fi
 else
@@ -475,11 +475,12 @@ else
     printf '{}\n' > "$CLAUDE_HOME/settings.json"
     echo "  created $CLAUDE_HOME/settings.json (minimal, for hook wiring)"
   fi
-  # CLAUDE_HOME passed per-call (see dry-run branch above) — scoped, not exported.
+  # CLAUDE_HOME and PM_DISPATCH_REPO passed per-call (not exported) so they scope
+  # to hook wiring only and do not leak into nested install runs.
   if [[ -n "$PROFILE" ]]; then
-    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
+    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh" --profile "$PROFILE"
   else
-    CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh"
+    PM_DISPATCH_REPO="$REPO_ROOT" CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/install-guards.sh"
   fi
 fi
 echo
