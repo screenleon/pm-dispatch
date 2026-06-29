@@ -39,9 +39,14 @@ fi
 "$PMCTL" pre-release audit "$MILESTONE_ID"
 ```
 
+`pmctl pre-release audit` outputs the full Layer 1 structural check report
+followed by the Layer 3 blind-spot declaration.
+
 ## Step 3 — Layer 2: Semantic coverage (main-thread inline)
 
-After Layer 1 completes, perform Layer 2 analysis inline without dispatching a sub-job.
+After the Layer 1 + Layer 3 audit output in Step 2, perform Layer 2 analysis
+inline without dispatching a sub-job. Layer 2 output is appended after the
+Layer 1 + Layer 3 report.
 
 **3a. Build ticket list**: Read `MILESTONES.md`, locate the `## <milestone-id>` section,
 and extract every scoped ticket row that has a `pr:#NNN` reference in the status column.
@@ -53,18 +58,19 @@ Collect pairs of `(CC-NNN, PR#)`.
    `**Requirement**:` block (stop at the next `##` heading or `**Depends on**` line).
    Summarise requirements in 1–2 sentences maximum.
 
-2. Always fetch the file list first — do not read the full patch dump:
+2. First list changed files to identify which are relevant to the Requirement:
    ```bash
-   gh pr view <PR#> --json files --jq '[.files[].filename]'
+   gh pr diff <PR#> --name-only
    ```
    From the file list, identify which files relate to the Requirement.
-   Then fetch only those files' diffs:
+   Then fetch the full patch and extract only the relevant sections:
    ```bash
-   gh pr diff <PR#> -- <relevant-file1> <relevant-file2>
+   gh pr diff <PR#> --patch
    ```
-   For simple PRs (1–3 files, all relevant) fetch all at once; for larger
-   PRs always scope to the files named in the Requirement. Never load the
-   full patch without first scoping.
+   Read the patch output and focus on the `diff --git a/<relevant-file>` sections.
+   For small PRs (1–3 files, all relevant) read the full patch; for larger PRs
+   locate only the file sections named in the Requirement. Never skip the
+   `--name-only` step — scope first, then read.
 
 3. Compare: does the diff address each stated requirement? Record:
    - **Covered**: requirement clearly reflected in the diff
@@ -72,7 +78,7 @@ Collect pairs of `(CC-NNN, PR#)`.
    - **Gap**: no diff evidence for a stated requirement
    - **N/A**: requirement is prose/doc with no code expectation
 
-**3c. Output the Layer 2 table** immediately after the Layer 1 report:
+**3c. Output the Layer 2 table** appended after the Layer 1 + Layer 3 report:
 
 ```
 ### Layer 2 — Semantic coverage
@@ -102,10 +108,14 @@ Do **not** output a GO/NO-GO verdict. The table is informational only.
 
 ## Layer 2 — Semantic coverage
 
-Main thread reads each scoped ticket's Requirement section from BACKLOG, fetches the
-file list first (`gh pr view <PR#> --json files`), then fetches only the relevant file
-diffs (`gh pr diff <PR#> -- <file…>`). Analyses coverage per ticket inline, outputting
-a per-ticket conclusion table. No sub-job dispatch.
+Main thread reads each scoped ticket's Requirement section from BACKLOG, fetches
+`gh pr diff <PR#> --name-only` to scope the relevant files, then reads
+`gh pr diff <PR#> --patch` and analyses coverage per ticket inline, outputting
+a per-ticket conclusion table with Covered / Partial / Gap / N/A, Confidence
+(High / Med / Low), and Flag columns. No sub-job dispatch.
+
+Layer 2 output is appended after the Layer 1 + Layer 3 report produced by
+`pmctl pre-release audit`.
 
 **Layer 2 is informational only and does not produce a GO/NO-GO verdict.**
 
