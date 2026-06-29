@@ -1,12 +1,12 @@
 ---
-description: Run Layer 1 structural audit for a milestone release — checks PR refs, body residuals, CHANGELOG coverage, and index/body status consistency.
+description: Run pre-release audit for a milestone — Layer 1 structural checks, Layer 2 semantic diff coverage, and Layer 3 blind-spot declaration.
 argument-hint: "<milestone-id>"
 ---
 
 Run the pre-release audit via `pmctl pre-release audit <milestone-id>`.
-This command covers **Layer 1** (machine-executable structural checks) and
-**Layer 3** (static blind-spot declaration). Layer 2 (semantic diff coverage)
-is not yet implemented.
+This command covers **Layer 1** (machine-executable structural checks),
+**Layer 2** (main-thread semantic diff coverage), and
+**Layer 3** (static blind-spot declaration).
 
 **Output is a report — not a GO/NO-GO verdict.** The release decision remains
 with the user.
@@ -23,7 +23,7 @@ else
 fi
 ```
 
-## Step 2 — Parse args and run audit
+## Step 2 — Parse args and run Layer 1 + Layer 3 audit
 
 Parse `$ARGUMENTS` for `<milestone-id>`.
 
@@ -39,6 +39,52 @@ fi
 "$PMCTL" pre-release audit "$MILESTONE_ID"
 ```
 
+## Step 3 — Layer 2: Semantic coverage (main-thread inline)
+
+After Layer 1 completes, perform Layer 2 analysis inline without dispatching a sub-job.
+
+**3a. Build ticket list**: Read `MILESTONES.md`, locate the `## <milestone-id>` section,
+and extract every scoped ticket row that has a `pr:#NNN` reference in the status column.
+Collect pairs of `(CC-NNN, PR#)`.
+
+**3b. Per-ticket analysis** (repeat for each ticket in scope):
+
+1. Read the ticket body from `BACKLOG.md` — find `## CC-NNN` section and extract the
+   `**Requirement**:` block (stop at the next `##` heading or `**Depends on**` line).
+   Summarise requirements in 1–2 sentences maximum.
+
+2. Fetch the PR diff targeted to relevant files only — do not load the entire diff at once:
+   ```bash
+   gh pr diff <PR#> --patch | head -500
+   ```
+   If the diff is large, read the file list first (`gh pr view <PR#> --json files`) then
+   target only files mentioned in the Requirement.
+
+3. Compare: does the diff address each stated requirement? Record:
+   - **Covered**: requirement clearly reflected in the diff
+   - **Partial**: diff touches the area but misses stated sub-points
+   - **Gap**: no diff evidence for a stated requirement
+   - **N/A**: requirement is prose/doc with no code expectation
+
+**3c. Output the Layer 2 table** immediately after the Layer 1 report:
+
+```
+### Layer 2 — Semantic coverage
+
+| Ticket | Requirement summary | Diff coverage | Confidence | Flag |
+|--------|--------------------|--------------:|-----------|------|
+| CC-NNN | <1-sentence summary> | Covered / Partial / Gap / N/A | High / Med / Low | — / ⚠️ |
+```
+
+**Confidence** reflects how clearly the diff maps to the requirement:
+- **High**: direct match, obvious implementation
+- **Med**: indirect evidence or refactor-shaped change
+- **Low**: diff too large to read fully, or requirement ambiguous
+
+**Flag** `⚠️` when coverage is Partial or Gap, or confidence is Low.
+
+Do **not** output a GO/NO-GO verdict. The table is informational only.
+
 ## Layer 1 checks (machine-executable)
 
 | Check | What it verifies |
@@ -48,18 +94,18 @@ fi
 | 1.3 CHANGELOG coverage | Each scope ticket (by CC-NNN or PR#) appears in CHANGELOG `[Unreleased]` section |
 | 1.4 Index ↔ body status | BACKLOG.md index row status emoji matches the body heading status emoji |
 
-## Layer 2 — Semantic coverage (not yet implemented)
+## Layer 2 — Semantic coverage
 
-Layer 2 semantics: main thread reads each scope ticket's Requirement section
-from BACKLOG + the PR diff summary (`gh pr diff <PR#>`), analyses coverage
-per ticket inline, and outputs a per-ticket conclusion table. Planned for Phase B.
+Main thread reads each scoped ticket's Requirement section from BACKLOG + the PR diff
+(`gh pr diff <PR#>`) and analyses coverage per ticket inline, outputting a per-ticket
+conclusion table. No sub-job dispatch. Does not produce GO/NO-GO.
 
 ## Layer 3 — Blind spots (always included in report)
 
 The generated report always appends a static blind-spot declaration covering:
 - What the tool can and cannot confirm
 - The disclaimer: "No structural issues found ≠ release is safe"
-- The Layer 2 gap (semantic drift not yet checked)
+- Remaining gaps not covered by Layer 1 or Layer 2
 
 ## Exit codes
 

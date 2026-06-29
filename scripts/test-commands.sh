@@ -326,6 +326,11 @@ should_run "pre-release: invokes pmctl pre-release audit" && assert_file_contain
 should_run "pre-release: accepts milestone-id argument" && assert_file_contains "pre-release: accepts milestone-id argument" "$PRE_RELEASE" "MILESTONE_ID" && pass "pre-release: accepts milestone-id argument"
 should_run "pre-release: output is report not GO/NO-GO" && assert_file_contains "pre-release: output is report not GO/NO-GO" "$PRE_RELEASE" "not a GO/NO-GO" && pass "pre-release: output is report not GO/NO-GO"
 should_run "pre-release: documents Layer 1 checks" && assert_file_contains "pre-release: documents Layer 1 checks" "$PRE_RELEASE" "Layer 1" && pass "pre-release: documents Layer 1 checks"
+should_run "pre-release: documents Layer 2 semantic coverage" && assert_file_contains "pre-release: documents Layer 2 semantic coverage" "$PRE_RELEASE" "Layer 2" && pass "pre-release: documents Layer 2 semantic coverage"
+should_run "pre-release: Layer 2 runs on main thread without dispatch" && assert_file_contains "pre-release: Layer 2 runs on main thread without dispatch" "$PRE_RELEASE" "main-thread" && pass "pre-release: Layer 2 runs on main thread without dispatch"
+should_run "pre-release: Layer 2 uses gh pr diff" && assert_file_contains "pre-release: Layer 2 uses gh pr diff" "$PRE_RELEASE" "gh pr diff" && pass "pre-release: Layer 2 uses gh pr diff"
+should_run "pre-release: Layer 2 outputs per-ticket table" && assert_file_contains "pre-release: Layer 2 outputs per-ticket table" "$PRE_RELEASE" "Semantic coverage" && pass "pre-release: Layer 2 outputs per-ticket table"
+should_run "pre-release: Layer 2 does not produce GO/NO-GO" && assert_file_contains "pre-release: Layer 2 does not produce GO/NO-GO" "$PRE_RELEASE" "not a GO/NO-GO" && pass "pre-release: Layer 2 does not produce GO/NO-GO"
 should_run "pre-release: documents Layer 3 blind spots" && assert_file_contains "pre-release: documents Layer 3 blind spots" "$PRE_RELEASE" "Layer 3" && pass "pre-release: documents Layer 3 blind spots"
 should_run "pre-release: documents exit codes" && assert_file_contains "pre-release: documents exit codes" "$PRE_RELEASE" "Exit codes" && pass "pre-release: documents exit codes"
 

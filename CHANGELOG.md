@@ -6,6 +6,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`/pre-release` Layer 2 — semantic diff coverage (CC-430, PR#339).** After Layer 1 structural audit, the command now runs a main-thread inline Layer 2 analysis: per scoped ticket, reads the `Requirement` section from BACKLOG.md, fetches `gh pr diff <PR#>` (targeted, not full dump), and outputs a coverage table (`Covered / Partial / Gap / N/A`) with Confidence and Flag columns. No sub-job dispatch. Does not produce GO/NO-GO — judgement stays with the user.
+
+---
+
 ## [0.7.0] — 2026-06-29
 
 ### Changed
