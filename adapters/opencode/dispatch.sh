@@ -70,6 +70,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /opencode-dispatch\.[A-Za-z0-9]{6}/opencode-dispa
     cp -- "$__oc_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__oc_dispatch_snapshot_dir/lib/model-aliases.sh" || true
   [[ -r "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
     cp -- "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__oc_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
+  [[ -r "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh" ]] && \
+    cp -- "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh" "$__oc_dispatch_snapshot_dir/lib/dispatch-common.sh" || true
   chmod +x -- "$__oc_dispatch_snapshot"
   exec "$__oc_dispatch_snapshot" "$@"
 fi
@@ -94,6 +96,8 @@ NATIVE_FLAGS=()
 . "$SCRIPT_DIR/lib/model-aliases.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/timeout-resolve.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/dispatch-common.sh"
 
 # ── Model alias resolution ────────────────────────────────────────────────────
 PM_OC_ALIAS_FILE="$SCRIPT_DIR/opencode-model-aliases.tsv"
@@ -207,14 +211,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$WORK_DIR" ]] && { echo "Error: --cd <dir> is required" >&2; exit 2; }
-[[ ! -d "$WORK_DIR" ]] && { echo "Error: working dir not found: $WORK_DIR" >&2; exit 2; }
-if [[ -n "$BRIEF_FILE" ]]; then
-  [[ ! -f "$BRIEF_FILE" || ! -r "$BRIEF_FILE" ]] && { echo "Error: brief file not found or not readable: $BRIEF_FILE" >&2; exit 2; }
-  BRIEF="$(<"$BRIEF_FILE")"
-fi
-[[ -z "$BRIEF" && "$PRINT_CMD" -ne 1 ]] && { echo "Error: brief is required; pass --brief-file <path>" >&2; exit 2; }
-! [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && { echo "Error: --timeout must be a non-negative integer (got: $TIMEOUT)" >&2; exit 2; }
+dc_validate_args "$WORK_DIR" "$BRIEF_FILE" "$PRINT_CMD" "$TIMEOUT" || exit 2
+BRIEF="$DC_BRIEF"
 
 # ── Isolation resolution ──────────────────────────────────────────────────────
 if [[ -n "$ISOLATION" ]]; then
@@ -254,15 +252,8 @@ if [[ "$PRINT_CMD" -ne 1 ]]; then
   # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
   # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
   # when trace is actually written (--print-cmd writes none, so it needs no lib).
-  if ! declare -F sw_resolve_trace_dir >/dev/null 2>&1; then
-    echo "Error: trace-path helper unavailable (state-paths.sh not loaded)" >&2
-    exit 2
-  fi
-  TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
-  mkdir -p "$TRACE_DIR"
-  TRACE="$TRACE_DIR/opencode-$TS.jsonl"
-  LAST="$TRACE_DIR/opencode-$TS.last"
-  STDERR_LOG="$TRACE_DIR/opencode-$TS.stderr"
+  dc_setup_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR" "opencode" "$TS" || exit 2
+  TRACE_DIR="$DC_TRACE_DIR"; TRACE="$DC_TRACE"; LAST="$DC_LAST"; STDERR_LOG="$DC_STDERR_LOG"
 fi
 
 if [[ "$PRINT_CMD" -eq 1 ]]; then
@@ -271,12 +262,6 @@ if [[ "$PRINT_CMD" -eq 1 ]]; then
   exit 0
 fi
 
-# ── latest.* helpers ──────────────────────────────────────────────────────────
-_refresh_latest_pointers() {
-  ln -sfn "opencode-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
-  ln -sfn "opencode-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
-  ln -sfn "opencode-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
-}
 
 # ── JSONL health checks ───────────────────────────────────────────────────────
 # opencode exits 0 even on API errors; scan JSONL to compensate.
@@ -317,7 +302,7 @@ _has_session_error() {
   [[ -n "$BRIEF_FILE" ]] && echo "  brief:    $BRIEF_FILE (file)"
 } | tee -a "$STDERR_LOG" >&2
 
-_refresh_latest_pointers
+dc_refresh_latest_pointers "opencode" "$TRACE_DIR" "$TS"
 
 # ── Per-attempt timeout ───────────────────────────────────────────────────────
 # Distribute budget evenly across the fallback chain so a single hanging model
@@ -440,7 +425,7 @@ if [[ -s "$TRACE" ]]; then
 fi
 
 # ── Re-point latest.* now that per-run files exist ────────────────────────────
-_refresh_latest_pointers
+dc_refresh_latest_pointers "opencode" "$TRACE_DIR" "$TS"
 
 # ── Closing banner ────────────────────────────────────────────────────────────
 {
@@ -452,16 +437,6 @@ _refresh_latest_pointers
   fi
 } | tee -a "$STDERR_LOG" >&2
 
-echo "---"
-echo "trace:  $TRACE"
-echo "last:   $LAST"
-echo "stderr: $STDERR_LOG"
-echo "exit:   $EXIT"
-echo "model:  ${USED_MODEL:-<none>}"
-echo "---"
-if [[ -s "$LAST" ]]; then
-  echo "=== final message ==="
-  cat "$LAST"
-fi
+dc_print_footer "$TRACE" "$LAST" "$STDERR_LOG" "$EXIT" "${USED_MODEL:-<none>}"
 
 exit $EXIT

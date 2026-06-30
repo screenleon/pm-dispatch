@@ -67,6 +67,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     cp -- "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__claude_dispatch_snapshot_dir/lib/model-aliases.sh" || true
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__claude_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
+  [[ -r "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh" ]] && \
+    cp -- "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh" "$__claude_dispatch_snapshot_dir/lib/dispatch-common.sh" || true
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
 fi
@@ -92,6 +94,8 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 . "$SCRIPT_DIR/lib/model-aliases.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/timeout-resolve.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/dispatch-common.sh"
 
 # Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
 # Snapshot copies the tsv alongside this script; fall back to repo-source paths.
@@ -162,29 +166,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$WORK_DIR" ]]; then
-  echo "Error: --cd <dir> is required" >&2
-  exit 2
-fi
-if [[ ! -d "$WORK_DIR" ]]; then
-  echo "Error: working dir not found: $WORK_DIR" >&2
-  exit 2
-fi
-if [[ -n "$BRIEF_FILE" ]]; then
-  if [[ ! -f "$BRIEF_FILE" || ! -r "$BRIEF_FILE" ]]; then
-    echo "Error: brief file not found or not readable: $BRIEF_FILE" >&2
-    exit 2
-  fi
-  BRIEF="$(<"$BRIEF_FILE")"
-fi
-if [[ -z "$BRIEF" && "$PRINT_CMD" -ne 1 ]]; then
-  echo "Error: brief is required; pass --brief-file <path>" >&2
-  exit 2
-fi
-if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
-  echo "Error: --timeout must be a non-negative integer (got: $TIMEOUT)" >&2
-  exit 2
-fi
+dc_validate_args "$WORK_DIR" "$BRIEF_FILE" "$PRINT_CMD" "$TIMEOUT" || exit 2
+BRIEF="$DC_BRIEF"
 
 if [[ -n "$ISOLATION" ]]; then
   PERMISSION_MODE="$(_resolve_permission_mode "$ISOLATION")" || exit 2
@@ -215,15 +198,8 @@ if [[ "$PRINT_CMD" -ne 1 ]]; then
   # validation live in sw_resolve_trace_dir (scripts/lib/state-paths.sh), sourced
   # via state-writer.sh above and copied into the snapshot lib dir. Resolved only
   # when trace is actually written (--print-cmd writes none, so it needs no lib).
-  if ! declare -F sw_resolve_trace_dir >/dev/null 2>&1; then
-    echo "Error: trace-path helper unavailable (state-paths.sh not loaded)" >&2
-    exit 2
-  fi
-  TRACE_DIR="$(sw_resolve_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR/.agent-trace")" || exit 2
-  mkdir -p "$TRACE_DIR"
-  TRACE="$TRACE_DIR/claude-$TS.jsonl"
-  LAST="$TRACE_DIR/claude-$TS.last"
-  STDERR_LOG="$TRACE_DIR/claude-$TS.stderr"
+  dc_setup_trace_dir "$TRACE_DIR_OVERRIDE" "$WORK_DIR" "claude" "$TS" || exit 2
+  TRACE_DIR="$DC_TRACE_DIR"; TRACE="$DC_TRACE"; LAST="$DC_LAST"; STDERR_LOG="$DC_STDERR_LOG"
 fi
 
 CMD=(claude -p
@@ -253,16 +229,10 @@ fi
 
 # Point latest.* convenience pointers at this run's files. Best-effort: on
 # symlink-less hosts (Windows Git Bash) `ln -s` copy-falls-back, and a missing
-# pointer must never abort dispatch — post-verify reads the per-run footer path
-# (CC-305), not latest.*. Called before launch (Unix observers attach
-# immediately) and again after the run (symlink-less hosts get a usable copy once
-# the targets exist).
-_refresh_latest_pointers() {
-  ln -sfn "claude-$TS.jsonl"   "$TRACE_DIR/latest.jsonl"  2>/dev/null || true
-  ln -sfn "claude-$TS.last"    "$TRACE_DIR/latest.last"   2>/dev/null || true
-  ln -sfn "claude-$TS.stderr"  "$TRACE_DIR/latest.stderr" 2>/dev/null || true
-}
-_refresh_latest_pointers
+# pointer must never abort dispatch — post-verify reads the per-run footer path,
+# not latest.*. Called before launch (Unix observers attach immediately) and again
+# after the run (symlink-less hosts get a usable copy once the targets exist).
+dc_refresh_latest_pointers "claude" "$TRACE_DIR" "$TS"
 
 # Run claude in the work dir; brief is delivered on stdin as the prompt. JSONL
 # event stream stdout → TRACE (.jsonl); claude stderr → STDERR_LOG. Bounded by timeout.
@@ -295,7 +265,7 @@ fi
 
 # Re-point latest.* now that the per-run files exist (usable copies on
 # symlink-less hosts; idempotent symlink refresh on Unix).
-_refresh_latest_pointers
+dc_refresh_latest_pointers "claude" "$TRACE_DIR" "$TS"
 
 # --- auto-log token usage to usage-tracker.jsonl (best-effort) ---
 if [[ "$EXIT" -eq 0 && -s "$TRACE" ]]; then
@@ -315,16 +285,6 @@ fi
   fi
 } | tee -a "$STDERR_LOG" >&2
 
-echo "---"
-echo "trace:  $TRACE"
-echo "last:   $LAST"
-echo "stderr: $STDERR_LOG"
-echo "exit:   $EXIT"
-echo "model:  $MODEL"
-echo "---"
-if [[ -s "$LAST" ]]; then
-  echo "=== final message ==="
-  cat "$LAST"
-fi
+dc_print_footer "$TRACE" "$LAST" "$STDERR_LOG" "$EXIT" "$MODEL"
 
 exit $EXIT
