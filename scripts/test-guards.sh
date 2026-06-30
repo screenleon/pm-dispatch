@@ -226,6 +226,184 @@ $LIST || printf '%s' "{\"agent_type\":\"project-pm\",\"tool_name\":\"Edit\",\"to
 assert_log "pm: audit log contains bypass line with agent_type" "decision=bypass"
 assert_log "pm: bypass line records project-pm (not '?')" "agent=project-pm"
 
+# --- Rule A: /tmp/<slug>/*.md (PM task-slug brief pattern) ---
+run_case "pm: Write /tmp/slug-abc/brief.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug-abc/brief.md"}}'
+
+run_case "pm: Write /tmp/task-xyz/output.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/task-xyz/output.md"}}'
+
+run_case "pm: Edit /tmp/task-abc123/notes.md → allow (Rule A)" 0 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Edit","tool_input":{"file_path":"/tmp/task-abc123/notes.md"}}'
+
+run_case "pm: Write /tmp/My-task/brief.md → deny (uppercase start, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/My-task/brief.md"}}' \
+  "outside memory directory"
+
+run_case "pm: Write /tmp/slug/sub/deep.md → deny (nested subdir, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug/sub/deep.md"}}' \
+  "outside memory directory"
+
+run_case "pm: Write /tmp/slug-abc/file.txt → deny (not .md, Rule A)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/slug-abc/file.txt"}}' \
+  "outside memory directory"
+
+# --- Rule B: docs/spikes PM-authored files ---
+run_case "pm: Write docs/spikes/CC-258-pm-write.md → allow (Rule B, CC-NNN*)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/CC-258-pm-write.md\"}}"
+
+run_case "pm: Write docs/spikes/pm-guard-scope.md → allow (Rule B, *-scope)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/pm-guard-scope.md\"}}"
+
+run_case "pm: Write docs/spikes/pm-guard-rfc.md → allow (Rule B, *-rfc)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/pm-guard-rfc.md\"}}"
+
+run_case "pm: Write docs/spikes/notes.md → deny (no pattern match, Rule B)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/spikes/notes.md\"}}" \
+  "outside memory directory"
+
+run_case "pm: Write docs/DECISIONS.md → deny (not spikes/, Rule B)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/DECISIONS.md\"}}" \
+  "outside memory directory"
+
+run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B in /tmp zone)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
+  "outside memory directory"
+
+# Cross-repo Rule B: PM dispatched to work on another repo — spike files there
+# should be allowed.  Use a sibling directory next to REPO_ROOT so the path is
+# outside /tmp/ and does not rely on the file existing.
+run_case "pm: Write cross-repo docs/spikes/CC-999-cross-repo.md → allow (Rule B, any repo)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/CC-999-cross-repo.md\"}}"
+
+run_case "pm: Write cross-repo docs/spikes/analysis-scope.md → allow (Rule B, *-scope, any repo)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/analysis-scope.md\"}}"
+
+run_case "pm: Write cross-repo docs/spikes/notes.md → deny (no pattern match, cross-repo)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/notes.md\"}}" \
+  "outside memory directory"
+
+# Rule A traversal: the lexical normalizer must collapse /tmp/<slug>/../ before
+# the pattern check so that the traversal cannot escape the two-segment limit.
+run_case "pm: Write /tmp/brief-abc/../secret.md → deny (Rule A traversal)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-abc/../secret.md"}}' \
+  "outside memory directory"
+
+# --- Rule C: symlinked memory dir (lexical path dual-normalization) ---
+# Use a fake HOME under the sandboxed log dir so tests are isolated from the
+# live ~/.claude/projects tree.
+_pm_sym_fake_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home.XXXXXX")"
+_pm_sym_real="$(mktemp -d "$PM_GUARD_LOG_DIR/sym-real.XXXXXX")"
+mkdir -p "$_pm_sym_fake_home/.claude/projects/test-proj"
+ln -sfn "$_pm_sym_real" "$_pm_sym_fake_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
+  run_case_env "pm: Write symlinked memory dir → allow (Rule C)" 0 \
+    "HOME=$_pm_sym_fake_home" "$PMHOOK" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/foo.md\"}}"
+  run_case "pm: Write symlinked memory/../../../etc/passwd → deny (Rule C traversal)" 2 "$PMHOOK" \
+    "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/../../../etc/passwd\"}}" \
+    "outside memory directory"
+
+  # File symlink escape: memory dir is legitimate, but the file itself is a
+  # symlink pointing outside — Rule C must deny this.
+  _pm_file_sym_target="$(mktemp "$PM_GUARD_LOG_DIR/outside-XXXXXX")"
+  _pm_file_sym_link="$_pm_sym_real/escape.md"
+  ln -sfn "$_pm_file_sym_target" "$_pm_file_sym_link" 2>/dev/null || true
+  if [[ -L "$_pm_file_sym_link" ]]; then
+    run_case_env "pm: Write file symlink inside memory pointing outside → deny (Rule C escape)" 2 \
+      "HOME=$_pm_sym_fake_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/escape.md\"}}"
+  else
+    $LIST || printf '  SKIP  pm: file-symlink escape test (symlink creation unsupported)\n'
+  fi
+  rm -f "$_pm_file_sym_target" "$_pm_file_sym_link"
+  unset _pm_file_sym_target _pm_file_sym_link
+
+  # Nested directory symlink escape: a subdirectory inside memory is itself a
+  # symlink pointing outside the memory target — must also deny.
+  _pm_nest_outside="$(mktemp -d "$PM_GUARD_LOG_DIR/nest-outside-XXXXXX")"
+  _pm_nest_linkdir="$_pm_sym_real/linkdir"
+  ln -sfn "$_pm_nest_outside" "$_pm_nest_linkdir" 2>/dev/null || true
+  if [[ -L "$_pm_nest_linkdir" ]]; then
+    run_case_env "pm: Write nested dir symlink inside memory pointing outside → deny (Rule C)" 2 \
+      "HOME=$_pm_sym_fake_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_sym_fake_home/.claude/projects/test-proj/memory/linkdir/escape.md\"}}"
+  else
+    $LIST || printf '  SKIP  pm: nested dir symlink escape test (symlink creation unsupported)\n'
+  fi
+  rm -rf "$_pm_nest_outside" "$_pm_nest_linkdir"
+  unset _pm_nest_outside _pm_nest_linkdir
+
+  # Cross-rule Rule A escape: memory dir symlinks into /tmp/<slug>/ so that
+  # abs_path matches Rule A's /tmp/[a-z][^/]*/[^/]+\.md pattern.  The
+  # dual-check must deny because lex_path is not under /tmp/<slug>/.
+  _pm_cross_ruleA_dir="$(mktemp -d /tmp/brief-escXXXXXX)"
+  _pm_cross_ruleA_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home-ruleA.XXXXXX")"
+  mkdir -p "$_pm_cross_ruleA_home/.claude/projects/test-proj"
+  ln -sfn "$_pm_cross_ruleA_dir" "$_pm_cross_ruleA_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+  if [[ -L "$_pm_cross_ruleA_home/.claude/projects/test-proj/memory" ]]; then
+    run_case_env "pm: memory symlink into /tmp/<slug>/ → deny (cross-rule Rule A escape)" 2 \
+      "HOME=$_pm_cross_ruleA_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleA_home/.claude/projects/test-proj/memory/escape.md\"}}" \
+      "outside memory directory"
+  else
+    $LIST || printf '  SKIP  pm: cross-rule Rule A escape test (symlink creation unsupported)\n'
+  fi
+  rm -rf "$_pm_cross_ruleA_dir" "$_pm_cross_ruleA_home"
+  unset _pm_cross_ruleA_dir _pm_cross_ruleA_home
+
+  # Cross-rule Rule B escape: memory dir symlinks into docs/spikes/ so that
+  # abs_path matches Rule B's docs/spikes/CC-*.md pattern.  The dual-check
+  # must deny because lex_path is not under docs/spikes/.
+  _pm_cross_ruleB_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home-ruleB.XXXXXX")"
+  mkdir -p "$_pm_cross_ruleB_home/.claude/projects/test-proj"
+  ln -sfn "$REPO_ROOT/docs/spikes" "$_pm_cross_ruleB_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+  if [[ -L "$_pm_cross_ruleB_home/.claude/projects/test-proj/memory" ]]; then
+    run_case_env "pm: memory symlink into docs/spikes/ → deny (cross-rule Rule B escape)" 2 \
+      "HOME=$_pm_cross_ruleB_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleB_home/.claude/projects/test-proj/memory/CC-99999-test.md\"}}" \
+      "outside memory directory"
+  else
+    $LIST || printf '  SKIP  pm: cross-rule Rule B escape test (symlink creation unsupported)\n'
+  fi
+  rm -rf "$_pm_cross_ruleB_home"
+  unset _pm_cross_ruleB_home
+else
+  $LIST || printf '  SKIP  pm: symlink tests (symlink creation unsupported)\n'
+fi
+rm -rf "$_pm_sym_fake_home" "$_pm_sym_real"
+unset _pm_sym_fake_home _pm_sym_real
+
+# --- realpath_m_lex bash fallback ---
+# Shadow the system realpath with a stub that always fails so the bash-native
+# normalization branch is exercised on all platforms.
+_lex_fake_bin="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-bin.XXXXXX")"
+printf '#!/bin/bash\nexit 1\n' > "$_lex_fake_bin/realpath"
+chmod +x "$_lex_fake_bin/realpath"
+
+if should_run "pm: realpath_m_lex fallback collapses .."; then
+  _lex_got="$(PATH="$_lex_fake_bin:$PATH" bash -c \
+    ". '$SCRIPT_DIR/lib/portable.sh' && realpath_m_lex '/foo/bar/../baz'" 2>/dev/null)"
+  if [[ "$_lex_got" == "/foo/baz" ]]; then
+    pass "pm: realpath_m_lex fallback collapses .."
+  else
+    fail "pm: realpath_m_lex fallback collapses .." "expected /foo/baz, got '$_lex_got'"
+  fi
+fi
+
+if should_run "pm: realpath_m_lex fallback strips ."; then
+  _lex_got2="$(PATH="$_lex_fake_bin:$PATH" bash -c \
+    ". '$SCRIPT_DIR/lib/portable.sh' && realpath_m_lex '/a/./b/c'" 2>/dev/null)"
+  if [[ "$_lex_got2" == "/a/b/c" ]]; then
+    pass "pm: realpath_m_lex fallback strips ."
+  else
+    fail "pm: realpath_m_lex fallback strips ." "expected /a/b/c, got '$_lex_got2'"
+  fi
+fi
+
+rm -rf "$_lex_fake_bin"
+unset _lex_fake_bin
+
 # =============================================================================
 # codex-write-guard
 # =============================================================================

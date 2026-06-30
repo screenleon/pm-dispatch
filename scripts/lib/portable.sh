@@ -104,6 +104,38 @@ realpath_m() {
   esac
 }
 
+# Resolve a path lexically — normalizes . and .. but does NOT follow symlinks.
+# Safe even when the path does not exist on disk.
+realpath_m_lex() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 1
+
+  # GNU realpath -m -s: allow missing components (-m) + no-symlinks (-s).
+  if realpath -m -s -- "$path" 2>/dev/null; then
+    return 0
+  fi
+
+  # Bash-native fallback: collapse . and .. segments without touching the
+  # filesystem. Caller must pass an absolute path (g_validate_path guarantees
+  # this for all guard callers); no tilde expansion is needed.
+  local IFS='/' seg
+  local -a parts=()
+  read -ra segs <<< "$path"
+  for seg in "${segs[@]}"; do
+    case "$seg" in
+      ''|.) ;;
+      ..)   [[ ${#parts[@]} -gt 0 ]] && unset 'parts[-1]' ;;
+      *)    parts+=("$seg") ;;
+    esac
+  done
+  local out="/" i
+  for ((i=0; i<${#parts[@]}; i++)); do
+    [[ $i -gt 0 ]] && out+="/"
+    out+="${parts[$i]}"
+  done
+  printf '%s\n' "$out"
+}
+
 # Return a writable temp directory.
 safe_tmpdir() {
   local platform

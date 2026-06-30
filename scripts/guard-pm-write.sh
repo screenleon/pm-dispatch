@@ -26,6 +26,7 @@ GUARD_NAME="guard-pm-write"
 LOG_DIR="${PM_GUARD_LOG_DIR:-$HOME/.claude/logs}"
 LOG_FILE="$LOG_DIR/hooks.log"
 G_BYPASS_ENV="PM_GUARD_PM_WRITE"
+REPO_ROOT="$(cd "$_SCRIPT_DIR/.." 2>/dev/null && pwd)"
 # shellcheck source=scripts/lib/guard-framework.sh
 . "$_SCRIPT_DIR/lib/guard-framework.sh"
 unset _SCRIPT_DIR
@@ -41,6 +42,8 @@ project-pm: blocked by $GUARD_NAME — $reason
 
   attempted: $G_TOOL_NAME on ${file_path:-(empty)}
   allowed:   ${ALLOWED_BASE}/<project>/memory/**
+             /tmp/<slug>/<file>.md  (task-slug briefs)
+             <any-repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
 
 If a code change is needed, hand a brief back to the main thread for executor
 dispatch via pmctl dispatch run (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
@@ -76,10 +79,58 @@ g_check_bypass PM_GUARD_PM_WRITE
 g_validate_path "$file_path"
 abs_path="$G_ABS_PATH"
 
-# Pattern: $ALLOWED_BASE/<project>/memory/<file>
-# [!/]* = one path segment with no slashes, so memory-evil/ does NOT match.
-case "$abs_path" in
-  "$ALLOWED_BASE"/[!/]*/memory/*) g_allow "inside memory dir" "$file_path" ;;
-esac
+# For all allow rules: check the lexical path (PM intent) to prevent cross-rule
+# symlink escapes where abs_path matches a different rule than the intended one.
+# Each rule additionally verifies abs_path is safe within the same rule's scope.
+lex_path="$(realpath_m_lex "$file_path")" || lex_path="$abs_path"
+
+# Memory rule: PM intends to write inside this project's memory dir.
+if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
+  if [[ "$abs_path" == "$lex_path" ]]; then
+    # No symlinks followed — direct memory write.
+    g_allow "inside memory dir" "$file_path"
+  else
+    # Symlink(s) were followed. Allow only when abs_path stays inside the
+    # resolved memory directory target, covering the symlinked-memory-dir use
+    # case (Rule C) while denying file-symlink and nested-dir-symlink escapes.
+    if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/([^/]+)/memory/.+ ]]; then
+      real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
+        || real_mem_dir=""
+      if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
+        # Deny when abs_path falls into a Rule A or Rule B zone — that would be
+        # a cross-rule escape via a memory/ dir symlink pointing to /tmp/<slug>/
+        # or docs/spikes/, both of which are distinct allow zones with their own
+        # lex_path requirements.  Only allow when abs_path stays outside those
+        # zones (i.e. memory is legitimately symlinked to an external storage).
+        if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]] || \
+           [[ "$abs_path" != /tmp/* && "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+          : # fall through to g_deny
+        else
+          g_allow "inside memory dir (lex)" "$file_path"
+        fi
+      fi
+    fi
+  fi
+fi
+
+# Rule A: /tmp/<slug>/<file>.md — exactly two segments below /tmp, .md suffix.
+# Both lex_path and abs_path must match so symlinks cannot route abs_path here
+# from an unrelated file_path (cross-rule symlink escape).
+if [[ "$lex_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
+  if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
+    g_allow "tmp task-slug brief" "$file_path"
+  fi
+fi
+
+# Rule B: any repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
+# Paths in /tmp/ are excluded (those belong to Rule A's zone).  Both lex_path
+# and abs_path must satisfy the same predicate (cross-rule escape prevention).
+if [[ "$lex_path" != /tmp/* ]] && \
+   [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+  if [[ "$abs_path" != /tmp/* ]] && \
+     [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+    g_allow "docs/spikes PM-authored file" "$file_path"
+  fi
+fi
 
 g_deny "outside memory directory (resolved to $abs_path)" "$file_path"
