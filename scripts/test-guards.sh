@@ -314,6 +314,41 @@ if [[ -L "$_pm_sym_fake_home/.claude/projects/test-proj/memory" ]]; then
   fi
   rm -rf "$_pm_nest_outside" "$_pm_nest_linkdir"
   unset _pm_nest_outside _pm_nest_linkdir
+
+  # Cross-rule Rule A escape: memory dir symlinks into /tmp/<slug>/ so that
+  # abs_path matches Rule A's /tmp/[a-z][^/]*/[^/]+\.md pattern.  The
+  # dual-check must deny because lex_path is not under /tmp/<slug>/.
+  _pm_cross_ruleA_dir="$(mktemp -d /tmp/brief-escXXXXXX)"
+  _pm_cross_ruleA_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home-ruleA.XXXXXX")"
+  mkdir -p "$_pm_cross_ruleA_home/.claude/projects/test-proj"
+  ln -sfn "$_pm_cross_ruleA_dir" "$_pm_cross_ruleA_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+  if [[ -L "$_pm_cross_ruleA_home/.claude/projects/test-proj/memory" ]]; then
+    run_case_env "pm: memory symlink into /tmp/<slug>/ → deny (cross-rule Rule A escape)" 2 \
+      "HOME=$_pm_cross_ruleA_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleA_home/.claude/projects/test-proj/memory/escape.md\"}}" \
+      "outside memory directory"
+  else
+    $LIST || printf '  SKIP  pm: cross-rule Rule A escape test (symlink creation unsupported)\n'
+  fi
+  rm -rf "$_pm_cross_ruleA_dir" "$_pm_cross_ruleA_home"
+  unset _pm_cross_ruleA_dir _pm_cross_ruleA_home
+
+  # Cross-rule Rule B escape: memory dir symlinks into docs/spikes/ so that
+  # abs_path matches Rule B's docs/spikes/CC-*.md pattern.  The dual-check
+  # must deny because lex_path is not under docs/spikes/.
+  _pm_cross_ruleB_home="$(mktemp -d "$PM_GUARD_LOG_DIR/fake-home-ruleB.XXXXXX")"
+  mkdir -p "$_pm_cross_ruleB_home/.claude/projects/test-proj"
+  ln -sfn "$REPO_ROOT/docs/spikes" "$_pm_cross_ruleB_home/.claude/projects/test-proj/memory" 2>/dev/null || true
+  if [[ -L "$_pm_cross_ruleB_home/.claude/projects/test-proj/memory" ]]; then
+    run_case_env "pm: memory symlink into docs/spikes/ → deny (cross-rule Rule B escape)" 2 \
+      "HOME=$_pm_cross_ruleB_home" "$PMHOOK" \
+      "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$_pm_cross_ruleB_home/.claude/projects/test-proj/memory/CC-99999-test.md\"}}" \
+      "outside memory directory"
+  else
+    $LIST || printf '  SKIP  pm: cross-rule Rule B escape test (symlink creation unsupported)\n'
+  fi
+  rm -rf "$_pm_cross_ruleB_home"
+  unset _pm_cross_ruleB_home
 else
   $LIST || printf '  SKIP  pm: symlink tests (symlink creation unsupported)\n'
 fi

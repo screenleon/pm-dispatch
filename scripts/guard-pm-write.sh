@@ -42,6 +42,8 @@ project-pm: blocked by $GUARD_NAME — $reason
 
   attempted: $G_TOOL_NAME on ${file_path:-(empty)}
   allowed:   ${ALLOWED_BASE}/<project>/memory/**
+             /tmp/<slug>/<file>.md  (task-slug briefs)
+             ${REPO_ROOT}/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
 
 If a code change is needed, hand a brief back to the main thread for executor
 dispatch via pmctl dispatch run (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
@@ -95,7 +97,17 @@ if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
       real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
         || real_mem_dir=""
       if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
-        g_allow "inside memory dir (lex)" "$file_path"
+        # Deny when abs_path falls into a Rule A or Rule B zone — that would be
+        # a cross-rule escape via a memory/ dir symlink pointing to /tmp/<slug>/
+        # or docs/spikes/, both of which are distinct allow zones with their own
+        # lex_path requirements.  Only allow when abs_path stays outside those
+        # zones (i.e. memory is legitimately symlinked to an external storage).
+        if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]] || \
+           [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+          : # fall through to g_deny
+        else
+          g_allow "inside memory dir (lex)" "$file_path"
+        fi
       fi
     fi
   fi
