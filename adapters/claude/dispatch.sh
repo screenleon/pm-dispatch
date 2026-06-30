@@ -65,6 +65,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     cp -- "$__claude_dispatch_source_repo/scripts/lib/portable.sh" "$__claude_dispatch_snapshot_dir/lib/portable.sh" || true
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__claude_dispatch_snapshot_dir/lib/model-aliases.sh" || true
+  [[ -r "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
+    cp -- "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__claude_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
 fi
@@ -88,6 +90,8 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/timeout-resolve.sh"
 
 # Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
 # Snapshot copies the tsv alongside this script; fall back to repo-source paths.
@@ -135,17 +139,8 @@ _resolve_permission_mode() {
   printf '%s\n' "$_mode"
 }
 
-# Timeout precedence: --timeout flag (parsed below, wins) > $CLAUDE_DISPATCH_TIMEOUT
-# env > PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
-# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run`; direct
-# adapter invocations fall back to 1200 when the var is absent.
-if [[ -n "${CLAUDE_DISPATCH_TIMEOUT:-}" ]]; then
-  TIMEOUT="$CLAUDE_DISPATCH_TIMEOUT"
-elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then
-  TIMEOUT="$PM_CFG_TIMEOUT"
-else
-  TIMEOUT="1200"
-fi
+tr_resolve_timeout "" "CLAUDE_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
+TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

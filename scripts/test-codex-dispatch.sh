@@ -631,6 +631,7 @@ case_alias_source_missing_exits_2() {
   _tmproot="$(mktemp -d)"
   mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_tmproot/scripts/lib/"
   _dispatch="$_tmproot/adapters/codex/dispatch.sh"
   sed \
     -e 's|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE="/tmp/__nonexistent_alias_$$"|g' \
@@ -662,6 +663,7 @@ case_alias_source_malformed_exits_nonzero() {
   _tmproot="$(mktemp -d)"
   mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_tmproot/scripts/lib/"
   _dispatch="$_tmproot/adapters/codex/dispatch.sh"
   sed \
     -e "s|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE=\"$_alias_file\"|g" \
@@ -691,6 +693,7 @@ case_alias_source_installed_helper_fallback() {
   mkdir -p "$_script_dir" "$_share_dir" "$_script_dir/lib"
   cp "$DISPATCH" "$_script_dir/codex-dispatch.sh"
   cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_script_dir/lib/"
+  cp "$REPO_ROOT/scripts/lib/timeout-resolve.sh" "$_script_dir/lib/"
   chmod +x "$_script_dir/codex-dispatch.sh"
   printf 'codex-spark\tgpt-5.3-codex-spark\thigh\n' > "$_share_dir/model-aliases.tsv"
   _work="$(mktemp -d)"; git init -q "$_work"
