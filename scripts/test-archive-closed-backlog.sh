@@ -822,9 +822,9 @@ EOF
 }
 
 case_orphan_terminal_row_warns() {
-  # A terminal index row with NO matching body section: the row is dropped and
-  # a warning is emitted to stderr so the operator can reconcile (no silent
-  # data loss). The active ticket is preserved.
+  # A terminal index row with NO matching body in BACKLOG.md AND none in
+  # BACKLOG-ARCHIVE.md: the row is KEPT (not dropped) and a warning is emitted
+  # to stderr for manual reconciliation. The active ticket is preserved.
   local name="archive-orphan-terminal-row-warns"
   should_run "$name" || return 0
 
@@ -846,25 +846,97 @@ case_orphan_terminal_row_warns() {
 
 EOF
 
-  local stderr_out="" rc=0
+  local stderr_out="" stdout_out="" rc=0
   set +e
-  stderr_out="$(run_archiver "$repo" 2>&1 >/dev/null)"
+  stdout_out="$(run_archiver "$repo" 2>/tmp/orphan-stderr-$$)"
   rc=$?
+  stderr_out="$(cat /tmp/orphan-stderr-$$)"
+  rm -f /tmp/orphan-stderr-$$
   set -e
   if [[ "$rc" -ne 0 ]]; then
-    fail "$name" "script exited $rc: $stderr_out"
+    fail "$name" "script exited $rc: $stderr_out $stdout_out"
     return
   fi
-  if [[ "$stderr_out" != *"CC-090"*"terminal index row dropped"* ]]; then
-    fail "$name" "expected orphan-row warning for CC-090, got: $stderr_out"
+  if [[ "$stderr_out" != *"CC-090"*"row kept for manual reconciliation"* ]]; then
+    fail "$name" "expected orphan-row kept-warning for CC-090, got: $stderr_out"
     return
   fi
-  if grep -Eq '^\| CC-090 \|' "$repo/BACKLOG.md"; then
-    fail "$name" "orphan terminal row CC-090 not dropped"
+  if ! grep -Eq '^\| CC-090 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "orphan terminal row CC-090 was dropped (should be kept)"
     return
   fi
   if ! grep -Eq '^\| CC-091 \|' "$repo/BACKLOG.md"; then
     fail "$name" "active row CC-091 was removed"
+    return
+  fi
+
+  pass "$name"
+}
+
+case_safe_drop_body_in_archive() {
+  # A terminal index row with NO body in BACKLOG.md but whose body IS already
+  # in BACKLOG-ARCHIVE.md: the row IS dropped (body safely archived, no loss).
+  # This covers the "legacy index row after archive-only partial write" path.
+  local name="archive-safe-drop-body-in-archive"
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/safe-drop"
+  setup_repo "$repo"
+  cat > "$repo/BACKLOG-ARCHIVE.md" <<'EOF'
+<!-- pm-dispatch: backlog-archive 2026-01-01 -->
+# archive
+
+Last archived: 2026-01-01
+
+---
+
+## CC-095 — already archived body ✅ 2026-01-01
+
+**Problem**: body was archived in a previous run
+
+**Why**: partial-write recovery scenario
+
+EOF
+  cat > "$repo/BACKLOG.md" <<'EOF'
+<!-- pm-schema: v1.2 -->
+# Backlog
+
+| ID | Status | Desc | area | Created | Refs | Pri | Epic |
+|---|---|---|---|---|---|---|---|
+| CC-095 | ✅ closed 2026-01-01 | already archived body | ops | 2026-01-01 | pr:#4 | — | — |
+| CC-096 | 🔵 active | live | ops | 2026-01-02 | — | — | — |
+
+## CC-096 — live 🔵 active
+
+**Problem**: active body
+
+EOF
+
+  local stderr_out="" stdout_out="" rc=0
+  set +e
+  stdout_out="$(run_archiver "$repo" 2>/tmp/safe-drop-stderr-$$)"
+  rc=$?
+  stderr_out="$(cat /tmp/safe-drop-stderr-$$)"
+  rm -f /tmp/safe-drop-stderr-$$
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "script exited $rc: $stderr_out $stdout_out"
+    return
+  fi
+  if [[ -n "$stderr_out" ]]; then
+    fail "$name" "unexpected stderr when body is safely archived: $stderr_out"
+    return
+  fi
+  if grep -Eq '^\| CC-095 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "terminal row CC-095 should be dropped (body is in archive)"
+    return
+  fi
+  if ! grep -Eq '^\| CC-096 \|' "$repo/BACKLOG.md"; then
+    fail "$name" "active row CC-096 was removed"
+    return
+  fi
+  if [[ "$(grep -c '## CC-095' "$repo/BACKLOG-ARCHIVE.md")" != "1" ]]; then
+    fail "$name" "archive body was duplicated or removed"
     return
   fi
 
@@ -885,5 +957,6 @@ case_malformed_status_not_archived
 case_legacy_stub_sweep
 case_recovery_partial_write
 case_orphan_terminal_row_warns
+case_safe_drop_body_in_archive
 
 th_summary
