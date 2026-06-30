@@ -59,19 +59,9 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /opencode-dispatch\.[A-Za-z0-9]{6}/opencode-dispa
     mkdir -p -- "$__oc_dispatch_snapshot_dir/adapters/opencode"
     cp -- "$__oc_dispatch_adapter_source" "$__oc_dispatch_snapshot_dir/adapters/opencode/adapter.yaml"
   fi
-  mkdir -p -- "$__oc_dispatch_snapshot_dir/lib"
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/state-writer.sh" "$__oc_dispatch_snapshot_dir/lib/state-writer.sh" || true
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/state-paths.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/state-paths.sh" "$__oc_dispatch_snapshot_dir/lib/state-paths.sh" || true
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/portable.sh" "$__oc_dispatch_snapshot_dir/lib/portable.sh" || true
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__oc_dispatch_snapshot_dir/lib/model-aliases.sh" || true
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__oc_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
-  [[ -r "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh" ]] && \
-    cp -- "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh" "$__oc_dispatch_snapshot_dir/lib/dispatch-common.sh" || true
+  # shellcheck disable=SC1091
+  . "$__oc_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  dc_snapshot_copy_libs "$__oc_dispatch_snapshot_dir" "$__oc_dispatch_source_repo"
   chmod +x -- "$__oc_dispatch_snapshot"
   exec "$__oc_dispatch_snapshot" "$@"
 fi

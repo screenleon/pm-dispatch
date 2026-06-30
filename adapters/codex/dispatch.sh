@@ -79,19 +79,9 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     mkdir -p -- "$__codex_dispatch_snapshot_dir/adapters/codex"
     cp -- "$__codex_dispatch_isolation_source" "$__codex_dispatch_snapshot_dir/adapters/codex/isolation-map.yaml"
   fi
-  mkdir -p -- "$__codex_dispatch_snapshot_dir/lib"
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/state-writer.sh" "$__codex_dispatch_snapshot_dir/lib/state-writer.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/state-paths.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/state-paths.sh" "$__codex_dispatch_snapshot_dir/lib/state-paths.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__codex_dispatch_snapshot_dir/lib/model-aliases.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__codex_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
-  [[ -r "$__codex_dispatch_source_repo/scripts/lib/dispatch-common.sh" ]] && \
-    cp -- "$__codex_dispatch_source_repo/scripts/lib/dispatch-common.sh" "$__codex_dispatch_snapshot_dir/lib/dispatch-common.sh" || true
+  # shellcheck disable=SC1091
+  . "$__codex_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  dc_snapshot_copy_libs "$__codex_dispatch_snapshot_dir" "$__codex_dispatch_source_repo"
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi

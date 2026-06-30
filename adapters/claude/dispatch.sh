@@ -56,19 +56,9 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     cp -- "$__claude_dispatch_isolation_source" "$__claude_dispatch_snapshot_dir/adapters/claude/isolation-map.yaml"
   fi
   [[ -r "$__claude_dispatch_alias_source" ]] && cp -- "$__claude_dispatch_alias_source" "$__claude_dispatch_snapshot_dir/claude-model-aliases.tsv" || true
-  mkdir -p -- "$__claude_dispatch_snapshot_dir/lib"
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/state-writer.sh" "$__claude_dispatch_snapshot_dir/lib/state-writer.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/state-paths.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/state-paths.sh" "$__claude_dispatch_snapshot_dir/lib/state-paths.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/portable.sh" "$__claude_dispatch_snapshot_dir/lib/portable.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__claude_dispatch_snapshot_dir/lib/model-aliases.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__claude_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
-  [[ -r "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh" ]] && \
-    cp -- "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh" "$__claude_dispatch_snapshot_dir/lib/dispatch-common.sh" || true
+  # shellcheck disable=SC1091
+  . "$__claude_dispatch_source_repo/scripts/lib/dispatch-common.sh"
+  dc_snapshot_copy_libs "$__claude_dispatch_snapshot_dir" "$__claude_dispatch_source_repo"
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
 fi

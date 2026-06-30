@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests for scripts/lib/dispatch-common.sh — shared adapter dispatch helpers.
+# Covers: dc_validate_args, dc_setup_trace_dir, dc_refresh_latest_pointers,
+#         dc_print_footer, dc_snapshot_copy_libs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +16,9 @@ th_init "$@"
 
 case_validate_missing_workdir() {
   local name="dc_validate_args/missing --cd"; should_run "$name" || return 0
+  # Arrange: empty work_dir, no brief, print_cmd=0, valid timeout
+  # Act: call dc_validate_args
+  # Assert: returns non-zero (error message emitted to stderr)
   if ! dc_validate_args "" "" "0" "60" 2>/dev/null; then
     pass "$name"
   else
@@ -23,6 +28,9 @@ case_validate_missing_workdir() {
 
 case_validate_workdir_not_a_dir() {
   local name="dc_validate_args/work_dir not a directory"; should_run "$name" || return 0
+  # Arrange: work_dir path that does not exist on disk
+  # Act: call dc_validate_args
+  # Assert: returns non-zero
   if ! dc_validate_args "/nonexistent/path/xyz" "" "0" "60" 2>/dev/null; then
     pass "$name"
   else
@@ -32,8 +40,11 @@ case_validate_workdir_not_a_dir() {
 
 case_validate_brief_file_missing() {
   local name="dc_validate_args/brief_file not found"; should_run "$name" || return 0
+  # Arrange: valid work_dir, brief_file path that does not exist
   local work_dir="$tmp_root/wdir_missing_brief"
   mkdir -p "$work_dir"
+  # Act: call dc_validate_args with non-existent brief_file
+  # Assert: returns non-zero
   if ! dc_validate_args "$work_dir" "/nonexistent/brief.md" "0" "60" 2>/dev/null; then
     pass "$name"
   else
@@ -43,11 +54,14 @@ case_validate_brief_file_missing() {
 
 case_validate_brief_file_sets_dc_brief() {
   local name="dc_validate_args/brief_file is read into DC_BRIEF"; should_run "$name" || return 0
+  # Arrange: valid work_dir and a readable brief file containing known content
   local work_dir="$tmp_root/wdir_brief_set"
   local bf="$tmp_root/brief_ok.md"
   mkdir -p "$work_dir"
   printf 'goal: test\n' > "$bf"
+  # Act: call dc_validate_args with a real brief_file
   dc_validate_args "$work_dir" "$bf" "0" "60"
+  # Assert: DC_BRIEF matches the file contents
   if [[ "$DC_BRIEF" == "goal: test" ]]; then
     pass "$name"
   else
@@ -57,8 +71,11 @@ case_validate_brief_file_sets_dc_brief() {
 
 case_validate_empty_brief_print_cmd_ok() {
   local name="dc_validate_args/empty brief with print_cmd=1 is ok"; should_run "$name" || return 0
+  # Arrange: valid work_dir, no brief_file, print_cmd=1 (brief not required)
   local work_dir="$tmp_root/wdir_print_cmd"
   mkdir -p "$work_dir"
+  # Act: call dc_validate_args with print_cmd=1 and no brief
+  # Assert: returns 0 (print-cmd mode does not require a brief)
   if dc_validate_args "$work_dir" "" "1" "60" 2>/dev/null; then
     pass "$name"
   else
@@ -68,8 +85,11 @@ case_validate_empty_brief_print_cmd_ok() {
 
 case_validate_empty_brief_no_print_cmd_fails() {
   local name="dc_validate_args/empty brief without print_cmd fails"; should_run "$name" || return 0
+  # Arrange: valid work_dir, no brief_file, print_cmd=0
   local work_dir="$tmp_root/wdir_no_brief"
   mkdir -p "$work_dir"
+  # Act: call dc_validate_args with no brief and no print_cmd bypass
+  # Assert: returns non-zero
   if ! dc_validate_args "$work_dir" "" "0" "60" 2>/dev/null; then
     pass "$name"
   else
@@ -79,10 +99,13 @@ case_validate_empty_brief_no_print_cmd_fails() {
 
 case_validate_invalid_timeout() {
   local name="dc_validate_args/non-integer timeout fails"; should_run "$name" || return 0
+  # Arrange: valid work_dir and brief_file, timeout is a non-integer string
   local work_dir="$tmp_root/wdir_timeout"
   local bf="$tmp_root/brief_timeout.md"
   mkdir -p "$work_dir"
   printf 'goal: x\n' > "$bf"
+  # Act: call dc_validate_args with timeout="abc"
+  # Assert: returns non-zero
   if ! dc_validate_args "$work_dir" "$bf" "0" "abc" 2>/dev/null; then
     pass "$name"
   else
@@ -92,10 +115,13 @@ case_validate_invalid_timeout() {
 
 case_validate_zero_timeout_ok() {
   local name="dc_validate_args/timeout=0 is valid"; should_run "$name" || return 0
+  # Arrange: valid work_dir and brief_file, timeout=0 (no-limit sentinel)
   local work_dir="$tmp_root/wdir_zero_to"
   local bf="$tmp_root/brief_zero_to.md"
   mkdir -p "$work_dir"
   printf 'goal: x\n' > "$bf"
+  # Act: call dc_validate_args with timeout=0
+  # Assert: returns 0 (zero is a valid non-negative integer meaning no limit)
   if dc_validate_args "$work_dir" "$bf" "0" "0" 2>/dev/null; then
     pass "$name"
   else
@@ -105,8 +131,8 @@ case_validate_zero_timeout_ok() {
 
 # ── dc_setup_trace_dir ────────────────────────────────────────────────────────
 
-# Stub sw_resolve_trace_dir for isolation — real function lives in state-paths.sh
-# which is sourced via state-writer.sh in adapters. Tests here don't need state-paths.sh.
+# Stub sw_resolve_trace_dir for isolation — the real function lives in state-paths.sh
+# sourced via state-writer.sh in adapters. Tests here do not load state-paths.sh.
 _stub_sw_resolve() {
   sw_resolve_trace_dir() { printf '%s\n' "${2:-/tmp/fallback-trace}"; }
 }
@@ -116,10 +142,13 @@ _unstub_sw_resolve() {
 
 case_setup_trace_dir_missing_helper() {
   local name="dc_setup_trace_dir/fails when sw_resolve_trace_dir absent"; should_run "$name" || return 0
+  # Arrange: sw_resolve_trace_dir is not defined
   _unstub_sw_resolve
   unset -f sw_resolve_trace_dir 2>/dev/null || true
   local work_dir="$tmp_root/wdir_no_helper"
   mkdir -p "$work_dir"
+  # Act: call dc_setup_trace_dir without the helper present
+  # Assert: returns non-zero (helper unavailable guard triggers)
   if ! dc_setup_trace_dir "" "$work_dir" "test" "20260630" 2>/dev/null; then
     pass "$name"
   else
@@ -129,16 +158,19 @@ case_setup_trace_dir_missing_helper() {
 
 case_setup_trace_dir_sets_vars() {
   local name="dc_setup_trace_dir/sets DC_TRACE_DIR DC_TRACE DC_LAST DC_STDERR_LOG"; should_run "$name" || return 0
+  # Arrange: stub sw_resolve_trace_dir to return work_dir/.agent-trace
   _stub_sw_resolve
   local work_dir="$tmp_root/wdir_trace_vars"
   mkdir -p "$work_dir"
   local ts="20260630-120000-99999"
   local expected_tdir="$work_dir/.agent-trace"
+  # Act: call dc_setup_trace_dir with prefix "myprefix"
   dc_setup_trace_dir "" "$work_dir" "myprefix" "$ts"
+  # Assert: all four DC_* variables carry the expected paths
   local ok=1
-  [[ "$DC_TRACE_DIR" == "$expected_tdir" ]]                             || ok=0
-  [[ "$DC_TRACE"     == "$expected_tdir/myprefix-$ts.jsonl" ]]          || ok=0
-  [[ "$DC_LAST"      == "$expected_tdir/myprefix-$ts.last" ]]           || ok=0
+  [[ "$DC_TRACE_DIR"  == "$expected_tdir" ]]                            || ok=0
+  [[ "$DC_TRACE"      == "$expected_tdir/myprefix-$ts.jsonl" ]]         || ok=0
+  [[ "$DC_LAST"       == "$expected_tdir/myprefix-$ts.last" ]]          || ok=0
   [[ "$DC_STDERR_LOG" == "$expected_tdir/myprefix-$ts.stderr" ]]        || ok=0
   _unstub_sw_resolve
   if [[ "$ok" -eq 1 ]]; then
@@ -150,13 +182,16 @@ case_setup_trace_dir_sets_vars() {
 
 case_setup_trace_dir_creates_dir() {
   local name="dc_setup_trace_dir/creates trace dir on disk"; should_run "$name" || return 0
+  # Arrange: stub returns a non-existent directory path; work_dir exists
   local trace_dir="$tmp_root/trace_dir_create"
   sw_resolve_trace_dir() { printf '%s\n' "$trace_dir"; }
   local work_dir="$tmp_root/wdir_create"
   mkdir -p "$work_dir"
   rm -rf "$trace_dir"
+  # Act: call dc_setup_trace_dir
   dc_setup_trace_dir "" "$work_dir" "pfx" "ts123"
   unset -f sw_resolve_trace_dir
+  # Assert: the trace directory now exists on disk
   if [[ -d "$trace_dir" ]]; then
     pass "$name"
   else
@@ -168,13 +203,14 @@ case_setup_trace_dir_creates_dir() {
 
 case_refresh_pointers_creates_symlinks() {
   local name="dc_refresh_latest_pointers/creates latest.* symlinks"; should_run "$name" || return 0
+  # Arrange: trace dir with dummy per-run target files
   local tdir="$tmp_root/refresh_syms"
   mkdir -p "$tdir"
-  local ts="20260630-010101-1"
-  local prefix="testadapter"
-  # Create dummy targets so symlinks are valid
+  local ts="20260630-010101-1" prefix="testadapter"
   touch "$tdir/$prefix-$ts.jsonl" "$tdir/$prefix-$ts.last" "$tdir/$prefix-$ts.stderr"
+  # Act: call dc_refresh_latest_pointers
   dc_refresh_latest_pointers "$prefix" "$tdir" "$ts"
+  # Assert: latest.{jsonl,last,stderr} symlinks exist and point to the correct targets
   local ok=1
   [[ -L "$tdir/latest.jsonl"  ]] || ok=0
   [[ -L "$tdir/latest.last"   ]] || ok=0
@@ -191,6 +227,9 @@ case_refresh_pointers_creates_symlinks() {
 
 case_refresh_pointers_best_effort() {
   local name="dc_refresh_latest_pointers/no error when dir absent"; should_run "$name" || return 0
+  # Arrange: trace dir does not exist
+  # Act: call dc_refresh_latest_pointers with a nonexistent dir
+  # Assert: returns 0 (best-effort, ln failure is suppressed)
   if dc_refresh_latest_pointers "pfx" "/nonexistent/dir/xyz" "ts" 2>/dev/null; then
     pass "$name"
   else
@@ -202,16 +241,19 @@ case_refresh_pointers_best_effort() {
 
 case_print_footer_structure() {
   local name="dc_print_footer/prints standard footer fields"; should_run "$name" || return 0
+  # Arrange: an empty .last file so the final-message block is not triggered
   local last="$tmp_root/empty.last"
-  printf '' > "$last"   # empty file
+  printf '' > "$last"
+  # Act: call dc_print_footer with known argument values
   local out
   out="$(dc_print_footer "/t/trace.jsonl" "$last" "/t/trace.stderr" "0" "test-model")"
+  # Assert: output contains all five expected footer lines
   local ok=1
-  grep -q '^trace:.*trace\.jsonl'  <<<"$out" || ok=0
-  grep -q '^last:.*empty\.last'    <<<"$out" || ok=0
+  grep -q '^trace:.*trace\.jsonl'   <<<"$out" || ok=0
+  grep -q '^last:.*empty\.last'     <<<"$out" || ok=0
   grep -q '^stderr:.*trace\.stderr' <<<"$out" || ok=0
-  grep -q '^exit:.*0'              <<<"$out" || ok=0
-  grep -q '^model:.*test-model'    <<<"$out" || ok=0
+  grep -q '^exit:.*0'               <<<"$out" || ok=0
+  grep -q '^model:.*test-model'     <<<"$out" || ok=0
   if [[ "$ok" -eq 1 ]]; then
     pass "$name"
   else
@@ -221,10 +263,13 @@ case_print_footer_structure() {
 
 case_print_footer_cats_last() {
   local name="dc_print_footer/cats last file when non-empty"; should_run "$name" || return 0
+  # Arrange: a .last file containing known content
   local last="$tmp_root/nonempty.last"
   printf 'work done\n' > "$last"
+  # Act: call dc_print_footer
   local out
   out="$(dc_print_footer "/t/trace.jsonl" "$last" "/t/stderr" "0" "m")"
+  # Assert: footer output includes the file content under the final-message header
   if grep -q 'work done' <<<"$out"; then
     pass "$name"
   else
@@ -234,10 +279,13 @@ case_print_footer_cats_last() {
 
 case_print_footer_skips_empty_last() {
   local name="dc_print_footer/does not cat empty last file"; should_run "$name" || return 0
+  # Arrange: an empty .last file (zero bytes)
   local last="$tmp_root/empty2.last"
   printf '' > "$last"
+  # Act: call dc_print_footer
   local out
   out="$(dc_print_footer "/t/trace.jsonl" "$last" "/t/stderr" "1" "m")"
+  # Assert: the "=== final message ===" header is absent when .last is empty
   if ! grep -q 'final message' <<<"$out"; then
     pass "$name"
   else
@@ -249,9 +297,12 @@ case_print_footer_skips_empty_last() {
 
 case_snapshot_copy_libs_copies_dispatch_common() {
   local name="dc_snapshot_copy_libs/copies dispatch-common.sh"; should_run "$name" || return 0
+  # Arrange: an empty snapshot dir and the real repo root
   local snap="$tmp_root/snap_copy"
   mkdir -p "$snap"
+  # Act: call dc_snapshot_copy_libs
   dc_snapshot_copy_libs "$snap" "$REPO_ROOT"
+  # Assert: dispatch-common.sh is present in the snapshot lib dir
   if [[ -f "$snap/lib/dispatch-common.sh" ]]; then
     pass "$name"
   else
@@ -261,9 +312,12 @@ case_snapshot_copy_libs_copies_dispatch_common() {
 
 case_snapshot_copy_libs_copies_all_core_libs() {
   local name="dc_snapshot_copy_libs/copies all core shared libs"; should_run "$name" || return 0
+  # Arrange: an empty snapshot dir and the real repo root
   local snap="$tmp_root/snap_all_libs"
   mkdir -p "$snap"
+  # Act: call dc_snapshot_copy_libs
   dc_snapshot_copy_libs "$snap" "$REPO_ROOT"
+  # Assert: all six expected libs are present
   local missing=()
   for lib in state-writer.sh state-paths.sh portable.sh model-aliases.sh \
              timeout-resolve.sh dispatch-common.sh; do
@@ -278,10 +332,13 @@ case_snapshot_copy_libs_copies_all_core_libs() {
 
 case_snapshot_copy_libs_creates_lib_dir() {
   local name="dc_snapshot_copy_libs/creates lib/ subdir"; should_run "$name" || return 0
+  # Arrange: snapshot dir without a lib/ subdirectory
   local snap="$tmp_root/snap_mkdir"
   mkdir -p "$snap"
-  rm -rf "$snap/lib"
+  rm -rf "${snap:?}/lib"
+  # Act: call dc_snapshot_copy_libs
   dc_snapshot_copy_libs "$snap" "$REPO_ROOT"
+  # Assert: lib/ directory was created
   if [[ -d "$snap/lib" ]]; then
     pass "$name"
   else
