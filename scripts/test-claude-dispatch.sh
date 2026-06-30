@@ -407,11 +407,14 @@ case_model_alias_malformed_tsv_warns() {
   printf 'bad\tonly-two-columns\n' > "$bad_tsv"
   # Test _resolve_claude_model_alias in isolation: extract the function from the
   # adapter via awk and run it in a subshell with PM_CLAUDE_ALIAS_FILE set to the
-  # malformed TSV. Verifies the malformed-entry warning branch in dispatch.sh.
+  # malformed TSV. Also source model-aliases.sh (the shared lib) so ma_resolve_alias
+  # is available. Verifies the malformed-entry warning branch in dispatch.sh.
   set +e
-  out="$(bash -s -- "$bad_tsv" "$DISPATCH" 2>&1 <<'RESOLVER_TEST'
+  out="$(bash -s -- "$bad_tsv" "$DISPATCH" "$REPO_ROOT/scripts/lib/model-aliases.sh" 2>&1 <<'RESOLVER_TEST'
 set -euo pipefail
-bad_tsv="$1"; dispatch_sh="$2"
+bad_tsv="$1"; dispatch_sh="$2"; lib_sh="$3"
+# shellcheck disable=SC1090
+. "$lib_sh"
 PM_CLAUDE_ALIAS_FILE="$bad_tsv"
 MODEL="light"
 eval "$(awk '/^_resolve_claude_model_alias\(\)/,/^}$/' "$dispatch_sh")"

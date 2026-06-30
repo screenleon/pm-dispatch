@@ -185,8 +185,8 @@ if ! grep -q "PM_DISPATCH_ALIAS_FILE" "$dispatch_script"; then
   exit 1
 fi
 
-if ! grep -q "_resolve_model_alias" "$dispatch_script"; then
-  echo "lint-model-aliases: ERROR: runtime dispatcher no longer uses _resolve_model_alias()" >&2
+if ! grep -q "ma_resolve_alias" "$dispatch_script"; then
+  echo "lint-model-aliases: ERROR: runtime dispatcher no longer uses ma_resolve_alias()" >&2
   exit 1
 fi
 
@@ -232,8 +232,8 @@ if ! grep -q "PM_CLAUDE_ALIAS_FILE" "$claude_dispatch_script"; then
   exit 1
 fi
 
-if ! grep -q "_resolve_claude_model_alias" "$claude_dispatch_script"; then
-  echo "lint-model-aliases: ERROR: claude adapter no longer uses _resolve_claude_model_alias()" >&2
+if ! grep -q "ma_resolve_alias" "$claude_dispatch_script"; then
+  echo "lint-model-aliases: ERROR: claude adapter no longer uses ma_resolve_alias()" >&2
   exit 1
 fi
 

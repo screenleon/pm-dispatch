@@ -25,11 +25,11 @@ _make_fake_repo() {
   printf '%s' "$claude_tsv_content" > "$root/share/claude-model-aliases.tsv"
   printf '%s' "$doc_content" > "$root/docs/dispatch-brief.md"
   # codex adapter stub
-  printf 'PM_DISPATCH_ALIAS_FILE=x\n_resolve_model_alias() { :; }\n' \
+  printf 'PM_DISPATCH_ALIAS_FILE=x\nma_resolve_alias_strict() { :; }\n_resolve_model_alias() { ma_resolve_alias_strict "$@"; }\n' \
     > "$root/adapters/codex/dispatch.sh"
   printf '# stub\n# --model codex-spark\n' > "$root/scripts/test-codex-dispatch.sh"
   # claude adapter stub
-  printf 'PM_CLAUDE_ALIAS_FILE=x\n_resolve_claude_model_alias() { :; }\n' \
+  printf 'PM_CLAUDE_ALIAS_FILE=x\nma_resolve_alias() { :; }\n_resolve_claude_model_alias() { ma_resolve_alias "$@"; }\n' \
     > "$root/adapters/claude/dispatch.sh"
   printf '# stub\n# --model light\n' > "$root/scripts/test-claude-dispatch.sh"
   printf '' > "$root/agents/project-pm.md"
@@ -184,7 +184,7 @@ case_claude_adapter_missing_reference_fails() {
   should_run "$name" || return 0
   root="$(mktemp -d)"
   _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
-  printf '# stub without alias file reference\n_resolve_claude_model_alias() { :; }\n' \
+  printf '# stub without alias file reference\nma_resolve_alias() { :; }\n_resolve_claude_model_alias() { ma_resolve_alias "$@"; }\n' \
     > "$root/adapters/claude/dispatch.sh"
   _run_linter_expect "$name" "$root" "nonzero" "PM_CLAUDE_ALIAS_FILE"
   rm -rf "$root"
@@ -196,10 +196,10 @@ case_claude_adapter_missing_resolver_fails() {
   should_run "$name" || return 0
   root="$(mktemp -d)"
   _make_fake_repo "$root" "$VALID_TSV" "$VALID_DOC"
-  # Keep PM_CLAUDE_ALIAS_FILE but remove the resolver function reference
-  printf 'PM_CLAUDE_ALIAS_FILE=x\n# resolver function deliberately absent\n' \
+  # Keep PM_CLAUDE_ALIAS_FILE but omit the shared lib call
+  printf 'PM_CLAUDE_ALIAS_FILE=x\n# resolver deliberately absent\n' \
     > "$root/adapters/claude/dispatch.sh"
-  _run_linter_expect "$name" "$root" "nonzero" "_resolve_claude_model_alias"
+  _run_linter_expect "$name" "$root" "nonzero" "ma_resolve_alias"
   rm -rf "$root"
 }
 

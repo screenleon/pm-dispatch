@@ -623,11 +623,15 @@ case_timeout_precedence_brief_field() {
 # ---- 20: alias source missing exits non-zero ----
 case_alias_source_missing_exits_2() {
   local name="alias-source/missing TSV exits non-zero"
-  local _work _brief _dispatch _out _exit
+  local _work _brief _dispatch _out _exit _tmproot
   should_run "$name" || return 0
   _work="$(mktemp -d)"; git init -q "$_work"
   _brief="$(mktemp --suffix=.md)"; printf 'goal: alias missing test\n' > "$_brief"
-  _dispatch="$(mktemp --suffix=.sh)"
+  # Build a fake repo tree so the bootstrap can resolve source_repo and copy the lib.
+  _tmproot="$(mktemp -d)"
+  mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
+  cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  _dispatch="$_tmproot/adapters/codex/dispatch.sh"
   sed \
     -e 's|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE="/tmp/__nonexistent_alias_$$"|g' \
     -e 's|^\[\[ -f "$PM_DISPATCH_ALIAS_FILE" \]\].*|: # forced PM_DISPATCH_ALIAS_FILE for test|g' \
@@ -642,19 +646,23 @@ case_alias_source_missing_exits_2() {
   else
     fail "$name" "exit=$_exit out=$(head -1 <<<"$_out")"
   fi
-  rm -rf "$_work"; rm -f "$_brief" "$_dispatch"
+  rm -rf "$_work" "$_tmproot"; rm -f "$_brief"
 }
 
 # ---- 21: alias source malformed exits non-zero ----
 case_alias_source_malformed_exits_nonzero() {
   local name="alias-source/malformed TSV exits non-zero"
-  local _work _brief _dispatch _alias_file _out _exit
+  local _work _brief _dispatch _alias_file _out _exit _tmproot
   should_run "$name" || return 0
   _work="$(mktemp -d)"; git init -q "$_work"
   _brief="$(mktemp --suffix=.md)"; printf 'goal: alias malformed test\n' > "$_brief"
   _alias_file="$(mktemp)"
   printf 'bad-alias\tgpt-5.3\n' > "$_alias_file"
-  _dispatch="$(mktemp --suffix=.sh)"
+  # Build a fake repo tree so the bootstrap can resolve source_repo and copy the lib.
+  _tmproot="$(mktemp -d)"
+  mkdir -p "$_tmproot/adapters/codex" "$_tmproot/scripts/lib"
+  cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_tmproot/scripts/lib/"
+  _dispatch="$_tmproot/adapters/codex/dispatch.sh"
   sed \
     -e "s|^PM_DISPATCH_ALIAS_FILE=.*|PM_DISPATCH_ALIAS_FILE=\"$_alias_file\"|g" \
     -e 's|^\[\[ -f "$PM_DISPATCH_ALIAS_FILE" \]\].*|: # forced PM_DISPATCH_ALIAS_FILE for test|g' \
@@ -669,7 +677,7 @@ case_alias_source_malformed_exits_nonzero() {
   else
     fail "$name" "exit=$_exit out=$(head -1 <<<"$_out")"
   fi
-  rm -rf "$_work"; rm -f "$_brief" "$_dispatch" "$_alias_file"
+  rm -rf "$_work" "$_tmproot"; rm -f "$_brief" "$_alias_file"
 }
 
 # ---- 22: alias source installed-helper fallback resolves from ../share ----
@@ -680,8 +688,9 @@ case_alias_source_installed_helper_fallback() {
   _root="$(mktemp -d)"
   _script_dir="$_root/codex-dispatch.ABC123"
   _share_dir="$_root/share"
-  mkdir -p "$_script_dir" "$_share_dir"
+  mkdir -p "$_script_dir" "$_share_dir" "$_script_dir/lib"
   cp "$DISPATCH" "$_script_dir/codex-dispatch.sh"
+  cp "$REPO_ROOT/scripts/lib/model-aliases.sh" "$_script_dir/lib/"
   chmod +x "$_script_dir/codex-dispatch.sh"
   printf 'codex-spark\tgpt-5.3-codex-spark\thigh\n' > "$_share_dir/model-aliases.tsv"
   _work="$(mktemp -d)"; git init -q "$_work"
