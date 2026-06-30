@@ -117,7 +117,6 @@ case_mkdir_lock_contention() {
   rm -f "$fifo_ready"
   if [[ "$signal" != "ok" ]]; then
     kill "$holder_pid" 2>/dev/null || true
-    echo done > "$fifo_release" 2>/dev/null || true
     rm -f "$fifo_release"
     fail "$name" "holder subshell failed to acquire lock (signal=$signal)"
     return

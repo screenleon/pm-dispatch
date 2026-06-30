@@ -583,7 +583,7 @@ format differences only.
 
 **Cross-link**: CC-230 (state store), CC-211 (epic); AI Night Shift mapping — docs/architecture/v0.3.0-synthesis.md §5.3.
 
-## ✅ 2026-06-30 CC-240 — test-suite reliability follow-ups（deferred — partial）
+## CC-240 — test-suite reliability follow-ups（deferred — partial）✅ 2026-06-30
 
 **Status**: Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129); the assertions now derive expected pass/skip totals from `${#SUITE_NAMES[@]}`. Part (b) closed via this ticket.
 
