@@ -266,8 +266,27 @@ run_case "pm: Write docs/DECISIONS.md → deny (not spikes/, Rule B)" 2 "$PMHOOK
   "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/docs/DECISIONS.md\"}}" \
   "outside memory directory"
 
-run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B outside repo)" 2 "$PMHOOK" \
+run_case "pm: Write /tmp/rogue/docs/spikes/CC-999-evil.md → deny (Rule B in /tmp zone)" 2 "$PMHOOK" \
   '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/rogue/docs/spikes/CC-999-evil.md"}}' \
+  "outside memory directory"
+
+# Cross-repo Rule B: PM dispatched to work on another repo — spike files there
+# should be allowed.  Use a sibling directory next to REPO_ROOT so the path is
+# outside /tmp/ and does not rely on the file existing.
+run_case "pm: Write cross-repo docs/spikes/CC-999-cross-repo.md → allow (Rule B, any repo)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/CC-999-cross-repo.md\"}}"
+
+run_case "pm: Write cross-repo docs/spikes/analysis-scope.md → allow (Rule B, *-scope, any repo)" 0 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/analysis-scope.md\"}}"
+
+run_case "pm: Write cross-repo docs/spikes/notes.md → deny (no pattern match, cross-repo)" 2 "$PMHOOK" \
+  "{\"agent_type\":\"project-pm\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO_ROOT/../other-project/docs/spikes/notes.md\"}}" \
+  "outside memory directory"
+
+# Rule A traversal: the lexical normalizer must collapse /tmp/<slug>/../ before
+# the pattern check so that the traversal cannot escape the two-segment limit.
+run_case "pm: Write /tmp/brief-abc/../secret.md → deny (Rule A traversal)" 2 "$PMHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-abc/../secret.md"}}' \
   "outside memory directory"
 
 # --- Rule C: symlinked memory dir (lexical path dual-normalization) ---

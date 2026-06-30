@@ -43,7 +43,7 @@ project-pm: blocked by $GUARD_NAME — $reason
   attempted: $G_TOOL_NAME on ${file_path:-(empty)}
   allowed:   ${ALLOWED_BASE}/<project>/memory/**
              /tmp/<slug>/<file>.md  (task-slug briefs)
-             ${REPO_ROOT}/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
+             <any-repo>/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md
 
 If a code change is needed, hand a brief back to the main thread for executor
 dispatch via pmctl dispatch run (schema: ~/github/pm-dispatch/docs/dispatch-brief.md).
@@ -103,7 +103,7 @@ if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
         # lex_path requirements.  Only allow when abs_path stays outside those
         # zones (i.e. memory is legitimately symlinked to an external storage).
         if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]] || \
-           [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+           [[ "$abs_path" != /tmp/* && "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
           : # fall through to g_deny
         else
           g_allow "inside memory dir (lex)" "$file_path"
@@ -122,10 +122,13 @@ if [[ "$lex_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
   fi
 fi
 
-# Rule B: this repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
-# Both lex_path and abs_path must match (same cross-rule escape prevention).
-if [[ "$lex_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
-  if [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+# Rule B: any repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
+# Paths in /tmp/ are excluded (those belong to Rule A's zone).  Both lex_path
+# and abs_path must satisfy the same predicate (cross-rule escape prevention).
+if [[ "$lex_path" != /tmp/* ]] && \
+   [[ "$lex_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+  if [[ "$abs_path" != /tmp/* ]] && \
+     [[ "$abs_path" =~ /docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
     g_allow "docs/spikes PM-authored file" "$file_path"
   fi
 fi
