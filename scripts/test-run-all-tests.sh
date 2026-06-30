@@ -51,6 +51,8 @@ SUITE_NAMES=(
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
+  test-timeout-resolve
+  test-dispatch-common
   test-lint-model-aliases
   test-core-schemas
   test-pm-prep-snapshot
@@ -72,9 +74,9 @@ SUITE_NAMES=(
   test-pmctl-memory
   test-pmctl-backlog
   test-pmctl-guard
+  test-pre-release
   test-release-verify
   test-e2e-script
-  test-pre-release
 )
 SUITE_TOTAL=${#SUITE_NAMES[@]}
 SUITE_MINUS_ONE=$((SUITE_TOTAL - 1))
@@ -139,6 +141,8 @@ suite_path() {
     test-skill-refine) printf 'scripts/test-skill-refine.sh\n' ;;
     test-pr-gate-profile) printf 'scripts/test-pr-gate-profile.sh\n' ;;
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
+    test-timeout-resolve) printf 'scripts/test-timeout-resolve.sh\n' ;;
+    test-dispatch-common) printf 'scripts/test-dispatch-common.sh\n' ;;
     test-lint-model-aliases) printf 'scripts/test-lint-model-aliases.sh\n' ;;
     test-core-schemas) printf 'scripts/test-core-schemas.sh\n' ;;
     test-pm-prep-snapshot) printf 'scripts/test-pm-prep-snapshot.sh\n' ;;
@@ -160,9 +164,9 @@ suite_path() {
     test-pmctl-memory)   printf 'scripts/test-pmctl-memory.sh\n' ;;
     test-pmctl-backlog)   printf 'scripts/test-pmctl-backlog.sh\n' ;;
     test-pmctl-guard)     printf 'scripts/test-pmctl-guard.sh\n' ;;
+    test-pre-release)     printf 'scripts/test-pre-release.sh\n' ;;
     test-release-verify)  printf 'scripts/test-release-verify.sh\n' ;;
     test-e2e-script)      printf 'scripts/test-e2e-script.sh\n' ;;
-    test-pre-release)     printf 'scripts/test-pre-release.sh\n' ;;
     *) return 1 ;;
   esac
 }
