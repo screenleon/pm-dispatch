@@ -134,6 +134,7 @@ case_validate_zero_timeout_ok() {
 # Stub sw_resolve_trace_dir for isolation — the real function lives in state-paths.sh
 # sourced via state-writer.sh in adapters. Tests here do not load state-paths.sh.
 _stub_sw_resolve() {
+  # shellcheck disable=SC2329
   sw_resolve_trace_dir() { printf '%s\n' "${2:-/tmp/fallback-trace}"; }
 }
 _unstub_sw_resolve() {
@@ -184,6 +185,7 @@ case_setup_trace_dir_creates_dir() {
   local name="dc_setup_trace_dir/creates trace dir on disk"; should_run "$name" || return 0
   # Arrange: stub returns a non-existent directory path; work_dir exists
   local trace_dir="$tmp_root/trace_dir_create"
+  # shellcheck disable=SC2329
   sw_resolve_trace_dir() { printf '%s\n' "$trace_dir"; }
   local work_dir="$tmp_root/wdir_create"
   mkdir -p "$work_dir"
