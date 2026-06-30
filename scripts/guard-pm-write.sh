@@ -77,35 +77,44 @@ g_check_bypass PM_GUARD_PM_WRITE
 g_validate_path "$file_path"
 abs_path="$G_ABS_PATH"
 
-# Rule: memory dir — $ALLOWED_BASE/<project>/memory/<file>
-# Use regex so * cannot cross path boundaries (case * matches / in bash).
-if [[ "$abs_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
-  g_allow "inside memory dir" "$file_path"
+# For all allow rules: check the lexical path (PM intent) to prevent cross-rule
+# symlink escapes where abs_path matches a different rule than the intended one.
+# Each rule additionally verifies abs_path is safe within the same rule's scope.
+lex_path="$(realpath_m_lex "$file_path")" || lex_path="$abs_path"
+
+# Memory rule: PM intends to write inside this project's memory dir.
+if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/[^/]+/memory/.+ ]]; then
+  if [[ "$abs_path" == "$lex_path" ]]; then
+    # No symlinks followed — direct memory write.
+    g_allow "inside memory dir" "$file_path"
+  else
+    # Symlink(s) were followed. Allow only when abs_path stays inside the
+    # resolved memory directory target, covering the symlinked-memory-dir use
+    # case (Rule C) while denying file-symlink and nested-dir-symlink escapes.
+    if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/([^/]+)/memory/.+ ]]; then
+      real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
+        || real_mem_dir=""
+      if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
+        g_allow "inside memory dir (lex)" "$file_path"
+      fi
+    fi
+  fi
 fi
 
 # Rule A: /tmp/<slug>/<file>.md — exactly two segments below /tmp, .md suffix.
-if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
-  g_allow "tmp task-slug brief" "$file_path"
+# Both lex_path and abs_path must match so symlinks cannot route abs_path here
+# from an unrelated file_path (cross-rule symlink escape).
+if [[ "$lex_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
+  if [[ "$abs_path" =~ ^/tmp/[a-z][^/]*/[^/]+\.md$ ]]; then
+    g_allow "tmp task-slug brief" "$file_path"
+  fi
 fi
 
 # Rule B: this repo's docs/spikes/<name>.md — CC-NNN*, *-scope, *-rfc only.
-# Anchored to REPO_ROOT so paths in unrelated directories are not affected.
-if [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
-  g_allow "docs/spikes PM-authored file" "$file_path"
-fi
-
-# Rule C: symlink dual-normalization — allow when the memory/ DIRECTORY is a
-# symlink whose target is outside ALLOWED_BASE. Deny file-symlink and nested
-# directory-symlink escapes by checking that abs_path falls inside the resolved
-# memory directory target (not just the immediate parent match).
-lex_path="$(realpath_m_lex "$file_path")" || lex_path=""
-if [[ -n "$lex_path" && "$lex_path" != "$abs_path" ]]; then
-  if [[ "$lex_path" =~ ^"$ALLOWED_BASE"/([^/]+)/memory/.+ ]]; then
-    real_mem_dir="$(realpath_m "$ALLOWED_BASE/${BASH_REMATCH[1]}/memory" 2>/dev/null)" \
-      || real_mem_dir=""
-    if [[ -n "$real_mem_dir" && "$abs_path" == "$real_mem_dir/"* ]]; then
-      g_allow "inside memory dir (lex)" "$file_path"
-    fi
+# Both lex_path and abs_path must match (same cross-rule escape prevention).
+if [[ "$lex_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+  if [[ "$abs_path" =~ ^"$REPO_ROOT"/docs/spikes/(CC-[0-9][^/]*|[^/]+-scope|[^/]+-rfc)\.md$ ]]; then
+    g_allow "docs/spikes PM-authored file" "$file_path"
   fi
 fi
 
