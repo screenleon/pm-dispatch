@@ -3,6 +3,7 @@
 # Provides ma_resolve_alias (soft) and ma_resolve_alias_strict (hard-fail).
 # Both functions set MA_RESOLVE_MODEL, MA_RESOLVE_EFFORT, MA_RESOLVE_MATCH.
 
+# shellcheck disable=SC2034  # output variables read by callers after sourcing this lib
 MA_RESOLVE_MODEL=""
 MA_RESOLVE_EFFORT=""
 MA_RESOLVE_MATCH=0
@@ -28,8 +29,11 @@ ma_resolve_alias() {
       continue
     fi
     if [[ "$alias_value" == "$query_alias" ]]; then
+      # shellcheck disable=SC2034
       MA_RESOLVE_MODEL="$model_id"
+      # shellcheck disable=SC2034
       MA_RESOLVE_EFFORT="$effort"
+      # shellcheck disable=SC2034
       MA_RESOLVE_MATCH=1
       return 0
     fi
@@ -67,8 +71,11 @@ ma_resolve_alias_strict() {
       return 1
     fi
     if [[ "$alias_value" == "$query_alias" ]]; then
+      # shellcheck disable=SC2034
       MA_RESOLVE_MODEL="$model_id"
+      # shellcheck disable=SC2034
       MA_RESOLVE_EFFORT="$effort"
+      # shellcheck disable=SC2034
       MA_RESOLVE_MATCH=1
       return 0
     fi
