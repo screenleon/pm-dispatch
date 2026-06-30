@@ -170,6 +170,7 @@ jobs:
             test-harness.sh
             test-test-harness.sh
             test-lint-model-aliases.sh
+            test-timeout-resolve.sh
             test-model-aliases.sh
             test-schema-task-mirrors-backlog.sh
             test-brief-validate.sh
