@@ -124,7 +124,7 @@ case_mkdir_lock_contention() {
 
   if mkdir_lock "$lock" 1; then
     mkdir_unlock "$lock"
-    echo done > "$fifo_release"
+    printf '%s\n' done > "$fifo_release"
     rm -f "$fifo_release"
     wait "$holder_pid" || true
     fail "$name" "second lock attempt unexpectedly succeeded"
