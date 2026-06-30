@@ -94,19 +94,30 @@ function flush_section(    i) {
   section_hdr = ""
 }
 
-BEGIN { in_section = 0; cur_terminal = 0; body_n = 0 }
+BEGIN { in_section = 0; cur_terminal = 0; body_n = 0; file_pass = 0 }
 
 # ID grammar (pm-schema §2.2, prefix-agnostic for cross-repo use):
 #   PREFIX-NNN with an optional lowercase sub-ticket suffix, e.g. CC-229,
 #   JS-106, CC-104b. Heading form: "## <ID> — ...". Index row: "| <ID> | ...".
 
+FNR == 1 { file_pass++ }
+
 # ---- pass 1: existing archive — remember archived body headings for dedup ----
-FNR == NR {
-  if (/^## [A-Z][A-Z0-9]*-[0-9]+[a-z]* /) known_archived[$0] = 1
+file_pass == 1 {
+  if (/^## [A-Z][A-Z0-9]*-[0-9]+[a-z]* /) {
+    known_archived[$0] = 1
+    archived_id[id_from_header($0)] = 1
+  }
   next
 }
 
-# ---- pass 2: BACKLOG ----
+# ---- pass 2: BACKLOG body-id pre-scan (build backlog_body_id) ----
+file_pass == 2 {
+  if (/^## [A-Z][A-Z0-9]*-[0-9]+[a-z]* /) backlog_body_id[id_from_header($0)] = 1
+  next
+}
+
+# ---- pass 3: BACKLOG output pass ----
 # Body section boundary.
 /^## [A-Z][A-Z0-9]*-[0-9]+[a-z]* / {
   if (in_section) flush_section()
@@ -139,7 +150,14 @@ in_section {
       status ~ /^🟢 superseded [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ ||
       status ~ /^🚫 dropped [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
     terminal_id[rid] = 1
-    removed_rows++
+    if (!(rid in backlog_body_id) && !(rid in archived_id)) {
+      # Body in neither BACKLOG.md nor BACKLOG-ARCHIVE.md — keep row for
+      # manual reconciliation rather than silently losing index metadata.
+      printf "warning: %s — terminal index row has no body in BACKLOG.md or BACKLOG-ARCHIVE.md; row kept for manual reconciliation\n", rid > "/dev/stderr"
+      print
+    } else {
+      removed_rows++
+    }
     next
   }
   print
@@ -150,17 +168,9 @@ in_section {
 
 END {
   if (in_section) flush_section()
-  # Observability: a terminal index row with no body section in BACKLOG is just
-  # a row drop — flag it so operators can reconcile (its body should already be
-  # in the archive or in git history; a true orphan would otherwise be silent).
-  for (id in terminal_id) {
-    if (!(id in body_seen_for)) {
-      printf "warning: %s — terminal index row dropped with no matching body section in BACKLOG.md (body already archived or orphaned)\n", id > "/dev/stderr"
-    }
-  }
   printf "%d %d\n", removed_rows, newly_archived > count_file
 }
-' "$ARCHIVE" "$BACKLOG" > "$TMP_BACKLOG"
+' "$ARCHIVE" "$BACKLOG" "$BACKLOG" > "$TMP_BACKLOG"
 
 read -r archived_count newly_count < "$TMP_COUNT"
 

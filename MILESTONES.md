@@ -36,7 +36,7 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-240 | `test-portable.sh::case_mkdir_lock_contention` 替換固定 `sleep 1.2`：改用 FIFO-gated IPC 同步，消除 CI 時序不確定性（qa-testing-rules 紅線：不用 sleep 做非同步同步） | ⏸ deferred |
-| CC-285 | archiver safe-drop：terminal row 的 body 在 BACKLOG.md 與 BACKLOG-ARCHIVE.md 都不存在時，保留 row 並 emit 警告（不刪），供人工處置；加迴歸 fixture | 🟡 deferred |
+| CC-285 | archiver safe-drop：terminal row 的 body 在 BACKLOG.md 與 BACKLOG-ARCHIVE.md 都不存在時，保留 row 並 emit 警告（不刪），供人工處置；加迴歸 fixture | ✅ done |
 
 ### Phase 4 — adapter 共用邏輯抽 lib（P3；可選；不依賴 Phase 1–3）
 
