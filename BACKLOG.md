@@ -1240,7 +1240,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 三個 adapter 的 model alias 行為與今天 byte-identical（現有 adapter 測試綠）。
 - `lint-model-aliases.sh` 仍通過。
 
-**See**: pr:TBD
+**See**: pr:#345
 
 **Priority**: P3（someday）。
 
