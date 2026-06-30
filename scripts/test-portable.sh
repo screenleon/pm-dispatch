@@ -84,50 +84,55 @@ case_mkdir_lock_contention() {
   local name="portable-mkdir-lock-contention-timeout"
   should_run "$name" || return 0
   local lock="$tmp_root/lock-contention"
-  # FIFO/named-pipe handshake — pure event synchronization. The holder
-  # subshell writes to the FIFO AFTER acquiring the lock; the foreground
-  # blocks on `read` until that write happens. No `sleep` involved in the
-  # readiness wait, so the test is independent of scheduler latency on
-  # any platform.
-  local fifo="$tmp_root/lock-contention.ready"
-  if ! mkfifo "$fifo" 2>/dev/null; then
+  # Two-FIFO handshake — fully event-driven, no sleep on either side.
+  # lock-contention.ready:   holder → foreground: lock acquired
+  # lock-contention.release: foreground → holder: ok to unlock
+  local fifo_ready="$tmp_root/lock-contention.ready"
+  local fifo_release="$tmp_root/lock-contention.release"
+  if ! mkfifo "$fifo_ready" 2>/dev/null || ! mkfifo "$fifo_release" 2>/dev/null; then
     printf 'SKIP: %s (mkfifo unavailable on this platform)\n' "$name"
+    rm -f "$fifo_ready" "$fifo_release"
     return
   fi
 
   (
     if mkdir_lock "$lock" 2; then
-      echo ok > "$fifo"
+      echo ok > "$fifo_ready"
+      IFS= read -r _ < "$fifo_release" || true
+      mkdir_unlock "$lock"
     else
-      echo fail > "$fifo"
+      echo fail > "$fifo_ready"
       exit 1
     fi
-    sleep 2.5
-    mkdir_unlock "$lock"
   ) &
   local holder_pid=$!
 
   local signal=""
-  if ! IFS= read -r signal < "$fifo"; then
+  if ! IFS= read -r signal < "$fifo_ready"; then
     kill "$holder_pid" 2>/dev/null || true
-    rm -f "$fifo"
+    rm -f "$fifo_ready" "$fifo_release"
     fail "$name" "FIFO read failed waiting for holder readiness"
     return
   fi
-  rm -f "$fifo"
+  rm -f "$fifo_ready"
   if [[ "$signal" != "ok" ]]; then
     kill "$holder_pid" 2>/dev/null || true
+    rm -f "$fifo_release"
     fail "$name" "holder subshell failed to acquire lock (signal=$signal)"
     return
   fi
 
   if mkdir_lock "$lock" 1; then
     mkdir_unlock "$lock"
-    kill "$holder_pid" 2>/dev/null || true
+    printf '%s\n' done > "$fifo_release"
+    rm -f "$fifo_release"
+    wait "$holder_pid" || true
     fail "$name" "second lock attempt unexpectedly succeeded"
     return
   fi
 
+  echo done > "$fifo_release"
+  rm -f "$fifo_release"
   wait "$holder_pid" || true
   pass "$name"
 }
