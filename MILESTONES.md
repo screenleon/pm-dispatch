@@ -42,7 +42,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | 🟢 someday |
+| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | ✅ |
 | CC-421 | adapter 共用 timeout 優先序邏輯 → `scripts/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | 🟢 someday |
 
 > Phase 4 兩張票可獨立 ship，與 Phase 1–3 無依賴。CC-422（dispatch-common.sh）需先 spike 確認邊界，**不排入本版**。

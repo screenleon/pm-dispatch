@@ -63,6 +63,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     cp -- "$__claude_dispatch_source_repo/scripts/lib/state-paths.sh" "$__claude_dispatch_snapshot_dir/lib/state-paths.sh" || true
   [[ -r "$__claude_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__claude_dispatch_source_repo/scripts/lib/portable.sh" "$__claude_dispatch_snapshot_dir/lib/portable.sh" || true
+  [[ -r "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
+    cp -- "$__claude_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__claude_dispatch_snapshot_dir/lib/model-aliases.sh" || true
   chmod +x -- "$__claude_dispatch_snapshot"
   exec "$__claude_dispatch_snapshot" "$@"
 fi
@@ -84,6 +86,8 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 
 # shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/model-aliases.sh"
 
 # Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
 # Snapshot copies the tsv alongside this script; fall back to repo-source paths.
@@ -92,22 +96,10 @@ PM_CLAUDE_ALIAS_FILE="$SCRIPT_DIR/claude-model-aliases.tsv"
 
 _resolve_claude_model_alias() {
   local query_model="$1"
-  [[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || return 0   # no alias file → pass through unchanged
-  local line alias_value model_id effort rest
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-    IFS=$'\t' read -r alias_value model_id effort rest <<< "$line"
-    if [[ -z "$alias_value" || -z "$model_id" || -z "$effort" || -n "$rest" ]]; then
-      printf 'claude-dispatch: warning: malformed entry in %s, skipping\n' "$PM_CLAUDE_ALIAS_FILE" >&2
-      continue
-    fi
-    if [[ "$alias_value" == "$query_model" ]]; then
-      MODEL="$model_id"
-      return 0
-    fi
-  done < "$PM_CLAUDE_ALIAS_FILE"
-  return 0   # no match → pass through unchanged
+  [[ -f "$PM_CLAUDE_ALIAS_FILE" ]] || return 0
+  ma_resolve_alias "$PM_CLAUDE_ALIAS_FILE" "$query_model" "claude-dispatch" || return 0
+  [[ "$MA_RESOLVE_MATCH" == "1" ]] && MODEL="$MA_RESOLVE_MODEL"
+  return 0
 }
 
 # Resolve isolation_level → permission_mode from adapters/claude/isolation-map.yaml.

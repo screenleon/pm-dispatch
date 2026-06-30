@@ -86,6 +86,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     cp -- "$__codex_dispatch_source_repo/scripts/lib/state-paths.sh" "$__codex_dispatch_snapshot_dir/lib/state-paths.sh" || true
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/portable.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__codex_dispatch_snapshot_dir/lib/model-aliases.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -124,47 +126,17 @@ DEFAULT_DISPATCH_MODEL="default"
 
 # shellcheck source=scripts/lib/state-writer.sh  # sourced for snapshot support only; pmctl owns state writes.
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/model-aliases.sh"
 
 _resolve_model_alias() {
   local query_model="$1"
-  local line_no=0
-  local line
-  local alias_value model_id reasoning_effort
-
-  if [[ ! -f "$PM_DISPATCH_ALIAS_FILE" ]]; then
-    echo "codex-dispatch: error: model alias source-of-truth not found: $PM_DISPATCH_ALIAS_FILE" >&2
-    echo "Expected file path: share/model-aliases.tsv (copied to snapshot at runtime)." >&2
-    return 1
+  ma_resolve_alias_strict "$PM_DISPATCH_ALIAS_FILE" "$query_model" "codex-dispatch" || return 1
+  if [[ "$MA_RESOLVE_MATCH" == "1" ]]; then
+    MODEL_RESOLVED="$MA_RESOLVE_MODEL"
+    MODEL_RESOLVED_EFFORT="$MA_RESOLVE_EFFORT"
+    MODEL_ALIAS_MATCH=1
   fi
-  if ! [[ -r "$PM_DISPATCH_ALIAS_FILE" ]]; then
-    echo "codex-dispatch: error: model alias source-of-truth unreadable: $PM_DISPATCH_ALIAS_FILE" >&2
-    return 1
-  fi
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    ((line_no += 1))
-    line="${line%$'\r'}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" ]] && continue
-    [[ "${line:0:1}" == "#" ]] && continue
-
-    IFS=$'\t' read -r alias_value model_id reasoning_effort rest <<< "$line"
-    if [[ -z "$alias_value" || -z "$model_id" || -z "$reasoning_effort" || -n "$rest" ]]; then
-      echo "codex-dispatch: error: malformed model-alias entry in ${PM_DISPATCH_ALIAS_FILE}:${line_no}" >&2
-      echo "Expected one tab-separated line: <alias><TAB><model_id><TAB><reasoning_effort>" >&2
-      return 1
-    fi
-
-    if [[ "$alias_value" == "$query_model" ]]; then
-      MODEL_RESOLVED="$model_id"
-      MODEL_RESOLVED_EFFORT="$reasoning_effort"
-      MODEL_ALIAS_MATCH=1
-      return 0
-    fi
-  done < "$PM_DISPATCH_ALIAS_FILE"
-
-  return 0
 }
 
 # Timeout precedence: --timeout flag (parsed below, wins) > $CODEX_DISPATCH_TIMEOUT
