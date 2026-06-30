@@ -846,7 +846,7 @@ This makes directory creation the mutex.
 
 **Cross-link**: `[[CC-284]]` (working-set contract / archiver), pr-gate finding on PR #186.
 
-**See**: pr:#TBD
+**See**: pr:#343
 
 ## CC-286 — [arch] pmctl: prefix-generic next-id derivation ⏸ deferred
 
