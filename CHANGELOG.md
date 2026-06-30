@@ -8,9 +8,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.7.1] — 2026-06-30
+
 ### Added
 
 - **`/pre-release` Layer 2 — semantic diff coverage (CC-430, PR#339).** After Layer 1 structural audit, the command now runs a main-thread inline Layer 2 analysis: per scoped ticket, reads the `Requirement` section from BACKLOG.md (stops at next `##` or `**Depends on**`; N/A if absent), lists changed files via `gh pr diff <PR#> --name-only`, then fetches each relevant file's patch individually via `gh api /repos/{owner}/{repo}/pulls/{PR#}/files` — no full PR patch dump. Outputs a coverage table (`Covered / Partial / Gap / N/A`) with Confidence (`High / Med / Low`) and Flag (`⚠️` for Partial/Gap/Low) columns. No sub-job dispatch. Does not produce GO/NO-GO — judgement stays with the user.
+
+- **`pm-write-guard` hook: three new allow rules with cross-rule symlink escape prevention (CC-258, PR#342).** Added `/tmp/<slug>/*.md`, `docs/spikes/{CC-NNN*,*-scope,*-rfc}.md`, and symlink-normalized memory double-canonicalization allow rules. Added ~15 regression tests for cross-rule symlink escape edge cases. Total test count reaches 193.
+
+- **`doctor.sh` ↔ `install-hooks.sh` hook-profile parity test (CC-224, PR#341).** Added `scripts/test-hook-profile.sh` asserting that the minimal hook sets listed in `doctor.sh` and `install-hooks.sh` match exactly, preventing silent drift when a new hook is added to one file but not the other.
+
+- **Shared adapter lib: `scripts/lib/model-aliases.sh` (CC-420, PR#345).** Extracted the model-alias TSV parser shared by the `claude`, `codex`, and `opencode` adapters (~30 duplicate lines eliminated). All three adapters now source this lib.
+
+- **Shared adapter lib: `scripts/lib/timeout-resolve.sh` (CC-421, PR#346).** Extracted the timeout-precedence resolution logic (brief timeout > adapter default > system default) shared by the three adapters and `dispatch-post-verify.sh` (~15 lines × 4 eliminated).
+
+- **Shared adapter lib: `scripts/lib/dispatch-common.sh` (CC-422, PR#347).** Extracted five shared adapter init helpers (`require_brief_file`, `require_working_dir`, `load_model_aliases`, `resolve_timeout`, `init_run_dir`) into a single sourced lib. All three adapters now share a single init sequence.
+
+### Fixed
+
+- **`uninstall.sh` blast-radius guard: exact managed-root path rejection (CC-210, PR#340).** Added `[[ "$dst" == "$managed_root" ]]` precise path check to prevent the managed root itself from being deleted during uninstall. Added regression test case.
+
+- **`test-portable.sh` lock contention: FIFO-gated IPC replaces fixed `sleep 1.2` (CC-240, PR#344).** `case_mkdir_lock_contention` now uses a FIFO release signal for cross-process synchronization instead of a timing-dependent sleep, eliminating CI flakiness on slow runners. Satisfies qa-testing-rules constraint against sleep-based async synchronization.
+
+- **Archiver safe-drop: terminal row preserved when body is absent everywhere (CC-285, PR#343).** When a terminal row's body section is absent from both `BACKLOG.md` and `BACKLOG-ARCHIVE.md`, the archiver now preserves the row and emits a warning instead of silently dropping it. Added regression fixture.
 
 ---
 

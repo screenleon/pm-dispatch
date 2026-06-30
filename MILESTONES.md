@@ -36,14 +36,14 @@
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-240 | `test-portable.sh::case_mkdir_lock_contention` 替換固定 `sleep 1.2`：改用 FIFO-gated IPC 同步，消除 CI 時序不確定性（qa-testing-rules 紅線：不用 sleep 做非同步同步） | ✅ pr:#344 |
-| CC-285 | archiver safe-drop：terminal row 的 body 在 BACKLOG.md 與 BACKLOG-ARCHIVE.md 都不存在時，保留 row 並 emit 警告（不刪），供人工處置；加迴歸 fixture | ✅ done |
+| CC-285 | archiver safe-drop：terminal row 的 body 在 BACKLOG.md 與 BACKLOG-ARCHIVE.md 都不存在時，保留 row 並 emit 警告（不刪），供人工處置；加迴歸 fixture | ✅ pr:#343 |
 
 ### Phase 4 — adapter 共用邏輯抽 lib（P3；可選；不依賴 Phase 1–3）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | ✅ |
-| CC-421 | adapter 共用 timeout 優先序邏輯 → `scripts/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | ✅ |
+| CC-420 | adapter 共用 model alias TSV 解析 → `scripts/lib/model-aliases.sh`；claude / codex / opencode 三 adapter ~30 行重複消除 | ✅ pr:#345 |
+| CC-421 | adapter 共用 timeout 優先序邏輯 → `scripts/lib/timeout-resolve.sh`；3 adapter + post-verify ~15 行×4 重複消除 | ✅ pr:#346 |
 
 > Phase 4 兩張票可獨立 ship，與 Phase 1–3 無依賴。CC-422（dispatch-common.sh）需先 spike 確認邊界，**不排入本版**。
 
