@@ -68,6 +68,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /opencode-dispatch\.[A-Za-z0-9]{6}/opencode-dispa
     cp -- "$__oc_dispatch_source_repo/scripts/lib/portable.sh" "$__oc_dispatch_snapshot_dir/lib/portable.sh" || true
   [[ -r "$__oc_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
     cp -- "$__oc_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__oc_dispatch_snapshot_dir/lib/model-aliases.sh" || true
+  [[ -r "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
+    cp -- "$__oc_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__oc_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
   chmod +x -- "$__oc_dispatch_snapshot"
   exec "$__oc_dispatch_snapshot" "$@"
 fi
@@ -90,6 +92,8 @@ NATIVE_FLAGS=()
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/timeout-resolve.sh"
 
 # ── Model alias resolution ────────────────────────────────────────────────────
 PM_OC_ALIAS_FILE="$SCRIPT_DIR/opencode-model-aliases.tsv"
@@ -178,13 +182,8 @@ _resolve_isolation() {
 }
 
 # ── Timeout defaults ──────────────────────────────────────────────────────────
-if [[ -n "${OPENCODE_DISPATCH_TIMEOUT:-}" ]]; then
-  TIMEOUT="$OPENCODE_DISPATCH_TIMEOUT"
-elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then
-  TIMEOUT="$PM_CFG_TIMEOUT"
-else
-  TIMEOUT="1200"
-fi
+tr_resolve_timeout "" "OPENCODE_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
+TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

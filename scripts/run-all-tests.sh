@@ -49,6 +49,7 @@ SUITE_NAMES=(
   test-skill-refine
   test-pr-gate-profile
   test-run-all-tests
+  test-timeout-resolve
   test-lint-model-aliases
   test-core-schemas
   test-pm-prep-snapshot
@@ -114,6 +115,7 @@ declare -A SUITE_PATHS=(
   [test-skill-refine]="scripts/test-skill-refine.sh"
   [test-pr-gate-profile]="scripts/test-pr-gate-profile.sh"
   [test-run-all-tests]="scripts/test-run-all-tests.sh"
+  [test-timeout-resolve]="scripts/test-timeout-resolve.sh"
   [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"

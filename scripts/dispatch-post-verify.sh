@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/portable.sh"
 # shellcheck source=scripts/lib/state-paths.sh
 source "$SCRIPT_DIR/lib/state-paths.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/timeout-resolve.sh"
 
 usage() {
   printf 'usage: %s <work_dir> [brief_file] [--run-dir <abs>] [--trace-dir <path>] [--last <path>] [--jsonl <path>] [--stderr <path>] [--brief-file <path>] [--base <ref>] [--terminal-event <type>]\n' "$0" >&2
@@ -308,7 +310,8 @@ printf '\n'
 # The optional `expect:` mapping key that may follow a `cmd:` item is informational
 # (the only documented value is "exits 0", which is exactly the exit-0 PASS rule);
 # the awk extractor only yields `- ` list items, so `expect:` lines are ignored.
-SELF_VERIFY_TIMEOUT="${DISPATCH_SELF_VERIFY_TIMEOUT:-300}"
+tr_resolve_timeout "" "DISPATCH_SELF_VERIFY_TIMEOUT" "" "300"
+SELF_VERIFY_TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
 if [[ -n "$BRIEF_FILE" ]]; then
   printf '=== Self-verify checks ===\n'

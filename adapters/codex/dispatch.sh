@@ -88,6 +88,8 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /codex-dispatch\.[A-Za-z0-9]{6}/codex-dispatch\.s
     cp -- "$__codex_dispatch_source_repo/scripts/lib/portable.sh" "$__codex_dispatch_snapshot_dir/lib/portable.sh" || true
   [[ -r "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" ]] && \
     cp -- "$__codex_dispatch_source_repo/scripts/lib/model-aliases.sh" "$__codex_dispatch_snapshot_dir/lib/model-aliases.sh" || true
+  [[ -r "$__codex_dispatch_source_repo/scripts/lib/timeout-resolve.sh" ]] && \
+    cp -- "$__codex_dispatch_source_repo/scripts/lib/timeout-resolve.sh" "$__codex_dispatch_snapshot_dir/lib/timeout-resolve.sh" || true
   chmod +x -- "$__codex_dispatch_snapshot"
   exec "$__codex_dispatch_snapshot" "$@"
 fi
@@ -128,6 +130,8 @@ DEFAULT_DISPATCH_MODEL="default"
 . "$SCRIPT_DIR/lib/state-writer.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/model-aliases.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/timeout-resolve.sh"
 
 _resolve_model_alias() {
   local query_model="$1"
@@ -139,17 +143,8 @@ _resolve_model_alias() {
   fi
 }
 
-# Timeout precedence: --timeout flag (parsed below, wins) > $CODEX_DISPATCH_TIMEOUT
-# env > PM_CFG_TIMEOUT (exported by pmctl from config) > 1200 default.
-# PM_CFG_TIMEOUT is set in this env by `pmctl dispatch run`; direct
-# adapter invocations fall back to 1200 when the var is absent.
-if [[ -n "${CODEX_DISPATCH_TIMEOUT:-}" ]]; then
-  TIMEOUT="$CODEX_DISPATCH_TIMEOUT"
-elif [[ -n "${PM_CFG_TIMEOUT:-}" ]]; then
-  TIMEOUT="$PM_CFG_TIMEOUT"
-else
-  TIMEOUT="1200"
-fi
+tr_resolve_timeout "" "CODEX_DISPATCH_TIMEOUT" "PM_CFG_TIMEOUT" "1200"
+TIMEOUT="$TR_RESOLVED_TIMEOUT"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
