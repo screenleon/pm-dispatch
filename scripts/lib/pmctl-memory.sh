@@ -14,11 +14,21 @@
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
 
+# Loads ~/.pm-dispatch/config's dispatch.memory_dir into PM_CFG_MEMORY_DIR
+# when a config loader is available (always true under cli/pmctl) and no
+# caller has already populated it. No-op (cheap declare -F check only) if
+# pmctl-config.sh was never sourced.
+_pmctl_memory_load_config_override() {
+  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
+  return 0
+}
+
 # Print the memory directory for the given working directory (default: $PWD).
 # Exit 1 (no output) if no memory directory is found.
 pmctl_memory_dir() {
   local cwd="${1:-$PWD}"
   local mem_dir
+  _pmctl_memory_load_config_override
   mem_dir="$(find_memory_dir "$cwd")" || return 1
   printf '%s\n' "$mem_dir"
 }
@@ -178,6 +188,7 @@ pmctl_memory_doctor() {
   done
 
   local mem_dir=""
+  _pmctl_memory_load_config_override
   if ! mem_dir="$(find_memory_dir "$repo_root")"; then
     mem_dir=""
   fi
@@ -440,6 +451,7 @@ pmctl_memory_shard() {
   done
 
   local mem_dir=""
+  _pmctl_memory_load_config_override
   mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory shard: no memory directory found\n' >&2; return 1; }
 
   local ep="$mem_dir/episodes.jsonl"
@@ -503,6 +515,7 @@ pmctl_memory_rebuild_summary() {
   done
 
   local mem_dir=""
+  _pmctl_memory_load_config_override
   mem_dir="$(find_memory_dir "$repo_root")" || { printf 'pmctl memory rebuild-summary: no memory directory found\n' >&2; return 1; }
 
   local ep="$mem_dir/episodes.jsonl"

@@ -45,6 +45,7 @@ _ctx_memory_db_path() {
 _ctx_resolve_memory_dir() {
   local cwd="$1"
   declare -F find_memory_dir >/dev/null 2>&1 || return 1
+  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
   find_memory_dir "$cwd" 2>/dev/null
 }
 

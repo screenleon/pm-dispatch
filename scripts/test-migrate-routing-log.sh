@@ -205,11 +205,60 @@ test_routing_log_dir_override() {
   fi
 }
 
+# Behavior: PM_MEMORY_DIR env var overrides project-memory directory discovery
+# (cross-tool memory-dir seam), same as CLAUDE_ROUTING_LOG_DIR does today.
+# Steps:
+#   1. Write a fixture to $tmp_root/m7/routing_log.md.
+#   2. Run migrator with PM_MEMORY_DIR pointing to $tmp_root/m7 and --cwd set
+#      to a path with no .claude memory dir.
+#   3. Verify exit 0 — the override was respected and migration succeeded.
+test_pm_memory_dir_override() {
+  local name="migrate: PM_MEMORY_DIR overrides memory discovery"
+  local path dir
+  should_run "$name" || return 0
+  dir="$tmp_root/m7"
+  path="$dir/routing_log.md"
+  write_fixture "$path"
+  if PM_MEMORY_DIR="$dir" "$MIGRATOR" --cwd /tmp/no-such-cwd-pmmem-a 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "PM_MEMORY_DIR override not respected by find_memory_dir"
+  fi
+}
+
+# Behavior: PM_MEMORY_DIR outranks CLAUDE_ROUTING_LOG_DIR when both are set
+# (design decision: the new cross-tool seam supersedes the legacy,
+# installer-only override).
+# Steps:
+#   1. Write a valid fixture to $tmp_root/m8-win/routing_log.md (PM_MEMORY_DIR
+#      target) and a decoy fixture with no routing_log.md at
+#      $tmp_root/m8-lose (CLAUDE_ROUTING_LOG_DIR target).
+#   2. Run migrator with both env vars set.
+#   3. Verify exit 0 — resolution used PM_MEMORY_DIR (the only one with a
+#      migratable routing_log.md), not CLAUDE_ROUTING_LOG_DIR.
+test_pm_memory_dir_outranks_routing_log_dir() {
+  local name="migrate: PM_MEMORY_DIR outranks CLAUDE_ROUTING_LOG_DIR"
+  local win_dir lose_dir
+  should_run "$name" || return 0
+  win_dir="$tmp_root/m8-win"
+  lose_dir="$tmp_root/m8-lose"
+  mkdir -p "$lose_dir"
+  write_fixture "$win_dir/routing_log.md"
+  if PM_MEMORY_DIR="$win_dir" CLAUDE_ROUTING_LOG_DIR="$lose_dir" \
+      "$MIGRATOR" --cwd /tmp/no-such-cwd-pmmem-b 2>/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "expected PM_MEMORY_DIR to win over CLAUDE_ROUTING_LOG_DIR"
+  fi
+}
+
 test_fresh_migrates
 test_idempotent
 test_existing_backup_aborts
 test_malformed_skips
 test_legacy_integrity
 test_routing_log_dir_override
+test_pm_memory_dir_override
+test_pm_memory_dir_outranks_routing_log_dir
 
 th_summary

@@ -7,6 +7,7 @@
 #   PM_CFG_DEFAULT_MODEL — dispatch.default_model (alias/id), or ""
 #   PM_CFG_AUTO_PACK     — dispatch.auto_pack (on|off), or ""
 #   PM_CFG_LIFECYCLE     — dispatch.lifecycle (foreground|detached), or ""
+#   PM_CFG_MEMORY_DIR    — dispatch.memory_dir (absolute path), or ""
 #
 # Config file: ${PM_DISPATCH_CONFIG_FILE:-~/.pm-dispatch/config}
 # Format: key = value lines; # comments; unknown keys silently ignored.
@@ -16,6 +17,7 @@ PM_CFG_TIMEOUT=""
 PM_CFG_DEFAULT_MODEL=""
 PM_CFG_AUTO_PACK=""
 PM_CFG_LIFECYCLE=""
+PM_CFG_MEMORY_DIR=""
 
 pm_config_load() {
   local _cfg_path="${PM_DISPATCH_CONFIG_FILE:-${HOME}/.pm-dispatch/config}"
@@ -25,6 +27,7 @@ pm_config_load() {
   PM_CFG_DEFAULT_MODEL=""
   PM_CFG_AUTO_PACK=""
   PM_CFG_LIFECYCLE=""
+  PM_CFG_MEMORY_DIR=""
 
   [[ -r "$_cfg_path" ]] || return 0
 
@@ -69,6 +72,13 @@ pm_config_load() {
           PM_CFG_LIFECYCLE="$_value"
         else
           printf 'pm-dispatch: config: warning: malformed value for dispatch.lifecycle in %s:%d; ignoring\n' "$_cfg_path" "$_line_no" >&2
+        fi
+        ;;
+      dispatch.memory_dir)
+        if [[ "$_value" == /* ]]; then
+          PM_CFG_MEMORY_DIR="$_value"
+        else
+          printf 'pm-dispatch: config: warning: malformed value for dispatch.memory_dir in %s:%d (must be absolute path); ignoring\n' "$_cfg_path" "$_line_no" >&2
         fi
         ;;
     esac

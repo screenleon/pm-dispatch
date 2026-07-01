@@ -713,6 +713,83 @@ case_memory_dir_not_found() {
   pass "$name"
 }
 
+case_memory_dir_pm_memory_dir_env_override() {
+  local name="pmctl memory dir: PM_MEMORY_DIR env overrides CLAUDE_CONFIG_DIR discovery"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pmenv-cfg" repo="$tmp_root/pmenv-repo" override="$tmp_root/pmenv-override"
+  mkdir -p "$repo" "$override"
+  # No memory dir under $cfg for $repo — override must be what wins.
+
+  local out status=0
+  out="$(PM_MEMORY_DIR="$override" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$override" ]]; then
+    fail "$name" "expected '$override' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_pm_memory_dir_unset_byte_identical() {
+  local name="pmctl memory dir: PM_MEMORY_DIR unset → byte-identical to pre-seam resolution"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pmunset-cfg" repo="$tmp_root/pmunset-repo"
+  mkdir -p "$repo"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+
+  local out status=0
+  out="$(unset PM_MEMORY_DIR; CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$mdir" ]]; then
+    fail "$name" "expected '$mdir' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_config_dispatch_memory_dir_override() {
+  local name="pmctl memory dir: dispatch.memory_dir config overrides discovery when PM_MEMORY_DIR unset"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pmcfg-cfg" repo="$tmp_root/pmcfg-repo" override="$tmp_root/pmcfg-override" fakehome="$tmp_root/pmcfg-home"
+  mkdir -p "$repo" "$override" "$fakehome/.pm-dispatch"
+  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+
+  local out status=0
+  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$override" ]]; then
+    fail "$name" "expected '$override' got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_dir_pm_memory_dir_outranks_config() {
+  local name="pmctl memory dir: PM_MEMORY_DIR env outranks dispatch.memory_dir config"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pmboth-cfg" repo="$tmp_root/pmboth-repo"
+  local env_win="$tmp_root/pmboth-env-win" cfg_lose="$tmp_root/pmboth-cfg-lose" fakehome="$tmp_root/pmboth-home"
+  mkdir -p "$repo" "$env_win" "$cfg_lose" "$fakehome/.pm-dispatch"
+  printf 'dispatch.memory_dir = %s\n' "$cfg_lose" > "$fakehome/.pm-dispatch/config"
+
+  local out status=0
+  out="$(PM_MEMORY_DIR="$env_win" HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>/dev/null)" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$env_win" ]]; then
+    fail "$name" "expected '$env_win' (env) got '$out'"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_dir_no_mutation() {
   local name="pmctl memory dir: does not create or mutate directories on hit or miss"
   should_run "$name" || return 0
@@ -1394,6 +1471,10 @@ case_memory_dir_happy_path
 case_memory_dir_nested_subdir
 case_memory_dir_uses_pwd_default
 case_memory_dir_not_found
+case_memory_dir_pm_memory_dir_env_override
+case_memory_dir_pm_memory_dir_unset_byte_identical
+case_memory_dir_config_dispatch_memory_dir_override
+case_memory_dir_pm_memory_dir_outranks_config
 case_memory_dir_no_mutation
 case_memory_doctor_clean_fixture
 case_memory_doctor_dead_link
