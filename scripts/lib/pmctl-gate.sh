@@ -332,10 +332,11 @@ pmctl_gate_wait() {
       if [[ -n "$_result" ]]; then
         printf 'result: %s\n' "$_result"
       fi
-      # A GO/NO-GO sentinel is only trustworthy if its result file exists and
-      # passes the SAME structural check the synchronous route enforces
-      # in-process (gate_result_verify). Without this, a wait that completes
-      # while the result is missing/corrupt/unparsable would report success
+      # A GO/NO-GO sentinel is only trustworthy if its result file exists,
+      # falls under the run dir --cd actually owns, and passes the SAME
+      # structural check the synchronous route enforces in-process
+      # (gate_result_verify). Without this, a wait that completes while the
+      # result is missing/corrupt/unparsable/foreign would report success
       # (exit 0/1) on an outcome nobody can actually confirm -- fail-closed
       # instead: treat integrity failure as a failed wait (exit 2), distinct
       # from a genuine NO-GO (exit 1).
@@ -343,6 +344,30 @@ pmctl_gate_wait() {
         if [[ -z "$_result" ]]; then
           printf 'pmctl gate wait: FAIL: state %s reported but the sentinel recorded no result file -- treating as failed wait (result integrity cannot be confirmed)\n' "$_state" >&2
           return 2
+        fi
+        # --cd binds this wait to a specific project partition: recompute the
+        # SAME gate_run_dir pmctl_gate_run_detached derived at launch time
+        # (via sw_project_run_dir) and require the sentinel's result path to
+        # fall under it. A gate_id is only reachable by someone who already
+        # holds its sentinel key (per-user, mode 700), so this is not a
+        # security boundary -- it is what makes --cd load-bearing rather than
+        # cosmetic: a caller waiting under the wrong --cd gets a clear
+        # mismatch error instead of a silently-trusted foreign-partition path.
+        if [[ "$(type -t sw_project_run_dir 2>/dev/null)" != function ]]; then
+          local _sp_lib="$repo_root/scripts/lib/state-paths.sh"
+          if [[ -r "$_sp_lib" ]]; then
+            # shellcheck disable=SC1090,SC1091
+            . "$_sp_lib" 2>/dev/null || true
+          fi
+        fi
+        if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+          local _expected_run_dir
+          _expected_run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _expected_run_dir=""
+          if [[ -n "$_expected_run_dir" && "$_result" != "$_expected_run_dir"/* ]]; then
+            printf 'pmctl gate wait: FAIL: result %s does not fall under the run dir for %s under --cd %s (%s) -- wrong --cd for this gate_id?\n' \
+              "$_result" "$gate_id" "$work_dir" "$_expected_run_dir" >&2
+            return 2
+          fi
         fi
         if ! declare -F gate_result_verify >/dev/null 2>&1; then
           local _gr_lib="$repo_root/scripts/lib/gate-result-verify.sh"

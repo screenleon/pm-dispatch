@@ -43,15 +43,36 @@ _mk_fixture_repo() {
   done
 }
 
+# Install a fake pr-gate.sh that signals $started_fifo then blocks reading
+# $release_fifo indefinitely -- a deterministic "never completes" fixture for
+# the wait-timeout case, with no sleep-based synchronization (QA red line:
+# scripts/test-dispatch-lifecycle.sh's _install_fake_codex_blocking uses the
+# same FIFO handshake). O_RDWR opens on both FIFOs so writer/reader never
+# block on each other regardless of open order.
+_mk_fake_gate_blocking() {
+  local fixture="$1" started_fifo="$2" release_fifo="$3"
+  mkdir -p "$fixture/scripts"
+  cat > "$fixture/scripts/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
+if [[ -p "$release_fifo" ]]; then
+  read -r _dummy < "$release_fifo" 2>/dev/null || true
+fi
+exec 7>&- 2>/dev/null || true
+exit 0
+FAKEGATE
+  chmod +x "$fixture/scripts/pr-gate.sh"
+}
+
 # Install a fake pr-gate.sh that writes a structurally valid gate result under
 # --run-dir and prints `result: <path>` (mirrors the real script's contract at
 # scripts/pr-gate.sh:1493), then exits with the given code.
 _mk_fake_gate() {
-  local fixture="$1" code="$2" delay="${3:-0}"
+  local fixture="$1" code="$2"
   mkdir -p "$fixture/scripts"
   cat > "$fixture/scripts/pr-gate.sh" <<FAKEGATE
 #!/usr/bin/env bash
-sleep $delay
 rd=""
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
@@ -293,13 +314,21 @@ case_wait_indeterminate_on_consumed_sentinel() {
 
 # ---- 6: gate wait times out (exit 124) when supervisor never completes -------
 case_wait_times_out() {
+  # No sleep-based synchronization (QA red line): the fake gate signals
+  # $started_fifo the instant it launches, so the test blocks on a bounded
+  # `read -t` of that FIFO to know the supervisor is genuinely running before
+  # asserting the wait times out -- not a fixed sleep racing the poll loop.
   local name="gate-lifecycle/gate wait times out when supervisor never completes"
   should_run "$name" || return 0
 
   local fixture="$tmp_root/c6/fixture" work="$tmp_root/c6/work"
   mkdir -p "$work"
   _mk_fixture_repo "$fixture"
-  _mk_fake_gate "$fixture" 0 5   # 5s delay, well past the 1s wait timeout below
+
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_blocking "$fixture" "$started_fifo" "$release_fifo"
 
   local run_wrapper="$tmp_root/c6/run" wait_wrapper="$tmp_root/c6/wait"
   _run_gate_wrapper "$fixture" "$run_wrapper"
@@ -308,8 +337,21 @@ case_wait_times_out() {
   local gate_id
   gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
 
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+    rm -f "$started_fifo" "$release_fifo"
+    return
+  fi
+
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
+
+  # Release the blocked fake gate so its process doesn't leak past this case,
+  # then clean up the FIFOs.
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  rm -f "$started_fifo" "$release_fifo"
 
   if [[ "$code" -eq 124 ]] && [[ "$out" == *"timed out"* ]]; then
     pass "$name"
@@ -435,6 +477,48 @@ case_wait_fails_on_corrupt_result() {
   fi
 }
 
+# ---- 10b: gate wait rejects a --cd whose partition doesn't own the result ----
+case_wait_fails_on_cd_partition_mismatch() {
+  # CC-423 pr-gate finding (architecture-reviewer, medium): --cd previously
+  # played no role in completion lookup, making it structurally misleading as
+  # a "required" flag. It now must recompute the SAME gate_run_dir the
+  # detached launcher derived (via sw_project_run_dir keyed off --cd) and
+  # reject a sentinel result that falls outside it.
+  local name="gate-lifecycle/gate wait fails when --cd partition does not own the result"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c10b/fixture" work="$tmp_root/c10b/work" other_work="$tmp_root/c10b/other-work"
+  mkdir -p "$work" "$other_work"
+  # sw_project_run_dir partitions by git top-level; a plain non-repo dir
+  # falls back to a shared "global" bucket, which would make work and
+  # other_work collide into the SAME partition and defeat this test. `git
+  # init` alone is enough for `rev-parse --show-toplevel` to resolve (no
+  # commit needed), so give each its own throwaway repo root.
+  git init -q "$work"
+  git init -q "$other_work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate "$fixture" 0
+
+  local run_wrapper="$tmp_root/c10b/run" wait_wrapper="$tmp_root/c10b/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+
+  # Wait under a DIFFERENT --cd than the one the gate was launched under --
+  # sw_project_run_dir partitions by cwd hash, so this recomputes a different
+  # expected run dir than the one the sentinel's result actually lives under.
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$other_work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"does not fall under the run dir"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # ---- 11: gate wait usage-error contract (invalid timeout / gate_id / --cd) ---
 case_wait_usage_errors() {
   # CC-423 pr-gate finding (qa-tester, medium): the wait input-validation
@@ -483,6 +567,7 @@ case_foreground_unchanged
 case_detached_requires_state_paths
 case_wait_fails_on_missing_result
 case_wait_fails_on_corrupt_result
+case_wait_fails_on_cd_partition_mismatch
 case_wait_usage_errors
 
 th_summary
