@@ -50,7 +50,7 @@ The curated cards are split by purpose so the index can stay compact and the loa
 
 `episodes.jsonl` remains the episodic layer (append-only session summaries) and feeds `/mem-recall` and `/mem-distill` when needed.
 
-## Card frontmatter schema (CC-405)
+## Card frontmatter schema
 
 Card frontmatter is **additive**. The legacy block — `name`, `description`, and
 the `metadata:` map (`node_type`, `type`, `originSessionId`) — is preserved

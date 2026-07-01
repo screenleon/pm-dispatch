@@ -8,7 +8,7 @@
 > features. **Windows users should run pm-dispatch under WSL2**, which avoids the
 > MSYS path / symlink / permission edge cases entirely. macOS is documented but
 > untested. Native Windows may be reassessed once the core stabilizes — see
-> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev) / CC-370.
+> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
 >
 > Already-shipped portability code still runs on native Windows on a best-effort
 > basis (hooks are pure bash+jq, no python3; `install.sh` uses directory junctions
@@ -23,7 +23,7 @@
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | WSL2                             | **First-class**      | Treated as Linux |
 | macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
-| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development (CC-370). Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
+| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development. Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
 
 ---
@@ -96,7 +96,7 @@ Add the repo CLI directory to PATH so `pmctl` can run in place:
 export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 ```
 
-> **Symlink support (CC-207):** On Git Bash, `ln -s` does not create real
+> **Symlink support:** On Git Bash, `ln -s` does not create real
 > symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
 > for `agents/`, `commands/`, `skills/`, `adapters/`, and `pm-schema` directories
 > so those paths auto-sync after pulling. Individual helper scripts are still
@@ -308,7 +308,7 @@ bash install.sh
 - GNU `realpath -m` not guaranteed → shimmed `realpath_m` provides equivalent behavior.
 - Filesystem case-insensitive → avoid hook paths differing only by case.
 - `codex` CLI hooks unsupported on Windows; `--profile full` falls back to `minimal`.
-- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts (CC-207).
+- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts.
 
 ## Repository references
 

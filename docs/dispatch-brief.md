@@ -31,7 +31,7 @@ Dispatch overhead (brief write + executor startup + post-verify) costs ~30–120
 
 ## Selecting an executor
 
-The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). `isolation_level:` is required. The legacy fields `sandbox`, `approval`, and `skip_git_check` were removed in v0.6.0 (CC-335); a brief that still carries any of them is rejected with a migration error.
+The handover metadata's `executor:` field selects which executor receives the brief. Valid values today: `codex`, `claude`, and `opencode`. The default is set at install time via `./install.sh --profile minimal|full` (auto-detected from `command -v codex` when unset): `full` → `codex`, `minimal` → `claude`. PM may override per-brief by setting `executor:` explicitly in the `dispatch_handover_v1` block. Use `isolation_level:` in the handover metadata (canonical values: `none | read-only | workspace-write | workspace-network | sandboxed`); the adapter layer translates this to executor-native flags — note that `opencode` only supports `none` (all others are rejected at dispatch time; workspace boundaries for opencode are configured via host opencode.json). `isolation_level:` is required. The legacy fields `sandbox`, `approval`, and `skip_git_check` were removed in v0.6.0; a brief that still carries any of them is rejected with a migration error.
 
 ## Required fields
 
@@ -109,7 +109,7 @@ Use as needed; not all briefs require all of them.
 - **`retrieval_skip_reason`** — non-empty reason why retrieval was intentionally skipped for a file-writing brief. Use this only when query/reuse-scan evidence would add no signal, such as a mechanical edit with all context already supplied in the brief.
 - **`task`** — free-form instruction block used by composed workflows to pass per-run task instructions distinct from the brief's `goal` field.
 - **`output_format`** — when the deliverable is a report (audit, plan), specify the file path and required sections.
-- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex and claude reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected.
+- **`isolation_level`** — required: `workspace-write` (default), `read-only`, `workspace-network`, `sandboxed`, or `none`. `none` means full machine access and is **opencode-only** (it has no finer-grained sandbox); codex and claude reject `none` (their max isolation is `workspace-write`). The adapter layer translates to executor-native flags. Source of truth: `core/policy/isolation-level.yaml`. The legacy `sandbox` / `approval` / `skip_git_check` fields were removed in v0.6.0; a brief carrying any of them is rejected.
 - **`qa_checklist`** — **Conditionally required**: include when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error-handling branches). For each unit, list its expected test name or scenario. `qa-tester` will block in gate round 1 for any introduced unit without adjacent coverage — writing this upfront costs one minute and prevents multiple gate/fix cycles. Example:
   ```
   qa_checklist:
@@ -317,7 +317,7 @@ Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapte
 bash scripts/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
-Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processes each `self_verify` item by kind (CC-318):
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processes each `self_verify` item by kind:
 
 - A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
 - Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.
@@ -462,7 +462,7 @@ Metadata fields:
 | `dispatch_route` | yes | `main_thread_bash_background` — the routine route for every shipped (cli-subprocess) adapter. `agent_executor` remains a valid value reserved for a future host-native adapter, but no shipped executor uses it. |
 | `working_dir` | yes | Absolute path; must exist; must match the brief body. |
 | `brief_file` | yes | Absolute path under `/tmp/brief-...`; main thread creates this file with unique `mktemp`-style exclusive semantics, then writes the brief body. |
-| `isolation_level` | yes | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. The legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 (CC-335); a brief carrying any of them is rejected. |
+| `isolation_level` | yes | Canonical isolation intent: `none \| read-only \| workspace-write \| workspace-network \| sandboxed`. Adapter layer expands to executor-native flags. The legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0; a brief carrying any of them is rejected. |
 | `timeout` | yes | Seconds; `1200` default. Passed through to the executor adapter. For `opencode`, must be 0 (no limit) or ≥ 120 (per-attempt floor). |
 | `model` | yes | `default` or an executor-specific model wire-id. For `opencode`, aliases like `light`/`default` are resolved by the adapter. |
 | `fallback_allowed` | yes | Legacy flag retained for schema compatibility. The Agent-spawn executor fallback was retired, so all dispatch uses the main-thread Bash route regardless of this value. |
@@ -492,7 +492,7 @@ Invalid lines (for example `dispatch.default_timeout=oops`) are logged as warnin
 - `foreground` runs the post-preflight executor tail (adapter invocation → footer parse → post-verify → terminal state + durable record) in-process and blocks until the adapter exits — the historical behavior. No run-spec is written; the dispatch exit code is the adapter exit code.
 - `detached` persists a run-spec under `<work_dir>/.agent-trace/<run_id>.runspec`, launches `scripts/dispatch-supervisor.sh` via `setsid`/`nohup` (falling back to `nohup ... & disown`), writes the `run_id` to stdout, and exits 0 without waiting for the adapter. The supervisor re-runs the **full** security preflight — adapter name/containment, route allowlist, `brief-validate.sh`, and `pmctl guard check` — before invoking any executor, so it can never bypass the gates `pmctl dispatch run` enforces. The run-spec records the `--cd` and `--brief-file` values as trusted scalars and carries only the non-core adapter args as passthrough; the supervisor rebuilds the adapter command from those scalars, so the brief that is guarded and validated is exactly the one executed (it rejects any attempt to smuggle a second `--cd`/`--brief-file` through the passthrough args).
 
-Use `pmctl dispatch wait <run_id> --cd <work_dir> [--timeout <secs>]` to reattach and resolve the terminal outcome. `--cd` is mandatory; timeout exits 124. The authoritative completion signal is the supervisor sentinel written to `/tmp` (never the in-workspace `.dispatch-results/<run_id>.md` record, which is executor-writable and used for observability only). The sentinel path includes a per-run nonce held in a per-user `mode 700` key dir and not stored in the workspace run-spec: this stops *other OS users* and cross-run/predictable-path collisions from resolving the wait, but a *same-user* executor (same uid) can read the key — so the executor is **trusted** not to forge it (the deployment runs the operator's own login-authenticated agent; see `docs/executor-contract.md` → Durable dispatch record for the full trust model and CC-399 override). If the sentinel key is absent, `dispatch wait` returns **indeterminate (exit 3)** and prints the durable record for observability only — never as authenticated success.
+Use `pmctl dispatch wait <run_id> --cd <work_dir> [--timeout <secs>]` to reattach and resolve the terminal outcome. `--cd` is mandatory; timeout exits 124. The authoritative completion signal is the supervisor sentinel written to `/tmp` (never the in-workspace `.dispatch-results/<run_id>.md` record, which is executor-writable and used for observability only). The sentinel path includes a per-run nonce held in a per-user `mode 700` key dir and not stored in the workspace run-spec: this stops *other OS users* and cross-run/predictable-path collisions from resolving the wait, but a *same-user* executor (same uid) can read the key — so the executor is **trusted** not to forge it (the deployment runs the operator's own login-authenticated agent; see `docs/executor-contract.md` → Durable dispatch record for the full trust model — this is a deliberate, user-accepted trust boundary, not an oversight). If the sentinel key is absent, `dispatch wait` returns **indeterminate (exit 3)** and prints the durable record for observability only — never as authenticated success.
 
 Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is derived from the adapter's `runner_kind` (`cli-subprocess` = eligible; `host-native` = not). An ineligible adapter or `--lifecycle detached --print-cmd` is rejected before any executor launch. `--lifecycle detached` **is** compatible with auto-pack: the augmented brief is snapshotted to the guardable `/tmp/brief-<run_id>.md` path and recorded as the run-spec's trusted `brief_file`, so the supervisor validates, guards, and executes exactly that augmented brief — preserving the single-brief invariant.
 
@@ -556,7 +556,7 @@ Before constructing this Bash command, the dispatcher MUST source `scripts/lib/h
 - `handover_validate_dispatch_route`
 - `handover_validate_working_dir`
 - `handover_validate_brief_file`
-- `handover_validate_isolation_level` (required; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 (CC-335) and are rejected if present)
+- `handover_validate_isolation_level` (required; the legacy `sandbox`/`approval`/`skip_git_check` fields were removed in v0.6.0 and are rejected if present)
 - `handover_validate_timeout`
 - `handover_validate_model`
 - `handover_validate_fallback_allowed`
@@ -584,7 +584,7 @@ sandbox: workspace-write
 fallback_allowed: maybe
 ```
 
-Each example above must reject before command construction: the control fields (`dispatch_route`, `working_dir`, `brief_file`, `isolation_level`, `timeout`, `model`, `fallback_allowed`) reject through their field validators, while the `sandbox` line rejects through the removed-legacy-field check (no `handover_validate_sandbox` validator exists anymore — the field was removed in v0.6.0, see CC-335).
+Each example above must reject before command construction: the control fields (`dispatch_route`, `working_dir`, `brief_file`, `isolation_level`, `timeout`, `model`, `fallback_allowed`) reject through their field validators, while the `sandbox` line rejects through the removed-legacy-field check (no `handover_validate_sandbox` validator exists anymore — the field was removed in v0.6.0).
 
 Argument order is stable:
 

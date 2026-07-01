@@ -5,7 +5,7 @@ top to bottom, and only tag when every box is checked on **Linux and/or WSL2**
 (WSL2 is treated as Linux). Native Windows Git Bash and macOS are **out of scope
 for release sign-off** during the core-development phase — see
 `docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
-Platform sign-off returns as a dedicated phase once the core stabilizes (CC-370).
+Platform sign-off returns as a dedicated phase once the core stabilizes.
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
 Coverage splits into three layers:
@@ -37,7 +37,7 @@ A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED
 
 Run on **Linux or WSL2** (the supported sign-off platforms). Native Windows Git
 Bash is out of scope during core development — `release-verify.sh` refuses to run
-there with a "use WSL2" notice (CC-370).
+there with a "use WSL2" notice.
 
 ```bash
 # Linux / WSL2 — Phases 1-3 (offline, no tokens)
@@ -129,7 +129,7 @@ for session summaries, or the trace/events store for dispatch telemetry.
 # (trigger by asking Claude to write to /tmp/test-hook-write.txt in a Claude Code session)
 
 # dispatch telemetry: any dispatch emits Run + Event records via pmctl (the
-# machine-written routing_log.md / routing-log hook was retired in CC-367 — events
+# machine-written routing_log.md / routing-log hook was retired — events
 # now live in the trace store). Run a dispatch, then confirm the event landed:
 pmctl trace tail -n 5            # newest events; a dispatch adds run.* rows
 
@@ -138,7 +138,7 @@ pmctl trace tail -n 5            # newest events; a dispatch adds run.* rows
 ```
 
 - [ ] write-guard hook fires and blocks a write outside the pm share path (exit 2, no file created).
-- [ ] dispatch telemetry: a dispatch appends Run/Event records visible via `pmctl trace tail` (replaces the retired routing-log hook, CC-367).
+- [ ] dispatch telemetry: a dispatch appends Run/Event records visible via `pmctl trace tail` (replaces the retired routing-log hook).
 - [ ] memory-inject hook injects `=== auto-memory: MEMORY.md index ===` in the session context.
 
 ---
@@ -179,7 +179,7 @@ covering check has passed this cycle.
 | Linux / WSL2 (required: exit 0 `GO`) | ☐ | ☐ | ☐ |
 
 > Native Windows Git Bash and macOS are out of scope for release sign-off during
-> the core-development phase (CC-370 / `docs/platform-support.md`). Platform
+> the core-development phase (see `docs/platform-support.md`). Platform
 > sign-off returns as a dedicated phase once the core stabilizes.
 
 ---

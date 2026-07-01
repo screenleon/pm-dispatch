@@ -70,7 +70,7 @@ pmctl trace tail --kind task.blocked   --json -n 20
 pmctl trace tail --kind review.verdict --json -n 20
 ```
 
-If `review.verdict` returns no output (events not yet written by the gate), fall back to scanning gate result files for blocked verdicts. `pmctl gate run` now writes results to an out-of-repo run dir by default (moved out of `.gate-results/` per CC-417); use `pmctl artifacts list` to find recent gate runs and `pmctl artifacts show <run_id>` to inspect their result file, or check `.gate-results/gate-*.md` if the project still has legacy in-repo results:
+If `review.verdict` returns no output (events not yet written by the gate), fall back to scanning gate result files for blocked verdicts. `pmctl gate run` writes results to an out-of-repo run dir by default; use `pmctl artifacts list` to find recent gate runs and `pmctl artifacts show <run_id>` to inspect their result file, or check `.gate-results/gate-*.md` if the project still has legacy in-repo results:
 
 ```bash
 ls -t .gate-results/gate-*.md 2>/dev/null | head -10 | xargs grep -l "Final: NO-GO" 2>/dev/null
