@@ -61,7 +61,7 @@ case_explicit_cd_passthrough() {
   _mk_gate_wrapper "$fixture" "$wrapper"
 
   local out code
-  set +e; out="$("$wrapper" --cd /tmp --tier express 2>&1)"; code=$?; set -e
+  set +e; out="$("$wrapper" --cd /tmp --lifecycle foreground --tier express 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] \
      && [[ "$out" == *"--cd /tmp"* ]] \
@@ -92,7 +92,7 @@ case_default_cd_injected() {
 
   local expected_cd out code
   expected_cd="$PWD"
-  set +e; out="$("$wrapper" --tier express 2>&1)"; code=$?; set -e
+  set +e; out="$("$wrapper" --lifecycle foreground --tier express 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd $expected_cd"* ]]; then
     pass "$name"
@@ -119,7 +119,7 @@ case_exit_propagated() {
   _mk_gate_wrapper "$fixture" "$wrapper"
 
   local code
-  set +e; "$wrapper" --cd /tmp >/dev/null 2>&1; code=$?; set -e
+  set +e; "$wrapper" --cd /tmp --lifecycle foreground >/dev/null 2>&1; code=$?; set -e
 
   if [[ "$code" -eq 2 ]]; then
     pass "$name"
@@ -169,14 +169,17 @@ case_pmctl_routing() {
   # table entry and lib load are both present.
   #
   # Steps:
-  #   1. Call pmctl gate run --help against the real repo binary.
+  #   1. Call pmctl gate run --lifecycle foreground --help against the real
+  #      repo binary (foreground forced explicitly: default lifecycle is
+  #      detached (CC-423), which would fork a real background supervisor
+  #      instead of forwarding --help synchronously).
   #   2. Assert exit code is 0 (pr-gate.sh --help exits 0).
   #   3. Assert stdout contains "--cd" (confirming pr-gate.sh usage was reached).
   local name="gate/run: pmctl cli routes gate/run subcommand"
   should_run "$name" || return 0
 
   local out code
-  set +e; out="$("$PMCTL" gate run --help 2>&1)"; code=$?; set -e
+  set +e; out="$("$PMCTL" gate run --lifecycle foreground --help 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd"* ]]; then
     pass "$name"
@@ -316,8 +319,8 @@ case_run_dir_forwarded_to_gate() {
   local dir1 dir2; dir1="$(mktemp -d)"; dir2="$(mktemp -d)"
   local out1 out2 code1 code2
   set +e
-  out1="$("$wrapper" --cd "$dir1" 2>&1)"; code1=$?
-  out2="$("$wrapper" --cd "$dir2" 2>&1)"; code2=$?
+  out1="$("$wrapper" --cd "$dir1" --lifecycle foreground 2>&1)"; code1=$?
+  out2="$("$wrapper" --cd "$dir2" --lifecycle foreground 2>&1)"; code2=$?
   set -e
   rm -rf "$dir1" "$dir2"
 
@@ -340,6 +343,42 @@ case_run_dir_forwarded_to_gate() {
   pass "$name"
 }
 
+# ---- 12: omitting --lifecycle defaults to detached (CC-423) ------------------
+case_default_lifecycle_is_detached() {
+  # Verifies that pmctl_gate_run with no --lifecycle flag now takes the
+  # detached path (returns a bare gate_id, does not synchronously exec
+  # pr-gate.sh), mirroring dispatch's default. scripts/test-gate-lifecycle.sh
+  # covers the detached mechanics (supervisor, wait, sentinel) in depth; this
+  # case only proves the default routing decision.
+  local name="gate/run: omitting --lifecycle defaults to detached"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f12" wrapper="$tmp_root/b12/wrapper" work="$tmp_root/f12-work"
+  mkdir -p "$(dirname "$wrapper")" "$work"
+  _mk_fake_gate "$fixture" 0
+  _mk_gate_wrapper "$fixture" "$wrapper"
+  cp "$REPO_ROOT/scripts/gate-supervisor.sh" "$fixture/scripts/gate-supervisor.sh"
+  chmod +x "$fixture/scripts/gate-supervisor.sh"
+  for _lib in state-paths.sh portable.sh; do
+    cp "$REPO_ROOT/scripts/lib/$_lib" "$fixture/scripts/lib/$_lib"
+  done
+
+  local out code
+  PM_DISPATCH_STATE_ROOT="$tmp_root/f12-state" XDG_RUNTIME_DIR="$tmp_root/f12-xdg"
+  mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$wrapper" --cd "$work" 2>&1)"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out (expected a bare gate_id, not synchronous pr-gate.sh output)"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
@@ -351,5 +390,6 @@ case_verify_no_final
 case_verify_parity_mismatch
 case_verify_usage
 case_run_dir_forwarded_to_gate
+case_default_lifecycle_is_detached
 
 th_summary

@@ -508,6 +508,18 @@ test_commands_pr_gate_md_documents_executors() {
   pass "$name"
 }
 
+test_commands_pr_gate_md_uses_detached_lifecycle() {
+  # CC-423: /pr-gate launches via `gate run --lifecycle detached` (inline,
+  # fast) then hands off to `gate wait` under run_in_background, replacing
+  # the prior single-call `gate run` under run_in_background.
+  local name="commands-pr-gate-md-uses-detached-lifecycle"
+  local target="$REPO_ROOT/commands/pr-gate.md"
+  assert_contains "$name" "$target" "gate run" || return
+  assert_contains "$name" "$target" "--lifecycle detached" || return
+  assert_contains "$name" "$target" "gate wait" || return
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -535,5 +547,6 @@ run_case "executor-claude-post-gate-hook-skipped-without-allow-hooks" test_execu
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "commands-pr-gate-md-documents-executors" test_commands_pr_gate_md_documents_executors
+run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_uses_detached_lifecycle
 
 th_summary

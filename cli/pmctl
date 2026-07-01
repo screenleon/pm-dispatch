@@ -183,6 +183,12 @@ case "$cmd/$sub" in
     fi
     pmctl_gate_verify "$REPO_ROOT" "$@"
     ;;
+  gate/wait)
+    if ! declare -F pmctl_gate_wait >/dev/null; then
+      pmctl_die "gate wait unavailable"
+    fi
+    pmctl_gate_wait "$REPO_ROOT" "$@"
+    ;;
   context/index)
     if ! declare -F pmctl_context_index >/dev/null; then
       pmctl_die "context index unavailable"
