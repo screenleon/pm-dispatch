@@ -22,6 +22,16 @@ if [[ "$(type -t find_memory_dir 2>/dev/null)" != function ]]; then
   . "$_CTX_LIB_DIR/memory.sh" 2>/dev/null || true
 fi
 
+# Source pmctl-config.sh explicitly (not pmctl-dispatch.sh or an adapter module,
+# so the "MUST NOT source adapters" rule does not apply) so dispatch.memory_dir
+# resolution does not depend on cli/pmctl's lib-load ordering happening to have
+# already sourced it via pmctl-dispatch.sh.
+if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/pmctl-config.sh
+  # shellcheck disable=SC1091
+  . "$_CTX_LIB_DIR/pmctl-config.sh" 2>/dev/null || true
+fi
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _ctx_db_path() {
@@ -45,6 +55,7 @@ _ctx_memory_db_path() {
 _ctx_resolve_memory_dir() {
   local cwd="$1"
   declare -F find_memory_dir >/dev/null 2>&1 || return 1
+  declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
   find_memory_dir "$cwd" 2>/dev/null
 }
 

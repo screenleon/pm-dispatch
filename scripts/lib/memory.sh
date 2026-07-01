@@ -8,7 +8,26 @@ encode_path() {
   printf '%s' "-${p#/}" | tr '/' '-'
 }
 
+# Cross-tool memory-dir override, checked by both this function and
+# memory-dir.sh's installer/migrator variant. PM_MEMORY_DIR (env) always wins
+# over PM_CFG_MEMORY_DIR (~/.pm-dispatch/config `dispatch.memory_dir`, only
+# populated when a caller has already run pm_config_load — hooks never do,
+# so this stays a plain variable read with zero file I/O on the hook path).
+# Silently falls through (does not use the override) when the directory does
+# not exist, matching the existing CLAUDE_ROUTING_LOG_DIR convention.
+_pm_memory_dir_override() {
+  local d="${PM_MEMORY_DIR:-}"
+  if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
+  d="${PM_CFG_MEMORY_DIR:-}"
+  if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
+  return 1
+}
+
 find_memory_dir() {
+  local override
+  if override="$(_pm_memory_dir_override)"; then
+    printf '%s' "$override"; return 0
+  fi
   local cwd="$1"
   local config_dir="${2:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}}"
   local projects_dir current candidate parent

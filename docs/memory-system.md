@@ -10,9 +10,11 @@ Claude Code sessions are stateless by design, and this repo relies on memory fil
 
 ## On-disk layout
 
-All fork and runtime state lives under:
+By default, all fork and runtime state lives under:
 
 `~/.claude/projects/<id>/memory/`
+
+This default is overridable — see [Cross-tool portability](#cross-tool-portability) below.
 
 Typical files are:
 
@@ -164,6 +166,39 @@ Use this pattern when:
 - you want to share installer behavior without sharing personal memory snapshots.
 
 The key behavior stays unchanged: hooks still target `~/.claude/projects/<id>/memory/`, while that path can be backed by a private location maintained in your fork workflow.
+
+## Cross-tool portability
+
+Memory cards, `pmctl memory doctor`, and `pmctl context --source memory` are
+already tool-neutral: cards are plain Markdown+YAML, and retrieval goes
+through `pmctl`, not a Claude-specific format. The two remaining Claude-only
+pieces are the memory directory's default *location* and its *injection*
+mechanism — both now have an explicit seam so other tools (codex, opencode,
+future hosts) can share the same memory without depending on Claude Code.
+
+**Location seam**: the memory-dir resolver (`find_memory_dir`) honors an
+explicit override, checked in this order:
+
+1. `PM_MEMORY_DIR` environment variable (highest priority; works everywhere,
+   including the Claude Code hook path, at zero extra cost)
+2. `dispatch.memory_dir` in `~/.pm-dispatch/config` (checked by CLI-driven
+   callers — `pmctl memory *`, `pmctl context --source memory`,
+   installer/migrator scripts — not by the hook path, to avoid adding a
+   config-file read to every Claude Code turn)
+3. the `CLAUDE_CONFIG_DIR/projects/<id>/memory/` convention (unchanged
+   default when neither override is set)
+
+An override is only honored when the target directory already exists; an
+unset or nonexistent override falls through to the next tier, so existing
+installs see byte-identical resolution with no environment changes.
+
+**Injection is a per-tool adapter, not part of the portable core.** The
+portable core is the retrieval API: `pmctl context --source memory` (and
+`pmctl memory doctor` for health checks). Claude Code's `UserPromptSubmit`
+hook (`guard-inject-memory.sh`) is one adapter that calls into this core
+automatically every turn. A tool without an equivalent hook (codex, opencode)
+gets the same memory by calling `pmctl context --source memory` directly —
+there is no requirement to replicate Claude's hook-based injection timing.
 
 ## Practical conventions
 
