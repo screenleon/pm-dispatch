@@ -83,37 +83,41 @@ pmctl_gate_run() {
   done
 
   # Extract --cd value first so the run dir is keyed to the TARGET repo's partition,
-  # not the caller's cwd. Fall back to $PWD when --cd is absent.
+  # not the caller's cwd. Fall back to $PWD when --cd is absent. A bare
+  # trailing --cd (no value follows) is a usage error, not "use $PWD" --
+  # matching pmctl_dispatch_run's --cd validation (pmctl-dispatch.sh:1161-1165)
+  # -- otherwise the detached path would silently launch a supervisor against
+  # the wrong directory and still return a "successful" gate_id.
+  #
+  # Single pass also builds _passthrough (args with the --cd pair removed):
+  # the detached path's native forward args need --cd excluded (the
+  # supervisor receives effective_cd as a trusted scalar and forwards it to
+  # pr-gate.sh itself, mirroring dispatch's cd_arg/native split), so
+  # validation and stripping share one parse instead of two separate loops
+  # that could diverge on where --cd is found.
   local effective_cd="$PWD"
   local has_cd=false
+  local -a _passthrough=()
   local _i=0
   local _args=("$@")
   while [[ "$_i" -lt "${#_args[@]}" ]]; do
     if [[ "${_args[$_i]}" == "--cd" ]]; then
       has_cd=true
       _i=$((_i + 1))
-      [[ "$_i" -lt "${#_args[@]}" ]] && effective_cd="${_args[$_i]}"
-      break
+      if [[ "$_i" -ge "${#_args[@]}" ]]; then
+        printf 'pmctl gate run: missing value for --cd\n' >&2
+        return 2
+      fi
+      effective_cd="${_args[$_i]}"
+      _i=$((_i + 1))
+    else
+      _passthrough+=("${_args[$_i]}")
+      _i=$((_i + 1))
     fi
-    _i=$((_i + 1))
   done
 
   if [[ "$lifecycle" == "detached" ]]; then
-    # Native forward args for the supervisor exclude --cd: the supervisor
-    # receives effective_cd as a trusted scalar and forwards it to
-    # pr-gate.sh itself (mirrors dispatch's cd_arg/native split).
-    local -a _native=()
-    local _j=0
-    local _cargs=("$@")
-    while [[ "$_j" -lt "${#_cargs[@]}" ]]; do
-      if [[ "${_cargs[$_j]}" == "--cd" ]]; then
-        _j=$((_j + 2))
-      else
-        _native+=("${_cargs[$_j]}")
-        _j=$((_j + 1))
-      fi
-    done
-    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_native[@]+"${_native[@]}"}
+    pmctl_gate_run_detached "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"}
     return $?
   fi
 

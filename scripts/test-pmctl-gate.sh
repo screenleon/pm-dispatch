@@ -224,6 +224,48 @@ WRAPPER
   fi
 }
 
+# ---- 4b: --cd with no value is a usage error, not "use $PWD" ----------------
+case_cd_missing_value_rejected() {
+  # CC-423 pr-gate finding (critic/qa-tester, high): the --cd extraction loop
+  # only checked array bounds, not whether --cd actually had a following
+  # value, so a trailing `--cd` (or `--cd` immediately followed by another
+  # flag, which is what remains after --lifecycle is stripped) silently fell
+  # back to $PWD instead of erroring. Under the default (detached) lifecycle
+  # this meant a malformed `pmctl gate run --cd --lifecycle detached` still
+  # returned a "successful" gate_id for a supervisor launched against the
+  # wrong directory. Both lifecycles must reject it explicitly.
+  local name="gate/run: --cd with no value is rejected (exit 2)"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f4b"
+  _mk_fake_gate "$fixture" 0
+
+  local wrapper="$tmp_root/b4b/wrapper"
+  mkdir -p "$(dirname "$wrapper")"
+  _mk_gate_wrapper "$fixture" "$wrapper"
+
+  local err code
+  set +e; err="$("$wrapper" --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "foreground (default detached, bare --cd): code=$code err=$err"
+    return
+  fi
+
+  set +e; err="$("$wrapper" --lifecycle foreground --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "explicit foreground, bare --cd: code=$code err=$err"
+    return
+  fi
+
+  set +e; err="$("$wrapper" --lifecycle detached --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "explicit detached, bare --cd: code=$code err=$err"
+    return
+  fi
+
+  pass "$name"
+}
+
 # ---- 5: pmctl binary routes gate/run without error ---------------------------
 case_pmctl_routing() {
   # Verifies that the top-level cli/pmctl binary recognises the gate/run
@@ -579,6 +621,7 @@ case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script
+case_cd_missing_value_rejected
 case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
