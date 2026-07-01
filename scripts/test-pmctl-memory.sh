@@ -504,6 +504,28 @@ case_memory_doctor_no_memory_dir() {
   pass "$name"
 }
 
+case_memory_doctor_config_memory_dir_override() {
+  local name="pmctl memory doctor: dispatch.memory_dir config resolves an override-only memory dir"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/docover-cfg" repo="$tmp_root/docover-repo"
+  local override="$tmp_root/docover-override" fakehome="$tmp_root/docover-home"
+  # cfg has NO projects/<repo>/memory dir — a hit proves resolution went
+  # through dispatch.memory_dir, not the CLAUDE_CONFIG_DIR walk.
+  mkdir -p "$cfg/projects" "$repo" "$override" "$fakehome/.pm-dispatch"
+  write_compliant_card "$override/feedback_test.md" test-card
+  printf '# Memory Index\n- [test](feedback_test.md) — hook\n' > "$override/MEMORY.md"
+  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+
+  local out="$tmp_root/docover.json" status=0
+  HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory doctor --repo-root "$repo" --json \
+    > "$out" 2>/dev/null || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if ! assert_jq "$name" "$out" ".memory_dir == \"$override\""; then return 0; fi
+  pass "$name"
+}
+
 case_memory_doctor_repo_refs_unsafe_path() {
   local name="pmctl memory doctor: path: ref escaping the repo (../ or absolute) → stale, not fresh"
   should_run "$name" || return 0
@@ -1229,6 +1251,68 @@ case_memory_rebuild_summary_no_memory_dir() {
   pass "$name"
 }
 
+case_memory_shard_config_memory_dir_override() {
+  local name="pmctl memory shard: dispatch.memory_dir config resolves an override-only memory dir"
+  should_run "$name" || return 0
+
+  local cfg repo override fakehome
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  override="$(mktemp -d -p "$tmp_root")"
+  fakehome="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects" "$fakehome/.pm-dispatch"  # cfg has NO memory dir for $repo
+  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+
+  local ep="$override/episodes.jsonl"
+  local i
+  for i in $(seq 1 5); do
+    printf '{"date":"2026-05-%02d","cwd":"%s","session_id":"s%d","summary":"entry %d"}\n' \
+      "$i" "$repo" "$i" "$i" >> "$ep"
+  done
+
+  local out status=0
+  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory shard --repo-root "$repo" 2>&1)" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected shard to resolve override-only memory dir; exited $status: $out"
+    return 0
+  fi
+  if ! printf '%s' "$out" | grep -q "no shard needed"; then
+    fail "$name" "expected 'no shard needed' (5 lines below limit); got: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_memory_rebuild_summary_config_memory_dir_override() {
+  local name="pmctl memory rebuild-summary: dispatch.memory_dir config resolves an override-only memory dir"
+  should_run "$name" || return 0
+
+  local cfg repo override fakehome
+  cfg="$(mktemp -d -p "$tmp_root")"
+  repo="$(mktemp -d -p "$tmp_root")"
+  override="$(mktemp -d -p "$tmp_root")"
+  fakehome="$(mktemp -d -p "$tmp_root")"
+  mkdir -p "$cfg/projects" "$fakehome/.pm-dispatch"  # cfg has NO memory dir for $repo
+  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+
+  local ep="$override/episodes.jsonl"
+  printf '{"date":"2026-05-01","cwd":"%s","session_id":"a","summary":"may entry one"}\n' "$repo" >> "$ep"
+
+  local out status=0
+  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory rebuild-summary --repo-root "$repo" 2>&1)" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected rebuild-summary to resolve override-only memory dir; exited $status: $out"
+    return 0
+  fi
+  if [[ ! -f "$override/episodes.summary.md" ]]; then
+    fail "$name" "expected episodes.summary.md under the config-override memory dir; output: $out"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_index_not_produced() {
   local name="pmctl memory shard+rebuild-summary: episodes.index.jsonl is not produced (deferred)"
   should_run "$name" || return 0
@@ -1516,6 +1600,7 @@ case_memory_doctor_help_exit0
 case_memory_doctor_repo_root_override
 case_memory_doctor_missing_required_fields
 case_memory_doctor_no_memory_dir
+case_memory_doctor_config_memory_dir_override
 case_memory_doctor_repo_refs_unsafe_path
 case_memory_doctor_fn_symbol_injection
 case_memory_doctor_fn_function_keyword_boundary
@@ -1526,6 +1611,8 @@ case_memory_shard_idempotent
 case_memory_rebuild_summary_no_duplicate_after_shard
 case_memory_shard_no_memory_dir
 case_memory_rebuild_summary_no_memory_dir
+case_memory_shard_config_memory_dir_override
+case_memory_rebuild_summary_config_memory_dir_override
 case_memory_index_not_produced
 case_memory_shard_at_exact_limit
 case_memory_shard_repo_root_missing_operand_exit2
