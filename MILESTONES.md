@@ -29,7 +29,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-412 | memory substrate 跨工具可攜：(a) 位置 seam — `find_memory_dir` 支援 `PM_MEMORY_DIR`（或 `dispatch.memory_dir` config）顯式覆寫，解析優先序 env > config > `CLAUDE_CONFIG_DIR` 慣例，未設時行為與今天 byte-identical；(b) 注入分層文件化 — 「可攜核心＝`pmctl context --source memory` retrieval API；注入＝per-tool adapter」，Claude 沿用現有 hook，codex/opencode/未來 host 改為主動呼叫 retrieval API | 🔵 active |
+| CC-412 | memory substrate 跨工具可攜：(a) 位置 seam — `find_memory_dir` 支援 `PM_MEMORY_DIR`（或 `dispatch.memory_dir` config）顯式覆寫，解析優先序 env > config > `CLAUDE_CONFIG_DIR` 慣例，未設時行為與今天 byte-identical；(b) 注入分層文件化 — 「可攜核心＝`pmctl context --source memory` retrieval API；注入＝per-tool adapter」，Claude 沿用現有 hook，codex/opencode/未來 host 改為主動呼叫 retrieval API | ✅ done pr:#352 |
 
 > 兩子需求耦合度低，若實作時發現超出 medium 估計，可拆 Phase 1a（代碼）/ 1b（docs）降低單一 PR 審查負擔。
 
