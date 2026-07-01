@@ -39,23 +39,18 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-104s | ⏸ deferred | **[Windows]** hook-tool-trace.sh path normalization fails on Git Bash backslashes；normalize via cygpath before case-match（parked: CC-370） | ops/portability | 2026-05-18 | — | — | oss |
 | CC-205 | ⏸ deferred | `/pm` dual-executor planning：`--executor auto/codex/claude` flag + `--parallel-plan` mode（PM 偵測 arch 特徵時暫停確認；parallel dispatch 後主線程合成計劃） | process | 2026-05-20 | — | P2 | design |
 | CC-209 | 🟢 someday | codegraph evaluation（Phase 1 AMBER）：pm-dispatch 非有效測試目標；Phase 2 benchmark 需 TS/JS/Python/Go codebase（see CC-253） | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
-| CC-210 | ✅ done | **[uninstall blast-radius guard]** `uninstall.sh` currently allows `$HOME/.claude` itself to pass the managed-root safety guard (dst must start with managed root); a malformed or tampered copy-mode manifest entry matching the directory hash could remove the entire Claude config tree. Fix: add an explicit `[[ "$dst" == "$managed_root" ]]` rejection check before the startswith guard, so only strict descendants of the managed root are deletable. Raised by risk-reviewer in PR #110 gate as [medium] advisory. **See**: pr:#340 | ops | 2026-05-21 | pr:#340 | P3 | hygiene |
 | CC-211 | ⏸ deferred | v0.3.0 arch epic：schema-first PM runtime（core/runtime/adapters/mcp 四層）；adapters codex+claude 已 ship；state-first/mcp 仍 open | arch/portability | 2026-05-21 | — | P1 | design |
 | CC-212 | ⏸ deferred | **[fix: harden Windows junction install — path-passing + idempotency]** 兩個 Windows junction hardening 合併一 PR（吸收 CC-213）：(A) `make_junction_windows()` 改用 `PM_DISPATCH_MAKE_SRC`/`PM_DISPATCH_MAKE_DST` env var 傳路徑，統一 PowerShell boundary 慣例；(B) `install_dir_junction()` 加 manifest-driven idempotency probe，不再依賴 `-L` 偵測。 | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
 | CC-216 | ⏸ deferred | MCP server（DEFERRED no milestone，2026-06-18 user 拍板；待 executor 抽象 + retrieval/memory 基底穩定後再評估） | arch/portability | 2026-05-21 | — | — | design |
-| CC-224 | ✅ done | **[shared hook-profile inventory: doctor.sh ↔ install-guards.sh]** `doctor.sh` owns a second hardcoded minimal/full hook membership model alongside `install-guards.sh`, creating a silent drift path when hooks are added or profile semantics change. Extract the hook-profile list into a shared shell helper (e.g. `scripts/hook-profile.sh`) or add a parity test asserting both files expect the same hook set. Raised by critic + architecture-reviewer as [medium] advise in gate-20260522-100348. **See**: pr:#341 | arch/reuse | 2026-05-22 | — | P3 | oss |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
-| CC-240 | ✅ done | **[test-suite reliability follow-ups]** Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129). Part (b) — `scripts/test-portable.sh::case_mkdir_lock_contention` sleep 1.2 → FIFO release signal — closed via pr:#344. | test | 2026-05-23 | pr:#344 | P3 | oss |
 | CC-244 | 🟢 someday | **[Typed artifact pipeline — spike → brief → handover schema]** Define `spike_v1` schema mirroring existing `dispatch_handover_v1`: frontmatter (`spike_id`, `status`, `decisions_resolved`, `branch_base`, `ticket_ids_consumed`, `project_tooling`) + named sections (`scope`, `findings`, `constraints`, `decisions`, `phase3_handover`). Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-brief-from-spike.sh` (mechanical brief extraction). Reduces main-thread courier cost, makes spike→brief authoring mechanical, gives invariant checkpoints (`decisions_resolved=true` ⇒ no re-asking Q1/Q2). Defer until 3+ spike docs exist and the brief-extraction pattern repeats; only one spike (CC-060) today, so schema would be premature overhead. CC-243 field names chosen to align with this future schema (no re-wash needed at upgrade time). | arch | 2026-05-23 | — | — | design |
 | CC-253 | 🟢 someday | **[CC-209 Phase 2: codegraph benchmark on representative target codebase]** Phase 1 (PR #151) verdict AMBER — codegraph install ✓ license MIT ✓ API ✓, but pm-dispatch (bash/markdown) isn't a valid test target (`62 unsupported language`). Phase 2 re-scope: user picks a TS/JS/Python/Go target codebase at brief time, index it via codegraph, run 3 representative queries against rg/git baseline, measure token + latency delta. Output: append `## Phase 2` section to `docs/spikes/cc209-codegraph-phase1.md` OR new sibling doc. Verdict per original CC-209 ticket: adopt / defer / reject for context-pack source (CC-232 / CC-237). | ops/token | 2026-05-24 | pr:TBD | P3 | spike |
-| CC-258 | ✅ done | pm-write-guard hook 政策修訂：3 條新 allow rule（`/tmp/<slug>/*.md`、`docs/spikes/*`、symlink memory 雙正規化）+ ~15 迴歸測試 | process | 2026-05-24 | pr:#342 | P3 | hygiene |
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-270 | ⏸ deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-273 | ⏸ deferred | arch: unified lifecycle hook event spec（`.pm-dispatch/hooks/<event>.sh`）；activate when second hook point beyond gate pre/post emerges | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-276 | 🔵 active | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。v0.8.0 Phase 2 | gate/process | 2026-05-29 | — | P2 | — |
-| CC-285 | ✅ done | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | pr:#343 | P3 | hygiene |
 | CC-286 | ⏸ deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-306 | ⏸ deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）+layer 4（CC-381）排入 v0.8.0；layer 7 待評估；open sub-tickets: CC-381/390/393/412 | arch | 2026-06-07 | — | P2 | design |
@@ -77,12 +72,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-412 | 🔵 active | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | — | P3 | retrieval |
-| CC-420 | ✅ done | refactor: adapter 共用 model alias TSV 解析抽 lib（claude/codex/opencode 三者 ~30行重複）→ `scripts/lib/model-aliases.sh` | arch | 2026-06-24 | pr:#345 | P3 | — |
-| CC-421 | ✅ done | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | pr:#346 | P3 | — |
-| CC-422 | ✅ done | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | pr:#347 | P3 | — |
 | CC-423 | 🔵 active | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | — | P3 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
-| CC-430 | ✅ done | **[release: `/pre-release` Layer 2 — 語義比對]** 承接 [[CC-426]] Layer 2。主線程直接讀取各 ticket Requirement 章節（從 BACKLOG）+ 對應 PR diff 摘要（`gh pr diff <PR#>`），內聯分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。 | ops/process | 2026-06-26 | pr:#339 | P1 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 
 ---
@@ -420,29 +411,6 @@ aligned with pm-dispatch's core token-efficiency goal.
 
 **Priority**: P3 — non-urgent. Evaluate after v0.2.0 milestone closes.
 
-## CC-210 — uninstall.sh: reject managed-root exact path as deletion target ✅ 2026-06-29
-
-**Problem**: `uninstall.sh` checks `[[ "$dst" == "$managed_root"* ]]` (startswith), which
-allows `$managed_root` itself to pass. A malformed copy-mode manifest entry with a
-destination equal to `$HOME/.claude` could cause the uninstaller to delete the entire
-Claude config directory.
-
-**Why**: Raised as [medium] advisory by risk-reviewer in PR #110 gate. Normal installer
-manifests never create such entries, but defense-in-depth suggests rejecting the exact
-root to align worst-case blast radius with "remove installed artifacts," not "remove all
-Claude config."
-
-**Requirement**: In `uninstall.sh`, before the `rm` / `unlink` call, add:
-```bash
-[[ "$dst" == "$managed_root" ]] && { warn "skipping managed root itself: $dst"; continue; }
-```
-Add a test case in `scripts/test-uninstall.sh`: manifest entry with dst == managed root
-is skipped and a warning is emitted.
-
-**Priority**: P3 — low urgency (normal manifests are safe). Fix before any public release.
-
-**See**: pr:#340
-
 ## CC-211 — multi-CLI platform architecture（deferred）
 
 **v0.3.0 epic** (updated 2026-05-22): umbrella epic for the v0.3.0 PM-runtime restructure. The original P0–P5 ordering below is **superseded** — see [`docs/architecture/v0.3.0-synthesis.md`](../docs/architecture/v0.3.0-synthesis.md) for the design breakdown (its **Conformance status** section tracks as-built drift; live numbering is **M0–M6** in `MILESTONES.md`, vs the §6 M0–M5 design cut) and `MILESTONES.md` v0.3.0 for ticket assignment. MCP (CC-216) and `adapters/antigravity`/`opencode` are deferred to v0.4.0; `adapters/codex` shipped in v0.3.0 (with claude).
@@ -533,22 +501,6 @@ format differences only.
 
 **Priority**: P4 within CC-211 roadmap. Evaluate at v0.3.0.
 
-## CC-224 — shared hook-profile inventory: doctor.sh ↔ install-guards.sh ✅ 2026-06-29
-
-**Problem**: `scripts/doctor.sh` owns a second hardcoded minimal/full hook membership model (around line 240) that mirrors the one in `scripts/install-hooks.sh`. When a new hook is added or a profile boundary changes, it is easy to update one file and miss the other — this is a silent drift path with no compile-time check.
-
-**Why**: Raised by critic and architecture-reviewer as [medium] advise in PR-gate `gate-20260522-100348`. The duplication became structurally significant once `--profile minimal|full|auto` was added and both files enumerate hooks by profile.
-
-**Requirement**: Extract the managed hook list and profile classification into a shared shell helper (e.g. `scripts/hook-profile.sh`) sourced by both `doctor.sh` and `install-hooks.sh`. Alternatively, add a parity test (e.g. `test-hook-profile-parity.sh`) that parses both files and asserts the hook sets are identical for each profile tier.
-
-**Dependencies**: CC-058（profile flag already landed）
-
-**Priority**: P3 — maintainability; current duplication is limited to two well-known files.
-
-**Cross-link**: CC-223（boundary fix; pair these if tackling doctor.sh again）, CC-204（hook/profile reuse debt）
-
-**See**: pr:#341
-
 ## CC-227 — refactor: extract yaml-frontmatter lib + shared validation helpers（deferred；吸收 CC-226）
 
 **Problem**: `scripts/lint-frontmatter.sh` mixes CLI parsing, frontmatter boundary detection, and a ~150-line hand-rolled YAML subset parser in a single file. The parser logic (`check_frontmatter()`) has no stable call boundary, making it hard to reuse from other scripts (e.g., `doctor.sh` currently forks a subprocess to call the linter), hard to test in isolation, and hard to extend without touching the CLI script. Additionally (absorbed from CC-226), the 4 collection branches each repeat the same dq-escape whitelist regex and adjacent-quoted-scalar check, creating a silent parity-gap risk.
@@ -583,23 +535,6 @@ format differences only.
 **Revisit when**: the workflow includes overnight / away-from-keyboard agent runs.
 
 **Cross-link**: CC-230 (state store), CC-211 (epic); AI Night Shift mapping — docs/architecture/v0.3.0-synthesis.md §5.3.
-
-## CC-240 — test-suite reliability follow-ups ✅ 2026-06-30
-
-**Status**: Part (a) — suite-count derivation in `scripts/test-run-all-tests.sh` — closed via CC-219 (pr:#129); the assertions now derive expected pass/skip totals from `${#SUITE_NAMES[@]}`. Part (b) closed via this ticket.
-
-**Problem (remaining)**: `scripts/test-portable.sh::case_mkdir_lock_contention` holds the lock with a fixed `sleep 1.2` to create contention overlap (pre-existing — not introduced by CC-203).
-
-**Why**: Fixed-`sleep` async timing is flaky on slow / preempted CI hosts and conflicts with the qa-testing-rules AGENT.md red line on `sleep` for async synchronization — a flaky gate test erodes the gate's signal.
-
-**Requirement**:
-- `test-portable.sh::case_mkdir_lock_contention`: replace the fixed `sleep 1.2` lock-hold with an IPC / event-driven control path (e.g. a FIFO-gated holder, matching the pattern already used elsewhere in the portable-lock tests).
-
-**Priority**: P3 — test-infra hardening; advisory follow-up, the CC-203 GO was not blocked on it.
-
-**Cross-link**: CC-203 (origin), `scripts/test-run-all-tests.sh`, `scripts/test-portable.sh`.
-
-**See**: pr:#344
 
 ## CC-244 — Typed artifact pipeline: spike → brief → handover schema（someday）
 
@@ -658,39 +593,6 @@ Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-b
 **Priority**: P3 — feeds CC-232 / CC-237 design, not blocking other work.
 
 **Cross-link**: CC-209 (Phase 1 origin), `docs/spikes/cc209-codegraph-phase1.md`, CC-255 (template improvements this depends on), CC-232 (context-pack consumer), CC-237 (enricher consumer), `[[feedback_spike_validation_mandatory]]`.
-
-## CC-258 — pm-write-guard hook policy revision ✅ 2026-06-29
-
-**Problem**: `scripts/hook-pm-write-guard.sh` currently allows only `~/.claude/projects/<project>/memory/**`. Audit of 207 denies over 10 days identified 3 legitimate PM-author patterns being incorrectly denied (12 hits; the rest are red-team / regression-test traffic).
-
-**Why**:
-- `/tmp/<task-slug>/*.md` is the verbatim-as-attached-file pattern from `[[feedback_codex_brief_discipline]]` (Pattern 2). Current deny forces PM to fall back to inline embedding — the exact failure mode the pattern was written to avoid (apply_patch debug-loop hang).
-- `<repo>/docs/spikes/*-scope.md` / `*-rfc.md` are PM-authorship territory; the inline-return → main-thread-write round-trip is a no-value transcription step.
-- Memory writes through symlinked memory dir (`memory-private/` per `[[reference_memory_private_repo]]`) get denied because `realpath_m` chases the symlink before the allow-pattern match. Hook bug, not policy.
-
-**Requirement**:
-- Three new allow rules (A: `/tmp/[a-z][!/]*/[!/]*.md`, B: `*/docs/spikes/{CC-NNN*,*-scope,*-rfc}.md`, C: dual-normalization for symlinked memory dir via lex_path-vs-abs_path).
-- New `realpath_m_lex` helper (or `realpath -s` flag) in `scripts/lib/portable.sh`.
-- ~50 LoC in `hook-pm-write-guard.sh`, ~20 LoC in `portable.sh`, ~15 new test cases in `scripts/test-hooks.sh`.
-- `BACKLOG.md`, `DECISIONS.md`, `agents/*.md`, `commands/*.md`, `scripts/**`, `/tmp/brief-*.md` continue to deny (verified by audit).
-
-**Acceptance**:
-- The 12 currently-denied legitimate writes succeed under the new rules.
-- All 195 currently-denied non-legitimate writes (including all red-team test cases) continue to deny.
-- New regression tests cover Rule A boundaries (no intermediate dir → deny, traversal → deny, nested subdirs → deny, non-.md → deny), Rule B boundaries (not under spikes/ → deny, no CC-/-scope/-rfc prefix-suffix → deny), Rule C (symlinked memory entry → allow, file-symlink-jump-out → deny).
-- `pm/scripts/validate.sh` BACKLOG parity preserved.
-
-**Milestone**: Post-M1 process tooling (not blocking M1 substrate work).
-
-**Priority**: P3 — process improvement. Current friction is workable via inline-return + main-thread-write or `CLAUDE_HOOK_PM_GUARD=off` bypass.
-
-**Open questions**: see spike doc §Open questions (Rule A pattern strictness — loose `[a-z]` vs require `-content` suffix; memory-private root configurability — hard-code vs env var; filename allowlist scope — pre-add `-design.md`/`-proposal.md` or wait for audit; bypass mechanism — single global vs per-rule; spike scope vs spike output split).
-
-**See**: pr:#342; `docs/spikes/CC-258-pm-write-guard-policy.md` (full design, audit data table, code change sketch, test coverage sketch, risks + mitigations).
-
-**Cross-link**: `[[feedback_codex_brief_discipline]]` (Pattern 2 origin), `[[feedback_spike_validation_mandatory]]` (why `/tmp/brief-*.md` stays denied), `[[reference_memory_private_repo]]` (symlink target).
-
----
 
 ## CC-259 — yaml.sh lib extraction（someday）
 
@@ -836,20 +738,6 @@ This makes directory creation the mutex.
 ## CC-104s — [Windows dogfood r3] hook-tool-trace.sh path normalization on Git Bash ⏸ deferred
 
 **Problem**: `read_home_path_basename_only` case-glob fails on Windows backslash paths. Fix: normalize via `cygpath`/string-replace before case-match. Affects trace JSON observability only.
-
-## CC-285 — [ops] archiver safe-drop: don't drop a terminal row whose body exists nowhere ✅ 2026-06-30
-
-**Problem**: `scripts/archive-closed-backlog.sh` drops a terminal index row (`✅ closed` / `🚫 dropped`) even when no body section accompanies it in BACKLOG.md and none already exists in BACKLOG-ARCHIVE.md. It emits a per-id stderr warning, but the row metadata is removed (recoverable only via git).
-
-**Why**: In a valid backlog this cannot happen — `pm/scripts/validate.sh` enforces an index↔body 1:1 invariant, so a terminal row always has a body to archive. It only arises from malformed/partial state. Recorded as an accepted tradeoff in DECISIONS 2026-05-30. This ticket tracks the defense-in-depth improvement if that invariant ever weakens.
-
-**Requirement**:
-1. When a terminal row's body is found in neither BACKLOG.md (this run) nor BACKLOG-ARCHIVE.md, do NOT drop the row; keep it and emit a loud warning for manual reconciliation.
-2. Regression fixture: terminal row + no body anywhere → row preserved + warning (not removed).
-
-**Cross-link**: `[[CC-284]]` (working-set contract / archiver), pr-gate finding on PR #186.
-
-**See**: pr:#343
 
 ## CC-286 — [arch] pmctl: prefix-generic next-id derivation ⏸ deferred
 
@@ -1228,58 +1116,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3（someday）。
 
-## CC-420 — refactor: adapter 共用 model alias TSV 解析抽 lib ✅ 2026-06-30
-
-**Problem**: claude/codex/opencode 三個 adapter 各自重複相同的 model alias TSV 解析邏輯（約 30 行 × 3）。
-
-**Why**: 三份複製體確保任何欄位調整或 alias 格式變化都要改三處，且測試覆蓋分散——實際上三個 adapter 讀同一份 TSV 格式，解析邏輯 byte-identical。
-
-**Requirement**: 抽 `scripts/lib/model-aliases.sh` 提供 `ma_resolve_alias <adapter> <alias>` 函式；三個 adapter source 該 lib 並刪除各自的重複邏輯；`test-model-aliases.sh` 直接測試 lib；現有 adapter 測試的 alias 行為路徑不得退化。不改 TSV schema 或 alias 語意。
-
-**Acceptance**:
-- `bash scripts/test-model-aliases.sh` 通過。
-- 三個 adapter 的 model alias 行為與今天 byte-identical（現有 adapter 測試綠）。
-- `lint-model-aliases.sh` 仍通過。
-
-**See**: pr:#345
-
-**Priority**: P3（someday）。
-
-## CC-421 — refactor: adapter 共用 timeout 優先序邏輯抽 lib ✅ 2026-06-30
-
-**Problem**: 三個 adapter 與 `dispatch-post-verify.sh` 均有相同的 timeout 優先序模式（flag > env > config > default），約 15 行 × 4 處重複。
-
-**Why**: timeout 優先序若需調整（例如加 config 層級或改 default 值），須改 4 處且各處行為需保持一致；目前缺乏單一 source of truth。
-
-**Requirement**: 抽 `scripts/lib/timeout-resolve.sh` 提供 `tr_resolve_timeout <flag_val> <env_var_name> <config_key> <default>` 函式；四個呼叫方改用此函式；現有測試的 timeout 行為路徑不得退化。不改 timeout 語意或預設值。
-
-**Acceptance**:
-- 四個呼叫方（claude/codex/opencode adapter + dispatch-post-verify）行為與今天 byte-identical。
-- 新增 `test-timeout-resolve.sh` 覆蓋 flag > env > config > default 四層優先序。
-
-**See**: pr:#346
-
-**Priority**: P3（someday）。
-
-## CC-422 — refactor: adapter 共用 dispatch 初始化邏輯抽 lib ✅ 2026-06-30
-
-**Problem**: claude/codex 兩個 adapter 有約 200 行高度相似的 dispatch 初始化邏輯（snapshot、isolation map 解析、brief 讀取、run-dir 建立）。
-
-**Why**: 兩份複製體讓 dispatch 核心流程改動需同步兩處，且介面不一致時 bug 只在一個 adapter 出現——歷史上 CC-414 的 trace-dir seam 就因此需要在三個 adapter 各自加一次。opencode 在此已有部分分歧（isolation 翻譯不同），須仔細界定共用邊界。
-
-**Requirement**: 分析 claude/codex/opencode 三個 adapter 的 dispatch 初始化，識別可安全共用的部分（純 setup：snapshot、brief parse、run-dir 建立）與必須保持 per-adapter 的部分（isolation 翻譯、native flag 傳遞）；抽出前者到 `scripts/lib/dispatch-common.sh`；後者維持 per-adapter。不改任何可見行為。
-
-**Acceptance**:
-- 三個 adapter 的 dispatch 行為與今天 byte-identical（現有 adapter 測試全綠）。
-- 新增 `test-dispatch-common.sh` 覆蓋被抽出的共用函式。
-- `dispatch-common.sh` 不引入跨 adapter 的隱式耦合（isolation 翻譯仍 per-adapter）。
-
-**Note**: dispatch-common 涉及 adapter 核心邏輯，重構前須先確認三個 adapter 的分歧點；建議在實作前做 spike 確認介面邊界。
-
-**Priority**: P3（someday）。
-
-**See**: pr:#347
-
 ## CC-423 — gate detached lifecycle 🔵 active
 
 **Problem**: `pmctl gate run` 目前以 foreground 模式執行（無 lifecycle 選項），透過 Claude Code harness 的 `run_in_background: true` 監控。Session interrupt 會讓 harness 遺失對 gate process 的追蹤，回報錯誤的 exit code（同 CC-418 之前 dispatch 的問題）。
@@ -1315,39 +1151,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 文件 + `pmctl gate run --help` 說明新參數。
 
 **Priority**: P3（someday）.
-
-## CC-430 — release: `/pre-release` Layer 2 — 語義比對 ✅ 2026-06-29
-
-**Problem**: CC-426 Layer 1 只驗結構標記（✅/PR ref/CHANGELOG mention），無法確認 PR diff 是否真的滿足 ticket 的 Requirement——ticket 說改 X/Y/Z，diff 只改了 X/Y 的情況在 Layer 1 完全偵測不到。
-
-**Why**: Layer 2 補上「需求 vs 實作」的語義比對層，讓 `/pre-release` 報告從「tracking hygiene 乾淨」升級到「實作覆蓋可追溯」。Layer 1 是必要前提（穩定的結構資料讓 diff mapping 可靠），Layer 2 是增值層。
-
-**Requirement**:
-
-承接 [[CC-426]] Layer 2 設計：
-
-**主線程執行策略**
-- 主線程逐 ticket 讀取 BACKLOG 的 Requirement 章節
-- 對應 PR diff 摘要由主線程取（`gh pr diff <PR#>`）
-- 主線程內聯分析覆蓋度，輸出 per-ticket 結論
-- 可取 `pmctl context query --source memory` 相關 decision 背景輔助判斷
-
-**Output 格式（追加至 Layer 1 + Layer 3 報告後）**：
-```
-### Layer 2 — Semantic coverage
-| Ticket | Requirement summary | Diff coverage | Confidence | Flag |
-```
-
-**Constraints**:
-- 主線程執行，不派發子 job（閱讀理解任務，主線程直接處理）
-- PR diff 由主線程自行取，每 ticket targeted read，不整份 diff 一次塞入
-- 不輸出 GO/NO-GO；報告判斷留給人
-
-**Depends on**: [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。
-
-**Priority**: P1（v0.7.1）. CC-429 dogfood run 完成後升 P1（2026-06-29）；CC-426 Layer 1 穩定、依賴 CC-403/CC-404 全 ✅。
-
-**See**: pr:#339
 
 ## CC-431 — test-e2e.sh + release-verify.sh: opencode adapter support 🟢 someday
 
