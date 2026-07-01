@@ -21,6 +21,45 @@ mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Install a fake pr-gate.sh into fixture/scripts/ that writes a structurally
+# valid gate result under --run-dir (so gate_result_verify accepts it -- the
+# detached wait path now requires this, per CC-423's result-integrity fix)
+# and prints `result: <path>`, then exits with the given code.
+_mk_fake_gate_with_result() {
+  local fixture="$1" code="$2"
+  mkdir -p "$fixture/scripts"
+  cat > "$fixture/scripts/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+rd=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --run-dir) rd="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ -n "\$rd" ]]; then
+  mkdir -p "\$rd"
+  cat > "\$rd/result.md" <<RESULT
+---
+gate_result_version: pr_gate_result_v1
+final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
+tier: express
+mode: sequential
+most_severe: approve
+---
+
+# PR-Gate Result
+
+## Gate Conclusion
+Final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
+RESULT
+  printf 'result: %s\n' "\$rd/result.md"
+fi
+exit $code
+FAKEGATE
+  chmod +x "$fixture/scripts/pr-gate.sh"
+}
+
 # Install a fake pr-gate.sh into fixture/scripts/ that echoes its args and
 # exits with the given code.
 _mk_fake_gate() {
@@ -208,6 +247,25 @@ case_pmctl_routing() {
     pass "$name"
   else
     fail "$name" "code=$code out=$(printf '%s' "$out" | head -3)"
+  fi
+}
+
+# ---- 5b: --help stays synchronous even with the default (detached) lifecycle
+case_help_bypasses_detached_default() {
+  # CC-423 pr-gate finding (critic, medium): flipping the default lifecycle
+  # to detached silently turned `pmctl gate run --help` (no --lifecycle flag)
+  # into a detached launch instead of synchronous usage output. Verifies the
+  # fix: -h/--help always forwards synchronously regardless of lifecycle.
+  local name="gate/run: --help forwards synchronously under the default (detached) lifecycle"
+  should_run "$name" || return 0
+
+  local out code
+  set +e; out="$("$PMCTL" gate run --help 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd"* ]] && [[ "$out" != gate-* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(printf '%s' "$out" | head -3) (expected synchronous usage text, not a bare gate_id)"
   fi
 }
 
@@ -420,7 +478,7 @@ _run_gate_cli_route_case() {
   local state="$tmp_root/${name//[^A-Za-z0-9]/-}/state"
   mkdir -p "$work"
   _mk_gate_cli_fixture "$fixture"
-  _mk_fake_gate "$fixture" "$gate_code"
+  _mk_fake_gate_with_result "$fixture" "$gate_code"
 
   local cli_pmctl="$fixture/cli/pmctl"
   local gate_id out1 code1
@@ -463,6 +521,7 @@ case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script
 case_pmctl_routing
+case_help_bypasses_detached_default
 case_verify_valid
 case_verify_empty
 case_verify_no_final

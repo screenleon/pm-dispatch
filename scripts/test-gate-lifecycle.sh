@@ -82,6 +82,44 @@ FAKEGATE
   chmod +x "$fixture/scripts/pr-gate.sh"
 }
 
+# Install a fake pr-gate.sh that exits 0 (GO) but never writes a result file
+# or prints a `result: <path>` line -- the pathological case the pr-gate
+# result-integrity fix (CC-423 risk-reviewer finding) exists to catch: a
+# sentinel that reports GO/NO-GO with no verifiable result behind it.
+_mk_fake_gate_no_result() {
+  local fixture="$1" code="${2:-0}"
+  mkdir -p "$fixture/scripts"
+  cat > "$fixture/scripts/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+exit $code
+FAKEGATE
+  chmod +x "$fixture/scripts/pr-gate.sh"
+}
+
+# Install a fake pr-gate.sh that exits 0 (GO) and prints a \`result:\` line,
+# but the file it points at is structurally invalid (no Final: line) -- the
+# gate_result_verify rejection path, distinct from the missing-result path
+# above.
+_mk_fake_gate_corrupt_result() {
+  local fixture="$1"
+  mkdir -p "$fixture/scripts"
+  cat > "$fixture/scripts/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+rd=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-dir) rd="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$rd"
+printf 'not a valid gate result\n' > "$rd/result.md"
+printf 'result: %s\n' "$rd/result.md"
+exit 0
+FAKEGATE
+  chmod +x "$fixture/scripts/pr-gate.sh"
+}
+
 # Install a fake pr-gate.sh usage-error case: it exits 2 without a --run-dir
 # or a result file at all (mirrors a real dispatch/argv failure path).
 _mk_fake_gate_usage_error() {
@@ -337,6 +375,104 @@ case_detached_requires_state_paths() {
   fi
 }
 
+# ---- 9: GO sentinel with no result file fails the wait (exit 2) --------------
+case_wait_fails_on_missing_result() {
+  # CC-423 pr-gate finding (risk-reviewer, high): a wait must not report
+  # success on a GO/NO-GO state when the sentinel recorded no result file --
+  # that state is unverifiable and must not be trusted.
+  local name="gate-lifecycle/gate wait fails when GO sentinel has no result file"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c9/fixture" work="$tmp_root/c9/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate_no_result "$fixture" 0
+
+  local run_wrapper="$tmp_root/c9/run" wait_wrapper="$tmp_root/c9/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"no result file"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 10: GO sentinel with a structurally invalid result fails the wait -------
+case_wait_fails_on_corrupt_result() {
+  # CC-423 pr-gate finding (qa-tester, high): distinct from the missing-result
+  # case above -- here a result file exists but gate_result_verify rejects it
+  # (no Final: line), and the wait must still fail rather than trust it.
+  local name="gate-lifecycle/gate wait fails when result fails gate_result_verify"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c10/fixture" work="$tmp_root/c10/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  _mk_fake_gate_corrupt_result "$fixture"
+
+  local run_wrapper="$tmp_root/c10/run" wait_wrapper="$tmp_root/c10/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+
+  local out code
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"gate_result_verify rejected"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# ---- 11: gate wait usage-error contract (invalid timeout / gate_id / --cd) ---
+case_wait_usage_errors() {
+  # CC-423 pr-gate finding (qa-tester, medium): the wait input-validation
+  # branches (invalid --timeout, invalid gate_id, missing --cd) had no direct
+  # coverage in this suite.
+  local name="gate-lifecycle/gate wait rejects malformed usage (exit 2)"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c11/fixture" work="$tmp_root/c11/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+
+  local wait_wrapper="$tmp_root/c11/wait"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local out code
+
+  set +e; out="$("$wait_wrapper" gate-20260101-000000-abcdef --cd "$work" --timeout notanumber 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$out" != *"invalid --timeout"* ]]; then
+    fail "$name" "invalid --timeout: code=$code out=$out"
+    return
+  fi
+
+  set +e; out="$("$wait_wrapper" not-a-valid-gate-id --cd "$work" 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$out" != *"invalid gate_id"* ]]; then
+    fail "$name" "invalid gate_id: code=$code out=$out"
+    return
+  fi
+
+  set +e; out="$("$wait_wrapper" gate-20260101-000000-abcdef 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$out" != *"--cd <work_dir> is required"* ]]; then
+    fail "$name" "missing --cd: code=$code out=$out"
+    return
+  fi
+
+  pass "$name"
+}
+
 case_detached_launch_returns_gate_id
 case_wait_resolves_go
 case_wait_resolves_nogo
@@ -345,5 +481,8 @@ case_wait_indeterminate_on_consumed_sentinel
 case_wait_times_out
 case_foreground_unchanged
 case_detached_requires_state_paths
+case_wait_fails_on_missing_result
+case_wait_fails_on_corrupt_result
+case_wait_usage_errors
 
 th_summary

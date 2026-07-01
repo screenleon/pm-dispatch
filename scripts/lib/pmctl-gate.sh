@@ -69,6 +69,19 @@ pmctl_gate_run() {
   done
   set -- "${args[@]}"
 
+  # -h/--help always forwards synchronously to pr-gate.sh's own usage output,
+  # regardless of lifecycle (checked after --lifecycle is stripped above, so
+  # `--lifecycle detached --help` and bare `--help` -- default lifecycle is
+  # detached -- both still print usage instead of forking a supervisor for a
+  # no-op run): a caller asking for help wants text on stdout immediately,
+  # not a detached gate_id that reflects nothing about the requested run.
+  local _arg
+  for _arg in "$@"; do
+    if [[ "$_arg" == "-h" || "$_arg" == "--help" ]]; then
+      exec "$gate_script" "$@"
+    fi
+  done
+
   # Extract --cd value first so the run dir is keyed to the TARGET repo's partition,
   # not the caller's cwd. Fall back to $PWD when --cd is absent.
   local effective_cd="$PWD"
@@ -318,9 +331,33 @@ pmctl_gate_wait() {
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
       if [[ -n "$_result" ]]; then
         printf 'result: %s\n' "$_result"
-        if [[ "${_state:-}" == "GO" || "${_state:-}" == "NO-GO" ]] && declare -F gate_result_verify >/dev/null 2>&1; then
-          gate_result_verify "$_result" >/dev/null 2>&1 \
-            || printf 'pmctl gate wait: WARN: gate_result_verify failed for %s\n' "$_result" >&2
+      fi
+      # A GO/NO-GO sentinel is only trustworthy if its result file exists and
+      # passes the SAME structural check the synchronous route enforces
+      # in-process (gate_result_verify). Without this, a wait that completes
+      # while the result is missing/corrupt/unparsable would report success
+      # (exit 0/1) on an outcome nobody can actually confirm -- fail-closed
+      # instead: treat integrity failure as a failed wait (exit 2), distinct
+      # from a genuine NO-GO (exit 1).
+      if [[ "${_state:-}" == "GO" || "${_state:-}" == "NO-GO" ]]; then
+        if [[ -z "$_result" ]]; then
+          printf 'pmctl gate wait: FAIL: state %s reported but the sentinel recorded no result file -- treating as failed wait (result integrity cannot be confirmed)\n' "$_state" >&2
+          return 2
+        fi
+        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+          local _gr_lib="$repo_root/scripts/lib/gate-result-verify.sh"
+          if [[ -r "$_gr_lib" ]]; then
+            # shellcheck disable=SC1090,SC1091
+            . "$_gr_lib" 2>/dev/null || true
+          fi
+        fi
+        if ! declare -F gate_result_verify >/dev/null 2>&1; then
+          printf 'pmctl gate wait: FAIL: gate_result_verify unavailable -- cannot confirm result integrity for %s, treating as failed wait\n' "$_result" >&2
+          return 2
+        fi
+        if ! gate_result_verify "$_result" >/dev/null 2>&1; then
+          printf 'pmctl gate wait: FAIL: gate_result_verify rejected %s -- result is missing/corrupt/unparsable, treating as failed wait\n' "$_result" >&2
+          return 2
         fi
       fi
       return "$_exit"
@@ -328,6 +365,9 @@ pmctl_gate_wait() {
     elapsed=$((SECONDS - start))
     if (( elapsed >= timeout )); then
       printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
+      # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
+      printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
+        "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
       return 124
     fi
     sleep "${PM_GATE_WAIT_POLL_INTERVAL:-2}"
