@@ -2,7 +2,7 @@
 # Shared ~/.pm-dispatch/config reader for dispatch adapters.
 #
 # Call pm_config_load once in the main shell (NOT a subshell) before reading
-# the two output globals:
+# the output globals:
 #   PM_CFG_TIMEOUT       — dispatch.default_timeout (integer string), or ""
 #   PM_CFG_DEFAULT_MODEL — dispatch.default_model (alias/id), or ""
 #   PM_CFG_AUTO_PACK     — dispatch.auto_pack (on|off), or ""
