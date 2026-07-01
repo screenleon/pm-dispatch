@@ -39,8 +39,9 @@
 |----|------|------|
 | CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | 🔵 active |
 | CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed，鏡像既有 `dispatch --lifecycle detached` 模式 | ✅ done pr:#353 |
+| CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢（`sleep` 迴圈）改為主動通知（FIFO/inotify 等，解法未定案）。CC-423 交付後發現的簡化與效率改善項，解法待 `/pre-impl` 或 `/spike` 收斂 | 🟢 someday |
 
-> CC-425（gate 解除 PR 綁定）暫不排入——需重構 gate result key schema，範圍比 CC-276/423 大一截，待本 Phase 完成後視情況併入或延後 v0.9.0。
+> CC-425（gate 解除 PR 綁定）暫不排入——需重構 gate result key schema，範圍比 CC-276/423 大一截，待本 Phase 完成後視情況併入或延後 v0.9.0。CC-433 排入 Phase 2 作為 CC-423 的後續收斂項，非阻塞本 Phase 其餘票的完成。
 
 ### Phase 3 — CC-381 spike-only（P3；design 收斂，非完整實作）
 

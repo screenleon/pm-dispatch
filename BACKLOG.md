@@ -76,6 +76,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | 🔵 active | **[run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸]** 兩者因共用真實 repo 的 `.pm-dispatch/ctx/context.db` 被 `LIVE_DB_EXCLUSIVE` 強制序列，合計 558 秒（實測 test-release-verify 380s + test-pmctl-context 178s），佔全套件 ~10 分鐘總時長的絕大部分；根因初判為 `test-release-verify.sh` 對 `release-verify.sh` 呼叫 25 次、多次仍跑 Phase 3 對真實 repo 重複索引。**解法尚未定案**，需先深入分析（Phase 3 smoke 隔離 vs 案例跳過 vs 其他）再規劃實作範圍。觸發：CC-423 pr-gate 迭代中使用者實測耗時排查（2026-07-01）。 | ops/test | 2026-07-01 | — | P2 | design |
+| CC-433 | 🟢 someday | **[detached lifecycle：抽共用 sentinel lib + wait 改主動通知]** (1) `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入邏輯結構相同但各自重寫，應抽成共用 lib，兩邊各自只保留獨有業務邏輯（preflight+adapter vs. 直接 exec pr-gate.sh）；(2) `pmctl dispatch wait`/`pmctl gate wait` 目前用 `sleep \$POLL_INTERVAL` 輪詢 sentinel 檔案，應改為主動通知（如 blocking read on FIFO、inotify 等），supervisor 完成時主動喚醒 wait 而非讓它每 N 秒醒來檢查一次。解法未定案，需先 `/pre-impl` 或 `/spike` 收斂設計。 | arch/gate | 2026-07-01 | — | P3 | design |
 
 ---
 
@@ -1208,3 +1209,24 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **area**: ops/test
 **Priority**: P2 — 不阻塞 CC-423，但影響日常開發迭代速度，排在下一個 PR 優先分析規劃。
+
+## CC-433 — detached lifecycle：抽共用 sentinel lib + wait 改主動通知 🟢 someday
+
+**Problem**：CC-423（gate detached lifecycle）實作時直接照抄 `scripts/dispatch-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入模式，寫出 `scripts/gate-supervisor.sh`，兩份檔案在「啟動 detached process + 寫 sentinel」這塊結構相同（`_write_sentinel`/`_die` 的形狀、`/tmp/pm-*-sentinel-<id>-<nonce>` 命名、per-user mode-700 key 目錄）卻各自重寫，沒有抽共用 lib。
+
+另外，`pmctl dispatch wait <run_id>` 與 `pmctl gate wait <gate_id>` 目前都是輪詢實作：`while true; do [[ -f "$sentinel" ]] && ...; sleep "${POLL_INTERVAL:-2}"; done`。這代表 wait 呼叫平均要多等最多一個 poll interval 才能發現 supervisor 已完成，且長時間執行期間持續喚醒進程檢查檔案是否存在，而非讓 supervisor 完成時主動通知等待中的 wait。
+
+**Why**：
+- 重複程式碼：sentinel 寫入/驗證/清理邏輯目前有兩份幾乎相同的實作（`pmctl-dispatch.sh` 的 `_pmctl_sentinel_key_file`/`pmctl_dispatch_wait` 與 `pmctl-gate.sh` 的 `_pmctl_gate_sentinel_key_file`/`pmctl_gate_wait`），日後改其中一份的行為容易忘記同步另一份（已在 CC-423 實作中發生：gate 側的 result 完整性 fail-closed 邏輯是 dispatch 側原本沒有的，兩邊已經開始各自演化）。
+- 輪詢的效率/延遲問題：poll interval 預設 2 秒，代表 wait 呼叫最多要多等 2 秒才會回報完成，且整個等待期間都在忙輪詢（即使是低成本的 `sleep`），而非事件驅動。
+
+**Requirement**（待 `/pre-impl` 或 `/spike` 收斂，以下為方向候選，未定案）：
+- 共用 lib 化：抽出 `scripts/lib/detached-launch.sh`（或類似命名），提供通用的 `write_sentinel`/`launch_under_setsid`/nonce-key-file 管理函式，讓 `dispatch-supervisor.sh`/`gate-supervisor.sh` 與 `pmctl_dispatch_wait`/`pmctl_gate_wait` 都基於同一套實作，各自只保留獨有邏輯（dispatch 的 adapter/guard preflight + `pmctl_dispatch_execute_tail`；gate 的直接 exec pr-gate.sh + result 完整性檢查）。
+- 輪詢改主動通知：評估可行機制，例如 (a) named pipe/FIFO：supervisor 完成時寫入 FIFO，wait 用 blocking read 而非 `sleep` 迴圈喚醒；(b) `inotifywait`（若目標平台可穩定安裝該工具）監控 sentinel 檔案建立事件；(c) 其他 IPC 機制。需評估跨平台相容性（尤其 CI/macOS/WSL2）與現有 fail-closed／timeout／indeterminate（exit 3）語意是否受影響。
+- 兩項改動涉及安全敏感的 supervisor 檔案（尤其 dispatch 側有完整 preflight 防禦），需謹慎規劃測試涵蓋範圍，避免共用化過程中意外弱化 dispatch 的安全邊界。
+
+**Trigger**：CC-423（gate detached lifecycle）pr-gate 迭代後，使用者檢視 `scripts/gate-supervisor.sh` 與 `scripts/dispatch-supervisor.sh` 的重複程度，並注意到 wait 端目前是輪詢實作，要求記錄為後續改善票（2026-07-01）。
+
+**area**: arch/gate
+**Priority**: P3（someday）。
+**Cross-link**: [[CC-423]]、[[CC-432]]。
