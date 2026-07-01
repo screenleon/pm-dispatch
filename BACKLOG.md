@@ -72,7 +72,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-412 | ✅ closed 2026-07-01 | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | pr:#352 | P3 | retrieval |
-| CC-423 | 🔵 active | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | — | P3 | — |
+| CC-423 | ✅ closed 2026-07-01 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | pr:#353 | P3 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | 🔵 active | **[run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸]** 兩者因共用真實 repo 的 `.pm-dispatch/ctx/context.db` 被 `LIVE_DB_EXCLUSIVE` 強制序列，合計 558 秒（實測 test-release-verify 380s + test-pmctl-context 178s），佔全套件 ~10 分鐘總時長的絕大部分；根因初判為 `test-release-verify.sh` 對 `release-verify.sh` 呼叫 25 次、多次仍跑 Phase 3 對真實 repo 重複索引。**解法尚未定案**，需先深入分析（Phase 3 smoke 隔離 vs 案例跳過 vs 其他）再規劃實作範圍。觸發：CC-423 pr-gate 迭代中使用者實測耗時排查（2026-07-01）。 | ops/test | 2026-07-01 | — | P2 | design |
@@ -1119,7 +1119,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3（someday）。
 
-## CC-423 — gate detached lifecycle 🔵 active
+## CC-423 — gate detached lifecycle ✅ 2026-07-01
+
+**See**: pr:#353 — 全需求交付：`--lifecycle detached`（現為預設）+ `scripts/gate-supervisor.sh` + `pmctl gate wait` + result 完整性 fail-closed（GO/NO-GO sentinel 若缺 result 或 `gate_result_verify` 失敗即回報失敗，不可信的結果不會被誤判成功）+ `--cd` partition 綁定（`gate wait` 現在會驗證 `--cd` 是否真的擁有該 gate_id 的 run dir）+ `/pr-gate` 兩步流程（每個 Bash 呼叫皆自給自足，不依賴跨呼叫 shell 變數）。7 輪 pr-gate 迭代收斂，最終 full tier 5-reviewer 全數 approve/pass，零 finding。
 
 **Problem**: `pmctl gate run` 目前以 foreground 模式執行（無 lifecycle 選項），透過 Claude Code harness 的 `run_in_background: true` 監控。Session interrupt 會讓 harness 遺失對 gate process 的追蹤，回報錯誤的 exit code（同 CC-418 之前 dispatch 的問題）。
 
