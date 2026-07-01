@@ -23,16 +23,14 @@ paths or when reviewer independence matters.
 ## Step 1 - Locate pmctl
 
 Resolve the installed `pmctl` binary. `~/.local/bin/pmctl` is the installed
-symlink; fall back to the repo-relative path when the install is absent:
+symlink; fall back to the repo-relative path when the install is absent.
+**This resolution is a one-liner repeated verbatim at the top of every Bash
+call in this skill that invokes `pmctl`** (Step 2's launch call and the wait
+call below) — never assume `$PMCTL` set in one Bash call is visible in
+another; each call is its own subprocess:
 
 ```bash
-if [[ -x "${HOME}/.local/bin/pmctl" ]]; then
-  PMCTL="${HOME}/.local/bin/pmctl"
-else
-  CMD_LINK="${HOME}/.claude/commands/pr-gate.md"
-  CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
-  PMCTL="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/cli/pmctl"
-fi
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 ```
 
 ## Step 2 - Parse args and launch detached
@@ -63,6 +61,7 @@ This command should pass exactly one of these explicit modes when known:
 `/pm` profile defaults and `scripts/install-guards.sh` auto-detect.
 
 ```bash
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 RAW_ARGS="${ARGUMENTS:-}"
 TIER_OVERRIDE=""
 TARGETED_REVIEWERS=""
@@ -123,11 +122,13 @@ GATE_ARGS=(--cd "$PWD" --executor auto)
 
 Read the printed `gate_id` from this call's stdout, then launch the wait as a
 **separate Bash tool call** with `run_in_background: true` so the main thread
-is free while the gate runs. Substitute the literal `gate_id` value into the
-command string below -- it is a different shell invocation, so a variable set
-in the block above is not visible here:
+is free while the gate runs. This is a genuinely independent subprocess, so
+it re-resolves `pmctl` itself (Step 1's one-liner, repeated -- never `$PMCTL`
+from an earlier call) and receives `gate_id` only as a substituted literal
+value, never a shell variable from the block above:
 
 ```bash
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 "$PMCTL" gate wait <gate_id> --cd "$PWD"
 ```
 
