@@ -37,7 +37,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | 🔵 active |
+| CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | ✅ done pr:#301（規劃前已交付，覆核發現） |
 | CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed，鏡像既有 `dispatch --lifecycle detached` 模式 | ✅ done pr:#353 |
 | CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢（`sleep` 迴圈）改為主動通知（FIFO/inotify 等，解法未定案）。CC-423 交付後發現的簡化與效率改善項，解法待 `/pre-impl` 或 `/spike` 收斂 | 🟢 someday |
 
