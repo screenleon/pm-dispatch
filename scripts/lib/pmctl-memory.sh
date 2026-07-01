@@ -14,10 +14,17 @@
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/memory.sh"
 
+# Explicitly own the dispatch.memory_dir config dependency (not pmctl-dispatch.sh
+# or an adapter module, so the "MUST NOT source adapters" rule does not apply)
+# instead of relying on cli/pmctl's lib-load ordering having already sourced it.
+if [[ "$(type -t pm_config_load 2>/dev/null)" != function ]]; then
+  # shellcheck source=scripts/lib/pmctl-config.sh
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/pmctl-config.sh" 2>/dev/null || true
+fi
+
 # Loads ~/.pm-dispatch/config's dispatch.memory_dir into PM_CFG_MEMORY_DIR
-# when a config loader is available (always true under cli/pmctl) and no
-# caller has already populated it. No-op (cheap declare -F check only) if
-# pmctl-config.sh was never sourced.
+# when no caller has already populated it.
 _pmctl_memory_load_config_override() {
   declare -F pm_config_load >/dev/null 2>&1 && [[ -z "${PM_CFG_MEMORY_DIR:-}" ]] && pm_config_load
   return 0

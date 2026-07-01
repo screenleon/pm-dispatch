@@ -2313,6 +2313,39 @@ case_context_query_source_memory_no_dir_graceful() {
   if grep -q '# no hits' "$out"; then pass "$name"; else fail "$name" "expected '# no hits'; got: $(<"$out")"; fi
 }
 
+case_context_query_source_memory_config_override() {
+  local name="pmctl context query --source memory: dispatch.memory_dir config resolves memory dir"
+  should_run "$name" || return 0
+  local repo="$tmp_root/mem-cfgover-repo" cfg="$tmp_root/mem-cfgover-cfg"
+  local override="$tmp_root/mem-cfgover-override" fakehome="$tmp_root/mem-cfgover-home"
+  mkdir -p "$repo" "$fakehome/.pm-dispatch"
+  # $cfg deliberately has no memory dir for $repo. Populate ONLY the override
+  # dir (not under $cfg/projects/<id>/memory) so a hit proves resolution went
+  # through dispatch.memory_dir, not the CLAUDE_CONFIG_DIR walk.
+  mkdir -p "$override"
+  cat > "$override/MEMORY.md" <<'MD'
+# Memory Index
+- [gate executor codex](feedback_gate_executor.md) — pr-gate prefers codex executor
+MD
+  cat > "$override/feedback_gate_executor.md" <<'MD'
+---
+name: gate-executor-codex
+---
+The pr-gate flow should prefer the codex executor for separation.
+MD
+  printf 'dispatch.memory_dir = %s\n' "$override" > "$fakehome/.pm-dispatch/config"
+
+  local out err status=0
+  out="$tmp_root/mem-cfgover.out"; err="$tmp_root/mem-cfgover.err"
+  HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" context query "$repo" --source memory codex > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "query exited $status: $(<"$err")"; return 0; fi
+  if grep -q 'ref: feedback_gate_executor.md' "$out" && grep -q 'source_domain: memory' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "expected memory card hit resolved via dispatch.memory_dir; got: $(<"$out")"
+  fi
+}
+
 case_context_query_source_memory_domain_rejected() {
   local name="pmctl context query: --domain with --source memory is rejected (exit 2)"
   should_run "$name" || return 0
@@ -2601,6 +2634,7 @@ case_context_memory_db_out_of_repo
 case_context_query_source_all_merges
 case_context_query_source_repo_excludes_memory
 case_context_query_source_memory_no_dir_graceful
+case_context_query_source_memory_config_override
 case_context_query_source_memory_domain_rejected
 case_context_query_source_invalid_rejected
 case_context_index_source_memory_builds_db

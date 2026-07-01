@@ -790,6 +790,31 @@ case_memory_dir_pm_memory_dir_outranks_config() {
   pass "$name"
 }
 
+case_memory_dir_malformed_config_memory_dir_falls_through() {
+  local name="pmctl memory dir: malformed (relative) dispatch.memory_dir warns and falls through to legacy resolution"
+  should_run "$name" || return 0
+
+  local cfg="$tmp_root/pmbad-cfg" repo="$tmp_root/pmbad-repo" fakehome="$tmp_root/pmbad-home"
+  mkdir -p "$repo" "$fakehome/.pm-dispatch"
+  local mdir; mdir="$(make_fixture_memory "$cfg" "$repo")"
+  printf 'dispatch.memory_dir = relative/not-absolute\n' > "$fakehome/.pm-dispatch/config"
+
+  local out err status=0
+  err="$tmp_root/pmbad.err"
+  out="$(HOME="$fakehome" CLAUDE_CONFIG_DIR="$cfg" "$PMCTL" memory dir "$repo" 2>"$err")" || status=$?
+
+  if ! assert_exit "$name" "$status" 0; then return 0; fi
+  if [[ "$out" != "$mdir" ]]; then
+    fail "$name" "expected fallback to legacy dir '$mdir' (malformed override must be ignored), got '$out'"
+    return 0
+  fi
+  if ! grep -q 'malformed value for dispatch.memory_dir' "$err"; then
+    fail "$name" "expected a malformed-value warning on stderr, got: $(<"$err")"
+    return 0
+  fi
+  pass "$name"
+}
+
 case_memory_dir_no_mutation() {
   local name="pmctl memory dir: does not create or mutate directories on hit or miss"
   should_run "$name" || return 0
@@ -1475,6 +1500,7 @@ case_memory_dir_pm_memory_dir_env_override
 case_memory_dir_pm_memory_dir_unset_byte_identical
 case_memory_dir_config_dispatch_memory_dir_override
 case_memory_dir_pm_memory_dir_outranks_config
+case_memory_dir_malformed_config_memory_dir_falls_through
 case_memory_dir_no_mutation
 case_memory_doctor_clean_fixture
 case_memory_doctor_dead_link
