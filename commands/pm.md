@@ -19,9 +19,10 @@ Relay the PM's user-facing summary. Do not do the PM's job yourself.
 
 - `executor: codex` → main-thread Bash to `pmctl dispatch run --adapter codex`
 - `executor: claude` → main-thread Bash to `pmctl dispatch run --adapter claude`
+- `executor: opencode` → main-thread Bash to `pmctl dispatch run --adapter opencode`
 - any other value is rejected by the validator before this point
 
-The abstract contract both routes implement is documented in `docs/executor-contract.md`. Always source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
+The abstract contract all three routes implement is documented in `docs/executor-contract.md`. Always source `scripts/lib/handover-validate.sh`, extract and split the fenced block with the shared handover helpers, validate the full metadata header, confirm the metadata/body `working_dir` match, and write `brief_file` via `mktemp -p /tmp brief-<slug>-XXXXXX.md` or equivalent exclusive-create (mode 0600) — `/tmp` is shared, predictable names invite symlink races.
 
 ### Route A — `executor: codex`
 
@@ -43,11 +44,15 @@ Polls for the supervisor's nonce-authenticated sentinel. The harness background-
 
 ### Route B — `executor: claude`
 
-Same two-step pattern as Route A with `--adapter claude`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — both adapters write the same dispatch record and sentinel. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL already recorded in `verify_summary`.
+Same two-step pattern as Route A with `--adapter claude`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — both adapters write the same dispatch record and sentinel. Omit `--model` when `model: default`. The adapter translates `isolation_level` to `--permission-mode`. Note: step 5 trace cross-check (command_execution grep) applies to codex traces only; for claude traces (`claude --print --output-format stream-json`), skip the JSONL grep and rely on `self_verify` PASS/FAIL already recorded in `verify_summary`.
+
+### Route C — `executor: opencode`
+
+Same two-step pattern as Route A with `--adapter opencode`. Step A1 (inline, `--lifecycle detached`) returns the `run_id`; Step A2 (background, `pmctl dispatch wait`) polls for completion. Completion handling is identical — all three adapters write the same dispatch record and sentinel. Model resolution uses `share/opencode-model-aliases.tsv` with a free-tier fallback chain (omit `--model` when `model: default`). `isolation_level: none` (full machine access) is valid only for this route — opencode has no finer-grained sandbox; codex and claude reject `none`.
 
 ### Choosing the route
 
-`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B); both routes share the same two-step dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. There is no Agent executor fallback — every executor dispatches via the main-thread `pmctl dispatch run` Bash route.
+`executor:` in the handover metadata selects the adapter (`codex` → Route A, `claude` → Route B, `opencode` → Route C); all three routes share the same two-step dispatch shape and completion handling — the only difference is `--adapter <value>`. Install profile (`./install.sh --profile minimal|full`, auto-detected from `command -v codex` when unset) sets the PM agent's default `executor:`. There is no Agent executor fallback — every executor dispatches via the main-thread `pmctl dispatch run` Bash route.
 
 Main-thread completion handling for both routes — the supervisor runs `pmctl_dispatch_execute_tail` (including post-verify and `self_verify` checks) and writes a durable dispatch record; the main thread's job is to authenticate the result via the sentinel (step 2), read artifact paths from the record (step 3), surface the supervisor's verify summary (step 4), and cross-check execution evidence in the trace (step 5):
 

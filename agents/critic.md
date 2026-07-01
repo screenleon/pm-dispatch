@@ -29,7 +29,7 @@ Find what's wrong, weak, or missed. Do not validate.
 # Output
 
 ```
-status: pass | advise | block-soft
+status: approve | advise | block-soft
 summary: <one line>
 
 findings:
@@ -48,7 +48,7 @@ verdict: <2-3 sentences>
 
 - **block-soft**: significant; caller should pause. PM may override with explicit reasoning.
 - **advise**: real issues worth fixing but not blockers.
-- **pass**: nothing material found; list what you specifically checked so trust is calibrated.
+- **approve**: nothing material found; list what you specifically checked so trust is calibrated.
 
 # Rules
 

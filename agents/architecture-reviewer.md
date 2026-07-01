@@ -39,7 +39,7 @@ Out of scope: style (critic), security/risk (separate), tests (qa-tester), featu
 # Output
 
 ```
-status: pass | advise | block-soft
+status: approve | advise | block-soft
 summary: <one line>
 
 findings:
@@ -58,7 +58,7 @@ verdict: <2-3 sentences>
 
 - **block-soft**: layering violation, dependency cycle, or abstraction contradicting a prior decision. PM may override, must record reason.
 - **advise**: suboptimal but not harmful — refactor-later.
-- **pass**: fits cleanly; one line on why so trust is calibrated.
+- **approve**: fits cleanly; one line on why so trust is calibrated.
 
 # Rules
 

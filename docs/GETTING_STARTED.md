@@ -63,8 +63,8 @@ bash install.sh
 
 `install.sh` has two explicit profiles and one auto-detected mode:
 
-- `--profile full` — wires codex-related hooks and assumes Codex CLI workflow.
-- `--profile minimal` — installs everything except codex hook guard paths.
+- `--profile full` — wires adapter bash guards (manifest-driven via `needs_bash_guard`). No adapter ships a bash guard today, so `full` and `minimal` currently wire the same hook set; the flag is retained for forward compatibility.
+- `--profile minimal` — skips registering adapter bash guards; other hooks (pm-write-guard, session-summary, inject-memory, save-rate-limits) stay wired in both profiles.
 - `--profile` omitted (default) — auto-detects profile from `command -v codex`.
 
 Auto-detect is a simple presence check:

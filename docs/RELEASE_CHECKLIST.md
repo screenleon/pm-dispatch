@@ -5,14 +5,14 @@ top to bottom, and only tag when every box is checked on **Linux and/or WSL2**
 (WSL2 is treated as Linux). Native Windows Git Bash and macOS are **out of scope
 for release sign-off** during the core-development phase — see
 `docs/platform-support.md` and `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
-Platform sign-off returns as a dedicated phase once the core stabilizes (CC-370).
+Platform sign-off returns as a dedicated phase once the core stabilizes.
 
 The goal is that **every feature is actually exercised**, not just unit-tested.
 Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 54 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 64 test suites, real `pmctl context` smoke + real `sqlite3` |
 | **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
@@ -37,7 +37,7 @@ A release is **full GO** only when `release-verify.sh --e2e` exits 0 (`AUTOMATED
 
 Run on **Linux or WSL2** (the supported sign-off platforms). Native Windows Git
 Bash is out of scope during core development — `release-verify.sh` refuses to run
-there with a "use WSL2" notice (CC-370).
+there with a "use WSL2" notice.
 
 ```bash
 # Linux / WSL2 — Phases 1-3 (offline, no tokens)
@@ -82,13 +82,14 @@ because they mutate the real `~/.claude` environment.
 bash install.sh --verify          # runs preflight suites, then installs
 bash scripts/install-guards.sh     # wire hooks into ~/.claude/settings.json
 bash scripts/doctor.sh            # Linux / WSL2: profile auto
-bash uninstall.sh                 # confirm clean removal, no leftover share/ dir
+bash uninstall.sh                 # confirm clean removal, no leftover managed dirs
 ```
 
 - [ ] `install.sh --verify` completes, managed dirs/symlinks created; `pmctl` resolvable on PATH.
 - [ ] `doctor.sh` reports **0 FAIL**.
-- [ ] `uninstall.sh` removes everything it installed (no dangling links, no empty
-      `share/`).
+- [ ] `uninstall.sh` removes everything it installed (no dangling links, no leftover
+      `agents/`, `commands/`, `skills/`, `scripts/`, `share/`, or `adapters/` under
+      `~/.claude/`).
 
 ### 2b. Real dispatch + 2c. pr-gate — automated by `--e2e`
 
@@ -119,14 +120,16 @@ bash scripts/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Pha
 ### 2d. Claude Code hooks (live)
 
 In a real Claude Code session against an installed checkout, trigger each hook
-type once and confirm the output lands in `share/` or the trace store.
+type once and confirm the output lands in the right place: `~/.claude/usage-tracker.jsonl`
+or `~/.claude/logs/hooks.log` for hook-level telemetry, project memory `episodes.jsonl`
+for session summaries, or the trace/events store for dispatch telemetry.
 
 ```bash
 # write-guard: attempt a write outside the allowed path — should be DENIED with exit 2
 # (trigger by asking Claude to write to /tmp/test-hook-write.txt in a Claude Code session)
 
 # dispatch telemetry: any dispatch emits Run + Event records via pmctl (the
-# machine-written routing_log.md / routing-log hook was retired in CC-367 — events
+# machine-written routing_log.md / routing-log hook was retired — events
 # now live in the trace store). Run a dispatch, then confirm the event landed:
 pmctl trace tail -n 5            # newest events; a dispatch adds run.* rows
 
@@ -135,7 +138,7 @@ pmctl trace tail -n 5            # newest events; a dispatch adds run.* rows
 ```
 
 - [ ] write-guard hook fires and blocks a write outside the pm share path (exit 2, no file created).
-- [ ] dispatch telemetry: a dispatch appends Run/Event records visible via `pmctl trace tail` (replaces the retired routing-log hook, CC-367).
+- [ ] dispatch telemetry: a dispatch appends Run/Event records visible via `pmctl trace tail` (replaces the retired routing-log hook).
 - [ ] memory-inject hook injects `=== auto-memory: MEMORY.md index ===` in the session context.
 
 ---
@@ -176,7 +179,7 @@ covering check has passed this cycle.
 | Linux / WSL2 (required: exit 0 `GO`) | ☐ | ☐ | ☐ |
 
 > Native Windows Git Bash and macOS are out of scope for release sign-off during
-> the core-development phase (CC-370 / `docs/platform-support.md`). Platform
+> the core-development phase (see `docs/platform-support.md`). Platform
 > sign-off returns as a dedicated phase once the core stabilizes.
 
 ---

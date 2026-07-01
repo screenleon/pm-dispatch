@@ -5,7 +5,7 @@
 For knowledge-doc lookups, retrieval comes first. Run the context query before
 any Read, Grep, or full-file open:
 
-    pmctl context query --domain knowledge <term>
+    pmctl context query <repo_root> --domain knowledge <term>
 
 This returns heading-anchored hits with line numbers. Paste the ref directly
 into a brief's context block instead of re-deriving the background. Fall back to
@@ -13,7 +13,11 @@ targeted Read/Grep only when the query returns no hits.
 
 For code symbols, omit --domain or use --domain repo:
 
-    pmctl context query <symbol-name>
+    pmctl context query <repo_root> <symbol-name>
+
+`<repo_root>` must be an explicit directory argument — if the first argument
+isn't a directory, the query falls back to `pmctl`'s own `REPO_ROOT` (the
+pm-dispatch install repo), not your target project.
 
 ## Source planes — repo and memory
 
@@ -26,8 +30,8 @@ For code symbols, omit --domain or use --domain repo:
 | `memory`   | The project-memory plane — cards, `MEMORY.md`, and `episodes.jsonl` under `~/.claude/projects/<id>/memory/`. |
 | `all`      | Repo **and** memory hits, merged.                                        |
 
-    pmctl context query --source memory <term>      # decisions / rules / preferences
-    pmctl context query --source all <term>          # repo + memory
+    pmctl context query <repo_root> --source memory <term>      # decisions / rules / preferences
+    pmctl context query <repo_root> --source all <term>          # repo + memory
 
 Memory hits carry `source_domain: memory` and a trust tier: curated cards and
 `MEMORY.md` rank `high`, raw `episodes.jsonl` ranks `medium`. `--domain` is a

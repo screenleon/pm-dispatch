@@ -49,9 +49,11 @@ Read both:
 Run the following to keep derived episode artifacts fresh:
 
 ```bash
-pmctl memory rebuild-summary 2>/dev/null || true
-pmctl memory shard           2>/dev/null || true
+pmctl memory rebuild-summary --repo-root "$(pwd)" 2>/dev/null || true
+pmctl memory shard           --repo-root "$(pwd)" 2>/dev/null || true
 ```
+
+Always pass `--repo-root "$(pwd)"` explicitly — without it these subcommands default to `${REPO_ROOT:-$PWD}`, and `REPO_ROOT` is set by the `pmctl` CLI entrypoint to the pm-dispatch install repo, not the calling project. Omitting the flag can rebuild/shard the wrong project's memory dir.
 
 `pmctl memory rebuild-summary` regenerates `episodes.summary.md` from entries in `episodes.jsonl`, grouping by year-month. If it fails (e.g., no episodes file), skip silently.
 
@@ -68,7 +70,7 @@ pmctl trace tail --kind task.blocked   --json -n 20
 pmctl trace tail --kind review.verdict --json -n 20
 ```
 
-If `review.verdict` returns no output (events not yet written by the gate), fall back to scanning gate result files for blocked verdicts:
+If `review.verdict` returns no output (events not yet written by the gate), fall back to scanning gate result files for blocked verdicts. `pmctl gate run` writes results to an out-of-repo run dir by default; use `pmctl artifacts list` to find recent gate runs and `pmctl artifacts show <run_id>` to inspect their result file, or check `.gate-results/gate-*.md` if the project still has legacy in-repo results:
 
 ```bash
 ls -t .gate-results/gate-*.md 2>/dev/null | head -10 | xargs grep -l "Final: NO-GO" 2>/dev/null

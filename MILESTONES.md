@@ -9,7 +9,58 @@
 
 ---
 
-## v0.7.1 — release 工具完整化 + 積累 hygiene 清掃（規劃中 2026-06-29）
+## v0.8.0 — memory substrate 跨工具可攜 + gate DX（規劃中 2026-07-01）
+
+> 最後排程更新：2026-07-01
+
+**主題**：延續 v0.6.0（executor abstraction）與 v0.7.0（retrieval-base：memory 成為 `pmctl context` 可檢索 source）兩版已交付的抽象工作，補上最後兩個 Claude 專屬耦合點——**memory 位置 resolver** 與 **注入機制**（CC-412，headline）；並行做兩張範圍小、風險低、彼此檔案面不重疊的 gate DX 票（CC-276、CC-423）；另起一個 spike-only phase 把 CC-381（host-PM-aware install）從「設計問題陳述」推進到「有具體 Requirement 的實作票」，為下一版鋪路。
+
+> **設計依據**：2026-07-01 四路獨立分析收斂——主線程 BACKLOG 掃描、codex 獨立 read-only audit、opencode 獨立 read-only audit、外部 chatgpt 研究文件（僅在前三者完成後才讀取），四者皆將 CC-412 列為第一優先。CC-381 原被四方共同建議延後，但覆核發現其前置票（CC-372/374/375/380）已全數 ✅ done，排除理由修正為「設計未收斂」而非「規模過大」，故改列 spike-only phase 而非整票延後。
+
+### Phase 0 — release 文件 drift 清理（P3；無票號，直接修正）
+
+> 純文字修正，零行為風險，與 Phase 1 的 load-bearing 向後相容要求無關，獨立 PR 先行，不與 CC-412 混批審查。
+
+- README 版本徽章：`v0.6.0` → `v0.7.1`
+- MILESTONES.md v0.7.1 標頭：「規劃中 2026-06-29」→ 標記已 released（tag + GitHub Release 已於 2026-06-30 建立）
+- CC-333 index/body 狀態同步：index 標 `⏸ deferred`（BACKLOG.md 之前），body heading 標 `🔵 active`，需一致
+
+### Phase 1 — memory substrate 跨工具可攜（P3；headline；load-bearing 向後相容）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-412 | memory substrate 跨工具可攜：(a) 位置 seam — `find_memory_dir` 支援 `PM_MEMORY_DIR`（或 `dispatch.memory_dir` config）顯式覆寫，解析優先序 env > config > `CLAUDE_CONFIG_DIR` 慣例，未設時行為與今天 byte-identical；(b) 注入分層文件化 — 「可攜核心＝`pmctl context --source memory` retrieval API；注入＝per-tool adapter」，Claude 沿用現有 hook，codex/opencode/未來 host 改為主動呼叫 retrieval API | 🔵 active |
+
+> 兩子需求耦合度低，若實作時發現超出 medium 估計，可拆 Phase 1a（代碼）/ 1b（docs）降低單一 PR 審查負擔。
+
+### Phase 2 — gate DX（P3；低風險並行；與 Phase 1 檔案面不重疊）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | 🔵 active |
+| CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，鏡像既有 `dispatch --lifecycle detached` 模式 | 🔵 active |
+
+> CC-425（gate 解除 PR 綁定）暫不排入——需重構 gate result key schema，範圍比 CC-276/423 大一截，待本 Phase 完成後視情況併入或延後 v0.9.0。
+
+### Phase 3 — CC-381 spike-only（P3；design 收斂，非完整實作）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-381 | install host-PM-aware — 縮小為 read-only host-profile-detection / doctor 擴充切片：讓 `doctor.sh`/`pmctl doctor` 能回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」不動 installer write path。前置票 CC-372/374/375/380 已全數 done，本 Phase 目標是把 CC-381 從設計陳述推進為有明確 Requirement 的實作票 | 🔵 active |
+
+### 待後續 / 明確排除
+
+- **CC-425（gate 解除 PR 綁定）**——待 Phase 2 完成後視情況併入或延後 v0.9.0。
+- **CC-358（runner telemetry）**——與 CC-412 無架構相依，更適合作為 v0.9.0 gate 決策的前置證據，不排入本版。
+- **CC-346 Phase a（bash source ref index）**——BACKLOG.md 明文 resume trigger（reuse-scan 進過 ≥2 份真 brief）尚未觸發，排入即覆蓋票自身 gating 準則，未排入。
+- **CC-216 MCP**——2026-06-18 已拍板不排入任何 milestone，維持排除。
+- **CC-340 embeddings**——維持排除，同既有立場，待 FTS/LIKE ranking 證明不足再 resume。
+- **CC-377 agy adapter**——等待 agy headless CLI 版本更新，不排入。
+- **CC-381 完整實作**（installer write path、多 host 設定面改寫）——Phase 3 只做 spike/doctor 切片，完整改寫留給 spike 收斂後的下一版評估。
+
+---
+
+## v0.7.1 — release 工具完整化 + 積累 hygiene 清掃（✅ released 2026-06-30）
 
 > 最後排程更新：2026-06-29
 
@@ -58,7 +109,7 @@
 
 ---
 
-## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
+## v0.7.0 — retrieval-first context discipline + memory 檢索基底（✅ released 2026-06-29）
 > 最後排程更新：2026-06-26
 
 **主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。

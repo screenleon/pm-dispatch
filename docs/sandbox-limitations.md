@@ -166,8 +166,10 @@ preferred approach for integration tests because failures abort the gate before 
 token budget is spent.
 
 **Alternative — `--executor claude`**: If you need reviewers to run commands that
-require network access, use `--executor claude`. Claude subagents inherit the main
-thread's environment including Docker and localhost.
+require network access, use `--executor claude`. The claude executor runs as an
+independent headless `claude --print` subprocess (not an in-session subagent, and
+does not inherit the main thread's environment) — grant it network access the same
+way as codex, via `--isolation workspace-network`.
 
 **When to use pre-gate.sh vs `--isolation workspace-network`**
 
@@ -207,11 +209,10 @@ self_verify:
   - cmd: "git add -A && git commit -m 'feat: ...' "   # blocked by hook — omit this
 ```
 
-**Fix (Option B — if you need the executor to commit)**: Add
-`Bash(git add:*)` and `Bash(git commit:*)` to the project's allowed-list in
-`.claude/settings.json` (or user-level `~/.claude/settings.json`). This opens
-both commands for all executor dispatches in this project — only do this if you
-trust the executor's commit scope, as it bypasses the hook guard.
+**There is no allow-list workaround**: the commit delegation rule is structural, not
+a hook policy toggle — executors MUST NOT include a commit step in briefs, `self_verify`,
+`constraints`, or `acceptance` (see `docs/dispatch-brief.md` §Commit delegation rule).
+Commit is always the main thread's job, after reviewing the diff.
 
 **Standard workflow**: After `pmctl dispatch run` finishes:
 1. Review the executor's diff with `git diff` / `git status`

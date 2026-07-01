@@ -8,7 +8,7 @@
 > features. **Windows users should run pm-dispatch under WSL2**, which avoids the
 > MSYS path / symlink / permission edge cases entirely. macOS is documented but
 > untested. Native Windows may be reassessed once the core stabilizes — see
-> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev) / CC-370.
+> `DECISIONS.md` (2026-06-13 defer-native-windows-support-during-core-dev).
 >
 > Already-shipped portability code still runs on native Windows on a best-effort
 > basis (hooks are pure bash+jq, no python3; `install.sh` uses directory junctions
@@ -23,7 +23,7 @@
 | Linux                            | **First-class**      | Full profile + minimal profile |
 | WSL2                             | **First-class**      | Treated as Linux |
 | macOS                            | **Documented, untested** | Code path same as Linux; requires GNU `realpath` (`brew install coreutils`). No dogfood run confirmed yet — report issues if you hit problems. |
-| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development (CC-370). Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
+| Windows Git Bash (`msys2/mingw`) | **Not supported (use WSL2)** | Platform work deferred during core development. Shipped portability code runs best-effort but is unverified by CI/sign-off; run under WSL2 instead |
 | Other / unrecognized             | Best effort          | Install may succeed or fail depending on tool availability |
 
 ---
@@ -59,11 +59,9 @@
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 
-# 2. Install managed files (agents, commands, scripts, .pm schema)
+# 2. Install managed files and wire Claude Code hooks into ~/.claude/settings.json
+# (install.sh calls scripts/install-guards.sh internally; no separate step needed)
 bash install.sh
-
-# 3. Wire Claude Code hooks into ~/.claude/settings.json
-bash scripts/install-guards.sh
 ```
 
 `install.sh` symlinks each file individually into `~/.claude/agents/`,
@@ -90,7 +88,6 @@ git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
 
 bash install.sh
-bash scripts/install-guards.sh
 ```
 
 Add the repo CLI directory to PATH so `pmctl` can run in place:
@@ -99,11 +96,11 @@ Add the repo CLI directory to PATH so `pmctl` can run in place:
 export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 ```
 
-> **Symlink support (CC-207):** On Git Bash, `ln -s` does not create real
+> **Symlink support:** On Git Bash, `ln -s` does not create real
 > symlinks. `install.sh` uses `powershell.exe New-Item -ItemType Junction`
-> for `agents/`, `commands/`, `skills/`, and `pm-schema` directories so those
-> paths auto-sync after pulling. Individual helper scripts are still copied.
-> See *Update* below.
+> for `agents/`, `commands/`, `skills/`, `adapters/`, and `pm-schema` directories
+> so those paths auto-sync after pulling. Individual helper scripts are still
+> copied. See *Update* below.
 
 > **Copy-mode installs (no dev-mode):** Individual helper scripts (`scripts/*.sh`) are
 > always installed via copy on Git Bash. Re-run `bash install.sh` after pulling to
@@ -213,19 +210,30 @@ bash "${PM_DISPATCH_REPO}/uninstall.sh" --dry-run
 ```bash
 # Agents
 rm -f ~/.claude/agents/architecture-reviewer.md
-rm -f ~/.claude/agents/claude-executor.md
-rm -f ~/.claude/agents/codex-executor.md
 rm -f ~/.claude/agents/critic.md
 rm -f ~/.claude/agents/project-pm.md
 rm -f ~/.claude/agents/qa-tester.md
 rm -f ~/.claude/agents/risk-reviewer.md
 rm -f ~/.claude/agents/security-reviewer.md
+rm -f ~/.claude/agents/spike.md
 
 # Commands  (remove only pm-dispatch commands; keep any you added manually)
+rm -f ~/.claude/commands/discover.md
+rm -f ~/.claude/commands/mem-distill.md
 rm -f ~/.claude/commands/mem-log.md
 rm -f ~/.claude/commands/mem-recall.md
+rm -f ~/.claude/commands/mem-search.md
+rm -f ~/.claude/commands/memory-compress.md
 rm -f ~/.claude/commands/pm.md
 rm -f ~/.claude/commands/pr-gate.md
+rm -f ~/.claude/commands/pre-impl.md
+rm -f ~/.claude/commands/pre-release.md
+rm -f ~/.claude/commands/research.md
+rm -f ~/.claude/commands/skill-refine.md
+rm -f ~/.claude/commands/spike.md
+
+# Adapters (manifest-driven executor definitions)
+rm -rf ~/.claude/adapters
 
 # Helper scripts
 rm -f ~/.claude/scripts/token-usage.sh
@@ -233,6 +241,10 @@ rm -f ~/.claude/scripts/log-usage.sh
 rm -f ~/.claude/scripts/pr-gate.sh
 rm -f ~/.claude/scripts/setup-project.sh
 rm -f ~/.claude/scripts/patch-gitignore.sh
+rm -f ~/.claude/scripts/doctor.sh
+
+# Share assets (model alias tables)
+rm -rf ~/.claude/share
 
 # .pm schema
 rm -rf ~/.claude/.pm       # symlink or directory; safe to remove entirely
@@ -265,7 +277,7 @@ fi
 brew install jq coreutils
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
-bash install.sh && bash scripts/install-guards.sh
+bash install.sh
 ```
 
 ### Windows Git Bash minimal
@@ -277,8 +289,7 @@ winget install jqlang.jq Git.Git
 # Then in Git Bash:
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
-bash install.sh
-bash scripts/install-guards.sh --profile minimal
+bash install.sh --profile minimal
 ```
 
 ### WSL2
@@ -287,7 +298,7 @@ bash scripts/install-guards.sh --profile minimal
 sudo apt update && sudo apt install -y jq
 git clone https://github.com/screenleon/pm-dispatch "${PM_DISPATCH_REPO}"
 cd "${PM_DISPATCH_REPO}"
-bash install.sh && bash scripts/install-guards.sh
+bash install.sh
 ```
 
 ---
@@ -297,7 +308,7 @@ bash install.sh && bash scripts/install-guards.sh
 - GNU `realpath -m` not guaranteed → shimmed `realpath_m` provides equivalent behavior.
 - Filesystem case-insensitive → avoid hook paths differing only by case.
 - `codex` CLI hooks unsupported on Windows; `--profile full` falls back to `minimal`.
-- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts (CC-207).
+- Symlinks require Developer Mode or `MSYS=winsymlinks:nativestrict`; on Git Bash, install uses directory junctions for managed directories and copies individual helper scripts.
 
 ## Repository references
 

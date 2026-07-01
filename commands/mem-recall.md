@@ -37,11 +37,11 @@ Parse `$ARGUMENTS` for an integer N (default: 5). Read the last N lines of episo
 
 ## Step 2b — Find relevant old episodes via context index (fallback gracefully)
 
-Run `pmctl context query --source memory` to find older episodes relevant to the current project:
+Run `pmctl context query "$(pwd)" --source memory` to find older episodes relevant to the current project. Passing `"$(pwd)"` explicitly scopes the lookup to this project's memory — without it, `pmctl context query` falls back to `pmctl`'s own `REPO_ROOT` (the pm-dispatch install repo), silently querying the wrong project's memory plane.
 
 ```bash
 cwd_name="$(basename "$PWD")"
-relevant_hits="$(pmctl context query --source memory -- "$cwd_name" 2>/dev/null || true)"
+relevant_hits="$(pmctl context query "$(pwd)" --source memory -- "$cwd_name" 2>/dev/null || true)"
 ```
 
 From `relevant_hits`, extract lines that reference `episodes` files (file paths containing `episodes`). Parse each hit's `date` and `summary` fields. Deduplicate against the recent-N set by `date` value. Keep at most 3 relevant hits that are not already in the recent-N set.

@@ -1,6 +1,6 @@
 # pr-gate-handover_v1 schema
 
-> **DEPRECATED (CC-383).** `pmctl gate run --executor claude` no longer emits this
+> **DEPRECATED.** `pmctl gate run --executor claude` no longer emits this
 > block. The claude executor now dispatches an independent headless `claude --print`
 > subprocess (`adapters/claude/dispatch.sh`) and writes the result in-process,
 > symmetric to codex — there is no handover/fan-out. `scripts/pr-gate.sh` no longer
@@ -8,7 +8,7 @@
 > for historical reference only; the schema below describes the retired behavior.
 
 This schema was used by `scripts/pr-gate.sh` when the selected executor was
-`claude` (pre-CC-383). It is intentionally separate from `dispatch_handover_v1`.
+`claude`, before this route was retired. It is intentionally separate from `dispatch_handover_v1`.
 
 - Envelope fence: ```pr-gate-handover_v1
 - Purpose: instructed the main-thread orchestrator to fan out one or more
@@ -40,16 +40,16 @@ Required keys by role:
   - one `role: reviewer` entry per selected reviewer
   - exactly one trailing `role: synthesis` entry.
 
-## Output contract (historical — retired in CC-383)
+## Output contract (historical — retired)
 
-The behavior below describes the pre-CC-383 handover route and no longer occurs;
+The behavior below describes the retired handover route and no longer occurs;
 `scripts/pr-gate.sh` does not print a handover block for any executor.
 
 - The gate script printed the handover block on stdout when running in claude mode.
 - The caller parsed the block and dispatched one in-session Agent call for every
   `role: reviewer` entry, passing `brief_file` as the call prompt. The reviewer brief already
   contains an explicit `pmctl guard check --role reviewer --runtime claude
-  --event pre-write` constraint (CC-297) — the executor calls it before
+  --event pre-write` constraint — the executor calls it before
   writing, enforcing the `.gate-results/`-only rule via the same policy hook
   (`guard-reviewer-write.sh`) used by the codex route.
 - The caller must then dispatch the `role: synthesis` Agent when present.

@@ -18,8 +18,9 @@ briefs and dispatch policy docs — never hard-code executor-specific model IDs.
 |---|---|---|---|
 | codex | `gpt-5.3-codex-spark` | ~64K | Small codex dispatches |
 | claude | `claude-haiku-4-5-20251001` | ~200K | Small claude dispatches |
+| opencode | `opencode/deepseek-v4-flash-free` | varies by model | Small opencode dispatches |
 
-Alias tables: `share/model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude).
+Alias tables: `share/model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude), `share/opencode-model-aliases.tsv` (opencode).
 
 **When to use `light`**: all three criteria must hold — (a) expected diff < 50 lines,
 (b) changes confined to ≤ 2 adjacent files with no cross-module dependencies,
@@ -73,27 +74,22 @@ Wait for user confirmation before spawning any agent.
 
 ---
 
-## `/pr-gate`: Sonnet for all reviewers and synthesis
+## `/pr-gate`: `default` model for all reviewers and synthesis
 
-Every Agent call spawned by `/pr-gate` — reviewers and the final project-pm
-synthesis hop — uses `model: "sonnet"`. These are bounded, scoped tasks:
-reviewing a diff and synthesising the result does not benefit from a larger
-model but does incur its cost.
+`/pr-gate` does not spawn in-session `Agent()` calls — reviewers and the final
+project-pm synthesis hop each dispatch as an independent executor subprocess via
+`pmctl gate run` (`scripts/pr-gate.sh`'s `dispatch_via`), sharing one `--model`
+value for the whole gate run (default: the `default` alias, e.g. `claude-sonnet-4-6`
+for the claude executor). These are bounded, scoped tasks: reviewing a diff and
+synthesising the result does not benefit from a larger model but does incur its
+cost.
 
 ```
-# /pr-gate reviewer spawns (Step 2)
-Agent(subagent_type: "critic",                model: "sonnet", ...)
-Agent(subagent_type: "qa-tester",             model: "sonnet", ...)
-Agent(subagent_type: "architecture-reviewer", model: "sonnet", ...)
-Agent(subagent_type: "security-reviewer",     model: "sonnet", ...)
-Agent(subagent_type: "risk-reviewer",         model: "sonnet", ...)
-
-# /pr-gate synthesis (Step 3)
-Agent(subagent_type: "project-pm", model: "sonnet", ...)
+pmctl gate run --model default   # applies to all reviewers + synthesis dispatch
 ```
 
-**`/pr-gate` Opus escalation** — suggest Opus (and ask the user per the flow
-above) only when **all three** hold:
+**`/pr-gate` Opus escalation** — suggest `--model opus` (and ask the user per the
+flow above) only when **all three** hold:
 
 1. Tier is `full`
 2. Diff exceeds 1000 changed lines
@@ -101,8 +97,8 @@ above) only when **all three** hold:
 
 Example ask:
 > "This PR is large and sensitive (>1000 lines, touches [path]). Opus reviewers
-> may catch more subtle issues, but cost is roughly 3–5× higher. Use Opus for
-> this gate, or keep Sonnet?"
+> may catch more subtle issues, but cost is roughly 3–5× higher. Use `--model opus`
+> for this gate, or keep the default?"
 
 ---
 

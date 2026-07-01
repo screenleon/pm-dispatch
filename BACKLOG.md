@@ -54,11 +54,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-270 | ⏸ deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-273 | ⏸ deferred | arch: unified lifecycle hook event spec（`.pm-dispatch/hooks/<event>.sh`）；activate when second hook point beyond gate pre/post emerges | arch/gate | 2026-05-28 | — | P3 | — |
-| CC-276 | ⏸ deferred | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。 | gate/process | 2026-05-29 | — | P2 | — |
+| CC-276 | 🔵 active | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。v0.8.0 Phase 2 | gate/process | 2026-05-29 | — | P2 | — |
 | CC-285 | ✅ done | **[archiver safe-drop: don't drop a terminal row whose body exists nowhere]** `scripts/archive-closed-backlog.sh` currently drops a terminal index row even when no body section exists in BACKLOG.md and none is in BACKLOG-ARCHIVE.md (warns to stderr). In a valid backlog `validate.sh`'s index↔body 1:1 invariant prevents this, and it is git-recoverable — recorded as accepted tradeoff in DECISIONS 2026-05-30. Defense-in-depth follow-up: keep the row + emit a loud warning when the body is in neither file, leaving it for manual reconciliation rather than removing it. Surfaced by pr-gate critic on #186. | ops | 2026-05-30 | pr:#343 | P3 | hygiene |
 | CC-286 | ⏸ deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-306 | ⏸ deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
-| CC-333 | ⏸ deferred | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1/4/7 移後版；open sub-tickets: CC-381/390/393/412 | arch | 2026-06-07 | — | P2 | design |
+| CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）+layer 4（CC-381）排入 v0.8.0；layer 7 待評估；open sub-tickets: CC-381/390/393/412 | arch | 2026-06-07 | — | P2 | design |
 | CC-340 | ⏸ deferred | knowledge index: embeddings/semantic-backend remainder（FTS/LIKE MVP 已由 CC-403 接管；本票保留 Khoj-class semantic accelerator，待 FTS ranking 不足時 resume） | memory | 2026-06-08 | — | P3 | retrieval |
 | CC-342 | 🟢 someday | agent: debt-auditor — proactive tech-debt health scan（`agents/debt-auditor.md`；`pmctl audit <path>` 呼叫；PR-free 主動健康掃描，有別於現有 PR-focused reviewers） | process/DX | 2026-06-05 | — | P3 | design |
 | CC-346 | ⏸ deferred | repo-index: cross-file ref tracking `file_refs` table（paused 2026-06-10；resume trigger: reuse-scan 進過 ≥2 份真 brief 且缺 ref 資料為瓶頸；屆時先 Phase a bash source） | ops | 2026-06-09 | — | P3 | design |
@@ -73,14 +73,14 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-377 | ⏸ deferred | adapter: Google Antigravity（`agy`）executor（DEFERRED：headless CLI 1.0.8 不成熟；resume: newer agy with `--output-format stream-json`；umbrella: CC-333） | arch/portability | 2026-06-13 | — | P2 | design |
-| CC-381 | ⏸ deferred | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；排在 CC-373..377 之後；umbrella: CC-333） | arch/install | 2026-06-14 | — | P2 | design |
+| CC-381 | 🔵 active | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；排在 CC-373..377 之後；umbrella: CC-333）。v0.8.0 Phase 3 spike-only：縮小為 read-only host-profile-detection / doctor 擴充切片，不動 installer write path | arch/install | 2026-06-14 | — | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
-| CC-412 | 🟢 someday | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API） | arch/memory | 2026-06-23 | — | P3 | retrieval |
+| CC-412 | 🔵 active | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | — | P3 | retrieval |
 | CC-420 | ✅ done | refactor: adapter 共用 model alias TSV 解析抽 lib（claude/codex/opencode 三者 ~30行重複）→ `scripts/lib/model-aliases.sh` | arch | 2026-06-24 | pr:#345 | P3 | — |
 | CC-421 | ✅ done | refactor: adapter 共用 timeout 優先序邏輯抽 lib（3 adapter + post-verify ~15行×4重複）→ `scripts/lib/timeout-resolve.sh` | arch | 2026-06-24 | pr:#346 | P3 | — |
 | CC-422 | ✅ done | refactor: adapter 共用 dispatch 初始化邏輯抽 lib（claude/codex ~200行相似）→ `scripts/lib/dispatch-common.sh`；需先 spike 確認邊界 | arch | 2026-06-24 | pr:#347 | P3 | — |
-| CC-423 | 🟢 someday | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果 | arch | 2026-06-25 | — | P3 | — |
+| CC-423 | 🔵 active | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | — | P3 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-430 | ✅ done | **[release: `/pre-release` Layer 2 — 語義比對]** 承接 [[CC-426]] Layer 2。主線程直接讀取各 ticket Requirement 章節（從 BACKLOG）+ 對應 PR diff 摘要（`gh pr diff <PR#>`），內聯分析覆蓋度，輸出 per-ticket 結論表。相依 [[CC-426]]（Layer 1 穩定基礎）、[[CC-403]]（memory context query）、[[CC-404]]（注入預算）。 | ops/process | 2026-06-26 | pr:#339 | P1 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
@@ -113,7 +113,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
-## CC-381 — arch: install host-PM-aware ⏸ deferred
+## CC-381 — arch: install host-PM-aware 🔵 active
 
 **Problem**: `install.sh` / `install-hooks.sh` 把整個安裝面寫死成 claude harness：PreToolUse/SessionEnd 等 hook 接進 `~/.claude/settings.json`、reviewer 與 dispatch 的 `permissions.allow`、statusline、以及 `agents/` `commands/` 的 PM 介面，全部假設「claude 是 host PM」。一旦 codex（或未來 host）當主 PM，這些都不對：codex 的設定面是 `~/.codex/` ＋ `AGENTS.md` ＋自有 sandbox/approval 模型，沒有 `~/.claude` 那套 PreToolUse hook。[[CC-334]]/[[CC-380]] 把 reviewer guard 與 allow-list 寫進 `~/.claude/settings.json`——在 codex-host 下根本不載入，等於 codex-PM 安裝拿不到任何 gate/guard plumbing。
 
@@ -759,7 +759,7 @@ This makes directory creation the mutex.
 
 ---
 
-## CC-276 — feat: persistent gate override declarations to reduce re-statement across rounds
+## CC-276 — feat: persistent gate override declarations to reduce re-statement across rounds 🔵 active
 
 **Problem**: Each `pr-gate.sh` run spawns fresh reviewer sessions with no memory of previous rounds. When users consciously accept a known risk (storage cleanup failure, Docker unavailable in sandbox, etc.) and provide an override declaration, Round N+1 reviewers see the same code with no context of the previous override and re-block. Users must re-state identical override declarations every round. Observed: 9+ rounds on a single PR primarily due to re-blocking on already-accepted known risks.
 
@@ -1205,7 +1205,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
 
-## CC-412 — memory substrate 跨工具可攜（decouple from Claude-specific location + injection）
+## CC-412 — memory substrate 跨工具可攜（decouple from Claude-specific location + injection） 🔵 active
 
 **Problem**: 專案記憶目前綁兩處 Claude 專屬實作，使「跨 AI 工具/agent（codex、opencode、未來 host）共用同一份專案記憶」困難：(1) `find_memory_dir`（`scripts/lib/memory.sh`）的目錄慣例寫死 `CLAUDE_CONFIG_DIR/projects/<encode(cwd)>/memory/`；(2) MEMORY.md 的每-session 注入靠 Claude Code 的 UserPromptSubmit hook，其他工具沒有等價 hook，既無法定位也無法注入。
 
@@ -1280,7 +1280,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **See**: pr:#347
 
-## CC-423 — gate detached lifecycle 🟢 someday
+## CC-423 — gate detached lifecycle 🔵 active
 
 **Problem**: `pmctl gate run` 目前以 foreground 模式執行（無 lifecycle 選項），透過 Claude Code harness 的 `run_in_background: true` 監控。Session interrupt 會讓 harness 遺失對 gate process 的追蹤，回報錯誤的 exit code（同 CC-418 之前 dispatch 的問題）。
 

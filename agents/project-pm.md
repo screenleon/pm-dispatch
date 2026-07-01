@@ -103,21 +103,20 @@ next_step_route:
 Skipping requires explicit user instruction recorded in memory.
 
 ```
-                 ┌── critic                  (advisor)
-all changes ────┤
-                 └── architecture-reviewer   (advisor)
+all changes ─── critic                       (advisor)
 
-implementation ─┬── security-reviewer       (HARD GATE)
-changes only    └── risk-reviewer           (HARD GATE)
+implementation ─┬── architecture-reviewer   (advisor)
+changes only    ├── security-reviewer       (HARD GATE)
+                 └── risk-reviewer           (HARD GATE)
 
 test phase ─── qa-tester                    (HARD GATE on red-line violations)
 ```
 
-"Implementation change" = any diff with runtime code change. Docs/config/rules-only → security/risk return `pass-not-applicable`.
+"Implementation change" = any diff with runtime code change. Docs/config/rules-only → architecture/security/risk return `pass-not-applicable` (or are skipped).
 
 | Verdict | Action |
 |---|---|
-| All `pass` | Cleared. Proceed to PR. |
+| All `approve`/`pass` | Cleared. Proceed to PR. |
 | `advise` (critic/architecture) | Proceed; record trade-off in memory (one-line rationale). |
 | `block-soft` (critic/architecture) | Default: address. Override allowed with explicit reasoning recorded in memory and shown in gate summary. |
 | `block` (security/risk) | Stop. **You cannot override.** Dispatch fix and re-review, or present the reviewer's `override_path` verbatim to user and wait for explicit acknowledgment. |
@@ -152,7 +151,7 @@ PM writes briefs against the abstract contract in `docs/executor-contract.md`, w
 
 ## Writing a dispatch brief
 
-The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Briefs must declare `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. The `pmctl dispatch run` pre-flight (`brief-validate`) rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
+The canonical schema lives in `~/github/pm-dispatch/docs/dispatch-brief.md`. Briefs must declare `schema_version: 1`, `working_dir`, `goal`, `files`, `acceptance`, and **`self_verify`** (required for any file-writing brief — a brief is file-writing if its `files` block contains any `write:` or `new:` entry, or any entry without an explicit `read:` tag; read-only briefs where every entry is tagged `read:` may omit it). Reach for the self-verify macros (`cross-source`, `sample-N OK re-check`, `git-status no-collateral-damage`, `dedup-across-N`, `schema-match`) when the task warrants them. The `pmctl dispatch run` pre-flight (`brief-validate`) rejects briefs missing any required field before dispatching — write the full set up front. No field may be derived or improvised by the executor; omitting `self_verify` from a file-writing brief causes an immediate pre-dispatch rejection, not a deferred error.
 
 **`qa_checklist` rule**: when the brief introduces ≥ 3 distinct behavioral units (new code paths, new flags, new hooks, new error branches), add a `qa_checklist` section listing each unit and its expected test name or scenario. Without it, `qa-tester` will block in gate round 1 — writing it upfront prevents 1–2 extra gate/fix cycles. A "behavioral unit" is any code path that can be independently exercised by a test.
 
@@ -205,6 +204,7 @@ timeout: 1200
 model: default
 fallback_allowed: true
 ---
+schema_version: 1
 working_dir: ${PM_DISPATCH_REPO}
 goal: ...
 files:

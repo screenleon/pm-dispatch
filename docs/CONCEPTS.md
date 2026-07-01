@@ -8,7 +8,7 @@ Claude Code gives you a chat interface plus four extensibility surfaces:
 
 | Surface | What it is | Where it lives |
 |---|---|---|
-| **Hooks** | Shell commands the harness runs around every tool call | `settings.json` + `scripts/hook-*.sh` |
+| **Hooks** | Shell commands the harness runs around every tool call | `settings.json` + `scripts/guard-*.sh` |
 | **Slash commands** | User-invokable prompts (a.k.a. "skills") | `commands/*.md` |
 | **Subagents** | Specialised Claude sessions with their own tools and prompts | `agents/*.md` |
 | **Memory** | Files Claude reads at session start and writes to over time | `~/.claude/projects/<id>/memory/` |
@@ -111,7 +111,7 @@ These two rules shape how every workflow in this repo is wired. The main thread 
 
 - `agents/*.md` — every subagent definition (one markdown per role)
 - `commands/pm.md` — how the main thread invokes the `project-pm` subagent
-- `scripts/pr-gate.sh` — how the main thread runs five reviewer subagents in sequence
+- `scripts/pr-gate.sh` — how the main thread dispatches review as an independent executor subprocess (`pmctl gate run`), not an in-session subagent fan-out
 
 ---
 
@@ -133,7 +133,7 @@ That's all Claude Code provides. The structure on top is up to you.
 | **Curated cards** | `feedback_*.md`, `project_*.md`, `reference_*.md`, `user_*.md` | Durable rules, project state, references | Long |
 | **Episodic** | `episodes.jsonl` | Per-session summaries appended at SessionStop | Append-only |
 
-A typical user-facing fact ("I prefer terse responses with no trailing summary") lives as a feedback card. A long-lived project fact ("this repo's PR-gate flow runs five reviewers") lives as a project card. A historical moment ("yesterday's session shipped CC-047") lives as an episode.
+A typical user-facing fact ("I prefer terse responses with no trailing summary") lives as a feedback card. A long-lived project fact ("this repo's PR-gate dispatches an independent reviewer subprocess") lives as a project card. A historical moment ("yesterday's session shipped the new release checklist") lives as an episode.
 
 The point of the tiering is **token budget**. The index is always loaded; the cards are loaded on demand by `MEMORY.md` links; the episodes are loaded only when `/mem-recall` is invoked. Without this split, either you load nothing (no continuity) or you load everything (every session pays for every memory).
 
