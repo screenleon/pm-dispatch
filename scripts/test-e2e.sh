@@ -243,8 +243,12 @@ SCRIPT
     mkdir -p "$synthetic_base/.gate-results"
     e2e_log="$(mktemp)"
     gate_rc=0
+    # --lifecycle foreground: this harness wants the gate to complete inline
+    # before inspecting $gate_result, not a bare gate_id (default lifecycle
+    # is detached since CC-423).
     "$PMCTL" gate run \
       --cd "$synthetic_base" \
+      --lifecycle foreground \
       --executor codex \
       --tier express \
       --base main \

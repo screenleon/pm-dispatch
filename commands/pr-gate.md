@@ -23,22 +23,31 @@ paths or when reviewer independence matters.
 ## Step 1 - Locate pmctl
 
 Resolve the installed `pmctl` binary. `~/.local/bin/pmctl` is the installed
-symlink; fall back to the repo-relative path when the install is absent:
+symlink; fall back to the repo-relative path when the install is absent.
+**This resolution is a one-liner repeated verbatim at the top of every Bash
+call in this skill that invokes `pmctl`** (Step 2's launch call and the wait
+call below) — never assume `$PMCTL` set in one Bash call is visible in
+another; each call is its own subprocess:
 
 ```bash
-if [[ -x "${HOME}/.local/bin/pmctl" ]]; then
-  PMCTL="${HOME}/.local/bin/pmctl"
-else
-  CMD_LINK="${HOME}/.claude/commands/pr-gate.md"
-  CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
-  PMCTL="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/cli/pmctl"
-fi
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 ```
 
-## Step 2 - Parse args and launch in background
+## Step 2 - Parse args and launch detached
 
-Parse `$ARGUMENTS`, build the gate args, then launch via `run_in_background: true`
-so the main thread is free while `/pr-gate` runs.
+Parse `$ARGUMENTS`, build the gate args, then launch with `--lifecycle detached`
+(inline, not `run_in_background`) so the harness sees the launch return fast with
+a `gate_id`. The gate itself keeps running under `setsid`/`nohup`, fully
+OS-decoupled from this session — a session interrupt cannot kill it or corrupt
+its exit-code reporting.
+
+**The run call and the wait call below are two SEPARATE Bash tool
+invocations** — each Bash call is its own subprocess, so a shell variable
+assigned in one does NOT survive into the next. Read the `gate_id` this call
+prints to stdout and substitute that literal value into the wait command's
+argv (the same `<run_id>` pattern `commands/pm.md`'s dispatch routes use) —
+do not write a second Bash call that assumes a variable set by the first
+call is still available.
 
 ### Executor routing is passed by flag only
 
@@ -52,6 +61,7 @@ This command should pass exactly one of these explicit modes when known:
 `/pm` profile defaults and `scripts/install-guards.sh` auto-detect.
 
 ```bash
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 RAW_ARGS="${ARGUMENTS:-}"
 TIER_OVERRIDE=""
 TARGETED_REVIEWERS=""
@@ -104,16 +114,37 @@ GATE_ARGS=(--cd "$PWD" --executor auto)
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
 [[ "$PARALLEL" == "true" ]] && GATE_ARGS+=(--parallel)
 
-# Fire with run_in_background: true. The harness captures stdout/stderr and
-# emits a completion notification when this Bash call exits.
-"$PMCTL" gate run "${GATE_ARGS[@]}" 2>&1
+# Launch detached: this call is inline (NOT run_in_background) and returns in
+# well under a second once the supervisor is forked -- it prints exactly one
+# line, the gate_id, and nothing else on success.
+"$PMCTL" gate run "${GATE_ARGS[@]}" --lifecycle detached
 ```
 
-After firing, reply with one short status line, e.g.:
+Read the printed `gate_id` from this call's stdout, then launch the wait as a
+**separate Bash tool call** with `run_in_background: true` so the main thread
+is free while the gate runs. This is a genuinely independent subprocess, so
+it re-resolves `pmctl` itself (Step 1's one-liner, repeated -- never `$PMCTL`
+from an earlier call) and receives `gate_id` only as a substituted literal
+value, never a shell variable from the block above:
 
-> `PR-gate launched in background (tier <T>, ~3-5 min). Main thread free; I'll relay the verdict when it finishes.`
+```bash
+PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
+"$PMCTL" gate wait <gate_id> --cd "$PWD"
+```
 
-Do not poll, sleep, or call `BashOutput` immediately.
+After firing the wait, reply with one short status line, e.g.:
+
+> `PR-gate launched (gate_id <id>, tier <T>, ~3-5 min). Main thread free; I'll relay the verdict when it finishes.`
+
+Do not poll, sleep, or call `BashOutput` immediately. If the session is
+interrupted before the wait notification arrives, the gate keeps running
+detached; note the `gate_id` before the interrupt (or recover it via
+`pmctl artifacts list --cd "$PWD"`) and reattach with
+`pmctl gate wait <gate_id> --cd "$PWD"` in a new session -- a fresh `/pr-gate`
+invocation starts a NEW gate and does NOT reattach to the interrupted one.
+(gate wait exit 3 means the sentinel was already consumed by a prior wait —
+check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
+file in that case).
 
 ## Executor routes — both dispatch an independent subprocess
 
@@ -132,13 +163,20 @@ skill does not fan out reviewers or parse any handover block.
 
 ## Step 3 - Receive completion and relay the result
 
-When the background Bash completion notification arrives:
+When the `pmctl gate wait` background Bash completion notification arrives:
 
-1. Fetch full stdout via `BashOutput(bash_id: <id>)`.
+1. Fetch full stdout via `BashOutput(bash_id: <id>)`. It contains
+   `gate: <gate_id>  state: <GO|NO-GO|failed>  exit: <N>` and, when a result was
+   written, `result: <path>` on the next line.
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
-3. If exit code is non-zero, surface a brief failure summary (exit code + last ~20
-   lines of stdout).
+3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
+   running detached -- retry `pmctl gate wait <gate_id> --cd "$PWD"` once with
+   the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
+   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "$PWD"`
+   to locate the durable result instead), other non-zero = gate failed (surface a
+   brief failure summary: exit code + last ~20 lines of the supervisor log at
+   `pmctl artifacts show <gate_id> --cd "$PWD"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
    re-confirm out of band, run `pmctl gate verify "$result_file"` (exit 0 = valid).
 5. Prepend `PR-gate complete.` to completion relay and include the full gate

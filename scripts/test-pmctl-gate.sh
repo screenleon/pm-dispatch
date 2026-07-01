@@ -11,9 +11,54 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
+# cases, mirroring scripts/test-gate-lifecycle.sh's isolation, so they are
+# deterministic and never collide with a real gate run on this host.
+_GATE_CLI_XDG_RUNTIME_DIR="$tmp_root/gate-cli-xdg-runtime"
+mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Install a fake pr-gate.sh into fixture/scripts/ that writes a structurally
+# valid gate result under --run-dir (so gate_result_verify accepts it -- the
+# detached wait path now requires this, per CC-423's result-integrity fix)
+# and prints `result: <path>`, then exits with the given code.
+_mk_fake_gate_with_result() {
+  local fixture="$1" code="$2"
+  mkdir -p "$fixture/scripts"
+  cat > "$fixture/scripts/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+rd=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --run-dir) rd="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ -n "\$rd" ]]; then
+  mkdir -p "\$rd"
+  cat > "\$rd/result.md" <<RESULT
+---
+gate_result_version: pr_gate_result_v1
+final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
+tier: express
+mode: sequential
+most_severe: approve
+---
+
+# PR-Gate Result
+
+## Gate Conclusion
+Final: $([[ $code -eq 0 ]] && printf GO || printf NO-GO)
+RESULT
+  printf 'result: %s\n' "\$rd/result.md"
+fi
+exit $code
+FAKEGATE
+  chmod +x "$fixture/scripts/pr-gate.sh"
+}
 
 # Install a fake pr-gate.sh into fixture/scripts/ that echoes its args and
 # exits with the given code.
@@ -43,6 +88,23 @@ WRAPPER
   chmod +x "$out"
 }
 
+# Build a fixture repo that carries the REAL cli/pmctl binary (so its own
+# gate/run + gate/wait routing-table entries are exercised, not a hand-rolled
+# wrapper) plus the minimal lib set gate/run and gate/wait need. cli/pmctl
+# resolves REPO_ROOT from its own script location, so copying it into the
+# fixture makes it treat the fixture as REPO_ROOT.
+_mk_gate_cli_fixture() {
+  local fixture="$1"
+  mkdir -p "$fixture/cli" "$fixture/scripts/lib"
+  cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"
+  chmod +x "$fixture/cli/pmctl"
+  for _lib in pmctl-gate gate-result-verify state-paths portable; do
+    cp "$REPO_ROOT/scripts/lib/$_lib.sh" "$fixture/scripts/lib/$_lib.sh"
+  done
+  cp "$REPO_ROOT/scripts/gate-supervisor.sh" "$fixture/scripts/gate-supervisor.sh"
+  chmod +x "$fixture/scripts/gate-supervisor.sh"
+}
+
 # ---- 1: explicit --cd is passed through unchanged ----------------------------
 case_explicit_cd_passthrough() {
   # Verifies that pmctl_gate_run passes an explicit --cd value through to
@@ -61,7 +123,7 @@ case_explicit_cd_passthrough() {
   _mk_gate_wrapper "$fixture" "$wrapper"
 
   local out code
-  set +e; out="$("$wrapper" --cd /tmp --tier express 2>&1)"; code=$?; set -e
+  set +e; out="$("$wrapper" --cd /tmp --lifecycle foreground --tier express 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] \
      && [[ "$out" == *"--cd /tmp"* ]] \
@@ -92,7 +154,7 @@ case_default_cd_injected() {
 
   local expected_cd out code
   expected_cd="$PWD"
-  set +e; out="$("$wrapper" --tier express 2>&1)"; code=$?; set -e
+  set +e; out="$("$wrapper" --lifecycle foreground --tier express 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd $expected_cd"* ]]; then
     pass "$name"
@@ -119,7 +181,7 @@ case_exit_propagated() {
   _mk_gate_wrapper "$fixture" "$wrapper"
 
   local code
-  set +e; "$wrapper" --cd /tmp >/dev/null 2>&1; code=$?; set -e
+  set +e; "$wrapper" --cd /tmp --lifecycle foreground >/dev/null 2>&1; code=$?; set -e
 
   if [[ "$code" -eq 2 ]]; then
     pass "$name"
@@ -162,6 +224,48 @@ WRAPPER
   fi
 }
 
+# ---- 4b: --cd with no value is a usage error, not "use $PWD" ----------------
+case_cd_missing_value_rejected() {
+  # CC-423 pr-gate finding (critic/qa-tester, high): the --cd extraction loop
+  # only checked array bounds, not whether --cd actually had a following
+  # value, so a trailing `--cd` (or `--cd` immediately followed by another
+  # flag, which is what remains after --lifecycle is stripped) silently fell
+  # back to $PWD instead of erroring. Under the default (detached) lifecycle
+  # this meant a malformed `pmctl gate run --cd --lifecycle detached` still
+  # returned a "successful" gate_id for a supervisor launched against the
+  # wrong directory. Both lifecycles must reject it explicitly.
+  local name="gate/run: --cd with no value is rejected (exit 2)"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f4b"
+  _mk_fake_gate "$fixture" 0
+
+  local wrapper="$tmp_root/b4b/wrapper"
+  mkdir -p "$(dirname "$wrapper")"
+  _mk_gate_wrapper "$fixture" "$wrapper"
+
+  local err code
+  set +e; err="$("$wrapper" --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "foreground (default detached, bare --cd): code=$code err=$err"
+    return
+  fi
+
+  set +e; err="$("$wrapper" --lifecycle foreground --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "explicit foreground, bare --cd: code=$code err=$err"
+    return
+  fi
+
+  set +e; err="$("$wrapper" --lifecycle detached --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$err" != *"missing value for --cd"* ]]; then
+    fail "$name" "explicit detached, bare --cd: code=$code err=$err"
+    return
+  fi
+
+  pass "$name"
+}
+
 # ---- 5: pmctl binary routes gate/run without error ---------------------------
 case_pmctl_routing() {
   # Verifies that the top-level cli/pmctl binary recognises the gate/run
@@ -169,19 +273,41 @@ case_pmctl_routing() {
   # table entry and lib load are both present.
   #
   # Steps:
-  #   1. Call pmctl gate run --help against the real repo binary.
+  #   1. Call pmctl gate run --lifecycle foreground --help against the real
+  #      repo binary (foreground forced explicitly: default lifecycle is
+  #      detached (CC-423), which would fork a real background supervisor
+  #      instead of forwarding --help synchronously).
   #   2. Assert exit code is 0 (pr-gate.sh --help exits 0).
   #   3. Assert stdout contains "--cd" (confirming pr-gate.sh usage was reached).
   local name="gate/run: pmctl cli routes gate/run subcommand"
   should_run "$name" || return 0
 
   local out code
-  set +e; out="$("$PMCTL" gate run --help 2>&1)"; code=$?; set -e
+  set +e; out="$("$PMCTL" gate run --lifecycle foreground --help 2>&1)"; code=$?; set -e
 
   if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$(printf '%s' "$out" | head -3)"
+  fi
+}
+
+# ---- 5b: --help stays synchronous even with the default (detached) lifecycle
+case_help_bypasses_detached_default() {
+  # CC-423 pr-gate finding (critic, medium): flipping the default lifecycle
+  # to detached silently turned `pmctl gate run --help` (no --lifecycle flag)
+  # into a detached launch instead of synchronous usage output. Verifies the
+  # fix: -h/--help always forwards synchronously regardless of lifecycle.
+  local name="gate/run: --help forwards synchronously under the default (detached) lifecycle"
+  should_run "$name" || return 0
+
+  local out code
+  set +e; out="$("$PMCTL" gate run --help 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd"* ]] && [[ "$out" != gate-* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$(printf '%s' "$out" | head -3) (expected synchronous usage text, not a bare gate_id)"
   fi
 }
 
@@ -316,8 +442,8 @@ case_run_dir_forwarded_to_gate() {
   local dir1 dir2; dir1="$(mktemp -d)"; dir2="$(mktemp -d)"
   local out1 out2 code1 code2
   set +e
-  out1="$("$wrapper" --cd "$dir1" 2>&1)"; code1=$?
-  out2="$("$wrapper" --cd "$dir2" 2>&1)"; code2=$?
+  out1="$("$wrapper" --cd "$dir1" --lifecycle foreground 2>&1)"; code1=$?
+  out2="$("$wrapper" --cd "$dir2" --lifecycle foreground 2>&1)"; code2=$?
   set -e
   rm -rf "$dir1" "$dir2"
 
@@ -340,16 +466,173 @@ case_run_dir_forwarded_to_gate() {
   pass "$name"
 }
 
+# ---- 12: omitting --lifecycle defaults to detached (CC-423) ------------------
+case_default_lifecycle_is_detached() {
+  # Verifies that pmctl_gate_run with no --lifecycle flag now takes the
+  # detached path (returns a bare gate_id, does not synchronously exec
+  # pr-gate.sh), mirroring dispatch's default. scripts/test-gate-lifecycle.sh
+  # covers the detached mechanics (supervisor, wait, sentinel) in depth; this
+  # case only proves the default routing decision.
+  local name="gate/run: omitting --lifecycle defaults to detached"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f12" wrapper="$tmp_root/b12/wrapper" work="$tmp_root/f12-work"
+  mkdir -p "$(dirname "$wrapper")" "$work"
+  _mk_fake_gate "$fixture" 0
+  _mk_gate_wrapper "$fixture" "$wrapper"
+  cp "$REPO_ROOT/scripts/gate-supervisor.sh" "$fixture/scripts/gate-supervisor.sh"
+  chmod +x "$fixture/scripts/gate-supervisor.sh"
+  for _lib in state-paths.sh portable.sh; do
+    cp "$REPO_ROOT/scripts/lib/$_lib" "$fixture/scripts/lib/$_lib"
+  done
+
+  local out code
+  PM_DISPATCH_STATE_ROOT="$tmp_root/f12-state" XDG_RUNTIME_DIR="$tmp_root/f12-xdg"
+  mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    "$wrapper" --cd "$work" 2>&1)"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out (expected a bare gate_id, not synchronous pr-gate.sh output)"
+  fi
+}
+
+# ---- 13/14: gate/wait routed through the REAL cli/pmctl binary (GO/NO-GO) ----
+# scripts/test-gate-lifecycle.sh drives pmctl_gate_run_detached/pmctl_gate_wait
+# by sourcing pmctl-gate.sh directly, which never exercises cli/pmctl's own
+# `case "$cmd/$sub" in gate/wait) ...` routing-table entry -- that entry could
+# regress (typo, wrong function name) while the lifecycle-library tests still
+# pass. These two cases copy the REAL cli/pmctl into a fixture (cli/pmctl
+# resolves REPO_ROOT from its own script location, so this makes it treat the
+# fixture as REPO_ROOT) and drive `gate run --lifecycle detached` +
+# `gate wait` end to end through it for both a GO and a NO-GO outcome.
+_run_gate_cli_route_case() {
+  local name="$1" gate_code="$2" expect_state="$3" expect_exit="$4"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/${name//[^A-Za-z0-9]/-}/fixture"
+  local work="$tmp_root/${name//[^A-Za-z0-9]/-}/work"
+  local state="$tmp_root/${name//[^A-Za-z0-9]/-}/state"
+  mkdir -p "$work"
+  _mk_gate_cli_fixture "$fixture"
+  _mk_fake_gate_with_result "$fixture" "$gate_code"
+
+  local cli_pmctl="$fixture/cli/pmctl"
+  local gate_id out1 code1
+  set +e
+  gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate run --cd "$work" --lifecycle detached 2>&1)"
+  code1=$?
+  set -e
+  if [[ "$code1" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "gate run --lifecycle detached via cli/pmctl failed: code=$code1 out=$gate_id"
+    return
+  fi
+
+  local out2 code2
+  set +e
+  out2="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate wait "$gate_id" --cd "$work" --timeout 30 2>&1)"
+  code2=$?
+  set -e
+
+  if [[ "$code2" -eq "$expect_exit" ]] && [[ "$out2" == *"state: $expect_state"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code1=$code1 gate_id=$gate_id code2=$code2 (expected $expect_exit) out2=$out2"
+  fi
+}
+
+case_gate_wait_go_route_via_cli() {
+  _run_gate_cli_route_case "gate/wait: GO routed through real cli/pmctl" 0 "GO" 0
+}
+
+case_gate_wait_nogo_route_via_cli() {
+  _run_gate_cli_route_case "gate/wait: NO-GO routed through real cli/pmctl" 1 "NO-GO" 1
+}
+
+# ---- 15: /pr-gate's documented run/wait handoff survives a REAL process boundary
+# CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer/risk-reviewer,
+# high, all four converged on the same root cause): commands/pr-gate.md's
+# worked example captured `GATE_ID="$(...)"` in one Bash code block and reused
+# `"$GATE_ID"` in a separate one, but each Bash tool call is an independent
+# subprocess -- shell variables do not survive across calls, so the wait would
+# receive an empty gate_id. The fix: read the captured stdout, substitute the
+# LITERAL value into the next command (matching commands/pm.md's <run_id>
+# convention). This case proves that literal-substitution handoff actually
+# works by launching `gate run` and `gate wait` as two genuinely separate
+# `bash -c` processes -- run's stdout is captured to a FILE (never a shell
+# variable), and wait receives the id only via a substituted argv token, with
+# no environment or variable inheritance connecting the two processes.
+case_run_wait_handoff_survives_separate_process() {
+  local name="gate/run+wait: documented literal-gate_id handoff survives a real process boundary"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f15/fixture" work="$tmp_root/f15/work" state="$tmp_root/f15/state"
+  mkdir -p "$work"
+  _mk_gate_cli_fixture "$fixture"
+  _mk_fake_gate_with_result "$fixture" 0
+  local cli_pmctl="$fixture/cli/pmctl"
+
+  # "Bash call 1": run detached, capture stdout to a file only (the harness's
+  # equivalent -- never assign to a variable this test could accidentally
+  # smuggle into the next process).
+  local id_file="$tmp_root/f15/gate_id.txt"
+  env -i PATH="$PATH" HOME="$HOME" \
+    PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    bash -c '"$1" gate run --cd "$2" --lifecycle detached' _ "$cli_pmctl" "$work" \
+    > "$id_file" 2>"$tmp_root/f15/run.err"
+  local run_code=$?
+  local gate_id; gate_id="$(cat "$id_file" 2>/dev/null)"
+  if [[ "$run_code" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "run failed or produced no gate_id: code=$run_code gate_id=$gate_id err=$(cat "$tmp_root/f15/run.err" 2>/dev/null)"
+    return
+  fi
+
+  # "Bash call 2": a BRAND NEW process (env -i: no inherited variables at
+  # all) that only knows the gate_id because it was substituted into the
+  # command string as a literal argv token -- exactly what the agent does
+  # when it reads call 1's stdout and writes call 2's command.
+  local out code
+  set +e
+  out="$(env -i PATH="$PATH" HOME="$HOME" \
+    PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    bash -c "\"$cli_pmctl\" gate wait $gate_id --cd \"$work\" --timeout 30" 2>&1)"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "gate_id=$gate_id code=$code out=$out"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script
+case_cd_missing_value_rejected
 case_pmctl_routing
+case_help_bypasses_detached_default
 case_verify_valid
 case_verify_empty
 case_verify_no_final
 case_verify_parity_mismatch
 case_verify_usage
 case_run_dir_forwarded_to_gate
+case_default_lifecycle_is_detached
+case_gate_wait_go_route_via_cli
+case_gate_wait_nogo_route_via_cli
+case_run_wait_handoff_survives_separate_process
 
 th_summary

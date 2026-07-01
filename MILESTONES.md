@@ -37,10 +37,11 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | 🔵 active |
-| CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，鏡像既有 `dispatch --lifecycle detached` 模式 | 🔵 active |
+| CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | ✅ done pr:#301（規劃前已交付，覆核發現） |
+| CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed，鏡像既有 `dispatch --lifecycle detached` 模式 | ✅ done pr:#353 |
+| CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢（`sleep` 迴圈）改為主動通知（FIFO/inotify 等，解法未定案）。CC-423 交付後發現的簡化與效率改善項，解法待 `/pre-impl` 或 `/spike` 收斂 | 🟢 someday |
 
-> CC-425（gate 解除 PR 綁定）暫不排入——需重構 gate result key schema，範圍比 CC-276/423 大一截，待本 Phase 完成後視情況併入或延後 v0.9.0。
+> CC-425（gate 解除 PR 綁定）暫不排入——需重構 gate result key schema，範圍比 CC-276/423 大一截，待本 Phase 完成後視情況併入或延後 v0.9.0。CC-433 排入 Phase 2 作為 CC-423 的後續收斂項，非阻塞本 Phase 其餘票的完成。
 
 ### Phase 3 — CC-381 spike-only（P3；design 收斂，非完整實作）
 
@@ -58,6 +59,7 @@
 
 ### 待後續 / 明確排除
 
+- **CC-432（run-all-tests.sh 耗時瓶頸分析）**——2026-07-01 CC-423 pr-gate 迭代中發現並記錄根因（test-release-verify/test-pmctl-context 序列鎖佔全套件 ~10 分鐘的絕大部分），解法尚未定案。使用者指定為**下一個 PR 優先處理**，先走 `/pre-impl` 或 `/spike` 收斂設計方向。
 - **CC-425（gate 解除 PR 綁定）**——待 Phase 2 完成後視情況併入或延後 v0.9.0。
 - **CC-358（runner telemetry）**——與 CC-412 無架構相依，更適合作為 v0.9.0 gate 決策的前置證據，不排入本版。
 - **CC-346 Phase a（bash source ref index）**——BACKLOG.md 明文 resume trigger（reuse-scan 進過 ≥2 份真 brief）尚未觸發，排入即覆蓋票自身 gating 準則，未排入。

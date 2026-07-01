@@ -508,6 +508,72 @@ test_commands_pr_gate_md_documents_executors() {
   pass "$name"
 }
 
+test_commands_pr_gate_md_uses_detached_lifecycle() {
+  # CC-423: /pr-gate launches via `gate run --lifecycle detached` (inline,
+  # fast) then hands off to `gate wait` under run_in_background, replacing
+  # the prior single-call `gate run` under run_in_background.
+  local name="commands-pr-gate-md-uses-detached-lifecycle"
+  local target="$REPO_ROOT/commands/pr-gate.md"
+  assert_contains "$name" "$target" "gate run" || return
+  assert_contains "$name" "$target" "--lifecycle detached" || return
+  assert_contains "$name" "$target" "gate wait" || return
+  pass "$name"
+}
+
+test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls() {
+  # CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer/
+  # risk-reviewer, high): an earlier draft captured `GATE_ID="$(...)"` in the
+  # run call's code block and reused `"$GATE_ID"` in the wait call's separate
+  # code block. Each Bash tool call is an independent subprocess -- shell
+  # variables never survive across calls -- so the wait would receive an
+  # empty gate_id. The doc must show the wait command receiving a literal
+  # gate_id token (the `<gate_id>` placeholder convention commands/pm.md
+  # already uses for `run_id`/`gate_id`), never a `$GATE_ID`/`${GATE_ID}`
+  # shell-variable reference. scripts/test-pmctl-gate.sh's
+  # case_run_wait_handoff_survives_separate_process proves the corrected
+  # literal-substitution handoff actually works end to end; this case is the
+  # regression lock on the doc text itself so the broken pattern can't creep
+  # back in silently.
+  local name="commands-pr-gate-md-no-shell-var-reuse-across-bash-calls"
+  local target="$REPO_ROOT/commands/pr-gate.md"
+  assert_not_contains "$name" "$target" '$GATE_ID' || return
+  assert_not_contains "$name" "$target" '${GATE_ID}' || return
+  assert_contains "$name" "$target" '<gate_id>' || return
+  pass "$name"
+}
+
+test_commands_pr_gate_md_wait_block_self_resolves_pmctl() {
+  # CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer, high,
+  # round 2 of the same class of bug): the wait command block still called
+  # "$PMCTL" while relying on a $PMCTL assignment from the separate,
+  # earlier "Step 1 - Locate pmctl" Bash call -- the exact same
+  # cross-process shell-variable-leakage bug as $GATE_ID, just for a
+  # different variable. Extract the fenced code block that actually invokes
+  # `gate wait <gate_id>` and require that SAME block also assigns PMCTL --
+  # it must never depend on a variable set by an earlier, separate Bash call.
+  local name="commands-pr-gate-md-wait-block-self-resolves-pmctl"
+  local target="$REPO_ROOT/commands/pr-gate.md"
+  local wait_block
+  wait_block="$(awk '
+    /^```bash$/ { buf=""; in_block=1; next }
+    /^```$/ {
+      if (in_block && buf ~ /gate wait <gate_id>/) { printf "%s", buf; found=1; exit }
+      in_block=0; next
+    }
+    in_block { buf = buf $0 "\n" }
+    END { if (!found) exit 1 }
+  ' "$target")"
+  if [[ -z "$wait_block" ]]; then
+    fail "$name" "could not locate a fenced bash block invoking gate wait <gate_id> in $target"
+    return
+  fi
+  if [[ "$wait_block" != *'PMCTL='* ]]; then
+    fail "$name" "wait code block invokes pmctl without self-resolving PMCTL first: $wait_block"
+    return
+  fi
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -535,5 +601,8 @@ run_case "executor-claude-post-gate-hook-skipped-without-allow-hooks" test_execu
 run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_codex
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "commands-pr-gate-md-documents-executors" test_commands_pr_gate_md_documents_executors
+run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_uses_detached_lifecycle
+run_case "commands-pr-gate-md-no-shell-var-reuse-across-bash-calls" test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls
+run_case "commands-pr-gate-md-wait-block-self-resolves-pmctl" test_commands_pr_gate_md_wait_block_self_resolves_pmctl
 
 th_summary
