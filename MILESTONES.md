@@ -58,6 +58,7 @@
 
 ### 待後續 / 明確排除
 
+- **CC-432（run-all-tests.sh 耗時瓶頸分析）**——2026-07-01 CC-423 pr-gate 迭代中發現並記錄根因（test-release-verify/test-pmctl-context 序列鎖佔全套件 ~10 分鐘的絕大部分），解法尚未定案。使用者指定為**下一個 PR 優先處理**，先走 `/pre-impl` 或 `/spike` 收斂設計方向。
 - **CC-425（gate 解除 PR 綁定）**——待 Phase 2 完成後視情況併入或延後 v0.9.0。
 - **CC-358（runner telemetry）**——與 CC-412 無架構相依，更適合作為 v0.9.0 gate 決策的前置證據，不排入本版。
 - **CC-346 Phase a（bash source ref index）**——BACKLOG.md 明文 resume trigger（reuse-scan 進過 ≥2 份真 brief）尚未觸發，排入即覆蓋票自身 gating 準則，未排入。

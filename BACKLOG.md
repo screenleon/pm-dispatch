@@ -75,6 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-423 | 🔵 active | gate detached lifecycle：`pmctl gate run --lifecycle detached` 回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | — | P3 | — |
 | CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
+| CC-432 | 🔵 active | **[run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸]** 兩者因共用真實 repo 的 `.pm-dispatch/ctx/context.db` 被 `LIVE_DB_EXCLUSIVE` 強制序列，合計 558 秒（實測 test-release-verify 380s + test-pmctl-context 178s），佔全套件 ~10 分鐘總時長的絕大部分；根因初判為 `test-release-verify.sh` 對 `release-verify.sh` 呼叫 25 次、多次仍跑 Phase 3 對真實 repo 重複索引。**解法尚未定案**，需先深入分析（Phase 3 smoke 隔離 vs 案例跳過 vs 其他）再規劃實作範圍。觸發：CC-423 pr-gate 迭代中使用者實測耗時排查（2026-07-01）。 | ops/test | 2026-07-01 | — | P2 | design |
 
 ---
 
@@ -1176,3 +1177,32 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3（someday）.
 
 **See**: pr:#339
+
+## CC-432 — run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸 🔵 active
+
+**Problem**: 使用者在 CC-423 pr-gate 迭代過程中反映 `scripts/run-all-tests.sh` 單次執行超過 10 分鐘，要求排查瓶頸。逐一計時全部 65 個套件（`bash <suite>.sh` 個別量測，非平行）後的實測數據：
+
+| 套件 | 耗時 |
+|---|---|
+| `test-release-verify` | 380s |
+| `test-pmctl-context` | 178s |
+| `test-pmctl-dispatch` | 156s |
+| `test-dispatch-lifecycle` | 100s |
+| `test-install` | 75s |
+| 其餘 60 個套件合計 | ~296s |
+
+**根因分析**：`test-release-verify` 與 `test-pmctl-context` 兩者因共用真實 pm-dispatch repo 的 `.pm-dispatch/ctx/context.db`，被 `scripts/run-all-tests.sh` 的 `LIVE_DB_EXCLUSIVE` 機制強制序列（不可平行）——`test-pmctl-context` 斷言這份 DB 在整個套件執行期間不可變動，而 `test-release-verify` 的 Phase 3 會對同一個真實 repo 重新索引、重建同一份 DB，兩者並行會互踩。兩者合計 558 秒（9.3 分鐘），即使其餘 63 個套件在 8-way 平行下瞬間跑完，光這個序列鎖就佔滿使用者觀察到的整個等待時間。
+
+`test-release-verify.sh` 對 `scripts/release-verify.sh` 呼叫 25 次（涵蓋各種旗標組合的行為驗證），其中多次即使帶 `--no-suite`，仍會執行 Phase 3（對真實 repo 跑 `pmctl context index/query/pack/reuse-scan`）；單次 `pmctl context index` 約 2.5 秒，乘以 20 幾次呼叫、每次多個子指令，疊加成 380 秒。
+
+**Why P2 而非直接排入本 sprint 實作**：解法尚未定案，需要先深入分析利弊再規劃範圍，不應該在還沒釐清設計前就急著動手：
+- 方向 A：讓 `test-release-verify.sh` 的 Phase 3 smoke 改用隔離的假 repo（而非真實 pm-dispatch repo 本身），移除與 `test-pmctl-context` 的互斥前提，兩者即可平行跑——但需確認 Phase 3 smoke「驗證 pmctl context 在真實/大型 repo 上行為正確」的目的是否會因改用假 repo 而打折扣。
+- 方向 B：讓 25 次呼叫中大多數案例透過某種旗標跳過 Phase 3，只留真正需要驗證 Phase 3 行為的少數案例執行——需要盤點這 25 個案例各自實際在測什麼，避免跳過後產生覆蓋率死角。
+- 也可能有方向 A/B 之外的做法（例如快取索引結果、降低 Phase 3 涉及的子指令數），需要實際盤點 `test-release-verify.sh` 的 25 個案例後才能收斂。
+
+**Requirement**: 待分析完成後再具體化；預計走 `/pre-impl` 或 `/spike` 先收斂設計方向，再拆成實作票。
+
+**Trigger**: CC-423（gate detached lifecycle）pr-gate 迭代過程中，使用者對「run-all-tests.sh 執行超過 10 分鐘」提出疑慮並要求逐一計時排查根因（2026-07-01）。
+
+**area**: ops/test
+**Priority**: P2 — 不阻塞 CC-423，但影響日常開發迭代速度，排在下一個 PR 優先分析規劃。
