@@ -11,6 +11,12 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
+# cases, mirroring scripts/test-gate-lifecycle.sh's isolation, so they are
+# deterministic and never collide with a real gate run on this host.
+_GATE_CLI_XDG_RUNTIME_DIR="$tmp_root/gate-cli-xdg-runtime"
+mkdir -p "$_GATE_CLI_XDG_RUNTIME_DIR" && chmod 700 "$_GATE_CLI_XDG_RUNTIME_DIR"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -41,6 +47,23 @@ set -euo pipefail
 pmctl_gate_run "$fixture" "\$@"
 WRAPPER
   chmod +x "$out"
+}
+
+# Build a fixture repo that carries the REAL cli/pmctl binary (so its own
+# gate/run + gate/wait routing-table entries are exercised, not a hand-rolled
+# wrapper) plus the minimal lib set gate/run and gate/wait need. cli/pmctl
+# resolves REPO_ROOT from its own script location, so copying it into the
+# fixture makes it treat the fixture as REPO_ROOT.
+_mk_gate_cli_fixture() {
+  local fixture="$1"
+  mkdir -p "$fixture/cli" "$fixture/scripts/lib"
+  cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"
+  chmod +x "$fixture/cli/pmctl"
+  for _lib in pmctl-gate gate-result-verify state-paths portable; do
+    cp "$REPO_ROOT/scripts/lib/$_lib.sh" "$fixture/scripts/lib/$_lib.sh"
+  done
+  cp "$REPO_ROOT/scripts/gate-supervisor.sh" "$fixture/scripts/gate-supervisor.sh"
+  chmod +x "$fixture/scripts/gate-supervisor.sh"
 }
 
 # ---- 1: explicit --cd is passed through unchanged ----------------------------
@@ -379,6 +402,62 @@ case_default_lifecycle_is_detached() {
   fi
 }
 
+# ---- 13/14: gate/wait routed through the REAL cli/pmctl binary (GO/NO-GO) ----
+# scripts/test-gate-lifecycle.sh drives pmctl_gate_run_detached/pmctl_gate_wait
+# by sourcing pmctl-gate.sh directly, which never exercises cli/pmctl's own
+# `case "$cmd/$sub" in gate/wait) ...` routing-table entry -- that entry could
+# regress (typo, wrong function name) while the lifecycle-library tests still
+# pass. These two cases copy the REAL cli/pmctl into a fixture (cli/pmctl
+# resolves REPO_ROOT from its own script location, so this makes it treat the
+# fixture as REPO_ROOT) and drive `gate run --lifecycle detached` +
+# `gate wait` end to end through it for both a GO and a NO-GO outcome.
+_run_gate_cli_route_case() {
+  local name="$1" gate_code="$2" expect_state="$3" expect_exit="$4"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/${name//[^A-Za-z0-9]/-}/fixture"
+  local work="$tmp_root/${name//[^A-Za-z0-9]/-}/work"
+  local state="$tmp_root/${name//[^A-Za-z0-9]/-}/state"
+  mkdir -p "$work"
+  _mk_gate_cli_fixture "$fixture"
+  _mk_fake_gate "$fixture" "$gate_code"
+
+  local cli_pmctl="$fixture/cli/pmctl"
+  local gate_id out1 code1
+  set +e
+  gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate run --cd "$work" --lifecycle detached 2>&1)"
+  code1=$?
+  set -e
+  if [[ "$code1" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "gate run --lifecycle detached via cli/pmctl failed: code=$code1 out=$gate_id"
+    return
+  fi
+
+  local out2 code2
+  set +e
+  out2="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate wait "$gate_id" --cd "$work" --timeout 30 2>&1)"
+  code2=$?
+  set -e
+
+  if [[ "$code2" -eq "$expect_exit" ]] && [[ "$out2" == *"state: $expect_state"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code1=$code1 gate_id=$gate_id code2=$code2 (expected $expect_exit) out2=$out2"
+  fi
+}
+
+case_gate_wait_go_route_via_cli() {
+  _run_gate_cli_route_case "gate/wait: GO routed through real cli/pmctl" 0 "GO" 0
+}
+
+case_gate_wait_nogo_route_via_cli() {
+  _run_gate_cli_route_case "gate/wait: NO-GO routed through real cli/pmctl" 1 "NO-GO" 1
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
@@ -391,5 +470,7 @@ case_verify_parity_mismatch
 case_verify_usage
 case_run_dir_forwarded_to_gate
 case_default_lifecycle_is_detached
+case_gate_wait_go_route_via_cli
+case_gate_wait_nogo_route_via_cli
 
 th_summary

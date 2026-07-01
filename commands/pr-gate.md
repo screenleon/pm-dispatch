@@ -126,8 +126,10 @@ After firing the wait, reply with one short status line, e.g.:
 
 Do not poll, sleep, or call `BashOutput` immediately. If the session is
 interrupted before the wait notification arrives, the gate keeps running
-detached; a fresh `/pr-gate` invocation or a manual
-`pmctl gate wait "$GATE_ID" --cd "$PWD"` in a new session recovers the result
+detached; note the `gate_id` before the interrupt (or recover it via
+`pmctl artifacts list --cd "$PWD"`) and reattach with
+`pmctl gate wait "$GATE_ID" --cd "$PWD"` in a new session -- a fresh `/pr-gate`
+invocation starts a NEW gate and does NOT reattach to the interrupted one.
 (gate wait exit 3 means the sentinel was already consumed by a prior wait —
 check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
 file in that case).
