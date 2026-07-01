@@ -8,7 +8,7 @@ Claude Code gives you a chat interface plus four extensibility surfaces:
 
 | Surface | What it is | Where it lives |
 |---|---|---|
-| **Hooks** | Shell commands the harness runs around every tool call | `settings.json` + `scripts/hook-*.sh` |
+| **Hooks** | Shell commands the harness runs around every tool call | `settings.json` + `scripts/guard-*.sh` |
 | **Slash commands** | User-invokable prompts (a.k.a. "skills") | `commands/*.md` |
 | **Subagents** | Specialised Claude sessions with their own tools and prompts | `agents/*.md` |
 | **Memory** | Files Claude reads at session start and writes to over time | `~/.claude/projects/<id>/memory/` |
@@ -111,7 +111,7 @@ These two rules shape how every workflow in this repo is wired. The main thread 
 
 - `agents/*.md` — every subagent definition (one markdown per role)
 - `commands/pm.md` — how the main thread invokes the `project-pm` subagent
-- `scripts/pr-gate.sh` — how the main thread runs five reviewer subagents in sequence
+- `scripts/pr-gate.sh` — how the main thread dispatches review as an independent executor subprocess (`pmctl gate run`), not an in-session subagent fan-out
 
 ---
 

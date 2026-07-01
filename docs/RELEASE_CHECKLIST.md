@@ -12,7 +12,7 @@ Coverage splits into three layers:
 
 | Layer | What runs it | Covers |
 |-------|--------------|--------|
-| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 54 test suites, real `pmctl context` smoke + real `sqlite3` |
+| **Offline automated** | `scripts/release-verify.sh` (Phases 1–3) | prerequisites, all 64 test suites, real `pmctl context` smoke + real `sqlite3` |
 | **Live E2E automated** | `scripts/release-verify.sh --e2e` (Phase 4) | real dispatch output contract (Phase B); pr-gate structural validation via codex (Phase C — requires codex on PATH) — spends LLM tokens |
 | **Manual** | §2a / §2d below | real install + hooks, `doctor`, Claude Code hook execution — environment-mutating, not automatable |
 
@@ -82,13 +82,14 @@ because they mutate the real `~/.claude` environment.
 bash install.sh --verify          # runs preflight suites, then installs
 bash scripts/install-guards.sh     # wire hooks into ~/.claude/settings.json
 bash scripts/doctor.sh            # Linux / WSL2: profile auto
-bash uninstall.sh                 # confirm clean removal, no leftover share/ dir
+bash uninstall.sh                 # confirm clean removal, no leftover managed dirs
 ```
 
 - [ ] `install.sh --verify` completes, managed dirs/symlinks created; `pmctl` resolvable on PATH.
 - [ ] `doctor.sh` reports **0 FAIL**.
-- [ ] `uninstall.sh` removes everything it installed (no dangling links, no empty
-      `share/`).
+- [ ] `uninstall.sh` removes everything it installed (no dangling links, no leftover
+      `agents/`, `commands/`, `skills/`, `scripts/`, `share/`, or `adapters/` under
+      `~/.claude/`).
 
 ### 2b. Real dispatch + 2c. pr-gate — automated by `--e2e`
 
@@ -119,7 +120,9 @@ bash scripts/test-e2e.sh --skip-gate        # dispatch only, explicitly skip Pha
 ### 2d. Claude Code hooks (live)
 
 In a real Claude Code session against an installed checkout, trigger each hook
-type once and confirm the output lands in `share/` or the trace store.
+type once and confirm the output lands in the right place: `~/.claude/usage-tracker.jsonl`
+or `~/.claude/logs/hooks.log` for hook-level telemetry, project memory `episodes.jsonl`
+for session summaries, or the trace/events store for dispatch telemetry.
 
 ```bash
 # write-guard: attempt a write outside the allowed path — should be DENIED with exit 2

@@ -41,7 +41,14 @@ The diff is the source of truth for work completion. The report is narrative con
 
 ## Filesystem output contract
 
-All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
+All executors MUST write a trace to an `.agent-trace/` directory on every run. As of
+CC-417/419 the default location is **out-of-repo**: `sw_project_run_dir <run_id>`
+resolves to `~/.local/share/pm-dispatch/state/projects/<project_key>/runs/<run_id>/.agent-trace/`
+(precedence: explicit `--trace-dir` flag > `PM_DISPATCH_TRACE_DIR` env > this
+default). The legacy in-repo `<work_dir>/.agent-trace/` path is only reached as a
+fallback when the out-of-repo state store is unavailable. Discover the effective
+path per run via `trace_path:` in the dispatch record (`pmctl artifacts show <run_id>`),
+not by assuming a fixed location.
 
 | File | Description |
 |---|---|
@@ -51,9 +58,9 @@ All executors MUST write a trace to `<work_dir>/.agent-trace/` on every run.
 
 ### Path validation rules
 
-- `latest.last` and `latest.stderr` MUST be symlinks or files whose resolved path stays within `<work_dir>/.agent-trace/`. A symlink pointing outside that directory causes `dispatch-post-verify.sh` to exit 1.
+- `latest.last` and `latest.stderr` MUST be symlinks or files whose resolved path stays within the resolved `.agent-trace/` directory for the run. A symlink pointing outside that directory causes `dispatch-post-verify.sh` to exit 1.
 - The `<executor>-<ts>.last` basename format is: executor name (alphanumeric, hyphens allowed; no path separators) + `-` + wall-clock timestamp plus PID (`date +%Y%m%d-%H%M%S`-PID) + `.last`. Example: `codex-20260526-143048-3455197.last`, `claude-20260526-143048-3455197.last`.
-- `dispatch-post-verify.sh` validates symlink targets for both `latest.last` and `latest.stderr` before reading their contents. Executors that write trace files outside `.agent-trace/` violate this contract and will fail Phase 3.
+- `dispatch-post-verify.sh` validates symlink targets for both `latest.last` and `latest.stderr` before reading their contents. Executors that write trace files outside the resolved `.agent-trace/` directory violate this contract and will fail Phase 3.
 - Self-verify execution (CC-318): `dispatch-post-verify.sh` **executes** each `self_verify:` item written in the structured `- cmd: "<bash>"` form, running the command in `<work_dir>` and treating exit 0 as PASS, any non-zero (including timeout) as FAIL. Every other item shape (named macros, prose, bare scalars) is a semantic check the executor — not a shell — evaluates; post-verify marks it `SKIP (executor-evaluated)` and never fails on it. post-verify does **not** parse self_verify results out of `latest.last`, so the executor's prose style is irrelevant to the executed checks; an executor may still echo its own self_verify results for human review, but that text is informational and not part of this contract.
 
 `<ts>` is a wall-clock timestamp plus PID written at dispatch time by `date +%Y%m%d-%H%M%S`-PID.
@@ -71,7 +78,7 @@ exit:   <integer-exit-code>
 ---
 ```
 
-`pmctl dispatch run` captures this footer durably at `<work_dir>/.agent-trace/<run_id>.footer` and passes `trace:`, `last:`, and `stderr:` as explicit `--jsonl`/`--last`/`--stderr` flags to `dispatch-post-verify.sh`, so post-verify uses the **per-run** explicit paths rather than the `latest.*` symlinks. This prevents a concurrent-dispatch race where a second adapter run overwrites `latest.*` before the first run's post-verify reads it (CC-305). The persisted footer is local durable evidence of the adapter-declared per-run artifacts for recovery paths; `latest.*` symlinks are updated by the adapter for human observation only and are not load-bearing for post-verify correctness.
+`pmctl dispatch run` captures this footer durably at `<run_dir>/.agent-trace/<run_id>.footer` (the resolved run directory, out-of-repo by default per the Filesystem output contract above) and passes `trace:`, `last:`, and `stderr:` as explicit `--jsonl`/`--last`/`--stderr` flags to `dispatch-post-verify.sh`, so post-verify uses the **per-run** explicit paths rather than the `latest.*` symlinks. This prevents a concurrent-dispatch race where a second adapter run overwrites `latest.*` before the first run's post-verify reads it (CC-305). The persisted footer is local durable evidence of the adapter-declared per-run artifacts for recovery paths; `latest.*` symlinks are updated by the adapter for human observation only and are not load-bearing for post-verify correctness.
 
 Note: codex profile — `adapters/codex/dispatch.sh` (invoked through `pmctl dispatch run --adapter codex`) already satisfies this contract. claude profile — `adapters/claude/dispatch.sh` writes the trace via the headless `claude --print` subprocess. `pmctl dispatch run` persists the adapter stdout footer and passes the explicit per-run `trace:`, `last:`, and `stderr:` paths to `dispatch-post-verify.sh`; those per-run paths are the load-bearing input to Phase 3. `latest.last`, `latest.jsonl`, and `latest.stderr` are updated by the adapter for human observation only and are not read by post-verify when explicit paths are present.
 
@@ -103,7 +110,7 @@ Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief
    - **Proactive:** `doctor.sh` probes each present executor CLI for credentials (best-effort, non-interactive: checks well-known credential files and API-key/OAuth env vars without running the CLI or reading secret contents) and emits a **FAIL** when the binary is present but no credentials are detected. Heuristic — on hosts that store credentials outside these locations (e.g. macOS Keychain) it can false-negative; the supported platform (Linux/WSL2) uses files.
    - **Authoritative (dispatch-time):** an unauthenticated run produces no semantic terminal event, so the post-verify terminal-event check (see 4) fails the run regardless of the proactive probe.
 
-4. **Output contract + triple-machine-check verification.** The load-bearing outputs are `<work_dir>/.agent-trace/latest.last` (per-run `<executor>-<ts>.last`, the final-message artifact) and the `<executor>-<ts>.jsonl` event stream (load-bearing for machine verification — the structural and terminal-event checks below run against it); both are surfaced via the stdout footer. `pmctl` is the **sole result verifier** — the executor's natural-language conclusion is a self-report, never the verdict. Verification is three machine checks:
+4. **Output contract + triple-machine-check verification.** The load-bearing outputs are `<run_dir>/.agent-trace/latest.last` (per-run `<executor>-<ts>.last`, the final-message artifact) and the `<executor>-<ts>.jsonl` event stream (load-bearing for machine verification — the structural and terminal-event checks below run against it); both are surfaced via the stdout footer. `pmctl` is the **sole result verifier** — the executor's natural-language conclusion is a self-report, never the verdict. Verification is three machine checks:
    - (a) **exit code** — a non-zero adapter exit short-circuits to `failed` (no post-verify).
    - (b) **trace structural integrity** (CC-386) — `latest.jsonl` must parse as a JSON stream with at least one value (catches truncated/orphaned traces); adapter-agnostic.
    - (c) **semantic terminal event** (CC-389) — the adapter DECLARES its completion marker as `terminal_event` in `adapter.yaml` (the JSONL event `.type` emitted at the end of a finished run); `pmctl dispatch run` reads it and passes `--terminal-event <type>` to `dispatch-post-verify.sh`, which asserts at least one trace record carries that `.type`. A structurally-whole trace that never reached completion (e.g. stops at `turn.started`) passes (b) but fails (c). The predicate shape is fixed to `.type == <declared value>` (the value is injected, never an arbitrary jq filter from the manifest). Flag-gated: positional/legacy callers that pass no `--terminal-event` stay structure-only (back-compat).
@@ -111,7 +118,8 @@ Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief
    | Executor | `terminal_event` | Trace shape |
    |---|---|---|
    | codex | `turn.completed` | `codex exec --json` emits one `turn.completed` event at end of turn |
-   | claude | `result` | `claude -p --output-format json` emits one `{"type":"result",…}` object; stream-json (CC-388) ends with a trailing `type==result` event |
+   | claude | `result` | `claude --print --output-format stream-json` (CC-388) emits per-event JSONL ending with a trailing `type==result` event |
+   | opencode | `step_finish` | opencode CLI emits per-event JSONL ending with a `step_finish` event |
 
 5. **Fallback policy — no headless CLI → subagent path (none ships).** A runtime with **no** headless CLI could not run Model B and would need a subagent (Agent-spawn) route gated by the live PreToolUse write hook. No such runtime ships: every supported executor (codex, claude, opencode) has a headless CLI and runs as an independent subprocess via `pmctl dispatch run`, with the brief authored by trusted main-thread code. The `claude-executor` and `codex-executor` subagents were both retired, so there is no Agent-spawn executor route today; the live-hook write-guard branch survives only as defensive infrastructure for a hypothetical future no-CLI self-writing runtime.
 
@@ -131,6 +139,8 @@ Model B is the canonical dispatch topology: `pmctl dispatch run` lands the brief
 | Suitable scope | Repo edits that are already in codex dispatch envelope. | Any dispatch where a headless `claude --print` subprocess is the executor (host-independent; codex-as-PM can drive it). |
 | Status | Implemented (primary route). | Implemented — `adapters/claude/` + `executor: claude` enum + `install.sh --profile minimal\|full`. |
 
+`opencode` is a third shipped profile, not shown as a column above for brevity: `pmctl dispatch run --adapter opencode --brief-file <path>` invokes `adapters/opencode/dispatch.sh` (headless CLI subprocess, `runner_kind: cli-subprocess`, `write_guard_mode: cli-only`). It is the only adapter that accepts `isolation_level: none` (full machine access — opencode has no finer-grained sandbox); codex and claude reject that value. Model resolution uses `share/opencode-model-aliases.tsv` with a fallback chain across free-tier models.
+
 ## Guard enforcement
 
 Guard policy (what a role may write or run) is **executor-agnostic and lives in one place**: the guard hook scripts (`guard-pm-write.sh`, `guard-executor-write.sh`, `guard-reviewer-write.sh`), surfaced as a CLI via `pmctl guard check --event <pre-write|pre-bash|post-task> --role <pm|executor|reviewer> [--runtime <codex|claude>] --file/--command <val>`. Guard keys on the **role** (runtime-agnostic for `pm`; the `--runtime` axis refines policy only where a role differs by runtime); dispatch supplies the runtime via its `--adapter` (CC-291). The `pre-bash` event currently registers no policy for any role/runtime (the codex-executor subagent that needed one was retired), so every `pre-bash` check fail-closes; it remains in the CLI as defensive infrastructure. For `executor`, ONE unified `guard-executor-write.sh` covers every runtime (CC-374): it derives the runtime from `agent_type` (`<runtime>-executor`) and reads that runtime's `write_guard_mode` from its adapter manifest (CC-372). The role-level write policy is one shared rule, so adding a runtime needs no guard edit. The CLI synthesizes the canonical hook input and drives the same hook, so every host enforces the identical decision (deny → non-zero exit + reason).
@@ -140,7 +150,7 @@ The **live-hook vs CLI-only** behavior is declared by the manifest's `write_guar
 | `write_guard_mode` | runner_kind | Wrapper behavior |
 |---|---|---|
 | `hook` | `cli-subprocess` default — **no shipped adapter is in this class today** | Reserved for a runtime whose executor subagent SELF-WRITES its brief via the host `Write` tool — i.e. the no-headless-CLI fallback class (see Model B contract item 5). Thin dispatcher gated by a **live PreToolUse hook** — enforced on every `Edit`/`Write`, whether fired live or via `pmctl guard check`. codex was the former occupant but overrode to `cli-only` once its brief became pmctl-landed; the branch now survives only for the fallback case and is unit-locked by `test-runner-kind.sh` (`default/cli/guardmode` → `hook`). |
-| `cli-only` | `cli-subprocess` with an explicit override (both shipped adapters — codex and claude) | No executor subagent self-writes a brief via a live host `Write` on this path: the brief is pmctl-landed and the executor runs as an independent headless subprocess (codex and claude's canonical `claude --print` route — both `cli-subprocess` overriding `write_guard_mode` to `cli-only`). So a live hook must NOT gate it: the unified wrapper **no-ops when fired live** and enforces the brief-location policy only when driven by `pmctl guard check` (which sets `PM_GUARD_CHECK_CLI`). |
+| `cli-only` | `cli-subprocess` with an explicit override (all three shipped adapters — codex, claude, and opencode) | No executor subagent self-writes a brief via a live host `Write` on this path: the brief is pmctl-landed and the executor runs as an independent headless subprocess (codex, claude's `claude --print` route, and opencode's CLI — all `cli-subprocess` overriding `write_guard_mode` to `cli-only`). So a live hook must NOT gate it: the unified wrapper **no-ops when fired live** and enforces the brief-location policy only when driven by `pmctl guard check` (which sets `PM_GUARD_CHECK_CLI`). |
 
 When the CLI drives the wrapper for a runtime with no valid adapter manifest, it **fails closed** (deny); a missing/non-executable hook file likewise fails closed at the `pmctl guard check` `-x` check.
 
@@ -229,4 +239,4 @@ When the main thread dispatches a subagent via the `Agent` tool, the Claude Code
 
 ## Forward-compat notes
 
-`scripts/lib/handover-validate.sh` accepts `executor: codex` and `executor: claude`; any other value is rejected. The `claude` adapter is `adapters/claude/dispatch.sh` (headless subprocess). This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.
+`scripts/lib/handover-validate.sh` accepts `executor: codex`, `executor: claude`, and `executor: opencode`; any other value is rejected. The `claude` adapter is `adapters/claude/dispatch.sh` (headless subprocess); the `opencode` adapter is `adapters/opencode/dispatch.sh` (headless subprocess, `isolation_level: none` only). This document remains the upstream behavioral contract; future executors (e.g. other CLIs) should match the same input/output shape and add their entry to the executor enum + executor profiles table.

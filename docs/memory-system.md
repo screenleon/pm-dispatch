@@ -2,7 +2,7 @@
 
 For personal forks, memory is the persistence layer that lets PM and Codex sessions keep continuity across time without overloading token budgets.
 
-See [`docs/CONCEPTS.md`](docs/CONCEPTS.md) for the full conceptual framing.
+See [`CONCEPTS.md`](CONCEPTS.md) for the full conceptual framing.
 
 ## Why memory exists
 
@@ -108,16 +108,15 @@ lists; the doctor parses and staleness-checks both.
 ## Health check: `pmctl memory doctor`
 
 `pmctl memory doctor` is a **read-only** reporter over the memory dir — it
-mutates nothing. It is the warn-mode surface of the staged warn→enforce plan;
-write-time enforcement (in `/mem-distill` and `/memory-compress`) is a sequenced
-follow-up that lands only after a clean warn-scan.
+mutates nothing. Write-time enforcement is already live: `/mem-distill` and
+`/memory-compress` both block a write when a card is missing a required field.
 
 ```sh
 pmctl memory doctor [--json] [--repo-root <path>]
 ```
 
 Report fields (ordered): `memory_dir`, `entry_count`, `memory_bytes`,
-`episodes_bytes` (0 if absent), `dead_links` (MEMORY.md link → missing file),
+`episodes_bytes` (0 if absent), `shard_count`, `dead_links` (MEMORY.md link → missing file),
 `orphan_cards` (card present but unreferenced, MEMORY.md excluded),
 `duplicate_hooks` (hook text on ≥2 index lines), `stale_repo_refs`
 (`{card, ref}` per the grammar above), `cards_missing_fields`
@@ -126,9 +125,9 @@ Report fields (ordered): `memory_dir`, `entry_count`, `memory_bytes`,
 but the key must exist), `issues_count`. `--json` emits a single object carrying
 `schema_version: 1`. Exit codes: `0` healthy, `1` issues found, `2` usage error.
 
-Until the live cards are backfilled, `cards_missing_fields` will list every
-not-yet-migrated card — that is the warn surface that drives the one-time
-backfill before write-time enforce is enabled.
+`cards_missing_fields` lists any not-yet-migrated card still lacking a required
+field — useful for spot-checking coverage even though write-time enforcement is
+already active.
 
 ## Bootstrap-empty pattern for fork users
 

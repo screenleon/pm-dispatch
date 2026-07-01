@@ -107,14 +107,14 @@ pmctl_pre_release_audit() {
   printf '%s\n' "- Absence of unresolved-work markers in ticket bodies"
   printf '%s\n\n' "- BACKLOG index/body status consistency"
   printf 'This scan **cannot** confirm:\n'
-  printf '%s\n' "- Whether a PR diff actually satisfies the ticket requirement (Layer 2 — not yet implemented)"
+  printf '%s\n' "- Whether a PR diff actually satisfies the ticket requirement (see Layer 2 below — run by the /pre-release main thread, not this tool)"
   printf '%s\n' "- Whether features work correctly at runtime"
   printf '%s\n\n' "- Whether gaps exist in \"should have been changed but was not mentioned in any ticket\" (system topology knowledge)"
   printf '> **"No structural issues found" ≠ "release is safe."** Layer 1 verifies tracking hygiene, not implementation correctness. The release decision remains with the user.\n\n'
   printf '%s\n\n' '---'
 
   local total_issues=$(( c11_issues + c12_issues + c13_issues + c14_issues ))
-  printf '**Summary**: %d structural issue(s), 0 semantic flags (Layer 2 not run), 3 blind spots declared.\n' \
+  printf '**Summary**: %d structural issue(s), Layer 2 semantic coverage run separately by /pre-release (see below), 3 blind spots declared.\n' \
     "$total_issues"
 
   [[ "$total_issues" -gt 0 ]] && rc=1

@@ -3,7 +3,7 @@
 The canonical structure for any brief dispatched to an executor (codex, claude, or opencode via `pmctl dispatch run --adapter <name>`).
 
 Executors reject briefs missing the required fields. PMs and main-thread dispatchers should always write briefs against this schema; pick the matching skeleton in §"Brief skeletons" and fill the slots — don't write from scratch.
-The executor-level abstraction is defined in [docs/executor-contract.md](docs/executor-contract.md); this file is the concrete brief schema (independent of executor profile).
+The executor-level abstraction is defined in [executor-contract.md](executor-contract.md); this file is the concrete brief schema (independent of executor profile).
 
 ## When to dispatch vs. handle inline
 
@@ -309,7 +309,7 @@ pmctl dispatch run --adapter claude --cd <work_dir> --brief-file <brief-file>
 pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
 ```
 
-Invoke in background from the main thread. Wait for completion notification.
+Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapters: it returns a `run_id` immediately, then use `pmctl dispatch wait <run_id> --cd <work_dir>` (run that in background) to reattach and resolve the terminal outcome. Pass `--lifecycle foreground` explicitly to block in-process and get the adapter's stdout footer directly instead — see §Dispatch lifecycle below for the full contract.
 
 ### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s)
 
@@ -501,10 +501,10 @@ Only **detach-eligible** adapters accept `--lifecycle detached`: eligibility is 
 Use these aliases in briefs and PM routing — never hard-code executor wire-format IDs.
 Each adapter resolves the alias to its own wire format at dispatch time.
 
-| PM-facing alias | codex wire ID | claude wire ID | When to use |
-|---|---|---|---|
-| `default` | `gpt-5.5` | `claude-sonnet-4-6` | All medium/large tasks (omit `--model` or write `model: default`) |
-| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | Small tasks only (see §When to dispatch) |
+| PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | When to use |
+|---|---|---|---|---|
+| `default` | `gpt-5.5` | `claude-sonnet-4-6` | `opencode/nemotron-3-ultra-free` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | Small tasks only (see §When to dispatch) |
 
 See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
 
@@ -537,13 +537,15 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 | `haiku` | `claude-haiku-4-5-20251001` | `normal` |
 | `opus` | `claude-opus-4-8` | `high` |
 
-`default` is applied when `PM_CFG_DEFAULT_MODEL` is set or when `--model default` is given explicitly; omitting `--model` with no config default delegates to the claude CLI built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
+Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-4-6` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`scripts/lib/handover-validate.sh`).
 
 Direct Bash dispatch shape (substitute `<executor>` with `codex`, `claude`, or `opencode`):
 
 ```text
-Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file>", run_in_background: true, description: "Dispatch <executor> for <slug>")
+Bash(command: "pmctl dispatch run --adapter <executor> --cd <safe working_dir> --isolation <safe isolation_level> --timeout <safe timeout> --brief-file <safe brief_file> --lifecycle foreground", run_in_background: true, description: "Dispatch <executor> for <slug>")
 ```
+
+(Omit `--lifecycle foreground` to use the two-step `run` + `pmctl dispatch wait` pattern instead — see §Dispatch lifecycle.)
 
 Before constructing this Bash command, the dispatcher MUST source `scripts/lib/handover-validate.sh`, extract the fenced block with `handover_extract_block`, split it with `handover_extract_metadata` and `handover_extract_body`, require metadata with `handover_validate_required_fields`, validate the complete metadata header with `handover_validate_all_metadata`, confirm body consistency with `handover_validate_working_dir_match`, then use `handover_safe_argv <field> <value>` for the argv fragment inserted into the one-line command. This is the enforcement mechanism for the handover route, not optional formatting guidance.
 
@@ -715,7 +717,7 @@ acceptance:
 Write it to a unique path such as `/tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md` with exclusive `mktemp`-style creation, validate each metadata value with `scripts/lib/handover-validate.sh`, then launch one physical line built from `handover_safe_argv` values:
 
 ```text
-Bash(command: "pmctl dispatch run --adapter codex --cd ${PM_DISPATCH_REPO} --isolation workspace-write --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md", run_in_background: true, description: "Dispatch codex for cc036-smoke")
+Bash(command: "pmctl dispatch run --adapter codex --cd ${PM_DISPATCH_REPO} --isolation workspace-write --timeout 1200 --brief-file /tmp/brief-pm-dispatch-cc036-smoke-<utc-ts>-<rand>.md --lifecycle foreground", run_in_background: true, description: "Dispatch codex for cc036-smoke")
 ```
 
 Expected sequence:

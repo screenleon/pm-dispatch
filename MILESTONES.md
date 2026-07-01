@@ -60,7 +60,7 @@
 
 ---
 
-## v0.7.1 — release 工具完整化 + 積累 hygiene 清掃（規劃中 2026-06-29）
+## v0.7.1 — release 工具完整化 + 積累 hygiene 清掃（✅ released 2026-06-30）
 
 > 最後排程更新：2026-06-29
 
@@ -109,7 +109,7 @@
 
 ---
 
-## v0.7.0 — retrieval-first context discipline + memory 檢索基底（規劃中 2026-06-18）
+## v0.7.0 — retrieval-first context discipline + memory 檢索基底（✅ released 2026-06-29）
 > 最後排程更新：2026-06-26
 
 **主題**：讓「找既有資料」這件事真的**優先走內建 `pmctl context`**，並把 memory 變成可被檢索的 source——分兩層：行為層（context-first 紀律，在單一 chokepoint 強制）+ 能力層（memory 成為 `pmctl context` 的 source、收斂單一檢索入口、治理 memory 自身的 inject bloat 與 staleness）。
