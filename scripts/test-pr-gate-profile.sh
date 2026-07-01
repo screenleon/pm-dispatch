@@ -520,6 +520,28 @@ test_commands_pr_gate_md_uses_detached_lifecycle() {
   pass "$name"
 }
 
+test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls() {
+  # CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer/
+  # risk-reviewer, high): an earlier draft captured `GATE_ID="$(...)"` in the
+  # run call's code block and reused `"$GATE_ID"` in the wait call's separate
+  # code block. Each Bash tool call is an independent subprocess -- shell
+  # variables never survive across calls -- so the wait would receive an
+  # empty gate_id. The doc must show the wait command receiving a literal
+  # gate_id token (the `<gate_id>` placeholder convention commands/pm.md
+  # already uses for `run_id`/`gate_id`), never a `$GATE_ID`/`${GATE_ID}`
+  # shell-variable reference. scripts/test-pmctl-gate.sh's
+  # case_run_wait_handoff_survives_separate_process proves the corrected
+  # literal-substitution handoff actually works end to end; this case is the
+  # regression lock on the doc text itself so the broken pattern can't creep
+  # back in silently.
+  local name="commands-pr-gate-md-no-shell-var-reuse-across-bash-calls"
+  local target="$REPO_ROOT/commands/pr-gate.md"
+  assert_not_contains "$name" "$target" '$GATE_ID' || return
+  assert_not_contains "$name" "$target" '${GATE_ID}' || return
+  assert_contains "$name" "$target" '<gate_id>' || return
+  pass "$name"
+}
+
 run_case() {
   local name="$1" fn="$2"
   should_run "$name" || return 0
@@ -548,5 +570,6 @@ run_case "executor-claude-never-calls-codex" test_executor_claude_never_calls_co
 run_case "executor-invalid-value-rejected" test_executor_invalid_value_rejected
 run_case "commands-pr-gate-md-documents-executors" test_commands_pr_gate_md_documents_executors
 run_case "commands-pr-gate-md-uses-detached-lifecycle" test_commands_pr_gate_md_uses_detached_lifecycle
+run_case "commands-pr-gate-md-no-shell-var-reuse-across-bash-calls" test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls
 
 th_summary

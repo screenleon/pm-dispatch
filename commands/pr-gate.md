@@ -43,6 +43,14 @@ a `gate_id`. The gate itself keeps running under `setsid`/`nohup`, fully
 OS-decoupled from this session — a session interrupt cannot kill it or corrupt
 its exit-code reporting.
 
+**The run call and the wait call below are two SEPARATE Bash tool
+invocations** — each Bash call is its own subprocess, so a shell variable
+assigned in one does NOT survive into the next. Read the `gate_id` this call
+prints to stdout and substitute that literal value into the wait command's
+argv (the same `<run_id>` pattern `commands/pm.md`'s dispatch routes use) —
+do not write a second Bash call that assumes a variable set by the first
+call is still available.
+
 ### Executor routing is passed by flag only
 
 This command should pass exactly one of these explicit modes when known:
@@ -110,14 +118,17 @@ GATE_ARGS=(--cd "$PWD" --executor auto)
 # Launch detached: this call is inline (NOT run_in_background) and returns in
 # well under a second once the supervisor is forked -- it prints exactly one
 # line, the gate_id, and nothing else on success.
-GATE_ID="$("$PMCTL" gate run "${GATE_ARGS[@]}" --lifecycle detached)"
+"$PMCTL" gate run "${GATE_ARGS[@]}" --lifecycle detached
 ```
 
-Then launch the wait as a separate Bash call with `run_in_background: true` so
-the main thread is free while the gate runs:
+Read the printed `gate_id` from this call's stdout, then launch the wait as a
+**separate Bash tool call** with `run_in_background: true` so the main thread
+is free while the gate runs. Substitute the literal `gate_id` value into the
+command string below -- it is a different shell invocation, so a variable set
+in the block above is not visible here:
 
 ```bash
-"$PMCTL" gate wait "$GATE_ID" --cd "$PWD"
+"$PMCTL" gate wait <gate_id> --cd "$PWD"
 ```
 
 After firing the wait, reply with one short status line, e.g.:
@@ -128,7 +139,7 @@ Do not poll, sleep, or call `BashOutput` immediately. If the session is
 interrupted before the wait notification arrives, the gate keeps running
 detached; note the `gate_id` before the interrupt (or recover it via
 `pmctl artifacts list --cd "$PWD"`) and reattach with
-`pmctl gate wait "$GATE_ID" --cd "$PWD"` in a new session -- a fresh `/pr-gate`
+`pmctl gate wait <gate_id> --cd "$PWD"` in a new session -- a fresh `/pr-gate`
 invocation starts a NEW gate and does NOT reattach to the interrupted one.
 (gate wait exit 3 means the sentinel was already consumed by a prior wait —
 check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
@@ -159,12 +170,12 @@ When the `pmctl gate wait` background Bash completion notification arrives:
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
-   running detached -- retry `pmctl gate wait "$GATE_ID" --cd "$PWD"` once with
+   running detached -- retry `pmctl gate wait <gate_id> --cd "$PWD"` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   already consumed by a prior wait; use `pmctl artifacts show "$GATE_ID" --cd "$PWD"`
+   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "$PWD"`
    to locate the durable result instead), other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
-   `pmctl artifacts show "$GATE_ID" --cd "$PWD"`).
+   `pmctl artifacts show <gate_id> --cd "$PWD"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
    re-confirm out of band, run `pmctl gate verify "$result_file"` (exit 0 = valid).
 5. Prepend `PR-gate complete.` to completion relay and include the full gate

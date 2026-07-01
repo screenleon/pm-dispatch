@@ -516,6 +516,65 @@ case_gate_wait_nogo_route_via_cli() {
   _run_gate_cli_route_case "gate/wait: NO-GO routed through real cli/pmctl" 1 "NO-GO" 1
 }
 
+# ---- 15: /pr-gate's documented run/wait handoff survives a REAL process boundary
+# CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer/risk-reviewer,
+# high, all four converged on the same root cause): commands/pr-gate.md's
+# worked example captured `GATE_ID="$(...)"` in one Bash code block and reused
+# `"$GATE_ID"` in a separate one, but each Bash tool call is an independent
+# subprocess -- shell variables do not survive across calls, so the wait would
+# receive an empty gate_id. The fix: read the captured stdout, substitute the
+# LITERAL value into the next command (matching commands/pm.md's <run_id>
+# convention). This case proves that literal-substitution handoff actually
+# works by launching `gate run` and `gate wait` as two genuinely separate
+# `bash -c` processes -- run's stdout is captured to a FILE (never a shell
+# variable), and wait receives the id only via a substituted argv token, with
+# no environment or variable inheritance connecting the two processes.
+case_run_wait_handoff_survives_separate_process() {
+  local name="gate/run+wait: documented literal-gate_id handoff survives a real process boundary"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f15/fixture" work="$tmp_root/f15/work" state="$tmp_root/f15/state"
+  mkdir -p "$work"
+  _mk_gate_cli_fixture "$fixture"
+  _mk_fake_gate_with_result "$fixture" 0
+  local cli_pmctl="$fixture/cli/pmctl"
+
+  # "Bash call 1": run detached, capture stdout to a file only (the harness's
+  # equivalent -- never assign to a variable this test could accidentally
+  # smuggle into the next process).
+  local id_file="$tmp_root/f15/gate_id.txt"
+  env -i PATH="$PATH" HOME="$HOME" \
+    PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    bash -c '"$1" gate run --cd "$2" --lifecycle detached' _ "$cli_pmctl" "$work" \
+    > "$id_file" 2>"$tmp_root/f15/run.err"
+  local run_code=$?
+  local gate_id; gate_id="$(cat "$id_file" 2>/dev/null)"
+  if [[ "$run_code" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "run failed or produced no gate_id: code=$run_code gate_id=$gate_id err=$(cat "$tmp_root/f15/run.err" 2>/dev/null)"
+    return
+  fi
+
+  # "Bash call 2": a BRAND NEW process (env -i: no inherited variables at
+  # all) that only knows the gate_id because it was substituted into the
+  # command string as a literal argv token -- exactly what the agent does
+  # when it reads call 1's stdout and writes call 2's command.
+  local out code
+  set +e
+  out="$(env -i PATH="$PATH" HOME="$HOME" \
+    PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    bash -c "\"$cli_pmctl\" gate wait $gate_id --cd \"$work\" --timeout 30" 2>&1)"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "gate_id=$gate_id code=$code out=$out"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
@@ -531,5 +590,6 @@ case_run_dir_forwarded_to_gate
 case_default_lifecycle_is_detached
 case_gate_wait_go_route_via_cli
 case_gate_wait_nogo_route_via_cli
+case_run_wait_handoff_survives_separate_process
 
 th_summary
