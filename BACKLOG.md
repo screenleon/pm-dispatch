@@ -73,7 +73,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-412 | ✅ closed 2026-07-01 | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | pr:#352 | P3 | retrieval |
 | CC-423 | ✅ closed 2026-07-01 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | pr:#353 | P3 | — |
-| CC-425 | ✅ closed 2026-07-02 | `pr-gate.sh --head <ref>` 新增；diff 一組固定 base..head ref（branch/tag/commit），不涉及 PR 或 working tree；`--base` 既有支援已可省 PR。與 `--allow-dirty` 互斥（明確拒絕）。 | ops/gate | 2026-06-25 | pr:#TBD | P3 | — |
+| CC-425 | ✅ closed 2026-07-02 | `pr-gate.sh --head <ref>` 新增；diff 一組固定 base..head ref（branch/tag/commit），不涉及 PR 或 working tree；`--base` 既有支援已可省 PR。與 `--allow-dirty` 互斥（明確拒絕）。 | ops/gate | 2026-06-25 | pr:#355 | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
 | CC-433 | 🟢 someday | **[detached lifecycle：抽共用 sentinel lib + wait 改主動通知]** (1) `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入邏輯結構相同但各自重寫，應抽成共用 lib，兩邊各自只保留獨有業務邏輯（preflight+adapter vs. 直接 exec pr-gate.sh）；(2) `pmctl dispatch wait`/`pmctl gate wait` 目前用 `sleep \$POLL_INTERVAL` 輪詢 sentinel 檔案，應改為主動通知（如 blocking read on FIFO、inotify 等），supervisor 完成時主動喚醒 wait 而非讓它每 N 秒醒來檢查一次。解法未定案，需先 `/pre-impl` 或 `/spike` 收斂設計。 | arch/gate | 2026-07-01 | — | P3 | design |
@@ -1149,7 +1149,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 ## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 ✅ 2026-07-02
 
-**See**: pr:#TBD
+**See**: pr:#355
 
 **Resolution**: 盤點現有程式碼後發現票面描述的兩個問題中，一個已在先前重構中解決：`pmctl gate run`（detached lifecycle，CC-423）的 result 存放路徑早已改用 `gate_id`（`sw_project_run_dir`）而非 PR#；foreground 路徑的 `--output` 預設值也是 `.gate-results/gate-<ts>.md`（timestamp-based），並非 PR# key。`--base <ref>` 亦已存在且可在無 PR 情況下運作（`gh pr view` 失敗會 fallback 到 `origin/HEAD` symbolic-ref，不 hard-fail）。真正缺的是 `--head <ref>`：diff 邏輯之前寫死比對 `HEAD`（當前 checkout），無法比較兩個任意固定 ref（如 tag-to-tag、或未 checkout 的 branch）。
 
