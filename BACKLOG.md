@@ -75,6 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
+| CC-440 | 🔵 active | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline | arch/gate | 2026-07-02 | — | P2 | spike |
 
 ---
 
@@ -173,6 +174,26 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 依賴 [[CC-436]]（payload 驗證結果決定 `guard_bindings` 欄位能表達什麼）。承接 [[CC-381]] spike。umbrella [[CC-333]]。
 **See**: `docs/spikes/CC-381.md` §Angle 2 manifest YAML 草案、§Recommendation 步驟 2。
+
+---
+
+## CC-440 — spike: `/ship` 並行版可行性（spike） 🔵 active
+
+**Problem**: `/ship`（單票版）已合併，主線程一次跑一張票、實作留在主線程直接改（`feedback_development_workflow`）、分支用普通 `git checkout -b`。使用者指出這個模式在人不在場時效益有限——真正的槓桿是「同時跑 N 張票」，但這要求兩個核心假設同時改變：(1) 實作要從主線程直接改換成 dispatch 給 executor（`feedback_development_workflow` 的省 token 理由只在主線程與該票共享上下文時成立，N 張互相獨立的票之間沒有這個共享上下文，所以這條記憶的適用範圍本來就不包含這個情境，不是要推翻它）；(2) 分支要從 `git checkout -b` 換成 `pmctl worktree create`（CC-014 已交付）避免 N 條 pipeline 互踩同一個工作目錄。這兩個改變疊加後，還有更難的問題完全沒有答案：一條 lane 失敗（gate 卡住、dispatch 失敗、根本性不一致）要怎麼回報又不卡住其他 lane？gate 迴圈裡本來假設「主線程可以隨時插手判斷」，換成 dispatch 給 codex 之後誰來扮演這個角色？
+
+**Why**: 在沒有答案的情況下直接開實作票，大概率會像 `/ship` 單票版一樣在 pr-gate 階段被 architecture-reviewer/critic 挑出設計層面的漏洞，且並行 orchestration 的 blast radius（多個 worktree/dispatch 同時跑）遠大於單票版，值得先用 spike 收斂設計決策，而不是邊做邊踩。
+
+**Requirement**:
+- Investigation scope:
+  - lane 失敗隔離：一條 pipeline（worktree+dispatch+gate）失敗時，其他 lane 是否需要感知/暫停？回報機制長什麼樣（單一收尾報告彙總 N 條結果，還是逐條即時通知）？
+  - gate 迴圈的人機分工：`/ship` 單票版的 NO-GO fix-loop 假設「主線程」讀 gate 結果、判斷、寫 fix brief；並行版把實作換成 dispatch 給 codex 之後，fix-loop 由誰驅動（主線程仍讀每條 lane 的 gate 結果並派 fix brief，還是要在 dispatch brief 裡把整個 fix-loop 交給 executor 自己跑）？
+  - worktree 生命週期：`pmctl worktree create/remove/gc`（CC-014）在多條並行 lane 下的 create/remove 時機——PR 開出後、gate 迴圈完成後，還是要等使用者確認合併後才 remove？
+  - 併發上限：N 的合理上限（token/並發 dispatch/gate reviewer 容量），以及是否需要像 `--parallel` gate 一樣的 reviewer 隔離考量。
+- Done-when: 對上述四個問題，至少收斂出可執行的設計決策（不需要完整實作方案），足以支撐後續開一張明確的實作票。
+- Result log: docs/spikes/CC-440.md
+
+**Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
+**See**: —
 
 ---
 
