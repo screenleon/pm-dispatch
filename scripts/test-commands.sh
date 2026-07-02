@@ -441,6 +441,13 @@ should_run "ship: no CC ticket references" && assert_not_contains "ship: no CC t
 # git publication path: branch creation and push are the only side effects before PR creation
 should_run "ship: creates the feature branch via git checkout -b" && assert_file_contains "ship: creates the feature branch via git checkout -b" "$SHIP" "git checkout -b feat/<ticket-id>" && pass "ship: creates the feature branch via git checkout -b"
 should_run "ship: pushes the branch before opening the PR" && assert_file_contains "ship: pushes the branch before opening the PR" "$SHIP" "git push -u origin feat/<ticket-id>" && pass "ship: pushes the branch before opening the PR"
+# Step 5 close-out report: pins all four named outcomes so the reporting contract cannot silently erode
+should_run "ship: has Step 5 close-out report" && assert_file_contains "ship: has Step 5 close-out report" "$SHIP" "## Step 5 — Close-out report" && pass "ship: has Step 5 close-out report"
+should_run "ship: close-out report has exactly four named outcomes" && assert_file_contains "ship: close-out report has exactly four named outcomes" "$SHIP" "Report one of four outcomes" && pass "ship: close-out report has exactly four named outcomes"
+should_run "ship: close-out outcome 1 covers invalid ticket id" && assert_file_contains "ship: close-out outcome 1 covers invalid ticket id" "$SHIP" "(1) invalid ticket id" && pass "ship: close-out outcome 1 covers invalid ticket id"
+should_run "ship: close-out outcome 2 covers dirty-tree abort" && assert_file_contains "ship: close-out outcome 2 covers dirty-tree abort" "$SHIP" "(2)" && assert_file_contains "ship: close-out outcome 2 covers dirty-tree abort" "$SHIP" "dirty tree — that \`/ship\` aborted" && pass "ship: close-out outcome 2 covers dirty-tree abort"
+should_run "ship: close-out outcome 3 covers consistency-check stop" && assert_file_contains "ship: close-out outcome 3 covers consistency-check stop" "$SHIP" "(3) consistency-check" && pass "ship: close-out outcome 3 covers consistency-check stop"
+should_run "ship: close-out outcome 4 covers PR opened with URL" && assert_file_contains "ship: close-out outcome 4 covers PR opened with URL" "$SHIP" "or (4) PR opened" && assert_file_contains "ship: close-out outcome 4 covers PR opened with URL" "$SHIP" "the PR URL." && pass "ship: close-out outcome 4 covers PR opened with URL"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 
