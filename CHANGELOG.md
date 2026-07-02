@@ -8,6 +8,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`pr-gate.sh --head <ref>` (CC-425).** Gate can now diff a fixed `base..head` ref pair (branch, tag, or commit) with no PR and no working tree involved — review a branch before opening a PR, or diff `v0.6.0..v0.7.0` tag-to-tag. Rejects `--allow-dirty` (which folds in local uncommitted state) as incompatible. Forwarded transparently through both the foreground and `--lifecycle detached` routes since `pmctl gate run` already passes unrecognized flags through to `pr-gate.sh`.
+
 ---
 
 ## [0.7.1] — 2026-06-30

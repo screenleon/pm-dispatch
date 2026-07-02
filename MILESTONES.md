@@ -41,7 +41,7 @@
 | CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed，鏡像既有 `dispatch --lifecycle detached` 模式 | ✅ done pr:#353 |
 | CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢（`sleep` 迴圈）改為主動通知（FIFO/inotify 等，解法未定案）。CC-423 交付後發現的簡化與效率改善項，解法待 `/pre-impl` 或 `/spike` 收斂 | 🟢 someday |
 | CC-432 | run-all-tests.sh 耗時瓶頸：`test-release-verify.sh` 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s。方向 A（Phase 3 smoke 改隔離假 repo）與 `LIVE_DB_EXCLUSIVE` 序列化耦合窄化皆評估後擱置不追（風險高於效益，未來可重新評估） | ✅ done pr:#354 |
-| CC-425 | gate 解除 PR 綁定：`pmctl gate run [--base <ref>] [--head <ref>]`，兩者均可省略（維持現有 fork-point 推斷作為 fallback）；gate result 存放路徑從 PR# key 改為 `<base-slug>..<head-slug>` 或 run_id，PR# 僅在有 PR 時作為 optional metadata。讓 gate 可在開 PR 前本地跑，也可比較任意 branch/tag 差異 | 🔵 active |
+| CC-425 | gate 解除 PR 綁定：`pr-gate.sh --head <ref>` 新增，diff 固定 base..head ref 對，不涉 PR/working tree；盤點發現 result 路徑 PR# key 問題已在 CC-423 detached lifecycle 重構中解決（改用 gate_id），`--base` 也已支援無 PR 場景，故實際範圍小於原評估 | ✅ done pr:#TBD |
 
 > CC-433 排入 Phase 2 作為 CC-423 的後續收斂項，非阻塞本 Phase 其餘票的完成。CC-432 為 CC-423 pr-gate 迭代中發現並記錄的衍生票，同樣併入 Phase 2。CC-425 原評估「需重構 gate result key schema，範圍比 CC-276/423 大一截」暫不排入，2026-07-02 使用者確認排入本 Phase 處理——需重構 base 解析邏輯與 result 存放路徑（PR# key → base..head slug/run_id），實作前建議先 `/pre-impl` 確認既有 PR# key 的 gate result 讀取路徑（`pmctl gate wait`/`pmctl artifacts show` 等）向下相容策略。
 

@@ -61,6 +61,10 @@ _kill_process_tree() {
 #   --targeted <list>    alias for --reviewers (matches /pr-gate skill vocabulary)
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
+#   --head <ref>         head ref for diff (default: HEAD / working tree); pass a fixed ref
+#                        (branch, tag, commit) to diff base..head without a PR or working
+#                        tree involved -- e.g. review a branch before opening a PR, or diff
+#                        one tag against another (v0.6.0..v0.7.0). Incompatible with --allow-dirty.
 #   --run-dir <abs>      out-of-repo dir for gate artifacts (briefs/results/trace); optional,
 #                        defaults to in-repo paths under --cd when absent (backward compat)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
@@ -85,6 +89,7 @@ TIER_OVERRIDE=""
 REVIEWERS_OVERRIDE=""
 SCOPE=""
 BASE_OVERRIDE=""
+HEAD_OVERRIDE=""
 OUTPUT_OVERRIDE=""
 TIMEOUT="1200"
 SEQUENTIAL=true   # default: sequential (lower token cost)
@@ -112,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
     --scope)      SCOPE="$2";              shift 2;;
     --base)       BASE_OVERRIDE="$2";      shift 2;;
+    --head)       HEAD_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
     --model)      DISPATCH_MODEL="$2";     shift 2;;
@@ -128,11 +134,11 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { printf 'Error: --override-file requires a file path\n' >&2; exit 2; }
       OVERRIDE_FILE="$2";  shift 2;;
     -h|--help)
-      sed -n '2,63p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,84p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -447,6 +453,31 @@ if ! git rev-parse --verify "$BASE" > /dev/null 2>&1; then
   exit 1
 fi
 
+# ── Detect head ref ────────────────────────────────────────────────────────
+# Default HEAD keeps the existing working-tree/branch-diff behavior below.
+# A fixed --head ref (branch, tag, commit) diffs base..head_ref directly with
+# no working tree involved, so it is incompatible with --allow-dirty (which
+# exists specifically to fold uncommitted working-tree state into scope).
+HEAD_REF="HEAD"
+if [[ -n "$HEAD_OVERRIDE" ]]; then
+  if [[ "$ALLOW_DIRTY" == true ]]; then
+    printf 'Error: --head and --allow-dirty are incompatible (--head diffs a fixed ref pair; --allow-dirty folds in local working-tree changes)\n' >&2
+    exit 2
+  fi
+  HEAD_REF="$HEAD_OVERRIDE"
+  if ! git rev-parse --verify "$HEAD_REF" > /dev/null 2>&1; then
+    printf 'Error: head ref not found: %s\n' "$HEAD_REF" >&2
+    exit 1
+  fi
+fi
+# Surfaced in reviewer brief context blocks (Base: ${BASE}${HEAD_METADATA_LINE})
+# only when a fixed --head ref is in play; a plain HEAD comparison omits the
+# line entirely since it would just say "Head: HEAD" (no information).
+HEAD_METADATA_LINE=""
+if [[ "$HEAD_REF" != "HEAD" ]]; then
+  HEAD_METADATA_LINE=$'\n  Head: '"${HEAD_REF}"
+fi
+
 _worktree_is_dirty() {
   # uncommitted tracked changes (staged or unstaged) ...
   if ! git diff --quiet HEAD 2>/dev/null; then return 0; fi
@@ -461,8 +492,9 @@ _worktree_is_dirty() {
 # commits first for a complete, reproducible review -- unless they explicitly
 # opt into reviewing the working tree as-is. A dirty-only tree with NO
 # committed changes is handled by the working-tree fallback below and is NOT
-# failed here (nothing is omitted in that case).
-if ! git diff "$BASE"...HEAD --quiet 2>/dev/null && _worktree_is_dirty; then
+# failed here (nothing is omitted in that case). Skipped entirely for a fixed
+# --head ref: that path never reads the working tree.
+if [[ "$HEAD_REF" == "HEAD" ]] && ! git diff "$BASE"...HEAD --quiet 2>/dev/null && _worktree_is_dirty; then
   if [[ "$ALLOW_DIRTY" != true ]]; then
     _dt=$(git diff HEAD --name-only 2>/dev/null | { grep -c . || true; })
     _du=$(git ls-files --others --exclude-standard | { grep -c . || true; })
@@ -481,7 +513,21 @@ fi
 # ── Collect diff ──────────────────────────────────────────────────────────────
 # Use --name-status so renames expose BOTH old and new paths for sensitive matching.
 # Use --numstat to detect binary files (shown as -\t-\t<file>).
-if [[ "$ALLOW_DIRTY" == true ]] && _worktree_is_dirty; then
+if [[ "$HEAD_REF" != "HEAD" ]]; then
+  # Fixed base..head ref pair (e.g. tag-to-tag, or a branch reviewed before a
+  # PR exists) -- no working tree involved, so no dirty/fallback branches apply.
+  DIFF_FILES=$(git diff "$BASE"..."$HEAD_REF" --name-status | awk '
+    /^R/ { print $2; print $3; next }
+    /^[AMDCT]/ { print $2 }
+  ')
+  DIFF_STAT=$(git diff "$BASE"..."$HEAD_REF" --stat)
+  BINARY_HIT=$(git diff "$BASE"..."$HEAD_REF" --numstat | { grep -c $'^-\t-\t' || true; })
+  LINES=$(git diff "$BASE"..."$HEAD_REF" --numstat | awk '
+    /^-\t-\t/ { next }
+    { s += $1 + $2 }
+    END { print s+0 }
+  ')
+elif [[ "$ALLOW_DIRTY" == true ]] && _worktree_is_dirty; then
   # --allow-dirty: fold the working tree into scope. Two-dot diff vs BASE
   # captures committed + uncommitted tracked changes; untracked listed separately.
   DIFF_FILES=$( { git diff "$BASE" --name-status | awk '
@@ -840,7 +886,7 @@ context:
   Executor: ${EXECUTOR}
   Reviewers: ${REVIEWER_DISPLAY}
   Not reviewed: ${SKIPPED_DISPLAY}
-  Base: ${BASE}
+  Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_OVERRIDES_CONTEXT_BLOCK}
@@ -1027,7 +1073,7 @@ context:
   Tier: ${TIER}
   Executor: ${EXECUTOR}
   Reviewer: ${r}
-  Base: ${BASE}
+  Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_OVERRIDES_CONTEXT_BLOCK}
@@ -1251,7 +1297,7 @@ context:
   Executor: ${EXECUTOR}
   Reviewers: ${REVIEWER_DISPLAY}
   Not reviewed: ${SKIPPED_DISPLAY}
-  Base: ${BASE}
+  Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
 ${GATE_OVERRIDES_CONTEXT_BLOCK}

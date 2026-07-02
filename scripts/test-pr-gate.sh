@@ -4522,4 +4522,87 @@ run_test test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 
+# CC-425: --head <ref> diffs a fixed base..head ref pair with no PR or working
+# tree involved (e.g. review a branch before opening a PR, or a tag-to-tag diff).
+test_head_override_diffs_fixed_ref() {
+  local name="head-override-diffs-fixed-ref"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  # Checked out on main (not feature) proves --head does not require checking
+  # out the ref -- it diffs base..head_ref directly.
+  git -C "$repo" checkout -q main
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "Head: feature" || return
+  assert_file_contains "$name" "$brief" "app.go" || return
+  pass "$name"
+}
+
+test_head_override_invalid_ref() {
+  local name="head-override-invalid-ref"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head nonexistent-ref-98765
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Error: head ref not found: nonexistent-ref-98765" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+test_head_override_rejects_allow_dirty() {
+  local name="head-override-rejects-allow-dirty"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  git -C "$repo" checkout -q main
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature --allow-dirty
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--head and --allow-dirty are incompatible" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
+run_test test_head_override_diffs_fixed_ref
+run_test test_head_override_invalid_ref
+run_test test_head_override_rejects_allow_dirty
+
 th_summary
