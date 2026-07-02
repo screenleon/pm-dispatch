@@ -52,7 +52,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-273 | ⏸ deferred | arch: unified lifecycle hook event spec（`.pm-dispatch/hooks/<event>.sh`）；activate when second hook point beyond gate pre/post emerges | arch/gate | 2026-05-28 | — | P3 | — |
 | CC-286 | ⏸ deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-306 | ⏸ deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
-| CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）+layer 4（CC-381）排入 v0.8.0；layer 7 待評估；open sub-tickets: CC-381/390/393/412 | arch | 2026-06-07 | — | P2 | design |
+| CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）已交付、layer 4 spike（CC-381）已收斂為 CC-436/437/438；layer 7 待評估；open sub-tickets: CC-390/393/412/436/437/438 | arch | 2026-06-07 | — | P2 | design |
 | CC-340 | ⏸ deferred | knowledge index: embeddings/semantic-backend remainder（FTS/LIKE MVP 已由 CC-403 接管；本票保留 Khoj-class semantic accelerator，待 FTS ranking 不足時 resume） | memory | 2026-06-08 | — | P3 | retrieval |
 | CC-342 | 🟢 someday | agent: debt-auditor — proactive tech-debt health scan（`agents/debt-auditor.md`；`pmctl audit <path>` 呼叫；PR-free 主動健康掃描，有別於現有 PR-focused reviewers） | process/DX | 2026-06-05 | — | P3 | design |
 | CC-346 | ⏸ deferred | repo-index: cross-file ref tracking `file_refs` table（paused 2026-06-10；resume trigger: reuse-scan 進過 ≥2 份真 brief 且缺 ref 資料為瓶頸；屆時先 Phase a bash source） | ops | 2026-06-09 | — | P3 | design |
@@ -67,7 +67,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
 | CC-370 | ⏸ deferred | **[native Windows support deferred to post-core platform phase]** 核心功能開發期間正式只支援 Linux + WSL2（WSL2 視為 Linux）；原生 Windows Git Bash 非官方支援，使用者走 WSL2。理由是專注：開發期同時扛多平台會排擠核心功能（CI 只測 Linux，每次碰 Windows 都要人工驗證 + gate churn，見 #272/#273）。已合併的 portability 程式碼保留（綠且成本低），但不再新增 Windows 分支，直到核心定型（v0.5.0+）後的專屬平台階段。Parks: CC-038, CC-104d/e/f/g/j/k/r/s, CC-369。**See**: DECISIONS.md 2026-06-13 defer-native-windows-support-during-core-dev | ops/portability | 2026-06-13 | — | — | design |
 | CC-377 | ⏸ deferred | adapter: Google Antigravity（`agy`）executor（DEFERRED：headless CLI 1.0.8 不成熟；resume: newer agy with `--output-format stream-json`；umbrella: CC-333） | arch/portability | 2026-06-13 | — | P2 | design |
-| CC-381 | 🔵 active | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；排在 CC-373..377 之後；umbrella: CC-333）。v0.8.0 Phase 3 spike 已收斂（`docs/spikes/CC-381.md`，三方獨立分析：主線程/codex/chatgpt）：guard 落點不確定性已解——codex native PreToolUse hook 可行；後續拆為 CC-436/437/438 | arch/install | 2026-06-14 | pr:#359 | P2 | design |
+| CC-381 | ✅ done | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；umbrella: CC-333）。v0.8.0 Phase 3 spike 已收斂（`docs/spikes/CC-381.md`）：guard 落點不確定性已解——codex native PreToolUse hook 可行；後續拆為 CC-436/437/438 | arch/install | 2026-06-14 | pr:#359 | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
@@ -104,9 +104,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 <!-- archived stubs — full text in BACKLOG-ARCHIVE.md -->
 
-## CC-381 — arch: install host-PM-aware 🔵 active
-
-**Status note (2026-07-02)**: v0.8.0 Phase 3 spike 已完成並收斂，見 `docs/spikes/CC-381.md`（pr:#359）——三方獨立分析（主線程 BACKLOG/決策脈絡視角、codex read-only 對自身 hook runtime 的實測、chatgpt 外部架構視角）。**guard 落點的最大不確定性已解**：codex `PreToolUse` hook 經 codex 自己實測（`codex features list`/`codex doctor --json`/binary 字串）證實 stable 且 fail-closed，足以承接 write/bash guard，不必退回 cli-only fallback。本票收斂為三張可獨立排程的後續票：[[CC-436]]（codex PreToolUse payload 驗證 probe，唯讀，第一刀）、[[CC-437]]（doctor 擴充切片，可與 CC-436 並行）、[[CC-438]]（host manifest schema v1 draft，依賴 CC-436 驗證結果）。`install.sh` write path 仍不動，維持 Non-goals。
+## CC-381 — arch: install host-PM-aware ✅ 2026-07-02
 
 **Problem**: `install.sh` / `install-hooks.sh` 把整個安裝面寫死成 claude harness：PreToolUse/SessionEnd 等 hook 接進 `~/.claude/settings.json`、reviewer 與 dispatch 的 `permissions.allow`、statusline、以及 `agents/` `commands/` 的 PM 介面，全部假設「claude 是 host PM」。一旦 codex（或未來 host）當主 PM，這些都不對：codex 的設定面是 `~/.codex/` ＋ `AGENTS.md` ＋自有 sandbox/approval 模型，沒有 `~/.claude` 那套 PreToolUse hook。[[CC-334]]/[[CC-380]] 把 reviewer guard 與 allow-list 寫進 `~/.claude/settings.json`——在 codex-host 下根本不載入，等於 codex-PM 安裝拿不到任何 gate/guard plumbing。
 
@@ -122,7 +120,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Sequencing**: 排在 v0.6.0 executor-abstraction 核心（[[CC-373]]..[[CC-377]]）之後；可能落在 v0.7.0（與 [[CC-333]] layer 1/7、MCP 同期評估）。
 
-**See**: [[CC-333]] umbrella（layer 4 install-path）、關聯 [[CC-380]]（暴露 install 的 claude-host 中心性）、[[guard-role-runtime]]（role×runtime 兩軸）、[[CC-375]]（manifest 衍生接線）、spike 結果 `docs/spikes/CC-381.md`（pr:#359）、後續票 [[CC-436]]/[[CC-437]]/[[CC-438]]。
+**Outcome**: v0.8.0 Phase 3 spike 完成並收斂（`docs/spikes/CC-381.md`）——三方獨立分析（主線程 BACKLOG/決策脈絡視角、codex read-only 對自身 hook runtime 的實測、chatgpt 外部架構視角）。guard 落點的最大不確定性已解：codex `PreToolUse` hook 經 codex 自己實測（`codex features list`/`codex doctor --json`/binary 字串）證實 stable 且 fail-closed，足以承接 write/bash guard，不必退回 cli-only fallback。本票收斂為三張後續票：[[CC-436]]（payload 驗證 probe，唯讀，第一刀）、[[CC-437]]（doctor 擴充切片，可與 CC-436 並行）、[[CC-438]]（host manifest schema v1 draft，依賴 CC-436）。`install.sh` write path 仍不動，留給後續票。
+**See**: pr:#359
 
 ---
 
