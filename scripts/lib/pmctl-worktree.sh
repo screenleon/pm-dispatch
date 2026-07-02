@@ -210,9 +210,15 @@ pmctl_worktree_create() {
     "$(jq -Rn --arg v "$branch" '$v')" \
     "$(jq -Rn --arg v "$wt_path" '$v')" \
     "$(jq -Rn --arg v "$created_ts" '$v')")"
-  pmctl_worktree_manifest_append "$reg_dir" "$json_line" || {
-    printf 'pmctl worktree create: worktree created but manifest write failed -- run '\''pmctl worktree gc'\'' to reconcile\n' >&2
-  }
+  if ! pmctl_worktree_manifest_append "$reg_dir" "$json_line"; then
+    # gc reconciles EXISTING manifest entries against git/filesystem state --
+    # it cannot discover a worktree that never got a manifest entry in the
+    # first place, so this is not gc-recoverable. Surface it as a failure
+    # (not a warning) and point at the manual recovery path instead.
+    printf 'pmctl worktree create: worktree created at %s but manifest registration failed -- it will not appear in '\''pmctl worktree list/gc'\''. Run '\''git worktree remove %s'\'' to discard it, or retry '\''pmctl worktree create'\'' after fixing the manifest write error above.\n' "$wt_path" "$wt_path" >&2
+    printf '%s\n' "$wt_path"
+    return 1
+  fi
   printf '%s\n' "$wt_path"
 }
 

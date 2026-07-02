@@ -28,6 +28,17 @@ wt_list_json() {
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree list --json --cd "$work"
 }
 
+# reg_dir_for <store> <work>
+# Resolve the worktree-registry directory for a test partition, so a case
+# can directly rewrite manifest.jsonl's created_ts to simulate an aged
+# entry without waiting.
+reg_dir_for() {
+  local store="$1" work="$2"
+  PM_DISPATCH_STATE_ROOT="$store" bash -c \
+    '. "$1/scripts/lib/state-paths.sh" && sw_project_worktree_dir "$2"' \
+    _ "$REPO_ROOT" "$work"
+}
+
 case_create_requires_branch() {
   # behavior: pmctl worktree create with no <branch> arg exits 2 and prints usage
   # Steps: run create with only --cd; assert exit 2, stderr has "<branch> is required" and "usage:"
@@ -486,6 +497,49 @@ case_gc_max_age_days_filters() {
   fi
 }
 
+case_gc_max_age_days_removes_aged_entry() {
+  # behavior: gc --max-age-days N actually removes a worktree whose manifest created_ts is older than N days
+  #           (case_gc_max_age_days_filters above only proves a FRESH entry survives -- this proves the
+  #           destructive removal side of the same flag actually fires)
+  # Steps: create feat/aged, then directly rewrite its manifest created_ts to 60 days ago; run
+  #        gc --max-age-days 30; assert the directory is gone and the manifest entry is removed
+  local name="worktree gc: --max-age-days removes an entry older than the threshold"
+  should_run "$name" || return 0
+  local store work wt_path reg_dir manifest old_ts status=0
+  store="$tmp_root/state-gc-age-aged"
+  work="$tmp_root/work-gc-age-aged"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/aged --cd "$work" 2>/dev/null | tail -1)"
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  manifest="$reg_dir/manifest.jsonl"
+  old_ts="$(date -d '60 days ago' -Is 2>/dev/null || date -v-60d -Is 2>/dev/null)"
+  jq -c --arg ts "$old_ts" '.created_ts = $ts' "$manifest" > "$manifest.new" && mv "$manifest.new" "$manifest"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --max-age-days 30 --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && ! -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status wt_path_exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
+case_gc_max_age_days_rejects_non_integer() {
+  # behavior: gc --max-age-days with a non-integer value is rejected with exit 2 and a documented error
+  # Steps: run gc --max-age-days nope; assert exit 2 and stderr mentions the requirement
+  local name="worktree gc: --max-age-days rejects a non-integer value"
+  should_run "$name" || return 0
+  local store work err status=0
+  store="$tmp_root/state-gc-age-badarg"
+  work="$tmp_root/work-gc-age-badarg"
+  make_work_repo "$work"
+  err="$tmp_root/gcbad.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --max-age-days nope --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"--max-age-days requires an integer"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
 case_gc_prunes_git_state() {
   # behavior: gc also runs `git worktree prune` so git's own bookkeeping stays in sync with the manifest
   # Steps: create a worktree, delete its directory manually, run gc; assert `git worktree list` shows only
@@ -529,6 +583,8 @@ case_gc_merged_flag
 case_gc_merged_does_not_self_remove_when_invoked_from_inside
 case_gc_merged_skips_dirty_without_force
 case_gc_max_age_days_filters
+case_gc_max_age_days_removes_aged_entry
+case_gc_max_age_days_rejects_non_integer
 case_gc_prunes_git_state
 
 th_summary
