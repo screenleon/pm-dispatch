@@ -95,6 +95,81 @@ _sw_project_dir() {
   return 0
 }
 
+# _sw_main_repo_root [repo_root]
+# Resolve the PRIMARY (non-worktree) checkout root, so callers get the same
+# identity whether invoked from the main checkout or from inside a linked
+# `git worktree`. `git rev-parse --show-toplevel` (used by _sw_project_key)
+# returns the linked worktree's OWN path when run inside one, which would
+# split one project's state across partitions depending on caller cwd.
+# `--git-common-dir` instead always resolves to the primary worktree's `.git`:
+# an absolute path when run from inside a linked worktree, or the relative
+# string ".git" when run from the primary worktree itself (git only prints
+# it relative to cwd there, since git-common-dir == git-dir in that case).
+_sw_main_repo_root() {
+  {
+    local repo_root="${1:-}" common_dir
+    if [[ -n "$repo_root" ]]; then
+      common_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)"
+    else
+      common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+    fi
+    [[ -n "$common_dir" ]] || return 1
+    if [[ "$common_dir" == /* ]]; then
+      dirname "$common_dir"
+    elif [[ -n "$repo_root" ]]; then
+      git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null
+    else
+      git rev-parse --show-toplevel 2>/dev/null
+    fi
+  } 2>/dev/null || true
+  return 0
+}
+
+# _sw_worktree_project_key
+# Same hashing scheme as _sw_project_key, but keyed off _sw_main_repo_root
+# instead of --show-toplevel, so a linked worktree and its primary checkout
+# resolve to the SAME partition. Used only by sw_project_worktree_dir --
+# existing _sw_project_key/_sw_project_dir/sw_project_run_dir callers
+# (dispatch, gate, artifacts) are intentionally left untouched by this
+# helper; see docs/architecture/v0.4.0-state-first-foundation.md A5 for the
+# broader identity-reconciliation gap this does NOT attempt to fix.
+_sw_worktree_project_key() {
+  {
+    local main_root project_key
+    if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
+      main_root="$(_sw_main_repo_root "${_SW_REPO_ROOT}")"
+    else
+      main_root="$(_sw_main_repo_root)"
+    fi
+    if [[ -z "$main_root" ]]; then
+      printf 'global\n'
+      return 0
+    fi
+    main_root="$(_portable_canonical_path "$main_root")"
+    if ! project_key="$(printf '%s\n' "$main_root" | _portable_sha1 2>/dev/null)"; then
+      _sw_log_error "_sw_worktree_project_key: failed to hash main repo root; falling back to global: $main_root"
+      project_key=""
+    fi
+    if [[ -n "$project_key" ]]; then
+      printf '%s\n' "$project_key"
+    else
+      printf 'global\n'
+    fi
+  } 2>/dev/null || true
+  return 0
+}
+
+# sw_project_worktree_dir
+# Print the absolute worktree-registry directory for the current project's
+# MAIN repo partition (stable whether invoked from the main checkout or from
+# inside a linked worktree pmctl created):
+#   <store_root>/projects/<main_project_key>/worktrees
+# Pure computation -- does NOT create the directory; pmctl-worktree.sh owns
+# mkdir + manifest writes.
+sw_project_worktree_dir() {
+  printf '%s/projects/%s/worktrees\n' "$(_sw_store_root)" "$(_sw_worktree_project_key)"
+}
+
 # sw_project_run_dir <run_id>
 # Print the absolute run-artifact directory for the current project partition:
 #   <store_root>/projects/<project_key>/runs/<run_id>

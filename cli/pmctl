@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release; do
+for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -98,6 +98,30 @@ case "$cmd/$sub" in
       pmctl_die "artifacts migrate unavailable"
     fi
     pmctl_artifacts_migrate "$REPO_ROOT" "" "$@"
+    ;;
+  worktree/create)
+    if ! declare -F pmctl_worktree_create >/dev/null; then
+      pmctl_die "worktree create unavailable"
+    fi
+    pmctl_worktree_create "$REPO_ROOT" "" "$@"
+    ;;
+  worktree/list)
+    if ! declare -F pmctl_worktree_list >/dev/null; then
+      pmctl_die "worktree list unavailable"
+    fi
+    pmctl_worktree_list "$REPO_ROOT" "" "$@"
+    ;;
+  worktree/remove)
+    if ! declare -F pmctl_worktree_remove >/dev/null; then
+      pmctl_die "worktree remove unavailable"
+    fi
+    pmctl_worktree_remove "$REPO_ROOT" "" "$@"
+    ;;
+  worktree/gc)
+    if ! declare -F pmctl_worktree_gc >/dev/null; then
+      pmctl_die "worktree gc unavailable"
+    fi
+    pmctl_worktree_gc "$REPO_ROOT" "" "$@"
     ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then
