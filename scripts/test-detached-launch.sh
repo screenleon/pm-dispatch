@@ -8,6 +8,7 @@
 # scripts/dispatch-supervisor.sh inside BEGIN/END resolve-root markers. This
 # suite extracts and diffs the two marked blocks so a future edit to one that
 # forgets the other fails loudly instead of silently drifting.
+# shellcheck disable=SC2154  # tmp_root supplied by sourced test-harness
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,10 +16,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB="$REPO_ROOT/scripts/lib/detached-launch.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
 # shellcheck source=scripts/lib/detached-launch.sh
+# shellcheck disable=SC1091
 . "$LIB"
 
 _extract_marked_block() {
