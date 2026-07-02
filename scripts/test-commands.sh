@@ -384,9 +384,11 @@ should_run "ship: conflict stops before branching or implementing" && assert_fil
 should_run "ship: keeps DECISIONS.md out of dispatch briefs" && assert_file_contains "ship: keeps DECISIONS.md out of dispatch briefs" "$SHIP" "do not paste it into any dispatch brief" && pass "ship: keeps DECISIONS.md out of dispatch briefs"
 # ticket-id validation: empty / malformed / nonexistent must fail fast, distinct from the discussion stop
 should_run "ship: validates ticket id before any other step" && assert_file_contains "ship: validates ticket id before any other step" "$SHIP" "Ticket-id validation" && pass "ship: validates ticket id before any other step"
-should_run "ship: handles empty argument" && assert_file_contains "ship: handles empty argument" "$SHIP" "empty argument / malformed shape / no such ticket" && pass "ship: handles empty argument"
+should_run "ship: handles empty argument" && assert_file_contains "ship: handles empty argument" "$SHIP" "stop and report \"empty argument\"" && pass "ship: handles empty argument"
 should_run "ship: handles malformed ticket-id shape" && assert_file_contains "ship: handles malformed ticket-id shape" "$SHIP" "does not match this repo's ticket-id shape" && pass "ship: handles malformed ticket-id shape"
-should_run "ship: handles nonexistent ticket (checks both BACKLOG and archive)" && assert_file_contains "ship: handles nonexistent ticket (checks both BACKLOG and archive)" "$SHIP" "BACKLOG-ARCHIVE.md" && pass "ship: handles nonexistent ticket (checks both BACKLOG and archive)"
+should_run "ship: distinguishes already-archived ticket from no-such-ticket" && assert_file_contains "ship: distinguishes already-archived ticket from no-such-ticket" "$SHIP" "the ticket is already terminal" && pass "ship: distinguishes already-archived ticket from no-such-ticket"
+should_run "ship: consistency check only ever reads active BACKLOG.md" && assert_file_contains "ship: consistency check only ever reads active BACKLOG.md" "$SHIP" "resolves to an active \`BACKLOG.md\`" && pass "ship: consistency check only ever reads active BACKLOG.md"
+should_run "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" && assert_file_contains "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" "$SHIP" "never as a source to" && pass "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from"
 should_run "ship: distinguishes fail-fast validation from the discussion stop" && assert_file_contains "ship: distinguishes fail-fast validation from the discussion stop" "$SHIP" "not a discussion point" && pass "ship: distinguishes fail-fast validation from the discussion stop"
 # dirty-tree precondition is deterministic fail-safe, not a second ask path
 should_run "ship: dirty tree is stashed automatically, not asked about" && assert_file_contains "ship: dirty tree is stashed automatically, not asked about" "$SHIP" "git stash -u" && pass "ship: dirty tree is stashed automatically, not asked about"
@@ -436,6 +438,9 @@ should_run "ship: opens PR via gh pr create" && assert_file_contains "ship: open
 should_run "ship: PR body template records gate rounds and verdict" && assert_file_contains "ship: PR body template records gate rounds and verdict" "$SHIP" "Final verdict" && pass "ship: PR body template records gate rounds and verdict"
 should_run "ship: GO is not merge authorization" && assert_file_contains "ship: GO is not merge authorization" "$SHIP" "GO is not merge authorization" && pass "ship: GO is not merge authorization"
 should_run "ship: no CC ticket references" && assert_not_contains "ship: no CC ticket references" "$SHIP" "CC-[0-9]"
+# git publication path: branch creation and push are the only side effects before PR creation
+should_run "ship: creates the feature branch via git checkout -b" && assert_file_contains "ship: creates the feature branch via git checkout -b" "$SHIP" "git checkout -b feat/<ticket-id>" && pass "ship: creates the feature branch via git checkout -b"
+should_run "ship: pushes the branch before opening the PR" && assert_file_contains "ship: pushes the branch before opening the PR" "$SHIP" "git push -u origin feat/<ticket-id>" && pass "ship: pushes the branch before opening the PR"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 

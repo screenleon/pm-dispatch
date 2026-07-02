@@ -32,17 +32,27 @@ ambiguous* and needs the user's judgment.
 
 ## Step 0 — Validate the ticket id, then check consistency
 
-**Ticket-id validation** (fail fast, not a discussion point): if `$ARGUMENTS`
-is empty, does not match this repo's ticket-id shape (`<PREFIX>-<NNN>` per
-`pm/schema.md`), or has no matching `## <ticket-id>` heading in either
-`BACKLOG.md` or `BACKLOG-ARCHIVE.md`, stop immediately and report the exact
-problem (empty argument / malformed shape / no such ticket) — this is a plain
-input error, resolved by the caller supplying a valid id, not something to
-deliberate about.
+**Ticket-id validation** (fail fast, not a discussion point): `/ship` only
+ever acts on an active `BACKLOG.md` ticket — `BACKLOG-ARCHIVE.md` is
+consulted solely to produce a precise error message, never as a source to
+implement from.
 
-**Consistency check**: once the ticket id resolves, read its full body from
-`BACKLOG.md` (`grep -n '^## <ticket-id>'` then `sed -n` the section — do not
-full-file Read). Extract `Problem` / `Requirement` / `Dependencies`.
+- If `$ARGUMENTS` is empty or does not match this repo's ticket-id shape
+  (`<PREFIX>-<NNN>` per `pm/schema.md`): stop and report "empty argument" or
+  "malformed shape".
+- If there is no matching `## <ticket-id>` heading in `BACKLOG.md`: check
+   `BACKLOG-ARCHIVE.md`. A match there means the ticket is already terminal
+   (done/closed/dropped/superseded) — stop and report "ticket already
+   archived", not "no such ticket". No match in either file: stop and report
+   "no such ticket".
+
+Either way this is a plain input error, resolved by the caller supplying a
+valid, currently-active ticket id, not something to deliberate about.
+
+**Consistency check**: once the ticket id resolves to an active `BACKLOG.md`
+heading, read its full body (`grep -n '^## <ticket-id>'` then `sed -n` the
+section — do not full-file Read). Extract `Problem` / `Requirement` /
+`Dependencies`.
 
 - **Dependencies**: for every ticket referenced in `Dependencies`, confirm its
   status in `BACKLOG.md`'s index table (or `BACKLOG-ARCHIVE.md` if terminal)
