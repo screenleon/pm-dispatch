@@ -13,21 +13,36 @@ session stays open and you stay reachable the whole time.
 
 ## The one legal stopping point
 
-Everywhere in this flow, the only reason to stop and ask the user instead of
-continuing is: **the ticket's premise fundamentally conflicts with something
-already decided** — its approach contradicts a `DECISIONS.md` entry's
-`**Constraints introduced**`, a named `Dependencies` ticket is not actually
-done, or (discovered mid-implementation) the ticket's own assumption turns
-out to be wrong. Ordinary reviewer findings — hard gate or advisory, however
-many rounds it takes — are not a stopping point; fix them and continue. This
-mirrors `agents/project-pm.md`'s PR-gate verdict table and Rules A/B, which
-this command invokes rather than re-implements.
+Everywhere in this flow, the only reason to stop and ask the user for a
+substantive discussion instead of continuing is: **the ticket's premise
+fundamentally conflicts with something already decided** — its approach
+contradicts a `DECISIONS.md` entry's `**Constraints introduced**`, a named
+`Dependencies` ticket is not actually done, or (discovered mid-implementation)
+the ticket's own assumption turns out to be wrong. Ordinary reviewer findings
+— hard gate or advisory, however many rounds it takes — are not a stopping
+point; fix them and continue. This mirrors `agents/project-pm.md`'s PR-gate
+verdict table and Rules A/B, which this command invokes rather than
+re-implements.
 
-## Step 0 — Pre-flight consistency check
+This is distinct from Step 0's plain input validation and Step 1's dirty-tree
+precondition below — those are deterministic fail-fast/fail-safe checks with
+one predetermined outcome each, not a negotiated decision. "The one legal
+stopping point" refers only to cases where the *next action is genuinely
+ambiguous* and needs the user's judgment.
 
-Read the named ticket's full body from `BACKLOG.md` (`grep -n '^## <ticket-id>'`
-then `sed -n` the section — do not full-file Read). Extract `Problem` /
-`Requirement` / `Dependencies`.
+## Step 0 — Validate the ticket id, then check consistency
+
+**Ticket-id validation** (fail fast, not a discussion point): if `$ARGUMENTS`
+is empty, does not match this repo's ticket-id shape (`<PREFIX>-<NNN>` per
+`pm/schema.md`), or has no matching `## <ticket-id>` heading in either
+`BACKLOG.md` or `BACKLOG-ARCHIVE.md`, stop immediately and report the exact
+problem (empty argument / malformed shape / no such ticket) — this is a plain
+input error, resolved by the caller supplying a valid id, not something to
+deliberate about.
+
+**Consistency check**: once the ticket id resolves, read its full body from
+`BACKLOG.md` (`grep -n '^## <ticket-id>'` then `sed -n` the section — do not
+full-file Read). Extract `Problem` / `Requirement` / `Dependencies`.
 
 - **Dependencies**: for every ticket referenced in `Dependencies`, confirm its
   status in `BACKLOG.md`'s index table (or `BACKLOG-ARCHIVE.md` if terminal)
@@ -50,8 +65,12 @@ If clear: continue to Step 1.
 
 ## Step 1 — Branch
 
-`git status` first (never branch over uncommitted work silently — stash or
-ask if the tree is dirty for unrelated reasons). Then:
+**Dirty-tree precondition** (fail-safe, not a discussion point): run `git
+status` first. If the tree is dirty with changes unrelated to this ticket,
+`git stash -u` before branching (note the stash in the Step 5 report so it's
+easy to recover) — never branch over uncommitted work silently, and never
+stop to ask about it, since stashing is reversible and there is nothing to
+deliberate.
 
 ```bash
 git checkout -b feat/<ticket-id>
@@ -68,8 +87,8 @@ dispatch in Step 3.
 
 Run `pmctl gate run --executor codex --cd "$PWD" --lifecycle foreground` (the
 `/pr-gate` command is the orchestration wrapper around this exact invocation
-— either entry point is acceptable, but the underlying call is always
-`pmctl gate run --executor codex`, never `bash scripts/pr-gate.sh` directly).
+— either entry point is acceptable, but the underlying gate call is always
+this one, never `bash scripts/pr-gate.sh` directly).
 `--lifecycle foreground` is required here: the default `--lifecycle detached`
 returns only a `gate_id` immediately and the gate keeps running in the
 background — reading `Final:` right after that call would read a stale or
@@ -128,7 +147,9 @@ explicitly says so.
 
 ## Step 5 — Close-out report
 
-Whether Step 0 stopped the run or Step 4 opened a PR, report: ticket id, what
-changed, how many gate rounds it took, the final verdict, and the PR URL (or,
-if stopped, the exact conflict found and what decision is needed from the
-user).
+Report one of three outcomes: (1) invalid ticket id — the exact problem
+(empty argument / malformed shape / no such ticket); (2) consistency-check
+stop — the ticket id, the conflicting `DECISIONS.md` entry or unmet
+dependency, and what decision is needed from the user; or (3) PR opened —
+ticket id, what changed, how many gate rounds it took, the final verdict, the
+PR URL, and whether Step 1 stashed pre-existing changes.

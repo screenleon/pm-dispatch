@@ -382,6 +382,15 @@ should_run "ship: checks DECISIONS.md Constraints introduced" && assert_file_con
 should_run "ship: checks unmet Dependencies before starting" && assert_file_contains "ship: checks unmet Dependencies before starting" "$SHIP" "Dependencies" && pass "ship: checks unmet Dependencies before starting"
 should_run "ship: conflict stops before branching or implementing" && assert_file_contains "ship: conflict stops before branching or implementing" "$SHIP" "Do not create a branch" && pass "ship: conflict stops before branching or implementing"
 should_run "ship: keeps DECISIONS.md out of dispatch briefs" && assert_file_contains "ship: keeps DECISIONS.md out of dispatch briefs" "$SHIP" "do not paste it into any dispatch brief" && pass "ship: keeps DECISIONS.md out of dispatch briefs"
+# ticket-id validation: empty / malformed / nonexistent must fail fast, distinct from the discussion stop
+should_run "ship: validates ticket id before any other step" && assert_file_contains "ship: validates ticket id before any other step" "$SHIP" "Ticket-id validation" && pass "ship: validates ticket id before any other step"
+should_run "ship: handles empty argument" && assert_file_contains "ship: handles empty argument" "$SHIP" "empty argument / malformed shape / no such ticket" && pass "ship: handles empty argument"
+should_run "ship: handles malformed ticket-id shape" && assert_file_contains "ship: handles malformed ticket-id shape" "$SHIP" "does not match this repo's ticket-id shape" && pass "ship: handles malformed ticket-id shape"
+should_run "ship: handles nonexistent ticket (checks both BACKLOG and archive)" && assert_file_contains "ship: handles nonexistent ticket (checks both BACKLOG and archive)" "$SHIP" "BACKLOG-ARCHIVE.md" && pass "ship: handles nonexistent ticket (checks both BACKLOG and archive)"
+should_run "ship: distinguishes fail-fast validation from the discussion stop" && assert_file_contains "ship: distinguishes fail-fast validation from the discussion stop" "$SHIP" "not a discussion point" && pass "ship: distinguishes fail-fast validation from the discussion stop"
+# dirty-tree precondition is deterministic fail-safe, not a second ask path
+should_run "ship: dirty tree is stashed automatically, not asked about" && assert_file_contains "ship: dirty tree is stashed automatically, not asked about" "$SHIP" "git stash -u" && pass "ship: dirty tree is stashed automatically, not asked about"
+should_run "ship: never stops to ask about a dirty tree" && assert_file_contains "ship: never stops to ask about a dirty tree" "$SHIP" "stop to ask about it" && pass "ship: never stops to ask about a dirty tree"
 # implementation stays main-thread, not dispatched
 should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
 # gate loop contract
@@ -389,12 +398,12 @@ should_run "ship: invokes pmctl gate run --executor codex for review" && assert_
 should_run "ship: never invokes pr-gate.sh directly" && assert_file_contains "ship: never invokes pr-gate.sh directly" "$SHIP" "never \`bash scripts/pr-gate.sh\` directly" && pass "ship: never invokes pr-gate.sh directly"
 if should_run "ship: every gate invocation uses --lifecycle foreground"; then
   ship_flat=$(tr '\n' ' ' < "$SHIP" | tr -s ' ')
-  ship_gate_calls=$(grep -oE 'pmctl gate run --executor codex --cd "\$PWD"' <<< "$ship_flat" | wc -l)
-  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor codex --cd "\$PWD"[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
+  ship_gate_calls=$(grep -oE 'pmctl gate run --executor codex' <<< "$ship_flat" | wc -l)
+  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor codex[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
   if [[ "$ship_gate_calls" -gt 0 && "$ship_gate_calls" -eq "$ship_foreground_calls" ]]; then
     pass "ship: every gate invocation uses --lifecycle foreground"
   else
-    fail "ship: every gate invocation uses --lifecycle foreground" "found $ship_gate_calls gate run call(s) with --cd but only $ship_foreground_calls paired with --lifecycle foreground in $SHIP"
+    fail "ship: every gate invocation uses --lifecycle foreground" "found $ship_gate_calls occurrence(s) of the gate call but only $ship_foreground_calls paired with --lifecycle foreground in $SHIP"
   fi
 fi
 should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"
@@ -404,6 +413,14 @@ should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contai
 should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
 # exactly two stop conditions, no more
 should_run "ship: stop condition heading enumerates the loop's halt cases" && assert_file_contains "ship: stop condition heading enumerates the loop's halt cases" "$SHIP" "Stop the loop only when" && pass "ship: stop condition heading enumerates the loop's halt cases"
+if should_run "ship: exactly one genuine wait-for-user-direction path"; then
+  ship_wait_count=$(grep -c "wait for the user's direction" "$SHIP")
+  if [[ "$ship_wait_count" -eq 1 ]]; then
+    pass "ship: exactly one genuine wait-for-user-direction path"
+  else
+    fail "ship: exactly one genuine wait-for-user-direction path" "expected exactly 1 wait-for-user-direction occurrence, found $ship_wait_count in $SHIP"
+  fi
+fi
 if should_run "ship: stop-condition list has exactly two numbered cases"; then
   ship_stop_count=$(grep -cE '^[0-9]+\. ' "$SHIP")
   if [[ "$ship_stop_count" -eq 2 ]]; then
