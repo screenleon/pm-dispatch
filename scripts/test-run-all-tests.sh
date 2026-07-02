@@ -54,6 +54,7 @@ SUITE_NAMES=(
   test-run-all-tests
   test-timeout-resolve
   test-dispatch-common
+  test-detached-launch
   test-lint-model-aliases
   test-core-schemas
   test-pm-prep-snapshot
@@ -145,6 +146,7 @@ suite_path() {
     test-run-all-tests) printf 'scripts/test-run-all-tests.sh\n' ;;
     test-timeout-resolve) printf 'scripts/test-timeout-resolve.sh\n' ;;
     test-dispatch-common) printf 'scripts/test-dispatch-common.sh\n' ;;
+    test-detached-launch) printf 'scripts/test-detached-launch.sh\n' ;;
     test-lint-model-aliases) printf 'scripts/test-lint-model-aliases.sh\n' ;;
     test-core-schemas) printf 'scripts/test-core-schemas.sh\n' ;;
     test-pm-prep-snapshot) printf 'scripts/test-pm-prep-snapshot.sh\n' ;;

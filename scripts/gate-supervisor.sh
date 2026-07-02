@@ -13,8 +13,12 @@
 #     -- <native pr-gate.sh args>
 set -euo pipefail
 
-# Resolve the real script path through symlinks so REPO_ROOT is the actual repo
-# directory regardless of how the supervisor is launched (pattern from cli/pmctl).
+# REPO_ROOT resolution stays inline (BEGIN/END markers below): this script
+# must resolve its own root before it can `source` the shared lib, so the
+# resolver cannot itself live in the lib it bootstraps. Duplicated verbatim
+# in dispatch-supervisor.sh; scripts/test-detached-launch.sh diffs the two
+# marked blocks to catch drift (see docs/spikes/CC-433.md angle a3).
+# BEGIN resolve-root
 _self="${BASH_SOURCE[0]}"
 while [[ -L "$_self" ]]; do
   _dir="$(cd "$(dirname "$_self")" && pwd)"
@@ -23,6 +27,10 @@ while [[ -L "$_self" ]]; do
 done
 REPO_ROOT="$(cd "$(dirname "$_self")/.." && pwd)"
 unset _self _dir
+# END resolve-root
+
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/lib/detached-launch.sh"
 
 # Capture the parent-supplied sentinel nonce and immediately unset it so
 # pr-gate.sh (and any reviewer session it spawns) cannot read it and forge the
@@ -38,11 +46,11 @@ gate_id=""
 _write_sentinel() {
   local _state="${1:-failed}" _rc="${2:-2}" _result="${3:-}"
   if [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] && [[ -n "$_sentinel_nonce" ]]; then
-    {
-      printf 'final_state=%s\n' "$_state"
-      printf 'exit_code=%s\n' "$_rc"
-      [[ -n "$_result" ]] && printf 'result_file=%s\n' "$_result"
-    } > "/tmp/pm-gate-sentinel-${gate_id}-${_sentinel_nonce}" 2>/dev/null || true
+    local _sentinel_path
+    _sentinel_path="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_sentinel_nonce")"
+    local -a _pairs=("final_state=$_state" "exit_code=$_rc")
+    [[ -n "$_result" ]] && _pairs+=("result_file=$_result")
+    detached_launch_write_sentinel "$_sentinel_path" "${_pairs[@]}"
   fi
 }
 

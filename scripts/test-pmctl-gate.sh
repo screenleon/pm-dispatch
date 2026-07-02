@@ -79,6 +79,7 @@ _mk_gate_wrapper() {
   local fixture="$1" out="$2"
   mkdir -p "$fixture/scripts/lib"
   cp "$REPO_ROOT/scripts/lib/pmctl-gate.sh" "$fixture/scripts/lib/pmctl-gate.sh"
+  cp "$REPO_ROOT/scripts/lib/detached-launch.sh" "$fixture/scripts/lib/detached-launch.sh"
   cat > "$out" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -98,7 +99,7 @@ _mk_gate_cli_fixture() {
   mkdir -p "$fixture/cli" "$fixture/scripts/lib"
   cp "$REPO_ROOT/cli/pmctl" "$fixture/cli/pmctl"
   chmod +x "$fixture/cli/pmctl"
-  for _lib in pmctl-gate gate-result-verify state-paths portable; do
+  for _lib in pmctl-gate gate-result-verify state-paths portable detached-launch; do
     cp "$REPO_ROOT/scripts/lib/$_lib.sh" "$fixture/scripts/lib/$_lib.sh"
   done
   cp "$REPO_ROOT/scripts/gate-supervisor.sh" "$fixture/scripts/gate-supervisor.sh"

@@ -52,6 +52,7 @@ SUITE_NAMES=(
   test-run-all-tests
   test-timeout-resolve
   test-dispatch-common
+  test-detached-launch
   test-lint-model-aliases
   test-core-schemas
   test-pm-prep-snapshot
@@ -120,6 +121,7 @@ declare -A SUITE_PATHS=(
   [test-run-all-tests]="scripts/test-run-all-tests.sh"
   [test-timeout-resolve]="scripts/test-timeout-resolve.sh"
   [test-dispatch-common]="scripts/test-dispatch-common.sh"
+  [test-detached-launch]="scripts/test-detached-launch.sh"
   [test-lint-model-aliases]="scripts/test-lint-model-aliases.sh"
   [test-core-schemas]="scripts/test-core-schemas.sh"
   [test-pm-prep-snapshot]="scripts/test-pm-prep-snapshot.sh"

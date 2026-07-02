@@ -18,14 +18,8 @@ _pmctl_gate_hex6() {
 # mirroring _pmctl_sentinel_key_file in pmctl-dispatch.sh but rooted at a
 # separate /tmp namespace so gate and dispatch sentinels never collide.
 _pmctl_gate_sentinel_key_file() {
-  local _gate_id="${1:-}" _uid _key_dir
-  _uid="$(id -u 2>/dev/null)" || _uid="0"
-  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
-    _key_dir="${XDG_RUNTIME_DIR}/pm-gate-dispatch"
-  else
-    _key_dir="/tmp/pm-gate-dispatch-${_uid}"
-  fi
-  printf '%s/%s' "$_key_dir" "$_gate_id"
+  local _gate_id="${1:-}"
+  detached_launch_key_file "pm-gate-dispatch" "$_gate_id"
 }
 
 pmctl_gate_run() {
@@ -163,6 +157,14 @@ pmctl_gate_run_detached() {
   local repo_root="$1" effective_cd="$2"; shift 2
   local -a forward=("$@")
 
+  if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/scripts/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
+
   local gate_script="$repo_root/scripts/gate-supervisor.sh"
   if [[ ! -x "$gate_script" ]]; then
     printf 'pmctl gate run: gate-supervisor.sh not found or not executable: %s\n' "$gate_script" >&2
@@ -202,41 +204,25 @@ pmctl_gate_run_detached() {
   # nonce is passed to the supervisor via env (never written to a
   # workspace-readable file), mirroring pmctl_dispatch_run_detached.
   local _nonce _key_file _key_dir
-  _nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
-    || _nonce="${RANDOM}${RANDOM}${RANDOM}"
-  [[ -n "$_nonce" ]] || _nonce="${RANDOM}${RANDOM}${RANDOM}"
+  _nonce="$(detached_launch_generate_nonce)"
   _key_file="$(_pmctl_gate_sentinel_key_file "$gate_id")"
   _key_dir="$(dirname "$_key_file")"
-  mkdir -p "$_key_dir" 2>/dev/null || {
-    printf 'pmctl gate run: failed to create private key directory: %s\n' "$_key_dir" >&2
-    return 2
-  }
-  chmod 700 "$_key_dir" 2>/dev/null || {
-    printf 'pmctl gate run: failed to secure private key directory (not owner?): %s\n' "$_key_dir" >&2
-    return 2
-  }
-  local _key_dir_owner
-  _key_dir_owner="$(stat -c '%u' "$_key_dir" 2>/dev/null || stat -f '%u' "$_key_dir" 2>/dev/null || true)"
-  if [[ -n "$_key_dir_owner" && "$_key_dir_owner" != "$(id -u)" ]]; then
-    printf 'pmctl gate run: refusing key directory not owned by current user (owner uid=%s): %s\n' "$_key_dir_owner" "$_key_dir" >&2
-    return 2
-  fi
-  printf '%s' "$_nonce" > "$_key_file" 2>/dev/null || {
+  detached_launch_secure_key_dir "$_key_dir"
+  case "$?" in
+    0) : ;;
+    1) printf 'pmctl gate run: failed to create private key directory: %s\n' "$_key_dir" >&2; return 2 ;;
+    2) printf 'pmctl gate run: failed to secure private key directory (not owner?): %s\n' "$_key_dir" >&2; return 2 ;;
+    3) printf 'pmctl gate run: refusing key directory not owned by current user: %s\n' "$_key_dir" >&2; return 2 ;;
+  esac
+  detached_launch_write_key_file "$_key_file" "$_nonce" || {
     printf 'pmctl gate run: failed to write sentinel key file\n' >&2
     return 2
   }
 
   local supervisor_log="$gate_run_dir/supervisor.log"
-  if command -v setsid >/dev/null 2>&1; then
-    PM_GATE_SUPERVISOR_NONCE="$_nonce" setsid nohup bash "$gate_script" \
-      --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"} \
-      </dev/null >"$supervisor_log" 2>&1 &
-  else
-    PM_GATE_SUPERVISOR_NONCE="$_nonce" nohup bash "$gate_script" \
-      --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"} \
-      </dev/null >"$supervisor_log" 2>&1 &
-    disown $! 2>/dev/null || true
-  fi
+  PM_GATE_SUPERVISOR_NONCE="$_nonce" detached_launch_under_setsid \
+    "$gate_script" "$supervisor_log" "" \
+    -- --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"}
 
   printf '%s\n' "$gate_id"
   return 0
@@ -251,6 +237,14 @@ pmctl_gate_wait() {
   local repo_root="${1:-}"
   shift || true
   local gate_id="" work_dir="" timeout="${PM_GATE_WAIT_DEFAULT_TIMEOUT:-1200}"
+
+  if [[ "$(type -t detached_launch_wait_for_sentinel 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/scripts/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -321,11 +315,9 @@ pmctl_gate_wait() {
     return 2
   fi
 
-  local _sentinel="/tmp/pm-gate-sentinel-${gate_id}-${_key_nonce}"
-  local start elapsed
-  start="$SECONDS"
-  while true; do
-    if [[ -f "$_sentinel" ]]; then
+  local _sentinel
+  _sentinel="$(detached_launch_sentinel_path "pm-gate" "$gate_id" "$_key_nonce")"
+  if detached_launch_wait_for_sentinel "$_sentinel" "$timeout" "${PM_GATE_WAIT_POLL_INTERVAL:-2}"; then
       local _state _exit _result
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
@@ -390,17 +382,12 @@ pmctl_gate_wait() {
         fi
       fi
       return "$_exit"
-    fi
-    elapsed=$((SECONDS - start))
-    if (( elapsed >= timeout )); then
-      printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
-      # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
-      printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
-        "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
-      return 124
-    fi
-    sleep "${PM_GATE_WAIT_POLL_INTERVAL:-2}"
-  done
+  fi
+  printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
+  # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
+  printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
+    "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
+  return 124
 }
 
 # pmctl gate verify <result_file>

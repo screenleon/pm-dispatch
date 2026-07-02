@@ -76,7 +76,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-425 | ✅ closed 2026-07-02 | `pr-gate.sh --head <ref>` 新增；diff 一組固定 base..head ref（branch/tag/commit），不涉及 PR 或 working tree；`--base` 既有支援已可省 PR。與 `--allow-dirty` 互斥（明確拒絕）。 | ops/gate | 2026-06-25 | pr:#355 | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
-| CC-433 | 🟢 someday | **[detached lifecycle：抽共用 sentinel lib + wait 改主動通知]** (1) `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入邏輯結構相同但各自重寫，應抽成共用 lib，兩邊各自只保留獨有業務邏輯（preflight+adapter vs. 直接 exec pr-gate.sh）；(2) `pmctl dispatch wait`/`pmctl gate wait` 目前用 `sleep \$POLL_INTERVAL` 輪詢 sentinel 檔案，應改為主動通知（如 blocking read on FIFO、inotify 等），supervisor 完成時主動喚醒 wait 而非讓它每 N 秒醒來檢查一次。解法未定案，需先 `/pre-impl` 或 `/spike` 收斂設計。 | arch/gate | 2026-07-01 | — | P3 | design |
+| CC-433 | ✅ closed 2026-07-02 | detached lifecycle spike：`docs/spikes/CC-433.md` — 共用 lib 抽取 GREEN（adopt，開 CC-434）；poll→通知機制遷移 AMBER（mkfifo 技術可行但 multi-waiter 資料損毀未解，維持輪詢） | arch/gate | 2026-07-01 | — | P3 | spike |
+| CC-434 | ✅ closed 2026-07-02 | 抽出 `scripts/lib/detached-launch.sh`（7 共用函式），gate/dispatch supervisor + wait 端改用共用實作；`resolve_repo_root` 保留 inline + drift-guard fixture 測試；dispatch 安全預檢查零改動 | arch/gate | 2026-07-02 | pr:#356 | P2 | — |
+| CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 
 ---
 
@@ -1217,7 +1219,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **area**: ops/test
 **Priority**: P2 — 不阻塞 CC-423，但影響日常開發迭代速度，排在下一個 PR 優先分析規劃。
 
-## CC-433 — detached lifecycle：抽共用 sentinel lib + wait 改主動通知 🟢 someday
+## CC-433 — detached lifecycle：抽共用 sentinel lib + wait 改主動通知 ✅ 2026-07-02
+
+**See**: docs/spikes/CC-433.md
 
 **Problem**：CC-423（gate detached lifecycle）實作時直接照抄 `scripts/dispatch-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入模式，寫出 `scripts/gate-supervisor.sh`，兩份檔案在「啟動 detached process + 寫 sentinel」這塊結構相同（`_write_sentinel`/`_die` 的形狀、`/tmp/pm-*-sentinel-<id>-<nonce>` 命名、per-user mode-700 key 目錄）卻各自重寫，沒有抽共用 lib。
 
@@ -1232,8 +1236,57 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 - 輪詢改主動通知：評估可行機制，例如 (a) named pipe/FIFO：supervisor 完成時寫入 FIFO，wait 用 blocking read 而非 `sleep` 迴圈喚醒；(b) `inotifywait`（若目標平台可穩定安裝該工具）監控 sentinel 檔案建立事件；(c) 其他 IPC 機制。需評估跨平台相容性（尤其 CI/macOS/WSL2）與現有 fail-closed／timeout／indeterminate（exit 3）語意是否受影響。
 - 兩項改動涉及安全敏感的 supervisor 檔案（尤其 dispatch 側有完整 preflight 防禦），需謹慎規劃測試涵蓋範圍，避免共用化過程中意外弱化 dispatch 的安全邊界。
 
+**Investigation scope**：
+1. 共用 lib 邊界：比對 `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + sentinel 寫入/nonce-key-file 管理邏輯，界定可抽出到 `scripts/lib/detached-launch.sh` 的共用函式，以及各自必須保留的獨有邏輯（dispatch 的 adapter/guard preflight + `pmctl_dispatch_execute_tail`；gate 的直接 exec pr-gate.sh + result 完整性檢查），並確認抽出不弱化 dispatch 側現有 security preflight。
+2. Poll→通知機制：評估 FIFO blocking read / `inotifywait` / 其他 IPC 在 CI、macOS、WSL2 三個目標平台的可行性與相容性，並確認選定機制下 `pmctl dispatch wait`/`pmctl gate wait` 既有的 fail-closed／timeout／indeterminate（exit 3）語意維持不變。
+
+**Done-when**：`docs/spikes/CC-433.md` 對上述兩項各給出明確建議（含至少一個實際 call site 的 pilot walkthrough，建議先遷移 gate 側，blast radius 較低），並標註 GREEN/AMBER/RED 可行性判定；後續實作票依此結果撰寫。
+
+**Result log**：完成，見 `docs/spikes/CC-433.md`（2026-07-02）。判定：共用 lib 抽取 **GREEN**（7/8 函式可乾淨抽取到 `scripts/lib/detached-launch.sh`，`resolve_repo_root` 因循環依賴保留 inline，邊界清楚、無安全弱化，建議開 CC-433a 實作）；poll→通知機制遷移 **AMBER**（mkfifo blocking read 技術可行且延遲大幅改善，但 multi-waiter 並發下有資料損毀風險，需先設計 single-waiter guard 才可採用，本輪維持輪詢）。
+
 **Trigger**：CC-423（gate detached lifecycle）pr-gate 迭代後，使用者檢視 `scripts/gate-supervisor.sh` 與 `scripts/dispatch-supervisor.sh` 的重複程度，並注意到 wait 端目前是輪詢實作，要求記錄為後續改善票（2026-07-01）。
 
 **area**: arch/gate
 **Priority**: P3（someday）。
-**Cross-link**: [[CC-423]]、[[CC-432]]。
+**Cross-link**: [[CC-423]]、[[CC-432]]、[[CC-434]]。
+
+## CC-434 — detached lifecycle：抽共用 sentinel lib scripts/lib/detached-launch.sh ✅ 2026-07-02
+
+**See**: pr:#356
+
+**Problem**：CC-433 spike（`docs/spikes/CC-433.md`）判定共用 lib 抽取為 GREEN——`dispatch-supervisor.sh`/`gate-supervisor.sh` 在啟動 detached process + 寫 sentinel 這塊今天是逐位元組相同的實作，但各自重寫，維護成本已在 CC-423 實作中顯現。本票落地該建議。
+
+**Requirement**（依 spike Pilot walkthrough 收斂，非待定案）：
+- 新增 `scripts/lib/detached-launch.sh`：7 個共用函式（`detached_launch_generate_nonce`、`detached_launch_key_file`、`detached_launch_secure_key_dir`、`detached_launch_write_key_file`、`detached_launch_sentinel_path`、`detached_launch_under_setsid`、`detached_launch_write_sentinel`、`detached_launch_wait_for_sentinel`）。
+- `resolve_repo_root`（symlink 解析）因 bootstrap 循環依賴（腳本要先解出 REPO_ROOT 才能 source lib）**保留 inline** 於 `dispatch-supervisor.sh`/`gate-supervisor.sh` 頂端；加一個 fixture 測試以 marker-comment 框住兩處區塊、逐字 diff，防止未來修改其中一份卻忘了同步另一份。
+- `gate-supervisor.sh`/`pmctl_gate_wait`（`scripts/lib/pmctl-gate.sh`）與 `dispatch-supervisor.sh`/`pmctl_dispatch_wait`（`scripts/lib/pmctl-dispatch.sh`）都改用共用函式；wait 端沿用輪詢（`detached_launch_wait_for_sentinel`），不動 IPC 機制（CC-433 spike 判定 poll→通知遷移 AMBER，未收斂）。
+- dispatch 側所有安全預檢查（native-arg 走私防護、adapter 解析、brief 驗證、guard check、run-spec schema 驗證、brief-snapshot 路徑相等性清理）**零改動**，不進共用 lib。
+- gate 側特有邏輯（`gate_result_verify` 結構完整性檢查、`--cd`→run-dir 包含關係比對、timeout 提示文字）**零改動**，維持在 `pmctl-gate.sh`。
+- sentinel 檔名/key-dir 路徑命名維持與現況位元組相同（`/tmp/pm-supervisor-sentinel-<run_id>-<nonce>`、`/tmp/pm-gate-sentinel-<gate_id>-<nonce>`、`pm-dispatch`/`pm-gate-dispatch` key-dir namespace），純委派實作、不改變任何對外行為。
+
+**Done-when**：`scripts/lib/detached-launch.sh` 落地並被兩側 supervisor + wait 函式使用；REPO_ROOT inline 區塊漂移守衛測試存在且通過；既有 dispatch/gate lifecycle 測試套件（`test-dispatch-lifecycle.sh`、`test-gate-lifecycle.sh`、`test-pmctl-dispatch.sh`、`test-pmctl-gate.sh` 等）全數通過，無行為變化；`run-all-tests.sh` 全套綠燈。
+
+**area**: arch/gate
+**Priority**: P2。
+**Cross-link**: [[CC-433]]、[[CC-423]]、[[CC-435]]。
+
+## CC-435 — poll→通知機制 single-waiter guard：條件觸發，非既定後續票 🟢 someday
+
+**Problem**：`docs/spikes/CC-433.md` 判定 poll→通知機制遷移為 AMBER——mkfifo blocking read 技術可行且延遲大幅改善，但發現並發 waiter 讀同一個 fifo 會造成 byte-level 資料損毀的正確性風險（輪詢設計沒有這個問題）。CC-434 實作完成後與使用者進一步討論了兩個候選防護設計，重新盤點成本效益後決定不排入既定實作。
+
+**Why**（盤點結論，決定本票只在條件觸發時才啟動）：
+- **資源消耗**：輪詢（`sleep 2s` + `stat()`）與 blocking read 在「一個 run/gate 對應一個 waiter、等待數分鐘到數十分鐘」的實際用量下，差距趨近於零——兩者都是「睡眠中不耗 CPU」等級，不構成採用理由。
+- **延遲精度**：唯一有意義的量化差異是輪詢最多晚 2 秒才發現完成，listener 近乎即時；但這個延遲對「人在等 PR gate/dispatch 結果」的使用情境無感，不是使用者能察覺的體驗差異。
+- **複雜度／風險**：兩個候選設計都要在安全敏感的 supervisor 檔案（`dispatch-supervisor.sh`/`gate-supervisor.sh`）與 wait 端引入新的 race condition、新的清理責任、新的測試面，投資報酬率不足以證成這個複雜度。
+
+**Requirement**（候選設計草稿，僅供未來觸發條件成立時起步，非本票立即要做的規格）：
+- **方案 A**：對 sentinel 的 `.waitlock` 檔案做 `flock -n` 搶排他鎖；搶到鎖的 waiter 走 mkfifo blocking read 快速路徑，搶不到鎖的 waiter 安全退回既有輪詢（`detached_launch_wait_for_sentinel`），不去碰 fifo。需補上「拿到鎖後、mkfifo 之前先檢查 sentinel 是否已存在」的 TOCTOU 修正（supervisor 搶先完成的情況）。`detached_launch_write_sentinel` 需加一段 best-effort 廣播（fifo 存在才嘗試非阻塞寫入，失敗不影響檔案寫入這個唯一正確性來源）。
+- **方案 B**：每個 waiter 建立自己專屬的 fifo（不共享），supervisor 完成時掃描一個註冊表目錄、逐一廣播寫入每個已註冊 waiter 的 fifo。沒有任何 waiter 需要退回輪詢，代價是要處理註冊 race（同樣用 TOCTOU 檢查解）與殭屍 fifo 清理（比照現有 `pmctl_dispatch_wait` key file 靠 tmpwatch 回收的先例，不影響正確性）。
+
+**Done-when**：僅在觸發條件成立（見下）後才需要收斂 Done-when；屆時應包含至少 3 個新測試案例：兩個以上 waiter 同時等待同一個 run_id/gate_id、supervisor 比任一 waiter 先完成、fifo/lock 建立失敗時的行為。
+
+**Trigger**（條件觸發，非既定排程）：**僅在真正出現需要多個 waiter 同時等待同一個 run_id/gate_id 的場景時才拿出來討論**（例如某個 orchestration 流程設計上就要 fan-out 通知給多個消費者）。目前 `pmctl dispatch wait`/`gate wait` 的呼叫模式都是「一個呼叫端等一個結果」，此條件尚未成立，故列為 someday 而非排入 milestone。
+
+**area**: arch/gate
+**Priority**: P3（someday，條件觸發）。
+**Cross-link**: [[CC-433]]、[[CC-434]]。

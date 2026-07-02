@@ -819,35 +819,14 @@ pmctl_dispatch_write_runspec() {
 # Both pmctl_dispatch_run_detached and pmctl_dispatch_wait use the same derivation
 # so they find the same file without storing the path in the workspace.
 _pmctl_sentinel_key_file() {
-  local _run_id="${1:-}" _uid _key_dir
-  _uid="$(id -u 2>/dev/null)" || _uid="0"
-  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
-    _key_dir="${XDG_RUNTIME_DIR}/pm-dispatch"
-  else
-    _key_dir="/tmp/pm-dispatch-${_uid}"
-  fi
-  printf '%s/%s' "$_key_dir" "$_run_id"
+  local _run_id="${1:-}"
+  detached_launch_key_file "pm-dispatch" "$_run_id"
 }
 
 _pmctl_dispatch_launch_supervisor() {
   local repo_root="${1:-}" spec_path="${2:-}" supervisor_log="${3:-}" pid_file="${4:-}"
-  local supervisor pid
-
-  supervisor="$repo_root/scripts/dispatch-supervisor.sh"
-  mkdir -p "$(dirname "$supervisor_log")" "$(dirname "$pid_file")" || return 1
-
-  if command -v setsid >/dev/null 2>&1; then
-    setsid nohup bash "$supervisor" --run-spec "$spec_path" \
-      </dev/null >"$supervisor_log" 2>&1 &
-    pid=$!
-  else
-    nohup bash "$supervisor" --run-spec "$spec_path" \
-      </dev/null >"$supervisor_log" 2>&1 &
-    pid=$!
-    disown "$pid" 2>/dev/null || true
-  fi
-  printf '%s\n' "$pid" > "$pid_file" || return 1
-  return 0
+  local supervisor="$repo_root/scripts/dispatch-supervisor.sh"
+  detached_launch_under_setsid "$supervisor" "$supervisor_log" "$pid_file" -- --run-spec "$spec_path"
 }
 
 # Detached lifecycle launcher. Splits the core --cd /
@@ -864,6 +843,14 @@ pmctl_dispatch_run_detached() {
   local run_id="${4:-}" model="${5:-}" brief_file="${6:-}" created_ts="${7:-}" print_cmd="${8:-}"
   shift 8 || true
   local -a forward=("$@")
+
+  if [[ "$(type -t detached_launch_generate_nonce 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/scripts/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
 
   # Separate the core --cd / --brief-file (recorded as trusted scalars) from the
   # native passthrough args. The caller passes the EFFECTIVE brief (the auto-pack
@@ -925,9 +912,7 @@ pmctl_dispatch_run_detached() {
   # an executor that can only read workspace files. The key file is stored in a
   # per-user private directory (mode 700) so only the owning user can access it.
   local _sup_nonce _sup_key_file _sup_key_dir
-  _sup_nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
-    || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
-  [[ -n "$_sup_nonce" ]] || _sup_nonce="${RANDOM}${RANDOM}${RANDOM}"
+  _sup_nonce="$(detached_launch_generate_nonce)"
   _sup_key_file="$(_pmctl_sentinel_key_file "$run_id")"
   _sup_key_dir="$(dirname "$_sup_key_file")"
   # Create the per-user key dir, then verify it is owner-only AND owned by us.
@@ -936,21 +921,14 @@ pmctl_dispatch_run_detached() {
   # permissive or foreign-owned dir could expose nonce files. So: mkdir, chmod 700
   # (tightens an owner-owned-but-loose dir; fails if we do not own it), and refuse
   # any dir not owned by the current uid.
-  mkdir -p "$_sup_key_dir" 2>/dev/null || {
-    printf 'pmctl dispatch run: failed to create private key directory: %s\n' "$_sup_key_dir" >&2
-    return 2
-  }
-  chmod 700 "$_sup_key_dir" 2>/dev/null || {
-    printf 'pmctl dispatch run: failed to secure private key directory (not owner?): %s\n' "$_sup_key_dir" >&2
-    return 2
-  }
-  local _key_dir_owner
-  _key_dir_owner="$(stat -c '%u' "$_sup_key_dir" 2>/dev/null || stat -f '%u' "$_sup_key_dir" 2>/dev/null || true)"
-  if [[ -n "$_key_dir_owner" && "$_key_dir_owner" != "$(id -u)" ]]; then
-    printf 'pmctl dispatch run: refusing key directory not owned by current user (owner uid=%s): %s\n' "$_key_dir_owner" "$_sup_key_dir" >&2
-    return 2
-  fi
-  printf '%s' "$_sup_nonce" > "$_sup_key_file" 2>/dev/null || {
+  detached_launch_secure_key_dir "$_sup_key_dir"
+  case "$?" in
+    0) : ;;
+    1) printf 'pmctl dispatch run: failed to create private key directory: %s\n' "$_sup_key_dir" >&2; return 2 ;;
+    2) printf 'pmctl dispatch run: failed to secure private key directory (not owner?): %s\n' "$_sup_key_dir" >&2; return 2 ;;
+    3) printf 'pmctl dispatch run: refusing key directory not owned by current user: %s\n' "$_sup_key_dir" >&2; return 2 ;;
+  esac
+  detached_launch_write_key_file "$_sup_key_file" "$_sup_nonce" || {
     printf 'pmctl dispatch run: failed to write sentinel key file\n' >&2
     return 2
   }
@@ -996,8 +974,9 @@ pmctl_dispatch_run_detached() {
       "failed" 2 "$model" "$brief_file" "" "$created_ts" "dispatched" 2>/dev/null || true
     pmctl_dispatch_write_record_soft "$run_id" "$adapter" "$model" "$brief_file" \
       "$work_dir" 2 "failed" "supervisor launch failed" "" "" "" "$created_ts" "$_launch_fail_ts"
-    printf 'final_state=failed\nexit_code=2\n' \
-      > "/tmp/pm-supervisor-sentinel-${run_id}-${_sup_nonce}" 2>/dev/null || true
+    detached_launch_write_sentinel \
+      "$(detached_launch_sentinel_path "pm-supervisor" "$run_id" "$_sup_nonce")" \
+      "final_state=failed" "exit_code=2"
     rm -f "$brief_file" 2>/dev/null || true
     # Keep the key file: dispatch wait must read the nonce to authenticate the
     # failure sentinel above (exit 2). Removing it here would force wait into the
@@ -1015,6 +994,14 @@ pmctl_dispatch_wait() {
   local _repo_root="${1:-}"
   shift || true
   local run_id="" work_dir="" timeout=3600
+
+  if [[ "$(type -t detached_launch_wait_for_sentinel 2>/dev/null)" != function ]]; then
+    local _dl_lib="$_repo_root/scripts/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1100,38 +1087,31 @@ pmctl_dispatch_wait() {
     return 2
   fi
 
-  local _sentinel="/tmp/pm-supervisor-sentinel-${run_id}-${_key_nonce}"
-  local start elapsed
-  start="$SECONDS"
-  while true; do
-    if [[ -f "$_sentinel" ]]; then
-      local _sent_state _sent_exit
-      _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-      _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-      rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
-      [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
-      if dispatch_record_read_state "$work_dir" "$run_id"; then
-        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
-          "${_sent_state:-$DISPATCH_RECORD_STATE}" "${_sent_exit:-$DISPATCH_RECORD_EXIT}"
-        if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
-          printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
-        fi
-      else
-        printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
-          "${_sent_state:-unknown}" "${_sent_exit:-1}"
-        if [[ "${_sent_exit:-1}" -eq 0 ]]; then
-          printf 'pmctl dispatch wait: WARN: sentinel ok but durable dispatch record not found for %s in %s\n' "$run_id" "$work_dir" >&2
-        fi
+  local _sentinel
+  _sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$run_id" "$_key_nonce")"
+  if detached_launch_wait_for_sentinel "$_sentinel" "$timeout" "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"; then
+    local _sent_state _sent_exit
+    _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+    _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+    rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
+    [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
+    if dispatch_record_read_state "$work_dir" "$run_id"; then
+      printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+        "${_sent_state:-$DISPATCH_RECORD_STATE}" "${_sent_exit:-$DISPATCH_RECORD_EXIT}"
+      if [[ -n "${DISPATCH_RECORD_SUMMARY:-}" ]]; then
+        printf '%s\n' "$DISPATCH_RECORD_SUMMARY"
       fi
-      return "${_sent_exit:-1}"
+    else
+      printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
+        "${_sent_state:-unknown}" "${_sent_exit:-1}"
+      if [[ "${_sent_exit:-1}" -eq 0 ]]; then
+        printf 'pmctl dispatch wait: WARN: sentinel ok but durable dispatch record not found for %s in %s\n' "$run_id" "$work_dir" >&2
+      fi
     fi
-    elapsed=$((SECONDS - start))
-    if (( elapsed >= timeout )); then
-      printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
-      return 124
-    fi
-    sleep "${PM_DISPATCH_WAIT_POLL_INTERVAL:-2}"
-  done
+    return "${_sent_exit:-1}"
+  fi
+  printf 'pmctl dispatch wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$run_id" "$work_dir" >&2
+  return 124
 }
 
 pmctl_dispatch_run() {
