@@ -77,7 +77,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
 | CC-433 | ✅ closed 2026-07-02 | detached lifecycle spike：`docs/spikes/CC-433.md` — 共用 lib 抽取 GREEN（adopt，開 CC-434）；poll→通知機制遷移 AMBER（mkfifo 技術可行但 multi-waiter 資料損毀未解，維持輪詢） | arch/gate | 2026-07-01 | — | P3 | spike |
-| CC-434 | 🔵 active | **[detached lifecycle：抽共用 sentinel lib scripts/lib/detached-launch.sh]** 依 CC-433 spike 結論落地：`dispatch-supervisor.sh`/`gate-supervisor.sh` 與 `pmctl_dispatch_wait`/`pmctl_gate_wait` 改用共用的 nonce 產生/key-dir 加固/sentinel 寫入輪詢函式；`resolve_repo_root` 因 bootstrap 循環依賴保留 inline，加 fixture 測試防兩份 inline 區塊漂移；dispatch 側安全預檢查（native-arg 走私防護/adapter/brief/guard 驗證）零改動。 | arch/gate | 2026-07-02 | — | P2 | — |
+| CC-434 | ✅ closed 2026-07-02 | 抽出 `scripts/lib/detached-launch.sh`（7 共用函式），gate/dispatch supervisor + wait 端改用共用實作；`resolve_repo_root` 保留 inline + drift-guard fixture 測試；dispatch 安全預檢查零改動 | arch/gate | 2026-07-02 | pr:#356 | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 
 ---
@@ -1250,7 +1250,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3（someday）。
 **Cross-link**: [[CC-423]]、[[CC-432]]、[[CC-434]]。
 
-## CC-434 — detached lifecycle：抽共用 sentinel lib scripts/lib/detached-launch.sh 🔵 active
+## CC-434 — detached lifecycle：抽共用 sentinel lib scripts/lib/detached-launch.sh ✅ 2026-07-02
+
+**See**: pr:#356
 
 **Problem**：CC-433 spike（`docs/spikes/CC-433.md`）判定共用 lib 抽取為 GREEN——`dispatch-supervisor.sh`/`gate-supervisor.sh` 在啟動 detached process + 寫 sentinel 這塊今天是逐位元組相同的實作，但各自重寫，維護成本已在 CC-423 實作中顯現。本票落地該建議。
 
