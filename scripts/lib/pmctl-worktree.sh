@@ -5,12 +5,22 @@
 # state-paths.sh:_sw_worktree_project_key) so a linked worktree and its
 # primary checkout resolve to the SAME partition regardless of which one the
 # command is invoked from.
+#
+# Every subcommand resolves reg_dir ONCE, up front, via
+# `sw_project_worktree_dir "$work_dir"` (a pure computation that takes an
+# explicit repo_root -- no cd required). All manifest reads/writes take that
+# resolved reg_dir as an explicit argument instead of re-deriving it via a
+# `cd "$work_dir"` subshell each time. This matters because gc/remove can
+# delete the very directory `$work_dir` points at (a linked worktree
+# removing itself) -- re-deriving reg_dir afterward via cd would fail once
+# that directory is gone, but the already-resolved absolute reg_dir (which
+# lives in the state store, not the repo) keeps working.
 
 pmctl_worktree_usage() {
   printf 'usage: pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--cd <work_dir>]\n' >&2
   printf '       pmctl worktree list   [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl worktree remove <name|branch> [--force] [--cd <work_dir>]\n' >&2
-  printf '       pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--cd <work_dir>]\n' >&2
+  printf '       pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--force] [--cd <work_dir>]\n' >&2
 }
 
 pmctl_worktree_ensure_state_paths() {
@@ -58,10 +68,19 @@ _pmctl_worktree_slugify() {
   printf '%s\n' "$slug"
 }
 
-pmctl_worktree_manifest_path() {
-  local reg_dir
-  reg_dir="$(sw_project_worktree_dir)" || return 1
-  printf '%s/manifest.jsonl\n' "$reg_dir"
+# _pmctl_worktree_main_root <work_dir>
+# Resolve the PRIMARY (non-worktree) checkout root for work_dir, mirroring
+# state-paths.sh:_sw_main_repo_root. Used to evaluate branch --merged status
+# against a STABLE reference instead of the caller's own possibly-linked-
+# worktree HEAD (see pmctl_worktree_gc for why that distinction matters).
+_pmctl_worktree_main_root() {
+  local work_dir="$1" common_dir
+  common_dir="$(git -C "$work_dir" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  if [[ "$common_dir" == /* ]]; then
+    dirname "$common_dir"
+  else
+    git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null
+  fi
 }
 
 _pmctl_worktree_manifest_append_inner() {
@@ -70,9 +89,9 @@ _pmctl_worktree_manifest_append_inner() {
   printf '%s\n' "$compact" >> "$manifest"
 }
 
+# pmctl_worktree_manifest_append <reg_dir> <json_line>
 pmctl_worktree_manifest_append() {
-  local json_line="$1" reg_dir manifest rc=0
-  reg_dir="$(sw_project_worktree_dir)" || return 1
+  local reg_dir="$1" json_line="$2" manifest rc=0
   mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl worktree: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
   chmod 0700 "$reg_dir" 2>/dev/null || true
   manifest="$reg_dir/manifest.jsonl"
@@ -88,10 +107,11 @@ _pmctl_worktree_manifest_rewrite_inner() {
   mv -f "$tmp_content" "$manifest"
 }
 
+# pmctl_worktree_manifest_rewrite <reg_dir> <new_content>
 pmctl_worktree_manifest_rewrite() {
-  local new_content="$1" reg_dir manifest tmp rc=0
-  reg_dir="$(sw_project_worktree_dir)" || return 1
+  local reg_dir="$1" new_content="$2" manifest tmp rc=0
   manifest="$reg_dir/manifest.jsonl"
+  mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl worktree: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
   tmp="$(mktemp "$reg_dir/.manifest.XXXXXX")" || return 1
   printf '%s' "$new_content" > "$tmp"
   serialize_with_lock "$reg_dir/manifest" _pmctl_worktree_manifest_rewrite_inner "$manifest" "$tmp" || rc=$?
@@ -99,9 +119,9 @@ pmctl_worktree_manifest_rewrite() {
   return "$rc"
 }
 
+# pmctl_worktree_manifest_read <reg_dir>
 pmctl_worktree_manifest_read() {
-  local manifest
-  manifest="$(pmctl_worktree_manifest_path)" || return 1
+  local reg_dir="$1" manifest="$1/manifest.jsonl"
   [[ -f "$manifest" ]] && cat "$manifest"
   return 0
 }
@@ -152,7 +172,7 @@ pmctl_worktree_create() {
   slug="$(_pmctl_worktree_slugify "${name:-$branch}")" || return 1
 
   local reg_dir wt_path
-  reg_dir="$(cd "$work_dir" 2>/dev/null && sw_project_worktree_dir)" || {
+  reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
     printf 'pmctl worktree create: cannot resolve worktree registry dir from %s\n' "$work_dir" >&2
     return 1
   }
@@ -162,7 +182,7 @@ pmctl_worktree_create() {
     printf 'pmctl worktree create: a worktree already exists at %s (slug %s in use)\n' "$wt_path" "$slug" >&2
     return 1
   fi
-  if (cd "$work_dir" && git worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path\$"); then
+  if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path\$"; then
     printf 'pmctl worktree create: git already tracks a worktree at %s\n' "$wt_path" >&2
     return 1
   fi
@@ -172,13 +192,13 @@ pmctl_worktree_create() {
   local git_args=(worktree add)
   if [[ -n "$base" ]]; then
     git_args+=(-b "$branch" "$wt_path" "$base")
-  elif (cd "$work_dir" && git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null); then
+  elif git -C "$work_dir" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
     git_args+=("$wt_path" "$branch")
   else
     git_args+=(-b "$branch" "$wt_path")
   fi
 
-  if ! (cd "$work_dir" && git "${git_args[@]}"); then
+  if ! git -C "$work_dir" "${git_args[@]}"; then
     printf 'pmctl worktree create: git worktree add failed\n' >&2
     return 1
   fi
@@ -190,7 +210,7 @@ pmctl_worktree_create() {
     "$(jq -Rn --arg v "$branch" '$v')" \
     "$(jq -Rn --arg v "$wt_path" '$v')" \
     "$(jq -Rn --arg v "$created_ts" '$v')")"
-  (cd "$work_dir" && pmctl_worktree_manifest_append "$json_line") || {
+  pmctl_worktree_manifest_append "$reg_dir" "$json_line" || {
     printf 'pmctl worktree create: worktree created but manifest write failed -- run '\''pmctl worktree gc'\'' to reconcile\n' >&2
   }
   printf '%s\n' "$wt_path"
@@ -214,8 +234,9 @@ pmctl_worktree_list() {
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
 
-  local manifest_content
-  manifest_content="$(cd "$work_dir" 2>/dev/null && pmctl_worktree_manifest_read)" || true
+  local reg_dir manifest_content
+  reg_dir="$(sw_project_worktree_dir "$work_dir")" || true
+  manifest_content="$(pmctl_worktree_manifest_read "$reg_dir")"
 
   if [[ "$json_out" -eq 1 ]]; then
     if [[ -z "$manifest_content" ]]; then
@@ -264,8 +285,12 @@ pmctl_worktree_remove() {
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
 
-  local manifest_content match_line match_path
-  manifest_content="$(cd "$work_dir" 2>/dev/null && pmctl_worktree_manifest_read)" || true
+  local reg_dir manifest_content match_line match_path
+  reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
+    printf 'pmctl worktree remove: cannot resolve worktree registry dir from %s\n' "$work_dir" >&2
+    return 1
+  }
+  manifest_content="$(pmctl_worktree_manifest_read "$reg_dir")"
   match_line="$(printf '%s\n' "$manifest_content" | jq -c --arg t "$target" 'select(.slug == $t or .branch == $t)' | head -1)"
   if [[ -z "$match_line" ]]; then
     printf 'pmctl worktree remove: no registered worktree matches %s\n' "$target" >&2
@@ -277,23 +302,23 @@ pmctl_worktree_remove() {
   [[ "$force" -eq 1 ]] && git_rm_args+=(--force)
   git_rm_args+=("$match_path")
   if [[ -d "$match_path" ]]; then
-    if ! (cd "$work_dir" && git "${git_rm_args[@]}"); then
+    if ! git -C "$work_dir" "${git_rm_args[@]}"; then
       printf 'pmctl worktree remove: git worktree remove failed for %s (dirty? pass --force to override)\n' "$match_path" >&2
       return 1
     fi
   fi
-  (cd "$work_dir" && git worktree prune) 2>/dev/null || true
+  git -C "$work_dir" worktree prune 2>/dev/null || true
 
   local remaining
   remaining="$(printf '%s\n' "$manifest_content" | jq -c --arg t "$target" 'select(.slug != $t and .branch != $t)')"
-  (cd "$work_dir" && pmctl_worktree_manifest_rewrite "$remaining") || {
+  pmctl_worktree_manifest_rewrite "$reg_dir" "$remaining" || {
     printf 'pmctl worktree remove: worktree removed but manifest cleanup failed -- run '\''pmctl worktree gc'\'' to reconcile\n' >&2
   }
   printf 'removed %s (%s)\n' "$target" "$match_path"
 }
 
 pmctl_worktree_gc() {
-  local repo_root="${1:-}" work_dir dry_run=0 merged_only=0 max_age_days=0 args=()
+  local repo_root="${1:-}" work_dir dry_run=0 merged_only=0 max_age_days=0 force=0 args=()
   shift || true
   work_dir="${1:-$repo_root}"
   shift || true
@@ -303,6 +328,7 @@ pmctl_worktree_gc() {
     case "${args[$i]}" in
       --dry-run) dry_run=1; i=$((i+1)) ;;
       --merged) merged_only=1; i=$((i+1)) ;;
+      --force) force=1; i=$((i+1)) ;;
       --max-age-days)
         max_age_days="${args[$((i+1))]:-0}"
         if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
@@ -320,16 +346,25 @@ pmctl_worktree_gc() {
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
 
-  local manifest_content now_epoch max_age_seconds
-  manifest_content="$(cd "$work_dir" 2>/dev/null && pmctl_worktree_manifest_read)" || true
+  local reg_dir manifest_content now_epoch max_age_seconds main_root
+  reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
+    printf 'pmctl worktree gc: cannot resolve worktree registry dir from %s\n' "$work_dir" >&2
+    return 1
+  }
+  manifest_content="$(pmctl_worktree_manifest_read "$reg_dir")"
   [[ -n "$manifest_content" ]] || { printf 'gc: no registered worktrees\n'; return 0; }
   now_epoch="$(date +%s 2>/dev/null || echo 0)"
   max_age_seconds=$(( max_age_days * 86400 ))
+  # --merged must be evaluated against the PRIMARY checkout's HEAD, not
+  # work_dir's own HEAD: a branch is trivially "merged into itself", so if
+  # work_dir is itself a linked worktree, `git branch --merged` run there
+  # would flag the worktree's own checked-out branch as removable.
+  main_root="$(_pmctl_worktree_main_root "$work_dir")" || main_root="$work_dir"
 
-  local kept_lines="" removed_count=0
+  local kept_lines="" removed_count=0 skipped_dirty=0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    local slug branch path created_ts age_seconds should_remove=0 reason=""
+    local slug branch path created_ts age_seconds should_remove=0 reason="" destructive=0
     slug="$(jq -r '.slug' <<<"$line")"
     branch="$(jq -r '.branch' <<<"$line")"
     path="$(jq -r '.path' <<<"$line")"
@@ -337,38 +372,55 @@ pmctl_worktree_gc() {
 
     if [[ ! -d "$path" ]]; then
       should_remove=1; reason="path missing (orphaned manifest entry)"
-    elif ! (cd "$work_dir" && git worktree list --porcelain 2>/dev/null | grep -q "^worktree $path\$"); then
+    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $path\$"; then
       should_remove=1; reason="git no longer tracks this worktree"
-    elif [[ "$merged_only" -eq 1 ]] && (cd "$work_dir" && git branch --merged 2>/dev/null | grep -qE "^[*+ ]+$branch\$"); then
-      should_remove=1; reason="branch merged"
+    elif [[ "$merged_only" -eq 1 ]] && git -C "$main_root" branch --merged 2>/dev/null | grep -qE "^[*+ ]+$branch\$"; then
+      should_remove=1; destructive=1; reason="branch merged"
     elif [[ "$max_age_days" -gt 0 ]]; then
       local created_epoch
       created_epoch="$(date -d "$created_ts" +%s 2>/dev/null || date -jf '%Y-%m-%dT%H:%M:%S' "${created_ts%%[+-]*}" +%s 2>/dev/null || echo "$now_epoch")"
       age_seconds=$(( now_epoch - created_epoch ))
       if [[ "$age_seconds" -ge "$max_age_seconds" ]]; then
-        should_remove=1; reason="older than $max_age_days day(s)"
+        should_remove=1; destructive=1; reason="older than $max_age_days day(s)"
       fi
     fi
 
     if [[ "$should_remove" -eq 1 ]]; then
-      removed_count=$((removed_count+1))
       if [[ "$dry_run" -eq 1 ]]; then
+        removed_count=$((removed_count+1))
         printf 'would remove %s (%s): %s\n' "$slug" "$path" "$reason"
-      else
-        printf 'removing %s (%s): %s\n' "$slug" "$path" "$reason"
-        if [[ -d "$path" ]]; then
-          (cd "$work_dir" && git worktree remove --force "$path") 2>/dev/null || true
-        fi
+        continue
       fi
+      if [[ "$destructive" -eq 1 && -d "$path" ]]; then
+        # merged/age-based reasons touch a LIVE worktree that may have
+        # uncommitted changes -- default to git's own dirty-worktree
+        # refusal (same as `remove` without --force) unless the caller
+        # explicitly opted into `gc --force`.
+        local rm_args=(worktree remove)
+        [[ "$force" -eq 1 ]] && rm_args+=(--force)
+        rm_args+=("$path")
+        if ! git -C "$work_dir" "${rm_args[@]}" 2>/dev/null; then
+          printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
+          skipped_dirty=$((skipped_dirty+1))
+          kept_lines="${kept_lines}${line}"$'\n'
+          continue
+        fi
+      elif [[ -d "$path" ]]; then
+        # orphaned / no-longer-tracked reasons: nothing live to lose, safe
+        # to force since git already doesn't consider this a real worktree.
+        git -C "$work_dir" worktree remove --force "$path" 2>/dev/null || true
+      fi
+      removed_count=$((removed_count+1))
+      printf 'removed %s (%s): %s\n' "$slug" "$path" "$reason"
     else
       kept_lines="${kept_lines}${line}"$'\n'
     fi
   done <<<"$manifest_content"
 
-  (cd "$work_dir" && git worktree prune) 2>/dev/null || true
+  git -C "$work_dir" worktree prune 2>/dev/null || true
 
   if [[ "$dry_run" -eq 0 ]]; then
-    (cd "$work_dir" && pmctl_worktree_manifest_rewrite "$kept_lines") || {
+    pmctl_worktree_manifest_rewrite "$reg_dir" "$kept_lines" || {
       printf 'pmctl worktree gc: manifest rewrite failed after removal\n' >&2
       return 1
     }
@@ -377,6 +429,8 @@ pmctl_worktree_gc() {
   if [[ "$dry_run" -eq 1 ]]; then
     printf 'gc: dry-run, would remove %d worktree(s)\n' "$removed_count"
   else
-    printf 'gc: removed %d worktree(s)\n' "$removed_count"
+    printf 'gc: removed %d worktree(s)' "$removed_count"
+    [[ "$skipped_dirty" -gt 0 ]] && printf ', skipped %d dirty worktree(s)' "$skipped_dirty"
+    printf '\n'
   fi
 }

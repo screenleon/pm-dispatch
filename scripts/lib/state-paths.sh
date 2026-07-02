@@ -159,15 +159,23 @@ _sw_worktree_project_key() {
   return 0
 }
 
-# sw_project_worktree_dir
-# Print the absolute worktree-registry directory for the current project's
-# MAIN repo partition (stable whether invoked from the main checkout or from
-# inside a linked worktree pmctl created):
+# sw_project_worktree_dir [repo_root]
+# Print the absolute worktree-registry directory for the given (or ambient
+# cwd) repo's MAIN partition (stable whether invoked from the main checkout
+# or from inside a linked worktree pmctl created):
 #   <store_root>/projects/<main_project_key>/worktrees
 # Pure computation -- does NOT create the directory; pmctl-worktree.sh owns
-# mkdir + manifest writes.
+# mkdir + manifest writes. Accepting an explicit repo_root lets callers
+# resolve the registry dir WITHOUT cd'ing into it first, so the resolution
+# doesn't depend on that directory continuing to exist for the rest of the
+# call (e.g. gc deleting the very worktree it was invoked from via --cd).
 sw_project_worktree_dir() {
-  printf '%s/projects/%s/worktrees\n' "$(_sw_store_root)" "$(_sw_worktree_project_key)"
+  local repo_root="${1:-}"
+  if [[ -n "$repo_root" ]]; then
+    printf '%s/projects/%s/worktrees\n' "$(_sw_store_root)" "$(_SW_REPO_ROOT="$repo_root" _sw_worktree_project_key)"
+  else
+    printf '%s/projects/%s/worktrees\n' "$(_sw_store_root)" "$(_sw_worktree_project_key)"
+  fi
 }
 
 # sw_project_run_dir <run_id>

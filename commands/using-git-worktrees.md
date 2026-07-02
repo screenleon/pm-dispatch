@@ -33,14 +33,14 @@ pmctl worktree remove feat/my-feature
 pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--cd <work_dir>]
 pmctl worktree list   [--cd <work_dir>] [--json]
 pmctl worktree remove <name|branch> [--force] [--cd <work_dir>]
-pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--cd <work_dir>]
+pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--force] [--cd <work_dir>]
 ```
 
 - `create <branch>` — attaches an existing local branch, or creates a new one off the current `HEAD` if it doesn't exist yet. Pass `--from <base-branch>` to create the new branch off a specific base instead of `HEAD`. Prints the new worktree's absolute path on success — capture it if you need to `cd` into it.
 - `create --name <slug>` — override the manifest slug (defaults to the branch name with `/` replaced by `-`). Two worktrees cannot share a slug; `create` fails rather than silently overwriting an existing one.
 - `list` — table of registered worktrees (`SLUG`, `BRANCH`, `PATH`). Add `--json` for a machine-readable array (each entry: `slug`, `branch`, `path`, `created_ts`).
 - `remove <name|branch>` — matches by slug or by branch name. Fails if the worktree has uncommitted changes; pass `--force` to discard them and remove anyway. **`--force` is destructive** — it discards uncommitted work in that worktree with no recovery path, so confirm you don't need those changes before passing it.
-- `gc` — reconciles the manifest against actual git/filesystem state: drops entries whose directory was removed manually (e.g. `rm -rf`) or that git no longer tracks. Add `--merged` to also remove worktrees whose branch is fully merged, or `--max-age-days N` to remove entries older than N days. Always run with `--dry-run` first to see what would be removed before running for real.
+- `gc` — reconciles the manifest against actual git/filesystem state: drops entries whose directory was removed manually (e.g. `rm -rf`) or that git no longer tracks (these are never destructive — the worktree is already gone or already untracked, so `gc` only cleans up the leftover manifest entry). Add `--merged` to also remove worktrees whose branch is fully merged, or `--max-age-days N` to remove entries older than N days — by default `gc` will *not* remove a merged/aged worktree that still has uncommitted changes (same dirty-worktree protection as plain `remove` without `--force`); it prints a `skipping ... has uncommitted changes` line and keeps the manifest entry instead. Pass `gc --force` to override that protection and force-remove merged/aged worktrees even when dirty — treat it with the same caution as `remove --force`. `--merged` is evaluated against the primary checkout's branch, not whichever worktree you happen to run `gc` from, so running `gc --merged` from inside a linked worktree never mistakes "merged into itself" for "safe to delete". Always run with `--dry-run` first to see what would be removed before running for real.
 
 All four subcommands accept `--cd <work_dir>` to target a repo other than the current directory (same convention as `pmctl artifacts`/`pmctl dispatch`).
 
@@ -53,7 +53,7 @@ All four subcommands accept `--cd <work_dir>` to target a repo other than the cu
 
 ## Cleanup and orphan recovery
 
-If a worktree directory is deleted directly (`rm -rf` instead of `pmctl worktree remove`), git and the manifest both still reference it. Run `pmctl worktree gc` — it detects the missing path, removes the stale manifest entry, and runs `git worktree prune` so `git worktree list` stays in sync too. `gc` never force-deletes a directory that still exists and looks live; it only prunes entries that are already gone, already merged (`--merged`), or past the age threshold (`--max-age-days`).
+If a worktree directory is deleted directly (`rm -rf` instead of `pmctl worktree remove`), git and the manifest both still reference it. Run `pmctl worktree gc` — it detects the missing path, removes the stale manifest entry, and runs `git worktree prune` so `git worktree list` stays in sync too. By default `gc` never discards a directory that still exists and has uncommitted changes: for `--merged`/`--max-age-days` matches it attempts a plain (non-forced) removal and skips + reports any that turn out dirty, exactly like `remove` without `--force`. Only entries that are already gone or already untracked by git are removed unconditionally, since there is nothing live left to lose. Pass `gc --force` if you want merged/aged dirty worktrees discarded anyway.
 
 ## Out of scope
 

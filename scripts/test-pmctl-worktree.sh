@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Regression tests for `pmctl worktree create/list/remove/gc`.
+# shellcheck disable=SC2154  # tmp_root supplied by sourced test-harness
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,6 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
 
 # shellcheck source=scripts/lib/test-harness.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
@@ -27,6 +29,8 @@ wt_list_json() {
 }
 
 case_create_requires_branch() {
+  # behavior: pmctl worktree create with no <branch> arg exits 2 and prints usage
+  # Steps: run create with only --cd; assert exit 2, stderr has "<branch> is required" and "usage:"
   local name="worktree create: missing <branch> exits 2 with usage"
   should_run "$name" || return 0
   local store work out err status=0
@@ -43,6 +47,8 @@ case_create_requires_branch() {
 }
 
 case_create_new_branch() {
+  # behavior: create with a branch name that doesn't exist yet creates the branch + worktree + manifest entry
+  # Steps: run create feat/x; assert exit 0, printed path is a directory, manifest has branch feat/x
   local name="worktree create: new branch creates worktree + manifest entry"
   should_run "$name" || return 0
   local store work out err status=0 wt_path
@@ -61,6 +67,8 @@ case_create_new_branch() {
 }
 
 case_create_from_base() {
+  # behavior: create --from <base> creates the new branch off the given base commit, not HEAD
+  # Steps: create a base-branch pointer; create feat/from-base --from base-branch; assert its HEAD sha == base sha
   local name="worktree create: --from creates a new branch off the given base"
   should_run "$name" || return 0
   local store work out err status=0 wt_path base_sha branch_sha
@@ -81,6 +89,8 @@ case_create_from_base() {
 }
 
 case_create_existing_branch_no_new_ref() {
+  # behavior: create on a branch that already exists attaches to it instead of erroring or creating a duplicate ref
+  # Steps: create a local branch; run create <that branch>; assert exit 0 and no "already exists" error
   local name="worktree create: existing branch attaches without creating a duplicate ref"
   should_run "$name" || return 0
   local store work out err status=0
@@ -98,6 +108,8 @@ case_create_existing_branch_no_new_ref() {
 }
 
 case_create_name_override_slug() {
+  # behavior: create --name <slug> overrides the default branch-derived manifest slug
+  # Steps: run create feat/named --name custom-slug; assert the manifest's slug field is custom-slug
   local name="worktree create: --name overrides the manifest slug"
   should_run "$name" || return 0
   local store work out err status=0
@@ -114,6 +126,8 @@ case_create_name_override_slug() {
 }
 
 case_create_duplicate_slug_rejected() {
+  # behavior: create with a slug that is already registered fails and does not add a second manifest entry
+  # Steps: create feat/dup twice; assert first succeeds, second fails with "already exists", manifest has exactly 1 entry
   local name="worktree create: duplicate slug is rejected, no duplicate manifest entry"
   should_run "$name" || return 0
   local store work err1 err2 status1=0 status2=0
@@ -132,6 +146,8 @@ case_create_duplicate_slug_rejected() {
 }
 
 case_create_unsafe_slug_rejected() {
+  # behavior: a branch name that slugifies to an unsafe segment (e.g. "..") is rejected before touching git
+  # Steps: run create '..'; assert non-zero exit and stderr mentions "safe slug"
   local name="worktree create: a branch slug of '..' is rejected before touching git"
   should_run "$name" || return 0
   local store work err status=0
@@ -148,6 +164,8 @@ case_create_unsafe_slug_rejected() {
 }
 
 case_create_help() {
+  # behavior: create -h prints usage and exits 0 without creating anything
+  # Steps: run create -h; assert exit 0 and stderr contains "usage:"
   local name="worktree create: -h prints usage and exits 0"
   should_run "$name" || return 0
   local store work out status=0
@@ -164,6 +182,8 @@ case_create_help() {
 }
 
 case_list_empty() {
+  # behavior: list on an empty registry prints a human-readable "no worktrees" message
+  # Steps: run list on a fresh repo with no registered worktrees; assert output contains "No registered worktrees."
   local name="worktree list: empty registry prints no-worktrees message"
   should_run "$name" || return 0
   local store work out status=0
@@ -180,6 +200,8 @@ case_list_empty() {
 }
 
 case_list_json_valid() {
+  # behavior: list --json prints a valid JSON array with one element per registered worktree
+  # Steps: create one worktree; run list --json; assert output type is array with length 1
   local name="worktree list: --json prints a valid JSON array"
   should_run "$name" || return 0
   local store work status=0
@@ -196,6 +218,8 @@ case_list_json_valid() {
 }
 
 case_list_text_table() {
+  # behavior: list (no --json) prints a human-readable SLUG/BRANCH/PATH table
+  # Steps: create one worktree; run list; assert header row has SLUG/BRANCH/PATH and a data row has the branch
   local name="worktree list: text mode prints a SLUG/BRANCH/PATH table"
   should_run "$name" || return 0
   local store work out status=0
@@ -213,6 +237,10 @@ case_list_text_table() {
 }
 
 case_list_cross_worktree_identity() {
+  # behavior: list invoked with --cd pointing INSIDE a linked worktree resolves the same manifest partition
+  #           as the primary checkout (the identity seam this whole feature depends on)
+  # Steps: create a worktree from the primary checkout; run list --json --cd <that worktree's own path>;
+  #        assert it sees the same entry it was just registered under
   local name="worktree list: invoked from inside a linked worktree sees the same manifest"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -230,6 +258,8 @@ case_list_cross_worktree_identity() {
 }
 
 case_remove_requires_target() {
+  # behavior: remove with no <name|branch> arg exits 2 and prints usage
+  # Steps: run remove with only --cd; assert exit 2 and stderr has "<name|branch> is required"
   local name="worktree remove: missing <name|branch> exits 2 with usage"
   should_run "$name" || return 0
   local store work err status=0
@@ -246,6 +276,8 @@ case_remove_requires_target() {
 }
 
 case_remove_unknown_target() {
+  # behavior: remove with a target that matches no manifest entry exits non-zero with a clear error
+  # Steps: run remove nope on an empty registry; assert non-zero exit and stderr mentions no match found
   local name="worktree remove: unknown target exits 1"
   should_run "$name" || return 0
   local store work err status=0
@@ -262,6 +294,8 @@ case_remove_unknown_target() {
 }
 
 case_remove_success() {
+  # behavior: remove on a clean worktree deletes the git worktree directory and its manifest entry
+  # Steps: create feat/rm; remove feat/rm; assert exit 0, directory gone, manifest empty
   local name="worktree remove: removes git worktree and manifest entry"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -278,6 +312,9 @@ case_remove_success() {
 }
 
 case_remove_dirty_requires_force() {
+  # behavior: remove on a worktree with uncommitted changes fails without --force and succeeds with it
+  # Steps: create feat/dirty, add an untracked file; remove without --force (assert fails, dir survives);
+  #        remove --force (assert succeeds, dir gone)
   local name="worktree remove: dirty worktree fails without --force, succeeds with it"
   should_run "$name" || return 0
   local store work wt_path status1=0 status2=0 existed_after_first=0 existed_after_second=0
@@ -298,6 +335,8 @@ case_remove_dirty_requires_force() {
 }
 
 case_gc_no_worktrees() {
+  # behavior: gc on an empty registry is a no-op that reports so and exits 0
+  # Steps: run gc on a repo with no registered worktrees; assert exit 0 and output mentions no registered worktrees
   local name="worktree gc: empty registry is a no-op"
   should_run "$name" || return 0
   local store work out status=0
@@ -314,6 +353,9 @@ case_gc_no_worktrees() {
 }
 
 case_gc_dry_run_no_mutation() {
+  # behavior: gc --dry-run reports what it would remove but leaves the manifest untouched
+  # Steps: create a worktree, delete its directory manually (orphan it); run gc --dry-run;
+  #        assert output says "would remove" and the manifest still has the entry
   local name="worktree gc: --dry-run reports but does not mutate the manifest"
   should_run "$name" || return 0
   local store work wt_path out status=0
@@ -333,6 +375,8 @@ case_gc_dry_run_no_mutation() {
 }
 
 case_gc_removes_orphaned_manifest_entry() {
+  # behavior: gc removes a manifest entry whose directory was deleted outside of pmctl (e.g. rm -rf)
+  # Steps: create a worktree, delete its directory manually; run gc; assert manifest is empty afterward
   local name="worktree gc: removes a manifest entry whose path was manually deleted"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -350,6 +394,9 @@ case_gc_removes_orphaned_manifest_entry() {
 }
 
 case_gc_merged_flag() {
+  # behavior: gc --merged removes a clean worktree whose branch is fully merged into the primary checkout's HEAD
+  # Steps: create feat/merged with no new commits (trivially merged); run gc --merged from the primary checkout;
+  #        assert manifest is empty afterward
   local name="worktree gc: --merged removes worktrees whose branch is fully merged"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -366,7 +413,64 @@ case_gc_merged_flag() {
   fi
 }
 
+case_gc_merged_does_not_self_remove_when_invoked_from_inside() {
+  # behavior: gc --merged evaluates "merged" against the PRIMARY checkout's HEAD, not the invoking worktree's
+  #           own HEAD -- so it must not treat an unmerged branch as removable just because gc was run
+  #           from inside that very worktree (a branch is trivially "merged into itself")
+  # Steps: create feat/self, commit something on it that master does NOT have (genuinely unmerged);
+  #        run gc --merged --cd <the worktree itself>; assert the worktree and its manifest entry survive
+  local name="worktree gc: --merged run from inside the linked worktree does not remove itself"
+  should_run "$name" || return 0
+  local store work wt_path status=0
+  store="$tmp_root/state-gc-self"
+  work="$tmp_root/work-gc-self"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/self --cd "$work" 2>/dev/null | tail -1)"
+  git -C "$wt_path" config user.email t@e.com
+  git -C "$wt_path" config user.name t
+  printf 'unmerged\n' > "$wt_path/unmerged.txt"
+  git -C "$wt_path" add unmerged.txt
+  git -C "$wt_path" commit -q -m unmerged
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$wt_path" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && -d "$wt_path" && "$(wt_list_json "$store" "$wt_path" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status wt_path_exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
+case_gc_merged_skips_dirty_without_force() {
+  # behavior: gc --merged must not silently discard uncommitted changes -- a merged-but-dirty worktree is
+  #           skipped (kept in the manifest, reported) unless the caller explicitly passes gc --force
+  # Steps: create feat/dirty-merged (trivially merged), add an untracked file; run gc --merged (no --force):
+  #        assert it is skipped with an "uncommitted changes" message and the directory/manifest entry survive;
+  #        run gc --merged --force: assert it is now removed
+  local name="worktree gc: --merged skips a dirty worktree without --force, removes it with --force"
+  should_run "$name" || return 0
+  local store work wt_path out status1=0 status2=0 existed_after_skip=0 existed_after_force=0
+  store="$tmp_root/state-gc-dirty-merged"
+  work="$tmp_root/work-gc-dirty-merged"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/dirty-merged --cd "$work" 2>/dev/null | tail -1)"
+  printf 'dirty\n' > "$wt_path/dirty.txt"
+  out="$tmp_root/gcd1.out"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$work" > "$out" 2>&1 || status1=$?
+  [[ -d "$wt_path" ]] && existed_after_skip=1
+  local kept_after_skip
+  kept_after_skip="$(wt_list_json "$store" "$work" | jq 'length')"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --force --cd "$work" > /dev/null 2>&1 || status2=$?
+  [[ -d "$wt_path" ]] && existed_after_force=1
+  if [[ "$status1" -eq 0 && "$existed_after_skip" -eq 1 && "$kept_after_skip" -eq 1 && "$(<"$out")" == *"uncommitted changes"* \
+        && "$status2" -eq 0 && "$existed_after_force" -eq 0 && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status1=$status1 existed_after_skip=$existed_after_skip kept_after_skip=$kept_after_skip status2=$status2 existed_after_force=$existed_after_force out=$(<"$out")"
+  fi
+}
+
 case_gc_max_age_days_filters() {
+  # behavior: gc --max-age-days N only removes entries older than N days; a freshly created entry is kept
+  # Steps: create feat/fresh; run gc --max-age-days 30 immediately afterward; assert directory and manifest entry survive
   local name="worktree gc: --max-age-days only removes entries older than the threshold"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -383,6 +487,9 @@ case_gc_max_age_days_filters() {
 }
 
 case_gc_prunes_git_state() {
+  # behavior: gc also runs `git worktree prune` so git's own bookkeeping stays in sync with the manifest
+  # Steps: create a worktree, delete its directory manually, run gc; assert `git worktree list` shows only
+  #        the primary checkout afterward (no stray registered-but-gone entries)
   local name="worktree gc: leaves git's own worktree list in sync (no stray entries)"
   should_run "$name" || return 0
   local store work wt_path status=0
@@ -419,6 +526,8 @@ case_gc_no_worktrees
 case_gc_dry_run_no_mutation
 case_gc_removes_orphaned_manifest_entry
 case_gc_merged_flag
+case_gc_merged_does_not_self_remove_when_invoked_from_inside
+case_gc_merged_skips_dirty_without_force
 case_gc_max_age_days_filters
 case_gc_prunes_git_state
 
