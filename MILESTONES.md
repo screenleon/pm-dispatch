@@ -11,7 +11,7 @@
 
 ## v0.8.0 — memory substrate 跨工具可攜 + gate DX（規劃中 2026-07-01）
 
-> 最後排程更新：2026-07-01
+> 最後排程更新：2026-07-02
 
 **主題**：延續 v0.6.0（executor abstraction）與 v0.7.0（retrieval-base：memory 成為 `pmctl context` 可檢索 source）兩版已交付的抽象工作，補上最後兩個 Claude 專屬耦合點——**memory 位置 resolver** 與 **注入機制**（CC-412，headline）；並行做兩張範圍小、風險低、彼此檔案面不重疊的 gate DX 票（CC-276、CC-423）；另起一個 spike-only phase 把 CC-381（host-PM-aware install）從「設計問題陳述」推進到「有具體 Requirement 的實作票」，為下一版鋪路。
 
@@ -45,11 +45,13 @@
 
 > CC-433 排入 Phase 2 作為 CC-423 的後續收斂項，非阻塞本 Phase 其餘票的完成。CC-432 為 CC-423 pr-gate 迭代中發現並記錄的衍生票，同樣併入 Phase 2。CC-425 原評估「需重構 gate result key schema，範圍比 CC-276/423 大一截」暫不排入，2026-07-02 使用者確認排入本 Phase 處理；實作前盤點發現 result key 已在 CC-423 detached lifecycle 重構中改為 gate_id-keyed，範圍縮小為僅需新增 `--head <ref>`，`/pre-impl` 的向下相容顧慮已不適用，見 pr:#355。
 
-### Phase 3 — CC-381 spike-only（P3；design 收斂，非完整實作）
+### Phase 3 — CC-381 spike-only（P3；design 收斂，非完整實作）✅ spike done pr:#359
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-381 | install host-PM-aware — 縮小為 read-only host-profile-detection / doctor 擴充切片：讓 `doctor.sh`/`pmctl doctor` 能回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」不動 installer write path。前置票 CC-372/374/375/380 已全數 done，本 Phase 目標是把 CC-381 從設計陳述推進為有明確 Requirement 的實作票 | 🔵 active |
+| CC-381 | install host-PM-aware — 縮小為 read-only host-profile-detection / doctor 擴充切片：讓 `doctor.sh`/`pmctl doctor` 能回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」不動 installer write path。前置票 CC-372/374/375/380 已全數 done，本 Phase 目標是把 CC-381 從設計陳述推進為有明確 Requirement 的實作票 | ✅ spike done pr:#359 |
+
+> **Phase 3 結果**：2026-07-02 三方獨立分析（主線程/codex read-only 實測/chatgpt 外部視角）收斂於 `docs/spikes/CC-381.md`。最大不確定性（codex hook 機制是否足以承接 write/bash guard）已由 codex 自身唯讀實測解答：`PreToolUse` hook stable 且 fail-closed，足以承接，不必退回 cli-only fallback。CC-381 從設計陳述推進為三張有明確 Requirement 的後續票：**CC-436**（codex PreToolUse payload 驗證 probe，第一刀，唯讀）、**CC-437**（doctor 擴充切片，可與 CC-436 並行）、**CC-438**（host manifest schema v1 draft，依賴 CC-436）。三票排入下一版（v0.9.0 候選，待排程）評估，`install.sh` write path 仍不動。
 
 ### Phase 4 — CC-014 repo 通用 worktree 平行開發工具（P3；低風險並行；與 Phase 1-3 檔案面不重疊）
 
@@ -66,7 +68,7 @@
 - **CC-216 MCP**——2026-06-18 已拍板不排入任何 milestone，維持排除。
 - **CC-340 embeddings**——維持排除，同既有立場，待 FTS/LIKE ranking 證明不足再 resume。
 - **CC-377 agy adapter**——等待 agy headless CLI 版本更新，不排入。
-- **CC-381 完整實作**（installer write path、多 host 設定面改寫）——Phase 3 只做 spike/doctor 切片，完整改寫留給 spike 收斂後的下一版評估。
+- **CC-381 完整實作**（installer write path、多 host 設定面改寫）——Phase 3 spike 已收斂為 CC-436/437/438 三張後續票（見上方 Phase 3 結果），installer write path 仍留給這三票驗證完成後的下一版評估。
 
 ---
 
