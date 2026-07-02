@@ -40,17 +40,31 @@ pmctl_worktree_ensure_state_paths() {
 
 pmctl_worktree_ensure_writer() {
   local repo_root="${1:-}"
-  if [[ "$(type -t _sw_compact_json_line 2>/dev/null)" != function || "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
+  if [[ "$(type -t _sw_compact_json_line 2>/dev/null)" != function || "$(type -t serialize_with_lock 2>/dev/null)" != function \
+        || "$(type -t _sw_ensure_store_root_safe 2>/dev/null)" != function ]]; then
     local _sw_lib="${repo_root:-}/scripts/lib/state-writer.sh"
     if [[ -r "$_sw_lib" ]]; then
       # shellcheck disable=SC1090,SC1091  # dynamic repo-root path.
       . "$_sw_lib" 2>/dev/null || true
     fi
   fi
-  if [[ "$(type -t _sw_compact_json_line 2>/dev/null)" != function || "$(type -t serialize_with_lock 2>/dev/null)" != function ]]; then
+  if [[ "$(type -t _sw_compact_json_line 2>/dev/null)" != function || "$(type -t serialize_with_lock 2>/dev/null)" != function \
+        || "$(type -t _sw_ensure_store_root_safe 2>/dev/null)" != function ]]; then
     printf 'pmctl worktree: state-writer.sh unavailable; cannot write worktree manifest\n' >&2
     return 2
   fi
+}
+
+# pmctl_worktree_ensure_root_safe
+# Route every worktree-registry write (manifest mkdir/mktemp, and the git
+# checkout create/remove/gc perform under it) through the SAME unsafe-root
+# check ("state_store_init" / "_sw_ensure_store_root_safe") that guards every
+# other state-store writer -- a symlinked or non-owned PM_DISPATCH_STATE_ROOT
+# leaf must be rejected here too, not just for runs/events/decisions. Must be
+# called (after pmctl_worktree_ensure_writer) before ANY mkdir/mktemp/git-add
+# under a resolved reg_dir.
+pmctl_worktree_ensure_root_safe() {
+  _sw_ensure_store_root_safe "$(_sw_store_root)"
 }
 
 # _pmctl_worktree_slugify <branch>
@@ -81,6 +95,22 @@ _pmctl_worktree_main_root() {
   else
     git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null
   fi
+}
+
+# _pmctl_worktree_branch_is_merged <main_root> <branch>
+# Exact-match membership test against `git branch --merged` output. `git
+# branch [--merged]` always prints a fixed 2-character marker column
+# ("* ", "+ ", "  ") followed by the ref name, so stripping exactly 2
+# characters and comparing for equality is both correct and immune to
+# branch names containing regex metacharacters (a prior version matched
+# via `grep -E`, so a branch named e.g. "a.b" could false-positive match
+# an unrelated merged branch "axb").
+_pmctl_worktree_branch_is_merged() {
+  local main_root="$1" branch="$2" line
+  while IFS= read -r line; do
+    [[ "${line:2}" == "$branch" ]] && return 0
+  done < <(git -C "$main_root" branch --merged 2>/dev/null)
+  return 1
 }
 
 _pmctl_worktree_manifest_append_inner() {
@@ -167,6 +197,7 @@ pmctl_worktree_create() {
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
+  pmctl_worktree_ensure_root_safe || return 1
 
   local slug
   slug="$(_pmctl_worktree_slugify "${name:-$branch}")" || return 1
@@ -184,6 +215,15 @@ pmctl_worktree_create() {
   fi
   if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path\$"; then
     printf 'pmctl worktree create: git already tracks a worktree at %s\n' "$wt_path" >&2
+    return 1
+  fi
+  # A manifest entry can outlive its checkout (manual `rm -rf` + `git
+  # worktree prune` without going through `pmctl worktree remove`/`gc`
+  # first) -- the two checks above only see live filesystem/git state, so
+  # they would miss that stale registration and let this same slug get
+  # appended a second time. Check the manifest itself too.
+  if [[ -n "$(pmctl_worktree_manifest_read "$reg_dir" | jq -c --arg s "$slug" 'select(.slug == $s)' | head -1)" ]]; then
+    printf 'pmctl worktree create: slug %s is already registered in the manifest (stale entry? run '\''pmctl worktree gc'\'' first)\n' "$slug" >&2
     return 1
   fi
 
@@ -290,6 +330,7 @@ pmctl_worktree_remove() {
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
+  pmctl_worktree_ensure_root_safe || return 1
 
   local reg_dir manifest_content match_line match_path
   reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
@@ -351,6 +392,7 @@ pmctl_worktree_gc() {
   [[ -n "$work_dir" ]] || work_dir="$repo_root"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
+  pmctl_worktree_ensure_root_safe || return 1
 
   local reg_dir manifest_content now_epoch max_age_seconds main_root
   reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
@@ -380,7 +422,7 @@ pmctl_worktree_gc() {
       should_remove=1; reason="path missing (orphaned manifest entry)"
     elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $path\$"; then
       should_remove=1; reason="git no longer tracks this worktree"
-    elif [[ "$merged_only" -eq 1 ]] && git -C "$main_root" branch --merged 2>/dev/null | grep -qE "^[*+ ]+$branch\$"; then
+    elif [[ "$merged_only" -eq 1 ]] && _pmctl_worktree_branch_is_merged "$main_root" "$branch"; then
       should_remove=1; destructive=1; reason="branch merged"
     elif [[ "$max_age_days" -gt 0 ]]; then
       local created_epoch

@@ -156,6 +156,55 @@ case_create_duplicate_slug_rejected() {
   fi
 }
 
+case_create_stale_manifest_duplicate_slug_rejected() {
+  # behavior: create rejects a slug that is still registered in the manifest even when the checkout was
+  #           deleted and pruned OUTSIDE pmctl (rm -rf + git worktree prune, bypassing `remove`/`gc`) --
+  #           the live-path and git-worktree-list checks alone would miss this and append a duplicate row
+  # Steps: create feat/stale, then rm -rf its directory and `git worktree prune` directly (not via pmctl);
+  #        run create feat/stale again; assert it is rejected and the manifest still has exactly 1 entry
+  local name="worktree create: stale manifest entry blocks recreating the same slug"
+  should_run "$name" || return 0
+  local store work wt_path err status=0
+  store="$tmp_root/state-create-stale"
+  work="$tmp_root/work-create-stale"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/stale --cd "$work" 2>/dev/null | tail -1)"
+  rm -rf "$wt_path"
+  git -C "$work" worktree prune
+  err="$tmp_root/c9.err"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/stale --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 0 && "$(<"$err")" == *"already registered"* \
+        && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err") count=$(wt_list_json "$store" "$work" | jq 'length')"
+  fi
+}
+
+case_create_rejects_unsafe_symlinked_state_root() {
+  # behavior: worktree writes (manifest mkdir, checkout creation) are rejected when PM_DISPATCH_STATE_ROOT
+  #           itself is a symlink, mirroring the same unsafe-root policy other state-store writers enforce
+  # Steps: point PM_DISPATCH_STATE_ROOT at a symlink to a real directory; run create; assert nonzero exit
+  #        and stderr mentions the unsafe-root rejection, and nothing was created under the symlink target
+  local name="worktree create: rejects a symlinked PM_DISPATCH_STATE_ROOT"
+  should_run "$name" || return 0
+  local work real_target link err status=0
+  work="$tmp_root/work-create-unsafe-root"
+  make_work_repo "$work"
+  real_target="$tmp_root/unsafe-root-real"
+  mkdir -p "$real_target"
+  link="$tmp_root/unsafe-root-link"
+  ln -s "$real_target" "$link"
+  err="$tmp_root/c10.err"
+  PM_DISPATCH_STATE_ROOT="$link" "$PMCTL" worktree create feat/unsafe-root --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 0 && "$(<"$err")" == *"unsafe state root rejected"* \
+        && -z "$(find "$real_target" -mindepth 1 2>/dev/null)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
 case_create_unsafe_slug_rejected() {
   # behavior: a branch name that slugifies to an unsafe segment (e.g. "..") is rejected before touching git
   # Steps: run create '..'; assert non-zero exit and stderr mentions "safe slug"
@@ -479,6 +528,34 @@ case_gc_merged_skips_dirty_without_force() {
   fi
 }
 
+case_gc_merged_exact_match_ignores_regex_metachar_collision() {
+  # behavior: gc --merged uses EXACT branch-name matching, so a branch containing regex metacharacters
+  #           (e.g. a literal dot) must not false-positive match an unrelated already-merged branch whose
+  #           name happens to satisfy the metachar as a wildcard (a prior version used `grep -E` and a
+  #           branch "a.b" would incorrectly match a merged branch literally named "axb")
+  # Steps: create an unrelated already-merged plain branch "axb"; create worktree branch "a.b" and give it
+  #        a commit master does not have (genuinely unmerged); run gc --merged; assert "a.b" survives
+  local name="worktree gc: --merged exact-matches branch names, ignoring regex-metachar collisions"
+  should_run "$name" || return 0
+  local store work wt_path status=0
+  store="$tmp_root/state-gc-regex"
+  work="$tmp_root/work-gc-regex"
+  make_work_repo "$work"
+  git -C "$work" branch axb
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create 'a.b' --cd "$work" 2>/dev/null | tail -1)"
+  git -C "$wt_path" config user.email t@e.com
+  git -C "$wt_path" config user.name t
+  printf 'unmerged\n' > "$wt_path/unmerged.txt"
+  git -C "$wt_path" add unmerged.txt
+  git -C "$wt_path" commit -q -m unmerged
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status wt_path_exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
 case_gc_max_age_days_filters() {
   # behavior: gc --max-age-days N only removes entries older than N days; a freshly created entry is kept
   # Steps: create feat/fresh; run gc --max-age-days 30 immediately afterward; assert directory and manifest entry survive
@@ -566,6 +643,8 @@ case_create_from_base
 case_create_existing_branch_no_new_ref
 case_create_name_override_slug
 case_create_duplicate_slug_rejected
+case_create_stale_manifest_duplicate_slug_rejected
+case_create_rejects_unsafe_symlinked_state_root
 case_create_unsafe_slug_rejected
 case_create_help
 case_list_empty
@@ -582,6 +661,7 @@ case_gc_removes_orphaned_manifest_entry
 case_gc_merged_flag
 case_gc_merged_does_not_self_remove_when_invoked_from_inside
 case_gc_merged_skips_dirty_without_force
+case_gc_merged_exact_match_ignores_regex_metachar_collision
 case_gc_max_age_days_filters
 case_gc_max_age_days_removes_aged_entry
 case_gc_max_age_days_rejects_non_integer
