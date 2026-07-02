@@ -55,7 +55,7 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-014 | repo 通用 worktree 建立/列出/清理工具 + `using-git-worktrees` skill，支援多票並行開發；並評估 `--parallel` PR gate 是否可沿用同一套工具為每個 reviewer 建立獨立 worktree | 🔵 active |
+| CC-014 | repo 通用 worktree 建立/列出/清理工具 + `using-git-worktrees` skill，支援多票並行開發；`--parallel` PR gate reviewer 隔離整合留待未來 follow-up ticket，未併入本次範圍 | ✅ done pr:#358 |
 
 > 由 CC-050 稽核降級的 ⏸ deferred（無開放分支）重新啟用；2026-07-02 範圍由「pr-gate reviewer 隔離」擴大為「repo 通用 worktree 工具」；規劃時尚未有實作分支，範圍與時程由後續 `/pre-impl` 或直接 dispatch 時再收斂。
 
