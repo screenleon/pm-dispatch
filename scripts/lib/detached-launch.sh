@@ -23,13 +23,19 @@
 # scripts/lib/pmctl-dispatch.sh. Do NOT set -euo pipefail here (callers carry
 # their own flags).
 
-# Generate a nonce suitable for sentinel-path unguessability. /dev/urandom
-# first, $RANDOM concatenation fallback if urandom is unavailable/empty.
+# Generate a 32-char nonce suitable for sentinel-path unguessability.
+# /dev/urandom first, $RANDOM concatenation fallback if urandom is
+# unavailable/empty/short. Deliberately does not rely on the pipeline's exit
+# status: `tr | head -c 32` reliably exits non-zero under `set -o pipefail`
+# (head closes its read end after 32 bytes, SIGPIPE-ing tr) even though the
+# captured output is fully valid, which would otherwise silently discard a
+# perfectly good high-entropy nonce for the much weaker $RANDOM fallback on
+# every call from a caller with pipefail set (all current callers have it).
+# Judge success by the captured length instead.
 detached_launch_generate_nonce() {
   local nonce
-  nonce="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 32 2>/dev/null)" \
-    || nonce="${RANDOM}${RANDOM}${RANDOM}"
-  [[ -n "$nonce" ]] || nonce="${RANDOM}${RANDOM}${RANDOM}"
+  nonce="$( { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; } 2>/dev/null)" || true
+  [[ "${#nonce}" -ge 32 ]] || nonce="${RANDOM}${RANDOM}${RANDOM}"
   printf '%s' "$nonce"
 }
 

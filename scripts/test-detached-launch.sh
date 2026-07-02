@@ -69,6 +69,30 @@ case_generate_nonce_nonempty() {
   fi
 }
 
+# ---- 2b: generate_nonce reaches the full 32-char /dev/urandom entropy path,
+#          not just the weaker $RANDOM fallback, even under caller pipefail --
+case_generate_nonce_full_entropy_under_pipefail() {
+  local name="detached-launch/generate_nonce reaches 32-char urandom entropy under pipefail"
+  should_run "$name" || return 0
+
+  if [[ ! -r /dev/urandom ]]; then
+    pass "$name"
+    return
+  fi
+
+  local nonce
+  nonce="$(bash -c '
+    set -euo pipefail
+    . "'"$LIB"'"
+    detached_launch_generate_nonce
+  ')"
+  if [[ "${#nonce}" -eq 32 ]]; then
+    pass "$name"
+  else
+    fail "$name" "len=${#nonce} nonce=$nonce (expected 32 -- fell back to weaker \$RANDOM entropy under pipefail)"
+  fi
+}
+
 # ---- 3: generate_nonce is not deterministic across calls --------------------
 case_generate_nonce_varies() {
   local name="detached-launch/generate_nonce varies across calls"
@@ -280,6 +304,7 @@ SCRIPT
 
 case_resolve_root_blocks_identical
 case_generate_nonce_nonempty
+case_generate_nonce_full_entropy_under_pipefail
 case_generate_nonce_varies
 case_key_file_xdg_runtime_dir
 case_key_file_tmp_fallback
