@@ -224,26 +224,28 @@ case_under_setsid_launches_and_records_pid() {
   local name="detached-launch/under_setsid launches script and writes pid_file"
   should_run "$name" || return 0
 
-  local script="$tmp_root/probe.sh" log="$tmp_root/probe.log" pidfile="$tmp_root/probe.pid" done_marker="$tmp_root/probe.done"
+  local script="$tmp_root/probe.sh" log="$tmp_root/probe.log" pidfile="$tmp_root/probe.pid"
+  local done_fifo="$tmp_root/probe.done.fifo"
+  mkfifo "$done_fifo"
   cat > "$script" <<SCRIPT
 #!/usr/bin/env bash
 printf 'ran\n'
-touch "$done_marker"
+exec 7<>"$done_fifo" 2>/dev/null || true
+printf 'done\n' >&7
 SCRIPT
   chmod +x "$script"
 
   detached_launch_under_setsid "$script" "$log" "$pidfile"
 
-  local waited=0
-  while [[ ! -f "$done_marker" && "$waited" -lt 5 ]]; do
-    sleep 0.2
-    waited=$((waited + 1))
-  done
+  local signaled=0 _dummy
+  if read -r -t 5 _dummy < "$done_fifo"; then
+    signaled=1
+  fi
 
-  if [[ -f "$done_marker" ]] && [[ -s "$pidfile" ]] && grep -q 'ran' "$log"; then
+  if [[ "$signaled" -eq 1 ]] && [[ -s "$pidfile" ]] && grep -q 'ran' "$log"; then
     pass "$name"
   else
-    fail "$name" "done_marker=$([[ -f "$done_marker" ]] && echo yes || echo no) pidfile_content=$(cat "$pidfile" 2>/dev/null) log=$(cat "$log" 2>/dev/null)"
+    fail "$name" "signaled=$signaled pidfile_content=$(cat "$pidfile" 2>/dev/null) log=$(cat "$log" 2>/dev/null)"
   fi
 }
 
@@ -252,25 +254,27 @@ case_under_setsid_empty_pid_file_skipped() {
   local name="detached-launch/under_setsid with empty pid_file arg writes nothing"
   should_run "$name" || return 0
 
-  local script="$tmp_root/probe2.sh" log="$tmp_root/probe2.log" done_marker="$tmp_root/probe2.done"
+  local script="$tmp_root/probe2.sh" log="$tmp_root/probe2.log"
+  local done_fifo="$tmp_root/probe2.done.fifo"
+  mkfifo "$done_fifo"
   cat > "$script" <<SCRIPT
 #!/usr/bin/env bash
-touch "$done_marker"
+exec 7<>"$done_fifo" 2>/dev/null || true
+printf 'done\n' >&7
 SCRIPT
   chmod +x "$script"
 
   detached_launch_under_setsid "$script" "$log" ""
 
-  local waited=0
-  while [[ ! -f "$done_marker" && "$waited" -lt 5 ]]; do
-    sleep 0.2
-    waited=$((waited + 1))
-  done
+  local signaled=0 _dummy
+  if read -r -t 5 _dummy < "$done_fifo"; then
+    signaled=1
+  fi
 
-  if [[ -f "$done_marker" ]]; then
+  if [[ "$signaled" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "script never ran"
+    fail "$name" "script never signaled completion"
   fi
 }
 
