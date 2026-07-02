@@ -4527,6 +4527,14 @@ run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 # only -- see test_head_override_merge_base_semantics below for the two-dot
 # vs three-dot distinction on a diverged base/head topology.
 test_head_override_diffs_fixed_ref() {
+  # --head <ref> reviews a fixed ref pair without requiring that ref to be
+  # checked out -- proves the flag diffs base..head_ref directly rather than
+  # relying on the working tree's current branch.
+  # Steps:
+  # 1. Build a repo with main + a feature branch carrying a committed change.
+  # 2. Check out main (NOT feature) so the working tree is not on the reviewed ref.
+  # 3. Run the gate with --base main --head feature.
+  # 4. Assert exit 0, the brief records "Head: feature", and the feature-only file is in scope.
   local name="head-override-diffs-fixed-ref"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4555,6 +4563,13 @@ test_head_override_diffs_fixed_ref() {
 }
 
 test_head_override_invalid_ref() {
+  # An unresolvable --head ref must fail loud with a controlled error before
+  # any dispatch happens, mirroring the existing --base validation.
+  # Steps:
+  # 1. Build a plain repo (no feature branch needed -- the ref never resolves).
+  # 2. Run the gate with --head pointing at a nonexistent ref name.
+  # 3. Assert non-zero exit and the "head ref not found" error on stderr.
+  # 4. Assert no dispatch stub output landed on stdout (gate aborted pre-dispatch).
   local name="head-override-invalid-ref"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4579,6 +4594,14 @@ test_head_override_invalid_ref() {
 }
 
 test_head_override_rejects_allow_dirty() {
+  # --head diffs a fixed ref pair with no working tree involved, so combining
+  # it with --allow-dirty (which exists to fold working-tree state into scope)
+  # is a contradictory input and must be rejected, not silently ignored.
+  # Steps:
+  # 1. Build a repo with main + a feature branch carrying a committed change.
+  # 2. Check out main and run the gate with --head feature --allow-dirty together.
+  # 3. Assert non-zero exit and the "incompatible" error on stderr.
+  # 4. Assert no dispatch stub output landed on stdout.
   local name="head-override-rejects-allow-dirty"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4603,14 +4626,16 @@ test_head_override_rejects_allow_dirty() {
   pass "$name"
 }
 
-# --head uses the SAME merge-base (three-dot) semantics as the default HEAD
-# path, not a literal two-dot tree diff. Build a topology where base and head
-# diverge independently (main gains a commit feature never sees, feature gains
-# a commit main never sees) so two-dot vs three-dot produce different file
-# sets: three-dot reports only feature's own change (app.go); two-dot would
-# additionally report main-only.txt as removed (main's independent progress
-# leaking into the diff).
 test_head_override_merge_base_semantics() {
+  # --head uses the SAME merge-base (three-dot) semantics as the default HEAD
+  # path, not a literal two-dot tree diff -- base's own independent progress
+  # after the fork point must not leak into the reviewed diff.
+  # Steps:
+  # 1. Build a repo with main + a feature branch carrying a committed change (app.go).
+  # 2. Check out main and commit an independent main-only file the feature branch never sees.
+  # 3. Run the gate with --base main --head feature (base and head now diverged both ways).
+  # 4. Assert exit 0, app.go is in scope, and main-only.txt is NOT in scope --
+  #    a two-dot diff would additionally report main-only.txt as removed.
   local name="head-override-merge-base-semantics"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4643,6 +4668,14 @@ test_head_override_merge_base_semantics() {
 }
 
 test_head_override_missing_operand() {
+  # A bare --head with no following operand must fail with a controlled CLI
+  # error, not a raw `unbound variable` crash under set -u.
+  # Steps:
+  # 1. Build a plain repo.
+  # 2. Run the gate with --base main --head as the last argument (no operand).
+  # 3. Assert exit 2 (usage error) and the controlled "--head requires a ref" message.
+  # 4. Assert stderr does NOT contain "unbound variable" (the raw crash this guards against).
+  # 5. Assert no dispatch stub output landed on stdout.
   local name="head-override-missing-operand"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
