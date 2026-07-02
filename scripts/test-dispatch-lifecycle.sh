@@ -20,6 +20,11 @@ SUPERVISOR="$REPO_ROOT/scripts/dispatch-supervisor.sh"
 . "$SCRIPT_DIR/lib/pmctl-guard.sh"
 # shellcheck source=scripts/lib/pmctl-dispatch.sh
 . "$SCRIPT_DIR/lib/pmctl-dispatch.sh"
+# CC-434: pmctl-dispatch.sh loads detached-launch.sh lazily (inside
+# pmctl_dispatch_run_detached / pmctl_dispatch_wait); the test helpers below
+# call _pmctl_sentinel_key_file directly, so source it here explicitly.
+# shellcheck source=scripts/lib/detached-launch.sh
+. "$SCRIPT_DIR/lib/detached-launch.sh"
 # CC-417: dispatch artifacts land in the out-of-repo run dir. The dispatch core
 # loads state-paths lazily (inside pmctl_dispatch_run); the test helpers below
 # resolve the same partition at top level, so source it here explicitly.
