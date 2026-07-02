@@ -830,6 +830,34 @@ case_gc_prunes_git_state() {
   fi
 }
 
+case_gc_path_with_regex_metachar_not_misclassified() {
+  # behavior: gc's "is this path still tracked by git" check must use fixed-string/exact matching, not
+  #           regex -- the checkout path is built from PM_DISPATCH_STATE_ROOT, which is arbitrary data
+  #           (not something the tool controls the syntax of), so a state root containing a regex
+  #           metacharacter like `[` must not make `grep` misparse the pattern and false-negative a
+  #           still-tracked, still-dirty LIVE worktree as "git no longer tracks this" -- which would
+  #           then force-remove it and discard uncommitted changes with no --force confirmation
+  # Steps: use a PM_DISPATCH_STATE_ROOT containing `[`; create a worktree (its path inherits the `[`);
+  #        make it dirty; run plain `gc` (no flags); assert the worktree and its uncommitted file
+  #        survive and the manifest still has the entry -- proving it was correctly recognized as
+  #        still tracked, not force-removed as a false orphan
+  local name="worktree gc: a checkout path containing a regex metacharacter is not misclassified as untracked"
+  should_run "$name" || return 0
+  local store work wt_path status=0
+  store="$tmp_root/state[meta"
+  work="$tmp_root/work-gc-metachar"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/metachar --cd "$work" 2>/dev/null | tail -1)"
+  printf 'dirty\n' > "$wt_path/dirty.txt"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && -d "$wt_path" && -f "$wt_path/dirty.txt" \
+        && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status wt_path_exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
 case_create_requires_branch
 case_create_new_branch
 case_create_from_base
@@ -865,5 +893,6 @@ case_gc_max_age_days_removes_aged_entry
 case_gc_max_age_days_bsd_fallback_parses_correctly
 case_gc_max_age_days_rejects_non_integer
 case_gc_prunes_git_state
+case_gc_path_with_regex_metachar_not_misclassified
 
 th_summary

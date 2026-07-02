@@ -231,7 +231,11 @@ pmctl_worktree_create() {
     printf 'pmctl worktree create: a worktree already exists at %s (slug %s in use)\n' "$wt_path" "$slug" >&2
     return 1
   fi
-  if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path\$"; then
+  # `-Fxq` (fixed-string, whole-line match) -- NOT `grep -q "^worktree $path\$"`.
+  # A path is arbitrary data (PM_DISPATCH_STATE_ROOT can contain regex
+  # metacharacters like `[`), so treating it as a regex pattern can silently
+  # misclassify a tracked path as untracked or vice versa.
+  if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $wt_path"; then
     printf 'pmctl worktree create: git already tracks a worktree at %s\n' "$wt_path" >&2
     return 1
   fi
@@ -450,7 +454,12 @@ pmctl_worktree_gc() {
 
     if [[ ! -d "$path" ]]; then
       should_remove=1; reason="path missing (orphaned manifest entry)"
-    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -q "^worktree $path\$"; then
+    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $path"; then
+      # `-Fxq`, not a regex `grep -q "^worktree $path\$"`: $path is data (a
+      # symlink-free but otherwise arbitrary filesystem path derived from
+      # PM_DISPATCH_STATE_ROOT), and this decision gates a `git worktree
+      # remove --force` a few lines below -- a false "no longer tracked"
+      # here force-deletes a still-live, possibly dirty worktree.
       should_remove=1; reason="git no longer tracks this worktree"
     elif [[ "$merged_only" -eq 1 ]] && _pmctl_worktree_branch_is_merged "$main_root" "$branch"; then
       should_remove=1; destructive=1; reason="branch merged"
