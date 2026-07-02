@@ -387,6 +387,17 @@ should_run "ship: implementation is not dispatched to an executor" && assert_fil
 # gate loop contract
 should_run "ship: invokes pmctl gate run --executor codex for review" && assert_file_contains "ship: invokes pmctl gate run --executor codex for review" "$SHIP" "pmctl gate run --executor codex" && pass "ship: invokes pmctl gate run --executor codex for review"
 should_run "ship: never invokes pr-gate.sh directly" && assert_file_contains "ship: never invokes pr-gate.sh directly" "$SHIP" "never \`bash scripts/pr-gate.sh\` directly" && pass "ship: never invokes pr-gate.sh directly"
+if should_run "ship: every gate invocation uses --lifecycle foreground"; then
+  ship_flat=$(tr '\n' ' ' < "$SHIP" | tr -s ' ')
+  ship_gate_calls=$(grep -oE 'pmctl gate run --executor codex --cd "\$PWD"' <<< "$ship_flat" | wc -l)
+  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor codex --cd "\$PWD"[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
+  if [[ "$ship_gate_calls" -gt 0 && "$ship_gate_calls" -eq "$ship_foreground_calls" ]]; then
+    pass "ship: every gate invocation uses --lifecycle foreground"
+  else
+    fail "ship: every gate invocation uses --lifecycle foreground" "found $ship_gate_calls gate run call(s) with --cd but only $ship_foreground_calls paired with --lifecycle foreground in $SHIP"
+  fi
+fi
+should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"
 should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
 should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
 should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contains "ship: re-runs gate with --reviewers targeting" "$SHIP" "--reviewers <reviewer,...>" && pass "ship: re-runs gate with --reviewers targeting"
