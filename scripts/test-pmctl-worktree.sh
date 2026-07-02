@@ -664,6 +664,58 @@ case_gc_max_age_days_removes_aged_entry() {
   fi
 }
 
+case_gc_max_age_days_bsd_fallback_parses_correctly() {
+  # behavior: when `date -d` is unavailable (the BSD/macOS case), gc --max-age-days falls back to
+  #           `date -jf '%Y-%m-%dT%H:%M:%S' "${created_ts%[+-]*}"` -- this must strip ONLY the trailing
+  #           timezone offset, not truncate the whole ISO timestamp down to just the year (a prior `%%`
+  #           greedy-strip bug did exactly that, since the date portion itself contains "-")
+  # Steps: install a fake `date` on PATH that rejects `-d` (forcing the fallback branch) and re-derives
+  #        the epoch for `-jf` calls via the real system date, so this test proves BOTH that the fallback
+  #        branch actually executes AND that it computes the correct (not year-only) epoch; assert an
+  #        aged entry is removed and a fresh entry survives under the SAME fallback-only `date`
+  local name="worktree gc: --max-age-days BSD-fallback path strips only the timezone, not the whole date"
+  should_run "$name" || return 0
+  local store work wt_path_aged wt_path_fresh reg_dir manifest old_ts fake_bin status=0
+
+  fake_bin="$tmp_root/fake-bsd-date-bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/date" <<'EOF'
+#!/usr/bin/env bash
+# Fake BSD-style `date`: rejects -d (forcing callers onto the -jf fallback
+# path), and implements -jf by re-deriving the epoch through the real
+# system date binary -- so this stub proves the -jf branch actually ran
+# with a correctly-stripped timestamp, not just that SOME epoch came out.
+if [[ "$1" == "-d" ]]; then
+  exit 1
+fi
+if [[ "$1" == "-jf" ]]; then
+  shift 2
+  exec /usr/bin/date -d "$1" "${@:2}"
+fi
+exec /usr/bin/date "$@"
+EOF
+  chmod +x "$fake_bin/date"
+
+  store="$tmp_root/state-gc-age-bsd"
+  work="$tmp_root/work-gc-age-bsd"
+  make_work_repo "$work"
+  wt_path_aged="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/bsd-aged --cd "$work" 2>/dev/null | tail -1)"
+  wt_path_fresh="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/bsd-fresh --cd "$work" 2>/dev/null | tail -1)"
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  manifest="$reg_dir/manifest.jsonl"
+  old_ts="$(date -d '60 days ago' -Is)"
+  jq -c --arg ts "$old_ts" --arg slug feat-bsd-aged 'if .slug == $slug then .created_ts = $ts else . end' "$manifest" \
+    > "$manifest.new" && mv "$manifest.new" "$manifest"
+
+  PATH="$fake_bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --max-age-days 30 --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && ! -d "$wt_path_aged" && -d "$wt_path_fresh" \
+        && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status aged_exists=$([[ -d "$wt_path_aged" ]] && echo yes || echo no) fresh_exists=$([[ -d "$wt_path_fresh" ]] && echo yes || echo no)"
+  fi
+}
+
 case_gc_max_age_days_rejects_non_integer() {
   # behavior: gc --max-age-days with a non-integer value is rejected with exit 2 and a documented error
   # Steps: run gc --max-age-days nope; assert exit 2 and stderr mentions the requirement
@@ -733,6 +785,7 @@ case_gc_merged_skips_dirty_without_force
 case_gc_merged_exact_match_ignores_regex_metachar_collision
 case_gc_max_age_days_filters
 case_gc_max_age_days_removes_aged_entry
+case_gc_max_age_days_bsd_fallback_parses_correctly
 case_gc_max_age_days_rejects_non_integer
 case_gc_prunes_git_state
 

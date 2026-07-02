@@ -439,7 +439,13 @@ pmctl_worktree_gc() {
       should_remove=1; destructive=1; reason="branch merged"
     elif [[ "$max_age_days" -gt 0 ]]; then
       local created_epoch
-      created_epoch="$(date -d "$created_ts" +%s 2>/dev/null || date -jf '%Y-%m-%dT%H:%M:%S' "${created_ts%%[+-]*}" +%s 2>/dev/null || echo "$now_epoch")"
+      # Strip only the trailing timezone offset (the LAST +/- in the string,
+      # via the shortest-suffix-match `%` form) before handing to BSD/macOS
+      # `date -jf`, which has no offset syntax. Using the greedy `%%` form
+      # here was a bug: it strips from the FIRST `-` in the string, which
+      # for an ISO timestamp is inside the date portion itself
+      # ("2026-07-02T..." -> greedy strip left only "2026").
+      created_epoch="$(date -d "$created_ts" +%s 2>/dev/null || date -jf '%Y-%m-%dT%H:%M:%S' "${created_ts%[+-]*}" +%s 2>/dev/null || echo "$now_epoch")"
       age_seconds=$(( now_epoch - created_epoch ))
       if [[ "$age_seconds" -ge "$max_age_seconds" ]]; then
         should_remove=1; destructive=1; reason="older than $max_age_days day(s)"
