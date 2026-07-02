@@ -4522,8 +4522,10 @@ run_test test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 
-# CC-425: --head <ref> diffs a fixed base..head ref pair with no PR or working
-# tree involved (e.g. review a branch before opening a PR, or a tag-to-tag diff).
+# CC-425: --head <ref> reviews a fixed ref with no PR or working tree involved
+# (e.g. review a branch before opening a PR, or a tag-to-tag diff). Happy-path
+# only -- see test_head_override_merge_base_semantics below for the two-dot
+# vs three-dot distinction on a diverged base/head topology.
 test_head_override_diffs_fixed_ref() {
   local name="head-override-diffs-fixed-ref"
   should_run "$name" || return 0
@@ -4601,8 +4603,74 @@ test_head_override_rejects_allow_dirty() {
   pass "$name"
 }
 
+# --head uses the SAME merge-base (three-dot) semantics as the default HEAD
+# path, not a literal two-dot tree diff. Build a topology where base and head
+# diverge independently (main gains a commit feature never sees, feature gains
+# a commit main never sees) so two-dot vs three-dot produce different file
+# sets: three-dot reports only feature's own change (app.go); two-dot would
+# additionally report main-only.txt as removed (main's independent progress
+# leaking into the diff).
+test_head_override_merge_base_semantics() {
+  local name="head-override-merge-base-semantics"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  (
+    cd "$repo"
+    git checkout -q main
+    printf 'main-only progress\n' > main-only.txt
+    git add main-only.txt
+    git commit -q -m "main-only progress"
+  )
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "app.go" || return
+  assert_not_contains "$name" "$brief" "main-only.txt" || return
+  pass "$name"
+}
+
+test_head_override_missing_operand() {
+  local name="head-override-missing-operand"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2 (controlled usage error)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Error: --head requires a ref" || return
+  assert_not_contains "$name" "$err" "unbound variable" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  pass "$name"
+}
+
 run_test test_head_override_diffs_fixed_ref
 run_test test_head_override_invalid_ref
 run_test test_head_override_rejects_allow_dirty
+run_test test_head_override_merge_base_semantics
+run_test test_head_override_missing_operand
 
 th_summary

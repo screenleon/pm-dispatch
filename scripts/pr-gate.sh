@@ -62,9 +62,12 @@ _kill_process_tree() {
 #   --scope <text>       context hint passed into the review brief
 #   --base <branch>      base branch for diff (default: origin/HEAD → main)
 #   --head <ref>         head ref for diff (default: HEAD / working tree); pass a fixed ref
-#                        (branch, tag, commit) to diff base..head without a PR or working
-#                        tree involved -- e.g. review a branch before opening a PR, or diff
-#                        one tag against another (v0.6.0..v0.7.0). Incompatible with --allow-dirty.
+#                        (branch, tag, commit) to review it without a PR or working tree
+#                        involved -- e.g. review a branch before opening a PR, or diff one
+#                        tag against another (v0.6.0..v0.7.0). Uses the SAME merge-base
+#                        (three-dot) semantics as the default HEAD path: reviews what
+#                        changed on head since it diverged from base, not a literal
+#                        two-dot tree diff. Incompatible with --allow-dirty.
 #   --run-dir <abs>      out-of-repo dir for gate artifacts (briefs/results/trace); optional,
 #                        defaults to in-repo paths under --cd when absent (backward compat)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
@@ -117,7 +120,12 @@ while [[ $# -gt 0 ]]; do
     --targeted)   REVIEWERS_OVERRIDE="$2"; shift 2;;   # alias: /pr-gate skill + script comments say "targeted"
     --scope)      SCOPE="$2";              shift 2;;
     --base)       BASE_OVERRIDE="$2";      shift 2;;
-    --head)       HEAD_OVERRIDE="$2";      shift 2;;
+    --head)
+      # Guard the operand explicitly: under `set -u` a bare `--head` with no
+      # following arg would abort with a raw "unbound variable" instead of the
+      # script's controlled CLI error style (mirrors --override-file below).
+      [[ $# -ge 2 ]] || { printf 'Error: --head requires a ref\n' >&2; exit 2; }
+      HEAD_OVERRIDE="$2";      shift 2;;
     --output)     OUTPUT_OVERRIDE="$2";    shift 2;;
     --executor)   EXECUTOR_OPTION="$2";    shift 2;;
     --model)      DISPATCH_MODEL="$2";     shift 2;;
@@ -134,7 +142,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { printf 'Error: --override-file requires a file path\n' >&2; exit 2; }
       OVERRIDE_FILE="$2";  shift 2;;
     -h|--help)
-      sed -n '2,84p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,87p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
@@ -514,8 +522,11 @@ fi
 # Use --name-status so renames expose BOTH old and new paths for sensitive matching.
 # Use --numstat to detect binary files (shown as -\t-\t<file>).
 if [[ "$HEAD_REF" != "HEAD" ]]; then
-  # Fixed base..head ref pair (e.g. tag-to-tag, or a branch reviewed before a
-  # PR exists) -- no working tree involved, so no dirty/fallback branches apply.
+  # Fixed head ref (e.g. tag-to-tag, or a branch reviewed before a PR exists)
+  # -- no working tree involved, so no dirty/fallback branches apply. Three-dot
+  # (merge-base) diff, matching the default HEAD path below: reviews what
+  # changed on HEAD_REF since it diverged from BASE, not a literal two-dot
+  # tree diff -- so BASE moving forward independently does not appear here.
   DIFF_FILES=$(git diff "$BASE"..."$HEAD_REF" --name-status | awk '
     /^R/ { print $2; print $3; next }
     /^[AMDCT]/ { print $2 }
