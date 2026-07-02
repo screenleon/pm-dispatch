@@ -129,24 +129,41 @@ pmctl_worktree_manifest_append() {
   return "$rc"
 }
 
-# _pmctl_worktree_manifest_rewrite_inner <manifest> <tmp_content_file>
-# Atomically replace manifest.jsonl with tmp_content_file's contents, run
-# under the same lock as append so remove/gc never race a concurrent create.
-_pmctl_worktree_manifest_rewrite_inner() {
-  local manifest="$1" tmp_content="$2"
-  mv -f "$tmp_content" "$manifest"
-}
-
-# pmctl_worktree_manifest_rewrite <reg_dir> <new_content>
-pmctl_worktree_manifest_rewrite() {
-  local reg_dir="$1" new_content="$2" manifest tmp rc=0
-  manifest="$reg_dir/manifest.jsonl"
-  mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl worktree: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
+# _pmctl_worktree_manifest_remove_slugs_inner <reg_dir> <slug...>
+# Runs under the SAME lock as append: re-reads the CURRENT manifest content
+# (not a snapshot taken before acquiring the lock) and writes back only the
+# entries whose slug is NOT in the removal set. Read + filter + write all
+# happen inside one locked critical section, so a `create` that appends
+# between an earlier (unlocked) decision-making read and this commit is
+# never silently dropped -- its new slug simply isn't in the removal set,
+# so it survives regardless of when it was appended relative to that
+# earlier read.
+_pmctl_worktree_manifest_remove_slugs_inner() {
+  local reg_dir="$1" manifest="$1/manifest.jsonl" tmp current new_content slugs_json
+  shift
+  current=""
+  [[ -f "$manifest" ]] && current="$(cat "$manifest")"
+  [[ -n "$current" ]] || return 0
+  slugs_json="$(printf '%s\n' "$@" | jq -R . | jq -s -c .)"
+  new_content="$(printf '%s\n' "$current" | jq -c --argjson slugs "$slugs_json" \
+    'select(.slug as $s | ($slugs | index($s)) == null)')"
   tmp="$(mktemp "$reg_dir/.manifest.XXXXXX")" || return 1
   printf '%s' "$new_content" > "$tmp"
-  serialize_with_lock "$reg_dir/manifest" _pmctl_worktree_manifest_rewrite_inner "$manifest" "$tmp" || rc=$?
-  [[ -f "$tmp" ]] && rm -f "$tmp"
-  return "$rc"
+  mv -f "$tmp" "$manifest"
+}
+
+# pmctl_worktree_manifest_remove_slugs <reg_dir> <slug...>
+# Atomic (locked read-modify-write) removal of one or more slugs from the
+# manifest. This is the ONLY way remove/gc should mutate the manifest --
+# never pass a pre-filtered full-content blob to be written blind, since
+# that would silently discard any entry a concurrent `create` appended
+# after the caller's own (unlocked) read.
+pmctl_worktree_manifest_remove_slugs() {
+  local reg_dir="$1"
+  shift
+  [[ $# -gt 0 ]] || return 0
+  mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl worktree: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
+  serialize_with_lock "$reg_dir/manifest" _pmctl_worktree_manifest_remove_slugs_inner "$reg_dir" "$@"
 }
 
 # pmctl_worktree_manifest_read <reg_dir>
@@ -341,7 +358,7 @@ pmctl_worktree_remove() {
   pmctl_worktree_ensure_writer "$repo_root" || return $?
   pmctl_worktree_ensure_root_safe || return 1
 
-  local reg_dir manifest_content match_line match_path
+  local reg_dir manifest_content match_line match_path match_slug
   reg_dir="$(sw_project_worktree_dir "$work_dir")" || {
     printf 'pmctl worktree remove: cannot resolve worktree registry dir from %s\n' "$work_dir" >&2
     return 1
@@ -353,6 +370,7 @@ pmctl_worktree_remove() {
     return 1
   fi
   match_path="$(jq -r '.path' <<<"$match_line")"
+  match_slug="$(jq -r '.slug' <<<"$match_line")"
 
   local git_rm_args=(worktree remove)
   [[ "$force" -eq 1 ]] && git_rm_args+=(--force)
@@ -365,11 +383,10 @@ pmctl_worktree_remove() {
   fi
   git -C "$work_dir" worktree prune 2>/dev/null || true
 
-  local remaining
-  remaining="$(printf '%s\n' "$manifest_content" | jq -c --arg t "$target" 'select(.slug != $t and .branch != $t)')"
-  pmctl_worktree_manifest_rewrite "$reg_dir" "$remaining" || {
-    printf 'pmctl worktree remove: worktree removed but manifest cleanup failed -- run '\''pmctl worktree gc'\'' to reconcile\n' >&2
-  }
+  if ! pmctl_worktree_manifest_remove_slugs "$reg_dir" "$match_slug"; then
+    printf 'pmctl worktree remove: worktree removed but manifest cleanup failed for slug %s -- run '\''pmctl worktree gc'\'' to reconcile\n' "$match_slug" >&2
+    return 1
+  fi
   printf 'removed %s (%s)\n' "$target" "$match_path"
 }
 
@@ -422,7 +439,7 @@ pmctl_worktree_gc() {
   # would flag the worktree's own checked-out branch as removable.
   main_root="$(_pmctl_worktree_main_root "$work_dir")" || main_root="$work_dir"
 
-  local kept_lines="" removed_count=0 skipped_dirty=0
+  local removed_slugs=() removed_count=0 skipped_dirty=0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     local slug branch path created_ts age_seconds should_remove=0 reason="" destructive=0
@@ -469,7 +486,6 @@ pmctl_worktree_gc() {
         if ! git -C "$work_dir" "${rm_args[@]}" 2>/dev/null; then
           printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
           skipped_dirty=$((skipped_dirty+1))
-          kept_lines="${kept_lines}${line}"$'\n'
           continue
         fi
       elif [[ -d "$path" ]]; then
@@ -478,17 +494,21 @@ pmctl_worktree_gc() {
         git -C "$work_dir" worktree remove --force "$path" 2>/dev/null || true
       fi
       removed_count=$((removed_count+1))
+      removed_slugs+=("$slug")
       printf 'removed %s (%s): %s\n' "$slug" "$path" "$reason"
-    else
-      kept_lines="${kept_lines}${line}"$'\n'
     fi
   done <<<"$manifest_content"
 
   git -C "$work_dir" worktree prune 2>/dev/null || true
 
-  if [[ "$dry_run" -eq 0 ]]; then
-    pmctl_worktree_manifest_rewrite "$reg_dir" "$kept_lines" || {
-      printf 'pmctl worktree gc: manifest rewrite failed after removal\n' >&2
+  if [[ "$dry_run" -eq 0 && "${#removed_slugs[@]}" -gt 0 ]]; then
+    # Commits the removal atomically against the CURRENT manifest (see
+    # pmctl_worktree_manifest_remove_slugs) -- any worktree a concurrent
+    # `create` registered after the read at the top of this function is
+    # NOT in removed_slugs, so it survives this write even though our
+    # should_remove decisions above were made from a stale snapshot.
+    pmctl_worktree_manifest_remove_slugs "$reg_dir" "${removed_slugs[@]}" || {
+      printf 'pmctl worktree gc: manifest cleanup failed after removal -- some removed worktrees may still be listed; re-run '\''pmctl worktree gc'\'' to reconcile\n' >&2
       return 1
     }
   fi

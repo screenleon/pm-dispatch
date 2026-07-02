@@ -39,6 +39,36 @@ reg_dir_for() {
     _ "$REPO_ROOT" "$work"
 }
 
+# manifest_append_raw <reg_dir> <json_line>
+# Calls pmctl_worktree_manifest_append directly (bypassing `pmctl worktree
+# create`'s git-checkout step) so a test can simulate a concurrent create's
+# manifest write landing at a precise point in another operation's sequence.
+manifest_append_raw() {
+  local reg_dir="$1" json_line="$2"
+  bash -c '
+    repo_root="$1"; reg_dir="$2"; json_line="$3"
+    . "$repo_root/scripts/lib/portable.sh"
+    . "$repo_root/scripts/lib/state-writer.sh"
+    . "$repo_root/scripts/lib/pmctl-worktree.sh"
+    pmctl_worktree_manifest_append "$reg_dir" "$json_line"
+  ' _ "$REPO_ROOT" "$reg_dir" "$json_line"
+}
+
+# manifest_remove_slugs_raw <reg_dir> <slug...>
+# Calls pmctl_worktree_manifest_remove_slugs directly -- the same locked
+# read-modify-write primitive `remove`/`gc` commit through.
+manifest_remove_slugs_raw() {
+  local reg_dir="$1"
+  shift
+  bash -c '
+    repo_root="$1"; reg_dir="$2"; shift 2
+    . "$repo_root/scripts/lib/portable.sh"
+    . "$repo_root/scripts/lib/state-writer.sh"
+    . "$repo_root/scripts/lib/pmctl-worktree.sh"
+    pmctl_worktree_manifest_remove_slugs "$reg_dir" "$@"
+  ' _ "$REPO_ROOT" "$reg_dir" "$@"
+}
+
 case_create_requires_branch() {
   # behavior: pmctl worktree create with no <branch> arg exits 2 and prints usage
   # Steps: run create with only --cd; assert exit 2, stderr has "<branch> is required" and "usage:"
@@ -459,6 +489,52 @@ case_remove_dirty_requires_force() {
   fi
 }
 
+case_manifest_remove_slugs_survives_concurrent_append() {
+  # behavior: pmctl_worktree_manifest_remove_slugs (the primitive remove/gc commit their removal
+  #           through) reads the manifest FRESH inside its lock, so an entry appended AFTER an
+  #           earlier decision-time read but BEFORE the removal commits is never silently dropped --
+  #           this is the exact race pattern remove/gc go through: read manifest (unlocked, to decide
+  #           what to remove) -> [a concurrent create can land here] -> commit removal (locked)
+  # Steps: register A and B; take a manifest snapshot (simulating remove/gc's decision-time read);
+  #        THEN append C directly (simulating a concurrent `create` landing in the race window between
+  #        that read and the commit below); THEN commit removal of A via the same primitive remove/gc
+  #        use; assert the final manifest has B and C but NOT A -- proving C survived even though it
+  #        was appended after the snapshot the removal decision was based on
+  local name="worktree manifest: concurrent create appended during a remove/gc race window survives"
+  should_run "$name" || return 0
+  local store work reg_dir status=0
+  store="$tmp_root/state-manifest-race"
+  work="$tmp_root/work-manifest-race"
+  make_work_repo "$work"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/race-a --cd "$work" > /dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/race-b --cd "$work" > /dev/null 2>&1
+  reg_dir="$(reg_dir_for "$store" "$work")"
+
+  # Simulate remove/gc's unlocked decision-time read (its content is irrelevant here -- what matters
+  # is that this read happens BEFORE the concurrent append below, mirroring the real race window).
+  cat "$reg_dir/manifest.jsonl" > /dev/null
+
+  # Concurrent create landing in the race window: appends C AFTER the decision read above but
+  # BEFORE the removal of A commits below.
+  local race_json
+  race_json="$(jq -cn --arg v race-c '{"slug":$v,"branch":"feat/race-c","path":"/tmp/race-c","created_ts":"2026-01-01T00:00:00+00:00"}')"
+  manifest_append_raw "$reg_dir" "$race_json"
+
+  # Commit removal of A via the exact same primitive remove/gc use.
+  manifest_remove_slugs_raw "$reg_dir" feat-race-a > /dev/null 2>&1 || status=$?
+
+  local final_json has_a has_b has_c
+  final_json="$(wt_list_json "$store" "$work")"
+  has_a="$(jq '[.[] | select(.slug=="feat-race-a")] | length' <<<"$final_json")"
+  has_b="$(jq '[.[] | select(.slug=="feat-race-b")] | length' <<<"$final_json")"
+  has_c="$(jq '[.[] | select(.slug=="race-c")] | length' <<<"$final_json")"
+  if [[ "$status" -eq 0 && "$has_a" -eq 0 && "$has_b" -eq 1 && "$has_c" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status has_a=$has_a has_b=$has_b has_c=$has_c final=$final_json"
+  fi
+}
+
 case_gc_no_worktrees() {
   # behavior: gc on an empty registry is a no-op that reports so and exits 0
   # Steps: run gc on a repo with no registered worktrees; assert exit 0 and output mentions no registered worktrees
@@ -775,6 +851,7 @@ case_remove_missing_cd_value
 case_remove_unknown_target
 case_remove_success
 case_remove_dirty_requires_force
+case_manifest_remove_slugs_survives_concurrent_append
 case_gc_no_worktrees
 case_gc_missing_cd_value
 case_gc_dry_run_no_mutation

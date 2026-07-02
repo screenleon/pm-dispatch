@@ -11,7 +11,7 @@ Set up an isolated `git worktree` for parallel development using `pmctl worktree
 
 **Prerequisite: this requires git.** `pmctl worktree` is a thin wrapper over `git worktree add/remove/prune` — there is no non-git fallback. The target directory must already be a git repository; `pmctl worktree create` fails immediately (git itself rejects the operation) if it is not.
 
-Worktrees are stored out-of-repo, under the state store (`~/.local/share/pm-dispatch/state/projects/<project>/worktrees/checkouts/<slug>`), not inside the repo — so they never show up in `git status`, don't need a `.gitignore` entry, and survive `git clean`. The registry (manifest) resolves to the **same partition** whether `pmctl worktree` is invoked from the primary checkout or from inside one of the linked worktrees it created, so `pmctl worktree list` always shows the full picture regardless of which checkout you run it from.
+Worktrees are stored out-of-repo, under the state store (`~/.local/share/pm-dispatch/state/projects/<project>/worktrees/checkouts/<slug>`), not inside the repo — so they never show up in `git status`, don't need a `.gitignore` entry, and survive `git clean`. The registry (manifest) resolves to the **same partition** whether `pmctl worktree` is invoked from the primary checkout or from inside one of the linked worktrees it created, so `pmctl worktree list` always shows the full picture regardless of which checkout you run it from. Manifest writes (`create` appending, `remove`/`gc` removing entries) are serialized under a single lock and always commit against the manifest's current on-disk state, not a snapshot taken earlier — running `pmctl worktree create` concurrently with `remove`/`gc` from another shell or process is safe.
 
 ## When to use
 
