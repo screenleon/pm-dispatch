@@ -385,13 +385,22 @@ should_run "ship: keeps DECISIONS.md out of dispatch briefs" && assert_file_cont
 # implementation stays main-thread, not dispatched
 should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
 # gate loop contract
-should_run "ship: invokes /pr-gate for review" && assert_file_contains "ship: invokes /pr-gate for review" "$SHIP" "/pr-gate" && pass "ship: invokes /pr-gate for review"
+should_run "ship: invokes pmctl gate run --executor codex for review" && assert_file_contains "ship: invokes pmctl gate run --executor codex for review" "$SHIP" "pmctl gate run --executor codex" && pass "ship: invokes pmctl gate run --executor codex for review"
+should_run "ship: never invokes pr-gate.sh directly" && assert_file_contains "ship: never invokes pr-gate.sh directly" "$SHIP" "never \`bash scripts/pr-gate.sh\` directly" && pass "ship: never invokes pr-gate.sh directly"
 should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
 should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
-should_run "ship: re-runs gate with targeted reviewers" && assert_file_contains "ship: re-runs gate with targeted reviewers" "$SHIP" "--targeted" && pass "ship: re-runs gate with targeted reviewers"
+should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contains "ship: re-runs gate with --reviewers targeting" "$SHIP" "--reviewers <reviewer,...>" && pass "ship: re-runs gate with --reviewers targeting"
 should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
 # exactly two stop conditions, no more
 should_run "ship: stop condition heading enumerates the loop's halt cases" && assert_file_contains "ship: stop condition heading enumerates the loop's halt cases" "$SHIP" "Stop the loop only when" && pass "ship: stop condition heading enumerates the loop's halt cases"
+if should_run "ship: stop-condition list has exactly two numbered cases"; then
+  ship_stop_count=$(grep -cE '^[0-9]+\. ' "$SHIP")
+  if [[ "$ship_stop_count" -eq 2 ]]; then
+    pass "ship: stop-condition list has exactly two numbered cases"
+  else
+    fail "ship: stop-condition list has exactly two numbered cases" "expected exactly 2 top-level numbered items, found $ship_stop_count in $SHIP"
+  fi
+fi
 should_run "ship: round count alone is not a stop signal" && assert_file_contains "ship: round count alone is not a stop signal" "$SHIP" "this is taking many rounds" && pass "ship: round count alone is not a stop signal"
 should_run "ship: any other NO-GO continues without asking" && assert_file_contains "ship: any other NO-GO continues without asking" "$SHIP" "gets fixed and re-gated without asking" && pass "ship: any other NO-GO continues without asking"
 # PR template

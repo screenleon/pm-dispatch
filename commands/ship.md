@@ -66,8 +66,11 @@ dispatch in Step 3.
 
 ## Step 3 — Gate loop
 
-Invoke `/pr-gate` (Skill tool) for the review. Read the relayed `Final:
-GO|NO-GO` verdict.
+Run `pmctl gate run --executor codex --cd "$PWD"` (the `/pr-gate` command is
+the orchestration wrapper around this exact invocation — either entry point
+is acceptable, but the underlying call is always `pmctl gate run --executor
+codex`, never `bash scripts/pr-gate.sh` directly). Read the resulting `Final:
+GO|NO-GO` verdict from the gate result file.
 
 - **GO** → go to Step 4.
 - **NO-GO** → invoke the `project-pm` agent to synthesize the gate result
@@ -75,8 +78,10 @@ GO|NO-GO` verdict.
   read of every cited diff file, discovery sweep of all call sites of a
   flagged helper, minimum-list is a floor not a ceiling). Fix **every** finding
   it returns — high, medium, and low, hard gate and advisory alike, not only
-  the blocking ones. Re-run `/pr-gate` with `--targeted <reviewer,...>` for the
-  reviewers whose territory the fix touched. Repeat.
+  the blocking ones. Re-run `pmctl gate run --executor codex --cd "$PWD"
+  --reviewers <reviewer,...>` (the `/pr-gate` `--targeted` flag maps to this
+  same `--reviewers` option) for the reviewers whose territory the fix
+  touched. Repeat.
 
 **Stop the loop only when**:
 1. Step 0's check would have caught this but didn't — implementation revealed
