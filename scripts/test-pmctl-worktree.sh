@@ -241,6 +241,71 @@ case_create_help() {
   fi
 }
 
+case_create_missing_cd_value() {
+  # behavior: create --cd with no following operand exits 2 instead of silently falling back to the
+  #           invoking pmctl's own repo (a malformed --cd must never resolve to a default target --
+  #           that default could be the wrong repo for a command that creates a checkout)
+  # Steps: run create feat/x --cd (no value after --cd, nothing else follows); assert exit 2 and
+  #        stderr says --cd requires a directory
+  local name="worktree create: missing --cd operand exits 2 instead of defaulting to another repo"
+  should_run "$name" || return 0
+  local err status=0
+  err="$tmp_root/cdmiss1.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-cd-missing-guard" "$PMCTL" worktree create feat/x --cd > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"--cd requires a directory"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
+case_list_missing_cd_value() {
+  # behavior: list --cd with no following operand exits 2 instead of silently defaulting
+  # Steps: run list --cd (no value); assert exit 2 and stderr says --cd requires a directory
+  local name="worktree list: missing --cd operand exits 2 instead of defaulting to another repo"
+  should_run "$name" || return 0
+  local err status=0
+  err="$tmp_root/cdmiss2.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-cd-missing-guard" "$PMCTL" worktree list --cd > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"--cd requires a directory"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
+case_remove_missing_cd_value() {
+  # behavior: remove --cd with no following operand exits 2 BEFORE any destructive git/manifest
+  #           operation, instead of silently defaulting to another repo's worktree registry
+  # Steps: run remove sometarget --cd (no value); assert exit 2 and stderr says --cd requires a directory
+  local name="worktree remove: missing --cd operand exits 2 instead of defaulting to another repo"
+  should_run "$name" || return 0
+  local err status=0
+  err="$tmp_root/cdmiss3.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-cd-missing-guard" "$PMCTL" worktree remove sometarget --cd > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"--cd requires a directory"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
+case_gc_missing_cd_value() {
+  # behavior: gc --cd with no following operand exits 2 BEFORE any destructive git/manifest
+  #           operation, instead of silently defaulting to another repo's worktree registry
+  # Steps: run gc --cd (no value); assert exit 2 and stderr says --cd requires a directory
+  local name="worktree gc: missing --cd operand exits 2 instead of defaulting to another repo"
+  should_run "$name" || return 0
+  local err status=0
+  err="$tmp_root/cdmiss4.err"
+  PM_DISPATCH_STATE_ROOT="$tmp_root/state-cd-missing-guard" "$PMCTL" worktree gc --cd > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 2 && "$(<"$err")" == *"--cd requires a directory"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
 case_list_empty() {
   # behavior: list on an empty registry prints a human-readable "no worktrees" message
   # Steps: run list on a fresh repo with no registered worktrees; assert output contains "No registered worktrees."
@@ -647,15 +712,19 @@ case_create_stale_manifest_duplicate_slug_rejected
 case_create_rejects_unsafe_symlinked_state_root
 case_create_unsafe_slug_rejected
 case_create_help
+case_create_missing_cd_value
 case_list_empty
+case_list_missing_cd_value
 case_list_json_valid
 case_list_text_table
 case_list_cross_worktree_identity
 case_remove_requires_target
+case_remove_missing_cd_value
 case_remove_unknown_target
 case_remove_success
 case_remove_dirty_requires_force
 case_gc_no_worktrees
+case_gc_missing_cd_value
 case_gc_dry_run_no_mutation
 case_gc_removes_orphaned_manifest_entry
 case_gc_merged_flag

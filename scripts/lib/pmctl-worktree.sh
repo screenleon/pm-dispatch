@@ -176,6 +176,7 @@ pmctl_worktree_create() {
         ;;
       --cd)
         work_dir="${args[$((i+1))]:-}"
+        [[ -n "$work_dir" ]] || { printf 'pmctl worktree create: --cd requires a directory\n' >&2; return 2; }
         i=$((i+2))
         ;;
       -h|--help)
@@ -271,7 +272,11 @@ pmctl_worktree_list() {
   local i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
-      --cd) work_dir="${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      --cd)
+        work_dir="${args[$((i+1))]:-}"
+        [[ -n "$work_dir" ]] || { printf 'pmctl worktree list: --cd requires a directory\n' >&2; return 2; }
+        i=$((i+2))
+        ;;
       --json) json_out=1; i=$((i+1)) ;;
       -h|--help) pmctl_worktree_usage; return 0 ;;
       *) i=$((i+1)) ;;
@@ -316,7 +321,11 @@ pmctl_worktree_remove() {
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
       --force) force=1; i=$((i+1)) ;;
-      --cd) work_dir="${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      --cd)
+        work_dir="${args[$((i+1))]:-}"
+        [[ -n "$work_dir" ]] || { printf 'pmctl worktree remove: --cd requires a directory\n' >&2; return 2; }
+        i=$((i+2))
+        ;;
       -h|--help) pmctl_worktree_usage; return 0 ;;
       *) rest+=("${args[$i]}"); i=$((i+1)) ;;
     esac
@@ -384,7 +393,11 @@ pmctl_worktree_gc() {
         fi
         i=$((i+2))
         ;;
-      --cd) work_dir="${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      --cd)
+        work_dir="${args[$((i+1))]:-}"
+        [[ -n "$work_dir" ]] || { printf 'pmctl worktree gc: --cd requires a directory\n' >&2; return 2; }
+        i=$((i+2))
+        ;;
       -h|--help) pmctl_worktree_usage; return 0 ;;
       *) i=$((i+1)) ;;
     esac
