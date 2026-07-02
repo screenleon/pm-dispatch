@@ -73,9 +73,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-412 | ✅ closed 2026-07-01 | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | pr:#352 | P3 | retrieval |
 | CC-423 | ✅ closed 2026-07-01 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | pr:#353 | P3 | — |
-| CC-425 | 🟢 someday | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。 | ops/gate | 2026-06-25 | — | P3 | — |
+| CC-425 | 🔵 active | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。排入 v0.8.0 Phase 2。 | ops/gate | 2026-06-25 | — | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
-| CC-432 | 🔵 active | **[run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸]** 兩者因共用真實 repo 的 `.pm-dispatch/ctx/context.db` 被 `LIVE_DB_EXCLUSIVE` 強制序列，合計 558 秒（實測 test-release-verify 380s + test-pmctl-context 178s），佔全套件 ~10 分鐘總時長的絕大部分；根因初判為 `test-release-verify.sh` 對 `release-verify.sh` 呼叫 25 次、多次仍跑 Phase 3 對真實 repo 重複索引。**解法尚未定案**，需先深入分析（Phase 3 smoke 隔離 vs 案例跳過 vs 其他）再規劃實作範圍。觸發：CC-423 pr-gate 迭代中使用者實測耗時排查（2026-07-01）。 | ops/test | 2026-07-01 | — | P2 | design |
+| CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
 | CC-433 | 🟢 someday | **[detached lifecycle：抽共用 sentinel lib + wait 改主動通知]** (1) `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入邏輯結構相同但各自重寫，應抽成共用 lib，兩邊各自只保留獨有業務邏輯（preflight+adapter vs. 直接 exec pr-gate.sh）；(2) `pmctl dispatch wait`/`pmctl gate wait` 目前用 `sleep \$POLL_INTERVAL` 輪詢 sentinel 檔案，應改為主動通知（如 blocking read on FIFO、inotify 等），supervisor 完成時主動喚醒 wait 而非讓它每 N 秒醒來檢查一次。解法未定案，需先 `/pre-impl` 或 `/spike` 收斂設計。 | arch/gate | 2026-07-01 | — | P3 | design |
 
 ---
@@ -1147,7 +1147,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3（someday）.
 
-## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 🟢 someday
+## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 🔵 active
 
 **Problem**: `pmctl gate run` 目前的 base 推斷邏輯綁死在 `git merge-base --fork-point origin/main HEAD`，gate result 也以 PR# 為 primary key——這意味著 gate 只能在已有 PR（或預設對 main）的情況下有意義地跑，無法在開 PR 前本地對任意兩個 branch 做 diff-gate，也無法比較 `v0.6.0..v0.7.0` 這類 tag-to-tag diff。
 
@@ -1183,7 +1183,13 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **See**: pr:#339
 
-## CC-432 — run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸 🔵 active
+## CC-432 — run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸 ✅ 2026-07-02
+
+**See**: pr:#354
+
+**Resolution**：三方獨立分析（主線程讀源碼＋codex read-only dispatch＋外部 ChatGPT 分析）收斂到票面 A/B 兩個候選之外的「方向 C」：`test-release-verify.sh` 的 12 個裸 `--no-suite` 測試函式各自獨立重跑完整 Phase 1+3+3b+3c smoke，只為斷言輸出裡不同子字串——改成 `rv_no_suite_once()` 懶初始化共用快取後，這 12 個測試改讀同一份快取結果（3 個 `--e2e` stub 變體維持獨立不受影響）。`release-verify.sh` 本體零改動，46 項既有斷言數量與行為不變。實測 `test-release-verify.sh` 耗時 380s → ~127s（降幅 ~66%）。
+- 方向 A（Phase 3 smoke 改用隔離假 repo）：評估後**不採用**——`release-verify.sh` 的 `REPO_ROOT` 寫死自身腳本所在 repo 且無 override 參數，Phase 3 有專屬斷言 `external-repo-db-location` 驗證「pmctl context 在真實/大型 repo 上行為正確」，改用假 repo 會牴觸「release-verify.sh 不可弱化」的硬限制。
+- `LIVE_DB_EXCLUSIVE`（`test-release-verify`/`test-pmctl-context` 因共用真實 repo `context.db` 被迫序列，合計 558s）本身的序列化耦合：評估後**擱置不追**——互斥窗是整個 `test-pmctl-context` 套件期間（guard 斷言只在套件中段跑一次，比對套件開始到該 case 之間的 fingerprint），要縮小窗口須拆分套件、改動 `run-all-tests.sh` 共用排程器，風險層級高於單一測試檔改動，效益（可再省的時間）不足以抵銷風險。未來若有需要可重新評估，非排入 someday backlog。
 
 **Problem**: 使用者在 CC-423 pr-gate 迭代過程中反映 `scripts/run-all-tests.sh` 單次執行超過 10 分鐘，要求排查瓶頸。逐一計時全部 65 個套件（`bash <suite>.sh` 個別量測，非平行）後的實測數據：
 

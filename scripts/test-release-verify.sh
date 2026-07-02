@@ -29,6 +29,25 @@ assert_not_contains() {
   if [[ "$hay" != *"$needle"* ]]; then pass "$name"; else fail "$name" "must not contain: $needle"; fi
 }
 
+# ── Shared cache for the repeated `bash "$RV" --no-suite` invocation ──────────
+# A dozen test functions below all assert against the same bare `--no-suite`
+# output (Phase 1 + real-repo Phase 3/3b/3c smoke). Running it once and caching
+# the result means that real work happens exactly once per test-release-verify.sh
+# run instead of once per assertion group. Only this exact invocation shape is
+# cached — the --e2e stub variants further down use distinct stubs/flags and stay
+# independent processes.
+RV_NO_SUITE_DONE=0
+RV_NO_SUITE_OUT=""
+RV_NO_SUITE_RC=0
+
+rv_no_suite_once() {
+  if [[ "$RV_NO_SUITE_DONE" -eq 0 ]]; then
+    RV_NO_SUITE_RC=0
+    RV_NO_SUITE_OUT=$(bash "$RV" --no-suite 2>&1) || RV_NO_SUITE_RC=$?
+    RV_NO_SUITE_DONE=1
+  fi
+}
+
 # ── --help / -h ───────────────────────────────────────────────────────────────
 
 test_help_contains_usage() {
@@ -96,15 +115,17 @@ test_help_ends_with_newline() {
 # pass in the current environment (same assumption as release-verify --no-suite).
 
 test_no_suite_partial_verdict() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "no-suite-partial-verdict"   "PARTIAL GO"                     "$out"
   assert_contains "no-suite-skip-reason"       "NOT valid for release sign-off" "$out"
 }
 
 test_no_suite_exits_3() {
   # PARTIAL GO is exit 3: distinct from 0=full GO, 1=NO-GO, 2=usage error.
-  assert_exit "no-suite-exits-3" 3 bash "$RV" --no-suite
+  rv_no_suite_once
+  local rc="$RV_NO_SUITE_RC"
+  if [[ "$rc" -eq 3 ]]; then pass "no-suite-exits-3"; else fail "no-suite-exits-3" "exit $rc want 3"; fi
 }
 
 # ── Phase 4 delegation via PM_RELEASE_VERIFY_E2E_SCRIPT stub ──────────────────
@@ -154,8 +175,8 @@ test_e2e_delegation_required_skip() {
 test_no_e2e_phase4_skip_recorded() {
   # When --e2e is omitted Phase 4 must be explicitly recorded as SKIP (required
   # phase skipped), making the verdict PARTIAL GO (exit 3) — not GO.
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "no-e2e-skip-line" "[SKIP] e2e dispatch+gate" "$out"
   assert_contains "no-e2e-partial"   "PARTIAL GO"               "$out"
   if [[ "$rc" -eq 3 ]]; then pass "no-e2e-exits-3"
@@ -167,8 +188,8 @@ test_no_e2e_phase4_skip_recorded() {
 # smoke, and no-db graceful degradation) appears in Phase 3 output.
 
 test_phase3_external_repo_cases() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3-external-repo-index"    "[PASS] external-repo-index"    "$out"
   assert_contains "phase3-external-repo-db-loc"   "external-repo-db-location"     "$out"
   assert_contains "phase3-external-repo-query"    "external-repo-query"           "$out"
@@ -177,8 +198,8 @@ test_phase3_external_repo_cases() {
 
 test_phase3_repo_local_db_smoke() {
   # The standard Phase 3 smoke (this repo) must PASS — proves repo-local db works.
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3-index-skip-query" "[PASS] context index+skip+query" "$out"
   assert_contains "phase3-pack"             "[PASS] context pack"             "$out"
   assert_contains "phase3-reuse-scan"       "[PASS] context reuse-scan"       "$out"
@@ -213,23 +234,23 @@ EOF
 # new guard + brief-validate smoke cases pass against the real pmctl binary.
 
 test_phase3b_adapter_manifests() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3b-manifest-codex"    "[PASS] adapter-manifest-codex"    "$out"
   assert_contains "phase3b-manifest-claude"   "[PASS] adapter-manifest-claude"   "$out"
   assert_contains "phase3b-manifest-opencode" "[PASS] adapter-manifest-opencode" "$out"
 }
 
 test_phase3b_guard_check() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3b-guard-allow" "[PASS] guard-check-executor-allow" "$out"
   assert_contains "phase3b-guard-block" "[PASS] guard-check-executor-block" "$out"
 }
 
 test_phase3b_brief_validate() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3b-legacy-reject" "[PASS] brief-validate-legacy-reject"     "$out"
   assert_contains "phase3b-none-reject"   "[PASS] brief-validate-none-codex-reject" "$out"
   assert_contains "phase3b-valid-brief"   "[PASS] brief-validate-valid"             "$out"
@@ -240,26 +261,26 @@ test_phase3b_brief_validate() {
 # memory-source, doctor, artifacts-list, and pre-release-audit smoke cases pass.
 
 test_phase3c_memory_source() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3c-memory-source" "[PASS] context-memory-source" "$out"
 }
 
 test_phase3c_memory_doctor() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3c-memory-doctor" "[PASS] memory-doctor" "$out"
 }
 
 test_phase3c_artifacts_list() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3c-artifacts-list" "[PASS] artifacts-list" "$out"
 }
 
 test_phase3c_pre_release_audit() {
-  local out rc=0
-  out=$(bash "$RV" --no-suite 2>&1) || rc=$?
+  rv_no_suite_once
+  local out="$RV_NO_SUITE_OUT" rc="$RV_NO_SUITE_RC"
   assert_contains "phase3c-pre-release-audit" "[PASS] pre-release-audit" "$out"
 }
 
