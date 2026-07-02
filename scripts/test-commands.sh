@@ -369,6 +369,37 @@ should_run "using-git-worktrees: documents orphan recovery via gc" && assert_fil
 should_run "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" && assert_file_contains "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" "$USING_GIT_WORKTREES" "does not touch the \`--parallel\` PR gate" && pass "using-git-worktrees: excludes --parallel gate reviewer isolation from scope"
 should_run "using-git-worktrees: no CC ticket references" && assert_not_contains "using-git-worktrees: no CC ticket references" "$USING_GIT_WORKTREES" "CC-"
 
+# ── ship.md contract ─────────────────────────────────────────────────────────
+
+SHIP="$COMMANDS_DIR/ship.md"
+
+assert_frontmatter "ship: frontmatter valid" "$SHIP"
+should_run "ship: scoped to a single named ticket per invocation" && assert_file_contains "ship: scoped to a single named ticket per invocation" "$SHIP" "one ticket per invocation" && pass "ship: scoped to a single named ticket per invocation"
+should_run "ship: does not batch-scan BACKLOG for candidates" && assert_file_contains "ship: does not batch-scan BACKLOG for candidates" "$SHIP" "Do not scan" && pass "ship: does not batch-scan BACKLOG for candidates"
+# Step 0 pre-flight consistency check: the one legal stopping point
+should_run "ship: has Step 0 pre-flight consistency check" && assert_file_contains "ship: has Step 0 pre-flight consistency check" "$SHIP" "Step 0" && pass "ship: has Step 0 pre-flight consistency check"
+should_run "ship: checks DECISIONS.md Constraints introduced" && assert_file_contains "ship: checks DECISIONS.md Constraints introduced" "$SHIP" "Constraints introduced" && pass "ship: checks DECISIONS.md Constraints introduced"
+should_run "ship: checks unmet Dependencies before starting" && assert_file_contains "ship: checks unmet Dependencies before starting" "$SHIP" "Dependencies" && pass "ship: checks unmet Dependencies before starting"
+should_run "ship: conflict stops before branching or implementing" && assert_file_contains "ship: conflict stops before branching or implementing" "$SHIP" "Do not create a branch" && pass "ship: conflict stops before branching or implementing"
+should_run "ship: keeps DECISIONS.md out of dispatch briefs" && assert_file_contains "ship: keeps DECISIONS.md out of dispatch briefs" "$SHIP" "do not paste it into any dispatch brief" && pass "ship: keeps DECISIONS.md out of dispatch briefs"
+# implementation stays main-thread, not dispatched
+should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
+# gate loop contract
+should_run "ship: invokes /pr-gate for review" && assert_file_contains "ship: invokes /pr-gate for review" "$SHIP" "/pr-gate" && pass "ship: invokes /pr-gate for review"
+should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
+should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
+should_run "ship: re-runs gate with targeted reviewers" && assert_file_contains "ship: re-runs gate with targeted reviewers" "$SHIP" "--targeted" && pass "ship: re-runs gate with targeted reviewers"
+should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
+# exactly two stop conditions, no more
+should_run "ship: stop condition heading enumerates the loop's halt cases" && assert_file_contains "ship: stop condition heading enumerates the loop's halt cases" "$SHIP" "Stop the loop only when" && pass "ship: stop condition heading enumerates the loop's halt cases"
+should_run "ship: round count alone is not a stop signal" && assert_file_contains "ship: round count alone is not a stop signal" "$SHIP" "this is taking many rounds" && pass "ship: round count alone is not a stop signal"
+should_run "ship: any other NO-GO continues without asking" && assert_file_contains "ship: any other NO-GO continues without asking" "$SHIP" "gets fixed and re-gated without asking" && pass "ship: any other NO-GO continues without asking"
+# PR template
+should_run "ship: opens PR via gh pr create" && assert_file_contains "ship: opens PR via gh pr create" "$SHIP" "gh pr create" && pass "ship: opens PR via gh pr create"
+should_run "ship: PR body template records gate rounds and verdict" && assert_file_contains "ship: PR body template records gate rounds and verdict" "$SHIP" "Final verdict" && pass "ship: PR body template records gate rounds and verdict"
+should_run "ship: GO is not merge authorization" && assert_file_contains "ship: GO is not merge authorization" "$SHIP" "GO is not merge authorization" && pass "ship: GO is not merge authorization"
+should_run "ship: no CC ticket references" && assert_not_contains "ship: no CC ticket references" "$SHIP" "CC-[0-9]"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
