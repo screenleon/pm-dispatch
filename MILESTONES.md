@@ -51,13 +51,13 @@
 |----|------|------|
 | CC-381 | install host-PM-aware — 縮小為 read-only host-profile-detection / doctor 擴充切片：讓 `doctor.sh`/`pmctl doctor` 能回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」不動 installer write path。前置票 CC-372/374/375/380 已全數 done，本 Phase 目標是把 CC-381 從設計陳述推進為有明確 Requirement 的實作票 | 🔵 active |
 
-### Phase 4 — CC-014 `using-git-worktrees` skill（P3；低風險並行；與 Phase 1-3 檔案面不重疊）
+### Phase 4 — CC-014 repo 通用 worktree 平行開發工具（P3；低風險並行；與 Phase 1-3 檔案面不重疊）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-014 | `using-git-worktrees` skill：為平行開發（`--parallel` PR gate 各 reviewer 目前共用同一 working tree，寫入可能互相干擾）補一份指導 skill；評估 `--parallel` gate 是否可為每個 reviewer 建立獨立 git worktree | 🔵 active |
+| CC-014 | repo 通用 worktree 建立/列出/清理工具 + `using-git-worktrees` skill，支援多票並行開發；`--parallel` PR gate reviewer 隔離整合留待未來 follow-up ticket，未併入本次範圍 | ✅ done pr:#358 |
 
-> 由 CC-050 稽核降級的 ⏸ deferred（無開放分支）重新啟用；規劃時尚未有實作分支，範圍與時程由後續 `/pre-impl` 或直接 dispatch 時再收斂。
+> 由 CC-050 稽核降級的 ⏸ deferred（無開放分支）重新啟用；2026-07-02 範圍由「pr-gate reviewer 隔離」擴大為「repo 通用 worktree 工具」；規劃時尚未有實作分支，範圍與時程由後續 `/pre-impl` 或直接 dispatch 時再收斂。
 
 ### 待後續 / 明確排除
 

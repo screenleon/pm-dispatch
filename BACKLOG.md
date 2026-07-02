@@ -13,7 +13,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-004 | 🟢 someday | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
-| CC-014 | 🔵 active | `using-git-worktrees` skill：parallel PR gate 隔離開發環境。v0.8.0 Phase 4 | arch | 2026-05-14 | — | — | — |
+| CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
 | CC-015 | ⏸ deferred | `systematic-debugging` skill：結構化偵錯工作流 | ux | 2026-05-14 | — | — | — |
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
@@ -209,12 +209,17 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Note**: 依賴 CC-011；建議與 CC-011 合入同一 PR（Phase 1 + Phase 2 同步落地，CC-012 無獨立實作意義）。
 **Status note (CC-050 audit 2026-05-18)**: Downgraded from ⏸ deferred to 🟢 someday — depends on CC-011; no active plan. Re-evaluate together with CC-011.
 
-## CC-014 — `using-git-worktrees` skill
+## CC-014 — repo 通用 worktree 平行開發工具 ✅ 2026-07-02
 
-**Status note (v0.8.0 planning 2026-07-01)**: Re-activated (was downgraded to ⏸ deferred by the CC-050 audit 2026-05-18 for lacking an open branch) — assigned to v0.8.0 Phase 4.
-**Problem**: `--parallel` PR gate 各 reviewer 在同一 working tree 執行，reviewer 寫入可能互相干擾。
-**Why**: git worktree 讓每個 subagent 在獨立環境工作，避免狀態污染，也直接補強 CC-003 的解法方向。
-**Requirement**: `commands/using-git-worktrees.md` skill，指導平行開發中使用 git worktree；評估 `--parallel` gate 是否可為每個 reviewer 建立獨立 worktree。
+**Status note (v0.8.0 planning 2026-07-02)**: Re-activated (was downgraded to ⏸ deferred by the CC-050 audit 2026-05-18 for lacking an open branch) — assigned to v0.8.0 Phase 4. Scope broadened 2026-07-02: 不再侷限於 pr-gate reviewer 隔離，改為 repo 層級通用 worktree 工具，讓任一 ticket/分支都能快速建立、切換、清理獨立 worktree 以支援多票並行開發。
+**Problem**: 目前開發者（與 `--parallel` PR gate 各 reviewer）都在同一 working tree 上工作，跨票並行開發時彼此的未 commit 變更、build 產物會互相干擾；沒有標準化的方式建立/清理獨立 worktree。
+**Why**: git worktree 讓每個工作串流（人或 subagent）在獨立環境工作，避免狀態污染；同時直接補強 CC-003 的解法方向，也可延伸解掉 `--parallel` gate 的 reviewer 隔離問題。
+**Requirement**:
+1. `scripts/worktree-*.sh`（或等效 `pmctl` 子指令）：為指定 ticket/分支建立、列出、清理 worktree，統一命名慣例與清理時機（避免孤兒 worktree 殘留）。
+2. `commands/using-git-worktrees.md` skill：指導開發者（人或 dispatch executor）如何用這些工具做功能分支平行開發。
+3. 評估 `--parallel` PR gate 是否可改用同一套工具為每個 reviewer 建立獨立 worktree（原票聚焦點，現列為本票子項而非全部範圍）。
+**Outcome**: `pmctl worktree create/list/remove/gc` 落地，manifest 存於 state store（`sw_project_worktree_dir`，跨主 repo/linked worktree 同一 partition）；`commands/using-git-worktrees.md` skill 文件；36 個 focused test。`--parallel` gate reviewer 隔離（原需求 3）留待未來 follow-up ticket，未併入本次範圍。
+**See**: pr:#358
 
 ## CC-015 — `systematic-debugging` skill
 

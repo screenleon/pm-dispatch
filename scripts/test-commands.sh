@@ -352,6 +352,23 @@ should_run "pre-release: Layer 2 section is informational only" && assert_file_c
 should_run "pre-release: documents Layer 3 blind spots" && assert_file_contains "pre-release: documents Layer 3 blind spots" "$PRE_RELEASE" "Layer 3" && pass "pre-release: documents Layer 3 blind spots"
 should_run "pre-release: documents exit codes" && assert_file_contains "pre-release: documents exit codes" "$PRE_RELEASE" "Exit codes" && pass "pre-release: documents exit codes"
 
+# ── using-git-worktrees.md contract ─────────────────────────────────────────
+
+USING_GIT_WORKTREES="$COMMANDS_DIR/using-git-worktrees.md"
+
+assert_frontmatter "using-git-worktrees: frontmatter valid" "$USING_GIT_WORKTREES"
+should_run "using-git-worktrees: states git is a hard prerequisite" && assert_file_contains "using-git-worktrees: states git is a hard prerequisite" "$USING_GIT_WORKTREES" "this requires git" && pass "using-git-worktrees: states git is a hard prerequisite"
+should_run "using-git-worktrees: documents create subcommand" && assert_file_contains "using-git-worktrees: documents create subcommand" "$USING_GIT_WORKTREES" "pmctl worktree create" && pass "using-git-worktrees: documents create subcommand"
+should_run "using-git-worktrees: documents list subcommand" && assert_file_contains "using-git-worktrees: documents list subcommand" "$USING_GIT_WORKTREES" "pmctl worktree list" && pass "using-git-worktrees: documents list subcommand"
+should_run "using-git-worktrees: documents remove subcommand" && assert_file_contains "using-git-worktrees: documents remove subcommand" "$USING_GIT_WORKTREES" "pmctl worktree remove" && pass "using-git-worktrees: documents remove subcommand"
+should_run "using-git-worktrees: documents gc subcommand" && assert_file_contains "using-git-worktrees: documents gc subcommand" "$USING_GIT_WORKTREES" "pmctl worktree gc" && pass "using-git-worktrees: documents gc subcommand"
+should_run "using-git-worktrees: documents --force is destructive" && assert_file_contains "using-git-worktrees: documents --force is destructive" "$USING_GIT_WORKTREES" "destructive" && pass "using-git-worktrees: documents --force is destructive"
+should_run "using-git-worktrees: documents cross-worktree identity guarantee" && assert_file_contains "using-git-worktrees: documents cross-worktree identity guarantee" "$USING_GIT_WORKTREES" "same partition" && pass "using-git-worktrees: documents cross-worktree identity guarantee"
+should_run "using-git-worktrees: documents concurrent manifest write safety" && assert_file_contains "using-git-worktrees: documents concurrent manifest write safety" "$USING_GIT_WORKTREES" "serialized under a single lock" && pass "using-git-worktrees: documents concurrent manifest write safety"
+should_run "using-git-worktrees: documents orphan recovery via gc" && assert_file_contains "using-git-worktrees: documents orphan recovery via gc" "$USING_GIT_WORKTREES" "git worktree prune" && pass "using-git-worktrees: documents orphan recovery via gc"
+should_run "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" && assert_file_contains "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" "$USING_GIT_WORKTREES" "does not touch the \`--parallel\` PR gate" && pass "using-git-worktrees: excludes --parallel gate reviewer isolation from scope"
+should_run "using-git-worktrees: no CC ticket references" && assert_not_contains "using-git-worktrees: no CC ticket references" "$USING_GIT_WORKTREES" "CC-"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
