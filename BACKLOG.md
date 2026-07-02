@@ -50,7 +50,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-259 | 🟢 someday | **[yaml.sh lib extraction]** Extract `_yaml_get` bash/awk helper and `case_yaml_parse` structural validator from `scripts/test-core-schemas.sh` into `scripts/lib/yaml.sh` for reuse across test scripts; add independent test file `scripts/test-yaml-lib.sh` and wire into `run-all-tests.sh` + CI. Currently only used in `test-core-schemas.sh`; extraction deferred from CC-229 M1 PR to reduce gate surface. Trigger: second consumer in a new test script. | ops/test | 2026-05-25 | pr:TBD | P3 | — |
 | CC-270 | ⏸ deferred | **[test: concurrent pmctl adapter generate guard]** Two simultaneous `pmctl adapter generate <same-name>` runs can race: the precheck+mkdir+trap sequence is not atomic. Blast radius: one run may delete another's partial output; reproducible by deleting `adapters/<name>` and rerunning. Deferred — single-developer workflow makes this low-probability; fix with atomic mkdir using `mkdir` exit-code guard when needed. | test/ops | 2026-05-28 | — | P3 | — |
 | CC-273 | ⏸ deferred | arch: unified lifecycle hook event spec（`.pm-dispatch/hooks/<event>.sh`）；activate when second hook point beyond gate pre/post emerges | arch/gate | 2026-05-28 | — | P3 | — |
-| CC-276 | ✅ closed 2026-06-19 | **[feat: persistent gate override declarations]** 每輪 gate 重開 fresh session，已接受的 risk override 必須重新聲明。支援 `--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 block 重複出現。已於 pr:#301 交付（覆核發現先於 v0.8.0 Phase 2 規劃前即已合入） | gate/process | 2026-05-29 | pr:#301 | P2 | — |
 | CC-286 | ⏸ deferred | **[pmctl: prefix-generic next-id derivation]** `scripts/pm-prep-snapshot.sh` derives `backlog_next_id` CC-only (it emits `CC-NNN`); under the working-set contract it scans BACKLOG.md + BACKLOG-ARCHIVE.md for the max, but only `CC-` IDs. A cross-repo next-id (other prefixes: JS-, PA-) must be prefix-derived and centralized in pmctl, scanning both working-set and archive. Retire pm-prep-snapshot's CC-hardcoded derivation when `pmctl backlog`/next-id lands. Surfaced by pr-gate critic+architecture on #186. | arch | 2026-05-30 | — | P3 | design |
 | CC-306 | ⏸ deferred | **[arch: extend CC-233 layer enforcer to runtime-named data paths in scripts/]** Guard against re-introducing `.codex-*`/`.claude-*` DATA directories under scripts/ (the optional follow-up deferred from CC-298). | arch | 2026-06-01 | — | P3 | design |
 | CC-333 | 🔵 active | arch: pm-dispatch runtime 解耦合（v0.6.0 umbrella）；layer 2/3/5/6 已交付（v0.6.0）；layer 1（CC-412）+layer 4（CC-381）排入 v0.8.0；layer 7 待評估；open sub-tickets: CC-381/390/393/412 | arch | 2026-06-07 | — | P2 | design |
@@ -71,13 +70,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-381 | 🔵 active | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；排在 CC-373..377 之後；umbrella: CC-333）。v0.8.0 Phase 3 spike-only：縮小為 read-only host-profile-detection / doctor 擴充切片，不動 installer write path | arch/install | 2026-06-14 | — | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
-| CC-412 | ✅ closed 2026-07-01 | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | pr:#352 | P3 | retrieval |
-| CC-423 | ✅ closed 2026-07-01 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | pr:#353 | P3 | — |
-| CC-425 | ✅ closed 2026-07-02 | `pr-gate.sh --head <ref>` 新增；diff 一組固定 base..head ref（branch/tag/commit），不涉及 PR 或 working tree；`--base` 既有支援已可省 PR。與 `--allow-dirty` 互斥（明確拒絕）。 | ops/gate | 2026-06-25 | pr:#355 | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
-| CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
-| CC-433 | ✅ closed 2026-07-02 | detached lifecycle spike：`docs/spikes/CC-433.md` — 共用 lib 抽取 GREEN（adopt，開 CC-434）；poll→通知機制遷移 AMBER（mkfifo 技術可行但 multi-waiter 資料損毀未解，維持輪詢） | arch/gate | 2026-07-01 | — | P3 | spike |
-| CC-434 | ✅ closed 2026-07-02 | 抽出 `scripts/lib/detached-launch.sh`（7 共用函式），gate/dispatch supervisor + wait 端改用共用實作；`resolve_repo_root` 保留 inline + drift-guard fixture 測試；dispatch 安全預檢查零改動 | arch/gate | 2026-07-02 | pr:#356 | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 
 ---
@@ -665,38 +658,6 @@ This makes directory creation the mutex.
 
 ---
 
-## CC-276 — feat: persistent gate override declarations to reduce re-statement across rounds ✅ 2026-06-19
-
-**See**: pr:#301 (2026-06-19) — delivered ahead of v0.8.0 Phase 2 planning; `--override-file`/auto-discovery, brief injection, and provenance audit all shipped with full test coverage in `scripts/test-pr-gate.sh` (override-file-autodiscovery, override-file-explicit-flag, override-file-missing-errors, override-file-injected-parallel-reviewer/synthesis, override-provenance-in-result, etc.)
-
-**Problem**: Each `pr-gate.sh` run spawns fresh reviewer sessions with no memory of previous rounds. When users consciously accept a known risk (storage cleanup failure, Docker unavailable in sandbox, etc.) and provide an override declaration, Round N+1 reviewers see the same code with no context of the previous override and re-block. Users must re-state identical override declarations every round. Observed: 9+ rounds on a single PR primarily due to re-blocking on already-accepted known risks.
-
-**Requirement**:
-- `pr-gate.sh` accepts `--override-file <path>` flag (Option A) OR auto-discovers `.gate-overrides.md` at repo root (Option B)
-- Override file format: freeform markdown with per-reviewer override declarations (see issue for example)
-- Reviewer brief preamble injects override content with instruction: "Do not re-block on these specific items unless the diff changes the risk materially"
-- When no override file is present, behaviour is unchanged (backward compatible)
-
-**Override file example** (`.gate-overrides.md`):
-```markdown
-## Gate Overrides (permanent, owner-accepted)
-
-- [security] I accept that storage cleanup may fail after DB anonymization.
-  Accepted: 2026-05-20. Owner: @screenleon.
-- [risk] Docker is unavailable in the gate sandbox; integration tests pass locally.
-  Accepted: 2026-05-20. Owner: @screenleon.
-```
-
-**Acceptance**:
-1. `bash scripts/pr-gate.sh --cd . --override-file .gate-overrides.md` — override content injected into all 5 reviewer prompts
-2. Reviewers that previously blocked on an overridden item return pass/advise (not block) when the diff is unchanged
-3. `bash scripts/test-pr-gate.sh` → exit 0 (new test covering override injection)
-4. No override file → behaviour identical to today
-
-**area**: gate/process
-**Raised by**: issue:#174 (2026-05-28)
-**Priority**: P2 — DX improvement; reduces friction on PRs with known-accepted risks across multi-round gate iteration.
-
 ## CC-104d — [Windows dogfood r1] hook-codex-bash-guard.sh hardcoded read-root ⏸ deferred
 
 **Problem**: `hook-codex-bash-guard.sh:55` defaults read-root to `$HOME/github:/tmp`; repos under `~/Documents/github/` or arbitrary Windows paths are not covered. `CLAUDE_HOOK_CODEX_READ_ROOTS` env override exists but the wrong default silently restricts hooks.
@@ -1099,68 +1060,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
 
-## CC-412 — memory substrate 跨工具可攜（decouple from Claude-specific location + injection） ✅ 2026-07-01
-
-**Problem**: 專案記憶目前綁兩處 Claude 專屬實作，使「跨 AI 工具/agent（codex、opencode、未來 host）共用同一份專案記憶」困難：(1) `find_memory_dir`（`scripts/lib/memory.sh`）的目錄慣例寫死 `CLAUDE_CONFIG_DIR/projects/<encode(cwd)>/memory/`；(2) MEMORY.md 的每-session 注入靠 Claude Code 的 UserPromptSubmit hook，其他工具沒有等價 hook，既無法定位也無法注入。
-
-**Why / 決策分析（此 ticket 即 decision record）**:
-- **已可攜的部分**（CC-405 剛強化，刻意做成工具中立）：卡片＝純 Markdown+YAML；`pmctl memory doctor`、`pmctl context --source memory`（[[CC-403]] 的中立檢索 API）；memory 衍生 DB；[[CC-405]] frontmatter schema（topics/priority/status/...）。標準化反而**降低** Claude 耦合——把記憶從「memory-graph 工具的不透明附屬品」變成 pmctl 可檢查、可檢索的結構化資料。
-- **真正耦合僅兩處**：位置 resolver + 注入機制。`metadata.node_type`/`originSessionId` 是 Claude memory-graph 的 additive 標籤，YAML 忽略未知鍵，**不阻礙**其他工具（[[CC-405]] spike 已明訂禁止移除 `metadata` block，正是為了不鎖死）。
-- **決策方向**：不打掉重練、不移除任何東西；**加兩個 seam**。
-
-**Requirement**:
-- **位置 seam**：`find_memory_dir` 支援顯式 `PM_MEMORY_DIR`（或 config `dispatch.memory_dir`）覆寫，解析優先序明確（env > config > `CLAUDE_CONFIG_DIR` 慣例）；`memory doctor` / `context --source memory` / `mem-*` 全部走同一解析。未設時行為與今天 byte-identical（向後相容 load-bearing）。
-- **注入 adapter 化**：文件化「**可攜核心＝pmctl retrieval API**；注入＝per-tool adapter」。Claude UserPromptSubmit hook 為現成 adapter；其他工具不靠 hook，改主動呼叫 `pmctl context --source memory` 取記憶。
-- 下游 [[CC-404]]/[[CC-406]]/[[CC-407]] 應建在 retrieval API 上、而非 Claude 注入機制上。
-
-**Acceptance**:
-- 設 `PM_MEMORY_DIR` 後 `pmctl memory doctor` / `pmctl context --source memory` 解析到該目錄；未設時與今天行為一致。
-- docs 說明跨工具取記憶走 `pmctl context --source memory`（注入為 per-tool adapter）。
-- 不破壞 Claude 路徑預設；`metadata` block 維持不動。
-
-**Sequencing / relation**: 與 [[CC-011]]/[[CC-012]]（記憶**跨裝置** sync：symlink/pull）**正交**——那是同一份 memory 跨機器，本票是同一份 memory **跨工具**可攜；兩者可共用「位置不再硬綁 ~/.claude」這個 seam。建在 [[CC-403]] retrieval API 上。
-
-**See**: pr:#352
-
-**Priority**: P3（someday）。
-
-## CC-423 — gate detached lifecycle ✅ 2026-07-01
-
-**See**: pr:#353 — 全需求交付：`--lifecycle detached`（現為預設）+ `scripts/gate-supervisor.sh` + `pmctl gate wait` + result 完整性 fail-closed（GO/NO-GO sentinel 若缺 result 或 `gate_result_verify` 失敗即回報失敗，不可信的結果不會被誤判成功）+ `--cd` partition 綁定（`gate wait` 現在會驗證 `--cd` 是否真的擁有該 gate_id 的 run dir）+ `/pr-gate` 兩步流程（每個 Bash 呼叫皆自給自足，不依賴跨呼叫 shell 變數）。7 輪 pr-gate 迭代收斂，最終 full tier 5-reviewer 全數 approve/pass，零 finding。
-
-**Problem**: `pmctl gate run` 目前以 foreground 模式執行（無 lifecycle 選項），透過 Claude Code harness 的 `run_in_background: true` 監控。Session interrupt 會讓 harness 遺失對 gate process 的追蹤，回報錯誤的 exit code（同 CC-418 之前 dispatch 的問題）。
-
-**Why**: dispatch 已透過 `--lifecycle detached`（nohup/setsid + sentinel 機制）完全解耦，gate 應有對等能力。Gate 跑 3-5 分鐘，風險低於 dispatch（30+ 分鐘），但架構上仍是同一個缺陷：process 存活與否取決於 harness 是否在線。
-
-**Requirement**:
-- `pmctl gate run --lifecycle detached` 立即回傳 `gate_id`（格式：`gate-<ts>-<rand>`），exit 0
-- `scripts/gate-supervisor.sh`：以 `nohup/setsid` 啟動 `pr-gate.sh`，完成後寫 sentinel（複用 dispatch sentinel 機制：`/tmp/pm-gate-sentinel-<gate_id>-<nonce>`）
-- `pmctl gate wait <gate_id> --cd <work_dir>`：輪詢 sentinel，完成後輸出 `gate: <gate_id>  state: <GO/NO-GO>  exit: <N>`，exit 代碼等同 sentinel
-- `/pr-gate` skill 改為兩步：(1) detached launch → gate_id，(2) `pmctl gate wait` in background
-- 維持 `--lifecycle foreground` 作為 backward-compat 選項（預設改 detached）
-
-**Acceptance**:
-- `pmctl gate run --lifecycle detached` 回傳 gate_id 並立即退出
-- Session interrupt 後 gate 繼續執行，`pmctl gate wait` 在新 session 中可重新等待結果
-- gate result file 路徑仍從 gate run dir 讀取（已有 gate-20xxx 格式）
-- `pmctl gate run --lifecycle foreground` 行為不變（backward-compat）
-
-**See**: dispatch sentinel 實作於 `scripts/dispatch-supervisor.sh`、`scripts/lib/pmctl-dispatch.sh`（`pmctl_dispatch_run_detached`、`pmctl_dispatch_wait`）可參考複用。
-
-**Priority**: P3（someday）.
-
-## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 ✅ 2026-07-02
-
-**See**: pr:#355
-
-**Resolution**: 盤點現有程式碼後發現票面描述的兩個問題中，一個已在先前重構中解決：`pmctl gate run`（detached lifecycle，CC-423）的 result 存放路徑早已改用 `gate_id`（`sw_project_run_dir`）而非 PR#；foreground 路徑的 `--output` 預設值也是 `.gate-results/gate-<ts>.md`（timestamp-based），並非 PR# key。`--base <ref>` 亦已存在且可在無 PR 情況下運作（`gh pr view` 失敗會 fallback 到 `origin/HEAD` symbolic-ref，不 hard-fail）。真正缺的是 `--head <ref>`：diff 邏輯之前寫死比對 `HEAD`（當前 checkout），無法比較兩個任意固定 ref（如 tag-to-tag、或未 checkout 的 branch）。
-
-新增 `pr-gate.sh --head <ref>`：省略時維持現有行為（working tree / 當前分支 fallback）；指定時走獨立分支，採與既有 `--base` 相同的 merge-base（three-dot）語意 `git diff "$BASE"..."$HEAD_REF"`（比較 head 相對 merge-base 的變更，而非字面 two-dot tree diff——base 之後的獨立進展不會滲入 diff），不觸碰 working tree 或 dirty-preflight 邏輯，因此與 `--allow-dirty`（其存在目的是把 working tree 折入 scope）明確互斥並拒絕（exit 2）。Reviewer brief context block 在 `--head` 生效時額外顯示 `Head: <ref>` 一行。`pmctl gate run` 兩條路徑（foreground exec 與 `--lifecycle detached` 透過 `gate-supervisor.sh` 的 `--` passthrough）皆無需改動即可轉發 `--head`，因為都是把未知旗標原樣傳給 `pr-gate.sh`。`--help` usage block 與 unknown-arg 提示同步補上並釐清 three-dot 語意。
-
-**Gate 第一輪 NO-GO（critic block-soft + qa-tester block）修復**：(1) 補 `--head` 缺 operand 的受控錯誤（原本會以 raw `unbound variable` crash，比照 `--override-file` 加 guard）；(2) 補 diverged base/head 拓樸測試（`test_head_override_merge_base_semantics`：main 與 feature 各自獨立前進，驗證 three-dot 只看 head 相對 merge-base 的變更、不含 base 的獨立進展）；(3) 全文（`--help`、code comment、本 resolution）統一明確標註 three-dot/merge-base 語意，避免與字面 `base..head` two-dot tree diff 混淆；(4) 修正 MILESTONES.md Phase 2 註記與已完成列矛盾的過期文字。第二輪 5 個 `--head` 測試（原 3 + 新 2）、`scripts/test-pr-gate.sh` 共 124 項全數通過；`test-gate-lifecycle.sh`/`test-pmctl-gate.sh`/`test-pr-gate-profile.sh` 無回歸。
-
-**Priority**: P3（someday）.
-
 ## CC-431 — test-e2e.sh + release-verify.sh: opencode adapter support 🟢 someday
 
 **Problem**: `test-e2e.sh` 和 `release-verify.sh` 的 `--adapter` 旗標只接受 `claude|codex|auto`；opencode adapter 在 v0.6.0 加入後，e2e 驗證路徑從未同步更新。執行 `release-verify.sh --e2e --adapter opencode` 直接 exit 2 被拒。
@@ -1183,92 +1082,6 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 **Priority**: P3（someday）.
 
 **See**: pr:#339
-
-## CC-432 — run-all-tests.sh 耗時調查：test-release-verify/test-pmctl-context 序列瓶頸 ✅ 2026-07-02
-
-**See**: pr:#354
-
-**Resolution**：三方獨立分析（主線程讀源碼＋codex read-only dispatch＋外部 ChatGPT 分析）收斂到票面 A/B 兩個候選之外的「方向 C」：`test-release-verify.sh` 的 12 個裸 `--no-suite` 測試函式各自獨立重跑完整 Phase 1+3+3b+3c smoke，只為斷言輸出裡不同子字串——改成 `rv_no_suite_once()` 懶初始化共用快取後，這 12 個測試改讀同一份快取結果（3 個 `--e2e` stub 變體維持獨立不受影響）。`release-verify.sh` 本體零改動，46 項既有斷言數量與行為不變。實測 `test-release-verify.sh` 耗時 380s → ~127s（降幅 ~66%）。
-- 方向 A（Phase 3 smoke 改用隔離假 repo）：評估後**不採用**——`release-verify.sh` 的 `REPO_ROOT` 寫死自身腳本所在 repo 且無 override 參數，Phase 3 有專屬斷言 `external-repo-db-location` 驗證「pmctl context 在真實/大型 repo 上行為正確」，改用假 repo 會牴觸「release-verify.sh 不可弱化」的硬限制。
-- `LIVE_DB_EXCLUSIVE`（`test-release-verify`/`test-pmctl-context` 因共用真實 repo `context.db` 被迫序列，合計 558s）本身的序列化耦合：評估後**擱置不追**——互斥窗是整個 `test-pmctl-context` 套件期間（guard 斷言只在套件中段跑一次，比對套件開始到該 case 之間的 fingerprint），要縮小窗口須拆分套件、改動 `run-all-tests.sh` 共用排程器，風險層級高於單一測試檔改動，效益（可再省的時間）不足以抵銷風險。未來若有需要可重新評估，非排入 someday backlog。
-
-**Problem**: 使用者在 CC-423 pr-gate 迭代過程中反映 `scripts/run-all-tests.sh` 單次執行超過 10 分鐘，要求排查瓶頸。逐一計時全部 65 個套件（`bash <suite>.sh` 個別量測，非平行）後的實測數據：
-
-| 套件 | 耗時 |
-|---|---|
-| `test-release-verify` | 380s |
-| `test-pmctl-context` | 178s |
-| `test-pmctl-dispatch` | 156s |
-| `test-dispatch-lifecycle` | 100s |
-| `test-install` | 75s |
-| 其餘 60 個套件合計 | ~296s |
-
-**根因分析**：`test-release-verify` 與 `test-pmctl-context` 兩者因共用真實 pm-dispatch repo 的 `.pm-dispatch/ctx/context.db`，被 `scripts/run-all-tests.sh` 的 `LIVE_DB_EXCLUSIVE` 機制強制序列（不可平行）——`test-pmctl-context` 斷言這份 DB 在整個套件執行期間不可變動，而 `test-release-verify` 的 Phase 3 會對同一個真實 repo 重新索引、重建同一份 DB，兩者並行會互踩。兩者合計 558 秒（9.3 分鐘），即使其餘 63 個套件在 8-way 平行下瞬間跑完，光這個序列鎖就佔滿使用者觀察到的整個等待時間。
-
-`test-release-verify.sh` 對 `scripts/release-verify.sh` 呼叫 25 次（涵蓋各種旗標組合的行為驗證），其中多次即使帶 `--no-suite`，仍會執行 Phase 3（對真實 repo 跑 `pmctl context index/query/pack/reuse-scan`）；單次 `pmctl context index` 約 2.5 秒，乘以 20 幾次呼叫、每次多個子指令，疊加成 380 秒。
-
-**Why P2 而非直接排入本 sprint 實作**：解法尚未定案，需要先深入分析利弊再規劃範圍，不應該在還沒釐清設計前就急著動手：
-- 方向 A：讓 `test-release-verify.sh` 的 Phase 3 smoke 改用隔離的假 repo（而非真實 pm-dispatch repo 本身），移除與 `test-pmctl-context` 的互斥前提，兩者即可平行跑——但需確認 Phase 3 smoke「驗證 pmctl context 在真實/大型 repo 上行為正確」的目的是否會因改用假 repo 而打折扣。
-- 方向 B：讓 25 次呼叫中大多數案例透過某種旗標跳過 Phase 3，只留真正需要驗證 Phase 3 行為的少數案例執行——需要盤點這 25 個案例各自實際在測什麼，避免跳過後產生覆蓋率死角。
-- 也可能有方向 A/B 之外的做法（例如快取索引結果、降低 Phase 3 涉及的子指令數），需要實際盤點 `test-release-verify.sh` 的 25 個案例後才能收斂。
-
-**Requirement**: 待分析完成後再具體化；預計走 `/pre-impl` 或 `/spike` 先收斂設計方向，再拆成實作票。
-
-**Trigger**: CC-423（gate detached lifecycle）pr-gate 迭代過程中，使用者對「run-all-tests.sh 執行超過 10 分鐘」提出疑慮並要求逐一計時排查根因（2026-07-01）。
-
-**area**: ops/test
-**Priority**: P2 — 不阻塞 CC-423，但影響日常開發迭代速度，排在下一個 PR 優先分析規劃。
-
-## CC-433 — detached lifecycle：抽共用 sentinel lib + wait 改主動通知 ✅ 2026-07-02
-
-**See**: docs/spikes/CC-433.md
-
-**Problem**：CC-423（gate detached lifecycle）實作時直接照抄 `scripts/dispatch-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入模式，寫出 `scripts/gate-supervisor.sh`，兩份檔案在「啟動 detached process + 寫 sentinel」這塊結構相同（`_write_sentinel`/`_die` 的形狀、`/tmp/pm-*-sentinel-<id>-<nonce>` 命名、per-user mode-700 key 目錄）卻各自重寫，沒有抽共用 lib。
-
-另外，`pmctl dispatch wait <run_id>` 與 `pmctl gate wait <gate_id>` 目前都是輪詢實作：`while true; do [[ -f "$sentinel" ]] && ...; sleep "${POLL_INTERVAL:-2}"; done`。這代表 wait 呼叫平均要多等最多一個 poll interval 才能發現 supervisor 已完成，且長時間執行期間持續喚醒進程檢查檔案是否存在，而非讓 supervisor 完成時主動通知等待中的 wait。
-
-**Why**：
-- 重複程式碼：sentinel 寫入/驗證/清理邏輯目前有兩份幾乎相同的實作（`pmctl-dispatch.sh` 的 `_pmctl_sentinel_key_file`/`pmctl_dispatch_wait` 與 `pmctl-gate.sh` 的 `_pmctl_gate_sentinel_key_file`/`pmctl_gate_wait`），日後改其中一份的行為容易忘記同步另一份（已在 CC-423 實作中發生：gate 側的 result 完整性 fail-closed 邏輯是 dispatch 側原本沒有的，兩邊已經開始各自演化）。
-- 輪詢的效率/延遲問題：poll interval 預設 2 秒，代表 wait 呼叫最多要多等 2 秒才會回報完成，且整個等待期間都在忙輪詢（即使是低成本的 `sleep`），而非事件驅動。
-
-**Requirement**（待 `/pre-impl` 或 `/spike` 收斂，以下為方向候選，未定案）：
-- 共用 lib 化：抽出 `scripts/lib/detached-launch.sh`（或類似命名），提供通用的 `write_sentinel`/`launch_under_setsid`/nonce-key-file 管理函式，讓 `dispatch-supervisor.sh`/`gate-supervisor.sh` 與 `pmctl_dispatch_wait`/`pmctl_gate_wait` 都基於同一套實作，各自只保留獨有邏輯（dispatch 的 adapter/guard preflight + `pmctl_dispatch_execute_tail`；gate 的直接 exec pr-gate.sh + result 完整性檢查）。
-- 輪詢改主動通知：評估可行機制，例如 (a) named pipe/FIFO：supervisor 完成時寫入 FIFO，wait 用 blocking read 而非 `sleep` 迴圈喚醒；(b) `inotifywait`（若目標平台可穩定安裝該工具）監控 sentinel 檔案建立事件；(c) 其他 IPC 機制。需評估跨平台相容性（尤其 CI/macOS/WSL2）與現有 fail-closed／timeout／indeterminate（exit 3）語意是否受影響。
-- 兩項改動涉及安全敏感的 supervisor 檔案（尤其 dispatch 側有完整 preflight 防禦），需謹慎規劃測試涵蓋範圍，避免共用化過程中意外弱化 dispatch 的安全邊界。
-
-**Investigation scope**：
-1. 共用 lib 邊界：比對 `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + sentinel 寫入/nonce-key-file 管理邏輯，界定可抽出到 `scripts/lib/detached-launch.sh` 的共用函式，以及各自必須保留的獨有邏輯（dispatch 的 adapter/guard preflight + `pmctl_dispatch_execute_tail`；gate 的直接 exec pr-gate.sh + result 完整性檢查），並確認抽出不弱化 dispatch 側現有 security preflight。
-2. Poll→通知機制：評估 FIFO blocking read / `inotifywait` / 其他 IPC 在 CI、macOS、WSL2 三個目標平台的可行性與相容性，並確認選定機制下 `pmctl dispatch wait`/`pmctl gate wait` 既有的 fail-closed／timeout／indeterminate（exit 3）語意維持不變。
-
-**Done-when**：`docs/spikes/CC-433.md` 對上述兩項各給出明確建議（含至少一個實際 call site 的 pilot walkthrough，建議先遷移 gate 側，blast radius 較低），並標註 GREEN/AMBER/RED 可行性判定；後續實作票依此結果撰寫。
-
-**Result log**：完成，見 `docs/spikes/CC-433.md`（2026-07-02）。判定：共用 lib 抽取 **GREEN**（7/8 函式可乾淨抽取到 `scripts/lib/detached-launch.sh`，`resolve_repo_root` 因循環依賴保留 inline，邊界清楚、無安全弱化，建議開 CC-433a 實作）；poll→通知機制遷移 **AMBER**（mkfifo blocking read 技術可行且延遲大幅改善，但 multi-waiter 並發下有資料損毀風險，需先設計 single-waiter guard 才可採用，本輪維持輪詢）。
-
-**Trigger**：CC-423（gate detached lifecycle）pr-gate 迭代後，使用者檢視 `scripts/gate-supervisor.sh` 與 `scripts/dispatch-supervisor.sh` 的重複程度，並注意到 wait 端目前是輪詢實作，要求記錄為後續改善票（2026-07-01）。
-
-**area**: arch/gate
-**Priority**: P3（someday）。
-**Cross-link**: [[CC-423]]、[[CC-432]]、[[CC-434]]。
-
-## CC-434 — detached lifecycle：抽共用 sentinel lib scripts/lib/detached-launch.sh ✅ 2026-07-02
-
-**See**: pr:#356
-
-**Problem**：CC-433 spike（`docs/spikes/CC-433.md`）判定共用 lib 抽取為 GREEN——`dispatch-supervisor.sh`/`gate-supervisor.sh` 在啟動 detached process + 寫 sentinel 這塊今天是逐位元組相同的實作，但各自重寫，維護成本已在 CC-423 實作中顯現。本票落地該建議。
-
-**Requirement**（依 spike Pilot walkthrough 收斂，非待定案）：
-- 新增 `scripts/lib/detached-launch.sh`：7 個共用函式（`detached_launch_generate_nonce`、`detached_launch_key_file`、`detached_launch_secure_key_dir`、`detached_launch_write_key_file`、`detached_launch_sentinel_path`、`detached_launch_under_setsid`、`detached_launch_write_sentinel`、`detached_launch_wait_for_sentinel`）。
-- `resolve_repo_root`（symlink 解析）因 bootstrap 循環依賴（腳本要先解出 REPO_ROOT 才能 source lib）**保留 inline** 於 `dispatch-supervisor.sh`/`gate-supervisor.sh` 頂端；加一個 fixture 測試以 marker-comment 框住兩處區塊、逐字 diff，防止未來修改其中一份卻忘了同步另一份。
-- `gate-supervisor.sh`/`pmctl_gate_wait`（`scripts/lib/pmctl-gate.sh`）與 `dispatch-supervisor.sh`/`pmctl_dispatch_wait`（`scripts/lib/pmctl-dispatch.sh`）都改用共用函式；wait 端沿用輪詢（`detached_launch_wait_for_sentinel`），不動 IPC 機制（CC-433 spike 判定 poll→通知遷移 AMBER，未收斂）。
-- dispatch 側所有安全預檢查（native-arg 走私防護、adapter 解析、brief 驗證、guard check、run-spec schema 驗證、brief-snapshot 路徑相等性清理）**零改動**，不進共用 lib。
-- gate 側特有邏輯（`gate_result_verify` 結構完整性檢查、`--cd`→run-dir 包含關係比對、timeout 提示文字）**零改動**，維持在 `pmctl-gate.sh`。
-- sentinel 檔名/key-dir 路徑命名維持與現況位元組相同（`/tmp/pm-supervisor-sentinel-<run_id>-<nonce>`、`/tmp/pm-gate-sentinel-<gate_id>-<nonce>`、`pm-dispatch`/`pm-gate-dispatch` key-dir namespace），純委派實作、不改變任何對外行為。
-
-**Done-when**：`scripts/lib/detached-launch.sh` 落地並被兩側 supervisor + wait 函式使用；REPO_ROOT inline 區塊漂移守衛測試存在且通過；既有 dispatch/gate lifecycle 測試套件（`test-dispatch-lifecycle.sh`、`test-gate-lifecycle.sh`、`test-pmctl-dispatch.sh`、`test-pmctl-gate.sh` 等）全數通過，無行為變化；`run-all-tests.sh` 全套綠燈。
-
-**area**: arch/gate
-**Priority**: P2。
-**Cross-link**: [[CC-433]]、[[CC-423]]、[[CC-435]]。
 
 ## CC-435 — poll→通知機制 single-waiter guard：條件觸發，非既定後續票 🟢 someday
 
