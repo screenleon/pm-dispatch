@@ -73,7 +73,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-412 | ✅ closed 2026-07-01 | memory substrate 跨工具可攜：位置 seam（`PM_MEMORY_DIR` override）+ 注入／檢索分層（可攜核心＝pmctl retrieval API）。v0.8.0 Phase 1 headline | arch/memory | 2026-06-23 | pr:#352 | P3 | retrieval |
 | CC-423 | ✅ closed 2026-07-01 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed；session interrupt 不影響 gate 執行結果。v0.8.0 Phase 2 | arch | 2026-06-25 | pr:#353 | P3 | — |
-| CC-425 | 🔵 active | **[gate: 解除 PR 綁定，改以 base..head ref 對為輸入]** 現在 `pmctl gate run` 預設從 `origin/main` fork point 推斷 base，gate result 以 PR# 為 key；改成接受任意兩個 ref（`--base <ref> --head <ref>`），讓 gate 可在開 PR 前本地跑，也可比較任意 branch 差異。需重構 gate 的 base 解析邏輯與 result 存放路徑（目前以 PR# 為 key，改以 `<base>..<head>` slug 或 run_id）。排入 v0.8.0 Phase 2。 | ops/gate | 2026-06-25 | — | P3 | — |
+| CC-425 | ✅ closed 2026-07-02 | `pr-gate.sh --head <ref>` 新增；diff 一組固定 base..head ref（branch/tag/commit），不涉及 PR 或 working tree；`--base` 既有支援已可省 PR。與 `--allow-dirty` 互斥（明確拒絕）。 | ops/gate | 2026-06-25 | pr:#355 | P3 | — |
 | CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
 | CC-432 | ✅ closed 2026-07-02 | test-release-verify.sh 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s；方向 A（假 repo 隔離）/序列化耦合窄化皆評估後擱置不追（風險高於效益） | ops/test | 2026-07-01 | pr:#354 | P2 | design |
 | CC-433 | 🟢 someday | **[detached lifecycle：抽共用 sentinel lib + wait 改主動通知]** (1) `scripts/dispatch-supervisor.sh` 與 `scripts/gate-supervisor.sh` 的 setsid/nohup 啟動 + nonce-authenticated sentinel 寫入邏輯結構相同但各自重寫，應抽成共用 lib，兩邊各自只保留獨有業務邏輯（preflight+adapter vs. 直接 exec pr-gate.sh）；(2) `pmctl dispatch wait`/`pmctl gate wait` 目前用 `sleep \$POLL_INTERVAL` 輪詢 sentinel 檔案，應改為主動通知（如 blocking read on FIFO、inotify 等），supervisor 完成時主動喚醒 wait 而非讓它每 N 秒醒來檢查一次。解法未定案，需先 `/pre-impl` 或 `/spike` 收斂設計。 | arch/gate | 2026-07-01 | — | P3 | design |
@@ -1147,16 +1147,15 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Priority**: P3（someday）.
 
-## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 🔵 active
+## CC-425 — gate: 解除 PR 綁定，改以 base..head ref 對為輸入 ✅ 2026-07-02
 
-**Problem**: `pmctl gate run` 目前的 base 推斷邏輯綁死在 `git merge-base --fork-point origin/main HEAD`，gate result 也以 PR# 為 primary key——這意味著 gate 只能在已有 PR（或預設對 main）的情況下有意義地跑，無法在開 PR 前本地對任意兩個 branch 做 diff-gate，也無法比較 `v0.6.0..v0.7.0` 這類 tag-to-tag diff。
+**See**: pr:#355
 
-**Why**: 讓 gate 成為通用的「diff 品質閘門」，不依賴 PR 存在。可用於：開 PR 前先本地跑確認、milestone boundary 差異審查、任意 feature branch 對 release branch 的 diff review。
+**Resolution**: 盤點現有程式碼後發現票面描述的兩個問題中，一個已在先前重構中解決：`pmctl gate run`（detached lifecycle，CC-423）的 result 存放路徑早已改用 `gate_id`（`sw_project_run_dir`）而非 PR#；foreground 路徑的 `--output` 預設值也是 `.gate-results/gate-<ts>.md`（timestamp-based），並非 PR# key。`--base <ref>` 亦已存在且可在無 PR 情況下運作（`gh pr view` 失敗會 fallback 到 `origin/HEAD` symbolic-ref，不 hard-fail）。真正缺的是 `--head <ref>`：diff 邏輯之前寫死比對 `HEAD`（當前 checkout），無法比較兩個任意固定 ref（如 tag-to-tag、或未 checkout 的 branch）。
 
-**Requirement**:
-- `pmctl gate run [--base <ref>] [--head <ref>]`：兩者均可省略（維持現有推斷行為作為 fallback）。
-- gate result 存放路徑從 PR# key 改為 `<base-slug>..<head-slug>` 或 run_id，PR# 僅在有 PR 時作為 optional metadata 加入。
-- 文件 + `pmctl gate run --help` 說明新參數。
+新增 `pr-gate.sh --head <ref>`：省略時維持現有行為（working tree / 當前分支 fallback）；指定時走獨立分支，採與既有 `--base` 相同的 merge-base（three-dot）語意 `git diff "$BASE"..."$HEAD_REF"`（比較 head 相對 merge-base 的變更，而非字面 two-dot tree diff——base 之後的獨立進展不會滲入 diff），不觸碰 working tree 或 dirty-preflight 邏輯，因此與 `--allow-dirty`（其存在目的是把 working tree 折入 scope）明確互斥並拒絕（exit 2）。Reviewer brief context block 在 `--head` 生效時額外顯示 `Head: <ref>` 一行。`pmctl gate run` 兩條路徑（foreground exec 與 `--lifecycle detached` 透過 `gate-supervisor.sh` 的 `--` passthrough）皆無需改動即可轉發 `--head`，因為都是把未知旗標原樣傳給 `pr-gate.sh`。`--help` usage block 與 unknown-arg 提示同步補上並釐清 three-dot 語意。
+
+**Gate 第一輪 NO-GO（critic block-soft + qa-tester block）修復**：(1) 補 `--head` 缺 operand 的受控錯誤（原本會以 raw `unbound variable` crash，比照 `--override-file` 加 guard）；(2) 補 diverged base/head 拓樸測試（`test_head_override_merge_base_semantics`：main 與 feature 各自獨立前進，驗證 three-dot 只看 head 相對 merge-base 的變更、不含 base 的獨立進展）；(3) 全文（`--help`、code comment、本 resolution）統一明確標註 three-dot/merge-base 語意，避免與字面 `base..head` two-dot tree diff 混淆；(4) 修正 MILESTONES.md Phase 2 註記與已完成列矛盾的過期文字。第二輪 5 個 `--head` 測試（原 3 + 新 2）、`scripts/test-pr-gate.sh` 共 124 項全數通過；`test-gate-lifecycle.sh`/`test-pmctl-gate.sh`/`test-pr-gate-profile.sh` 無回歸。
 
 **Priority**: P3（someday）.
 
