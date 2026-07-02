@@ -75,12 +75,16 @@ If clear: continue to Step 1.
 
 ## Step 1 — Branch
 
-**Dirty-tree precondition** (fail-safe, not a discussion point): run `git
-status` first. If the tree is dirty with changes unrelated to this ticket,
-`git stash -u` before branching (note the stash in the Step 5 report so it's
-easy to recover) — never branch over uncommitted work silently, and never
-stop to ask about it, since stashing is reversible and there is nothing to
-deliberate.
+**Dirty-tree precondition** (fail fast, not a discussion point — same bucket
+as Step 0's ticket-id validation): run `git status` first. If the tree is
+dirty with changes unrelated to this ticket, stop immediately and report that
+the tree must be clean before `/ship` will branch — do not stash, commit, or
+otherwise mutate the caller's uncommitted work on their behalf. This has one
+predetermined resolution (the caller commits or stashes it themselves and
+re-invokes `/ship`), so it is not the negotiated stop this command reserves
+for genuine ambiguity, and it is not an automatic mutation either — never
+branch over uncommitted work silently, and never take a repo-mutating action
+the caller did not ask for.
 
 ```bash
 git checkout -b feat/<ticket-id>
@@ -157,9 +161,11 @@ explicitly says so.
 
 ## Step 5 — Close-out report
 
-Report one of three outcomes: (1) invalid ticket id — the exact problem
-(empty argument / malformed shape / no such ticket); (2) consistency-check
+Report one of four outcomes: (1) invalid ticket id — the exact problem
+(empty argument / malformed shape / no such ticket / already archived); (2)
+dirty tree — that `/ship` aborted without touching the caller's uncommitted
+work, and that a clean tree is required to re-invoke; (3) consistency-check
 stop — the ticket id, the conflicting `DECISIONS.md` entry or unmet
-dependency, and what decision is needed from the user; or (3) PR opened —
-ticket id, what changed, how many gate rounds it took, the final verdict, the
-PR URL, and whether Step 1 stashed pre-existing changes.
+dependency, and what decision is needed from the user; or (4) PR opened —
+ticket id, what changed, how many gate rounds it took, the final verdict, and
+the PR URL.

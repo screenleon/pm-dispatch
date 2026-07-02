@@ -391,8 +391,8 @@ should_run "ship: consistency check only ever reads active BACKLOG.md" && assert
 should_run "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" && assert_file_contains "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" "$SHIP" "never as a source to" && pass "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from"
 should_run "ship: distinguishes fail-fast validation from the discussion stop" && assert_file_contains "ship: distinguishes fail-fast validation from the discussion stop" "$SHIP" "not a discussion point" && pass "ship: distinguishes fail-fast validation from the discussion stop"
 # dirty-tree precondition is deterministic fail-safe, not a second ask path
-should_run "ship: dirty tree is stashed automatically, not asked about" && assert_file_contains "ship: dirty tree is stashed automatically, not asked about" "$SHIP" "git stash -u" && pass "ship: dirty tree is stashed automatically, not asked about"
-should_run "ship: never stops to ask about a dirty tree" && assert_file_contains "ship: never stops to ask about a dirty tree" "$SHIP" "stop to ask about it" && pass "ship: never stops to ask about a dirty tree"
+should_run "ship: dirty tree aborts fail-fast, does not auto-mutate" && assert_file_contains "ship: dirty tree aborts fail-fast, does not auto-mutate" "$SHIP" "do not stash, commit, or" && pass "ship: dirty tree aborts fail-fast, does not auto-mutate"
+should_run "ship: dirty-tree abort is not the negotiated stop" && assert_file_contains "ship: dirty-tree abort is not the negotiated stop" "$SHIP" "not the negotiated stop this command reserves" && pass "ship: dirty-tree abort is not the negotiated stop"
 # implementation stays main-thread, not dispatched
 should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
 # gate loop contract
@@ -424,11 +424,11 @@ if should_run "ship: exactly one genuine wait-for-user-direction path"; then
   fi
 fi
 if should_run "ship: stop-condition list has exactly two numbered cases"; then
-  ship_stop_count=$(grep -cE '^[0-9]+\. ' "$SHIP")
+  ship_stop_count=$(awk '/^\*\*Stop the loop only when\*\*:/{in_sec=1; next} in_sec && /^## /{exit} in_sec && /^[0-9]+\. /{c++} END{print c+0}' "$SHIP")
   if [[ "$ship_stop_count" -eq 2 ]]; then
     pass "ship: stop-condition list has exactly two numbered cases"
   else
-    fail "ship: stop-condition list has exactly two numbered cases" "expected exactly 2 top-level numbered items, found $ship_stop_count in $SHIP"
+    fail "ship: stop-condition list has exactly two numbered cases" "expected exactly 2 numbered items in the 'Stop the loop only when' section, found $ship_stop_count in $SHIP"
   fi
 fi
 should_run "ship: round count alone is not a stop signal" && assert_file_contains "ship: round count alone is not a stop signal" "$SHIP" "this is taking many rounds" && pass "ship: round count alone is not a stop signal"
