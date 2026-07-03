@@ -821,6 +821,11 @@ dispatch_allowlist_entries_for_home() {
     rel="${f#"$home/"}"
     printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
   done
+
+  printf 'Bash(pmctl gate run:*)\n'
+  printf 'Bash(pmctl ship finish:*)\n'
+  printf 'Bash(git push:*)\n'
+  printf 'Bash(gh pr create:*)\n'
 }
 
 test_install_adds_dispatch_allowlist() {

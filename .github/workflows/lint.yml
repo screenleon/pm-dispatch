@@ -427,6 +427,13 @@ jobs:
       - name: pmctl worktree regression suite
         run: bash scripts/test-pmctl-worktree.sh
 
+  test-pmctl-ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl ship regression suite
+        run: bash scripts/test-pmctl-ship.sh
+
   lint-backlog:
     runs-on: ubuntu-latest
     steps:
