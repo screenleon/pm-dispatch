@@ -47,9 +47,10 @@ All four subcommands accept `--cd <work_dir>` to target a repo other than the cu
 ## Typical workflow
 
 1. `pmctl worktree create feat/my-feature` — creates the worktree and prints its path.
-2. `cd <printed path>` and work there like a normal checkout: `git add`, `git commit`, push, open a PR — all git operations behave exactly as in a regular checkout, because a linked worktree shares the same object store and refs as the primary checkout.
-3. When the ticket's PR is merged (or abandoned), `pmctl worktree remove feat/my-feature` from either the primary checkout or from inside the worktree itself.
-4. Periodically run `pmctl worktree gc --dry-run --merged` to spot worktrees left behind for already-merged branches, then `pmctl worktree gc --merged` to clean them up.
+2. `cd <printed path>` and, for a project with a gitignored dependency directory (e.g. `node_modules`, Python `venv`, vendored packages), install dependencies with that project's own package manager (`npm ci`/`yarn install --frozen-lockfile`/`pnpm install --frozen-lockfile`/`pip install -r requirements.txt`, etc. — check the repo's lockfile or existing install docs to tell which one applies) before running anything. `git worktree` never copies gitignored files, so a fresh worktree starts without them; skipping this step surfaces later as confusing test/build failures, or as a pr-gate "non-runnable" block. **Never substitute a symlink to another checkout's dependency directory** — a symlink is a tracked-type file, not an ignored directory, so it does not match the gitignore pattern and makes the worktree show up dirty, which pr-gate then rejects outright ("working tree is dirty while the branch has committed changes against main").
+3. Work there like a normal checkout: `git add`, `git commit`, push, open a PR — all git operations behave exactly as in a regular checkout, because a linked worktree shares the same object store and refs as the primary checkout.
+4. When the ticket's PR is merged (or abandoned), `pmctl worktree remove feat/my-feature` from either the primary checkout or from inside the worktree itself.
+5. Periodically run `pmctl worktree gc --dry-run --merged` to spot worktrees left behind for already-merged branches, then `pmctl worktree gc --merged` to clean them up.
 
 ## Cleanup and orphan recovery
 
