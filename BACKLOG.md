@@ -75,7 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
-| CC-440 | 🔵 active | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline | arch/gate | 2026-07-02 | — | P2 | spike |
+| CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-02 | — | P2 | spike |
 
 ---
 
@@ -177,7 +177,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-440 — spike: `/ship` 並行版可行性（spike） 🔵 active
+## CC-440 — spike: `/ship` 並行版可行性（spike） ✅ 2026-07-03
 
 **Problem**: `/ship`（單票版）已合併，主線程一次跑一張票、實作留在主線程直接改（`feedback_development_workflow`）、分支用普通 `git checkout -b`。使用者指出這個模式在人不在場時效益有限——真正的槓桿是「同時跑 N 張票」，但這要求兩個核心假設同時改變：(1) 實作要從主線程直接改換成 dispatch 給 executor（`feedback_development_workflow` 的省 token 理由只在主線程與該票共享上下文時成立，N 張互相獨立的票之間沒有這個共享上下文，所以這條記憶的適用範圍本來就不包含這個情境，不是要推翻它）；(2) 分支要從 `git checkout -b` 換成 `pmctl worktree create`（CC-014 已交付）避免 N 條 pipeline 互踩同一個工作目錄。這兩個改變疊加後，還有更難的問題完全沒有答案：一條 lane 失敗（gate 卡住、dispatch 失敗、根本性不一致）要怎麼回報又不卡住其他 lane？gate 迴圈裡本來假設「主線程可以隨時插手判斷」，換成 dispatch 給 codex 之後誰來扮演這個角色？
 
@@ -192,8 +192,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - Done-when: 對上述四個問題，至少收斂出可執行的設計決策（不需要完整實作方案），足以支撐後續開一張明確的實作票。
 - Result log: docs/spikes/CC-440.md
 
+**Outcome**: 四題與使用者逐一討論收斂（未 fan-out 多視角，單一使用者判斷已足夠明確）：lane 失敗互不干擾、逐條即時通知；gate NO-GO fix-loop 交給 executor 自扛到卡住才喚醒使用者；worktree 等使用者確認合併後才 remove；N 為可調參數，天生結構隔離（獨立 worktree + run_id 分區 artifact store）不需選票/仲裁機制。討論過程中額外浮現的 git 鎖疑慮也一併收斂：不自訂鎖，僅並行執行期間關閉 `gc.auto`。詳見 `docs/spikes/CC-440.md`。後續實作票承接 [[CC-439]]。
+
 **Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
-**See**: —
+**See**: pr:#PENDING
 
 ---
 
