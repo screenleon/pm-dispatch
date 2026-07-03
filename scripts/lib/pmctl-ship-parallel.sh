@@ -391,15 +391,23 @@ pmctl_ship_parallel_run() {
 # _pmctl_ship_parallel_lane_status <lane_path> <run_id>
 # Prints one of: dispatched | running | go | no-go | failed
 #
-# GO detection reads `pmctl ship finish`'s own structured marker file
+# GO detection reads ONLY `pmctl ship finish`'s own structured marker file
 # (.pm-dispatch-ship-finish.json, written INSIDE lane_path only on a
-# confirmed GO+PR) FIRST -- not the dispatched executor's free-text summary.
+# confirmed GO+PR) -- never the dispatched executor's free-text summary.
 # Grepping DISPATCH_RECORD_SUMMARY for "Final: GO" was the original
 # heuristic; a real CC-441 e2e run (claude executor) reported the verdict as
 # prose ("Gate 通過（**GO**）") instead of that literal string, producing a
-# false "no-go" for a lane that had actually reached GO and opened a PR.
-# The marker file is the only reliable source of truth because it is
-# written by pmctl-ship.sh's own code path, not parsed from model output.
+# false "no-go" for a lane that had actually reached GO and opened a PR --
+# fixed by adding the marker as a first check, but an EARLIER version of
+# that fix still fell back to the same free-text grep when the marker was
+# ABSENT, which is unsafe in the other direction: an executor whose own
+# narration happens to contain the string "Final: GO" (echoing the gate
+# result verbatim, translating it, or the model simply mentioning it) could
+# be reported as `go` even though `pmctl ship finish` never actually ran to
+# completion and never wrote the marker -- exactly the "reported ready
+# without proof" failure mode critic/architecture-reviewer/risk-reviewer
+# converged on in gate round 6. No marker file == not go, full stop; the
+# free-text branch below only distinguishes no-go/failed/running, never go.
 _pmctl_ship_parallel_lane_status() {
   local lane_path="$1" run_id="$2"
   if [[ -f "$lane_path/.pm-dispatch-ship-finish.json" ]]; then
@@ -425,13 +433,12 @@ _pmctl_ship_parallel_lane_status() {
     return 0
   fi
   case "$DISPATCH_RECORD_STATE" in
-    ok)
-      if printf '%s' "$DISPATCH_RECORD_SUMMARY" | grep -q 'Final: *GO'; then
-        printf 'go\n'
-      else
-        printf 'no-go\n'
-      fi
-      ;;
+    # `ok` here means the DISPATCH (the executor process) exited cleanly --
+    # it says nothing about whether the SHIP contract (gate GO + PR opened)
+    # was satisfied. Without the marker checked above, that is never
+    # provable from this record alone, so it is always no-go, regardless of
+    # what the executor's own free-text summary claims.
+    ok) printf 'no-go\n' ;;
     partial) printf 'no-go\n' ;;
     failed) printf 'failed\n' ;;
     *) printf 'running\n' ;;

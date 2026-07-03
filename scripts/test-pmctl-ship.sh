@@ -569,8 +569,8 @@ case_run_restores_gc_auto_previously_unset() {
   fi
 }
 
-case_status_reports_go_from_final_line() {
-  local name="ship-parallel status: a GO gate verdict in the dispatch record surfaces as status=go"
+case_status_never_reports_go_from_free_text_without_marker() {
+  local name="ship-parallel status: a dispatch record containing literal 'Final: GO' text WITHOUT a finish marker never surfaces as status=go"
   should_run "$name" || return 0
   local store work status=0
   store="$tmp_root/state-status-go"
@@ -583,13 +583,18 @@ case_status_reports_go_from_final_line() {
   tracking="$reg_dir/ship-parallel.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
+  # No .pm-dispatch-ship-finish.json marker is written here -- only the
+  # dispatch record's free-text summary claims "Final: GO". Since the
+  # marker is the ONLY source of truth for status=go (gate round 6 fix),
+  # this must NOT surface as go even though the old text-grep heuristic
+  # would have matched it.
   seed_dispatch_record "$lane_path" "$run_id" ok "Final: GO"
   local json
   json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
-  if [[ "$(jq -r '.[0].status' <<<"$json")" == "go" ]]; then
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == "no-go" ]]; then
     pass "$name"
   else
-    fail "$name" "expected status=go, got $json"
+    fail "$name" "expected status=no-go (no marker present), got $json"
   fi
 }
 
@@ -684,6 +689,10 @@ case_list_filters_to_go_only() {
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   seed_dispatch_record "$lane_path" "$run_id" ok "Final: GO"
+  # status=go requires the finish marker (gate round 6 fix) -- a dispatch
+  # record's free text is no longer sufficient on its own.
+  printf '{"ticket":"CC-9001","verdict":"GO","branch":"feat/CC-9001","pr_url":"https://example/pr/1"}' \
+    > "$lane_path/.pm-dispatch-ship-finish.json"
   local json
   json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship list --cd "$work" --json)"
   if [[ "$(jq 'length' <<<"$json")" -eq 1 && "$(jq -r '.[0].ticket' <<<"$json")" == "CC-9001" ]]; then
@@ -1047,7 +1056,7 @@ case_run_dispatches_and_tracks
 case_run_brief_preserves_ship_contract
 case_run_restores_gc_auto_previously_set
 case_run_restores_gc_auto_previously_unset
-case_status_reports_go_from_final_line
+case_status_never_reports_go_from_free_text_without_marker
 case_status_reports_go_from_finish_marker_even_without_final_go_text
 case_status_reports_no_go_from_final_line
 case_status_no_record_yet_is_running
@@ -1057,16 +1066,18 @@ case_status_no_tracked_lanes
 
 # Detached dispatch supervisors from the fake-codex/claude runs above can
 # still be mid-write (dispatch record, trace files) a moment after their
-# `pmctl ship --parallel` call returned -- wait for a CONDITION (no more
-# live process referencing $tmp_root), not a blind fixed-duration sleep,
-# before th_init's EXIT trap deletes $tmp_root. Bounded to 5s so a stuck
-# fake process cannot hang the suite; falls through either way -- this is a
-# best-effort cleanup courtesy, not a correctness dependency for any case
-# above (every case already asserts its own outcome before this point).
-_wait_iters=0
-while [[ "$_wait_iters" -lt 50 ]] && pgrep -f -- "$tmp_root" >/dev/null 2>&1; do
-  sleep 0.1
-  _wait_iters=$((_wait_iters + 1))
+# `pmctl ship --parallel` call returned. These are daemonized (setsid) --
+# no longer child processes of this shell -- so plain `wait` cannot block
+# on them; `tail --pid=<pid> -f /dev/null` is the sleep-free blocking
+# primitive used instead: it blocks on that PID's actual exit (real
+# process-exit notification, not a timed poll), bounded per-PID via
+# `timeout` so a stuck fake process cannot hang the suite. Best-effort
+# cleanup courtesy, not a correctness dependency for any case above (every
+# case already asserts its own outcome before this point).
+_lingering_pid=""
+for _lingering_pid in $(pgrep -f -- "$tmp_root" 2>/dev/null); do
+  timeout 5 tail --pid="$_lingering_pid" -f /dev/null < /dev/null > /dev/null 2>&1 || true
 done
+unset _lingering_pid
 
 th_summary
