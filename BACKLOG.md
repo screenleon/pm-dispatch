@@ -75,6 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
+| CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-02 | — | P2 | spike |
 
 ---
@@ -174,6 +175,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 依賴 [[CC-436]]（payload 驗證結果決定 `guard_bindings` 欄位能表達什麼）。承接 [[CC-381]] spike。umbrella [[CC-333]]。
 **See**: `docs/spikes/CC-381.md` §Angle 2 manifest YAML 草案、§Recommendation 步驟 2。
+
+---
+
+## CC-439 — `/ship <ticket-id>` command：明確票直接實作到開 PR ✅ 2026-07-03
+
+**Problem**: 目前「拿到明確 backlog 票 → 直接實作 → 派 pr-gate → 修到 GO → 開 PR」這條路徑，只存在於 memory 與 `agents/project-pm.md` 的 Rules A/B 散落文字裡，主線程每次都要自己記得拼起來完整流程，且完全沒有「開工前先檢查跟已定案決策有沒有衝突」這一步。
+
+**Why**: 參考 [ai-night-shift](https://github.com/JudyaiLab/ai-night-shift) 的自動化紀律（非其架構）：把「implement → gate → fix → PR」收斂成一個可重複呼叫的 command，讓「丟一張明確的票」到「開出 PR」變成單一動作；同時把唯一合法卡點（票跟 BACKLOG/DECISIONS 已定案內容根本性矛盾）做成明確、可執行的第一步檢查，而不是模糊的自我判斷。
+
+**Requirement**:
+- 新增 `commands/ship.md`（`/ship CC-NNN` 呼叫），依 `commands/pm.md`/`commands/spike.md` 既有格式撰寫，步驟：(0) pre-flight 一致性檢查：讀該票 `BACKLOG.md` body + grep `DECISIONS.md` `**Constraints introduced**`，若根本性矛盾或 `Dependencies` 未滿足，停止並回報，不開分支；(1) 開 `feat/CC-NNN` 分支；(2) 主線程直接 Read/Edit/Write 實作，不 dispatch codex 做實作；(3) gate 迴圈：`pmctl gate run --executor codex` → 讀 `Final:` → NO-GO 時交給 `project-pm` agent 依既有 Rule A/B synthesis → 修全部 finding → 重跑，直到 GO；停止條件只有兩種（根本性不一致、或 3-strike 審查後同批 diff-caused blocker 完全原地打轉）；(4) `git push` + `gh pr create`（title/body 模板：票號/摘要/跑幾輪 gate/最終 verdict）；(5) 收尾報告，GO 後不自動 merge。
+- `scripts/test-commands.sh` 補結構斷言：pre-flight 段落存在、gate 迴圈段落引用 `Final:`/`pmctl gate run --executor codex`、停止條件段落明確列出兩種且只有兩種、PR 模板段落存在。
+- 不新增 `open-pr.sh` 或 DECISIONS.md 解析腳本（一致性判斷是 LLM 語意工作，不做機械化）；不建背景 daemon/cron supervisor（維持互動 session 內執行）；不做批次掃描 BACKLOG 自動挑票。
+
+**Dependencies**: 無阻塞依賴。
+**See**: pr:#360
 
 ---
 

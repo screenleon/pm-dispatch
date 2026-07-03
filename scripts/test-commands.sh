@@ -369,6 +369,86 @@ should_run "using-git-worktrees: documents orphan recovery via gc" && assert_fil
 should_run "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" && assert_file_contains "using-git-worktrees: excludes --parallel gate reviewer isolation from scope" "$USING_GIT_WORKTREES" "does not touch the \`--parallel\` PR gate" && pass "using-git-worktrees: excludes --parallel gate reviewer isolation from scope"
 should_run "using-git-worktrees: no CC ticket references" && assert_not_contains "using-git-worktrees: no CC ticket references" "$USING_GIT_WORKTREES" "CC-"
 
+# ── ship.md contract ─────────────────────────────────────────────────────────
+
+SHIP="$COMMANDS_DIR/ship.md"
+
+assert_frontmatter "ship: frontmatter valid" "$SHIP"
+should_run "ship: scoped to a single named ticket per invocation" && assert_file_contains "ship: scoped to a single named ticket per invocation" "$SHIP" "one ticket per invocation" && pass "ship: scoped to a single named ticket per invocation"
+should_run "ship: does not batch-scan BACKLOG for candidates" && assert_file_contains "ship: does not batch-scan BACKLOG for candidates" "$SHIP" "Do not scan" && pass "ship: does not batch-scan BACKLOG for candidates"
+# Step 0 pre-flight consistency check: the one legal stopping point
+should_run "ship: has Step 0 pre-flight consistency check" && assert_file_contains "ship: has Step 0 pre-flight consistency check" "$SHIP" "Step 0" && pass "ship: has Step 0 pre-flight consistency check"
+should_run "ship: checks DECISIONS.md Constraints introduced" && assert_file_contains "ship: checks DECISIONS.md Constraints introduced" "$SHIP" "Constraints introduced" && pass "ship: checks DECISIONS.md Constraints introduced"
+should_run "ship: checks unmet Dependencies before starting" && assert_file_contains "ship: checks unmet Dependencies before starting" "$SHIP" "Dependencies" && pass "ship: checks unmet Dependencies before starting"
+should_run "ship: conflict stops before branching or implementing" && assert_file_contains "ship: conflict stops before branching or implementing" "$SHIP" "Do not create a branch" && pass "ship: conflict stops before branching or implementing"
+should_run "ship: keeps DECISIONS.md out of dispatch briefs" && assert_file_contains "ship: keeps DECISIONS.md out of dispatch briefs" "$SHIP" "do not paste it into any dispatch brief" && pass "ship: keeps DECISIONS.md out of dispatch briefs"
+# ticket-id validation: empty / malformed / nonexistent must fail fast, distinct from the discussion stop
+should_run "ship: validates ticket id before any other step" && assert_file_contains "ship: validates ticket id before any other step" "$SHIP" "Ticket-id validation" && pass "ship: validates ticket id before any other step"
+should_run "ship: handles empty argument" && assert_file_contains "ship: handles empty argument" "$SHIP" "stop and report \"empty argument\"" && pass "ship: handles empty argument"
+should_run "ship: handles malformed ticket-id shape" && assert_file_contains "ship: handles malformed ticket-id shape" "$SHIP" "does not match this repo's ticket-id shape" && pass "ship: handles malformed ticket-id shape"
+should_run "ship: distinguishes already-archived ticket from no-such-ticket" && assert_file_contains "ship: distinguishes already-archived ticket from no-such-ticket" "$SHIP" "the ticket is already terminal" && pass "ship: distinguishes already-archived ticket from no-such-ticket"
+should_run "ship: consistency check only ever reads active BACKLOG.md" && assert_file_contains "ship: consistency check only ever reads active BACKLOG.md" "$SHIP" "resolves to an active \`BACKLOG.md\`" && pass "ship: consistency check only ever reads active BACKLOG.md"
+should_run "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" && assert_file_contains "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from" "$SHIP" "never as a source to" && pass "ship: BACKLOG-ARCHIVE.md is error-message-only, never a source to implement from"
+should_run "ship: distinguishes fail-fast validation from the discussion stop" && assert_file_contains "ship: distinguishes fail-fast validation from the discussion stop" "$SHIP" "not a discussion point" && pass "ship: distinguishes fail-fast validation from the discussion stop"
+# dirty-tree precondition is deterministic fail-safe, not a second ask path
+should_run "ship: dirty tree aborts fail-fast, does not auto-mutate" && assert_file_contains "ship: dirty tree aborts fail-fast, does not auto-mutate" "$SHIP" "do not stash, commit, or" && pass "ship: dirty tree aborts fail-fast, does not auto-mutate"
+should_run "ship: dirty-tree abort is not the negotiated stop" && assert_file_contains "ship: dirty-tree abort is not the negotiated stop" "$SHIP" "not the negotiated stop this command reserves" && pass "ship: dirty-tree abort is not the negotiated stop"
+# implementation stays main-thread, not dispatched
+should_run "ship: implementation is not dispatched to an executor" && assert_file_contains "ship: implementation is not dispatched to an executor" "$SHIP" "to codex/claude/opencode" && pass "ship: implementation is not dispatched to an executor"
+# gate loop contract
+should_run "ship: invokes pmctl gate run --executor codex for review" && assert_file_contains "ship: invokes pmctl gate run --executor codex for review" "$SHIP" "pmctl gate run --executor codex" && pass "ship: invokes pmctl gate run --executor codex for review"
+should_run "ship: never invokes pr-gate.sh directly" && assert_file_contains "ship: never invokes pr-gate.sh directly" "$SHIP" "never \`bash scripts/pr-gate.sh\` directly" && pass "ship: never invokes pr-gate.sh directly"
+if should_run "ship: every gate invocation uses --lifecycle foreground"; then
+  ship_flat=$(tr '\n' ' ' < "$SHIP" | tr -s ' ')
+  ship_gate_calls=$(grep -oE 'pmctl gate run --executor codex' <<< "$ship_flat" | wc -l)
+  ship_foreground_calls=$(grep -oE 'pmctl gate run --executor codex[^`]*--lifecycle foreground' <<< "$ship_flat" | wc -l)
+  if [[ "$ship_gate_calls" -gt 0 && "$ship_gate_calls" -eq "$ship_foreground_calls" ]]; then
+    pass "ship: every gate invocation uses --lifecycle foreground"
+  else
+    fail "ship: every gate invocation uses --lifecycle foreground" "found $ship_gate_calls occurrence(s) of the gate call but only $ship_foreground_calls paired with --lifecycle foreground in $SHIP"
+  fi
+fi
+should_run "ship: explains why detached+wait is unnecessary here" && assert_file_contains "ship: explains why detached+wait is unnecessary here" "$SHIP" "nothing else for the main thread to do while it waits" && pass "ship: explains why detached+wait is unnecessary here"
+should_run "ship: reads Final GO/NO-GO verdict" && assert_file_contains "ship: reads Final GO/NO-GO verdict" "$SHIP" "Final:" && pass "ship: reads Final GO/NO-GO verdict"
+should_run "ship: NO-GO fixes every finding not only blocking ones" && assert_file_contains "ship: NO-GO fixes every finding not only blocking ones" "$SHIP" "the blocking ones" && pass "ship: NO-GO fixes every finding not only blocking ones"
+should_run "ship: re-runs gate with --reviewers targeting" && assert_file_contains "ship: re-runs gate with --reviewers targeting" "$SHIP" "--reviewers <reviewer,...>" && pass "ship: re-runs gate with --reviewers targeting"
+should_run "ship: references project-pm Rules A/B synthesis" && assert_file_contains "ship: references project-pm Rules A/B synthesis" "$SHIP" "Rules A/B" && pass "ship: references project-pm Rules A/B synthesis"
+# exactly two stop conditions, no more
+should_run "ship: stop condition heading enumerates the loop's halt cases" && assert_file_contains "ship: stop condition heading enumerates the loop's halt cases" "$SHIP" "Stop the loop only when" && pass "ship: stop condition heading enumerates the loop's halt cases"
+if should_run "ship: exactly one genuine wait-for-user-direction path"; then
+  ship_wait_count=$(grep -c "wait for the user's direction" "$SHIP")
+  if [[ "$ship_wait_count" -eq 1 ]]; then
+    pass "ship: exactly one genuine wait-for-user-direction path"
+  else
+    fail "ship: exactly one genuine wait-for-user-direction path" "expected exactly 1 wait-for-user-direction occurrence, found $ship_wait_count in $SHIP"
+  fi
+fi
+if should_run "ship: stop-condition list has exactly two numbered cases"; then
+  ship_stop_count=$(awk '/^\*\*Stop the loop only when\*\*:/{in_sec=1; next} in_sec && /^## /{exit} in_sec && /^[0-9]+\. /{c++} END{print c+0}' "$SHIP")
+  if [[ "$ship_stop_count" -eq 2 ]]; then
+    pass "ship: stop-condition list has exactly two numbered cases"
+  else
+    fail "ship: stop-condition list has exactly two numbered cases" "expected exactly 2 numbered items in the 'Stop the loop only when' section, found $ship_stop_count in $SHIP"
+  fi
+fi
+should_run "ship: round count alone is not a stop signal" && assert_file_contains "ship: round count alone is not a stop signal" "$SHIP" "this is taking many rounds" && pass "ship: round count alone is not a stop signal"
+should_run "ship: any other NO-GO continues without asking" && assert_file_contains "ship: any other NO-GO continues without asking" "$SHIP" "gets fixed and re-gated without asking" && pass "ship: any other NO-GO continues without asking"
+# PR template
+should_run "ship: opens PR via gh pr create" && assert_file_contains "ship: opens PR via gh pr create" "$SHIP" "gh pr create" && pass "ship: opens PR via gh pr create"
+should_run "ship: PR body template records gate rounds and verdict" && assert_file_contains "ship: PR body template records gate rounds and verdict" "$SHIP" "Final verdict" && pass "ship: PR body template records gate rounds and verdict"
+should_run "ship: GO is not merge authorization" && assert_file_contains "ship: GO is not merge authorization" "$SHIP" "GO is not merge authorization" && pass "ship: GO is not merge authorization"
+should_run "ship: no CC ticket references" && assert_not_contains "ship: no CC ticket references" "$SHIP" "CC-[0-9]"
+# git publication path: branch creation and push are the only side effects before PR creation
+should_run "ship: creates the feature branch via git checkout -b" && assert_file_contains "ship: creates the feature branch via git checkout -b" "$SHIP" "git checkout -b feat/<ticket-id>" && pass "ship: creates the feature branch via git checkout -b"
+should_run "ship: pushes the branch before opening the PR" && assert_file_contains "ship: pushes the branch before opening the PR" "$SHIP" "git push -u origin feat/<ticket-id>" && pass "ship: pushes the branch before opening the PR"
+# Step 5 close-out report: pins all four named outcomes so the reporting contract cannot silently erode
+should_run "ship: has Step 5 close-out report" && assert_file_contains "ship: has Step 5 close-out report" "$SHIP" "## Step 5 — Close-out report" && pass "ship: has Step 5 close-out report"
+should_run "ship: close-out report has exactly four named outcomes" && assert_file_contains "ship: close-out report has exactly four named outcomes" "$SHIP" "Report one of four outcomes" && pass "ship: close-out report has exactly four named outcomes"
+should_run "ship: close-out outcome 1 covers invalid ticket id" && assert_file_contains "ship: close-out outcome 1 covers invalid ticket id" "$SHIP" "(1) invalid ticket id" && pass "ship: close-out outcome 1 covers invalid ticket id"
+should_run "ship: close-out outcome 2 covers dirty-tree abort" && assert_file_contains "ship: close-out outcome 2 covers dirty-tree abort" "$SHIP" "(2)" && assert_file_contains "ship: close-out outcome 2 covers dirty-tree abort" "$SHIP" "dirty tree — that \`/ship\` aborted" && pass "ship: close-out outcome 2 covers dirty-tree abort"
+should_run "ship: close-out outcome 3 covers consistency-check stop" && assert_file_contains "ship: close-out outcome 3 covers consistency-check stop" "$SHIP" "(3) consistency-check" && pass "ship: close-out outcome 3 covers consistency-check stop"
+should_run "ship: close-out outcome 4 covers PR opened with URL" && assert_file_contains "ship: close-out outcome 4 covers PR opened with URL" "$SHIP" "or (4) PR opened" && assert_file_contains "ship: close-out outcome 4 covers PR opened with URL" "$SHIP" "the PR URL." && pass "ship: close-out outcome 4 covers PR opened with URL"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 th_summary
