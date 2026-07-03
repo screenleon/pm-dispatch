@@ -77,7 +77,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
-| CC-441 | 🔵 active | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | — | P2 | design |
+| CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
 
 ---
 
@@ -217,7 +217,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-441 — `/ship --parallel` N-lane orchestrator v1 🔵 active
+## CC-441 — `/ship --parallel` N-lane orchestrator v1 ✅ 2026-07-03
 
 **Problem**: [[CC-440]] spike 已收斂五項設計決策（lane 失敗隔離、gate 迴圈人機分工、worktree 生命週期、併發上限、git 鎖策略），但這些決策目前只存在 `docs/spikes/CC-440.md` 裡，尚未落地成任何可呼叫的 orchestrator。
 
@@ -235,7 +235,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - **Done-when（v1 範圍刻意縮小，避免第一張票塞太多）**：用 2 條 low-risk/mock 票驗證端到端——可各自建立 CC-014 worktree lane、各自生成通過 CC-439 契約檢查的 ship brief、各自 detached dispatch 且狀態可追蹤、GO 的 lane 進入「待合併」清單。不要求 v1 就有自動 remove、完整 cleanup UX、或超過 2 條的併發驗證——這些留給後續迭代。
 
 **Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，定義本票必須保留的 ship 契約）。必須使用 [[CC-014]] 已交付的 `pmctl worktree`，不得自造 worktree 管理機制。
-**See**: —
+
+**AS-BUILT**：`pmctl ship prepare/finish` 為 CC-439 ship 契約的可腳本化 bookend（票號驗證+開分支；單輪 gate+GO 後 push/PR，含 branch-identity/dirty-tree/HEAD-moved/gh-preflight 四道 guard）；`pmctl ship --parallel/status/list` 為建在 CC-014 worktree 之上的 N-lane orchestrator，每條 lane 的 brief 呼叫 `pmctl ship finish` 收斂 gate/PR，不重複實作 ship 契約。真實 e2e 驗收（CC-004、CC-214 兩張低風險票）過程中發現並修正多項真實問題：claude adapter headless Bash 核准缺口（改用 `pmctl` 前綴全收 allowlist）、isolation 預設值擋住巢狀 gate dispatch（改 `workspace-network`）、GO 判斷曾誤信自由文字（改為只信 `pmctl ship finish` 自己寫的 marker）、併發重複派發競態、票號前綴誤判、tracking 檔案未上鎖競態、push 成功但 PR 開失敗的靜默狀態（新增 `partial` 狀態）。pr-gate 歷經 8 輪收斂至全 GO。
+**See**: pr:#363
 
 ---
 
