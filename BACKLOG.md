@@ -76,7 +76,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
-| CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-02 | — | P2 | spike |
+| CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
+| CC-441 | 🔵 active | `/ship` 並行版（N-lane orchestrator）實作——落地 CC-440 spike 的五點設計決策 | arch/gate | 2026-07-03 | — | P2 | design |
 
 ---
 
@@ -213,6 +214,25 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
 **See**: pr:#361
+
+---
+
+## CC-441 — `/ship` 並行版（N-lane orchestrator）實作 🔵 active
+
+**Problem**: [[CC-440]] spike 已收斂五項設計決策（lane 失敗隔離、gate 迴圈人機分工、worktree 生命週期、併發上限、git 鎖策略），但這些決策目前只存在 `docs/spikes/CC-440.md` 裡，尚未落地成任何可呼叫的 orchestrator。
+
+**Why**: spike 的 Done-when 只要求「收斂出可執行的設計決策」，不含實作；決策已收斂完畢，直接照 spike 的 Recommendation 開實作票，避免決策成果停留在文件層沒有後續。
+
+**Requirement**（對照 `docs/spikes/CC-440.md` Recommendation 五點）：
+1. Orchestrator 主迴圈：讀入 N 張票的清單 → 對每張票 `pmctl worktree create` → 產生 dispatch brief（把 NO-GO fix-loop 責任交給 executor 自扛到卡住才喚醒使用者）→ `pmctl dispatch run --lifecycle detached` 平行送出。
+2. 執行前置/收尾：啟動時讀出並暫存目標 repo 現有 `gc.auto` 值，寫入 `git config gc.auto 0`；主迴圈結束時（不論全部成功、部分失敗、或整批中斷）一律還原成暫存值。
+3. 失敗回報：每條 lane 的 dispatch/gate 狀態變化即時通知使用者，不等其他 lane、不互相干擾。
+4. worktree 保留策略：GO 之後不自動 remove，等使用者明確確認合併對應 PR 才觸發 `pmctl worktree remove`；需要一個追蹤「哪些 lane 已 GO 但未合併」的清單機制。
+5. N 不做程式碼硬上限，僅在文件/CLI help 提醒使用者依機器負載自行調整；不做選票/仲裁機制。
+- Done-when：orchestrator 可用小 N（2-3 條）跑通至少一次端到端（create worktree → dispatch → gate GO → 等待合併確認 → remove），對應 `docs/spikes/CC-440.md` Open risks 建議的第一步驗證方式。
+
+**Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，作為並行版要呼叫的最小工作單元）。
+**See**: —
 
 ---
 
