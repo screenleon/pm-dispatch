@@ -19,26 +19,26 @@ dispatch_allowlist_entries() {
   # acceptEdits auto-approves file EDITS but, empirically (confirmed via a
   # real CC-441 ship --parallel dispatch), NOT Bash tool calls: a headlessly
   # dispatched executor asking "need user approval to run `pmctl gate run`"
-  # has no approver and stalls until timeout. The isolation SANDBOX (network/
-  # filesystem scope) is the actual security boundary here, not the
-  # permission prompt -- an already-dispatched, already-sandboxed executor
-  # gains nothing from also being blocked on these two specific, narrowly-
-  # scoped command prefixes, which are exactly the top-level Bash tool calls
-  # the ship contract (commands/ship.md / pmctl-ship.sh) requires every
-  # dispatched lane to run unattended.
+  # has no approver and stalls until timeout.
   #
-  # Deliberately NOT allowlisted: raw `git push`/`gh pr create`. `pmctl ship
-  # finish` already runs `git push -u origin <branch>` and `gh pr create`
-  # itself as ordinary subprocess calls INSIDE that one approved Bash tool
-  # invocation -- Claude's permission system gates model-issued tool calls,
-  # not the subprocess tree spawned by an already-approved command, so those
-  # two entries added nothing functionally and only widened the blast radius
-  # (a raw `Bash(git push:*)` prefix-matches force pushes, ref deletion, and
-  # pushes issued from any repo, not just the ship flow's own narrow push).
-  # Pr-gate's security/risk reviewers correctly blocked an earlier draft of
-  # this file that included them; do not re-add without a wrapper that
-  # constrains the exact push form (no --force, no ref deletion, current
-  # branch only).
-  printf 'Bash(pmctl gate run:*)\n'
-  printf 'Bash(pmctl ship finish:*)\n'
+  # Approved broadly at the `pmctl` PREFIX (both the bare `pmctl` form a
+  # dispatched lane's PATH resolves via this file's own adapter/*.sh
+  # symlink-into-~/.local/bin install step, and the `bash cli/pmctl` form
+  # used when invoking from inside the repo checkout) rather than pinned to
+  # the two specific subcommands the ship contract happens to need
+  # (`gate run` / `ship finish`). `pmctl` itself is the trusted, audited
+  # entry point -- every subcommand goes through brief-validate, guard
+  # checks, and/or a manifest-tracked state mutation (worktree
+  # create/remove, dispatch run, gate run, backlog archive, artifacts gc);
+  # none of them expose a raw, unconstrained passthrough to an arbitrary
+  # shell command the way `git push`/`gh pr create` do. That distinction --
+  # not "narrow string == safe, broad string == unsafe" -- is why this is a
+  # different call than the raw `git push`/`gh pr create` widening pr-gate's
+  # security/risk reviewers correctly blocked in an earlier draft of this
+  # file (do not re-introduce a raw `Bash(git push:*)`/`Bash(gh *:*)` entry;
+  # push/PR must stay behind a wrapper like `pmctl ship finish` that
+  # constrains the exact form, e.g. no --force, no ref deletion, branch ==
+  # feat/<ticket-id> only -- pmctl-ship.sh:pmctl_ship_finish enforces this).
+  printf 'Bash(pmctl:*)\n'
+  printf 'Bash(bash cli/pmctl:*)\n'
 }

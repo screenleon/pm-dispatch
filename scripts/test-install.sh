@@ -822,8 +822,8 @@ dispatch_allowlist_entries_for_home() {
     printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
   done
 
-  printf 'Bash(pmctl gate run:*)\n'
-  printf 'Bash(pmctl ship finish:*)\n'
+  printf 'Bash(pmctl:*)\n'
+  printf 'Bash(bash cli/pmctl:*)\n'
 }
 
 test_install_adds_dispatch_allowlist() {
