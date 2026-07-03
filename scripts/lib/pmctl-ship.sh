@@ -28,6 +28,33 @@ _pmctl_ship_id_shape_ok() {
   [[ "$1" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]]
 }
 
+# _pmctl_ship_heading_exists <file> <ticket_id>
+# The ONE shared "does `## <ticket_id>` exist as its own heading" check --
+# used by both `pmctl ship prepare` and `pmctl ship --parallel`'s pre-flight
+# (previously duplicated in pmctl-ship-parallel.sh and had independently
+# drifted into the same bug: a literal/prefix substring match on the
+# ticket id, e.g. checking id `CC-90` would match a heading `## CC-9001 —
+# ...` because "## CC-9001" starts with the literal substring "## CC-90").
+# Exact-matches the ticket id token: requires it be followed immediately by
+# either end-of-line or a non-alnum character (space, em dash, etc.), not
+# another digit/letter that would make it a DIFFERENT, longer ticket id.
+# Callers MUST validate shape first (_pmctl_ship_id_shape_ok) -- this
+# function does not re-check shape, only exact-match existence.
+_pmctl_ship_heading_exists() {
+  local file="$1" ticket_id="$2"
+  [[ -f "$file" ]] || return 1
+  awk -v want="## $ticket_id" '
+    {
+      prefix = substr($0, 1, length(want))
+      if (prefix == want) {
+        next_char = substr($0, length(want) + 1, 1)
+        if (next_char == "" || next_char !~ /[A-Za-z0-9]/) { found = 1 }
+      }
+    }
+    END { exit !found }
+  ' "$file"
+}
+
 # pmctl_ship_prepare <repo_root> <work_dir> <ticket-id>
 # Step 0 (id validation only -- the DECISIONS.md/Dependencies consistency
 # judgment stays the CALLER's job; that is PM-level judgment, not a
@@ -46,8 +73,8 @@ pmctl_ship_prepare() {
     printf 'pmctl ship prepare: malformed shape: %s\n' "$ticket_id" >&2
     return 1
   fi
-  if ! grep -q "^## $ticket_id" "$work_dir/BACKLOG.md" 2>/dev/null; then
-    if grep -q "^## $ticket_id" "$work_dir/BACKLOG-ARCHIVE.md" 2>/dev/null; then
+  if ! _pmctl_ship_heading_exists "$work_dir/BACKLOG.md" "$ticket_id"; then
+    if _pmctl_ship_heading_exists "$work_dir/BACKLOG-ARCHIVE.md" "$ticket_id"; then
       printf 'pmctl ship prepare: ticket already archived: %s\n' "$ticket_id" >&2
     else
       printf 'pmctl ship prepare: no such ticket: %s\n' "$ticket_id" >&2

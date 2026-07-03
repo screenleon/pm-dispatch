@@ -136,6 +136,59 @@ case_run_rejects_regex_metachar_ticket_id() {
   fi
 }
 
+case_run_rejects_prefix_collision_ticket_id() {
+  local name="ship-parallel run: a ticket-id that is a PREFIX of a real heading (CC-90 vs CC-9001) is rejected, not treated as a match"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-run-prefix"
+  work="$tmp_root/work-run-prefix"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-run-prefix"; err="$tmp_root/err-run-prefix"
+  # "## CC-9001 -- ..." starts with the literal substring "## CC-90", so an
+  # unanchored-on-the-right heading check would wrongly treat CC-90 as
+  # existing and dispatch a lane for a ticket that was never asked for.
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack "CC-90" --cd "$work" > "$out" 2> "$err" || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 1 ]] && grep -q "not an active BACKLOG.md ticket" "$err" && [[ ! -d "$reg_dir/checkouts/CC-90" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rejection + no worktree created; got status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_prepare_rejects_prefix_collision_ticket_id() {
+  local name="ship prepare: a ticket-id that is a PREFIX of a real heading (CC-90 vs CC-9001) is rejected as no-such-ticket"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-prep-prefix"
+  work="$tmp_root/work-prep-prefix"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-prep-prefix"; err="$tmp_root/err-prep-prefix"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship prepare "CC-90" --cd "$work" > "$out" 2> "$err" || status=$?
+  assert_exit "$name" "$status" 1 && \
+    assert_file_contains "$name" "$err" "no such ticket" && \
+    pass "$name"
+}
+
+case_run_rejects_duplicate_ticket_in_batch() {
+  local name="ship-parallel run: a ticket-id repeated in the same batch is rejected before any worktree is created"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-run-dup"
+  work="$tmp_root/work-run-dup"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-run-dup"; err="$tmp_root/err-run-dup"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 CC-9001 --cd "$work" > "$out" 2> "$err" || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 1 ]] && grep -q "appears more than once" "$err" && [[ ! -d "$reg_dir/checkouts/CC-9001" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rejection + no worktree created; got status=$status stderr=$(cat "$err")"
+  fi
+}
+
 case_run_bad_ticket_leaves_no_worktree() {
   local name="ship-parallel run: rejecting one ticket in a batch creates no worktree for either"
   should_run "$name" || return 0
@@ -567,6 +620,9 @@ case_finish_requires_ticket
 case_run_requires_ticket
 case_run_rejects_unknown_ticket
 case_run_rejects_regex_metachar_ticket_id
+case_run_rejects_prefix_collision_ticket_id
+case_prepare_rejects_prefix_collision_ticket_id
+case_run_rejects_duplicate_ticket_in_batch
 case_run_bad_ticket_leaves_no_worktree
 case_run_refuses_redispatch_while_in_flight
 case_run_dispatches_and_tracks
@@ -583,9 +639,16 @@ case_status_no_tracked_lanes
 
 # Detached dispatch supervisors from the fake-codex/claude runs above can
 # still be mid-write (dispatch record, trace files) a moment after their
-# `pmctl ship --parallel` call returned -- give them a beat to settle before
-# th_init's EXIT trap deletes $tmp_root, so cleanup doesn't race a live
-# writer under it.
-sleep 1
+# `pmctl ship --parallel` call returned -- wait for a CONDITION (no more
+# live process referencing $tmp_root), not a blind fixed-duration sleep,
+# before th_init's EXIT trap deletes $tmp_root. Bounded to 5s so a stuck
+# fake process cannot hang the suite; falls through either way -- this is a
+# best-effort cleanup courtesy, not a correctness dependency for any case
+# above (every case already asserts its own outcome before this point).
+_wait_iters=0
+while [[ "$_wait_iters" -lt 50 ]] && pgrep -f -- "$tmp_root" >/dev/null 2>&1; do
+  sleep 0.1
+  _wait_iters=$((_wait_iters + 1))
+done
 
 th_summary

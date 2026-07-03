@@ -141,19 +141,22 @@ _pmctl_ship_parallel_gc_auto_restore_trap() {
 # cannot possibly resolve.
 _pmctl_ship_parallel_ticket_active() {
   local work_dir="$1" ticket_id="$2"
-  # Reuse the exact shape check `pmctl ship prepare` uses (pmctl-ship.sh) --
-  # a ticket id containing regex metacharacters must fail here, not be
-  # handed to grep as a live pattern. Defense in depth on top of that: the
-  # heading match itself is a literal (not regex) prefix compare via awk's
-  # `index()`, not a `grep "^## $ticket_id"` pattern -- so even a
-  # shape-valid id is matched as literal text, never interpreted as regex,
-  # and `## $ticket_id` still has to be the line's own prefix (not merely
-  # appear anywhere in the line).
+  # Delegates to the ONE shared shape+exact-heading check pmctl-ship.sh
+  # defines (_pmctl_ship_id_shape_ok / _pmctl_ship_heading_exists), also
+  # used by `pmctl ship prepare` -- a second, independent implementation
+  # here previously drifted into a real bug: an unanchored prefix compare
+  # let ticket id `CC-90` false-match an unrelated `## CC-9001 -- ...`
+  # heading. One implementation, one place it can be wrong.
   if declare -F _pmctl_ship_id_shape_ok >/dev/null; then
     _pmctl_ship_id_shape_ok "$ticket_id" || return 1
   fi
-  awk -v want="## $ticket_id" 'index($0, want) == 1 { found=1 } END { exit !found }' \
-    "$work_dir/BACKLOG.md" 2>/dev/null
+  if declare -F _pmctl_ship_heading_exists >/dev/null; then
+    _pmctl_ship_heading_exists "$work_dir/BACKLOG.md" "$ticket_id"
+    return $?
+  fi
+  # pmctl-ship.sh not loaded (should not happen via cli/pmctl, which always
+  # sources both) -- fail closed rather than fall back to an unsafe check.
+  return 1
 }
 
 # _pmctl_ship_parallel_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path>
@@ -239,7 +242,13 @@ pmctl_ship_parallel_run() {
   # Pre-flight validation for ALL tickets before touching any worktree -- a
   # batch with one bad id should not leave the good ids' lanes half-created.
   local t
+  local -A _seen_tickets=()
   for t in "${tickets[@]}"; do
+    if [[ -n "${_seen_tickets[$t]:-}" ]]; then
+      printf 'pmctl ship-parallel run: %s appears more than once in this batch -- refusing before any worktree is created (a duplicate would dispatch the first occurrence, then fail the second on a worktree-slug collision, leaving a live lane with no way to cancel it from this command).\n' "$t" >&2
+      return 1
+    fi
+    _seen_tickets[$t]=1
     if ! _pmctl_ship_parallel_ticket_active "$work_dir" "$t"; then
       printf 'pmctl ship-parallel run: %s is not an active BACKLOG.md ticket (check id/shape, or BACKLOG-ARCHIVE.md for already-terminal tickets)\n' "$t" >&2
       return 1
