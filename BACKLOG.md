@@ -75,7 +75,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
-| CC-439 | 🔵 active | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | — | P2 | design |
+| CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
+| CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
+| CC-441 | 🔵 active | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | — | P2 | design |
 
 ---
 
@@ -177,7 +179,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-439 — `/ship <ticket-id>` command：明確票直接實作到開 PR 🔵 active
+## CC-439 — `/ship <ticket-id>` command：明確票直接實作到開 PR ✅ 2026-07-03
 
 **Problem**: 目前「拿到明確 backlog 票 → 直接實作 → 派 pr-gate → 修到 GO → 開 PR」這條路徑，只存在於 memory 與 `agents/project-pm.md` 的 Rules A/B 散落文字裡，主線程每次都要自己記得拼起來完整流程，且完全沒有「開工前先檢查跟已定案決策有沒有衝突」這一步。
 
@@ -189,6 +191,50 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - 不新增 `open-pr.sh` 或 DECISIONS.md 解析腳本（一致性判斷是 LLM 語意工作，不做機械化）；不建背景 daemon/cron supervisor（維持互動 session 內執行）；不做批次掃描 BACKLOG 自動挑票。
 
 **Dependencies**: 無阻塞依賴。
+**See**: pr:#360
+
+---
+
+## CC-440 — spike: `/ship` 並行版可行性（spike） ✅ 2026-07-03
+
+**Problem**: `/ship`（單票版）已合併，主線程一次跑一張票、實作留在主線程直接改（`feedback_development_workflow`）、分支用普通 `git checkout -b`。使用者指出這個模式在人不在場時效益有限——真正的槓桿是「同時跑 N 張票」，但這要求兩個核心假設同時改變：(1) 實作要從主線程直接改換成 dispatch 給 executor（`feedback_development_workflow` 的省 token 理由只在主線程與該票共享上下文時成立，N 張互相獨立的票之間沒有這個共享上下文，所以這條記憶的適用範圍本來就不包含這個情境，不是要推翻它）；(2) 分支要從 `git checkout -b` 換成 `pmctl worktree create`（CC-014 已交付）避免 N 條 pipeline 互踩同一個工作目錄。這兩個改變疊加後，還有更難的問題完全沒有答案：一條 lane 失敗（gate 卡住、dispatch 失敗、根本性不一致）要怎麼回報又不卡住其他 lane？gate 迴圈裡本來假設「主線程可以隨時插手判斷」，換成 dispatch 給 codex 之後誰來扮演這個角色？
+
+**Why**: 在沒有答案的情況下直接開實作票，大概率會像 `/ship` 單票版一樣在 pr-gate 階段被 architecture-reviewer/critic 挑出設計層面的漏洞，且並行 orchestration 的 blast radius（多個 worktree/dispatch 同時跑）遠大於單票版，值得先用 spike 收斂設計決策，而不是邊做邊踩。
+
+**Requirement**:
+- Investigation scope:
+  - lane 失敗隔離：一條 pipeline（worktree+dispatch+gate）失敗時，其他 lane 是否需要感知/暫停？回報機制長什麼樣（單一收尾報告彙總 N 條結果，還是逐條即時通知）？
+  - gate 迴圈的人機分工：`/ship` 單票版的 NO-GO fix-loop 假設「主線程」讀 gate 結果、判斷、寫 fix brief；並行版把實作換成 dispatch 給 codex 之後，fix-loop 由誰驅動（主線程仍讀每條 lane 的 gate 結果並派 fix brief，還是要在 dispatch brief 裡把整個 fix-loop 交給 executor 自己跑）？
+  - worktree 生命週期：`pmctl worktree create/remove/gc`（CC-014）在多條並行 lane 下的 create/remove 時機——PR 開出後、gate 迴圈完成後，還是要等使用者確認合併後才 remove？
+  - 併發上限：N 的合理上限（token/並發 dispatch/gate reviewer 容量），以及是否需要像 `--parallel` gate 一樣的 reviewer 隔離考量。
+- Done-when: 對上述四個問題，至少收斂出可執行的設計決策（不需要完整實作方案），足以支撐後續開一張明確的實作票。
+- Result log: docs/spikes/CC-440.md
+
+**Outcome**: 四題與使用者逐一討論收斂（未 fan-out 多視角，單一使用者判斷已足夠明確）：lane 失敗互不干擾、逐條即時通知；gate NO-GO fix-loop 交給 executor 自扛到卡住才喚醒使用者；worktree 等使用者確認合併後才 remove；N 為可調參數，天生結構隔離（獨立 worktree + run_id 分區 artifact store）不需選票/仲裁機制。討論過程中額外浮現的 git 鎖疑慮也一併收斂：不自訂鎖，僅並行執行期間關閉 `gc.auto`。詳見 `docs/spikes/CC-440.md`。後續實作票承接 [[CC-439]]。
+
+**Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
+**See**: pr:#361
+
+---
+
+## CC-441 — `/ship --parallel` N-lane orchestrator v1 🔵 active
+
+**Problem**: [[CC-440]] spike 已收斂五項設計決策（lane 失敗隔離、gate 迴圈人機分工、worktree 生命週期、併發上限、git 鎖策略），但這些決策目前只存在 `docs/spikes/CC-440.md` 裡，尚未落地成任何可呼叫的 orchestrator。
+
+**Why**: spike 的 Done-when 只要求「收斂出可執行的設計決策」，不含實作；決策已收斂完畢，直接照 spike 的 Recommendation 開實作票，避免決策成果停留在文件層沒有後續。
+
+**Framing（開工前必讀，避免誤讀範圍）**：CC-441 是一個**建在 [[CC-014]] worktree lane 之上的薄 orchestrator，保留 [[CC-439]] `/ship` 的 ship 語意契約**——不是重寫一條新的 ship pipeline。CC-441 只負責「lane 建立/追蹤/通知/`gc.auto` 暫時覆寫/GO-未合併清單」這幾件事；ship 本身該做什麼（pre-flight 一致性檢查、gate 讀 `Final:`、NO-GO fix-loop 停止條件、GO 後 push+PR、GO 後不自動 merge）由每條 lane 內部沿用 CC-439 已定義的契約，只是把「主線程直接改」換成「dispatch 給 executor 在該 lane 的 worktree 裡跑」。禁止：(a) 發明新的 worktree 目錄慣例/鎖/cleanup 狀態——一律用 CC-014 已交付的 `pmctl worktree create/list/remove/gc` 與其 manifest；(b) 在未跟使用者確認前，變更或繞過 CC-439 定義的 ship 停止條件。
+
+**Requirement**（對照 `docs/spikes/CC-440.md` Recommendation 五點）：
+0. **開工前 checkpoint**：實作前先產出一份簡短 execution plan（用到哪些 CC-014 `pmctl worktree` API、每個 lane 的 dispatch brief 如何映射 CC-439 的六項 ship 契約、CC-440 五項決策各自在程式碼裡的落點），列給使用者確認一次；若途中發現必須偏離 CC-439 的 ship 契約才能做到並行，停止並詢問使用者，不自行決定。
+1. Orchestrator 主迴圈：讀入 N 張票的清單 → 對每張票 `pmctl worktree create`（沿用 CC-014 既有 manifest/命名慣例，不新造）→ 產生**保留 CC-439 ship 契約**的 dispatch brief（pre-flight 檢查、gate `Final:` 讀取、NO-GO fix-loop 由 executor 自扛到卡住才喚醒使用者、GO 後 push+PR、不自動 merge 全部照搬）→ `pmctl dispatch run --lifecycle detached` 平行送出。
+2. 執行前置/收尾：啟動時用 `git config --get gc.auto` 讀出目標 repo 現有值並記錄「該 key 原本是否存在」（存在存實際值，不存在記為未設定，不可用 git 預設 `256` 頂替），寫入 `git config gc.auto 0`；主迴圈結束時（不論全部成功、部分失敗、或整批中斷）一律還原——原本有值寫回原值，原本未設定則 `--unset`，不可寫回 `256`。
+3. 失敗回報：每條 lane 的 dispatch/gate 狀態變化即時通知使用者，不等其他 lane、不互相干擾。
+4. worktree 保留策略：GO 之後不自動 remove，維護一份「已 GO 但未合併」的追蹤清單；remove 只提供 manual command path（使用者確認合併後手動觸發 `pmctl worktree remove`），本票不做自動 remove。
+5. N 不做程式碼硬上限，僅在文件/CLI help 提醒使用者依機器負載自行調整；不做選票/仲裁機制。
+- **Done-when（v1 範圍刻意縮小，避免第一張票塞太多）**：用 2 條 low-risk/mock 票驗證端到端——可各自建立 CC-014 worktree lane、各自生成通過 CC-439 契約檢查的 ship brief、各自 detached dispatch 且狀態可追蹤、GO 的 lane 進入「待合併」清單。不要求 v1 就有自動 remove、完整 cleanup UX、或超過 2 條的併發驗證——這些留給後續迭代。
+
+**Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，定義本票必須保留的 ship 契約）。必須使用 [[CC-014]] 已交付的 `pmctl worktree`，不得自造 worktree 管理機制。
 **See**: —
 
 ---
