@@ -102,6 +102,24 @@ FAKEOF
   chmod +x "$bindir/gh"
 }
 
+# install_fake_gh_pr_create_fails <bindir>
+# `command -v gh` finds this binary (so the earlier preflight passes), but
+# `gh pr create` itself fails at runtime -- simulates network/auth/API
+# failure AFTER a successful `git push`, distinct from "gh unavailable".
+install_fake_gh_pr_create_fails() {
+  local bindir="$1"
+  mkdir -p "$bindir"
+  cat > "$bindir/gh" <<'FAKEOF'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "pr create" ]]; then
+  echo "gh: simulated network/auth failure" >&2
+  exit 1
+fi
+exit 1
+FAKEOF
+  chmod +x "$bindir/gh"
+}
+
 # run_finish_with_fake_gate <work_dir> <ticket_id> <verdict> [extra_args...]
 # Calls `pmctl_ship_finish` directly (function-level, not via the CLI) with
 # `pmctl_gate_run` stubbed out -- avoids invoking the real, heavy
@@ -1024,6 +1042,85 @@ case_finish_go_pushes_and_opens_pr() {
   fi
 }
 
+case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker() {
+  local name="ship finish: gh pr create fails at runtime after a successful push -- writes PUSHED_PR_FAILED marker, exits nonzero"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-prfail"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-prfail-bin"
+  install_fake_gh_pr_create_fails "$gh_bin"
+  out="$tmp_root/out-finish-prfail"; err="$tmp_root/err-finish-prfail"
+  PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  local marker_verdict
+  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
+  if [[ "$status" -ne 0 && "$pushed" -eq 1 && "$marker_verdict" == "PUSHED_PR_FAILED" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected nonzero exit + pushed + PUSHED_PR_FAILED marker; got status=$status pushed=$pushed marker=$marker_verdict"
+  fi
+}
+
+case_status_reports_partial_for_pushed_pr_failed() {
+  local name="ship-parallel status: a PUSHED_PR_FAILED marker surfaces as status=partial, distinct from no-go"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-status-partial"
+  work="$tmp_root/work-status-partial"
+  make_work_repo "$work" "CC-9001"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
+    > "$tmp_root/out-status-partial" 2> "$tmp_root/err-status-partial" || status=$?
+  local reg_dir tracking lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-parallel.jsonl"
+  lane_path="$(jq -r '.path' "$tracking")"
+  printf '{"ticket":"CC-9001","verdict":"PUSHED_PR_FAILED","branch":"feat/CC-9001","pr_url":null}' \
+    > "$lane_path/.pm-dispatch-ship-finish.json"
+  local json
+  json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == "partial" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected status=partial, got $json"
+  fi
+}
+
+case_finish_reviewers_flag_reaches_gate_call() {
+  local name="ship finish: --reviewers reaches pmctl_gate_run's argv"
+  should_run "$name" || return 0
+  local work
+  work="$tmp_root/work-finish-reviewers"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  local argv_file="$tmp_root/finish-reviewers-argv"
+  rm -f "$argv_file"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; argv_file="$4"
+    pmctl_gate_run() {
+      shift
+      printf "%s\n" "$@" > "$argv_file"
+      local result_file
+      result_file="$(mktemp)"
+      printf "Final: NO-GO\n" > "$result_file"
+      printf "result: %s\n" "$result_file"
+      return 1
+    }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" --reviewers critic,qa-tester
+  ' _ "$REPO_ROOT" "$work" "CC-9001" "$argv_file" >/dev/null 2>&1 || true
+  local argv
+  argv="$(cat "$argv_file" 2>/dev/null)"
+  if grep -q -- '--reviewers' <<<"$argv" && grep -Fxq 'critic,qa-tester' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --reviewers critic,qa-tester in captured gate argv, got: $argv"
+  fi
+}
+
 case_finish_no_go_does_not_push
 case_finish_missing_result_file
 case_finish_go_dirty_tree_refuses_push
@@ -1031,6 +1128,9 @@ case_finish_go_head_moved_refuses_push
 case_finish_gh_missing_refuses_before_gate_or_push
 case_finish_wrong_branch_refuses_before_gate_or_push
 case_finish_go_pushes_and_opens_pr
+case_finish_gh_pr_create_runtime_failure_writes_pushed_pr_failed_marker
+case_status_reports_partial_for_pushed_pr_failed
+case_finish_reviewers_flag_reaches_gate_call
 case_prepare_empty_argument
 case_prepare_malformed_shape
 case_prepare_no_such_ticket

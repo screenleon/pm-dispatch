@@ -250,6 +250,19 @@ pmctl_ship_finish() {
     --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n\nTicket: %s\n' "$result_path" "$ticket_id")")" || pr_status=$?
   printf '%s\n' "$pr_url"
   if [[ "$pr_status" -ne 0 ]]; then
+    # `gh` was confirmed present at the earlier preflight, but `gh pr
+    # create` itself can still fail at RUNTIME (network, expired auth, API
+    # rate limit, etc.) -- a genuinely different failure mode than "gh
+    # missing", occurring AFTER the push already succeeded. Without a
+    # marker here this partial-publish state (branch live on origin, no
+    # PR, no record of why) is indistinguishable from an ordinary no-go/
+    # failed lane to `pmctl ship status`/`list` -- exactly the silent
+    # partial-publish gap critic/qa-tester/architecture-reviewer/
+    # risk-reviewer converged on.
+    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+      '{ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      > "$marker" 2>/dev/null || true
     return "$pr_status"
   fi
 

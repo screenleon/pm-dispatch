@@ -389,7 +389,7 @@ pmctl_ship_parallel_run() {
 }
 
 # _pmctl_ship_parallel_lane_status <lane_path> <run_id>
-# Prints one of: dispatched | running | go | no-go | failed
+# Prints one of: dispatched | running | go | no-go | partial | failed
 #
 # GO detection reads ONLY `pmctl ship finish`'s own structured marker file
 # (.pm-dispatch-ship-finish.json, written INSIDE lane_path only on a
@@ -417,11 +417,16 @@ _pmctl_ship_parallel_lane_status() {
     # *and* PR opened), so only the literal GO verdict maps to status=go.
     local marker_verdict
     marker_verdict="$(jq -r '.verdict // ""' "$lane_path/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-    if [[ "$marker_verdict" == "GO" ]]; then
-      printf 'go\n'
-      return 0
-    fi
-    printf 'no-go\n'
+    case "$marker_verdict" in
+      GO) printf 'go\n' ;;
+      # Distinct from plain no-go: the branch IS live on origin (a real,
+      # recoverable remote side effect) even though no PR exists yet --
+      # operationally different from "gate never passed, nothing pushed"
+      # and needs its own recovery action (open the PR manually / retry),
+      # not the ship contract's default "fix findings and re-run".
+      PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n' ;;
+      *) printf 'no-go\n' ;;
+    esac
     return 0
   fi
   if ! declare -F dispatch_record_read_state >/dev/null; then
