@@ -204,7 +204,7 @@ bash "${PM_DISPATCH_REPO}/uninstall.sh" --dry-run
 > if those directories were installed as Windows directory junctions. Running
 > `rm -f ~/.claude/agents/critic.md` inside a junction will delete the source file
 > from the pm-dispatch repository, not the link.
-> Use `bash uninstall.sh` or `rmdir ~/.claude/agents ~/.claude/commands ~/.claude/skills`
+> Use `bash "${PM_DISPATCH_REPO}/uninstall.sh"` or `rmdir ~/.claude/agents ~/.claude/commands ~/.claude/skills`
 > to remove junctions without following them.
 
 ```bash
@@ -261,7 +261,7 @@ fi
 > rm -rf ~/.claude/agents ~/.claude/commands ~/.claude/scripts ~/.claude/.pm
 > ```
 > Only do this if you have not added other agents or commands from other sources.
-> On Windows junction installs, prefer `bash uninstall.sh` to avoid data loss.
+> On Windows junction installs, prefer `bash "${PM_DISPATCH_REPO}/uninstall.sh"` to avoid data loss.
 
 ---
 
