@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# pmctl ship prepare/finish -- the deterministic, scriptable bookends of the
+# ship contract (commands/ship.md, CC-439): Step 0 (ticket-id validate +
+# consistency-check surface) and Step 1 (branch) live in `prepare`; Step 3
+# (one gate round) and Step 4 (PR on GO) live in `finish`. Step 2 (implement)
+# is NOT scriptable -- it requires an agent (this session, or a dispatched
+# executor) to actually read/write code -- so it is never a pmctl
+# subcommand; it happens between one `prepare` call and one-or-more `finish`
+# calls (finish is re-invoked after each round of fixes, same NO-GO loop
+# discipline `/ship` already uses, just with the mechanical parts scripted).
+#
+# `pmctl ship --parallel` (pmctl-ship-parallel.sh) is the N-lane extension:
+# each lane still runs prepare (as a worktree create) once, dispatches
+# Step 2 + repeated `finish` calls to an executor, same contract, same
+# bookend primitives, just executed inside a worktree by a dispatched
+# executor instead of inline by this session.
+
+pmctl_ship_usage() {
+  printf 'usage: pmctl ship prepare <ticket-id> [--cd <work_dir>]\n' >&2
+  printf '       pmctl ship finish  <ticket-id> [--cd <work_dir>] [--reviewers <r,...>]\n' >&2
+  printf '       pmctl ship --parallel <ticket-id> [<ticket-id>...] [--from <base>] [--adapter <codex|claude|opencode>] [--isolation <level>] [--model <alias>] [--cd <work_dir>]\n' >&2
+  printf '       pmctl ship status [--cd <work_dir>] [--json]\n' >&2
+  printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
+}
+
+# _pmctl_ship_id_shape_ok <ticket_id>
+_pmctl_ship_id_shape_ok() {
+  [[ "$1" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]]
+}
+
+# _pmctl_ship_heading_exists <file> <ticket_id>
+# The ONE shared "does `## <ticket_id>` exist as its own heading" check --
+# used by both `pmctl ship prepare` and `pmctl ship --parallel`'s pre-flight
+# (previously duplicated in pmctl-ship-parallel.sh and had independently
+# drifted into the same bug: a literal/prefix substring match on the
+# ticket id, e.g. checking id `CC-90` would match a heading `## CC-9001 —
+# ...` because "## CC-9001" starts with the literal substring "## CC-90").
+# Exact-matches the ticket id token: requires it be followed immediately by
+# either end-of-line or a non-alnum character (space, em dash, etc.), not
+# another digit/letter that would make it a DIFFERENT, longer ticket id.
+# Callers MUST validate shape first (_pmctl_ship_id_shape_ok) -- this
+# function does not re-check shape, only exact-match existence.
+_pmctl_ship_heading_exists() {
+  local file="$1" ticket_id="$2"
+  [[ -f "$file" ]] || return 1
+  awk -v want="## $ticket_id" '
+    {
+      prefix = substr($0, 1, length(want))
+      if (prefix == want) {
+        next_char = substr($0, length(want) + 1, 1)
+        if (next_char == "" || next_char !~ /[A-Za-z0-9]/) { found = 1 }
+      }
+    }
+    END { exit !found }
+  ' "$file"
+}
+
+# pmctl_ship_prepare <repo_root> <work_dir> <ticket-id>
+# Step 0 (id validation only -- the DECISIONS.md/Dependencies consistency
+# judgment stays the CALLER's job; that is PM-level judgment, not a
+# deterministic bash check, per commands/ship.md Step 0) + Step 1 (dirty-tree
+# precondition + branch), IN PLACE in work_dir -- no worktree, matching
+# /ship's existing single-ticket behavior exactly.
+pmctl_ship_prepare() {
+  local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
+  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+
+  if [[ -z "$ticket_id" ]]; then
+    printf 'pmctl ship prepare: empty argument\n' >&2
+    return 1
+  fi
+  if ! _pmctl_ship_id_shape_ok "$ticket_id"; then
+    printf 'pmctl ship prepare: malformed shape: %s\n' "$ticket_id" >&2
+    return 1
+  fi
+  if ! _pmctl_ship_heading_exists "$work_dir/BACKLOG.md" "$ticket_id"; then
+    if _pmctl_ship_heading_exists "$work_dir/BACKLOG-ARCHIVE.md" "$ticket_id"; then
+      printf 'pmctl ship prepare: ticket already archived: %s\n' "$ticket_id" >&2
+    else
+      printf 'pmctl ship prepare: no such ticket: %s\n' "$ticket_id" >&2
+    fi
+    return 1
+  fi
+
+  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    printf 'pmctl ship prepare: tree is dirty -- commit or stash before preparing %s\n' "$ticket_id" >&2
+    return 1
+  fi
+
+  local branch="feat/$ticket_id"
+  if ! git -C "$work_dir" checkout -b "$branch" 2>&1; then
+    printf 'pmctl ship prepare: branch checkout failed for %s\n' "$branch" >&2
+    return 1
+  fi
+  printf '%s\n' "$branch"
+}
+
+# pmctl_ship_finish <repo_root> <work_dir> <ticket-id> [--reviewers <r,...>]
+# Runs ONE gate round in work_dir. GO: push + open PR, print the PR URL.
+# NO-GO: print the verdict/result path and exit 1 -- the caller (agent) is
+# expected to fix findings and call `finish` again, same loop discipline as
+# `/ship` Step 3, just with the gate-invoke/read/push/PR mechanics scripted.
+pmctl_ship_finish() {
+  local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
+  shift 3 || true
+  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  local reviewers="" args=("$@") i=0
+  while [[ $i -lt ${#args[@]} ]]; do
+    case "${args[$i]}" in
+      --reviewers) reviewers="${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      -h|--help) pmctl_ship_usage; return 0 ;;
+      *) i=$((i+1)) ;;
+    esac
+  done
+
+  if [[ -z "$ticket_id" ]]; then
+    printf 'pmctl ship finish: <ticket-id> is required\n' >&2
+    return 2
+  fi
+  if ! declare -F pmctl_gate_run >/dev/null; then
+    printf 'pmctl ship finish: pmctl gate unavailable\n' >&2
+    return 2
+  fi
+
+  # Branch/ticket-identity guard, checked BEFORE the gate even runs: the
+  # `pmctl ship finish:*` Bash allowlist entry (scripts/lib/allowlist.sh)
+  # pre-approves this whole command for a headless, unattended executor --
+  # without this check, `finish` would push/PR WHATEVER branch happens to
+  # be checked out in work_dir, regardless of the ticket_id argument. A
+  # wrong `--cd`, a stale worktree, or a confused model call could then
+  # publish an unrelated branch after a GO verdict that reviewed something
+  # else entirely. Every lane is created by `pmctl worktree create` /
+  # `pmctl ship prepare` on exactly `feat/<ticket-id>` (CC-439/CC-441
+  # contract), so this is not a new constraint -- it is making an existing
+  # invariant enforced instead of assumed.
+  local expected_branch current_branch
+  expected_branch="feat/$ticket_id"
+  current_branch="$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ "$current_branch" != "$expected_branch" ]]; then
+    printf 'pmctl ship finish: refusing -- checked-out branch (%s) does not match the ticket (%s expects %s). This lane may be pointed at the wrong worktree.\n' \
+      "${current_branch:-unknown}" "$ticket_id" "$expected_branch" >&2
+    return 1
+  fi
+
+  # Preflight `gh` before the gate even runs (not merely before push) --
+  # finding out post-GO, after a push already happened, is the exact
+  # PUSHED_NO_PR partial state risk-reviewer flagged. Fail fast instead.
+  if ! command -v gh >/dev/null 2>&1; then
+    # Backtick below is a literal Markdown code span, not command substitution.
+    # shellcheck disable=SC2016
+    printf 'pmctl ship finish: `gh` is unavailable -- refusing before spending a gate round on a finish that cannot open a PR. Install/configure gh, or push and open the PR manually after a manual gate check.\n' >&2
+    return 1
+  fi
+
+  # Captured BEFORE the gate runs so the post-gate guard below can prove the
+  # commit about to be pushed is the exact commit the gate reviewed -- not a
+  # later, un-reviewed commit that happened to land while `finish` was
+  # running, and not a working tree that drifted dirty in between.
+  local pre_gate_head
+  pre_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+
+  local gate_args=(--executor codex --cd "$work_dir" --lifecycle foreground)
+  [[ -n "$reviewers" ]] && gate_args+=(--reviewers "$reviewers")
+  local gate_out gate_status=0
+  gate_out="$(pmctl_gate_run "$repo_root" "${gate_args[@]}" 2>&1)" || gate_status=$?
+  printf '%s\n' "$gate_out"
+
+  # Source of truth is the RESULT FILE's `Final:` line, not the captured
+  # exit code or any stdout text -- pr-gate.sh prints `result: <path>` near
+  # the end of its run; read that file directly rather than trust output
+  # that could be truncated/reordered by capture.
+  local result_path final_verdict
+  result_path="$(printf '%s\n' "$gate_out" | grep -m1 '^result: ' | sed 's/^result: *//')"
+  if [[ -z "$result_path" || ! -f "$result_path" ]]; then
+    printf 'pmctl ship finish: could not locate gate result file (gate exit %s) -- see output above\n' "$gate_status" >&2
+    return 1
+  fi
+  final_verdict="$(grep -m1 '^Final: ' "$result_path" 2>/dev/null | awk '{print $2}')"
+  if [[ "$final_verdict" != "GO" ]]; then
+    printf 'pmctl ship finish: %s -- fix findings and re-run finish. Result: %s\n' "${final_verdict:-NO VERDICT}" "$result_path" >&2
+    return 1
+  fi
+
+  # Committed-diff guard: GO only proves the gate reviewed SOME state of
+  # work_dir -- prove that state is exactly what is about to be pushed
+  # before pushing anything. Two ways this can drift: (a) the tree picked
+  # up uncommitted changes after the gate ran (those changes would then be
+  # silently absent from the pushed branch/PR -- the PR would look
+  # reviewed but not contain what was actually reviewed), or (b) a new
+  # commit landed on HEAD after the gate ran (that commit was never gated
+  # at all, yet would ride along in the same push). Refuse push/PR in
+  # either case rather than publish content the gate verdict does not
+  # actually cover.
+  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    printf 'pmctl ship finish: GO, but the tree is dirty -- refusing to push/PR content the gate did not review. Commit or discard the uncommitted changes and re-run finish.\n' >&2
+    return 1
+  fi
+  local post_gate_head
+  post_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+  if [[ -z "$pre_gate_head" || "$post_gate_head" != "$pre_gate_head" ]]; then
+    printf 'pmctl ship finish: GO, but HEAD moved during the gate run (%s -> %s) -- refusing to push/PR a commit the gate never reviewed. Re-run finish against the current HEAD.\n' \
+      "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
+    return 1
+  fi
+
+  local branch
+  branch="$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ -z "$branch" || "$branch" == HEAD ]]; then
+    printf 'pmctl ship finish: cannot resolve current branch in %s\n' "$work_dir" >&2
+    return 1
+  fi
+  if ! git -C "$work_dir" push -u origin "$branch"; then
+    printf 'pmctl ship finish: git push failed for %s\n' "$branch" >&2
+    return 1
+  fi
+  # Durable, structured marker inside work_dir -- this is what `pmctl ship
+  # status`/`list` (pmctl-ship-parallel.sh) read to detect a lane's state.
+  # Grepping a dispatched executor's own free-text summary for "Final: GO"
+  # is unreliable (an executor may report the verdict in prose/another
+  # language, e.g. "Gate 通過（GO）" -- confirmed to false-negative during
+  # CC-441's real e2e validation); this file is written by `pmctl ship
+  # finish` ITSELF only on a confirmed gate GO, so its mere presence (with
+  # the right verdict field) is the source of truth.
+  local marker
+  marker="$work_dir/.pm-dispatch-ship-finish.json"
+  if ! command -v gh >/dev/null 2>&1; then
+    # Backtick below is a literal Markdown code span, not command substitution.
+    # shellcheck disable=SC2016
+    printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
+    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+      '{ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      > "$marker" 2>/dev/null || true
+    # Nonzero: gate passed and the branch is pushed, but the ship contract
+    # (gate GO -> PR opened) is not yet complete -- the caller must open the
+    # PR manually and this is not a state `pmctl ship status` should report
+    # as a plain "go".
+    return 1
+  fi
+  # Body follows commands/ship.md's PR template shape (Gate section with
+  # verdict + result file, Ticket line) -- "Rounds" and a human summary
+  # line are intentionally omitted: `finish` is a single mechanical
+  # gate-round wrapper with no memory of prior rounds and no access to a
+  # human-authored summary, unlike the full `/ship` prose flow this
+  # mirrors. The caller (main thread or dispatched executor) can pass a
+  # richer body via a future --summary flag if that gap matters in
+  # practice; not adding one speculatively here.
+  local pr_url pr_status=0
+  pr_url="$(cd "$work_dir" && gh pr create --title "chore(${ticket_id}): ship" \
+    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n\nTicket: %s\n' "$result_path" "$ticket_id")")" || pr_status=$?
+  printf '%s\n' "$pr_url"
+  if [[ "$pr_status" -ne 0 ]]; then
+    # `gh` was confirmed present at the earlier preflight, but `gh pr
+    # create` itself can still fail at RUNTIME (network, expired auth, API
+    # rate limit, etc.) -- a genuinely different failure mode than "gh
+    # missing", occurring AFTER the push already succeeded. Without a
+    # marker here this partial-publish state (branch live on origin, no
+    # PR, no record of why) is indistinguishable from an ordinary no-go/
+    # failed lane to `pmctl ship status`/`list` -- exactly the silent
+    # partial-publish gap critic/qa-tester/architecture-reviewer/
+    # risk-reviewer converged on.
+    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+      '{ticket: $ticket, verdict: "PUSHED_PR_FAILED", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      > "$marker" 2>/dev/null || true
+    return "$pr_status"
+  fi
+
+  jq -n --arg ticket "$ticket_id" --arg branch "$branch" --arg pr_url "$pr_url" \
+    --arg result_path "$result_path" --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+    '{ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, finished_ts: $finished_ts}' \
+    > "$marker" 2>/dev/null || true
+}

@@ -256,7 +256,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: install/uninstall guards regression suite
-        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group hooks
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group guards
 
   test-usage-weekly:
     runs-on: ubuntu-latest
@@ -426,6 +426,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: pmctl worktree regression suite
         run: bash scripts/test-pmctl-worktree.sh
+
+  test-pmctl-ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl ship regression suite
+        run: bash scripts/test-pmctl-ship.sh
 
   lint-backlog:
     runs-on: ubuntu-latest

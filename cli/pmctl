@@ -16,7 +16,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
-for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree; do
+for _lib in detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-trace pmctl-task pmctl-decision gate-result-verify pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/scripts/lib/$_lib.sh" ]] && . "$REPO_ROOT/scripts/lib/$_lib.sh"
 done
@@ -122,6 +122,53 @@ case "$cmd/$sub" in
       pmctl_die "worktree gc unavailable"
     fi
     pmctl_worktree_gc "$REPO_ROOT" "" "$@"
+    ;;
+  ship/prepare)
+    if ! declare -F pmctl_ship_prepare >/dev/null; then
+      pmctl_die "ship prepare unavailable"
+    fi
+    _ship_cd="" _ship_ticket=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cd) _ship_cd="${2:-}"; shift 2 ;;
+        -*) pmctl_die "ship prepare: unknown option: $1" ;;
+        *) _ship_ticket="$1"; shift ;;
+      esac
+    done
+    pmctl_ship_prepare "$REPO_ROOT" "$_ship_cd" "$_ship_ticket"
+    ;;
+  ship/finish)
+    if ! declare -F pmctl_ship_finish >/dev/null; then
+      pmctl_die "ship finish unavailable"
+    fi
+    _ship_cd="" _ship_ticket="" _ship_rest=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cd) _ship_cd="${2:-}"; shift 2 ;;
+        --reviewers) _ship_rest+=(--reviewers "${2:-}"); shift 2 ;;
+        -*) pmctl_die "ship finish: unknown option: $1" ;;
+        *) _ship_ticket="$1"; shift ;;
+      esac
+    done
+    pmctl_ship_finish "$REPO_ROOT" "$_ship_cd" "$_ship_ticket" ${_ship_rest[@]+"${_ship_rest[@]}"}
+    ;;
+  ship/--parallel)
+    if ! declare -F pmctl_ship_parallel_run >/dev/null; then
+      pmctl_die "ship --parallel unavailable"
+    fi
+    pmctl_ship_parallel_run "$REPO_ROOT" "" "$@"
+    ;;
+  ship/status)
+    if ! declare -F pmctl_ship_parallel_status >/dev/null; then
+      pmctl_die "ship status unavailable"
+    fi
+    pmctl_ship_parallel_status "$REPO_ROOT" "" "$@"
+    ;;
+  ship/list)
+    if ! declare -F pmctl_ship_parallel_list >/dev/null; then
+      pmctl_die "ship list unavailable"
+    fi
+    pmctl_ship_parallel_list "$REPO_ROOT" "" "$@"
     ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then

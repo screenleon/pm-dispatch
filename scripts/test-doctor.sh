@@ -67,6 +67,7 @@ add_dispatch_allowlist() {
         rel="${f#"$home_dir/"}"
         printf 'Bash(%s:*)\nBash(~/%s:*)\n' "$f" "$rel"
       done
+      printf 'Bash(pmctl:*)\nBash(bash cli/pmctl:*)\n'
     } | jq -Rn '[inputs]'
   )"
   jq --argjson allow "$allow_json" '.permissions.allow = $allow' \
@@ -1359,6 +1360,7 @@ case_doctor_claude_config_dir() {
       for _f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
         [[ -f "$_f" ]] && printf 'Bash(%s:*)\n' "$_f"
       done
+      printf 'Bash(pmctl:*)\nBash(bash cli/pmctl:*)\n'
     } | jq -Rn '[inputs]'
   )"
   jq --argjson allow "$_allow_json" '.permissions.allow = $allow' \
