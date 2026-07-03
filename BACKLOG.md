@@ -78,6 +78,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
 | CC-441 | 🔵 active | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | — | P2 | design |
+| CC-442 | 🟢 someday | 統一「開始處理一張票」路徑：`pmctl ship prepare`（原地無隔離）與 `pmctl worktree create`（僅 `--parallel` 觸發）合流成 `pmctl ship` 單一入口 | arch/gate | 2026-07-03 | — | P3 | design |
 
 ---
 
@@ -236,6 +237,32 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，定義本票必須保留的 ship 契約）。必須使用 [[CC-014]] 已交付的 `pmctl worktree`，不得自造 worktree 管理機制。
 **See**: —
+
+---
+
+## CC-442 — design: 統一「開始處理一張票」路徑（ship prepare ↔ worktree create）🟢 someday
+
+**Problem**：[[CC-441]] 落地後，「開始處理一張票」存在兩條互不相通的路徑：
+- `pmctl ship prepare`（[[CC-439]]/[[CC-441]]）：**原地** `git checkout -b`，完全沒用到 worktree，只能主線程直接接手實作。
+- `pmctl worktree create`（[[CC-014]]）：只有 `pmctl ship --parallel` 的 lane 建立時才會呼叫，worktree 隔離必須綁著整個 N-lane dispatch 派工機制才能拿到。
+
+如果使用者想要「單張票也要 worktree 隔離，但不想走整個 dispatch 派工機制（例如想留在主線程自己實作，只是想要隔離的工作目錄）」，現在沒有對應指令。
+
+**Why**：不是真的重複實作——dispatch 邏輯沒有重複，`pmctl ship finish` 也是單一實作被 `--parallel` 的每條 lane 共用；但「怎麼開始一張票」這個概念層面分裂成兩套路徑，使用者體驗與心智模型不一致。[[CC-441]] 開發完成後由使用者提出，票面 Framing 當時刻意把範圍限定在「N-lane 並行整合」，不碰單票 `ship prepare` 行為，故延後為獨立票。
+
+**設計方向（使用者提出，待細化）**：把 `pmctl worktree create` 的獨立派發能力全部收斂、委託給 `ship` 這個單一入口，讓 `ship` 同時涵蓋「主線程直接接手」與「worktree 隔離＋（可選）dispatch」兩種流程模式，而不是像現在分成 `ship prepare`（無隔離）與「`--parallel` 內部才會用到的 `worktree create`」兩條平行路徑。初步方向：
+- `pmctl ship prepare <ticket-id>`：維持現狀，主線程原地接手（不隔離）。
+- `pmctl ship prepare <ticket-id> --worktree`：新增選項，走 [[CC-014]] `pmctl worktree create` 建立隔離的 worktree lane，但**不**自動 dispatch——回傳 lane 路徑，讓使用者（或主線程）自己決定要在該 worktree 裡接手實作，還是之後再手動 dispatch。
+- `pmctl ship --parallel`：維持現狀（N-lane + dispatch 一次到位），內部改為呼叫上面統一後的 `ship prepare --worktree`，不再重複一份 worktree 建立邏輯。
+
+**Requirement**（開票時待細化，不預先鎖定實作細節）：
+1. 盤點 `pmctl ship prepare`、`pmctl worktree create`、`pmctl_ship_parallel_run` 三處目前個別的 ticket 驗證/branch 建立邏輯，確認統一後不產生行為回歸（尤其是 [[CC-439]] 既有 `/ship` 單票契約不能被破壞）。
+2. 決定 `--worktree` 選項的確切語意（是否也要能接受 `--from <base>`；worktree 建立失敗時的錯誤訊息與 [[CC-014]] 既有慣例一致）。
+3. `pmctl ship --parallel` 內部改為呼叫統一後的入口，避免兩份 worktree 建立邏輯分別維護。
+4. 補齊對應的 `scripts/test-pmctl-ship.sh`/`scripts/test-pmctl-worktree.sh` 回歸測試。
+
+**Dependencies**：承接 [[CC-441]]（發現此縫隙）、[[CC-439]]（`ship prepare` 現有契約不可破壞）、[[CC-014]]（`pmctl worktree` 既有 API 不得重造）。
+**See**：—
 
 ---
 
