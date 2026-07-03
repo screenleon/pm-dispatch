@@ -66,6 +66,79 @@ make_work_repo() {
   git -C "$path" commit -q -m seed
 }
 
+# add_bare_origin <work_repo>
+# Creates a local bare repo and wires it as `origin` so `pmctl ship finish`
+# tests can exercise a real `git push` without touching any real remote.
+add_bare_origin() {
+  local work="$1" bare="$1.bare-origin.git"
+  git init -q --bare "$bare"
+  git -C "$work" remote add origin "$bare"
+}
+
+# checkout_ticket_branch <work_repo> <ticket_id>
+# `pmctl_ship_finish` operates on whatever branch is currently checked out
+# (mirrors real usage: always called after `pmctl ship prepare` already
+# created and checked out `feat/<ticket-id>`) -- these finish-focused test
+# cases call `finish` directly without going through `prepare` first, so
+# they set that precondition up explicitly.
+checkout_ticket_branch() {
+  local work="$1" ticket_id="$2"
+  git -C "$work" checkout -q -b "feat/$ticket_id"
+}
+
+# install_fake_gh <bindir> <pr_url>
+# A fake `gh` that only understands `gh pr create` (prints pr_url, exit 0).
+install_fake_gh() {
+  local bindir="$1" pr_url="$2"
+  mkdir -p "$bindir"
+  cat > "$bindir/gh" <<FAKEOF
+#!/usr/bin/env bash
+if [[ "\$1 \$2" == "pr create" ]]; then
+  printf '%s\n' "$pr_url"
+  exit 0
+fi
+exit 1
+FAKEOF
+  chmod +x "$bindir/gh"
+}
+
+# run_finish_with_fake_gate <work_dir> <ticket_id> <verdict> [extra_args...]
+# Calls `pmctl_ship_finish` directly (function-level, not via the CLI) with
+# `pmctl_gate_run` stubbed out -- avoids invoking the real, heavy
+# scripts/pr-gate.sh pipeline just to unit-test finish's own push/PR/guard
+# logic. The stub writes a real result FILE with a `Final:` line and prints
+# `result: <path>` on stdout, mirroring pr-gate.sh's actual output contract
+# byte-for-byte (same contract `pmctl_ship_finish` itself parses).
+run_finish_with_fake_gate() {
+  local work_dir="$1" ticket_id="$2" verdict="$3"
+  shift 3
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; verdict="$4"; shift 4
+    pmctl_gate_run() {
+      local result_file
+      result_file="$(mktemp)"
+      printf "Final: %s\n" "$verdict" > "$result_file"
+      printf "result: %s\n" "$result_file"
+      [[ "$verdict" == "GO" ]]
+    }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id" "$@"
+  ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$verdict" "$@"
+}
+
+# run_finish_with_no_result_line <work_dir> <ticket_id>
+# Same stub shape, but the fake gate never prints a `result: <path>` line at
+# all -- covers the "could not locate gate result file" branch.
+run_finish_with_no_result_line() {
+  local work_dir="$1" ticket_id="$2"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"
+    pmctl_gate_run() { printf "some unrelated gate output, no result line\n"; return 1; }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work_dir" "$ticket_id"
+}
+
 reg_dir_for() {
   local store="$1" work="$2"
   PM_DISPATCH_STATE_ROOT="$store" bash -c \
@@ -610,6 +683,158 @@ case_finish_requires_ticket() {
     pass "$name"
 }
 
+case_finish_no_go_does_not_push() {
+  local name="ship finish: NO-GO exits 1, prints the result path, and never pushes"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-nogo"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-nogo"; err="$tmp_root/err-finish-nogo"
+  run_finish_with_fake_gate "$work" "CC-9001" "NO-GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] && grep -q "NO-GO" "$err" && [[ "$pushed" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_missing_result_file() {
+  local name="ship finish: a gate that never prints a result: line exits 1 with a clear message"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-noresult"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  out="$tmp_root/out-finish-noresult"; err="$tmp_root/err-finish-noresult"
+  run_finish_with_no_result_line "$work" "CC-9001" > "$out" 2> "$err" || status=$?
+  assert_exit "$name" "$status" 1 && \
+    assert_file_contains "$name" "$err" "could not locate gate result file" && \
+    pass "$name"
+}
+
+case_finish_go_dirty_tree_refuses_push() {
+  local name="ship finish: GO with an uncommitted (dirty) tree refuses to push -- committed-diff guard"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-dirty"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  printf 'uncommitted\n' > "$work/dirty.txt"
+  out="$tmp_root/out-finish-dirty"; err="$tmp_root/err-finish-dirty"
+  run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] && grep -q "tree is dirty" "$err" && [[ "$pushed" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_go_head_moved_refuses_push() {
+  local name="ship finish: GO but HEAD moved during the gate run refuses to push an un-gated commit"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-headmoved"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-headmoved"; err="$tmp_root/err-finish-headmoved"
+  # Stub gate that ALSO makes an extra, never-reviewed commit as a side
+  # effect -- simulates something landing on HEAD during the gate window.
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"
+    pmctl_gate_run() {
+      printf "sneaky\n" > "'"$work"'/sneaky.txt"
+      git -C "'"$work"'" add sneaky.txt
+      git -C "'"$work"'" commit -q -m sneaky
+      local result_file
+      result_file="$(mktemp)"
+      printf "Final: GO\n" > "$result_file"
+      printf "result: %s\n" "$result_file"
+      return 0
+    }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] && grep -q "HEAD moved during the gate run" "$err" && [[ "$pushed" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push; got status=$status pushed=$pushed stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_go_gh_missing_writes_pushed_no_pr_marker() {
+  local name="ship finish: GO + clean tree but gh unavailable pushes, writes PUSHED_NO_PR marker, exits 1"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-nogh"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-nogh"; err="$tmp_root/err-finish-nogh"
+  # A curated PATH containing symlinks to exactly the tools finish needs
+  # (git/jq/bash/coreutils) but NOT `gh` -- simulates "gh unavailable"
+  # without the earlier approach's bug (removing whole real-PATH dirs that
+  # happen to contain `gh` alongside `git`/`jq` on this host removed those
+  # too, so `command -v git` etc. failed with 127 -- a false "gh missing"
+  # signal for the wrong reason).
+  local nogh_bin="$tmp_root/nogh-bin"
+  mkdir -p "$nogh_bin"
+  local tool tool_path
+  for tool in git jq bash mktemp awk sed grep date dirname basename cat mv rm mkdir; do
+    tool_path="$(command -v "$tool" 2>/dev/null)" || continue
+    ln -sf "$tool_path" "$nogh_bin/$tool"
+  done
+  PATH="$nogh_bin" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  local marker_verdict
+  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
+  if [[ "$status" -eq 1 && "$pushed" -eq 1 && "$marker_verdict" == "PUSHED_NO_PR" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + pushed + PUSHED_NO_PR marker; got status=$status pushed=$pushed marker=$marker_verdict"
+  fi
+}
+
+case_finish_go_pushes_and_opens_pr() {
+  local name="ship finish: GO + clean tree + gh available pushes, opens PR, writes GO marker with the pr_url"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-go"
+  make_work_repo "$work" "CC-9001"
+  checkout_ticket_branch "$work" "CC-9001"
+  add_bare_origin "$work"
+  local gh_bin="$tmp_root/fake-gh-bin"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/99"
+  out="$tmp_root/out-finish-go"; err="$tmp_root/err-finish-go"
+  PATH="$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+  local marker_verdict marker_pr
+  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
+  marker_pr="$(jq -r '.pr_url // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$pushed" -eq 1 && "$marker_verdict" == "GO" && "$marker_pr" == "https://example.invalid/pr/99" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 + pushed + GO marker with pr_url; got status=$status pushed=$pushed marker=$marker_verdict pr=$marker_pr"
+  fi
+}
+
+case_finish_no_go_does_not_push
+case_finish_missing_result_file
+case_finish_go_dirty_tree_refuses_push
+case_finish_go_head_moved_refuses_push
+case_finish_go_gh_missing_writes_pushed_no_pr_marker
+case_finish_go_pushes_and_opens_pr
 case_prepare_empty_argument
 case_prepare_malformed_shape
 case_prepare_no_such_ticket

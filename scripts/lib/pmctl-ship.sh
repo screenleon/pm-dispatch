@@ -122,6 +122,13 @@ pmctl_ship_finish() {
     return 2
   fi
 
+  # Captured BEFORE the gate runs so the post-gate guard below can prove the
+  # commit about to be pushed is the exact commit the gate reviewed -- not a
+  # later, un-reviewed commit that happened to land while `finish` was
+  # running, and not a working tree that drifted dirty in between.
+  local pre_gate_head
+  pre_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+
   local gate_args=(--executor codex --cd "$work_dir" --lifecycle foreground)
   [[ -n "$reviewers" ]] && gate_args+=(--reviewers "$reviewers")
   local gate_out gate_status=0
@@ -141,6 +148,28 @@ pmctl_ship_finish() {
   final_verdict="$(grep -m1 '^Final: ' "$result_path" 2>/dev/null | awk '{print $2}')"
   if [[ "$final_verdict" != "GO" ]]; then
     printf 'pmctl ship finish: %s -- fix findings and re-run finish. Result: %s\n' "${final_verdict:-NO VERDICT}" "$result_path" >&2
+    return 1
+  fi
+
+  # Committed-diff guard: GO only proves the gate reviewed SOME state of
+  # work_dir -- prove that state is exactly what is about to be pushed
+  # before pushing anything. Two ways this can drift: (a) the tree picked
+  # up uncommitted changes after the gate ran (those changes would then be
+  # silently absent from the pushed branch/PR -- the PR would look
+  # reviewed but not contain what was actually reviewed), or (b) a new
+  # commit landed on HEAD after the gate ran (that commit was never gated
+  # at all, yet would ride along in the same push). Refuse push/PR in
+  # either case rather than publish content the gate verdict does not
+  # actually cover.
+  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    printf 'pmctl ship finish: GO, but the tree is dirty -- refusing to push/PR content the gate did not review. Commit or discard the uncommitted changes and re-run finish.\n' >&2
+    return 1
+  fi
+  local post_gate_head
+  post_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
+  if [[ -z "$pre_gate_head" || "$post_gate_head" != "$pre_gate_head" ]]; then
+    printf 'pmctl ship finish: GO, but HEAD moved during the gate run (%s -> %s) -- refusing to push/PR a commit the gate never reviewed. Re-run finish against the current HEAD.\n' \
+      "${pre_gate_head:-unknown}" "${post_gate_head:-unknown}" >&2
     return 1
   fi
 
