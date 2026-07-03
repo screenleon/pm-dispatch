@@ -139,6 +139,34 @@ run_finish_with_no_result_line() {
   ' _ "$REPO_ROOT" "$work_dir" "$ticket_id"
 }
 
+# run_ship_parallel_capture_dispatch_argv <store> <work_dir> <ticket-id> [ship --parallel flags...]
+# Runs the REAL `pmctl_ship_parallel_run` (real worktree creation, so
+# --from is genuinely exercised against git) but with `pmctl_dispatch_run`
+# stubbed to capture its argv to a file instead of performing a real
+# dispatch -- lets --adapter/--isolation/--model/--auto-pack be asserted
+# directly against what actually reaches the dispatch call, rather than
+# inferred from a real (slow, adapter-dependent) end-to-end run.
+run_ship_parallel_capture_dispatch_argv() {
+  local store="$1" work_dir="$2" ticket_id="$3"
+  shift 3
+  local argv_file="$tmp_root/captured-dispatch-argv.$$"
+  rm -f "$argv_file"
+  PM_DISPATCH_STATE_ROOT="$store" ARGV_CAPTURE_FILE="$argv_file" bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; shift 3
+    for lib in portable state-writer state-paths pmctl-worktree pmctl-ship pmctl-ship-parallel; do
+      # shellcheck disable=SC1090
+      . "$repo_root/scripts/lib/$lib.sh"
+    done
+    pmctl_dispatch_run() {
+      shift
+      printf "%s\n" "$@" > "$ARGV_CAPTURE_FILE"
+      printf "fake-run-id-for-flag-test\n"
+    }
+    pmctl_ship_parallel_run "$repo_root" "$work_dir" "$ticket_id" "$@"
+  ' _ "$REPO_ROOT" "$work_dir" "$ticket_id" "$@"
+  cat "$argv_file" 2>/dev/null
+}
+
 reg_dir_for() {
   local store="$1" work="$2"
   PM_DISPATCH_STATE_ROOT="$store" bash -c \
@@ -288,15 +316,25 @@ case_run_refuses_redispatch_while_in_flight() {
   work="$tmp_root/work-run-inflight"
   make_work_repo "$work" "CC-9001"
 
-  # A slow fake claude (sleeps briefly before exiting) so the first lane's
-  # dispatched process is still alive when the second `ship --parallel` call
-  # for the SAME ticket runs immediately after.
+  # A fake claude that signals via marker FILES instead of a fixed sleep:
+  # it touches $started the moment it's actually running, then polls
+  # (bounded) for $release before exiting. The test below waits on the
+  # $started file (a real condition -- "the first lane's process is
+  # confirmed live") before firing the second dispatch, instead of a fixed
+  # sleep-and-hope duration.
+  local started="$tmp_root/inflight-started" release="$tmp_root/inflight-release"
+  rm -f "$started" "$release"
   local slow_bin="$tmp_root/slow-claude-bin"
   mkdir -p "$slow_bin"
-  cat > "$slow_bin/claude" <<'FAKEOF'
+  cat > "$slow_bin/claude" <<FAKEOF
 #!/usr/bin/env bash
 cat >/dev/null
-sleep 5
+touch "$started"
+_i=0
+while [[ ! -f "$release" && "\$_i" -lt 100 ]]; do
+  sleep 0.1
+  _i=\$((_i + 1))
+done
 printf '%s\n' '{"type":"result","subtype":"success","result":"work done","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"session_id":"fake","num_turns":1}'
 exit 0
 FAKEOF
@@ -305,15 +343,128 @@ FAKEOF
   PATH="$slow_bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$tmp_root/out-inflight-1" 2> "$tmp_root/err-inflight-1"
 
+  # Bounded poll on the actual condition (the fake process is confirmed
+  # running), not a fixed-duration sleep.
+  local _wait_iters=0
+  while [[ ! -f "$started" && "$_wait_iters" -lt 100 ]]; do
+    sleep 0.1
+    _wait_iters=$((_wait_iters + 1))
+  done
+
   local out2 err2 status2=0
   out2="$tmp_root/out-inflight-2"; err2="$tmp_root/err-inflight-2"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$out2" 2> "$err2" || status2=$?
 
-  if [[ "$status2" -eq 1 ]] && grep -q "already has an in-flight lane" "$err2"; then
+  touch "$release"
+
+  if [[ -f "$started" ]] && [[ "$status2" -eq 1 ]] && grep -q "already has an in-flight lane" "$err2"; then
     pass "$name"
   else
-    fail "$name" "expected exit 1 + in-flight refusal message; got status=$status2 stderr=$(cat "$err2")"
+    fail "$name" "expected first-lane started + exit 1 + in-flight refusal message; got started=$([[ -f "$started" ]] && echo yes || echo no) status=$status2 stderr=$(cat "$err2")"
+  fi
+}
+
+case_run_flag_adapter_reaches_dispatch() {
+  local name="ship-parallel run: --adapter reaches pmctl dispatch run's argv"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-adapter"
+  work="$tmp_root/work-flag-adapter"
+  make_work_repo "$work" "CC-9001"
+  local argv
+  argv="$(run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --no-auto-pack --adapter codex)"
+  if grep -q -- '--adapter' <<<"$argv" && grep -Fxq 'codex' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --adapter codex in captured argv, got: $argv"
+  fi
+}
+
+case_run_flag_isolation_reaches_dispatch() {
+  local name="ship-parallel run: --isolation reaches pmctl dispatch run's argv"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-isolation"
+  work="$tmp_root/work-flag-isolation"
+  make_work_repo "$work" "CC-9001"
+  local argv
+  argv="$(run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --no-auto-pack --isolation read-only)"
+  if grep -q -- '--isolation' <<<"$argv" && grep -Fxq 'read-only' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --isolation read-only in captured argv, got: $argv"
+  fi
+}
+
+case_run_flag_model_reaches_dispatch() {
+  local name="ship-parallel run: --model reaches pmctl dispatch run's argv"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-model"
+  work="$tmp_root/work-flag-model"
+  make_work_repo "$work" "CC-9001"
+  local argv
+  argv="$(run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --no-auto-pack --model light)"
+  if grep -q -- '--model' <<<"$argv" && grep -Fxq 'light' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --model light in captured argv, got: $argv"
+  fi
+}
+
+case_run_flag_no_auto_pack_reaches_dispatch() {
+  local name="ship-parallel run: --no-auto-pack reaches pmctl dispatch run's argv"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-noautopack"
+  work="$tmp_root/work-flag-noautopack"
+  make_work_repo "$work" "CC-9001"
+  local argv
+  argv="$(run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --no-auto-pack)"
+  if grep -q -- '--no-auto-pack' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --no-auto-pack in captured argv, got: $argv"
+  fi
+}
+
+case_run_flag_auto_pack_reaches_dispatch() {
+  local name="ship-parallel run: --auto-pack reaches pmctl dispatch run's argv"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-autopack"
+  work="$tmp_root/work-flag-autopack"
+  make_work_repo "$work" "CC-9001"
+  local argv
+  argv="$(run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --auto-pack)"
+  if grep -q -- '--auto-pack' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --auto-pack in captured argv, got: $argv"
+  fi
+}
+
+case_run_flag_from_sets_worktree_base() {
+  local name="ship-parallel run: --from creates the lane's branch off the named base, not the default HEAD"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-flag-from"
+  work="$tmp_root/work-flag-from"
+  make_work_repo "$work" "CC-9001"
+  git -C "$work" checkout -q -b side-base
+  printf 'only-on-side-base\n' > "$work/side-marker.txt"
+  git -C "$work" add side-marker.txt
+  git -C "$work" commit -q -m "side base marker"
+  git -C "$work" checkout -q master 2>/dev/null || git -C "$work" checkout -q main
+  run_ship_parallel_capture_dispatch_argv "$store" "$work" "CC-9001" --no-auto-pack --from side-base >/dev/null
+  local reg_dir lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  lane_path="$reg_dir/checkouts/CC-9001"
+  if [[ -f "$lane_path/side-marker.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected lane worktree branched from side-base (side-marker.txt present); lane_path=$lane_path"
   fi
 }
 
@@ -850,6 +1001,12 @@ case_prepare_rejects_prefix_collision_ticket_id
 case_run_rejects_duplicate_ticket_in_batch
 case_run_bad_ticket_leaves_no_worktree
 case_run_refuses_redispatch_while_in_flight
+case_run_flag_adapter_reaches_dispatch
+case_run_flag_isolation_reaches_dispatch
+case_run_flag_model_reaches_dispatch
+case_run_flag_no_auto_pack_reaches_dispatch
+case_run_flag_auto_pack_reaches_dispatch
+case_run_flag_from_sets_worktree_base
 case_run_dispatches_and_tracks
 case_run_brief_preserves_ship_contract
 case_run_restores_gc_auto_previously_set

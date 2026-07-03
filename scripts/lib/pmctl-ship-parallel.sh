@@ -186,8 +186,13 @@ _pmctl_ship_parallel_brief_write() {
     printf -- '  - Before running `pmctl ship finish`, `export PM_DISPATCH_STATE_ROOT=%s/.pm-dispatch-state` in this shell. `pmctl gate run`'\''s nested reviewer dispatch writes run/trace records to the out-of-repo state store; the default location resolves under `$HOME`, which is OUTSIDE this sandbox'\''s writable root (workspace-write only permits writes under this working_dir) and the write is rejected. Redirecting the state root to a path INSIDE this working_dir keeps every nested pmctl write inside the sandbox boundary. This is scoped to this one lane'\''s own dispatch tree; it does not touch the orchestrator'\''s or any other lane'\''s state.\n' "$lane_work_dir"
     printf -- '  - Gate + PR: run `pmctl ship finish %s --cd "%s"` -- it runs one gate round and, on GO, pushes and opens the PR (never merges). On NO-GO it prints the result path and exits 1: fix every finding -- high/medium/low, hard-gate and advisory -- and re-run `pmctl ship finish %s --cd "%s"`; repeat.\n' "$ticket_id" "$lane_work_dir" "$ticket_id" "$lane_work_dir"
     printf -- '  - Stop and report instead of continuing only if the ticket'\''s own premise turns out wrong, or a fix would require contradicting a DECISIONS.md constraint, or a gate round produces no new progress after Rule A'\''s 3-strike audit already ran -- same stopping rule as `/ship`, not a new one.\n'
+    # Shell-quote lane_work_dir before embedding it in the generated cmd:
+    # string -- a state-store path containing a space would otherwise split
+    # into multiple `git -C` arguments and produce an invalid command.
+    local quoted_lane_work_dir
+    printf -v quoted_lane_work_dir '%q' "$lane_work_dir"
     printf 'self_verify:\n'
-    printf -- '  - cmd: "git -C %s rev-parse --abbrev-ref HEAD | grep -qx %s"\n' "$lane_work_dir" "$branch"
+    printf -- '  - cmd: "git -C %s rev-parse --abbrev-ref HEAD | grep -qx %s"\n' "$quoted_lane_work_dir" "$branch"
     printf -- '  - git-status no-collateral-damage\n'
     printf 'acceptance:\n'
     printf -- '  - Gate final verdict is GO, or the run stopped at one of the explicit stopping conditions above with a stated reason\n'
