@@ -131,6 +131,7 @@ case "$cmd/$sub" in
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --cd) _ship_cd="${2:-}"; shift 2 ;;
+        -*) pmctl_die "ship prepare: unknown option: $1" ;;
         *) _ship_ticket="$1"; shift ;;
       esac
     done
@@ -145,6 +146,7 @@ case "$cmd/$sub" in
       case "$1" in
         --cd) _ship_cd="${2:-}"; shift 2 ;;
         --reviewers) _ship_rest+=(--reviewers "${2:-}"); shift 2 ;;
+        -*) pmctl_die "ship finish: unknown option: $1" ;;
         *) _ship_ticket="$1"; shift ;;
       esac
     done

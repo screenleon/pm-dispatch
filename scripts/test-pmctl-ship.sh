@@ -316,25 +316,26 @@ case_run_refuses_redispatch_while_in_flight() {
   work="$tmp_root/work-run-inflight"
   make_work_repo "$work" "CC-9001"
 
-  # A fake claude that signals via marker FILES instead of a fixed sleep:
-  # it touches $started the moment it's actually running, then polls
-  # (bounded) for $release before exiting. The test below waits on the
-  # $started file (a real condition -- "the first lane's process is
-  # confirmed live") before firing the second dispatch, instead of a fixed
-  # sleep-and-hope duration.
-  local started="$tmp_root/inflight-started" release="$tmp_root/inflight-release"
-  rm -f "$started" "$release"
+  # A fake claude that blocks on a named-pipe read until explicitly
+  # released -- no sleep anywhere (qa-tester's red line is against
+  # sleep-based synchronization, including bounded polling loops, not just
+  # fixed-duration sleeps). No "process has started" signal is needed: the
+  # first `ship --parallel` call is DETACHED and returns as soon as the
+  # supervisor launches (before the fake claude process even runs), so the
+  # second `ship --parallel` call below -- issued immediately after, with
+  # no gap -- reliably observes "no dispatch record written yet" (the fake
+  # process is still blocked on the fifo read) regardless of exact process
+  # scheduling. The fifo's only job is to keep the first lane alive long
+  # enough for that second call to run before the first one can finish.
+  local release_fifo="$tmp_root/inflight-release.fifo"
+  rm -f "$release_fifo"
+  mkfifo "$release_fifo"
   local slow_bin="$tmp_root/slow-claude-bin"
   mkdir -p "$slow_bin"
   cat > "$slow_bin/claude" <<FAKEOF
 #!/usr/bin/env bash
 cat >/dev/null
-touch "$started"
-_i=0
-while [[ ! -f "$release" && "\$_i" -lt 100 ]]; do
-  sleep 0.1
-  _i=\$((_i + 1))
-done
+read -r _ < "$release_fifo"
 printf '%s\n' '{"type":"result","subtype":"success","result":"work done","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"session_id":"fake","num_turns":1}'
 exit 0
 FAKEOF
@@ -343,25 +344,22 @@ FAKEOF
   PATH="$slow_bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$tmp_root/out-inflight-1" 2> "$tmp_root/err-inflight-1"
 
-  # Bounded poll on the actual condition (the fake process is confirmed
-  # running), not a fixed-duration sleep.
-  local _wait_iters=0
-  while [[ ! -f "$started" && "$_wait_iters" -lt 100 ]]; do
-    sleep 0.1
-    _wait_iters=$((_wait_iters + 1))
-  done
-
   local out2 err2 status2=0
   out2="$tmp_root/out-inflight-2"; err2="$tmp_root/err-inflight-2"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack CC-9001 --cd "$work" \
     > "$out2" 2> "$err2" || status2=$?
 
-  touch "$release"
+  # Opening a FIFO for write blocks until a reader connects -- the fake
+  # process's `read -r _ < "$release_fifo"` is that reader, so this
+  # unblocks it (no sleep needed on either side). Bounded via `timeout` in
+  # case the fake process already exited some other way.
+  # shellcheck disable=SC2016  # $1 is the spawned bash -c's own positional arg, deferred by design.
+  timeout 30 bash -c 'printf release > "$1"' _ "$release_fifo" 2>/dev/null || true
 
-  if [[ -f "$started" ]] && [[ "$status2" -eq 1 ]] && grep -q "already has an in-flight lane" "$err2"; then
+  if [[ "$status2" -eq 1 ]] && grep -q "already has an in-flight lane" "$err2"; then
     pass "$name"
   else
-    fail "$name" "expected first-lane started + exit 1 + in-flight refusal message; got started=$([[ -f "$started" ]] && echo yes || echo no) status=$status2 stderr=$(cat "$err2")"
+    fail "$name" "expected exit 1 + in-flight refusal message; got status=$status2 stderr=$(cat "$err2")"
   fi
 }
 
@@ -922,8 +920,8 @@ case_finish_go_head_moved_refuses_push() {
   fi
 }
 
-case_finish_go_gh_missing_writes_pushed_no_pr_marker() {
-  local name="ship finish: GO + clean tree but gh unavailable pushes, writes PUSHED_NO_PR marker, exits 1"
+case_finish_gh_missing_refuses_before_gate_or_push() {
+  local name="ship finish: gh unavailable refuses before the gate even runs -- no push, no gate round spent"
   should_run "$name" || return 0
   local work out err status=0
   work="$tmp_root/work-finish-nogh"
@@ -944,15 +942,52 @@ case_finish_go_gh_missing_writes_pushed_no_pr_marker() {
     tool_path="$(command -v "$tool" 2>/dev/null)" || continue
     ln -sf "$tool_path" "$nogh_bin/$tool"
   done
-  PATH="$nogh_bin" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+  # gate_call_marker: the stub pmctl_gate_run touches this if it is ever
+  # invoked -- proves finish refused BEFORE spending a gate round, per the
+  # risk-reviewer fix (preflight gh before the gate runs, not just before
+  # push), not merely before push.
+  local gate_call_marker="$tmp_root/gate-was-called"
+  rm -f "$gate_call_marker"
+  PATH="$nogh_bin" bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; gate_call_marker="$4"
+    pmctl_gate_run() { touch "$gate_call_marker"; printf "result: /dev/null\n"; return 1; }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work" "CC-9001" "$gate_call_marker" > "$out" 2> "$err" || status=$?
   local pushed=0
   git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
-  local marker_verdict
-  marker_verdict="$(jq -r '.verdict // ""' "$work/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-  if [[ "$status" -eq 1 && "$pushed" -eq 1 && "$marker_verdict" == "PUSHED_NO_PR" ]]; then
+  if [[ "$status" -eq 1 ]] && grep -q "gh.*unavailable" "$err" && [[ "$pushed" -eq 0 ]] && [[ ! -f "$gate_call_marker" ]]; then
     pass "$name"
   else
-    fail "$name" "expected exit 1 + pushed + PUSHED_NO_PR marker; got status=$status pushed=$pushed marker=$marker_verdict"
+    fail "$name" "expected exit 1 + no push + no gate call; got status=$status pushed=$pushed gate_called=$([[ -f "$gate_call_marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
+  fi
+}
+
+case_finish_wrong_branch_refuses_before_gate_or_push() {
+  local name="ship finish: checked-out branch not matching feat/<ticket-id> refuses before the gate runs -- branch/ticket-identity guard"
+  should_run "$name" || return 0
+  local work out err status=0
+  work="$tmp_root/work-finish-wrongbranch"
+  make_work_repo "$work" "CC-9001"
+  # Deliberately checked out on a DIFFERENT branch than feat/CC-9001 --
+  # simulates a wrong --cd, stale worktree, or confused executor call.
+  git -C "$work" checkout -q -b some-other-branch
+  add_bare_origin "$work"
+  out="$tmp_root/out-finish-wrongbranch"; err="$tmp_root/err-finish-wrongbranch"
+  local gate_call_marker="$tmp_root/gate-was-called-wrongbranch"
+  rm -f "$gate_call_marker"
+  bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"; gate_call_marker="$4"
+    pmctl_gate_run() { touch "$gate_call_marker"; printf "result: /dev/null\n"; return 1; }
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    pmctl_ship_finish "$repo_root" "$work_dir" "$ticket_id"
+  ' _ "$REPO_ROOT" "$work" "CC-9001" "$gate_call_marker" > "$out" 2> "$err" || status=$?
+  local pushed=0
+  git -C "$work.bare-origin.git" show-ref --quiet some-other-branch 2>/dev/null && pushed=1
+  if [[ "$status" -eq 1 ]] && grep -q "does not match the ticket" "$err" && [[ "$pushed" -eq 0 ]] && [[ ! -f "$gate_call_marker" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + no push + no gate call; got status=$status pushed=$pushed gate_called=$([[ -f "$gate_call_marker" ]] && echo yes || echo no) stderr=$(cat "$err")"
   fi
 }
 
@@ -984,7 +1019,8 @@ case_finish_no_go_does_not_push
 case_finish_missing_result_file
 case_finish_go_dirty_tree_refuses_push
 case_finish_go_head_moved_refuses_push
-case_finish_go_gh_missing_writes_pushed_no_pr_marker
+case_finish_gh_missing_refuses_before_gate_or_push
+case_finish_wrong_branch_refuses_before_gate_or_push
 case_finish_go_pushes_and_opens_pr
 case_prepare_empty_argument
 case_prepare_malformed_shape

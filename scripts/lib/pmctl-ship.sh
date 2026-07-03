@@ -122,6 +122,36 @@ pmctl_ship_finish() {
     return 2
   fi
 
+  # Branch/ticket-identity guard, checked BEFORE the gate even runs: the
+  # `pmctl ship finish:*` Bash allowlist entry (scripts/lib/allowlist.sh)
+  # pre-approves this whole command for a headless, unattended executor --
+  # without this check, `finish` would push/PR WHATEVER branch happens to
+  # be checked out in work_dir, regardless of the ticket_id argument. A
+  # wrong `--cd`, a stale worktree, or a confused model call could then
+  # publish an unrelated branch after a GO verdict that reviewed something
+  # else entirely. Every lane is created by `pmctl worktree create` /
+  # `pmctl ship prepare` on exactly `feat/<ticket-id>` (CC-439/CC-441
+  # contract), so this is not a new constraint -- it is making an existing
+  # invariant enforced instead of assumed.
+  local expected_branch current_branch
+  expected_branch="feat/$ticket_id"
+  current_branch="$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ "$current_branch" != "$expected_branch" ]]; then
+    printf 'pmctl ship finish: refusing -- checked-out branch (%s) does not match the ticket (%s expects %s). This lane may be pointed at the wrong worktree.\n' \
+      "${current_branch:-unknown}" "$ticket_id" "$expected_branch" >&2
+    return 1
+  fi
+
+  # Preflight `gh` before the gate even runs (not merely before push) --
+  # finding out post-GO, after a push already happened, is the exact
+  # PUSHED_NO_PR partial state risk-reviewer flagged. Fail fast instead.
+  if ! command -v gh >/dev/null 2>&1; then
+    # Backtick below is a literal Markdown code span, not command substitution.
+    # shellcheck disable=SC2016
+    printf 'pmctl ship finish: `gh` is unavailable -- refusing before spending a gate round on a finish that cannot open a PR. Install/configure gh, or push and open the PR manually after a manual gate check.\n' >&2
+    return 1
+  fi
+
   # Captured BEFORE the gate runs so the post-gate guard below can prove the
   # commit about to be pushed is the exact commit the gate reviewed -- not a
   # later, un-reviewed commit that happened to land while `finish` was
@@ -207,9 +237,17 @@ pmctl_ship_finish() {
     # as a plain "go".
     return 1
   fi
+  # Body follows commands/ship.md's PR template shape (Gate section with
+  # verdict + result file, Ticket line) -- "Rounds" and a human summary
+  # line are intentionally omitted: `finish` is a single mechanical
+  # gate-round wrapper with no memory of prior rounds and no access to a
+  # human-authored summary, unlike the full `/ship` prose flow this
+  # mirrors. The caller (main thread or dispatched executor) can pass a
+  # richer body via a future --summary flag if that gap matters in
+  # practice; not adding one speculatively here.
   local pr_url pr_status=0
   pr_url="$(cd "$work_dir" && gh pr create --title "chore(${ticket_id}): ship" \
-    --body "$(printf 'Ticket: %s\n\nGate: GO\n' "$ticket_id")")" || pr_status=$?
+    --body "$(printf '## Gate\n- Final verdict: GO\n- Result file: %s\n\nTicket: %s\n' "$result_path" "$ticket_id")")" || pr_status=$?
   printf '%s\n' "$pr_url"
   if [[ "$pr_status" -ne 0 ]]; then
     return "$pr_status"
