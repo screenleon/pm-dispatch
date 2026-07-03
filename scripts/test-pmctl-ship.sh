@@ -115,6 +115,27 @@ case_run_rejects_unknown_ticket() {
     pass "$name"
 }
 
+case_run_rejects_regex_metachar_ticket_id() {
+  local name="ship-parallel run: a ticket-id with regex metacharacters is rejected as malformed shape, not treated as a live grep pattern"
+  should_run "$name" || return 0
+  local store work out err status=0
+  store="$tmp_root/state-run-regexmeta"
+  work="$tmp_root/work-run-regexmeta"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-run-regexmeta"; err="$tmp_root/err-run-regexmeta"
+  # If the ticket-active check ever regressed to an unvalidated `grep`, this
+  # id ("CC-." -- "." matches any char) would false-match the real
+  # "## CC-9001" heading and the batch would proceed to create a worktree.
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack "CC-." --cd "$work" > "$out" 2> "$err" || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 1 ]] && grep -q "not an active BACKLOG.md ticket" "$err" && [[ ! -d "$reg_dir/checkouts/CC-." ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected rejection + no worktree created; got status=$status stderr=$(cat "$err")"
+  fi
+}
+
 case_run_bad_ticket_leaves_no_worktree() {
   local name="ship-parallel run: rejecting one ticket in a batch creates no worktree for either"
   should_run "$name" || return 0
@@ -545,6 +566,7 @@ case_prepare_happy_path_creates_branch
 case_finish_requires_ticket
 case_run_requires_ticket
 case_run_rejects_unknown_ticket
+case_run_rejects_regex_metachar_ticket_id
 case_run_bad_ticket_leaves_no_worktree
 case_run_refuses_redispatch_while_in_flight
 case_run_dispatches_and_tracks

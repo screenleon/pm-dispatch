@@ -256,7 +256,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: install/uninstall guards regression suite
-        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group hooks
+        run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./scripts/test-install.sh --group guards
 
   test-usage-weekly:
     runs-on: ubuntu-latest

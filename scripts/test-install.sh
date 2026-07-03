@@ -36,7 +36,7 @@ if [[ "$_ti_group_seen" -eq 1 && -z "$GROUP" ]]; then
 fi
 unset _ti_a _ti_prev _ti_group_seen
 case "$GROUP" in
-  ""|core|hooks) ;;
+  ""|core|guards) ;;
   *) printf 'test-install: --group must be core or guards (got: %s)\n' "$GROUP" >&2; exit 2 ;;
 esac
 
@@ -824,8 +824,6 @@ dispatch_allowlist_entries_for_home() {
 
   printf 'Bash(pmctl gate run:*)\n'
   printf 'Bash(pmctl ship finish:*)\n'
-  printf 'Bash(git push:*)\n'
-  printf 'Bash(gh pr create:*)\n'
 }
 
 test_install_adds_dispatch_allowlist() {

@@ -22,13 +22,23 @@ dispatch_allowlist_entries() {
   # has no approver and stalls until timeout. The isolation SANDBOX (network/
   # filesystem scope) is the actual security boundary here, not the
   # permission prompt -- an already-dispatched, already-sandboxed executor
-  # gains nothing from also being blocked on these specific, narrowly-scoped
-  # command prefixes, which are exactly the steps the ship contract
-  # (commands/ship.md / pmctl-ship.sh) requires every dispatched lane to run
-  # unattended. Scoped to prefixes, not a blanket `git:*`/`gh:*`, so this does
-  # not pre-approve unrelated destructive git/gh invocations.
+  # gains nothing from also being blocked on these two specific, narrowly-
+  # scoped command prefixes, which are exactly the top-level Bash tool calls
+  # the ship contract (commands/ship.md / pmctl-ship.sh) requires every
+  # dispatched lane to run unattended.
+  #
+  # Deliberately NOT allowlisted: raw `git push`/`gh pr create`. `pmctl ship
+  # finish` already runs `git push -u origin <branch>` and `gh pr create`
+  # itself as ordinary subprocess calls INSIDE that one approved Bash tool
+  # invocation -- Claude's permission system gates model-issued tool calls,
+  # not the subprocess tree spawned by an already-approved command, so those
+  # two entries added nothing functionally and only widened the blast radius
+  # (a raw `Bash(git push:*)` prefix-matches force pushes, ref deletion, and
+  # pushes issued from any repo, not just the ship flow's own narrow push).
+  # Pr-gate's security/risk reviewers correctly blocked an earlier draft of
+  # this file that included them; do not re-add without a wrapper that
+  # constrains the exact push form (no --force, no ref deletion, current
+  # branch only).
   printf 'Bash(pmctl gate run:*)\n'
   printf 'Bash(pmctl ship finish:*)\n'
-  printf 'Bash(git push:*)\n'
-  printf 'Bash(gh pr create:*)\n'
 }

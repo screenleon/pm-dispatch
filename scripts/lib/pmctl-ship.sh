@@ -127,11 +127,29 @@ pmctl_ship_finish() {
     printf 'pmctl ship finish: git push failed for %s\n' "$branch" >&2
     return 1
   fi
+  # Durable, structured marker inside work_dir -- this is what `pmctl ship
+  # status`/`list` (pmctl-ship-parallel.sh) read to detect a lane's state.
+  # Grepping a dispatched executor's own free-text summary for "Final: GO"
+  # is unreliable (an executor may report the verdict in prose/another
+  # language, e.g. "Gate 通過（GO）" -- confirmed to false-negative during
+  # CC-441's real e2e validation); this file is written by `pmctl ship
+  # finish` ITSELF only on a confirmed gate GO, so its mere presence (with
+  # the right verdict field) is the source of truth.
+  local marker
+  marker="$work_dir/.pm-dispatch-ship-finish.json"
   if ! command -v gh >/dev/null 2>&1; then
     # Backtick below is a literal Markdown code span, not command substitution.
     # shellcheck disable=SC2016
     printf 'pmctl ship finish: pushed %s, but `gh` is unavailable -- open the PR manually\n' "$branch" >&2
-    return 0
+    jq -n --arg ticket "$ticket_id" --arg branch "$branch" \
+      --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+      '{ticket: $ticket, verdict: "PUSHED_NO_PR", branch: $branch, pr_url: null, finished_ts: $finished_ts}' \
+      > "$marker" 2>/dev/null || true
+    # Nonzero: gate passed and the branch is pushed, but the ship contract
+    # (gate GO -> PR opened) is not yet complete -- the caller must open the
+    # PR manually and this is not a state `pmctl ship status` should report
+    # as a plain "go".
+    return 1
   fi
   local pr_url pr_status=0
   pr_url="$(cd "$work_dir" && gh pr create --title "chore(${ticket_id}): ship" \
@@ -141,16 +159,6 @@ pmctl_ship_finish() {
     return "$pr_status"
   fi
 
-  # Durable, structured GO+PR marker inside work_dir -- this is what
-  # `pmctl ship status`/`list` (pmctl-ship-parallel.sh) read to detect a
-  # lane's GO state. Grepping a dispatched executor's own free-text summary
-  # for "Final: GO" is unreliable (an executor may report the verdict in
-  # prose/another language, e.g. "Gate 通過（GO）" -- confirmed to false-
-  # negative during CC-441's real e2e validation); this file is written by
-  # `pmctl ship finish` ITSELF only on a confirmed GO, so its mere presence
-  # is the source of truth.
-  local marker
-  marker="$work_dir/.pm-dispatch-ship-finish.json"
   jq -n --arg ticket "$ticket_id" --arg branch "$branch" --arg pr_url "$pr_url" \
     --arg result_path "$result_path" --arg finished_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
     '{ticket: $ticket, verdict: "GO", branch: $branch, pr_url: $pr_url, result_path: $result_path, finished_ts: $finished_ts}' \

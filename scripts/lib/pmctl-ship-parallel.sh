@@ -30,6 +30,72 @@ _pmctl_ship_parallel_tracking_file() {
   printf '%s/ship-parallel.jsonl\n' "$1"
 }
 
+# _pmctl_ship_parallel_tracking_append_inner <json_line> <tracking_file>
+# Runs inside serialize_with_lock -- same locked-append primitive shape as
+# pmctl_worktree_manifest_append (pmctl-worktree.sh).
+_pmctl_ship_parallel_tracking_append_inner() {
+  local json_line="$1" tracking_file="$2" compact
+  compact="$(_sw_compact_json_line "$json_line")" || return $?
+  printf '%s\n' "$compact" >> "$tracking_file"
+}
+
+# pmctl_ship_parallel_tracking_append <reg_dir> <json_line>
+# The ONLY way `run` should append a new lane entry -- serialized against
+# `pmctl_ship_parallel_tracking_refresh` so a concurrent status refresh's
+# read-modify-write can never observe a half-written line nor silently drop
+# an append that lands mid-refresh.
+pmctl_ship_parallel_tracking_append() {
+  local reg_dir="$1" json_line="$2" tracking_file
+  mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl ship: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
+  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
+  serialize_with_lock "$reg_dir/ship-parallel" _pmctl_ship_parallel_tracking_append_inner "$json_line" "$tracking_file"
+}
+
+# _pmctl_ship_parallel_tracking_refresh_inner <tracking_file> <lane_status_fn>
+# Runs inside serialize_with_lock: re-reads the CURRENT file content (not a
+# snapshot taken before acquiring the lock), recomputes each line's status,
+# and writes the result back atomically (tmp + mv). This is the ONLY code
+# path that should overwrite ship-parallel.jsonl wholesale -- doing the
+# read+recompute+write inside one locked critical section is what makes it
+# safe against a concurrent `run`'s append (pmctl_ship_parallel_tracking_append
+# above), which is serialized against the SAME lock. Prints the recomputed
+# content on stdout (caller captures it for --json rendering) and prints one
+# human-readable line per lane to stderr, matching the un-locked version's
+# prior behavior.
+_pmctl_ship_parallel_tracking_refresh_inner() {
+  local tracking_file="$1" json_out="$2" tmp content line updated=""
+  content=""
+  [[ -f "$tracking_file" ]] && content="$(cat "$tracking_file")"
+  [[ -n "$content" ]] || return 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    local ticket branch path run_id new_status
+    ticket="$(jq -r '.ticket' <<<"$line")"
+    branch="$(jq -r '.branch' <<<"$line")"
+    path="$(jq -r '.path' <<<"$line")"
+    run_id="$(jq -r '.run_id' <<<"$line")"
+    new_status="$(_pmctl_ship_parallel_lane_status "$path" "$run_id")"
+    line="$(jq -c --arg s "$new_status" '.status = $s' <<<"$line")"
+    updated="${updated}${line}
+"
+    if [[ "$json_out" -eq 0 ]]; then
+      printf '[%s] %-12s branch=%-20s run_id=%s\n' "$ticket" "$new_status" "$branch" "$run_id" >&2
+    fi
+  done <<<"$content"
+  tmp="$(mktemp "$(dirname "$tracking_file")/.ship-parallel.XXXXXX")" || return 1
+  printf '%s' "$updated" > "$tmp"
+  mv -f "$tmp" "$tracking_file"
+  printf '%s' "$updated"
+}
+
+# pmctl_ship_parallel_tracking_refresh <reg_dir> <json_out 0|1>
+pmctl_ship_parallel_tracking_refresh() {
+  local reg_dir="$1" json_out="$2" tracking_file
+  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
+  [[ -f "$tracking_file" ]] || return 0
+  serialize_with_lock "$reg_dir/ship-parallel" _pmctl_ship_parallel_tracking_refresh_inner "$tracking_file" "$json_out"
+}
+
 # _pmctl_ship_parallel_gc_auto_save <work_dir>
 # Prints "set:<value>" if git config gc.auto is currently set, "unset"
 # otherwise. Never substitutes git's own runtime default (256) for an
@@ -53,6 +119,14 @@ _pmctl_ship_parallel_gc_auto_restore() {
   fi
 }
 
+# _pmctl_ship_parallel_gc_auto_restore_trap
+# Bare-name trap target (no string interpolation of caller-controlled data)
+# -- reads the work_dir/saved-value pair from global state set immediately
+# before `trap` is registered in pmctl_ship_parallel_run.
+_pmctl_ship_parallel_gc_auto_restore_trap() {
+  _pmctl_ship_parallel_gc_auto_restore "$_PMCTL_SHIP_PARALLEL_GC_WORK_DIR" "$_PMCTL_SHIP_PARALLEL_GC_SAVED"
+}
+
 # _pmctl_ship_parallel_ticket_active <work_dir> <ticket_id>
 # Same fail-fast shape as /ship Step 0's ticket-id validation: an active
 # `## <ticket-id>` heading in BACKLOG.md. Checked against <work_dir> (the
@@ -67,7 +141,19 @@ _pmctl_ship_parallel_gc_auto_restore() {
 # cannot possibly resolve.
 _pmctl_ship_parallel_ticket_active() {
   local work_dir="$1" ticket_id="$2"
-  grep -q "^## $ticket_id" "$work_dir/BACKLOG.md" 2>/dev/null
+  # Reuse the exact shape check `pmctl ship prepare` uses (pmctl-ship.sh) --
+  # a ticket id containing regex metacharacters must fail here, not be
+  # handed to grep as a live pattern. Defense in depth on top of that: the
+  # heading match itself is a literal (not regex) prefix compare via awk's
+  # `index()`, not a `grep "^## $ticket_id"` pattern -- so even a
+  # shape-valid id is matched as literal text, never interpreted as regex,
+  # and `## $ticket_id` still has to be the line's own prefix (not merely
+  # appear anywhere in the line).
+  if declare -F _pmctl_ship_id_shape_ok >/dev/null; then
+    _pmctl_ship_id_shape_ok "$ticket_id" || return 1
+  fi
+  awk -v want="## $ticket_id" 'index($0, want) == 1 { found=1 } END { exit !found }' \
+    "$work_dir/BACKLOG.md" 2>/dev/null
 }
 
 # _pmctl_ship_parallel_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path>
@@ -220,8 +306,15 @@ pmctl_ship_parallel_run() {
   local gc_saved
   gc_saved="$(_pmctl_ship_parallel_gc_auto_save "$work_dir")"
   git -C "$work_dir" config gc.auto 0 2>/dev/null || true
-  # shellcheck disable=SC2064  # intentional early expansion: capture work_dir/gc_saved now, not at trap-fire time.
-  trap "_pmctl_ship_parallel_gc_auto_restore '$work_dir' '$gc_saved'" EXIT INT TERM
+  # A caller-controlled work_dir containing a single quote would break the
+  # string-interpolated trap form (`trap "... '$work_dir' ..." EXIT`) --
+  # potentially executing unintended shell when the trap fires. Route
+  # through global state + a bare trap function name instead: `trap` with no
+  # expansion in its argument is safe regardless of what work_dir/gc_saved
+  # contain.
+  _PMCTL_SHIP_PARALLEL_GC_WORK_DIR="$work_dir"
+  _PMCTL_SHIP_PARALLEL_GC_SAVED="$gc_saved"
+  trap _pmctl_ship_parallel_gc_auto_restore_trap EXIT INT TERM
 
   local fail_count=0
   for t in "${tickets[@]}"; do
@@ -267,7 +360,9 @@ pmctl_ship_parallel_run() {
       "$(jq -Rn --arg v "$run_id" '$v')" \
       "$(jq -Rn --arg v "dispatched" '$v')" \
       "$(jq -Rn --arg v "$created_ts" '$v')")"
-    printf '%s\n' "$json_line" >> "$tracking_file"
+    if ! pmctl_ship_parallel_tracking_append "$reg_dir" "$json_line"; then
+      printf '[%s] tracking write failed -- lane dispatched (run_id=%s) but not tracked; check %s\n' "$t" "$run_id" "$tracking_file" >&2
+    fi
 
     printf '[%s] dispatched: run_id=%s lane=%s\n' "$t" "$run_id" "$lane_path"
   done
@@ -294,7 +389,17 @@ pmctl_ship_parallel_run() {
 _pmctl_ship_parallel_lane_status() {
   local lane_path="$1" run_id="$2"
   if [[ -f "$lane_path/.pm-dispatch-ship-finish.json" ]]; then
-    printf 'go\n'
+    # `pmctl ship finish` also writes this marker with verdict=PUSHED_NO_PR
+    # when the gate passed and the branch pushed but `gh` was unavailable to
+    # open the PR -- that is NOT a complete "go" (ship contract = gate GO
+    # *and* PR opened), so only the literal GO verdict maps to status=go.
+    local marker_verdict
+    marker_verdict="$(jq -r '.verdict // ""' "$lane_path/.pm-dispatch-ship-finish.json" 2>/dev/null)"
+    if [[ "$marker_verdict" == "GO" ]]; then
+      printf 'go\n'
+      return 0
+    fi
+    printf 'no-go\n'
     return 0
   fi
   if ! declare -F dispatch_record_read_state >/dev/null; then
@@ -343,24 +448,10 @@ pmctl_ship_parallel_status() {
   tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
   [[ -f "$tracking_file" ]] || { [[ "$json_out" -eq 1 ]] && printf '[]\n' || printf 'No tracked ship-parallel lanes.\n'; return 0; }
 
-  local updated="" line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    local ticket branch path run_id new_status
-    ticket="$(jq -r '.ticket' <<<"$line")"
-    branch="$(jq -r '.branch' <<<"$line")"
-    path="$(jq -r '.path' <<<"$line")"
-    run_id="$(jq -r '.run_id' <<<"$line")"
-    new_status="$(_pmctl_ship_parallel_lane_status "$path" "$run_id")"
-    line="$(jq -c --arg s "$new_status" '.status = $s' <<<"$line")"
-    updated="${updated}${line}
-"
-    if [[ "$json_out" -eq 0 ]]; then
-      printf '[%s] %-12s branch=%-20s run_id=%s\n' "$ticket" "$new_status" "$branch" "$run_id"
-    fi
-  done < "$tracking_file"
+  pmctl_worktree_ensure_writer "$repo_root" || return $?
 
-  printf '%s' "$updated" > "$tracking_file"
+  local updated
+  updated="$(pmctl_ship_parallel_tracking_refresh "$reg_dir" "$json_out")"
 
   if [[ "$json_out" -eq 1 ]]; then
     printf '%s' "$updated" | jq -s -c '[.[] | select(. != null)]'
@@ -384,10 +475,8 @@ pmctl_ship_parallel_list() {
     esac
   done
 
-  pmctl_ship_parallel_status "$repo_root" "$work_dir" --json > /tmp/.ship-parallel-list.$$.json 2>/dev/null || true
   local all go_only
-  all="$(cat /tmp/.ship-parallel-list.$$.json 2>/dev/null)"
-  rm -f /tmp/.ship-parallel-list.$$.json
+  all="$(pmctl_ship_parallel_status "$repo_root" "$work_dir" --json 2>/dev/null)" || true
   [[ -n "$all" ]] || all="[]"
   go_only="$(jq -c '[.[] | select(.status == "go")]' <<<"$all")"
 
