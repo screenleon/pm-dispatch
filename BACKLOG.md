@@ -195,7 +195,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Outcome**: 四題與使用者逐一討論收斂（未 fan-out 多視角，單一使用者判斷已足夠明確）：lane 失敗互不干擾、逐條即時通知；gate NO-GO fix-loop 交給 executor 自扛到卡住才喚醒使用者；worktree 等使用者確認合併後才 remove；N 為可調參數，天生結構隔離（獨立 worktree + run_id 分區 artifact store）不需選票/仲裁機制。討論過程中額外浮現的 git 鎖疑慮也一併收斂：不自訂鎖，僅並行執行期間關閉 `gc.auto`。詳見 `docs/spikes/CC-440.md`。後續實作票承接 [[CC-439]]。
 
 **Dependencies**: 承接 [[CC-439]]（單票版 `/ship`，作為並行版要呼叫的最小工作單元）。用到 CC-014 已交付的 `pmctl worktree`。
-**See**: pr:#PENDING
+**See**: pr:#361
 
 ---
 
