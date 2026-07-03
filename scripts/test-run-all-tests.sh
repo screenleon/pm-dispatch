@@ -76,6 +76,7 @@ SUITE_NAMES=(
   test-pmctl-memory
   test-pmctl-backlog
   test-pmctl-guard
+  test-pmctl-ship
   test-pre-release
   test-release-verify
   test-e2e-script
@@ -168,6 +169,7 @@ suite_path() {
     test-pmctl-memory)   printf 'scripts/test-pmctl-memory.sh\n' ;;
     test-pmctl-backlog)   printf 'scripts/test-pmctl-backlog.sh\n' ;;
     test-pmctl-guard)     printf 'scripts/test-pmctl-guard.sh\n' ;;
+    test-pmctl-ship)      printf 'scripts/test-pmctl-ship.sh\n' ;;
     test-pre-release)     printf 'scripts/test-pre-release.sh\n' ;;
     test-release-verify)  printf 'scripts/test-release-verify.sh\n' ;;
     test-e2e-script)      printf 'scripts/test-e2e-script.sh\n' ;;

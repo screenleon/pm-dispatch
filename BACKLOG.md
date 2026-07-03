@@ -41,7 +41,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-209 | 🟢 someday | codegraph evaluation（Phase 1 AMBER）：pm-dispatch 非有效測試目標；Phase 2 benchmark 需 TS/JS/Python/Go codebase（see CC-253） | ops/token | 2026-05-21 | pr:TBD | P3 | spike |
 | CC-211 | ⏸ deferred | v0.3.0 arch epic：schema-first PM runtime（core/runtime/adapters/mcp 四層）；adapters codex+claude 已 ship；state-first/mcp 仍 open | arch/portability | 2026-05-21 | — | P1 | design |
 | CC-212 | ⏸ deferred | **[fix: harden Windows junction install — path-passing + idempotency]** 兩個 Windows junction hardening 合併一 PR（吸收 CC-213）：(A) `make_junction_windows()` 改用 `PM_DISPATCH_MAKE_SRC`/`PM_DISPATCH_MAKE_DST` env var 傳路徑，統一 PowerShell boundary 慣例；(B) `install_dir_junction()` 加 manifest-driven idempotency probe，不再依賴 `-L` 偵測。 | ops/portability | 2026-05-21 | pr:#112 | P3 | oss |
-| CC-214 | ⏸ deferred | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；應改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-05-21 | pr:#112 | P3 | oss |
+| CC-214 | ✅ done | **[CC-207 advise follow-up]** `docs/platform-support.md` 手動 uninstall 說明使用裸 `bash uninstall.sh`，在非 repo-root 工作目錄下執行會找不到腳本；已改為 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` 形式（與文件其他範例一致）。Raised by critic in gate-20260521-115634 as [low] advise. | ops/DX | 2026-07-03 | pr:#362 | P3 | oss |
 | CC-216 | ⏸ deferred | MCP server（DEFERRED no milestone，2026-06-18 user 拍板；待 executor 抽象 + retrieval/memory 基底穩定後再評估） | arch/portability | 2026-05-21 | — | — | design |
 | CC-227 | ⏸ deferred | **[refactor: extract yaml-frontmatter lib + shared validation helpers]** 把 `check_frontmatter()` 與 shared helpers（dq-escape/adjacent-quote/empty-entry，原 CC-226 範圍）一起搬到 `scripts/lib/yaml-frontmatter.sh`；`lint-frontmatter.sh` 成薄 CLI 包裝；`doctor.sh` 可 source lib 取代 fork subprocess。CC-226 已合併入本票。 | arch/reuse | 2026-05-22 | pr:#119 | P3 | oss |
 | CC-236 | 🟢 someday | **[pmctl report — away-from-keyboard state roll-up]** A `pmctl report` rolling up state since last invocation (open tasks, blockers, last gate verdict, recent runs). Deprioritized 2026-05-22: the maintainer does not run agents unattended, so a "morning report" time-gap framing has low current need; on-demand status is already part of the `pmctl` surface (CC-215). Revisit if the workflow ever includes overnight / away dispatch. | ux | 2026-05-22 | — | — | design |
@@ -77,7 +77,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
-| CC-441 | 🔵 active | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | — | P2 | design |
+| CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
 | CC-442 | 🟢 someday | 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口，取代 prepare/--parallel 兩條平行路徑；`--adapter` 強制隱含 `--worktree` | arch/gate | 2026-07-03 | — | P3 | design |
 
 ---
@@ -218,7 +218,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-441 — `/ship --parallel` N-lane orchestrator v1 🔵 active
+## CC-441 — `/ship --parallel` N-lane orchestrator v1 ✅ 2026-07-03
 
 **Problem**: [[CC-440]] spike 已收斂五項設計決策（lane 失敗隔離、gate 迴圈人機分工、worktree 生命週期、併發上限、git 鎖策略），但這些決策目前只存在 `docs/spikes/CC-440.md` 裡，尚未落地成任何可呼叫的 orchestrator。
 
@@ -236,7 +236,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - **Done-when（v1 範圍刻意縮小，避免第一張票塞太多）**：用 2 條 low-risk/mock 票驗證端到端——可各自建立 CC-014 worktree lane、各自生成通過 CC-439 契約檢查的 ship brief、各自 detached dispatch 且狀態可追蹤、GO 的 lane 進入「待合併」清單。不要求 v1 就有自動 remove、完整 cleanup UX、或超過 2 條的併發驗證——這些留給後續迭代。
 
 **Dependencies**: 承接 [[CC-440]]（spike 已收斂全部設計決策）與 [[CC-439]]（`/ship` 單票版，定義本票必須保留的 ship 契約）。必須使用 [[CC-014]] 已交付的 `pmctl worktree`，不得自造 worktree 管理機制。
-**See**: —
+
+**AS-BUILT**：`pmctl ship prepare/finish` 為 CC-439 ship 契約的可腳本化 bookend（票號驗證+開分支；單輪 gate+GO 後 push/PR，含 branch-identity/dirty-tree/HEAD-moved/gh-preflight 四道 guard）；`pmctl ship --parallel/status/list` 為建在 CC-014 worktree 之上的 N-lane orchestrator，每條 lane 的 brief 呼叫 `pmctl ship finish` 收斂 gate/PR，不重複實作 ship 契約。真實 e2e 驗收（CC-004、CC-214 兩張低風險票）過程中發現並修正多項真實問題：claude adapter headless Bash 核准缺口（改用 `pmctl` 前綴全收 allowlist）、isolation 預設值擋住巢狀 gate dispatch（改 `workspace-network`）、GO 判斷曾誤信自由文字（改為只信 `pmctl ship finish` 自己寫的 marker）、併發重複派發競態、票號前綴誤判、tracking 檔案未上鎖競態、push 成功但 PR 開失敗的靜默狀態（新增 `partial` 狀態）。pr-gate 歷經 8 輪收斂至全 GO。
+**See**: pr:#363
 
 ---
 
@@ -612,7 +614,7 @@ dispatch state machine, reviewer policy, and schema definitions should be owned 
 
 **Priority**: P3.
 
-## CC-214 — platform-support.md manual uninstall command anchoring（deferred）
+## CC-214 — platform-support.md manual uninstall command anchoring ✅ 2026-07-03
 
 **Problem**: The manual uninstall warning in `docs/platform-support.md` uses `bash uninstall.sh`
 without anchoring to the repo path; running it from any other working directory silently fails.
@@ -623,7 +625,10 @@ document already use the `"${PM_DISPATCH_REPO}/uninstall.sh"` form.
 **Requirement**: Replace the bare `bash uninstall.sh` in the Windows uninstall warning block with
 `bash "${PM_DISPATCH_REPO}/uninstall.sh"` (one-line change).
 
-**Priority**: P3 — tiny fix, fold into next docs PR.
+**Note**: Picked as one of two real, low-risk mock tickets for [[CC-441]]'s real e2e validation
+(N-lane `pmctl ship --parallel` dispatch) — implemented by a dispatched claude executor inside a
+CC-014 worktree lane, not by hand.
+**See**: pr:#362
 
 ## CC-216 — MCP server — pm-dispatch-server（deferred）
 
