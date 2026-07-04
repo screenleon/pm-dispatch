@@ -652,6 +652,8 @@ pmctl_ship_run() {
     local inflight_run_id inflight_status
     inflight_run_id="${inflight%% *}"
     inflight_status="${inflight#* }"
+    # Backtick below is a literal Markdown code span, not command substitution.
+    # shellcheck disable=SC2016
     printf 'pmctl ship: %s already has an in-flight lane (run_id=%s, status=%s) -- refusing to re-dispatch. Check `pmctl ship status`; only retry after it reaches a terminal state (go/no-go/failed).\n' \
       "$ticket_id" "$inflight_run_id" "$inflight_status" >&2
     return 1
@@ -674,13 +676,20 @@ pmctl_ship_run() {
     # --worktree, no --adapter: manual lane, no dispatch. Caller decides
     # whether to implement there themselves.
     if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "" "" "prepared" "$created_ts"; then
+      # Backticks below are literal Markdown code spans, not command substitution.
+      # shellcheck disable=SC2016
       printf 'pmctl ship: %s CRITICAL -- worktree lane created at %s but tracking-append failed; `pmctl ship status`/`list` cannot see it. Recover manually via `pmctl worktree list`.\n' \
         "$ticket_id" "$lane_path" >&2
       return 1
     fi
     printf '%s\n' "$lane_path"
+    # See the shellcheck disable=SC2034 note at this function's other return
+    # point -- same cross-file (pmctl-ship-parallel.sh) consumer.
+    # shellcheck disable=SC2034
     PMCTL_SHIP_RUN_LANE_PATH="$lane_path"
+    # shellcheck disable=SC2034
     PMCTL_SHIP_RUN_ID=""
+    # shellcheck disable=SC2034
     PMCTL_SHIP_RUN_BRANCH="$branch"
     return 0
   fi
@@ -713,14 +722,23 @@ pmctl_ship_run() {
   run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
 
   if ! _pmctl_ship_lanes_tracking_write "$reg_dir" "$ticket_id" "$branch" "$lane_path" "$run_id" "$adapter" "dispatched" "$created_ts"; then
+    # Backticks below are literal Markdown code spans, not command substitution.
+    # shellcheck disable=SC2016
     printf 'pmctl ship: %s CRITICAL -- dispatched (run_id=%s) at %s but tracking-append failed; the executor IS running but `pmctl ship status`/`list` cannot see it. Recover manually via `pmctl worktree list` / `pmctl artifacts show %s`.\n' \
       "$ticket_id" "$run_id" "$lane_path" "$run_id" >&2
     return 1
   fi
 
   printf 'dispatched: run_id=%s lane=%s\n' "$run_id" "$lane_path"
+  # These three globals are this function's documented single-ticket return
+  # channel (see the header comment above) -- read by pmctl_ship_parallel_run
+  # in the sibling file pmctl-ship-parallel.sh, which shellcheck (run per-file
+  # here) cannot see across the source boundary.
+  # shellcheck disable=SC2034
   PMCTL_SHIP_RUN_LANE_PATH="$lane_path"
+  # shellcheck disable=SC2034
   PMCTL_SHIP_RUN_ID="$run_id"
+  # shellcheck disable=SC2034
   PMCTL_SHIP_RUN_BRANCH="$branch"
   return 0
 }
