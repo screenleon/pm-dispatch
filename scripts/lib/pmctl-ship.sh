@@ -10,8 +10,11 @@
 # each round of fixes, same NO-GO loop discipline `/ship` already uses, just
 # with the mechanical parts scripted).
 #
-# `pmctl_ship_run` (CC-442/CC-443) is the unified START entry point:
-#   pmctl ship <ticket-id>                       -- manual, in place (delegates to pmctl_ship_prepare, unchanged)
+# `pmctl_ship_run` (CC-442/CC-443) is the unified START entry point and the
+# SOLE canonical implementation of every path below -- older names redirect
+# INTO it, never the reverse, so a future decision to retire one of them
+# only ever touches one call site:
+#   pmctl ship <ticket-id>                       -- manual, in place (pmctl ship prepare <id> is a thin alias for this)
 #   pmctl ship <ticket-id> --worktree             -- manual, isolated worktree, no dispatch
 #   pmctl ship <ticket-id> --adapter <name>       -- dispatch; --adapter always implies --worktree
 #   pmctl ship <ticket-id> --worktree --adapter <name>  -- legal, identical to --adapter alone
@@ -68,43 +71,14 @@ _pmctl_ship_heading_exists() {
 }
 
 # pmctl_ship_prepare <repo_root> <work_dir> <ticket-id>
-# Step 0 (id validation only -- the DECISIONS.md/Dependencies consistency
-# judgment stays the CALLER's job; that is PM-level judgment, not a
-# deterministic bash check, per commands/ship.md Step 0) + Step 1 (dirty-tree
-# precondition + branch), IN PLACE in work_dir -- no worktree, matching
-# /ship's existing single-ticket behavior exactly.
+# Explicit, permanent CLI-facing alias for pmctl_ship_run's in-place path
+# (no --worktree, no --adapter) -- kept for CC-439/CC-441 script callers and
+# muscle memory (`pmctl ship prepare <id>`), NOT deprecated, NOT removed.
+# pmctl_ship_run is the sole canonical implementation of this logic; this
+# alias only forwards to it (not the other way around), so a future
+# decision to retire the `prepare` name has exactly one place to change.
 pmctl_ship_prepare() {
-  local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
-
-  if [[ -z "$ticket_id" ]]; then
-    printf 'pmctl ship prepare: empty argument\n' >&2
-    return 1
-  fi
-  if ! _pmctl_ship_id_shape_ok "$ticket_id"; then
-    printf 'pmctl ship prepare: malformed shape: %s\n' "$ticket_id" >&2
-    return 1
-  fi
-  if ! _pmctl_ship_heading_exists "$work_dir/BACKLOG.md" "$ticket_id"; then
-    if _pmctl_ship_heading_exists "$work_dir/BACKLOG-ARCHIVE.md" "$ticket_id"; then
-      printf 'pmctl ship prepare: ticket already archived: %s\n' "$ticket_id" >&2
-    else
-      printf 'pmctl ship prepare: no such ticket: %s\n' "$ticket_id" >&2
-    fi
-    return 1
-  fi
-
-  if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
-    printf 'pmctl ship prepare: tree is dirty -- commit or stash before preparing %s\n' "$ticket_id" >&2
-    return 1
-  fi
-
-  local branch="feat/$ticket_id"
-  if ! git -C "$work_dir" checkout -b "$branch" 2>&1; then
-    printf 'pmctl ship prepare: branch checkout failed for %s\n' "$branch" >&2
-    return 1
-  fi
-  printf '%s\n' "$branch"
+  pmctl_ship_run "${1:-}" "${2:-}" "${3:-}"
 }
 
 # pmctl_ship_finish <repo_root> <work_dir> <ticket-id> [--reviewers <r,...>]
@@ -604,16 +578,12 @@ pmctl_ship_run() {
     esac
   done
 
-  # In-place mode (no --worktree, no --adapter): identical to `ship prepare`
-  # -- delegate outright, no tracking entry (matches today's prepare, which
-  # was never tracked in ship-lanes.jsonl either).
-  if [[ "$want_worktree" -eq 0 ]]; then
-    pmctl_ship_prepare "$repo_root" "$work_dir" "$ticket_id"
-    return $?
-  fi
-
-  # Same Step 0 validation `pmctl_ship_prepare` does -- required here too
-  # since the in-place delegation above is bypassed for the worktree path.
+  # Step 0 (id validation only -- the DECISIONS.md/Dependencies consistency
+  # judgment stays the CALLER's job; that is PM-level judgment, not a
+  # deterministic bash check, per commands/ship.md Step 0). Checked ONCE
+  # here, shared by both the in-place and worktree/dispatch paths below
+  # (previously duplicated: one copy inside the now-removed delegation to
+  # pmctl_ship_prepare, a second copy for the worktree path).
   if [[ -z "$ticket_id" ]]; then
     printf 'pmctl ship: empty argument\n' >&2
     return 1
@@ -629,6 +599,26 @@ pmctl_ship_run() {
       printf 'pmctl ship: no such ticket: %s\n' "$ticket_id" >&2
     fi
     return 1
+  fi
+
+  # In-place mode (no --worktree, no --adapter): Step 1 (dirty-tree
+  # precondition + branch), IN PLACE in work_dir -- no worktree, no tracking
+  # entry (matches `ship prepare`'s historical behavior, which was never
+  # tracked in ship-lanes.jsonl either). This IS the canonical
+  # implementation -- `pmctl_ship_prepare` is a thin alias that calls back
+  # into this function, not the reverse.
+  if [[ "$want_worktree" -eq 0 ]]; then
+    if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+      printf 'pmctl ship: tree is dirty -- commit or stash before preparing %s\n' "$ticket_id" >&2
+      return 1
+    fi
+    local branch="feat/$ticket_id"
+    if ! git -C "$work_dir" checkout -b "$branch" 2>&1; then
+      printf 'pmctl ship: branch checkout failed for %s\n' "$branch" >&2
+      return 1
+    fi
+    printf '%s\n' "$branch"
+    return 0
   fi
 
   if ! declare -F pmctl_worktree_create >/dev/null; then
