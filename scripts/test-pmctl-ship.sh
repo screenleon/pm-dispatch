@@ -1475,6 +1475,87 @@ case_ship_rejects_duplicate_positional_ticket() {
   fi
 }
 
+case_ship_single_ticket_isolation_and_model_reach_real_dispatch() {
+  local name="ship <id> --adapter (single-ticket route, not --parallel): --isolation and --model, forwarded by cli/pmctl's OWN parser, reach the real adapter invocation"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-single-isolation-model"
+  work="$tmp_root/work-single-isolation-model"
+  make_work_repo "$work" "CC-9001"
+  # A dedicated fake `claude` that captures its OWN argv -- proves --isolation
+  # and --model survive cli/pmctl's ship/* parsing + pmctl_ship_run's own
+  # forwarding all the way to the real adapter exec, not just pmctl_ship_run's
+  # internals (which the --parallel-focused flag tests exercise via a stubbed
+  # pmctl_dispatch_run call that bypasses cli/pmctl's own parser entirely).
+  local argv_capture="$tmp_root/single-isolation-model-argv"
+  rm -f "$argv_capture"
+  local capture_bin="$tmp_root/capture-claude-bin-im"
+  mkdir -p "$capture_bin"
+  cat > "$capture_bin/claude" <<FAKEOF
+#!/usr/bin/env bash
+cat >/dev/null
+printf '%s\n' "\$@" > "$argv_capture"
+printf '%s\n' '{"type":"result","subtype":"success","result":"work done","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"session_id":"fake","num_turns":1}'
+exit 0
+FAKEOF
+  chmod +x "$capture_bin/claude"
+
+  local status=0
+  PATH="$capture_bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter claude --isolation read-only --model sonnet --no-auto-pack --cd "$work" \
+    > "$tmp_root/out-single-im" 2> "$tmp_root/err-single-im" || status=$?
+
+  # Dispatch is --lifecycle detached: the ship command above returns as soon
+  # as the supervisor is launched, before the (fake) adapter necessarily runs
+  # -- reading argv_capture immediately would race it. run_id/lane path are
+  # already durable (tracking-append is synchronous, before ship returns);
+  # `pmctl dispatch wait` is the real blocking primitive for "has the
+  # detached process actually finished", not a sleep/poll loop.
+  local reg_dir tracking run_id lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  run_id="$(jq -r '.run_id // ""' "$tracking" 2>/dev/null || true)"
+  lane_path="$(jq -r '.path // ""' "$tracking" 2>/dev/null || true)"
+  if [[ -n "$run_id" && -n "$lane_path" ]]; then
+    PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" dispatch wait "$run_id" --cd "$lane_path" >/dev/null 2>&1 || true
+  fi
+
+  local argv=""
+  [[ -f "$argv_capture" ]] && argv="$(cat "$argv_capture" 2>/dev/null || true)"
+  # --isolation read-only maps to permission_mode=default (adapters/claude/isolation-map.yaml).
+  if [[ "$status" -eq 0 ]] && grep -q -- '--permission-mode' <<<"$argv" && grep -Fxq 'default' <<<"$argv" && grep -q -- '--model' <<<"$argv"; then
+    pass "$name"
+  else
+    fail "$name" "expected --permission-mode default (from --isolation read-only) and --model in the real adapter argv; status=$status argv=$argv"
+  fi
+}
+
+case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch() {
+  local name="ship <id> --adapter (single-ticket route, not --parallel): --from sets the lane's branch base, and --auto-pack/--no-auto-pack are accepted by cli/pmctl's own parser without error"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-single-from-autopack"
+  work="$tmp_root/work-single-from-autopack"
+  make_work_repo "$work" "CC-9001"
+  git -C "$work" checkout -q -b side-base
+  printf 'only-on-side-base\n' > "$work/side-marker.txt"
+  git -C "$work" add side-marker.txt
+  git -C "$work" commit -q -m "side base marker"
+  git -C "$work" checkout -q master 2>/dev/null || git -C "$work" checkout -q main
+
+  local status=0
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter claude --from side-base --no-auto-pack --cd "$work" \
+    > "$tmp_root/out-single-from" 2> "$tmp_root/err-single-from" || status=$?
+
+  local reg_dir lane_path
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  lane_path="$reg_dir/checkouts/CC-9001"
+  if [[ "$status" -eq 0 && -f "$lane_path/side-marker.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected lane worktree branched from side-base (side-marker.txt present) and exit 0; status=$status lane=$lane_path"
+  fi
+}
+
 case_ship_brief_quotes_metacharacter_lane_path() {
   local name="ship brief writer: a lane path with shell metacharacters is safely quoted in EVERY generated command (export, finish --cd, self_verify), not just some"
   should_run "$name" || return 0
@@ -1578,6 +1659,8 @@ case_ship_status_preserves_dispatch_failed_across_refresh
 case_ship_tracking_append_failure_is_hard_failure
 case_ship_status_warns_on_legacy_tracking_file
 case_ship_rejects_duplicate_positional_ticket
+case_ship_single_ticket_isolation_and_model_reach_real_dispatch
+case_ship_single_ticket_from_and_auto_pack_flags_reach_dispatch
 case_ship_brief_quotes_metacharacter_lane_path
 case_ship_adapter_missing_value_fails_before_any_side_effect
 case_ship_adapter_trailing_flag_missing_value_fails
