@@ -9,9 +9,9 @@
 
 ---
 
-## v0.8.0 — memory substrate 跨工具可攜 + gate DX（規劃中 2026-07-01）
+## v0.8.0 — memory substrate 跨工具可攜 + gate DX（✅ released 2026-07-04）
 
-> 最後排程更新：2026-07-02
+> 最後排程更新：2026-07-04（release closure CC-444）
 
 **主題**：延續 v0.6.0（executor abstraction）與 v0.7.0（retrieval-base：memory 成為 `pmctl context` 可檢索 source）兩版已交付的抽象工作，補上最後兩個 Claude 專屬耦合點——**memory 位置 resolver** 與 **注入機制**（CC-412，headline）；並行做兩張範圍小、風險低、彼此檔案面不重疊的 gate DX 票（CC-276、CC-423）；另起一個 spike-only phase 把 CC-381（host-PM-aware install）從「設計問題陳述」推進到「有具體 Requirement 的實作票」，為下一版鋪路。
 
@@ -39,7 +39,7 @@
 |----|------|------|
 | CC-276 | persistent gate override declarations：`--override-file` 或自動探索 `.gate-overrides.md`，inject 到 reviewer prompt 前置脈絡，避免已接受的 risk override 每輪重新聲明 | ✅ done pr:#301（規劃前已交付，覆核發現） |
 | CC-423 | gate detached lifecycle：`pmctl gate run --lifecycle detached`（現為預設）回傳 gate_id 立即退出；gate-supervisor 以 nohup/setsid 跑 pr-gate.sh；sentinel 機制 + `pmctl gate wait <gate_id>` 輪詢，result 完整性 fail-closed，鏡像既有 `dispatch --lifecycle detached` 模式 | ✅ done pr:#353 |
-| CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢（`sleep` 迴圈）改為主動通知（FIFO/inotify 等，解法未定案）。CC-423 交付後發現的簡化與效率改善項，解法待 `/pre-impl` 或 `/spike` 收斂 | 🟢 someday |
+| CC-433 | detached lifecycle 收尾：(1) 抽出 dispatch/gate 兩份 supervisor 共用的 sentinel 啟動邏輯成共用 lib；(2) `pmctl dispatch wait`/`pmctl gate wait` 的輪詢改主動通知。CC-423 交付後發現的改善項，spike 收斂於 `docs/spikes/CC-433.md` | ✅ spike done；(1) lib GREEN → CC-434 落地 pr:#356；(2) poll→通知 AMBER 不採，殘餘 → CC-435（條件觸發 someday） |
 | CC-432 | run-all-tests.sh 耗時瓶頸：`test-release-verify.sh` 12 個重複 `--no-suite` 呼叫改共用快取（`rv_no_suite_once`），380s → ~127s。方向 A（Phase 3 smoke 改隔離假 repo）與 `LIVE_DB_EXCLUSIVE` 序列化耦合窄化皆評估後擱置不追（風險高於效益，未來可重新評估） | ✅ done pr:#354 |
 | CC-425 | gate 解除 PR 綁定：`pr-gate.sh --head <ref>` 新增，以既有 `--base` 相同的 merge-base（three-dot）語意 diff 一組固定 ref，不涉 PR/working tree；盤點發現 result 路徑 PR# key 問題已在 CC-423 detached lifecycle 重構中解決（改用 gate_id），`--base` 也已支援無 PR 場景，故實際範圍小於原評估 | ✅ done pr:#355 |
 
@@ -60,6 +60,26 @@
 | CC-014 | repo 通用 worktree 建立/列出/清理工具 + `using-git-worktrees` skill，支援多票並行開發；`--parallel` PR gate reviewer 隔離整合留待未來 follow-up ticket，未併入本次範圍 | ✅ done pr:#358 |
 
 > 由 CC-050 稽核降級的 ⏸ deferred（無開放分支）重新啟用；2026-07-02 範圍由「pr-gate reviewer 隔離」擴大為「repo 通用 worktree 工具」；規劃時尚未有實作分支，範圍與時程由後續 `/pre-impl` 或直接 dispatch 時再收斂。
+
+### Phase 5 — 計畫外同期 ship（規劃外交付，v0.8.0 開發期間完成）
+
+> ship 系列（CC-439→443）為 v0.8.0 排程後由使用者需求驅動的計畫外主線；CC-434 為 CC-433 spike GREEN 結論的即時落地；CC-214 為文件 hygiene。均已各自過 pr-gate。
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-434 | 抽共用 detached-launch lib（`scripts/lib/detached-launch.sh`，7 函式）；dispatch/gate 兩 supervisor + wait 端改共用，行為位元組不變 | ✅ done pr:#356 |
+| CC-214 | platform-support.md 手動 uninstall 指令錨定 `PM_DISPATCH_REPO` | ✅ done pr:#362 |
+| CC-439 | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | ✅ done pr:#360 |
+| CC-440 | spike: `/ship` 並行版可行性，五項設計決策收斂（`docs/spikes/CC-440.md`） | ✅ spike done pr:#361 |
+| CC-441 | `pmctl ship prepare/finish` + `--parallel` N-lane orchestrator v1（建在 CC-014 worktree 上，保留 CC-439 ship 契約） | ✅ done pr:#363 |
+| CC-442 | spike: 統一 `pmctl ship <ticket-id>` 單一入口，三項決策收斂（`docs/spikes/CC-442.md`） | ✅ spike done pr:#364 |
+| CC-443 | 實作：統一 `pmctl ship <ticket-id>` start 入口（`--worktree`/`--adapter`；`ship-lanes.jsonl` tracking；`dispatch-failed` 狀態） | ✅ done pr:#365 |
+
+### Phase 6 — release closure（tag 前完成）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-444 | v0.8.0 release closure：`/pre-release v0.8.0` 稽核 → CHANGELOG 補全（Layer 1 抓到 6 票缺漏 + ship 系列）→ MILESTONES/README 收斂 → release notes → tag | ✅ pr:#367 |
 
 ### 待後續 / 明確排除
 

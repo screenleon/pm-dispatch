@@ -75,6 +75,7 @@ SUITE_NAMES=(
   test-pmctl-backlog
   test-pmctl-guard
   test-pmctl-ship
+  test-pmctl-worktree
   test-pre-release
   test-release-verify
   test-e2e-script
@@ -145,6 +146,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-backlog]="scripts/test-pmctl-backlog.sh"
   [test-pmctl-guard]="scripts/test-pmctl-guard.sh"
   [test-pmctl-ship]="scripts/test-pmctl-ship.sh"
+  [test-pmctl-worktree]="scripts/test-pmctl-worktree.sh"
   [test-pre-release]="scripts/test-pre-release.sh"
   [test-release-verify]="scripts/test-release-verify.sh"
   [test-e2e-script]="scripts/test-e2e-script.sh"
