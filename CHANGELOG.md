@@ -6,13 +6,39 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-07-04
 
 ### Added
+
+- **Memory substrate cross-tool location seam (CC-412, PR#352).** `find_memory_dir` now honors an explicit override with precedence `PM_MEMORY_DIR` env > `dispatch.memory_dir` config > `CLAUDE_CONFIG_DIR` convention — behavior is byte-identical to before when neither override is set. The injection layering is now documented in `docs/memory-system.md`: the portable core is the `pmctl context --source memory` retrieval API; injection is a per-tool adapter concern (Claude keeps its existing hook; codex/opencode/future hosts call the retrieval API directly).
+
+- **Gate detached lifecycle (CC-423, PR#353).** `pmctl gate run --lifecycle detached` (now the default) returns a `gate_id` immediately and runs `pr-gate.sh` under a `setsid`/`nohup` gate-supervisor, mirroring the existing dispatch detached mode. `pmctl gate wait <gate_id>` reattaches via a nonce-authenticated sentinel and fails closed on result-integrity violations. A session interrupt can no longer kill a running gate or corrupt its exit-code reporting.
+
+- **Repo-wide git worktree tooling (CC-014, PR#358).** `pmctl worktree create/list/remove/gc` manages per-ticket worktree lanes with a tracked manifest, plus the `using-git-worktrees` skill documenting the parallel-development workflow. Executor-agnostic by design — worktree lifecycle is pmctl's responsibility, not any executor's.
+
+- **`/ship <ticket-id>` command (CC-439, PR#360).** Takes one explicit backlog ticket from implementation through pr-gate to an open PR without step-by-step confirmation stops: pre-flight consistency checks, gate `Final:` verdict reading, NO-GO fix-loop until stuck, GO → push + PR, never auto-merges.
+
+- **`pmctl ship prepare/finish` + `--parallel` N-lane orchestrator v1 (CC-441, PR#363).** `ship prepare`/`ship finish` are the scriptable bookends of the CC-439 ship contract (ticket validation + branch creation; single gate round + GO-gated push/PR with branch-identity, dirty-tree, HEAD-moved, and gh-preflight guards). `ship --parallel` runs N ticket lanes concurrently on CC-014 worktrees, each dispatched detached with its own run_id-partitioned artifacts; lane failures are isolated and reported per lane; GO lanes queue for human merge — never auto-merged. Hardened during real e2e acceptance: marker-based GO detection (never trusts free text), concurrent double-dispatch race guard, tracking-file locking, and a `partial` status for push-succeeded-but-PR-failed.
+
+- **Shared detached-launch lib (CC-434, PR#356).** Extracted the setsid/nohup launch + nonce-authenticated sentinel logic duplicated byte-for-byte between `dispatch-supervisor.sh` and `gate-supervisor.sh` into `scripts/lib/detached-launch.sh` (7 shared functions; `resolve_repo_root` stays inline for bootstrap reasons, guarded by a verbatim-diff fixture test). Pure delegation — no external behavior change; dispatch-side security preflights untouched.
 
 - **`pmctl ship <ticket-id>` unified start entry (CC-442/CC-443).** `pmctl ship <id> [--worktree] [--adapter <name>]` replaces the split between `ship prepare` (in-place only) and worktree creation (previously reachable only via `ship --parallel`): bare is in-place (identical to `prepare`, still available as an explicit alias), `--worktree` creates an isolated worktree with no dispatch, and `--adapter` (implying `--worktree`) creates the worktree and dispatches detached. `ship finish` is unchanged and stays a separate verb. `ship --parallel` is now sugar that calls the unified entry once per ticket instead of duplicating worktree-create/brief-write/dispatch logic. Lane tracking moved from the `--parallel`-only `ship-parallel.jsonl` to `ship-lanes.jsonl`, now written by any `--worktree` lane (manual or dispatched) with a new `adapter` field; a manual lane with no dispatch record correctly surfaces as `status=prepared` instead of a misleading `running`. Every terminal outcome after a worktree is created — including a `mktemp`/dispatch-run failure — is tracked (new `status=dispatch-failed`, preserved across status refreshes) so a lane can never exist on disk without a corresponding `ship status`/`list` record; a tracking-write failure itself is now a hard failure (nonzero exit) rather than a swallowed warning. `gc.auto` guarding stays owned exclusively by the `--parallel` batch wrapper (not duplicated per-lane).
 
 - **`pr-gate.sh --head <ref>` (CC-425).** Gate can now review a fixed head ref (branch, tag, or commit) with no PR and no working tree involved — review a branch before opening a PR, or diff `v0.6.0..v0.7.0` tag-to-tag. Uses the same merge-base (three-dot) semantics as the default `--base` path, so `base`'s independent progress after the fork point never leaks into the diff. Rejects `--allow-dirty` (which folds in local uncommitted state) as incompatible, and rejects a bare `--head` with a controlled error instead of crashing. Forwarded transparently through both the foreground and `--lifecycle detached` routes since `pmctl gate run` already passes unrecognized flags through to `pr-gate.sh`.
+
+### Performance
+
+- **`test-release-verify.sh` shared `--no-suite` cache (CC-432, PR#354).** Twelve duplicate `release-verify.sh --no-suite` invocations now share one cached run (`rv_no_suite_once`), cutting the suite from ~380s to ~127s.
+
+### Docs
+
+- **Install host-PM-aware spike convergence (CC-381, PR#359).** Three-way independent analysis (main thread / codex read-only self-test / external) converged in `docs/spikes/CC-381.md`: codex `PreToolUse` hooks are stable and fail-closed, sufficient to carry write/bash guards. CC-381 graduates from a design statement into three requirement-bearing follow-up tickets (CC-436 payload probe, CC-437 host-aware doctor, CC-438 host manifest schema v1); `install.sh` write path deliberately untouched.
+
+- **`/ship` parallel-execution spike (CC-440, PR#361).** Converged the five design decisions for N-lane parallel shipping in `docs/spikes/CC-440.md` (lane failure isolation, executor-owned gate fix-loop, worktree lifetime until human merge, tunable N with structural isolation, no custom git locks — only `gc.auto` off during parallel runs); same PR fixed the worktree dependency-install doc.
+
+- **`uninstall.sh` Windows warning anchored to `PM_DISPATCH_REPO` (CC-214, PR#362).** The manual uninstall command in `docs/platform-support.md` no longer assumes a hardcoded clone location.
+
+- **Note**: CC-276 (persistent gate overrides) appears in the v0.8.0 milestone as pre-delivered work rediscovered during planning; its changelog entry lives under v0.6.0 (gh-174, PR#301).
 
 ---
 

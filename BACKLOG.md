@@ -80,11 +80,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
 | CC-442 | ✅ done | spike: 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口。三題已收斂（`docs/spikes/CC-442.md`）：`ship finish` 維持獨立動詞不收斂、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim | arch/gate | 2026-07-03 | — | P3 | spike |
 | CC-443 | ✅ closed 2026-07-04 | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | pr:#365 | P2 | — |
-| CC-444 | 🔵 active | v0.8.0 release closure：`/pre-release v0.8.0` → 修 drift（README badge/MILESTONES 標頭/CHANGELOG range 含 ship 系列 CC-439..443）→ release notes → tag + GitHub Release | process | 2026-07-04 | — | P2 | — |
+| CC-444 | ✅ done | v0.8.0 release closure：`/pre-release v0.8.0` → 修 drift（README badge/MILESTONES 標頭/CHANGELOG range 含 ship 系列 CC-439..443）→ release notes → tag + GitHub Release | process | 2026-07-04 | pr:#367 | P2 | — |
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
 | CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v1.0-rc 候選；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 
 ---
 
@@ -324,7 +325,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-444 — v0.8.0 release closure 🔵 active
+## CC-444 — v0.8.0 release closure ✅ 2026-07-04
 
 **Problem**：v0.8.0 四個 Phase（memory substrate 跨工具可攜、gate DX、CC-381 spike、CC-014 worktree）已全部完成，但尚未 tag——v0.7.1 之後已累積 17 commits，含五張計畫外交付的 ship 系列票（[[CC-439]]..[[CC-443]]）。拖延不 tag 會讓版本邊界與 CHANGELOG range 越來越糊（v0.5.0 曾因此 release-prep 補了 ~8 張票的 CHANGELOG）。
 
@@ -337,8 +338,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Done-when**：tag `v0.8.0` 存在且指向含 closure PR 的 main；GitHub Release 發佈；`/pre-release` 報告無未處置 finding。
 
+**Outcome**（2026-07-04，pr:#367）：`/pre-release v0.8.0` Layer 1 抓到 8 個 structural findings，逐項處置——CHANGELOG 補全 6 票（CC-412/423/432/014/434 + docs 票；CC-276 判定 false positive，其 entry 本就在 [0.6.0] 段 gh-174 名下）+ ship 系列（CC-439..441；CC-442/443 已在）；MILESTONES CC-433 行過期狀態修正（spike done → lib 由 CC-434 pr:#356 落地、poll→notify 殘餘 → CC-435）；補 Phase 5（計畫外同期 ship 7 票）與 Phase 6（closure）；標頭改 released；README badge bump v0.8.0。Layer 2 語義覆蓋 7/7 Covered（High confidence）。收尾過程另發現並修復：**`test-pmctl-worktree` 未註冊進 `run-all-tests.sh`**（CC-014 交付的 36-case 套件從未被 aggregator 執行）——已補註冊並確認全綠；套件註冊完整性 lint 開 [[CC-449]] 防再漏。`release-verify.sh --e2e` 全套 sign-off 於 closure PR 前執行（結果見 PR）。
+
 **Dependencies**：[[CC-426]]（Layer 1/3 工具）、[[CC-430]]（Layer 2）皆已交付。
-**See**: DECISIONS.md 2026-07-04 v1.0-public-roadmap-and-release-sequence
+**See**: DECISIONS.md 2026-07-04 v1.0-public-roadmap-and-release-sequence、pr:#367
 
 ## CC-445 — install write path host-aware（CC-381 完整實作第一刀）🔵 active
 
@@ -410,6 +413,22 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。v1.0-rc 候選。
 **See**: DECISIONS.md 2026-07-04
+
+## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
+
+**Problem**：v0.8.0 新增的 `pmctl ship`（unified entry / prepare / finish / `--parallel`）與 `pmctl worktree`（create/list/remove/gc）只有 unit 套件覆蓋；release sign-off 的 e2e 路徑（`test-e2e.sh` Phase B/C）只驗 dispatch 輸出契約與 pr-gate 機制，對這兩個新 surface 零 live 煙測。且 [[CC-444]] 收尾時發現 `test-pmctl-worktree.sh`（36 cases）**根本沒註冊進 `run-all-tests.sh`**——套件存在但 aggregator 從未執行，release-verify 的「全套綠燈」靜默漏掉它（已於 CC-444 補註冊）；「新增 suite 必須註冊」目前無任何機械防護。
+
+**Why**：v1.0 P1 證據層的一環——release sign-off 的覆蓋範圍必須跟上 surface 的成長，否則 `release-verify GO` 的可信度逐版稀釋；註冊完整性 lint 是同類靜默缺口的止血閥。
+
+**Requirement**：
+1. **套件註冊完整性 lint**（第一刀，機械）：`scripts/test-*.sh` 存在但未在 `run-all-tests.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `release-verify.sh` Phase 1。注意新增套件目前需**三處**同步——`run-all-tests.sh`（SUITE 陣列 + path map）與 `test-run-all-tests.sh`（`SUITE_NAMES` mirror + `suite_path` case）；後者的 parity 已由 meta 套件自身把關（CC-444 補註冊時實際觸發），lint 只需補「檔案存在但未註冊」這缺口，並評估把 meta-suite mirror 改為從 run-all-tests.sh 動態派生以消除第三處人工同步。
+2. **ship/worktree e2e 煙測**：`test-e2e.sh` 新增 phase——synthetic target 上走一次 `pmctl worktree create → pmctl ship <id> --worktree → ship status 讀到 prepared → worktree remove`（不 dispatch、不花 LLM token 的最小閉環）；`ship finish` 的 live 驗證（含 gate）評估成本後決定納入或明文排除並記錄理由。
+3. 與 [[CC-431]]（adapter 清單動態派生）同批評估，避免 e2e 腳本兩次重構。
+
+**Done-when**：lint 落地且能抓到「新增未註冊套件」的注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
+
+**Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
+**See**: [[CC-444]] Outcome、pr:#367
 
 ---
 
