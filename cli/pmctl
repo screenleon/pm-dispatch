@@ -170,6 +170,45 @@ case "$cmd/$sub" in
     fi
     pmctl_ship_parallel_list "$REPO_ROOT" "" "$@"
     ;;
+  ship/*)
+    # Fallback for the unified start entry (CC-442/CC-443): `sub` here is
+    # whatever followed `ship` and did not match one of the reserved-word
+    # cases above (prepare/finish/status/list/--parallel) -- i.e. a
+    # ticket-id-shaped token. Reconstruct the full argv (sub was already
+    # shifted off) and hand it to pmctl_ship_run, which does its own shape
+    # validation and prints the "empty argument" usage error itself.
+    if ! declare -F pmctl_ship_run >/dev/null; then
+      pmctl_die "ship unavailable"
+    fi
+    set -- "$sub" "$@"
+    _ship_cd="" _ship_ticket="" _ship_rest=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cd) _ship_cd="${2:-}"; shift 2 ;;
+        --worktree) _ship_rest+=(--worktree); shift ;;
+        --adapter)
+          [[ $# -ge 2 && "$2" != -* ]] || pmctl_die "ship: --adapter requires a value"
+          _ship_rest+=(--adapter "$2"); shift 2 ;;
+        --from)
+          [[ $# -ge 2 && "$2" != -* ]] || pmctl_die "ship: --from requires a value"
+          _ship_rest+=(--from "$2"); shift 2 ;;
+        --isolation)
+          [[ $# -ge 2 && "$2" != -* ]] || pmctl_die "ship: --isolation requires a value"
+          _ship_rest+=(--isolation "$2"); shift 2 ;;
+        --model)
+          [[ $# -ge 2 && "$2" != -* ]] || pmctl_die "ship: --model requires a value"
+          _ship_rest+=(--model "$2"); shift 2 ;;
+        --auto-pack) _ship_rest+=(--auto-pack); shift ;;
+        --no-auto-pack) _ship_rest+=(--no-auto-pack); shift ;;
+        -h|--help) _ship_rest+=(--help); shift ;;
+        -*) pmctl_die "ship: unknown option: $1" ;;
+        *)
+          [[ -z "$_ship_ticket" ]] || pmctl_die "ship: unexpected extra positional argument: $1 (a ticket id was already given: $_ship_ticket)"
+          _ship_ticket="$1"; shift ;;
+      esac
+    done
+    pmctl_ship_run "$REPO_ROOT" "$_ship_cd" "$_ship_ticket" ${_ship_rest[@]+"${_ship_rest[@]}"}
+    ;;
   trace/tail)
     if ! declare -F pmctl_trace_tail >/dev/null; then
       pmctl_die "trace tail unavailable"
