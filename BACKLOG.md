@@ -78,7 +78,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
 | CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
-| CC-442 | 🟢 someday | 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口，取代 prepare/--parallel 兩條平行路徑；`--adapter` 強制隱含 `--worktree` | arch/gate | 2026-07-03 | — | P3 | design |
+| CC-442 | ✅ done | spike: 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口。三題已收斂（`docs/spikes/CC-442.md`）：`ship finish` 維持獨立動詞不收斂、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim | arch/gate | 2026-07-03 | — | P3 | spike |
+| CC-443 | 🔵 active | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | — | P2 | — |
 
 ---
 
@@ -242,7 +243,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-442 — design: 統一 `pmctl ship <ticket-id>` 單一入口（取代 prepare/--parallel 兩條平行路徑）🟢 someday
+## CC-442 — 統一 `pmctl ship <ticket-id>` 單一入口（取代 prepare/--parallel 兩條平行路徑）（spike）✅ 2026-07-04
 
 **Problem**：[[CC-441]] 落地後，「開始處理一張票」存在兩條互不相通的路徑：
 - `pmctl ship prepare`（[[CC-439]]/[[CC-441]]）：**原地** `git checkout -b`，完全沒用到 worktree，只能主線程直接接手實作。
@@ -260,15 +261,60 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - `pmctl ship <ticket-id> --adapter <name>`：**只要出現 `--adapter`，就強制隱含 `--worktree`**（dispatch 一定要隔離，不提供「不隔離也能 dispatch」的組合）——驗證票號、建隔離 worktree、產生保留 ship 契約的 dispatch brief、`pmctl dispatch run --lifecycle detached` 派給指定 adapter 跑完整流程（implement + `pmctl ship finish`）。
 - `pmctl ship --parallel <id1> <id2> ...`：不再是獨立實作，收斂成「對每張票呼叫 `ship <id> --worktree --adapter <X>` 並行送出」的語法糖，`status`/`list` 維持現有的 tracking/marker 機制不變。
 
-**Requirement**（開票時待細化，不預先鎖定實作細節）：
+**Requirement**：
+- Investigation scope：收斂「設計方向」段落遺留的兩項未定架構決策，並以一個真實消費者遷移驗證新介面站得住腳：
+  1. 單票「原地 / `--worktree`」模式下，Step 2 實作與 gate+PR 之間的呼叫介面要不要沿用現有 `ship finish`，還是也收斂進同一入口（例如同一個 `pmctl ship <ticket-id>` 呼叫兩次，或改用不同子動作字樣）？
+  2. `--adapter` 強制隱含 `--worktree` 之後，`--worktree`（無 `--adapter`）與 `--adapter`（必隱含 `--worktree`）兩種模式的 lane 目錄/tracking 記錄是否需要區分（例如非 dispatch 的 worktree lane 要不要也寫進 `ship-parallel.jsonl` 這類 tracking 檔）？
+  3. Pilot walkthrough：挑一個現有真實消費者（`pmctl ship --parallel` 內部呼叫）試接統一後的單票入口，寫出逐字 before/after diff，確認乾淨無 shim、無行為回歸。
+- Done-when：上述 3 點都有明確答案（介面呼叫形狀 + tracking schema 決策 + pilot diff 佐證），足以回填一份有信心的實作 dispatch brief，且不破壞 [[CC-439]] 既有 `/ship` 單票契約。
+- Result log: docs/spikes/CC-442.md
+
+**Outcome**：3-angle fan-out（interface-draft × 2 + code-audit）收斂三項決策：(1) `pmctl ship finish` **保留為獨立、不變的動詞**——已是掛 allowlist（`pmctl ship finish:*`）、有 branch-identity guard/HEAD-drift guard/`.pm-dispatch-ship-finish.json` marker 的既有 primitive，`--worktree`/`--adapter` 在 finish 時語意上是空的，收斂進同一入口等於重造「guard-one-execute-another」反模式（v0.6.0/v0.7.0 已有的教訓）；`commands/ship.md`（CC-439 契約）本來就不呼叫 `ship finish`，故不受影響。(2) tracking schema 採「unified-schema-with-optional-run_id」——所有 `--worktree` lane（無論是否 `--adapter` dispatch）都寫入 `ship-parallel.jsonl`，非 dispatch lane 的 `run_id=""`；純 worktree manifest 不夠，會讓 `ship status`/`ship list` 看不到該 lane，重現本票想解決的分裂。(3) Pilot walkthrough 證實遷移乾淨無 shim：新增 `pmctl_ship_run`（吸收 brief-writer + worktree-create + dispatch-run 序列，`ship-parallel.jsonl` 的 tracking-append 收斂進函式內部而非留在呼叫端，確保任何呼叫點都不會漏寫）、`pmctl_ship_parallel_run` 改為對每張票呼叫一次。完整證據、reconciliation 與 pilot diff 見 `docs/spikes/CC-442.md`。**後續實作票待開立**（承接下方草案，帶入本次 3 項決策），依賴不變：[[CC-441]]／[[CC-439]]／[[CC-014]]。
+
+**後續實作 Requirement 草案（spike 收斂後回填至新開的實作票）**：
 1. 盤點 `pmctl ship prepare`、`pmctl worktree create`、`pmctl_ship_parallel_run` 三處目前個別的 ticket 驗證/branch 建立邏輯，確認統一後不產生行為回歸（尤其是 [[CC-439]] 既有 `/ship` 單票契約不能被破壞）。
-2. 決定單票「原地/`--worktree`」模式下，Step 2 實作與 gate+PR 之間的呼叫介面要不要沿用現有 `ship finish`，還是也收斂進同一入口（例如同一個 `pmctl ship <ticket-id>` 呼叫兩次，或改用不同子動作字樣）。
-3. 決定 `--adapter` 強制隱含 `--worktree` 之後，`--worktree`（無 `--adapter`）與 `--adapter`（必隱含 --worktree）兩種模式的 lane 目錄/tracking 記錄是否需要區分（例如非 dispatch 的 worktree lane 要不要也寫進 `ship-parallel.jsonl` 這類 tracking 檔）。
+2. 依 spike 決策收斂單票模式下 Step 2 實作與 gate+PR 的呼叫介面。
+3. 依 spike 決策落實 `--worktree`/`--adapter` 兩種模式的 lane tracking 記錄語意。
 4. `pmctl ship --parallel` 內部改為呼叫統一後的單票入口（帶 `--worktree --adapter`），避免兩份 worktree 建立/dispatch brief 生成邏輯分別維護。
 5. 補齊對應的 `scripts/test-pmctl-ship.sh`/`scripts/test-pmctl-worktree.sh` 回歸測試，含「`--adapter` 隱含 `--worktree`」這條新規則的直接測試。
 
 **Dependencies**：承接 [[CC-441]]（發現此縫隙並完成初版 `--parallel`）、[[CC-439]]（單票 ship 契約不可破壞）、[[CC-014]]（`pmctl worktree` 既有 API 不得重造）。
-**See**：—
+**See**: `docs/spikes/CC-442.md`
+
+---
+
+## CC-443 — 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike）🔵 active
+
+**Problem**：[[CC-442]] spike 已收斂三項架構決策（`ship finish` 保留獨立動詞、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim），但尚未落地成程式碼。使用者對 spike 方向的外部（ChatGPT）review 也補強了幾個實作細節，本票一併吸收。
+
+**Why**：spike 決策若不落地會過期失效；[[CC-441]] 之後「開始處理一張票」仍分裂成 `ship prepare`（原地）與 `worktree create`（僅 `--parallel` 用得到）兩條路，單票 worktree 隔離、或單票 dispatch 給 codex/claude，都沒有乾淨入口。
+
+**Requirement**：
+1. 新增 `pmctl_ship_run(repo_root, work_dir, ticket_id, [--worktree] [--adapter <name>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack])`（`scripts/lib/pmctl-ship.sh`）：
+   - 無 `--worktree`/`--adapter`：原地委派給既有 `pmctl_ship_prepare`（行為完全不變，無 tracking 記錄）。
+   - `--worktree`（無 `--adapter`）：呼叫 [[CC-014]] `pmctl_worktree_create` 建隔離 worktree，不 dispatch，寫入 tracking（見 #3），回傳 lane 路徑。
+   - `--adapter <name>`：強制隱含 `--worktree`；建 worktree、寫 dispatch brief（沿用既有 ship 契約，`_pmctl_ship_brief_write`）、`pmctl dispatch run --lifecycle detached`、寫入 tracking。
+   - `--worktree --adapter <name>` 同時出現：合法，效果等同單獨 `--adapter <name>`（冗餘不報錯）。
+2. `pmctl ship finish` **維持獨立、不變的動詞**，不收斂進 `pmctl_ship_run`（CC-442 spike 決策）。`pmctl ship prepare <id>` **保留為明確 alias**，不刪除（外部 review 補強：CC-439/441 既有腳本化 bookend 依賴，直接移除有回歸風險）。`pmctl_ship_usage` 需明確標註 `pmctl ship <id>` 是「開始一個手動 ship lane」而非完整 ship 到 PR，並提示下一步是 `pmctl ship finish`；同時列出完整 option matrix（裸呼叫 / `--worktree` / `--adapter` / 兩者同時 / `--parallel`），避免實作時邊做邊猜（外部 review 補強）。
+3. Tracking 檔重新命名為 `ship-lanes.jsonl`（取代 `ship-parallel.jsonl`，反映此檔現在被手動 worktree lane 與 dispatch lane 共用，不再是 `--parallel` 專屬；外部 review 補強）：
+   - 欄位沿用既有 6 個（ticket/branch/path/run_id/status/created_ts）+ 新增 `adapter`（manual lane 為空字串）。
+   - 任何 `--worktree` lane（無論是否 dispatch）都寫入一筆，`run_id=""` 代表未 dispatch 的手動 lane（CC-442 spike 決策）。
+   - Tracking-append 呼叫收斂進 `pmctl_ship_run` 內部，不留在呼叫端，確保任何呼叫點都不會漏寫（CC-442 spike reconciliation 建議）。
+   - lane-status 判斷（原 `_pmctl_ship_parallel_lane_status`，改名 `_pmctl_ship_lane_status`）新增一條分支：`run_id` 為空字串且無 finish marker → 回傳 `prepared`（而非目前會落到的誤導性 `running`）。
+4. `pmctl_ship_parallel_run`（`scripts/lib/pmctl-ship-parallel.sh`）內部改為對每張票呼叫 `pmctl_ship_run "$repo_root" "$work_dir" "$t" --worktree --adapter "$adapter" ...` 一次，取代目前直接呼叫 `pmctl_worktree_create` + brief-write + `pmctl dispatch run` 的重複邏輯。Batch 層既有的 pre-flight（重複票號檢查、in-flight 檢查、全票驗證）與 `gc.auto` save/restore trap **維持只在 batch wrapper 這一層**；`pmctl_ship_run` 本身完全不碰 `gc.auto`（外部 review 補強：避免 N 條 lane 各自 set/restore 造成 race，與現有實作已經正確的批次層 scoping 保持一致，不要在單票路徑上重造）。
+5. `cli/pmctl` 新增 `ship/*` fallback 路由：`pmctl ship <ticket-id> [--worktree] [--adapter <name>] ...`（票號形狀的第一個 token，非既有保留字 `prepare`/`finish`/`status`/`list`/`--parallel`）呼叫 `pmctl_ship_run`。
+6. 回歸測試（`scripts/test-pmctl-ship.sh`）：
+   - `pmctl ship <id>` 裸呼叫行為等同 `ship prepare <id>`（無 worktree、無 tracking 記錄）。
+   - `pmctl ship prepare <id>` 既有行為不變（回歸）。
+   - `pmctl ship <id> --worktree`：建 worktree、不 dispatch、tracking 寫入 `run_id=""`/`adapter=""`，`ship status` 讀到 `prepared`（非誤導性 `running`）。
+   - `pmctl ship <id> --adapter <name>`：隱含 `--worktree`、寫 dispatch brief、tracking 寫入 `run_id`+`adapter`。
+   - `pmctl ship <id> --worktree --adapter <name>`：與純 `--adapter` 等價。
+   - 單票（非 `--parallel`）in-flight 重複 dispatch 拒絕。
+   - `pmctl ship --parallel` 端到端既有 case 全綠（含 tracking 檔案改名後路徑同步更新）。
+7. `docs/spikes/CC-442.md` 不修改（維持歷史 spike 記錄原貌）。
+
+**Dependencies**：承接 [[CC-442]] spike（三項決策）、[[CC-441]]（`--parallel` v1 需保持行為不回歸）、[[CC-439]]（單票 `/ship` 契約不可破壞）、[[CC-014]]（`pmctl_worktree_create` 不得重造）。
+**See**：`docs/spikes/CC-442.md`
 
 ---
 

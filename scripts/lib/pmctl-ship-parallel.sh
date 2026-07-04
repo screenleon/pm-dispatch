@@ -17,84 +17,13 @@ pmctl_ship_parallel_usage() {
   printf '       pmctl ship list   [--cd <work_dir>] [--json]\n' >&2
 }
 
-# _pmctl_ship_parallel_reg_dir <repo_root> <work_dir>
-# Same partition CC-014's `pmctl worktree` uses (sw_project_worktree_dir) --
-# ship-parallel tracking is a sibling file under it, not a new state root.
-_pmctl_ship_parallel_reg_dir() {
-  local repo_root="$1" work_dir="$2"
-  pmctl_worktree_ensure_state_paths "$repo_root" >/dev/null 2>&1 || true
-  sw_project_worktree_dir "$work_dir"
-}
-
-_pmctl_ship_parallel_tracking_file() {
-  printf '%s/ship-parallel.jsonl\n' "$1"
-}
-
-# _pmctl_ship_parallel_tracking_append_inner <json_line> <tracking_file>
-# Runs inside serialize_with_lock -- same locked-append primitive shape as
-# pmctl_worktree_manifest_append (pmctl-worktree.sh).
-_pmctl_ship_parallel_tracking_append_inner() {
-  local json_line="$1" tracking_file="$2" compact
-  compact="$(_sw_compact_json_line "$json_line")" || return $?
-  printf '%s\n' "$compact" >> "$tracking_file"
-}
-
-# pmctl_ship_parallel_tracking_append <reg_dir> <json_line>
-# The ONLY way `run` should append a new lane entry -- serialized against
-# `pmctl_ship_parallel_tracking_refresh` so a concurrent status refresh's
-# read-modify-write can never observe a half-written line nor silently drop
-# an append that lands mid-refresh.
-pmctl_ship_parallel_tracking_append() {
-  local reg_dir="$1" json_line="$2" tracking_file
-  mkdir -p "$reg_dir" 2>/dev/null || { printf 'pmctl ship: mkdir failed: %s\n' "$reg_dir" >&2; return 1; }
-  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
-  serialize_with_lock "$reg_dir/ship-parallel" _pmctl_ship_parallel_tracking_append_inner "$json_line" "$tracking_file"
-}
-
-# _pmctl_ship_parallel_tracking_refresh_inner <tracking_file> <lane_status_fn>
-# Runs inside serialize_with_lock: re-reads the CURRENT file content (not a
-# snapshot taken before acquiring the lock), recomputes each line's status,
-# and writes the result back atomically (tmp + mv). This is the ONLY code
-# path that should overwrite ship-parallel.jsonl wholesale -- doing the
-# read+recompute+write inside one locked critical section is what makes it
-# safe against a concurrent `run`'s append (pmctl_ship_parallel_tracking_append
-# above), which is serialized against the SAME lock. Prints the recomputed
-# content on stdout (caller captures it for --json rendering) and prints one
-# human-readable line per lane to stderr, matching the un-locked version's
-# prior behavior.
-_pmctl_ship_parallel_tracking_refresh_inner() {
-  local tracking_file="$1" json_out="$2" tmp content line updated=""
-  content=""
-  [[ -f "$tracking_file" ]] && content="$(cat "$tracking_file")"
-  [[ -n "$content" ]] || return 0
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    local ticket branch path run_id new_status
-    ticket="$(jq -r '.ticket' <<<"$line")"
-    branch="$(jq -r '.branch' <<<"$line")"
-    path="$(jq -r '.path' <<<"$line")"
-    run_id="$(jq -r '.run_id' <<<"$line")"
-    new_status="$(_pmctl_ship_parallel_lane_status "$path" "$run_id")"
-    line="$(jq -c --arg s "$new_status" '.status = $s' <<<"$line")"
-    updated="${updated}${line}
-"
-    if [[ "$json_out" -eq 0 ]]; then
-      printf '[%s] %-12s branch=%-20s run_id=%s\n' "$ticket" "$new_status" "$branch" "$run_id" >&2
-    fi
-  done <<<"$content"
-  tmp="$(mktemp "$(dirname "$tracking_file")/.ship-parallel.XXXXXX")" || return 1
-  printf '%s' "$updated" > "$tmp"
-  mv -f "$tmp" "$tracking_file"
-  printf '%s' "$updated"
-}
-
-# pmctl_ship_parallel_tracking_refresh <reg_dir> <json_out 0|1>
-pmctl_ship_parallel_tracking_refresh() {
-  local reg_dir="$1" json_out="$2" tracking_file
-  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
-  [[ -f "$tracking_file" ]] || return 0
-  serialize_with_lock "$reg_dir/ship-parallel" _pmctl_ship_parallel_tracking_refresh_inner "$tracking_file" "$json_out"
-}
+# Lane tracking (reg_dir/tracking-file/append/refresh, ship-lanes.jsonl) and
+# per-lane status resolution now live in pmctl-ship.sh as
+# _pmctl_ship_lanes_* / _pmctl_ship_lane_status -- CC-442/CC-443 unified them
+# because a `--worktree` lane created outside `--parallel` (via the single-
+# ticket `pmctl ship <id> --worktree`/`--adapter` entry, pmctl_ship_run) needs
+# the exact same tracking file `status`/`list` below already read; keeping a
+# second, --parallel-only copy would silently miss those lanes again.
 
 # _pmctl_ship_parallel_gc_auto_save <work_dir>
 # Prints "set:<value>" if git config gc.auto is currently set, "unset"
@@ -159,48 +88,6 @@ _pmctl_ship_parallel_ticket_active() {
   return 1
 }
 
-# _pmctl_ship_parallel_brief_write <repo_root> <ticket_id> <lane_work_dir> <branch> <out_path>
-# Writes a dispatch brief whose instructions are /ship's own Steps 2-5
-# (implement -> gate loop foreground -> PR, no auto-merge) re-targeted at the
-# lane's worktree, with Step 1 (branch) dropped -- the orchestrator already
-# created and checked out <branch> via `pmctl worktree create`.
-_pmctl_ship_parallel_brief_write() {
-  local repo_root="$1" ticket_id="$2" lane_work_dir="$3" branch="$4" out_path="$5"
-  # Backticks below are literal Markdown code spans, not command substitution.
-  # shellcheck disable=SC2016
-  {
-    printf 'schema_version: 1\n'
-    printf 'working_dir: %s\n' "$lane_work_dir"
-    printf 'goal: Ship %s end-to-end inside this pre-created worktree lane -- implement, gate to GO, open a PR. Do not merge.\n' "$ticket_id"
-    printf 'context:\n'
-    printf -- '  - This lane was created by `pmctl ship --parallel` as one of N parallel lanes. The branch `%s` is already checked out here (i.e. `pmctl ship prepare` already ran); do not create or switch branches.\n' "$branch"
-    printf -- '  - The ship contract this brief reuses is defined in `commands/ship.md` (CC-439) -- read it once for the exact stop conditions and gate-loop discipline; do not re-derive them from scratch.\n'
-    printf 'files:\n'
-    printf -- '  - read: BACKLOG.md (section `## %s`) for Problem/Requirement/Dependencies\n' "$ticket_id"
-    printf -- '  - read: commands/ship.md for the exact implement/gate/PR steps to reproduce\n'
-    printf -- '  - edit: files named by the ticket'\''s own Requirement section\n'
-    printf 'constraints:\n'
-    printf -- '  - Re-run the ticket-id consistency check yourself (Dependencies terminal-state, DECISIONS.md conflict scan) before implementing -- the orchestrator only did the cheap active-heading check, not this.\n'
-    printf -- '  - Do not run `git checkout -b` or otherwise switch branches; `%s` is already checked out.\n' "$branch"
-    printf -- '  - Do not run `pmctl worktree remove` or otherwise touch worktree lifecycle -- that is manual, user-triggered, and out of this lane'\''s scope.\n'
-    printf -- '  - Before running `pmctl ship finish`, `export PM_DISPATCH_STATE_ROOT=%s/.pm-dispatch-state` in this shell. `pmctl gate run`'\''s nested reviewer dispatch writes run/trace records to the out-of-repo state store; the default location resolves under `$HOME`, which is OUTSIDE this sandbox'\''s writable root (workspace-write only permits writes under this working_dir) and the write is rejected. Redirecting the state root to a path INSIDE this working_dir keeps every nested pmctl write inside the sandbox boundary. This is scoped to this one lane'\''s own dispatch tree; it does not touch the orchestrator'\''s or any other lane'\''s state.\n' "$lane_work_dir"
-    printf -- '  - Gate + PR: run `pmctl ship finish %s --cd "%s"` -- it runs one gate round and, on GO, pushes and opens the PR (never merges). On NO-GO it prints the result path and exits 1: fix every finding -- high/medium/low, hard-gate and advisory -- and re-run `pmctl ship finish %s --cd "%s"`; repeat.\n' "$ticket_id" "$lane_work_dir" "$ticket_id" "$lane_work_dir"
-    printf -- '  - Stop and report instead of continuing only if the ticket'\''s own premise turns out wrong, or a fix would require contradicting a DECISIONS.md constraint, or a gate round produces no new progress after Rule A'\''s 3-strike audit already ran -- same stopping rule as `/ship`, not a new one.\n'
-    # Shell-quote lane_work_dir before embedding it in the generated cmd:
-    # string -- a state-store path containing a space would otherwise split
-    # into multiple `git -C` arguments and produce an invalid command.
-    local quoted_lane_work_dir
-    printf -v quoted_lane_work_dir '%q' "$lane_work_dir"
-    printf 'self_verify:\n'
-    printf -- '  - cmd: "git -C %s rev-parse --abbrev-ref HEAD | grep -qx %s"\n' "$quoted_lane_work_dir" "$branch"
-    printf -- '  - git-status no-collateral-damage\n'
-    printf 'acceptance:\n'
-    printf -- '  - Gate final verdict is GO, or the run stopped at one of the explicit stopping conditions above with a stated reason\n'
-    printf -- '  - PR opened when GO (report the URL); no merge performed\n'
-    printf -- '  - self_verify all pass\n'
-  } > "$out_path"
-}
-
 # pmctl_ship_parallel_run <repo_root> <work_dir> <ticket-id...> [--from <base>] [--isolation <level>] [--model <alias>]
 pmctl_ship_parallel_run() {
   local repo_root="${1:-}" work_dir="${2:-}"
@@ -224,12 +111,23 @@ pmctl_ship_parallel_run() {
   # e2e run (CC-004/CC-214 mock tickets) during CC-441 development.
   local from="" isolation="workspace-network" model="" auto_pack_flag="" adapter="claude" tickets=()
   local args=("$@") i=0
+  # Same option-shaped/missing-operand rejection as pmctl_ship_run (CC-443
+  # gate finding) -- without it `--adapter --no-auto-pack` silently takes
+  # `--no-auto-pack` as the adapter NAME before any ticket is even validated.
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
-      --from) from="${args[$((i+1))]:-}"; i=$((i+2)) ;;
-      --isolation) isolation="${args[$((i+1))]:-workspace-network}"; i=$((i+2)) ;;
-      --model) model="${args[$((i+1))]:-}"; i=$((i+2)) ;;
-      --adapter) adapter="${args[$((i+1))]:-claude}"; i=$((i+2)) ;;
+      --from)
+        [[ $((i+1)) -lt ${#args[@]} && "${args[$((i+1))]}" != -* ]] || { printf 'pmctl ship-parallel run: --from requires a value\n' >&2; return 2; }
+        from="${args[$((i+1))]}"; i=$((i+2)) ;;
+      --isolation)
+        [[ $((i+1)) -lt ${#args[@]} && "${args[$((i+1))]}" != -* ]] || { printf 'pmctl ship-parallel run: --isolation requires a value\n' >&2; return 2; }
+        isolation="${args[$((i+1))]}"; i=$((i+2)) ;;
+      --model)
+        [[ $((i+1)) -lt ${#args[@]} && "${args[$((i+1))]}" != -* ]] || { printf 'pmctl ship-parallel run: --model requires a value\n' >&2; return 2; }
+        model="${args[$((i+1))]}"; i=$((i+2)) ;;
+      --adapter)
+        [[ $((i+1)) -lt ${#args[@]} && "${args[$((i+1))]}" != -* ]] || { printf 'pmctl ship-parallel run: --adapter requires a value\n' >&2; return 2; }
+        adapter="${args[$((i+1))]}"; i=$((i+2)) ;;
       --cd) work_dir="${args[$((i+1))]:-$work_dir}"; i=$((i+2)) ;;
       --no-auto-pack) auto_pack_flag="--no-auto-pack"; i=$((i+1)) ;;
       --auto-pack) auto_pack_flag="--auto-pack"; i=$((i+1)) ;;
@@ -264,14 +162,20 @@ pmctl_ship_parallel_run() {
     printf 'pmctl ship-parallel run: pmctl worktree unavailable\n' >&2
     return 2
   fi
+  # See the same guard in pmctl_ship_parallel_status: lane tracking is
+  # defined in pmctl-ship.sh, not this file.
+  if ! declare -F _pmctl_ship_lanes_reg_dir >/dev/null; then
+    printf 'pmctl ship-parallel run: pmctl-ship.sh (lane tracking) not loaded\n' >&2
+    return 2
+  fi
 
   local reg_dir
-  reg_dir="$(_pmctl_ship_parallel_reg_dir "$repo_root" "$work_dir")" || {
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || {
     printf 'pmctl ship-parallel run: cannot resolve worktree registry dir from %s\n' "$work_dir" >&2
     return 1
   }
   local tracking_file
-  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
+  tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
 
   # Refuse to re-dispatch a ticket whose PRIOR lane is still in flight
   # (dispatched/running, not yet a terminal go/no-go/failed). Without this,
@@ -299,7 +203,7 @@ pmctl_ship_parallel_run() {
           dispatched|running)
             # Re-check live state (not just the last-cached status) before refusing.
             local live_status
-            live_status="$(_pmctl_ship_parallel_lane_status "$tracked_path" "$tracked_run_id")"
+            live_status="$(_pmctl_ship_lane_status "$tracked_path" "$tracked_run_id")"
             if [[ "$live_status" == dispatched || "$live_status" == running ]]; then
               # Backtick below is a literal Markdown code span, not command substitution.
               # shellcheck disable=SC2016
@@ -330,55 +234,25 @@ pmctl_ship_parallel_run() {
   _PMCTL_SHIP_PARALLEL_GC_SAVED="$gc_saved"
   trap _pmctl_ship_parallel_gc_auto_restore_trap EXIT INT TERM
 
+  # Requirement 4 (CC-442/CC-443): each lane is now a single call into the
+  # unified start entry point (pmctl_ship_run, pmctl-ship.sh) -- worktree
+  # create, brief write, dispatch, and tracking-append all live there,
+  # exactly once, shared with the standalone `pmctl ship <id> --adapter`
+  # path instead of duplicated here. This loop stays responsible only for
+  # per-lane argv assembly and the batch fail-count summary; the in-flight
+  # re-check just above is a batch-wide pre-flight (belt), pmctl_ship_run's
+  # own single-ticket in-flight guard is the per-call recheck (suspenders).
   local fail_count=0
   for t in "${tickets[@]}"; do
-    local branch="feat/$t" lane_path create_out
-    # `pmctl_worktree_create` prints the resolved worktree path as its LAST
-    # stdout line (`git worktree add`'s own progress chatter -- "Preparing
-    # worktree...", "HEAD is now at..." -- precedes it, uncaptured/
-    # unsuppressed by that function). Take only the final line as the path.
-    if ! create_out="$(pmctl_worktree_create "$repo_root" "$work_dir" "$branch" ${from:+--from "$from"} --name "$t")"; then
-      printf '[%s] worktree create failed -- skipping this lane\n' "$t" >&2
+    if ! pmctl_ship_run "$repo_root" "$work_dir" "$t" \
+           --worktree --adapter "$adapter" \
+           ${from:+--from "$from"} --isolation "$isolation" \
+           ${model:+--model "$model"} ${auto_pack_flag:+"$auto_pack_flag"} >/dev/null; then
+      printf '[%s] dispatch failed -- see above for the specific reason\n' "$t" >&2
       fail_count=$((fail_count+1))
       continue
     fi
-    lane_path="$(printf '%s\n' "$create_out" | tail -1)"
-
-    local brief_path
-    brief_path="$(mktemp -p /tmp "brief-ship-parallel-$t-XXXXXX.md")" || {
-      printf '[%s] mktemp failed for brief -- skipping this lane\n' "$t" >&2
-      fail_count=$((fail_count+1))
-      continue
-    }
-    chmod 0600 "$brief_path" 2>/dev/null || true
-    _pmctl_ship_parallel_brief_write "$repo_root" "$t" "$lane_path" "$branch" "$brief_path"
-
-    local dispatch_args=(--adapter "$adapter" --cd "$lane_path" --isolation "$isolation" --lifecycle detached --brief-file "$brief_path")
-    [[ -n "$model" ]] && dispatch_args+=(--model "$model")
-    [[ -n "$auto_pack_flag" ]] && dispatch_args+=("$auto_pack_flag")
-
-    local run_id
-    if ! run_id="$(pmctl_dispatch_run "$repo_root" "${dispatch_args[@]}")"; then
-      printf '[%s] dispatch run failed -- lane worktree stays at %s for manual inspection\n' "$t" "$lane_path" >&2
-      fail_count=$((fail_count+1))
-      continue
-    fi
-    run_id="$(printf '%s\n' "$run_id" | tail -1 | tr -d '[:space:]')"
-
-    local created_ts json_line
-    created_ts="$(date -Is 2>/dev/null || date)"
-    json_line="$(printf '{"ticket":%s,"branch":%s,"path":%s,"run_id":%s,"status":%s,"created_ts":%s}' \
-      "$(jq -Rn --arg v "$t" '$v')" \
-      "$(jq -Rn --arg v "$branch" '$v')" \
-      "$(jq -Rn --arg v "$lane_path" '$v')" \
-      "$(jq -Rn --arg v "$run_id" '$v')" \
-      "$(jq -Rn --arg v "dispatched" '$v')" \
-      "$(jq -Rn --arg v "$created_ts" '$v')")"
-    if ! pmctl_ship_parallel_tracking_append "$reg_dir" "$json_line"; then
-      printf '[%s] tracking write failed -- lane dispatched (run_id=%s) but not tracked; check %s\n' "$t" "$run_id" "$tracking_file" >&2
-    fi
-
-    printf '[%s] dispatched: run_id=%s lane=%s\n' "$t" "$run_id" "$lane_path"
+    printf '[%s] dispatched: run_id=%s lane=%s\n' "$t" "$PMCTL_SHIP_RUN_ID" "$PMCTL_SHIP_RUN_LANE_PATH"
   done
 
   if [[ "$fail_count" -gt 0 ]]; then
@@ -388,67 +262,9 @@ pmctl_ship_parallel_run() {
   return 0
 }
 
-# _pmctl_ship_parallel_lane_status <lane_path> <run_id>
-# Prints one of: dispatched | running | go | no-go | partial | failed
-#
-# GO detection reads ONLY `pmctl ship finish`'s own structured marker file
-# (.pm-dispatch-ship-finish.json, written INSIDE lane_path only on a
-# confirmed GO+PR) -- never the dispatched executor's free-text summary.
-# Grepping DISPATCH_RECORD_SUMMARY for "Final: GO" was the original
-# heuristic; a real CC-441 e2e run (claude executor) reported the verdict as
-# prose ("Gate 通過（**GO**）") instead of that literal string, producing a
-# false "no-go" for a lane that had actually reached GO and opened a PR --
-# fixed by adding the marker as a first check, but an EARLIER version of
-# that fix still fell back to the same free-text grep when the marker was
-# ABSENT, which is unsafe in the other direction: an executor whose own
-# narration happens to contain the string "Final: GO" (echoing the gate
-# result verbatim, translating it, or the model simply mentioning it) could
-# be reported as `go` even though `pmctl ship finish` never actually ran to
-# completion and never wrote the marker -- exactly the "reported ready
-# without proof" failure mode critic/architecture-reviewer/risk-reviewer
-# converged on in gate round 6. No marker file == not go, full stop; the
-# free-text branch below only distinguishes no-go/failed/running, never go.
-_pmctl_ship_parallel_lane_status() {
-  local lane_path="$1" run_id="$2"
-  if [[ -f "$lane_path/.pm-dispatch-ship-finish.json" ]]; then
-    # `pmctl ship finish` also writes this marker with verdict=PUSHED_NO_PR
-    # when the gate passed and the branch pushed but `gh` was unavailable to
-    # open the PR -- that is NOT a complete "go" (ship contract = gate GO
-    # *and* PR opened), so only the literal GO verdict maps to status=go.
-    local marker_verdict
-    marker_verdict="$(jq -r '.verdict // ""' "$lane_path/.pm-dispatch-ship-finish.json" 2>/dev/null)"
-    case "$marker_verdict" in
-      GO) printf 'go\n' ;;
-      # Distinct from plain no-go: the branch IS live on origin (a real,
-      # recoverable remote side effect) even though no PR exists yet --
-      # operationally different from "gate never passed, nothing pushed"
-      # and needs its own recovery action (open the PR manually / retry),
-      # not the ship contract's default "fix findings and re-run".
-      PUSHED_NO_PR|PUSHED_PR_FAILED) printf 'partial\n' ;;
-      *) printf 'no-go\n' ;;
-    esac
-    return 0
-  fi
-  if ! declare -F dispatch_record_read_state >/dev/null; then
-    printf 'dispatched\n'
-    return 0
-  fi
-  if ! dispatch_record_read_state "$lane_path" "$run_id" >/dev/null 2>&1; then
-    printf 'running\n'
-    return 0
-  fi
-  case "$DISPATCH_RECORD_STATE" in
-    # `ok` here means the DISPATCH (the executor process) exited cleanly --
-    # it says nothing about whether the SHIP contract (gate GO + PR opened)
-    # was satisfied. Without the marker checked above, that is never
-    # provable from this record alone, so it is always no-go, regardless of
-    # what the executor's own free-text summary claims.
-    ok) printf 'no-go\n' ;;
-    partial) printf 'no-go\n' ;;
-    failed) printf 'failed\n' ;;
-    *) printf 'running\n' ;;
-  esac
-}
+# Per-lane status resolution is `_pmctl_ship_lane_status` (pmctl-ship.sh) --
+# shared with pmctl_ship_run's own in-flight guard, see the note near the
+# top of this file.
 
 # pmctl_ship_parallel_status <repo_root> <work_dir> [--json]
 # Refreshes tracked lane statuses in place (read-current-terminal-state, not
@@ -469,15 +285,39 @@ pmctl_ship_parallel_status() {
     esac
   done
 
+  # Lane tracking now lives in pmctl-ship.sh (_pmctl_ship_lanes_*, moved
+  # there in CC-442/CC-443 so both this batch orchestrator and the
+  # single-ticket `pmctl_ship_run` share one tracking file) -- fail closed
+  # with a clear message rather than an unbound-function crash if a direct
+  # function-level consumer sources this file without pmctl-ship.sh.
+  if ! declare -F _pmctl_ship_lanes_reg_dir >/dev/null; then
+    printf 'pmctl ship status: pmctl-ship.sh (lane tracking) not loaded\n' >&2
+    return 2
+  fi
+
   local reg_dir tracking_file
-  reg_dir="$(_pmctl_ship_parallel_reg_dir "$repo_root" "$work_dir")" || true
-  tracking_file="$(_pmctl_ship_parallel_tracking_file "$reg_dir")"
-  [[ -f "$tracking_file" ]] || { [[ "$json_out" -eq 1 ]] && printf '[]\n' || printf 'No tracked ship-parallel lanes.\n'; return 0; }
+  reg_dir="$(_pmctl_ship_lanes_reg_dir "$repo_root" "$work_dir")" || true
+  tracking_file="$(_pmctl_ship_lanes_tracking_file "$reg_dir")"
+  if [[ ! -f "$tracking_file" ]]; then
+    # CC-442/CC-443 renamed the tracking file from ship-parallel.jsonl to
+    # ship-lanes.jsonl (it now covers manual --worktree lanes too, not just
+    # --parallel). No migration/dual-read path is added on purpose -- this
+    # is pre-1.0 internal tooling and CLAUDE.md's own guidance is to avoid
+    # permanent backwards-compat shims -- but silently reporting "no tracked
+    # lanes" when a pre-upgrade ship-parallel.jsonl still exists would hide
+    # real (if stale) lane state from the user. Detect and say so plainly
+    # instead; the user decides whether the old lanes still matter.
+    if [[ -f "$reg_dir/ship-parallel.jsonl" ]]; then
+      printf 'pmctl ship status: found a legacy ship-parallel.jsonl at %s (this pm-dispatch version tracks lanes in ship-lanes.jsonl instead; the old file is not read) -- inspect it manually if you have lanes from before this upgrade.\n' "$reg_dir/ship-parallel.jsonl" >&2
+    fi
+    [[ "$json_out" -eq 1 ]] && printf '[]\n' || printf 'No tracked ship lanes.\n'
+    return 0
+  fi
 
   pmctl_worktree_ensure_writer "$repo_root" || return $?
 
   local updated
-  updated="$(pmctl_ship_parallel_tracking_refresh "$reg_dir" "$json_out")"
+  updated="$(pmctl_ship_lanes_tracking_refresh "$reg_dir" "$json_out")"
 
   if [[ "$json_out" -eq 1 ]]; then
     printf '%s' "$updated" | jq -s -c '[.[] | select(. != null)]'

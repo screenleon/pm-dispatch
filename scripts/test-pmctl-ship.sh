@@ -12,6 +12,19 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "$@"
 
+# Isolate XDG_RUNTIME_DIR for this suite's detached dispatch launches --
+# same pattern as test-dispatch-lifecycle.sh/test-gate-lifecycle.sh/
+# test-pmctl-gate.sh. Without this, detached-launch's key_file (used to
+# secure the sentinel used by `pmctl dispatch wait`) falls back to whatever
+# the ambient $XDG_RUNTIME_DIR/pm-dispatch resolves to; on a shared or
+# differently-permissioned runtime dir that directory can fail its
+# ownership/mode check ("failed to secure private key directory"),
+# making this suite's result depend on host environment instead of being
+# hermetic.
+_TEST_XDG_RUNTIME_DIR="$tmp_root/xdg-runtime"
+mkdir -p "$_TEST_XDG_RUNTIME_DIR" && chmod 700 "$_TEST_XDG_RUNTIME_DIR"
+export XDG_RUNTIME_DIR="$_TEST_XDG_RUNTIME_DIR"
+
 # Fake codex AND claude on PATH so `pmctl ship --parallel` (detached
 # dispatch; default adapter is `claude`, overridable with --adapter) never
 # shells out to a REAL executor CLI during this suite -- CC-441's lanes
@@ -496,7 +509,7 @@ case_run_dispatches_and_tracks() {
 
   local reg_dir tracking
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
 
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "run exited $status; stderr: $(cat "$err")"
@@ -532,7 +545,7 @@ case_run_brief_preserves_ship_contract() {
     > "$tmp_root/out-brief" 2> "$tmp_root/err-brief" || status=$?
   local reg_dir tracking run_id brief
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking" 2>/dev/null || true)"
   brief="/tmp/brief-$run_id.md"
   # Backticks below are literal Markdown code spans in the assertion text, not command substitution.
@@ -598,7 +611,7 @@ case_status_never_reports_go_from_free_text_without_marker() {
     > "$tmp_root/out-status-go" 2> "$tmp_root/err-status-go" || status=$?
   local reg_dir tracking run_id lane_path
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   # No .pm-dispatch-ship-finish.json marker is written here -- only the
@@ -627,7 +640,7 @@ case_status_reports_go_from_finish_marker_even_without_final_go_text() {
     > "$tmp_root/out-status-marker-go" 2> "$tmp_root/err-status-marker-go" || status=$?
   local reg_dir tracking run_id lane_path
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   # Simulates a real observed failure mode: the executor's own summary
@@ -656,7 +669,7 @@ case_status_reports_no_go_from_final_line() {
     > "$tmp_root/out-status-nogo" 2> "$tmp_root/err-status-nogo" || status=$?
   local reg_dir tracking run_id lane_path
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   seed_dispatch_record "$lane_path" "$run_id" ok "Final: NO-GO"
@@ -703,7 +716,7 @@ case_list_filters_to_go_only() {
     > "$tmp_root/out-list-go" 2> "$tmp_root/err-list-go" || status=$?
   local reg_dir tracking run_id lane_path
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   run_id="$(jq -r '.run_id' "$tracking")"
   lane_path="$(jq -r '.path' "$tracking")"
   seed_dispatch_record "$lane_path" "$run_id" ok "Final: GO"
@@ -748,7 +761,7 @@ case_status_no_tracked_lanes() {
   out="$tmp_root/out-status-none"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" > "$out" 2>&1 || status=$?
   assert_exit "$name" "$status" 0 && \
-    assert_file_contains "$name" "$out" "No tracked ship-parallel lanes." && \
+    assert_file_contains "$name" "$out" "No tracked ship lanes." && \
     pass "$name"
 }
 
@@ -1076,7 +1089,7 @@ case_status_reports_partial_for_pushed_pr_failed() {
     > "$tmp_root/out-status-partial" 2> "$tmp_root/err-status-partial" || status=$?
   local reg_dir tracking lane_path
   reg_dir="$(reg_dir_for "$store" "$work")"
-  tracking="$reg_dir/ship-parallel.jsonl"
+  tracking="$reg_dir/ship-lanes.jsonl"
   lane_path="$(jq -r '.path' "$tracking")"
   printf '{"ticket":"CC-9001","verdict":"PUSHED_PR_FAILED","branch":"feat/CC-9001","pr_url":null}' \
     > "$lane_path/.pm-dispatch-ship-finish.json"
@@ -1118,6 +1131,397 @@ case_finish_reviewers_flag_reaches_gate_call() {
     pass "$name"
   else
     fail "$name" "expected --reviewers critic,qa-tester in captured gate argv, got: $argv"
+  fi
+}
+
+# --- CC-442/CC-443: unified `pmctl ship <id> [--worktree] [--adapter]` entry ---
+
+case_ship_bare_start_behaves_like_prepare() {
+  local name="ship <id>: bare call behaves like prepare -- branch only, no worktree, no tracking entry"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-bare-start"
+  work="$tmp_root/work-bare-start"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-bare-start"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --cd "$work" > "$out" 2>&1 || status=$?
+  local branch reg_dir
+  branch="$(git -C "$work" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 0 && "$branch" == "feat/CC-9001" && ! -d "$reg_dir/checkouts/CC-9001" && ! -f "$reg_dir/ship-lanes.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected branch feat/CC-9001, no worktree, no tracking; got status=$status branch=$branch out=$(cat "$out")"
+  fi
+}
+
+case_ship_worktree_flag_creates_isolated_lane_no_dispatch() {
+  local name="ship <id> --worktree: creates isolated worktree, no dispatch, tracked with run_id/adapter empty, status=prepared"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-worktree-only"
+  work="$tmp_root/work-worktree-only"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-worktree-only"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --worktree --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir tracking
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "run exited $status: $(cat "$out")"
+    return
+  fi
+  if [[ ! -d "$reg_dir/checkouts/CC-9001" ]]; then
+    fail "$name" "lane worktree missing at $reg_dir/checkouts/CC-9001"
+    return
+  fi
+  if [[ ! -f "$tracking" ]]; then
+    fail "$name" "tracking file missing at $tracking"
+    return
+  fi
+  local ticket run_id adapter lane_status
+  ticket="$(jq -r '.ticket' "$tracking")"
+  run_id="$(jq -r '.run_id' "$tracking")"
+  adapter="$(jq -r '.adapter' "$tracking")"
+  lane_status="$(jq -r '.status' "$tracking")"
+  if [[ "$ticket" == "CC-9001" && -z "$run_id" && -z "$adapter" && "$lane_status" == "prepared" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected tracking entry: $(cat "$tracking")"
+  fi
+}
+
+case_ship_adapter_flag_implies_worktree_and_dispatches() {
+  local name="ship <id> --adapter: implies --worktree, dispatches, tracked with run_id+adapter, status=dispatched"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-adapter-only"
+  work="$tmp_root/work-adapter-only"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-adapter-only"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir tracking
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "run exited $status: $(cat "$out")"
+    return
+  fi
+  if [[ ! -d "$reg_dir/checkouts/CC-9001" ]]; then
+    fail "$name" "lane worktree missing at $reg_dir/checkouts/CC-9001"
+    return
+  fi
+  local run_id adapter lane_status
+  run_id="$(jq -r '.run_id' "$tracking")"
+  adapter="$(jq -r '.adapter' "$tracking")"
+  lane_status="$(jq -r '.status' "$tracking")"
+  if [[ -n "$run_id" && "$run_id" != null && "$adapter" == "claude" && "$lane_status" == "dispatched" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected tracking entry: $(cat "$tracking")"
+  fi
+}
+
+case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone() {
+  local name="ship <id> --worktree --adapter: legal, behaves identically to --adapter alone"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-both-flags"
+  work="$tmp_root/work-both-flags"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-both-flags"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --worktree --adapter claude --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir tracking run_id adapter lane_status
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  run_id="$(jq -r '.run_id' "$tracking" 2>/dev/null || true)"
+  adapter="$(jq -r '.adapter' "$tracking" 2>/dev/null || true)"
+  lane_status="$(jq -r '.status' "$tracking" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && -n "$run_id" && "$run_id" != null && "$adapter" == "claude" && "$lane_status" == "dispatched" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected dispatched tracking entry; status=$status tracking=$(cat "$tracking" 2>/dev/null)"
+  fi
+}
+
+case_ship_status_reports_prepared_for_manual_worktree_lane() {
+  local name="ship status: a manual --worktree lane (no dispatch, no finish marker) surfaces as status=prepared, not running"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-status-prepared"
+  work="$tmp_root/work-status-prepared"
+  make_work_repo "$work" "CC-9001"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --worktree --cd "$work" \
+    > "$tmp_root/out-status-prepared" 2> "$tmp_root/err-status-prepared" || status=$?
+  local json
+  json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == "prepared" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected status=prepared, got $json"
+  fi
+}
+
+case_ship_run_refuses_redispatch_while_in_flight_standalone() {
+  local name="ship <id> --adapter (standalone, no --parallel): refuses to re-dispatch a ticket whose prior lane is still running"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-standalone-inflight"
+  work="$tmp_root/work-standalone-inflight"
+  make_work_repo "$work" "CC-9001"
+
+  # Same FIFO-blocking convention as case_run_refuses_redispatch_while_in_flight
+  # -- no sleep anywhere, the fake claude blocks until explicitly released.
+  local release_fifo="$tmp_root/standalone-inflight-release.fifo"
+  rm -f "$release_fifo"
+  mkfifo "$release_fifo"
+  local slow_bin="$tmp_root/slow-claude-bin-standalone"
+  mkdir -p "$slow_bin"
+  cat > "$slow_bin/claude" <<FAKEOF
+#!/usr/bin/env bash
+cat >/dev/null
+read -r _ < "$release_fifo"
+printf '%s\n' '{"type":"result","subtype":"success","result":"work done","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"session_id":"fake","num_turns":1}'
+exit 0
+FAKEOF
+  chmod +x "$slow_bin/claude"
+
+  PATH="$slow_bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter claude --no-auto-pack --cd "$work" \
+    > "$tmp_root/out-standalone-inflight-1" 2> "$tmp_root/err-standalone-inflight-1"
+
+  local err2 status2=0
+  err2="$tmp_root/err-standalone-inflight-2"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter claude --no-auto-pack --cd "$work" \
+    > "$tmp_root/out-standalone-inflight-2" 2> "$err2" || status2=$?
+
+  # shellcheck disable=SC2016
+  timeout 30 bash -c 'printf release > "$1"' _ "$release_fifo" 2>/dev/null || true
+
+  if [[ "$status2" -eq 1 ]] && grep -q "already has an in-flight lane" "$err2"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1 + in-flight refusal message; got status=$status2 stderr=$(cat "$err2")"
+  fi
+}
+
+case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane() {
+  local name="ship <id> --adapter: a dispatch-run failure AFTER worktree creation still writes a ship-lanes.jsonl entry (status=dispatch-failed), not an untracked orphan"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-dispatchfail"
+  work="$tmp_root/work-dispatchfail"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-dispatchfail"
+  # An adapter name with no adapters/<name>/dispatch.sh fails fast inside
+  # `pmctl dispatch run` itself (unknown adapter), well AFTER
+  # `pmctl_worktree_create` has already run inside `pmctl_ship_run` --
+  # exactly the failure-after-worktree-creation path the gate review flagged
+  # as producing an untracked, invisible-to-`ship status` orphan lane.
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter totally-bogus-adapter --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir tracking
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  if [[ "$status" -eq 0 ]]; then
+    fail "$name" "expected nonzero exit for a bogus adapter; got 0"
+    return
+  fi
+  if [[ ! -d "$reg_dir/checkouts/CC-9001" ]]; then
+    fail "$name" "expected the worktree to still exist (created before dispatch was attempted); missing at $reg_dir/checkouts/CC-9001"
+    return
+  fi
+  if [[ ! -f "$tracking" ]]; then
+    fail "$name" "tracking file missing entirely -- the orphan-lane bug the gate review flagged; expected at $tracking"
+    return
+  fi
+  local run_id lane_status
+  run_id="$(jq -r '.run_id' "$tracking")"
+  lane_status="$(jq -r '.status' "$tracking")"
+  if [[ -z "$run_id" && "$lane_status" == "dispatch-failed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected run_id empty + status=dispatch-failed; got tracking=$(cat "$tracking")"
+  fi
+}
+
+case_ship_status_preserves_dispatch_failed_across_refresh() {
+  local name="ship status: a dispatch-failed lane stays dispatch-failed on refresh, not downgraded back to prepared"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-dispatchfail-refresh"
+  work="$tmp_root/work-dispatchfail-refresh"
+  make_work_repo "$work" "CC-9001"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter totally-bogus-adapter --cd "$work" \
+    > "$tmp_root/out-dispatchfail-refresh" 2>&1 || status=$?
+  local json
+  json="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" --json)"
+  if [[ "$(jq -r '.[0].status' <<<"$json")" == "dispatch-failed" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected status=dispatch-failed after refresh, got $json"
+  fi
+}
+
+case_ship_tracking_append_failure_is_hard_failure() {
+  local name="ship <id> --worktree: tracking-append failure is a hard failure (nonzero exit), not a swallowed warning"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-trackfail"
+  work="$tmp_root/work-trackfail"
+  make_work_repo "$work" "CC-9001"
+  # Stub `pmctl_ship_lanes_tracking_append` to always fail -- simulates a
+  # disk-full / lock-timeout / permission failure in the state store
+  # independent of worktree creation (which must still have succeeded by
+  # the time this stub is reached).
+  local out err
+  out="$tmp_root/out-trackfail"; err="$tmp_root/err-trackfail"
+  PM_DISPATCH_STATE_ROOT="$store" bash -c '
+    repo_root="$1"; work_dir="$2"; ticket_id="$3"
+    for lib in portable state-writer state-paths pmctl-worktree pmctl-ship pmctl-ship-parallel; do
+      # shellcheck disable=SC1090
+      . "$repo_root/scripts/lib/$lib.sh"
+    done
+    pmctl_ship_lanes_tracking_append() { return 1; }
+    pmctl_ship_run "$repo_root" "$work_dir" "$ticket_id" --worktree
+  ' _ "$REPO_ROOT" "$work" "CC-9001" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] && grep -q "CRITICAL" "$err" && grep -q "tracking-append failed" "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected nonzero exit + CRITICAL tracking-append message; got status=$status stderr=$(cat "$err")"
+  fi
+}
+
+case_ship_adapter_missing_value_fails_before_any_side_effect() {
+  local name="ship <id> --adapter: an option-shaped (or missing) operand is rejected before any worktree/tracking side effect"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-adapter-badvalue"
+  work="$tmp_root/work-adapter-badvalue"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-adapter-badvalue"
+  # `--no-auto-pack` immediately follows `--adapter` -- a naive parser takes
+  # it as --adapter's VALUE (not as its own flag), silently creating a
+  # worktree with adapter="--no-auto-pack" before dispatch ever validates
+  # the (bogus) adapter name. This must fail fast, before touching anything.
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --adapter --no-auto-pack --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 2 ]] && grep -q -- "--adapter requires a value" "$out" \
+     && [[ ! -d "$reg_dir/checkouts/CC-9001" ]] && [[ ! -f "$reg_dir/ship-lanes.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'requires a value' + no worktree/tracking; got status=$status out=$(cat "$out") reg_dir=$reg_dir"
+  fi
+}
+
+case_ship_adapter_trailing_flag_missing_value_fails() {
+  local name="ship <id> --adapter: a trailing --adapter with no operand at all is rejected"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-adapter-trailing"
+  work="$tmp_root/work-adapter-trailing"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-adapter-trailing"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 --cd "$work" --adapter > "$out" 2>&1 || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 2 ]] && grep -q -- "--adapter requires a value" "$out" \
+     && [[ ! -d "$reg_dir/checkouts/CC-9001" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + 'requires a value' + no worktree; got status=$status out=$(cat "$out") reg_dir=$reg_dir"
+  fi
+}
+
+case_ship_status_warns_on_legacy_tracking_file() {
+  local name="ship status: a leftover legacy ship-parallel.jsonl (pre-rename) triggers an explicit notice instead of a silent 'no tracked lanes'"
+  should_run "$name" || return 0
+  local store work
+  store="$tmp_root/state-legacy-tracking"
+  work="$tmp_root/work-legacy-tracking"
+  make_work_repo "$work" "CC-9001"
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  mkdir -p "$reg_dir"
+  printf '{"ticket":"CC-9001","branch":"feat/CC-9001","path":"/tmp/nonexistent","run_id":"old-run","status":"dispatched","created_ts":"2026-01-01T00:00:00Z"}\n' \
+    > "$reg_dir/ship-parallel.jsonl"
+  local err
+  err="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status --cd "$work" 2>&1 >/dev/null)"
+  if grep -q "legacy ship-parallel.jsonl" <<<"$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected a legacy-file notice on stderr, got: $err"
+  fi
+}
+
+case_ship_rejects_duplicate_positional_ticket() {
+  local name="ship <id>: a second positional ticket-id is rejected, not silently overwritten"
+  should_run "$name" || return 0
+  local store work out status=0
+  store="$tmp_root/state-dup-positional"
+  work="$tmp_root/work-dup-positional"
+  make_work_repo "$work" "CC-9001"
+  printf '## CC-9002 -- mock ticket %s\n\nProblem: test fixture.\n\nRequirement: none.\n\nDependencies: none.\n' "🔵 active" >> "$work/BACKLOG.md"
+  out="$tmp_root/out-dup-positional"
+  # A mistyped second ticket id must never silently pick one over the other
+  # -- it must fail before touching either ticket's worktree.
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship CC-9001 CC-9002 --worktree --cd "$work" > "$out" 2>&1 || status=$?
+  local reg_dir
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  if [[ "$status" -eq 2 ]] && grep -q "unexpected extra positional argument" "$out" \
+     && [[ ! -d "$reg_dir/checkouts/CC-9001" ]] && [[ ! -d "$reg_dir/checkouts/CC-9002" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 + rejection message + no worktree for either ticket; got status=$status out=$(cat "$out")"
+  fi
+}
+
+case_ship_brief_quotes_metacharacter_lane_path() {
+  local name="ship brief writer: a lane path with shell metacharacters is safely quoted in EVERY generated command (export, finish --cd, self_verify), not just some"
+  should_run "$name" || return 0
+  local evil_path="$tmp_root/evil dir; touch pwned-marker"
+  local brief_path="$tmp_root/brief-metachar-test.md"
+  bash -c '
+    repo_root="$1"; ticket_id="$2"; lane_work_dir="$3"; branch="$4"; out_path="$5"
+    . "$repo_root/scripts/lib/pmctl-ship.sh"
+    _pmctl_ship_brief_write "$repo_root" "$ticket_id" "$lane_work_dir" "$branch" "$out_path"
+  ' _ "$REPO_ROOT" "CC-9001" "$evil_path" "feat/CC-9001" "$brief_path"
+  local quoted export_line finish_line self_verify_line
+  quoted="$(printf '%q' "$evil_path")"
+  export_line="$(grep 'export PM_DISPATCH_STATE_ROOT=' "$brief_path")"
+  finish_line="$(grep -m1 'Gate + PR: run' "$brief_path")"
+  self_verify_line="$(grep -m1 '^  - cmd: ' "$brief_path")"
+  # All three shell-command instructions referencing the lane path must use
+  # the SAME shell-escaped form -- a raw, unescaped occurrence of the
+  # semicolon in any of them would mean that command can be reinterpreted by
+  # the executor's shell as two commands instead of one argument. (The plain
+  # `working_dir:` YAML metadata field legitimately keeps the raw path --
+  # it is read as data, never executed as a shell command -- so this test
+  # only checks the three lines that generate shell commands.)
+  if [[ "$export_line" == *"$quoted"* && "$finish_line" == *"--cd $quoted"* && "$self_verify_line" == *"$quoted"* ]] \
+     && [[ "$export_line" != *"$evil_path"* ]] && [[ "$finish_line" != *"$evil_path"* ]] && [[ "$self_verify_line" != *"$evil_path"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected export, --cd, and self_verify lines to all use the shell-escaped form ($quoted); export_line=$export_line finish_line=$finish_line self_verify_line=$self_verify_line"
+  fi
+}
+
+case_run_tracks_adapter_field() {
+  local name="ship-parallel run: tracking entry includes adapter field matching the dispatched adapter"
+  should_run "$name" || return 0
+  local store work status=0
+  store="$tmp_root/state-run-adapterfield"
+  work="$tmp_root/work-run-adapterfield"
+  make_work_repo "$work" "CC-9001"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship --parallel --no-auto-pack --adapter claude CC-9001 --cd "$work" \
+    > "$tmp_root/out-adapterfield" 2> "$tmp_root/err-adapterfield" || status=$?
+  local reg_dir tracking adapter
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  tracking="$reg_dir/ship-lanes.jsonl"
+  adapter="$(jq -r '.adapter' "$tracking" 2>/dev/null || true)"
+  if [[ "$status" -eq 0 && "$adapter" == "claude" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected adapter=claude in tracking entry; status=$status tracking=$(cat "$tracking" 2>/dev/null)"
   fi
 }
 
@@ -1163,6 +1567,21 @@ case_status_no_record_yet_is_running
 case_list_filters_to_go_only
 case_list_empty_when_none_go
 case_status_no_tracked_lanes
+case_ship_bare_start_behaves_like_prepare
+case_ship_worktree_flag_creates_isolated_lane_no_dispatch
+case_ship_adapter_flag_implies_worktree_and_dispatches
+case_ship_worktree_and_adapter_together_dispatches_same_as_adapter_alone
+case_ship_status_reports_prepared_for_manual_worktree_lane
+case_ship_run_refuses_redispatch_while_in_flight_standalone
+case_ship_dispatch_failure_after_worktree_records_dispatch_failed_lane
+case_ship_status_preserves_dispatch_failed_across_refresh
+case_ship_tracking_append_failure_is_hard_failure
+case_ship_status_warns_on_legacy_tracking_file
+case_ship_rejects_duplicate_positional_ticket
+case_ship_brief_quotes_metacharacter_lane_path
+case_ship_adapter_missing_value_fails_before_any_side_effect
+case_ship_adapter_trailing_flag_missing_value_fails
+case_run_tracks_adapter_field
 
 # Detached dispatch supervisors from the fake-codex/claude runs above can
 # still be mid-write (dispatch record, trace files) a moment after their
