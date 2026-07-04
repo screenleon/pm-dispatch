@@ -18,8 +18,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-018 | 🟢 someday | Codex quota 自動追蹤 + rate-limit 路徑統一（吸收 CC-269）：寫到 `~/.local/share/pm-dispatch/state/rate-limits.json`；解析 API response headers；token-usage.sh 加 Codex pool 顯示 | ux/token | 2026-05-14 | — | P3 | — |
 | CC-023 | ⏸ deferred | `coupling-reviewer`：PR gate 加入語言感知耦合分析（dependency-cruiser/gocyclo/coca） | ops/gate | 2026-05-14 | — | — | — |
 | CC-026 | 🟢 someday | `/skill-distill`：偵測重複工作流，產出草稿 skill .md | ux/memory | 2026-05-15 | — | P3 | — |
-| CC-032 | 🟢 someday | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link | process/DX | 2026-05-15 | — | P3 | — |
-| CC-033 | 🟢 someday | Public flip checklist：Issues/Discussions 設定、CITATION.cff（選配）、後續觀察期 | process | 2026-05-15 | — | P3 | — |
+| CC-032 | 🔵 active | `[[feedback_*]]` cross-link 公開化：抽到 `docs/policies/` glossary 避免 dead link（v1.0 P0，v1.0-rc 候選；DECISIONS 2026-07-04） | process/DX | 2026-05-15 | — | P2 | — |
+| CC-033 | 🔵 active | public posture reconciliation（原 flip checklist；repo 已 public 故 rescope）：README 文案一致、Issues/Discussions 設定、CITATION.cff（選配）、**即刻** git history 損害盤點（v1.0 P0，盤點即刻＋其餘 v1.0-rc；依賴 CC-032；DECISIONS 2026-07-04） | process | 2026-05-15 | — | P2 | — |
 | CC-035 | 🟢 someday | install/uninstall-guards basename+scripts/ heuristic：未覆蓋另一工具也在 scripts/ 下同名 hook 的 collision edge case | ops | 2026-05-15 | pr:#53 | P3 | — |
 | CC-038 | ⏸ deferred | Windows/cross-platform 鎖機制：`flock` Linux-only，未來支援需替代方案（parked: CC-370） | ops/portability | 2026-05-15 | — | — | oss |
 | CC-044 | ⏸ deferred | `tool-trace.jsonl` 三階段升級（吸收 CC-027b/c）：Phase 1 rotation/retention；Phase 2 bounded error counter；Phase 3 async validation | ux/memory | 2026-05-15 | — | — | — |
@@ -61,7 +61,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-352 | ⏸ deferred | **[codex-executor sandbox friction Pattern 1+2: apply_patch retry noise + Go module cache blocked]** issue:#173 Pattern 3（git commit blocked）已由 CC-272 pr:#245 吸收修復。剩餘：(1) apply_patch 中途失敗 self-retry 噪音 — brief 改拆小 hunk 加 unique context；(2) go build 時 GOPATH copy 被 sandbox 擋 — 文件化 GOPATH=/tmp/gopath 慣例。兩者均為 doc/convention fix。 | ops/DX | 2026-06-10 | — | P3 | — |
 | CC-355 | 🟢 someday | knowledge index: HTML semantic chunking `<h1-6>`（trigger: .html file enters knowledge plane；plug into CC-354 per-format chunker seam） | memory | 2026-06-10 | — | P3 | design |
 | CC-357 | 🟢 someday | **[skill as contract: machine-readable schema for skills]** 現有 skills/ 都是純 markdown prose（SKILL.md），沒有機器可讀的 input schema、output contract、tool_constraints、completion_condition。這使得 skill 無法被驗證、無法被工具自動發現、也無法像 dispatch_handover_v1 那樣由 validator 強制執行契約。本票引入 skill schema（YAML frontmatter 或 JSON sidecar），使 skill 具備：明確的輸入型別、輸出格式、允許/禁止工具清單、完成條件——平行於 brief-validate.sh 對 brief 的驗證角色。 | arch/DX | 2026-06-10 | — | — | design |
-| CC-358 | 🟢 someday | runner telemetry：per-adapter 成功率/失敗模式/fallback 分析（events.jsonl 原料已有；`pmctl run-stats` 候選） | ops/memory | 2026-06-10 | — | — | design |
+| CC-358 | 🔵 active | runner telemetry：`pmctl run-stats` per-adapter 成功率/失敗模式/fallback 分析（v1.0 P1 證據層，v0.9.0 候選；DECISIONS 2026-07-04） | ops/memory | 2026-06-10 | — | P2 | design |
 | CC-359 | 🟢 someday | concept: backlog-driven batch dispatch with worktree isolation（PM manages `git worktree` lifecycle；executor-agnostic；human-in-the-loop merge；PR-only output） | arch/ops | 2026-06-11 | — | — | design |
 | CC-364 | ⏸ deferred | **[perf: `pmctl trace tail --all` per-event jq spawn]** `pmctl trace tail --kind <k> --all --json` is O(n) with a high per-event constant — ~20s for 338 events (~60ms/event), consistent with spawning a jq/subprocess per event rather than one streaming pass. Surfaced while diagnosing #270 context-telemetry test flakiness; the tests no longer depend on it (telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates state). Standalone reader-perf follow-up. **See**: pr:#270 | ops | 2026-06-12 | pr:#270 | P3 | hygiene |
 | CC-369 | ⏸ deferred | Windows state store 真實 ACL via icacls（parked: CC-370；border case relative to profile ACL protection） | ops/portability | 2026-06-13 | — | — | hygiene |
@@ -70,7 +70,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-381 | ✅ done | arch: install host-PM-aware（host runtime axis：codex/opencode host PM 設定面；umbrella: CC-333）。v0.8.0 Phase 3 spike 已收斂（`docs/spikes/CC-381.md`）：guard 落點不確定性已解——codex native PreToolUse hook 可行；後續拆為 CC-436/437/438 | arch/install | 2026-06-14 | pr:#359 | P2 | design |
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
-| CC-431 | 🟢 someday | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。 | ops/test | 2026-06-30 | — | P3 | — |
+| CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
@@ -80,6 +80,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
 | CC-442 | ✅ done | spike: 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口。三題已收斂（`docs/spikes/CC-442.md`）：`ship finish` 維持獨立動詞不收斂、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim | arch/gate | 2026-07-03 | — | P3 | spike |
 | CC-443 | ✅ closed 2026-07-04 | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | pr:#365 | P2 | — |
+| CC-444 | 🔵 active | v0.8.0 release closure：`/pre-release v0.8.0` → 修 drift（README badge/MILESTONES 標頭/CHANGELOG range 含 ship 系列 CC-439..443）→ release notes → tag + GitHub Release | process | 2026-07-04 | — | P2 | — |
+| CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
+| CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
+| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v1.0-rc 候選；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04） | arch/install | 2026-07-04 | — | P2 | design |
 
 ---
 
@@ -319,6 +324,95 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
+## CC-444 — v0.8.0 release closure 🔵 active
+
+**Problem**：v0.8.0 四個 Phase（memory substrate 跨工具可攜、gate DX、CC-381 spike、CC-014 worktree）已全部完成，但尚未 tag——v0.7.1 之後已累積 17 commits，含五張計畫外交付的 ship 系列票（[[CC-439]]..[[CC-443]]）。拖延不 tag 會讓版本邊界與 CHANGELOG range 越來越糊（v0.5.0 曾因此 release-prep 補了 ~8 張票的 CHANGELOG）。
+
+**Why**：這是 DECISIONS 2026-07-04（v1.0-public-roadmap-and-release-sequence）排定的第一步；v0.9.0（host 軸）要在乾淨的版本邊界上開工。
+
+**Requirement**（mirror [[CC-429]] v0.7.0 closure 模式）：
+1. 跑 `/pre-release v0.8.0`（Layer 1 結構檢查 + Layer 2 語義 diff 覆蓋 + Layer 3 盲點聲明），逐項處理報告 finding。
+2. 修 release 文件：README 版本徽章 bump 至 target tag（RELEASE_CHECKLIST 政策——badge 僅於 release 時 bump，為唯一版本標記，開發期停在上一 release 非 drift）、MILESTONES.md v0.8.0 標頭（規劃中 → released）、v0.8.0 milestone 補 release-closure Phase 行、CHANGELOG v0.8.0 range 完整性（含計畫外 ship 系列 CC-439..443）。
+3. 寫 release notes；PR 合併後 tag `v0.8.0` + GitHub Release。
+
+**Done-when**：tag `v0.8.0` 存在且指向含 closure PR 的 main；GitHub Release 發佈；`/pre-release` 報告無未處置 finding。
+
+**Dependencies**：[[CC-426]]（Layer 1/3 工具）、[[CC-430]]（Layer 2）皆已交付。
+**See**: DECISIONS.md 2026-07-04 v1.0-public-roadmap-and-release-sequence
+
+## CC-445 — install write path host-aware（CC-381 完整實作第一刀）🔵 active
+
+**Problem**：[[CC-381]] spike 收斂出三張唯讀票（[[CC-436]] payload probe、[[CC-437]] doctor host-aware、[[CC-438]] host manifest schema），並明文把 installer write path 留給「三票驗證完成後的下一版」。在 write path 落地前，「pm-dispatch 支援 codex host」只是文件宣稱——install/uninstall 無法把 guard binding、hook 接線真正接到 codex host 上。
+
+**Why**：v1.0 public 正式版的 host-agnostic 宣稱需要至少一個非 claude host 的完整 install 鏈（DECISIONS 2026-07-04：v0.9.0 = host 軸完成 + 證據層）。
+
+**Requirement**（粗刻，待 [[CC-436]]/[[CC-438]] 結果收斂後以 `/pre-impl` 定案）：
+1. install/uninstall/doctor 的 codex-host 接線由 host manifest（[[CC-438]] `hosts/codex/host.yaml`）能力旗標衍生——鏡像 adapter manifest 模式（[[CC-375]] 先例：manifest 宣告一次，三方一致性回歸鎖住）。
+2. write/bash guard 綁進 codex `PreToolUse` hook（[[CC-381]] spike 已實測可行、fail-closed；欄位表達力以 [[CC-436]] probe 結果為準）。
+3. uninstall 對稱清除 + doctor parity check（呼應 CC-224/CC-375 的三方一致性教訓）。
+
+**Done-when**：(a) claude host 路徑 **byte-compatible**（既有 install 輸出零變更，回歸鎖住）；(b) codex host 路徑至少通過 dry-run + sandbox `CODEX_HOME` 實裝驗證：install → doctor 全綠 → guard 實際攔截一次違規寫入 → uninstall 無殘留；(c) install/uninstall/doctor 三方 parity test 覆蓋 host 維度。
+
+**Dependencies**：依賴 [[CC-436]]（payload 表達力）、[[CC-438]]（schema）；與 [[CC-437]] 的 doctor host module 介面對齊。write path 必須 host-generic（由 `hosts/*/host.yaml` 驅動，非 codex 特例）——[[CC-448]] opencode host 是本票抽象的 N=2 驗收。umbrella [[CC-333]]。v0.9.0 候選。
+**See**: `docs/spikes/CC-381.md`、DECISIONS.md 2026-07-04
+
+## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 🔵 active
+
+**Problem**：目前沒有任何文件回答「pmctl 哪些子指令是 stable、哪些是 experimental」；machine 契約（dispatch brief schema、`adapter.yaml`、`host.yaml`（[[CC-438]] 後）、run-spec、`ship-lanes.jsonl`、`.dispatch-results/`、gate result 格式）沒有版本化與相容承諾；[[CC-296]] deprecation sunset（`--profile` alias、`codex-dispatch.sh` shim）從 v0.5.0 排程至今漂了兩版未執行；`docs/pr-gate-handover-schema.md` 標 deprecated 卻仍列在 README 目錄。ship/worktree 系列（[[CC-443]]）剛落地，schema 仍在熱變動期。
+
+**Why**：v1.0 的第一個承諾是「契約不再隨意破壞」（DECISIONS 2026-07-04）；公開後外部 fork 使用者會依賴這些表面，沒有分級與 deprecation 政策，任何重構都變成潛在 breaking change。
+
+**Requirement**：
+1. `docs/stability-contract.md`：四層分級表——
+   - **Stable CLI**（v1.0 起受 SemVer 約束）：候選 `pmctl dispatch run/wait`、`pmctl gate run/wait/verify`、`pmctl validate brief`、`pmctl guard check`、`pmctl context index/update/query/pack/reuse-scan`（定案於本票實作時全面盤點）。
+   - **Experimental CLI**：新近落地的 `pmctl ship` 全家與 worktree/lane 子指令——至少經過一個 rc 週期無 schema 變動才可升 stable。
+   - **Stable schema**：dispatch brief schema、`adapter.yaml` 基本欄位、gate result verdict shape、`host.yaml`（[[CC-438]] 落地後納入）。
+   - **Internal schema**（明確宣告外部工具不得依賴）：`ship-lanes.jsonl`、run-spec 內部欄位、sentinel/key-file layout、`.dispatch-results/` 內部格式。
+2. SemVer 承諾範圍（什麼算 breaking）+ deprecation 流程（宣告 → 保留期 ≥1 minor → 移除）。
+3. 執行 [[CC-296]] deprecation 清掃（已過 v0.3.0 起多個正式版本）。
+4. deprecated surface 全清點：README 仍列已標 deprecated 的 `pr-gate-handover-schema.md`（executor-contract 已明言該 fan-out 路徑 retired）——去留與 README 目錄同步，消除自相矛盾。
+
+**Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
+
+**Dependencies**：吸收 [[CC-296]] 執行。Cross-link [[CC-286]]（prefix-generic next-id，影響 cross-repo ID contract，可同批評估）、[[CC-357]]（skill schema——**明確排除**，除非 v1.0 要宣稱 skill 為 machine-readable public API）。v0.9.0 候選（v1.0 P0）。
+**See**: DECISIONS.md 2026-07-04
+
+## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active
+
+**Problem**：GETTING_STARTED 與 install 鏈從未被第二使用者或乾淨環境驗證過——所有安裝驗證都發生在維護者已高度客製的機器上。repo 已 public，外部使用者的 install 體驗就是專案的第一印象，摔倒點目前不可見。
+
+**Why**：v1.0 的第二個承諾是「別人裝得起來、用得下去」（DECISIONS 2026-07-04）；這比做 bootstrap wizard（[[CC-064]]）便宜且先驗證需求。
+
+**Requirement**（拆兩個 smoke，時點不同）：
+1. **Offline clean-install smoke**（v0.9.0）：fresh Linux + WSL2 各一輪，不需任何 CLI auth——`install.sh --dry-run` → `CLAUDE_HOME=/tmp/... install.sh` → `doctor.sh` → `uninstall.sh` 無殘留。驗 install 鏈本體與文件一致性。
+2. **Live dogfood smoke**（v1.0-rc）：真實 Claude/Codex auth 環境，走完整 onboarding：install → doctor → 首次 `/pm` → 首次 `pmctl dispatch run` → 首次 `pmctl ship`（一次 gate 到 PR）。
+3. 每個摔倒點（缺依賴、文件與行為不符、錯誤訊息不可行動）逐一開票，不在本票內修。
+4. `QA_RULES_DIR` 外部依賴缺席時的行為驗證：qa-tester 在沒有 qa-testing-rules checkout 的機器上是 fail-loud 還是靜默劣化，結論寫入報告。
+5. [[CC-064]] bootstrap wizard 僅在實測證明需要時才升級為實作票。
+
+**Done-when**：兩個 smoke 的實測報告 committed（`docs/notes/` 或票內）；摔倒點全部開票；GETTING_STARTED 修正到與實測一致。
+
+**Dependencies**：offline smoke 無前置可先行；live smoke 宜在 [[CC-446]] 契約凍結後執行。offline = v0.9.0 候選、live = v1.0-rc。
+**See**: DECISIONS.md 2026-07-04
+
+## CC-448 — opencode host support：probe → host manifest → install/doctor 接線（host 抽象 N=2 驗收）🔵 active
+
+**Problem**：maintainer 2026-07-04 拍板 v1.0 host 支援面 = claude + **codex + opencode** 三者。[[CC-436]]/[[CC-437]]/[[CC-438]]/[[CC-445]] 只覆蓋 codex host；opencode 作為 host（PM 在 opencode session 內驅動 pm-dispatch，而非僅作 executor adapter）的能力面（hook/plugin 機制可否承接 write/bash guard、設定面佈局、session lifecycle）完全未驗證。
+
+**Why**：host 抽象比照 executor 抽象的 N≥2 紅線——只有 codex 一個非 claude host 時，`hosts/*/host.yaml` schema 可能被 codex 特例帶歪（executor 軸的歷史教訓）。opencode host 落地若需改核心 = 抽象未竟。
+
+**Requirement**（三階段，鏡像 CC-381→CC-436/437/438 的推進模式）：
+1. **Probe**（唯讀，鏡像 [[CC-436]]）：opencode 的 hook/plugin 機制實測——有無 PreToolUse 等價事件？payload 表達力（command？file path？）？fail-closed 可行否？結論寫 `docs/spikes/CC-448.md`。
+2. **Manifest**：`hosts/opencode/host.yaml` 以 [[CC-438]] schema v1 宣告 opencode host 能力（probe 結果決定 `guard_bindings` 表達）；若 schema 需為 opencode 增欄位，屬 schema 修訂而非 opencode 特例分支。
+3. **接線**：[[CC-437]] doctor host module + [[CC-445]] install write path 對 opencode host 生效——驗收紅線：**核心零改動，僅新增 `hosts/opencode/` 內容**；做不到即回頭修抽象。
+
+**Done-when**：sandbox 環境 opencode host install → doctor 全綠 →（若 probe 判定 guard 可承接）guard 攔截一次違規 → uninstall 無殘留；`docs/spikes/CC-448.md` 記錄能力矩陣；若 probe 判定 opencode hook 機制不足以承接 guard，fallback 為 cli-only guard（`pmctl guard check`）並在 host manifest 明宣告，v1.0 文件如實標示該能力差異。
+
+**Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。v1.0-rc 候選。
+**See**: DECISIONS.md 2026-07-04
+
+---
+
 ## CC-393 — design: portable-skill-substrate — CLI-agnostic skill 控制層 🟢 someday
 
 **Type**: design seed（想法捕捉；非 milestone 承諾）
@@ -461,6 +555,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 更新所有 `[[name]]` 改為 `[docs/policies/<slug>.md](docs/policies/<slug>.md)` 或 `[[<slug>]]`（若決定保留 wikilink 風格、配合 CC-030 validator 擴充驗證 link target 存在）。
 4. 個人偏好類 feedback memory（不適合公開）留 local memory 不對外。
 **Note**: 與 CC-030 schema validator 設計協同 — 可同 PR 加上「`[[name]]` link target 必須存在」的 validation。Blocks **CC-033**。
+**Update 2026-07-04**: 進入 v1.0 P0（someday → active，P3 → P2；v1.0-rc 候選）。repo 已為 public，本票的 link-target validator 綠燈為 v1.0 hard constraint（公開讀者不可見 dead wikilink）；DECISIONS 2026-07-04（v1.0-public-roadmap-and-release-sequence）。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #3（Explore 未抓到的盲點）。
 
 ## CC-033 — Public flip checklist 與後續觀察
@@ -472,6 +567,11 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. 觀察期：flip 後 2-4 週評估 — 若有有效 use case 出現再開 Issues。
 3. Flip 動作本身為 1 行：`gh repo edit --visibility public`。
 **Note**: 依賴 **CC-031**, **CC-032** 完成；本條為「最後一哩」與後續評估。
+**Update 2026-07-04（rescope：flip 前提已過時）**: 2026-07-04 實測 `gh repo view` 確認 **repo 已經是 public**（`isPrivate: false`）——本票原「flip 前防護」框架失效，rescope 為 **public posture reconciliation**（v1.0 P0，DECISIONS 2026-07-04）：
+1. **即刻 git history 損害盤點**（非 flip 前防護，是已曝光後的發現與處置）：原「git history 已審 clean」結論成於 2026-05-15，之後已累積 ~250 commits（含大量 dispatch trace / memory 路徑相關工作）——重掃 secrets、個人路徑、意外入 repo 的本機 artifact；發現即處置（rotate/清除/評估影響）。
+2. **README posture 一致化**：README 仍寫 "private-maintainer scoped" 而 repo 實際 public——文案改為明確的「publicly readable personal distribution, not a public support contract」定位（或依 v1.0 宣稱調整），與 CONTRIBUTING（不收外部 PR、issue 無 SLA）對齊。
+3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），時點改為 v1.0-rc；觀察期反轉為 v1.0.0 發佈後的觀察窗。
+someday → active，P3 → P2。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 
 ## CC-035 — install/uninstall-hooks basename+scripts/ collision edge case
@@ -1231,9 +1331,14 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Resume trigger for related tickets**: 本票的觀察結果是 [[CC-346]]（cross-file ref）resume 的補充證據，也是任何 runner diversity 票（multi-vendor adapter）的前置條件——先看數據，再決定要不要加第三個 adapter。
 
-**Milestone**: someday（無里程碑排期，概念票）。
+**Milestone**: v0.9.0 候選（v1.0 P1 證據層；DECISIONS 2026-07-04）。
 
-**Priority**: 未定（someday）。
+**Priority**: P2。
+
+**Update 2026-07-04（someday → active；具體 DoD）**: v1.0 的「穩定性有證據」承諾以本票為 reader——release 宣稱不能只靠「最近沒炸」。DoD：
+1. `pmctl run-stats --since <date> --by-adapter [--json]`：統計 dispatch/gate terminal outcome 分佈、post-verify failure、missing terminal event、adapter nonzero exit、fallback 使用次數。
+2. 不做 dashboard（[[CC-063]] 維持 deferred）；先有 reader 與可引用的報告。
+3. RELEASE_CHECKLIST 新增證據項：「v1.0 rc 期間至少 N 次真實 dispatch/gate 有統計報告、無未解釋的系統性 failure」；v1.0.0 release notes 附 run-stats 報告。
 
 **Cross-link**: `events.jsonl` (data source), `pmctl trace tail` (existing consumer, read model to build on), [[CC-234]] (write side of memory loop — episodes 可補充 events 的語意), [[CC-346]] (paused; needs CC-356 evidence first, this ticket adds more evidence dimension).
 
@@ -1266,7 +1371,7 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 `pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
 
-## CC-431 — test-e2e.sh + release-verify.sh: opencode adapter support 🟢 someday
+## CC-431 — test-e2e.sh + release-verify.sh: opencode adapter support 🔵 active
 
 **Problem**: `test-e2e.sh` 和 `release-verify.sh` 的 `--adapter` 旗標只接受 `claude|codex|auto`；opencode adapter 在 v0.6.0 加入後，e2e 驗證路徑從未同步更新。執行 `release-verify.sh --e2e --adapter opencode` 直接 exit 2 被拒。
 
@@ -1285,7 +1390,9 @@ Fix：文件化 `GOPATH=/tmp/gopath go build` 慣例到 brief self_verify go bui
 
 **Trigger**: `release-verify.sh --e2e --adapter opencode` → `exit 2: --adapter must be claude|codex|auto` (2026-06-30, v0.7.1 release sign-off)
 
-**Priority**: P3（someday）.
+**Priority**: P2（v0.9.0 候選）.
+
+**Update 2026-07-04（someday → active）**: v1.0「executor stable = codex/claude/opencode」宣稱的證據前置（DECISIONS 2026-07-04 P1 證據層）——release 驗證從未跑過第三方 adapter 是 executor-agnostic 宣稱的實質漏洞。若本票 e2e 未過，v1.0 文件須把 opencode executor 降標 experimental（不可與 codex/claude 並列 stable）。Phase C pr-gate smoke 若 reviewer pipeline 僅支援 codex，文件化為「gate executor codex-only」而非 SKIP 靜默。
 
 **See**: pr:#339
 
