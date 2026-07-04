@@ -79,7 +79,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
 | CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
 | CC-442 | ✅ done | spike: 統一 `pmctl ship <ticket-id> [--worktree] [--adapter <name>]` 單一入口。三題已收斂（`docs/spikes/CC-442.md`）：`ship finish` 維持獨立動詞不收斂、tracking 採 unified-schema-with-optional-run_id、pilot diff 證實 `pmctl_ship_run` 遷移乾淨無 shim | arch/gate | 2026-07-03 | — | P3 | spike |
-| CC-443 | 🔵 active | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | — | P2 | — |
+| CC-443 | 🔵 active | 實作：統一 `pmctl ship <ticket-id>` start 入口（承接 CC-442 spike 三項決策 + 使用者外部 review 補強：prepare 保留 alias、tracking 改名 ship-lanes.jsonl、gc.auto 僅 batch 層擁有） | arch/gate | 2026-07-04 | pr:#365 | P2 | — |
 
 ---
 
