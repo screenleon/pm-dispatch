@@ -143,12 +143,17 @@ validate_manifest() {
   bindings="$(section "$manifest" guard_bindings)"
   cap_count="$(count_in "$bindings" capability)"
   [[ "$cap_count" -ge 1 ]] || echo "guard_bindings has no capability entries"
-  # Full-enumeration rule: every capability in the closed enum must appear;
-  # an omission is a validation error, never a semantic statement.
-  local cap
+  # Full-enumeration rule: every capability in the closed enum must appear
+  # exactly once; an omission is a validation error, never a semantic
+  # statement, and a duplicate is a validation error, never a refinement.
+  local cap cap_n
   for cap in $ENUM_CAPABILITY; do
-    printf '%s\n' "$bindings" | grep -qE "^[[:space:]]*-[[:space:]]*capability:[[:space:]]*$cap([[:space:]]|#|$)" \
-      || echo "guard_bindings: capability $cap missing (full enumeration required)"
+    cap_n="$(printf '%s\n' "$bindings" | grep -cE "^[[:space:]]*-[[:space:]]*capability:[[:space:]]*$cap([[:space:]]|#|$)" || true)"
+    if [[ "$cap_n" -eq 0 ]]; then
+      echo "guard_bindings: capability $cap missing (full enumeration required)"
+    elif [[ "$cap_n" -gt 1 ]]; then
+      echo "guard_bindings: capability $cap declared $cap_n times (exactly once required)"
+    fi
   done
   for key in binding_form "${CAPABILITY_FIELDS[@]}"; do
     f_count="$(count_in "$bindings" "$key")"
@@ -330,6 +335,36 @@ run_negative_case "doctor_module pointing at missing file" \
 run_negative_case "ticket reference in manifest" \
   's/^host_binary: codex/host_binary: codex # CC-999/' \
   "manifest contains ticket references"
+
+# Duplicate-capability case: all five capabilities stay present and every
+# entry keeps a complete field tuple, so the ONLY violation is the
+# exactly-once rule. A sed one-liner cannot insert a full entry block, hence
+# the bespoke awk mutation instead of run_negative_case.
+name="negative: duplicate capability entry is rejected"
+if should_run "$name"; then
+  mutated="$tmp_root/host-dup.yaml"
+  awk '
+    /^permissions_surface:/ && !done {
+      print "  - capability: statusline"
+      print "    binding_form: none"
+      print "    provider: none"
+      print "    enforcement: none"
+      print "    coverage: none"
+      print "    stability: evolving"
+      print "    confidence: assumed"
+      done=1
+    }
+    { print }
+  ' "$REF_MANIFEST" > "$mutated"
+  violations="$(validate_manifest "$mutated" codex)"
+  if [[ "$violations" != *"capability statusline declared 2 times (exactly once required)"* ]]; then
+    fail "$name" "expected duplicate-capability violation, got: $(printf '%s' "$violations" | tr '\n' '; ')"
+  elif [[ "$(printf '%s\n' "$violations" | grep -c .)" -ne 1 ]]; then
+    fail "$name" "expected the duplicate violation to be the only finding, got: $(printf '%s' "$violations" | tr '\n' '; ')"
+  else
+    pass "$name"
+  fi
+fi
 
 # --- contract doc -------------------------------------------------------------
 
