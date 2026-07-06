@@ -190,7 +190,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 依賴 [[CC-436]]（payload 驗證結果決定 `guard_bindings` 欄位能表達什麼）。承接 [[CC-381]] spike。umbrella [[CC-333]]。
 
-**Outcome**: schema v1 定案（`docs/host-contract.md`）+ 首個 manifest（`hosts/codex/host.yaml`）+ 結構驗證器（`scripts/test-host-manifest.sh`，67 案例含 22 個負向 mutation，已註冊 run-all-tests）。schema 同時吃進雙 probe 結果——codex（[[CC-436]]）與 opencode 階段 1（[[CC-448]]）：`binding_form: config-fragment`/`provider: host_policy`/`hook_surface: {}` 承接宣告式 config host，不假設 guard binding 是腳本；closure-of-all-paths 條款明文寫入兩個 host file guard 的同構缺口（codex `apply_patch` 無 file_path 欄位 + shell 重導向繞過、opencode `edit:deny` 被 bash 繞過），all-deny 掛起風險與 headless hook-trust flag 亦入契約；contract 內含 opencode worked example 供階段 2 直接對照。gate 兩輪收斂（R1 qa NO-GO → enum-value 驗證補強；R2 GO + critic/arch advisory）→ advisory 修畢：capability 完整枚舉規則——五個 capability 全數必列，`none` 兩態由 `confidence` 區分（probed=已評估不支援、assumed=尚未評估），validator 強制完整性含負向案例。write path 不動，留給 [[CC-445]]。
+**Outcome**: schema v1 定案（`docs/host-contract.md`）+ 首個 manifest（`hosts/codex/host.yaml`）+ 結構驗證器（`scripts/test-host-manifest.sh`，82 案例含 33 個負向 mutation，已註冊 run-all-tests）。schema 同時吃進雙 probe 結果——codex（[[CC-436]]）與 opencode 階段 1（[[CC-448]]）：`binding_form: config-fragment`/`provider: host_policy`/`hook_surface: {}` 承接宣告式 config host，不假設 guard binding 是腳本；closure-of-all-paths 條款明文寫入兩個 host file guard 的同構缺口（codex `apply_patch` 無 file_path 欄位 + shell 重導向繞過、opencode `edit:deny` 被 bash 繞過），all-deny 掛起風險與 headless hook-trust flag 亦入契約；contract 內含 opencode worked example 供階段 2 直接對照。gate 兩輪收斂（R1 qa NO-GO → enum-value 驗證補強；R2 GO + critic/arch advisory）→ advisory 修畢：capability 完整枚舉規則——五個 capability 全數必列，`none` 兩態由 `confidence` 區分（probed=已評估不支援、assumed=尚未評估），validator 強制完整性含負向案例。write path 不動，留給 [[CC-445]]。
 **See**: pr:#375；`docs/host-contract.md`
 
 ---
@@ -362,6 +362,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. write/bash guard 綁進 codex `PreToolUse` hook（[[CC-381]] spike 已實測可行、fail-closed；欄位表達力以 [[CC-436]] probe 結果為準）。
 3. uninstall 對稱清除 + doctor parity check（呼應 CC-224/CC-375 的三方一致性教訓）。
 4. **claude-host 殘餘耦合一併盤點**（2026-07-06 盲測稽核）：`adapters/*/dispatch.sh` 硬編 `${HOME}/.claude/scripts/log-usage.sh` 做 usage 記帳——host-generic write path 落地時改由 host manifest／既有 `PM_CFG_*` env 慣例衍生，或明文宣告該能力 claude-host-only，消除 host-independent 宣稱與實作的落差。
+5. **manifest declared-vs-probed parity check**（[[CC-438]] PR #375 gate advisory；qa-tester + architecture-reviewer 共同點名）：consumer 落地時加上 manifest 宣告 capability 對 probe 紀錄的機械比對，宣告不得默默超出 probed 佐證。
 
 **Done-when**：(a) claude host 路徑 **byte-compatible**（既有 install 輸出零變更，回歸鎖住）；(b) codex host 路徑至少通過 dry-run + sandbox `CODEX_HOME` 實裝驗證：install → doctor 全綠 → guard 實際攔截一次違規寫入 → uninstall 無殘留；(c) install/uninstall/doctor 三方 parity test 覆蓋 host 維度。
 
