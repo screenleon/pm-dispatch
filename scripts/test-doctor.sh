@@ -1084,14 +1084,172 @@ case_doctor_capability_json_fields() {
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
 
-  local bad_fields claude_count codex_count
+  local bad_fields guard_tuple binary_tuple
   bad_fields="$(printf '%s\n' "$out" | jq -s '[.[] | select(.capability) | select((has("host") and has("provider") and has("enforcement") and has("coverage") and has("stability") and has("confidence")) | not)] | length')"
-  claude_count="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check? // "" | startswith("host.claude."))] | length')"
-  codex_count="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check? // "" | startswith("host.codex."))] | length')"
-  if [[ "$bad_fields" -eq 0 && "$claude_count" -ge 1 && "$codex_count" -ge 1 ]]; then
+  # Value-level assertions: a wired claude write guard and a present codex
+  # binary must report these exact capability tuples, so a silent mutation of
+  # any field fails here rather than passing a mere has()-check.
+  guard_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.claude.command-guard")
+    | select(.status == "ok" and .host == "claude" and .capability == "command_guard"
+      and .provider == "host_hook" and .enforcement == "blocking" and .coverage == "full"
+      and .stability == "stable" and .confidence == "probed")] | length')"
+  binary_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.binary")
+    | select(.status == "ok" and .host == "codex" and .capability == "pm_command_interface"
+      and .provider == "host_native" and .enforcement == "none" and .coverage == "full"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
+  if [[ "$bad_fields" -eq 0 && "$guard_tuple" -eq 1 && "$binary_tuple" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "bad_fields=$bad_fields claude_count=$claude_count codex_count=$codex_count status=$status out=$out"
+    fail "$name" "bad_fields=$bad_fields guard_tuple=$guard_tuple binary_tuple=$binary_tuple status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_hooks_wired_tuple() {
+  # Verifies the codex-host hooks probe reports the exact wired capability
+  # tuple when a valid CODEX_HOME/hooks.json exists (command coverage is
+  # partial by observation: file-write payloads embed paths in patch text).
+  #
+  # Steps:
+  #   1. Full healthy env; write a valid JSON hooks file under $HOME/.codex.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert exactly one host.codex.hooks record with the wired tuple.
+  local name="doctor-codex-hooks-wired-tuple"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-hooks-wired" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  printf '{"hooks":{"PreToolUse":[]}}\n' > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-hooks-wired" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local wired
+  wired="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.hooks")
+    | select(.status == "ok" and .host == "codex" and .capability == "command_guard"
+      and .provider == "host_hook" and .enforcement == "blocking" and .coverage == "partial"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
+  if [[ "$wired" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exactly one wired host.codex.hooks tuple; wired=$wired status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_hooks_malformed_warns() {
+  # Verifies the codex-host hooks probe reports a warn record with the
+  # degraded tuple when CODEX_HOME/hooks.json exists but is not valid JSON —
+  # a wired-but-broken hook surface must not read as healthy.
+  #
+  # Steps:
+  #   1. Full healthy env; write a malformed hooks.json under $HOME/.codex.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert exactly one host.codex.hooks warn record with the exact tuple.
+  local name="doctor-codex-hooks-malformed-warns"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-hooks-bad" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  printf '{not json\n' > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-hooks-bad" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local warned
+  warned="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.hooks")
+    | select(.status == "warn" and .host == "codex" and .capability == "command_guard"
+      and .provider == "host_hook" and .enforcement == "none" and .coverage == "none"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
+  if [[ "$warned" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exactly one malformed-hooks warn tuple; warned=$warned status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_hooks_absent_unwired_tuple() {
+  # Verifies the codex-host hooks probe reports the unwired tuple (ok status,
+  # provider none) when no CODEX_HOME/hooks.json exists — absence is an
+  # observed state, not an install defect, while the write path is pending.
+  #
+  # Steps:
+  #   1. Full healthy env; ensure no hooks.json under $HOME/.codex.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert exactly one host.codex.hooks record with the unwired tuple.
+  local name="doctor-codex-hooks-absent-unwired-tuple"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-hooks-absent" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-codex-hooks-absent" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local unwired
+  unwired="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.hooks")
+    | select(.status == "ok" and .host == "codex" and .capability == "command_guard"
+      and .provider == "none" and .enforcement == "none" and .coverage == "none"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
+  if [[ "$unwired" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exactly one unwired host.codex.hooks tuple; unwired=$unwired status=$status out=$out"
+  fi
+}
+
+case_doctor_claude_command_interface_missing_warns() {
+  # Verifies the claude-host pm_command_interface probe emits the warn tuple
+  # (provider none) when commands/pm.md is not installed.
+  #
+  # Steps:
+  #   1. Full healthy env, then remove commands/pm.md.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert exactly one host.claude.command-interface warn record with the
+  #      exact tuple and a fix hint.
+  local name="doctor-claude-command-interface-missing-warns"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-claude-cmd-missing" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  rm -f "$home/.claude/commands/pm.md"
+  path="$(make_stub_bin "$tmp_root/bin-claude-cmd-missing" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local warned
+  warned="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.claude.command-interface")
+    | select(.status == "warn" and .host == "claude" and .capability == "pm_command_interface"
+      and .provider == "none" and .enforcement == "none" and .coverage == "none"
+      and .stability == "stable" and .confidence == "probed" and (.fix | length) > 0)] | length')"
+  if [[ "$warned" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exactly one command-interface warn tuple with fix; warned=$warned status=$status out=$out"
   fi
 }
 
@@ -1632,6 +1790,10 @@ case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity
 case_doctor_capability_json_fields
+case_doctor_codex_hooks_wired_tuple
+case_doctor_codex_hooks_malformed_warns
+case_doctor_codex_hooks_absent_unwired_tuple
+case_doctor_claude_command_interface_missing_warns
 case_doctor_codex_module_no_binary_degrades
 case_doctor_copy_mode_hooks_degraded
 case_doctor_windows_path_hooks_present

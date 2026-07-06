@@ -21,7 +21,7 @@
 #
 # shellcheck disable=SC2153  # REPO_ROOT/PROFILE are doctor.sh globals, assigned before main() dispatches here
 
-check_settings_file() {
+_doctor_host_claude_check_settings_file() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   _SETTINGS_FILE_FAILED=0
   _SETTINGS_FILE_INVALID=0
@@ -41,7 +41,7 @@ check_settings_file() {
   emit_check settings-file ok "settings.json present"
 }
 
-hook_present() {
+_doctor_host_claude_hook_present() {
   local basename="$1" settings="$2"
   jq -e --arg basename "$basename" '
     # install-guards.sh shell-escapes managed command paths (printf %q), so a repo
@@ -74,7 +74,7 @@ hook_present() {
   ' "$settings" >/dev/null 2>&1
 }
 
-adapter_bg_present() {
+_doctor_host_claude_adapter_bg_present() {
   local adapter_name="$1" settings="$2"
   jq -e --arg adapter_name "$adapter_name" '
     def normalize_path:
@@ -94,7 +94,7 @@ adapter_bg_present() {
   ' "$settings" >/dev/null 2>&1
 }
 
-stale_hook_commands() {
+_doctor_host_claude_stale_hook_commands() {
   local settings="$1" repo_root="$2"
   jq -r --arg repo_root "$repo_root" '
     # Normalize Windows drive paths (C:/...) to POSIX form (/c/...) so that
@@ -140,7 +140,7 @@ stale_hook_commands() {
   ' "$settings" 2>/dev/null
 }
 
-check_hooks() {
+_doctor_host_claude_check_hooks() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
     emit_check hooks fail "settings.json missing — cannot check hooks" "bash '${REPO_ROOT}/install.sh'"
@@ -200,14 +200,14 @@ check_hooks() {
   local -a missing=()
   local hook
   for hook in "${hooks[@]}"; do
-    if ! hook_present "$hook" "$settings"; then
+    if ! _doctor_host_claude_hook_present "$hook" "$settings"; then
       missing+=("$hook")
     fi
   done
   if [[ "$_want_full" -eq 1 ]]; then
     local _aname
     for _aname in "${_adapter_bg_names[@]+"${_adapter_bg_names[@]}"}"; do
-      if ! adapter_bg_present "$_aname" "$settings"; then
+      if ! _doctor_host_claude_adapter_bg_present "$_aname" "$settings"; then
         missing+=("adapters/$_aname/bash-guard.sh")
       fi
     done
@@ -219,7 +219,7 @@ check_hooks() {
     local _sc
     while IFS= read -r _sc; do
       [[ -n "$_sc" ]] && _stale+=("$_sc")
-    done < <(stale_hook_commands "$settings" "$REPO_ROOT")
+    done < <(_doctor_host_claude_stale_hook_commands "$settings" "$REPO_ROOT")
   fi
 
   local _total_hooks=${#hooks[@]}
@@ -237,7 +237,7 @@ check_hooks() {
   fi
 }
 
-check_dispatch_allowlist() {
+_doctor_host_claude_check_dispatch_allowlist() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
     return
@@ -280,7 +280,7 @@ check_dispatch_allowlist() {
   fi
 }
 
-check_manifest() {
+_doctor_host_claude_check_manifest() {
   local manifest_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.pm-dispatch/install-manifest.json"
   if [[ ! -f "$manifest_path" ]]; then
     emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
@@ -310,7 +310,7 @@ _doctor_host_claude_capabilities() {
     return
   fi
 
-  if hook_present guard-pm-write.sh "$settings"; then
+  if _doctor_host_claude_hook_present guard-pm-write.sh "$settings"; then
     emit_capability host.claude.command-guard ok claude command_guard \
       host_hook blocking full stable probed \
       "write guard wired (PreToolUse hook)"
@@ -320,7 +320,7 @@ _doctor_host_claude_capabilities() {
       "write guard not wired" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
   fi
 
-  if hook_present guard-session-summary.sh "$settings"; then
+  if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
     emit_capability host.claude.session-lifecycle ok claude session_lifecycle \
       host_hook advisory full stable probed \
       "session summary wired (Stop hook)"
@@ -330,7 +330,7 @@ _doctor_host_claude_capabilities() {
       "session summary not wired" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
   fi
 
-  if hook_present guard-save-rate-limits.sh "$settings"; then
+  if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
     emit_capability host.claude.statusline ok claude statusline \
       host_hook advisory full stable probed \
       "statusline wired"
@@ -353,9 +353,9 @@ _doctor_host_claude_capabilities() {
 
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_claude_run() {
-  check_settings_file
-  check_hooks
-  check_dispatch_allowlist
-  check_manifest
+  _doctor_host_claude_check_settings_file
+  _doctor_host_claude_check_hooks
+  _doctor_host_claude_check_dispatch_allowlist
+  _doctor_host_claude_check_manifest
   _doctor_host_claude_capabilities
 }
