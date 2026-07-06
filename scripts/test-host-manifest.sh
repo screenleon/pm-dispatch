@@ -211,6 +211,12 @@ validate_manifest() {
     echo "doctor_module '$module' not found under repo root"
   fi
 
+  # --- uninstall_module must be null or an existing repo-relative file --------
+  module="$(grep -E '^uninstall_module:' "$manifest" | head -1 | sed 's/^uninstall_module:[[:space:]]*//;s/[[:space:]]*#.*$//')"
+  if [[ -n "$module" && "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
+    echo "uninstall_module '$module' not found under repo root (must be null or an existing repo-relative path)"
+  fi
+
   # --- operational files carry no ticket references ---------------------------
   if grep -qE 'CC-[0-9]+' "$manifest"; then
     echo "manifest contains ticket references"
@@ -332,6 +338,9 @@ run_negative_case "permissions config_target referencing unknown id" \
 run_negative_case "doctor_module pointing at missing file" \
   's|^doctor_module:.*|doctor_module: scripts/lib/doctor-host-missing.sh|' \
   "doctor_module 'scripts/lib/doctor-host-missing.sh' not found"
+run_negative_case "uninstall_module non-null pointing at missing file" \
+  's|^uninstall_module:.*|uninstall_module: scripts/lib/uninstall-host-missing.sh|' \
+  "uninstall_module 'scripts/lib/uninstall-host-missing.sh' not found"
 run_negative_case "ticket reference in manifest" \
   's/^host_binary: codex/host_binary: codex # CC-999/' \
   "manifest contains ticket references"
