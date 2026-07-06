@@ -99,7 +99,7 @@ dispatch in Step 3.
 
 ## Step 3 — Gate loop
 
-Run `pmctl gate run --executor codex --cd <work_dir> --lifecycle foreground`
+Run `pmctl gate run --executor codex --cd "<work_dir>" --lifecycle foreground`
 (substitute `<work_dir>` with the literal absolute working directory, not
 `"$PWD"` — a shell-variable expansion makes the command unanalyzable
 statically and forces a manual approval every time even though a bare
@@ -123,7 +123,7 @@ once the call returns.
   read of every cited diff file, discovery sweep of all call sites of a
   flagged helper, minimum-list is a floor not a ceiling). Fix **every** finding
   it returns — high, medium, and low, hard gate and advisory alike, not only
-  the blocking ones. Re-run `pmctl gate run --executor codex --cd <work_dir>
+  the blocking ones. Re-run `pmctl gate run --executor codex --cd "<work_dir>"
   --lifecycle foreground --reviewers <reviewer,...>` (same literal-path
   substitution as Step 3's first call — never `"$PWD"`; the `/pr-gate`
   `--targeted` flag maps to this same `--reviewers` option) for the reviewers

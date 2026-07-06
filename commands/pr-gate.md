@@ -150,7 +150,7 @@ makes the command unanalyzable statically, so it needs a manual approval
 every time regardless of the `pmctl:*` prefix match):
 
 ```bash
-pmctl gate wait <gate_id> --cd <work_dir>
+pmctl gate wait <gate_id> --cd "<work_dir>"
 ```
 
 If this fails with `pmctl: command not found`, fall back per Step 1 (retry
@@ -163,12 +163,12 @@ After firing the wait, reply with one short status line, e.g.:
 Do not poll, sleep, or call `BashOutput` immediately. If the session is
 interrupted before the wait notification arrives, the gate keeps running
 detached; note the `gate_id` before the interrupt (or recover it via
-`pmctl artifacts list --cd <work_dir>`) and reattach with
-`pmctl gate wait <gate_id> --cd <work_dir>` in a new session -- a fresh
+`pmctl artifacts list --cd "<work_dir>"`) and reattach with
+`pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
 `/pr-gate` invocation starts a NEW gate and does NOT reattach to the
 interrupted one.
 (gate wait exit 3 means the sentinel was already consumed by a prior wait —
-check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
+check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
 file in that case).
 
 ## Executor routes — both dispatch an independent subprocess
@@ -196,12 +196,12 @@ When the `pmctl gate wait` background Bash completion notification arrives:
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
-   running detached -- retry `pmctl gate wait <gate_id> --cd <work_dir>` once with
+   running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd <work_dir>`
+   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`
    to locate the durable result instead), other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
-   `pmctl artifacts show <gate_id> --cd <work_dir>`).
+   `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
    re-confirm out of band, run `pmctl gate verify <result_file_path>` (the
    literal path parsed in step 2, not a shell variable; exit 0 = valid).
