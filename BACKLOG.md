@@ -79,7 +79,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | docs/spikes/CC-436.md | P2 | spike |
+| CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
@@ -143,7 +143,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-436 — codex-host PreToolUse payload 驗證 probe ✅ done 2026-07-06
+## CC-436 — codex-host PreToolUse payload 驗證 probe ✅ 2026-07-06
 
 **Problem**: [[CC-381]] spike（`docs/spikes/CC-381.md`）已用唯讀證據（`codex features list`/`codex doctor --json`/binary 字串反查）確認 codex `PreToolUse` hook 是 stable 且會 fail-closed 阻擋，但尚未實際跑過一次 end-to-end 的 hook 阻擋，也不知道 payload 內容能否映射到 `pmctl guard check --file/--command` 需要的欄位。
 
