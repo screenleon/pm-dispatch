@@ -14,6 +14,7 @@ This repository is designed for a single maintainer working on their own adaptat
 **Reference**
 - [Platform support](docs/platform-support.md) — per-OS install model (symlink / copy mode)
 - [Executor contract](docs/executor-contract.md) — `full` / `minimal` profile + PM handoff abstraction
+- [Host manifest contract](docs/host-contract.md) — `hosts/<name>/host.yaml` schema v1 (host axis, capability declarations)
 - [Dispatch brief schema](docs/dispatch-brief.md) — required brief fields + `self_verify` macros
 - [Model tier policy](docs/model-tier-policy.md) — sonnet-default, Opus escalation rules
 - [Memory system](docs/memory-system.md) — memory persistence layer: on-disk layout and recall lifecycle
