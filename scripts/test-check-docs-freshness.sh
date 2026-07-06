@@ -192,7 +192,8 @@ run_test_u2_status_stale() {
   # section for the current tag still shows planned/scheduled status.
   #
   # Steps:
-  #   1. Create a repo tagged v0.2.0 with MILESTONES.md section marked planned.
+  #   1. Create a repo tagged v0.2.0 whose MILESTONES.md section heading
+  #      still carries the planned marker (status lives on the heading line).
   #   2. Run check-docs-freshness.sh on the repo.
   #   3. Assert exit code is 2 and output mentions "marked planned".
   local name="u2-status-stale-exit-2"
@@ -205,7 +206,7 @@ run_test_u2_status_stale() {
 Release: v0.2.0
 DOC
   cat > "$repo/MILESTONES.md" <<'DOC'
-## v0.2.0 — scheduled
+## v0.2.0 — scheduled（規劃中 2026-05-20）
 
 | 票號 | 說明 | 狀態 |
 |---|---|---|
@@ -224,6 +225,52 @@ DOC
   run_check "$repo"
   assert_exit "$name" "$LAST_EXIT" 2 || return
   assert_string_contains "$name" "$LAST_OUTPUT" "marked planned"
+  pass "$name"
+}
+
+run_test_u2_body_quote_ok() {
+  # Verifies that check-docs-freshness.sh does not flag a released section
+  # whose body merely quotes historical planned-status text — the planned
+  # marker is meaningful only on the "## vX.Y.Z" heading line itself.
+  #
+  # Steps:
+  #   1. Create a repo tagged v0.2.0 whose MILESTONES.md heading is marked
+  #      released but whose body quotes 「規劃中」 in a historical note.
+  #   2. Run check-docs-freshness.sh on the repo.
+  #   3. Assert exit code is 0 and no "marked planned" finding is emitted.
+  local name="u2-body-quote-exit-0"
+  local repo="$TMP_ROOT/$name"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  cat > "$repo/README.md" <<'DOC'
+# pm-dispatch
+Release: v0.2.0
+DOC
+  cat > "$repo/MILESTONES.md" <<'DOC'
+## v0.2.0 — Cross-platform ops（✅ released 2026-05-22）
+
+- 修正舊標頭殘留：「規劃中 2026-05-20」→ 標記已 released
+| CC | status |
+|---|---|
+| CC-999 | ✅ done |
+DOC
+  cat > "$repo/BACKLOG.md" <<'DOC'
+## Index
+
+| #  | Status | 主題 | 影響面 | 首次記錄 | Refs |
+|----|--------|------|--------|----------|------|
+| CC-001 | ✅ closed 2026-05-23 | clean test | ops | 2026-05-23 | pr:#999 |
+DOC
+
+  finalize_repo "$repo" v0.2.0
+
+  run_check "$repo"
+  assert_exit "$name" "$LAST_EXIT" 0 || return
+  if grep -Fq "marked planned" <<< "$LAST_OUTPUT"; then
+    fail "$name" "unexpected output: marked planned"
+    return 1
+  fi
   pass "$name"
 }
 
@@ -791,6 +838,7 @@ run_case "u1-readme-stale-exit-2" run_test_u1_readme_stale
 run_case "u1-readme-absent-exit-1" run_test_u1_readme_absent
 run_case "u2-section-missing-exit-2" run_test_u2_section_missing
 run_case "u2-status-stale-exit-2" run_test_u2_status_stale
+run_case "u2-body-quote-exit-0" run_test_u2_body_quote_ok
 run_case "u2-clean-exit-0" run_test_u2_clean
 run_case "u3-closed-tbd-exit-2" run_test_u3_closed_tbd
 run_case "u3-open-tbd-exit-1" run_test_u3_open_tbd
