@@ -39,6 +39,28 @@ _ctx_db_path() {
   printf '%s/.pm-dispatch/ctx/context.db\n' "$repo_root"
 }
 
+# Default repo_root for context-family subcommands invoked without an explicit
+# path argument: the git toplevel of the CALLER'S CWD, not cli/pmctl's own
+# REPO_ROOT (which resolves to the pmctl install repo, not the target repo —
+# see CC-455). Falls back to REPO_ROOT with a one-line stderr warning only when
+# the CWD is not inside any git worktree. Echoes nothing (returns 1) when
+# neither is available.
+_ctx_default_repo_root() {
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [[ -n "$toplevel" ]]; then
+    printf '%s\n' "$toplevel"
+    return 0
+  fi
+  if [[ -n "${REPO_ROOT:-}" ]]; then
+    printf 'pmctl context: CWD is not inside a git worktree; falling back to REPO_ROOT (%s)\n' \
+      "$REPO_ROOT" >&2
+    printf '%s\n' "$REPO_ROOT"
+    return 0
+  fi
+  return 1
+}
+
 # Memory-plane DB path. PRIVACY (load-bearing): the memory index lives UNDER the
 # memory directory (out-of-repo `~/.claude/projects/<id>/memory/`), never under
 # the repo checkout — even gitignored, a repo-local copy of private memory could
@@ -620,7 +642,7 @@ pmctl_context_index() {
   if [[ $# -gt 0 && -d "${1:-}" ]]; then
     repo_root="$1"; shift
   else
-    repo_root="${REPO_ROOT:-}"
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
   fi
   if [[ -z "$repo_root" ]]; then
     printf 'pmctl context index: repo root required\n' >&2
@@ -748,7 +770,7 @@ pmctl_context_update() {
   if [[ $# -gt 0 && -d "${1:-}" ]]; then
     repo_root="$1"; shift
   else
-    repo_root="${REPO_ROOT:-}"
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
   fi
   if [[ -z "$repo_root" ]]; then
     printf 'pmctl context update: repo root required\n' >&2
@@ -1115,7 +1137,7 @@ pmctl_context_query() {
   if [[ $# -gt 0 && -d "${1:-}" ]]; then
     repo_root="$1"; shift
   else
-    repo_root="${REPO_ROOT:-}"
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
   fi
   if [[ -z "$repo_root" ]]; then
     printf 'pmctl context query: repo root required\n' >&2
@@ -1265,7 +1287,8 @@ _ctx_pack_memory_tsv() {
 # CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ... [--source repo|memory|all]
 
 pmctl_context_pack() {
-  local repo_root="${REPO_ROOT:-}"
+  local repo_root
+  repo_root="$(_ctx_default_repo_root)" || repo_root=""
   local task_id=""
   local source="repo"
   local terms=()
@@ -1320,6 +1343,10 @@ pmctl_context_pack() {
     esac
   done
 
+  if [[ -z "$repo_root" ]]; then
+    printf 'pmctl context pack: repo root required\n' >&2
+    return 2
+  fi
   if [[ -z "$task_id" ]] || [[ "$task_id" =~ ^[[:space:]]+$ ]]; then
     printf 'pmctl context pack: --task-id is required\n' >&2
     return 2
@@ -1421,7 +1448,8 @@ pmctl_context_pack() {
 # CLI: pmctl context reuse-scan [<repo_root>] "<description>"
 
 pmctl_context_reuse_scan() {
-  local repo_root="${REPO_ROOT:-}"
+  local repo_root
+  repo_root="$(_ctx_default_repo_root)" || repo_root=""
   local desc=""
   local repo_root_set=0
 
@@ -1443,6 +1471,10 @@ pmctl_context_reuse_scan() {
     esac
   done
 
+  if [[ -z "$repo_root" ]]; then
+    printf 'pmctl context reuse-scan: repo root required\n' >&2
+    return 2
+  fi
   if [[ -z "$desc" ]]; then
     printf 'pmctl context reuse-scan: description required\n' >&2
     return 2
