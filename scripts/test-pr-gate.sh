@@ -7,8 +7,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# CC-103b introduced `--executor codex|claude|auto` on pr-gate.sh with
-# auto-detect via `command -v codex`. Existing tests in this file
+# pr-gate.sh supports `--executor codex|claude|auto`, with auto-detect
+# via `command -v codex`. Existing tests in this file
 # assume the codex execution path (brief file written, dispatch stub
 # invoked). On CI runners codex is absent, so auto-detect picks claude
 # mode → emits handover instead of brief.md → tests fail. Prepend a
@@ -137,7 +137,7 @@ write_frontmatter_stub_gate_result() {
   local final_verdict="${2:-GO}"
   local final_line="Final: ${final_verdict}"
 
-  # CC-252 regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
+  # Regression seam: when CODEX_GATE_STUB_BOLD_FINAL=1, emit the Final
   # line wrapped in markdown bold (simulates codex applying prose emphasis).
   # The parser MUST reject this — Final line is contract-locked to plain text.
   if [[ "${CODEX_GATE_STUB_BOLD_FINAL:-}" == "1" ]]; then
@@ -294,7 +294,7 @@ STUB_EOF
 
   # claude adapter stub: same behavior as the codex stub (parses --brief-file,
   # writes a stub result to the brief's `- new:` path, honors CODEX_GATE_STUB_*).
-  # The claude route dispatches a real subprocess now (CC-383), so explicit
+  # The claude route dispatches a real subprocess now, so explicit
   # --executor claude tests need an adapter stub just like codex.
   mkdir -p "$dir/adapters/claude"
   cp "$dir/adapters/codex/dispatch.sh" "$dir/adapters/claude/dispatch.sh"
@@ -416,7 +416,7 @@ test_tier_detection() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  # Sequential dispatch chatter now lands on stderr, not stdout.
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "Tier: express" || return
   assert_file_contains "$name" "$brief" "Executor: codex" || return
@@ -469,13 +469,13 @@ test_pr_gate_does_not_mutate_gitignore() {
   pass "$name"
 }
 
-# artifact_filter_porcelain unit tests (CC-413 stopgap): the worktree-integrity
-# guard must exclude the gate's OWN artifact leaves from its status fingerprint so a
+# artifact_filter_porcelain unit tests: the worktree-integrity guard must
+# exclude the gate's OWN artifact leaves from its status fingerprint so a
 # repo that has not had them gitignored is not misread as prompt-injected. These
 # exercise scripts/lib/artifact-paths.sh directly -- the canonical leaf source.
 
 # Behavior: artifact_filter_porcelain drops every gate-artifact leaf record
-# from a porcelain -z status stream (positive control for CC-413).
+# from a porcelain -z status stream (positive control).
 # Steps: source the canonical lib, build a -z stream of three artifact
 # records plus one real change, run it through artifact_filter_porcelain,
 # and assert no .agent-trace/.gate-briefs/.gate-results record survives.
@@ -506,7 +506,7 @@ test_artifact_filter_drops_gate_artifacts() {
 }
 
 # Behavior: artifact_filter_porcelain preserves real source records and does
-# not over-filter (negative control for CC-413).
+# not over-filter (negative control).
 # Steps: build a -z stream mixing two real changes with one artifact record,
 # run it through artifact_filter_porcelain, and assert both real-source
 # paths remain in the output.
@@ -535,7 +535,7 @@ test_artifact_filter_keeps_real_sources() {
 
 # Behavior: a status stream with gate artifacts and one without hash
 # identically after filtering, so the pre/post integrity guard never
-# false-aborts (CC-413 core).
+# false-aborts.
 # Steps: build a "post" stream (real change + artifacts) and a "pre" stream
 # (real change only), filter and sha256 each, and assert the two
 # fingerprints are byte-identical.
@@ -649,8 +649,8 @@ _extract_artifact_filter_body() {
 
 # Behavior: the copy-mode inline artifact_filter_porcelain fallback in
 # pr-gate.sh filters the gate's own artifacts load-bearingly: a healthy repo
-# that never gitignored the artifact dirs (the exact CC-413 bug condition)
-# must not false-abort.
+# that never gitignored the artifact dirs (the exact bug condition this
+# guard exists to fix) must not false-abort.
 # Steps: build a copy-mode runner (lib absent) and a repo whose .gitignore
 # omits the artifact dirs, run a full gate so it writes
 # .agent-trace/.gate-briefs/.gate-results into that repo, and assert the
@@ -1773,7 +1773,7 @@ test_sequential_no_final_line_aborts_gate() {
 
 # Behavior: a consumer that reads a prefix of gate stdout and closes the
 # pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
-# dispatches and writes the result file (CC-350 regression). Pre-fix, the
+# dispatches and writes the result file. Pre-fix, the
 # next stdout write after the pipe closed failed with EPIPE; under `set -e`
 # that nonzero killed the script before dispatch, leaving a 0-byte result
 # file while the outer pipeline reported the consumer's exit 0 (a silent
@@ -1998,7 +1998,9 @@ if [[ "$brief_file" == *-synthesis.md ]]; then
   if [[ -n "$reviewer_artifact" ]]; then
     printf 'tampered-by-synthesis\n' >> "$reviewer_artifact"
   fi
-  # Write valid synthesis output so other checks pass (frontmatter required by CC-250 parity check)
+  # Write valid synthesis output so other checks pass: gate_result_verify
+  # requires the YAML frontmatter `final:` field to agree with the body's
+  # `Final:` line, so both must be present and consistent here.
   printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: full\nmode: parallel\nmost_severe: advise\nreviewers:\n  critic: skipped\n  qa-tester: skipped\n  architecture-reviewer: skipped\n  security-reviewer: skipped\n  risk-reviewer: skipped\nescalation:\n  recommended: false\n  reviewers: []\n  reason: []\n---\n# PR-Gate Result\n**Date**: 2026-01-01\n**Reviewers**: stub\n**Not reviewed**: none\n\n## stub-reviewer -- advise\n- stub finding\n\nVerdict: advise. Stub.\n\n## Cross-Reviewer Overlaps\nnone\n\n## Coverage Notes\n**Dimensions not covered**: none\n\n## Gate Conclusion\n**Overall verdict**: advise\n**Most severe individual verdict**: advise\nFinal: GO\n\n## Escalation\n**Recommended**: false\n**Reviewers**: none\n**Reason**:\n- none\n\nRequired fixes before GO: none\n\nRecommended follow-ups:\n- none\n\nRationale: Stub.\n' > "$output_path"
 else
   stub_verdict="${CODEX_GATE_STUB_VERDICT:-advise}"
@@ -2094,11 +2096,12 @@ test_hash_tool_missing_aborts_gate() {
 }
 
 # Behavior: when synthesis emits the Final: line wrapped in markdown bold
-# (e.g., `**Final: GO**`) -- as observed on CC-249 spike PR #146 where codex
-# applied prose emphasis -- the parser MUST reject it. The Final line is
+# (e.g., `**Final: GO**`) -- as observed on spike PR #146 where codex applied
+# prose emphasis -- the parser MUST reject it. The Final line is
 # contract-locked to plain text via the `^Final: (GO|NO-GO)$` regex.
-# Loosening the parser to accept bold-Final would silently hide the brief-
-# template drift the CC-250 brief is supposed to prevent.
+# Loosening the parser to accept bold-Final would silently hide cases where
+# the executor stops following the brief's exact-format instructions for
+# that line -- exactly the drift this plain-text contract exists to catch.
 # Steps:
 #   1. Create a minimal repo (express tier, docs change)
 #   2. CODEX_GATE_STUB_BOLD_FINAL=1: synthesis writes "**Final: GO**" instead of "Final: GO"
@@ -2130,9 +2133,9 @@ test_bold_final_line_rejected() {
 
 # Behavior: the codex-brief heredoc at scripts/pr-gate.sh:362 (BRIEF_EOF)
 # and the synthesis-brief heredocs (SBRIEF_P1, SBRIEF_P2) are unquoted, so
-# bash performs command substitution on backtick pairs in the body. CC-252
-# (#147) introduced cautionary `` `Final: ...` `` tokens that bash then
-# tried to execute, producing 7 `command not found` lines per invocation.
+# bash performs command substitution on backtick pairs in the body. A
+# prior revision introduced cautionary `` `Final: ...` `` tokens that bash
+# then tried to execute, producing 7 `command not found` lines per invocation.
 # Fix: escape the backticks in the heredoc body (\`Final: ...\`) so bash
 # writes them literally.
 # Steps:
@@ -2617,7 +2620,7 @@ test_via_symlink() {
     fail "$name" "exit $code — readlink -f fix may be broken"
     return
   fi
-  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  # Sequential dispatch chatter now lands on stderr, not stdout.
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   pass "$name"
 }
@@ -3268,7 +3271,7 @@ test_isolation_forwarding_through_pr_gate() {
 }
 
 # Behavior: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
-# dispatches via adapters/codex/dispatch.sh -- NOT the deleted (CC-296)
+# dispatches via adapters/codex/dispatch.sh -- NOT the deleted
 # scripts/codex-dispatch.sh shim.
 # Steps: build a copy-mode runner (lib absent) with the adapter stub at
 # adapters/codex/dispatch.sh, run the gate, and assert exit 0 (a resolve to
@@ -3375,7 +3378,7 @@ test_targeted_alias() {
 }
 
 # Behavior: the sequential brief emitted by pr-gate.sh uses ASCII --
-# separators and contains no em dash (U+2014) bytes (CC-275 regression).
+# separators and contains no em dash (U+2014) bytes.
 # Steps: run the gate with --sequential, and assert the captured brief
 # contains "PR-Gate Result --" and "## {reviewer-name} -- {verdict}" using
 # ASCII dashes, and no UTF-8 em dash byte sequence (E2 80 94) is present.
@@ -3404,15 +3407,15 @@ test_seq_brief_ascii_separator() {
   assert_file_contains "$name" "$brief" "## {reviewer-name} -- {verdict}" || return
   # No em dash bytes (UTF-8 E2 80 94) must remain in the brief
   if grep -qP '\xe2\x80\x94' "$brief" 2>/dev/null || grep -q $'\xe2\x80\x94' "$brief" 2>/dev/null; then
-    fail "$name" "em dash (U+2014) found in sequential brief -- CC-275 regression"
+    fail "$name" "em dash (U+2014) found in sequential brief"
     return
   fi
   pass "$name"
 }
 
 # Behavior: the parallel synthesis brief emitted by pr-gate.sh uses ASCII
-# -- separators and contains no em dash (U+2014) bytes (CC-275 regression).
-# In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
+# -- separators and contains no em dash (U+2014) bytes. In --parallel mode
+# CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
 # Steps: run the gate with --parallel, and assert the captured brief
 # contains "PR-Gate Result --" and "## {reviewer-name} -- {verdict}" using
 # ASCII dashes, and no UTF-8 em dash byte sequence is present.
@@ -3441,16 +3444,16 @@ test_parallel_synthesis_brief_ascii_separator() {
   assert_file_contains "$name" "$brief" "## {reviewer-name} -- {verdict}" || return
   # No em dash bytes must remain in the synthesis brief
   if grep -qP '\xe2\x80\x94' "$brief" 2>/dev/null || grep -q $'\xe2\x80\x94' "$brief" 2>/dev/null; then
-    fail "$name" "em dash (U+2014) found in synthesis brief -- CC-275 regression"
+    fail "$name" "em dash (U+2014) found in synthesis brief"
     return
   fi
   pass "$name"
 }
 
 # Behavior: the per-reviewer brief emitted in parallel mode by pr-gate.sh
-# uses ASCII -- separators and contains no em dash (U+2014) (CC-275
-# regression). CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
-# non-synthesis brief dispatched during a parallel run.
+# uses ASCII -- separators and contains no em dash (U+2014).
+# CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last non-synthesis brief
+# dispatched during a parallel run.
 # Steps: run the gate with --reviewers critic --parallel, and assert the
 # captured reviewer brief contains "Executor: codex" and "file:line --"
 # using ASCII dashes, and no UTF-8 em dash byte sequence is present.
@@ -3483,7 +3486,7 @@ test_parallel_reviewer_brief_ascii_separator() {
   assert_file_contains "$name" "$reviewer_brief" "file:line --" || return
   # No em dash bytes (UTF-8 E2 80 94) must remain in the reviewer brief
   if grep -q $'\xe2\x80\x94' "$reviewer_brief" 2>/dev/null; then
-    fail "$name" "em dash (U+2014) found in parallel reviewer brief -- CC-275 regression"
+    fail "$name" "em dash (U+2014) found in parallel reviewer brief"
     return
   fi
   pass "$name"
@@ -3491,7 +3494,7 @@ test_parallel_reviewer_brief_ascii_separator() {
 
 # Behavior: the sequential brief contains the citation-guard preamble
 # ("Verified reference files") and the explicit constraint ("do not invent
-# citations"), listing real repo files (CC-208 regression).
+# citations"), listing real repo files.
 # Steps: commit a fixture agent file, run the gate with --sequential, and
 # assert the captured brief contains "Verified reference files", "do not
 # invent citations", and the fixture path.
@@ -3526,7 +3529,7 @@ test_sequential_brief_has_citation_guard() {
 
 # Behavior: the per-reviewer parallel brief contains the citation-guard
 # preamble ("Verified reference files") and the explicit constraint ("do
-# not invent citations"), listing real repo files (CC-208 regression).
+# not invent citations"), listing real repo files.
 # Steps: commit a fixture agent file, run the gate with --reviewers critic
 # --parallel, and assert the captured reviewer brief contains "Verified
 # reference files", "do not invent citations", and the fixture path.
@@ -3566,7 +3569,7 @@ test_parallel_reviewer_brief_has_citation_guard() {
 
 # Behavior: the parallel synthesis brief contains the citation-guard
 # preamble ("Verified reference files") and the explicit constraint ("do
-# not invent citations"), listing real repo files (CC-208 regression).
+# not invent citations"), listing real repo files.
 # Steps: commit a fixture agent file, run the gate with --reviewers critic
 # --parallel, and assert the captured synthesis brief contains "Verified
 # reference files", "do not invent citations", and the fixture path.
@@ -3657,7 +3660,7 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  # Sequential dispatch chatter now lands on stderr, not stdout.
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "dirtysrc.go" || return
   assert_file_contains "$name" "$err" "--allow-dirty set" || return
@@ -3709,7 +3712,7 @@ test_allow_dirty_includes_uncommitted_tracked() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  # CC-350: sequential dispatch chatter now lands on stderr, not stdout.
+  # Sequential dispatch chatter now lands on stderr, not stdout.
   assert_file_contains "$name" "$err" "DISPATCH_STUB:success" || return
   assert_file_contains "$name" "$brief" "tracked_base.go" || return
   pass "$name"
@@ -3772,8 +3775,8 @@ test_dirty_only_no_commit_still_reviewed() {
 
 # Behavior: the sequential combined reviewer brief contains the explicit
 # pmctl guard check constraint that must be called before writing the
-# output file (CC-297) -- added to prevent prompt-injection from inducing
-# a reviewer to write arbitrary files.
+# output file -- added to prevent prompt-injection from inducing a
+# reviewer to write arbitrary files.
 # Steps: run the gate with --sequential, and assert the captured brief
 # contains "pmctl guard check --role reviewer" and "--event pre-write".
 test_seq_brief_has_reviewer_guard_constraint() {
@@ -3802,7 +3805,7 @@ test_seq_brief_has_reviewer_guard_constraint() {
 
 # Behavior: each per-reviewer parallel brief contains the explicit pmctl
 # guard check constraint that must be called before writing the reviewer
-# output file (CC-297). CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
+# output file. CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
 # non-synthesis brief dispatched during a parallel run.
 # Steps: run the gate with --reviewers critic --parallel, and assert the
 # captured reviewer brief contains "pmctl guard check --role reviewer" and
@@ -4078,8 +4081,8 @@ test_relative_output_normalized_to_absolute() {
 
 # Behavior: pr-gate.sh's inline copy of gate_result_verify (for copy-mode,
 # run standalone without scripts/lib/) stays identical (modulo
-# indentation) to scripts/lib/gate-result-verify.sh (CC-382/CC-383) -- a
-# drifted copy would silently diverge the gate's integrity contract.
+# indentation) to scripts/lib/gate-result-verify.sh -- a drifted copy
+# would silently diverge the gate's integrity contract.
 # Steps: extract the gate_result_verify function body from both the lib
 # and the pr-gate.sh inline fallback, and assert the two bodies match
 # exactly.
@@ -4826,18 +4829,23 @@ run_test test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts
 run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 
-# CC-425: --head <ref> reviews a fixed ref with no PR or working tree involved
-# (e.g. review a branch before opening a PR, or a tag-to-tag diff). Happy-path
-# only -- see test_head_override_merge_base_semantics below for the two-dot
-# vs three-dot distinction on a diverged base/head topology.
-# Behavior: --head <ref> reviews a fixed ref pair without requiring that
-# ref to be checked out -- the flag diffs base..head_ref directly rather
-# than relying on the working tree's current branch.
+# --head <ref> reviews a fixed ref pair with no PR or working tree
+# involved (e.g. reviewing a branch before opening a PR, or a
+# tag-to-tag diff). Happy-path only -- see
+# test_head_override_merge_base_semantics below for the two-dot vs
+# three-dot distinction on a diverged base/head topology.
+
+# Behavior: --head <ref> reviews a fixed ref pair without requiring
+# that ref to be checked out -- the flag diffs base..head_ref
+# directly rather than relying on the working tree's current branch.
 # Steps:
-# 1. Build a repo with main + a feature branch carrying a committed change.
-# 2. Check out main (NOT feature) so the working tree is not on the reviewed ref.
+# 1. Build a repo with main + a feature branch carrying a
+#    committed change.
+# 2. Check out main (NOT feature) so the working tree is not on
+#    the reviewed ref.
 # 3. Run the gate with --base main --head feature.
-# 4. Assert exit 0, the brief records "Head: feature", and the feature-only file is in scope.
+# 4. Assert exit 0, the brief records "Head: feature", and the
+#    feature-only file is in scope.
 test_head_override_diffs_fixed_ref() {
   local name="head-override-diffs-fixed-ref"
   should_run "$name" || return 0
