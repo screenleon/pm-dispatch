@@ -46,12 +46,13 @@
 | CC-451 | core/ 定義層接上 runtime：enum 單一來源（policy YAML 派生 + parity 回歸）、state 寫入 schema 結構檢查；契約凍結的事實前置（2026-07-06 稽核新票） | 🔵 |
 | CC-446 | `docs/stability-contract.md` 四層分級 + SemVer/deprecation 政策 + CC-296 清掃 + deprecated surface 清點 + 契約可驗證性盤點（`--json` 一致性、死欄位去留） | 🔵 |
 
-### Phase 4 — 盲測 hardening（P3；低風險並行，檔案面與 Phase 1-3 不重疊）
+### Phase 4 — hardening：盲測稽核 + 使用回報（P3-P2；低風險並行，檔案面與 Phase 1-3 不重疊）
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
 | CC-452 | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard `set -e` 統一、ISO8601 正規化抽 lib | 🔵 |
 | CC-453 | worktree/auto-pack 路徑契約 hardening：worktree create stdout 收斂只印路徑、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正 | 🔵 |
+| CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | 🔵 |
 
 ### 待後續 / 明確排除
 
