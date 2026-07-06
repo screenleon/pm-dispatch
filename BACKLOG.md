@@ -79,7 +79,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-436 | 🔵 active | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
+| CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
@@ -143,20 +143,16 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-436 — codex-host PreToolUse payload 驗證 probe 🔵 active
+## CC-436 — codex-host PreToolUse payload 驗證 probe ✅ 2026-07-06
 
 **Problem**: [[CC-381]] spike（`docs/spikes/CC-381.md`）已用唯讀證據（`codex features list`/`codex doctor --json`/binary 字串反查）確認 codex `PreToolUse` hook 是 stable 且會 fail-closed 阻擋，但尚未實際跑過一次 end-to-end 的 hook 阻擋，也不知道 payload 內容能否映射到 `pmctl guard check --file/--command` 需要的欄位。
 
 **Why**: 這是 [[CC-381]] 收斂矩陣認定的「最小風險、最高信號」第一刀——payload 欄位不足會直接限制 codex-host guard binding 的設計空間（例如只能擋 command 不能擋 file path），必須在寫 host manifest schema（[[CC-438]]）前確認。
 
-**Requirement**:
-- 在 throwaway `CODEX_HOME`（`/tmp`）配置最小 `PreToolUse` hook，對一個明確 command（如 `echo blocked`）與一個 file change/apply patch 動作分別觸發，驗證 hook 是否真的 fail-closed 阻擋。
-- 確認 hook payload 是否包含可映射到 `pmctl guard check --file <path>` / `--command <cmd>` 的欄位；若不足，明確記錄缺口而非停在「可能不夠」。
-- 唯讀性質：不修改 repo 任何 install/doctor write path，不影響現有 codex executor adapter（`write_guard_mode: cli-only`）行為。
-- 結果寫回 `docs/spikes/CC-381.md`（追加 angle 或新增 `docs/spikes/CC-436.md`，由執行時決定）。
+**Outcome**: probe 完成，實測結果見 `docs/spikes/CC-436.md`。關鍵發現：(1) hook 設定格式是 `$CODEX_HOME/hooks.json`，與 Claude Code `settings.json` hooks 區塊相容，不是獨立 `config.toml` schema；(2) command 與 file-write 兩種動作皆實測 fail-closed 阻擋成功；(3) Bash/command payload 欄位齊全可直接映射 `pmctl guard check --command`，但 `apply_patch`（file-write）payload 沒有獨立 `file_path` 欄位，路徑內嵌在 patch 文字裡，需要額外 parser；(4) headless `codex exec` 若不帶 `--dangerously-bypass-hook-trust` 會無限期掛起（非 fail-closed 拒絕），這個 flag 對 codex-host dispatch 路徑是必要參數而非可選。建議：往 [[CC-438]] 推進但 schema 需區分 command/file 兩種覆蓋度不對稱；繼續保留 `write_guard_mode: cli-only` 當 fallback。
 
 **Dependencies**: 承接 [[CC-381]] spike 建議「第一刀」。umbrella [[CC-333]]。
-**See**: `docs/spikes/CC-381.md` §Recommendation 步驟 1。
+**See**: `docs/spikes/CC-436.md`
 
 ---
 
