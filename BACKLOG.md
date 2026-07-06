@@ -10,7 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-004 | 🟢 someday | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#38 | P3 | — |
+| CC-004 | ✅ closed 2026-07-06 | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#369 | P3 | — |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
@@ -499,11 +499,13 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Requirement**: 待 Windows = Supported flag flip 前評估：`state-writer.sh` 在 Windows 偵測下以 `icacls "<store_root>" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` 等價設定收斂保護，並補對應能力測試。
 **Source**: 2026-06-13 CC-368 #2 收尾時分出的 follow-up。
 
-## CC-004 — test-pr-gate.sh docstring 格式統一
+## CC-004 — test-pr-gate.sh docstring 格式統一 ✅ 2026-07-06
 
 **Problem**: scripts/test-pr-gate.sh 新增的 shell test functions 使用散文註解描述行為，而非 pm-schema 規範的 structured behavior/Steps docstring 形式。
 **Why**: tests 本身 behavior-named、deterministic，功能無虞，純為 audit-quality / 一致性問題。長期會讓新人讀測試時樣式不一。
 **Requirement**: 把新增 test functions 的開頭註解改寫成與既有 hook tests 一致的 behavior/Steps docstring 結構。不改測試邏輯。
+**AS-BUILT**：124 個 test function 全數補上 `# Behavior:`/`# Steps:` docstring，慣例說明加進 `scripts/lib/test-harness.sh` 頂部；新增 `scripts/lint-test-docstrings.sh` explicit-allowlist ratchet linter + 回歸測試，CI 掛勾守住已轉換檔案不再退化。其餘 9 檔 201 函式的跨檔 backfill 拆出為 [[CC-450]]。
+**See**: pr:#369
 
 ## CC-450 — 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔）
 
