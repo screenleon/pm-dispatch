@@ -80,7 +80,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-431 | 🔵 active | **[test-e2e.sh + release-verify.sh: opencode adapter support]** `--adapter` 目前只接受 `claude\|codex\|auto`；opencode 在 v0.6.0 加入後未同步更新 e2e 驗證路徑。需：(1) 將 opencode 加入兩腳本的 adapter 驗證清單；(2) Phase B dispatch 支援 opencode；(3) Phase C pr-gate smoke 評估是否可用 opencode executor（目前硬碼 codex）。觸發：release-verify --e2e --adapter opencode 被拒（exit 2）。v1.0 executor stable 宣稱的證據前置（v0.9.0 候選；DECISIONS 2026-07-04） | ops/test | 2026-06-30 | — | P2 | — |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
-| CC-437 | 🔵 active | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
+| CC-437 | ✅ done | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | pr:#374 | P2 | design |
 | CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
@@ -156,7 +156,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-437 — doctor 擴充切片：host-aware capability check 🔵 active
+## CC-437 — doctor 擴充切片：host-aware capability check ✅ 2026-07-06
 
 **Problem**: `scripts/doctor.sh` 目前四處寫死 claude-host 路徑（`check_settings_file`/`check_hooks`/`check_dispatch_allowlist`/`check_manifest`），無法回答「目前 host 是 claude/codex/opencode？哪些能力有 wiring？哪些只能透過 pmctl 手動使用？」。
 
@@ -169,7 +169,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - 唯讀：不改變 install 的 write path。
 
 **Dependencies**: 承接 [[CC-381]] spike 建議，可與 [[CC-436]] 並行（不互相阻塞）。umbrella [[CC-333]]。
-**See**: `docs/spikes/CC-381.md` §Angle 1/2/3 doctor 段落、§Recommendation 步驟 3。
+
+**Outcome**: `doctor.sh` 核心 host-agnostic 化——四個 claude-host 檢查逐字搬入 `scripts/lib/doctor-host-claude.sh`（slug 與 pass/fail 判準不變），泛型 `lib/doctor-host-*.sh` 模組 loader 動態載入，新增 host 只加模組檔。新增 `emit_capability` 結構化 capability 記錄（host/capability/provider/enforcement/coverage/stability/confidence 七欄位，對齊 [[CC-381]] capability object 設計）。codex-host 模組全唯讀（binary、`$CODEX_HOME/hooks.json` 存在性/有效性；coverage=partial 反映 [[CC-436]] file-write payload 需 patch parser 的實測）。模組 helper 私有化（`_doctor_host_<name>_*`），僅 `doctor_host_<name>_run` 公開。copy-mode（單檔安裝無 lib/）緊湊 fallback：settings-file/dispatch-allowlist/manifest 判準具體保留，hooks inventory 降級單一 WARN（唯一行為變更，僅 copy-mode）。gate 兩輪收斂（R1 qa block+arch advise → R2 全 GO）。capability 欄位命名與 [[CC-438]] schema 定案時對齊，模組介面 manifest-ready。
+**See**: pr:#374
+**Also**: `docs/spikes/CC-381.md` §Angle 1/2/3 doctor 段落、§Recommendation 步驟 3。
 
 ---
 

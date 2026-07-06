@@ -21,9 +21,9 @@
 
 | 票 | 摘要 | 狀態 |
 |----|------|------|
-| CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | 🔵 |
-| CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | 🔵 |
-| CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | 🔵 |
+| CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | ✅ |
+| CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | ✅ |
+| CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | ✅ |
 | CC-438 | host manifest schema v1：`hosts/codex/host.yaml` draft（install target/format、hook surface、guard bindings…）；依賴 CC-436 payload 結果，schema 定案須同時吃進 CC-448 階段 1 的 opencode probe 結果，不得 codex 特例 | 🔵 |
 | CC-445 | install write path host-aware：由 host manifest 衍生接線、host-generic（`hosts/*/host.yaml` 驅動）；claude 路徑 byte-compatible；含 claude-host 殘餘耦合盤點（usage-log 硬編路徑）；依賴 CC-436/438 | 🔵 |
 | CC-448（階段 2+3） | `hosts/opencode/host.yaml`（依 CC-438 schema）+ doctor/install 接線；N=2 驗收紅線：核心零改動、僅新增 `hosts/opencode/` 內容，做不到即回頭修抽象；probe 若判定 guard 不可承接則 fallback cli-only 並在 host manifest 明宣告 | 🔵 |
