@@ -41,10 +41,10 @@ _ctx_db_path() {
 
 # Default repo_root for context-family subcommands invoked without an explicit
 # path argument: the git toplevel of the CALLER'S CWD, not cli/pmctl's own
-# REPO_ROOT (which resolves to the pmctl install repo, not the target repo —
-# see CC-455). Falls back to REPO_ROOT with a one-line stderr warning only when
-# the CWD is not inside any git worktree. Echoes nothing (returns 1) when
-# neither is available.
+# REPO_ROOT (which resolves to the pmctl install repo, not the target repo).
+# Falls back to REPO_ROOT with a one-line stderr warning only when the CWD is
+# not inside any git worktree. Echoes nothing (returns 1) when neither is
+# available.
 _ctx_default_repo_root() {
   local toplevel
   toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"
@@ -1287,8 +1287,7 @@ _ctx_pack_memory_tsv() {
 # CLI: pmctl context pack [<repo_root>] --task-id <id> [--query <term>] ... [--source repo|memory|all]
 
 pmctl_context_pack() {
-  local repo_root
-  repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  local repo_root=""
   local task_id=""
   local source="repo"
   local terms=()
@@ -1343,6 +1342,9 @@ pmctl_context_pack() {
     esac
   done
 
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  fi
   if [[ -z "$repo_root" ]]; then
     printf 'pmctl context pack: repo root required\n' >&2
     return 2
@@ -1448,8 +1450,7 @@ pmctl_context_pack() {
 # CLI: pmctl context reuse-scan [<repo_root>] "<description>"
 
 pmctl_context_reuse_scan() {
-  local repo_root
-  repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  local repo_root=""
   local desc=""
   local repo_root_set=0
 
@@ -1471,6 +1472,9 @@ pmctl_context_reuse_scan() {
     esac
   done
 
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  fi
   if [[ -z "$repo_root" ]]; then
     printf 'pmctl context reuse-scan: repo root required\n' >&2
     return 2
