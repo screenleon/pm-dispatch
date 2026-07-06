@@ -52,6 +52,9 @@ ENUM_ENFORCEMENT="blocking approval advisory none"
 ENUM_COVERAGE="full partial none"
 ENUM_STABILITY="stable evolving"
 ENUM_CONFIDENCE="observed probed declared assumed"
+ENUM_PAYLOAD_FIELD="command cwd file_path"
+# Schema versions this validator knows how to check.
+KNOWN_SCHEMA_VERSIONS="1"
 
 in_enum() {
   # in_enum <value> <space-separated allowed values>
@@ -97,10 +100,19 @@ validate_manifest() {
 
   grep -qE '^schema_version:[[:space:]]*[1-9][0-9]*[[:space:]]*(#.*)?$' "$manifest" \
     || echo "schema_version is not a bare positive integer"
+  local sv
+  sv="$(grep -E '^schema_version:' "$manifest" | head -1 | sed 's/^schema_version:[[:space:]]*//;s/[[:space:]]*#.*$//')"
+  if [[ -n "$sv" ]] && ! in_enum "$sv" "$KNOWN_SCHEMA_VERSIONS"; then
+    echo "schema_version '$sv' is not a known version (validator supports: $KNOWN_SCHEMA_VERSIONS)"
+  fi
 
   local host_name
   host_name="$(grep -E '^host_name:' "$manifest" | head -1 | sed 's/^host_name:[[:space:]]*//;s/[[:space:]]*#.*$//')"
   [[ "$host_name" == "$host_dir" ]] || echo "host_name '$host_name' != directory '$host_dir'"
+
+  local host_binary
+  host_binary="$(grep -E '^host_binary:' "$manifest" | head -1 | sed 's/^host_binary:[[:space:]]*//;s/[[:space:]]*#.*$//')"
+  [[ -n "$host_binary" ]] || echo "host_binary is empty"
 
   # --- install_targets: per-entry fields + closed format enum ---------------
   local targets id_count f_count
@@ -123,6 +135,17 @@ validate_manifest() {
     [[ -z "$v" ]] && continue
     [[ "$v" == "true" || "$v" == "false" ]] || echo "install_targets: managed '$v' is not a boolean"
   done < <(printf '%s\n' "$targets" | grep -E '^[[:space:]]*(- )?managed:' | sed -E 's/^[[:space:]]*(- )?managed:[[:space:]]*//;s/[[:space:]]*#.*$//')
+  # ids must be unique: permissions_surface.config_target (and any future
+  # cross-reference) resolves by id, so a duplicate is ambiguous.
+  local dup_ids
+  dup_ids="$(printf '%s\n' "$targets" | grep -E '^[[:space:]]*(- )?id:' | sed -E 's/^[[:space:]]*(- )?id:[[:space:]]*//;s/[[:space:]]*#.*$//' | sort | uniq -d | tr '\n' ' ')"
+  [[ -z "${dup_ids// /}" ]] || echo "install_targets: duplicate id: $dup_ids"
+  # Paths must be anchored to the host's home env var, never a hard-coded
+  # user directory (contract design rule: no maintainer-local layout).
+  while IFS= read -r v; do
+    [[ -z "$v" ]] && continue
+    [[ "$v" == \$* ]] || echo "install_targets: path '$v' is not anchored to a host home env var"
+  done < <(printf '%s\n' "$targets" | grep -E '^[[:space:]]*(- )?path:' | sed -E 's/^[[:space:]]*(- )?path:[[:space:]]*//;s/[[:space:]]*#.*$//;s/^"//;s/"$//')
 
   # --- hook_surface: empty map, or config_format + events required ----------
   local hooks
@@ -136,6 +159,16 @@ validate_manifest() {
     if [[ -n "$v" ]]; then
       in_enum "$v" "$ENUM_FORMAT" || echo "hook_surface: config_format '$v' not in closed enum"
     fi
+    # headless_required_flags entries, when declared, must be CLI flags —
+    # dispatch paths pass them verbatim to the host binary.
+    while IFS= read -r v; do
+      [[ -z "$v" ]] && continue
+      [[ "$v" == -* ]] || echo "hook_surface: headless_required_flags entry '$v' is not a flag"
+    done < <(printf '%s\n' "$hooks" | awk '
+      /^[[:space:]]*headless_required_flags:/ { f=1; next }
+      f && /^[[:space:]]*- /   { sub(/^[[:space:]]*- /, ""); sub(/[[:space:]]*#.*$/, ""); print; next }
+      f && /[^[:space:]]/ && !/^[[:space:]]*#/ { f=0 }
+    ')
   fi
 
   # --- guard_bindings: tuple completeness + closed enums + none rule --------
@@ -195,7 +228,22 @@ validate_manifest() {
     END { flush() }
   '
 
-  # --- permissions_surface: config_target must reference an install id ------
+  # --- guard_bindings: payload_fields keys are a closed set ------------------
+  # payload_fields maps guard-check inputs to host payload paths; an unknown
+  # key would silently declare an input pmctl guard check cannot consume.
+  while IFS= read -r v; do
+    [[ -z "$v" ]] && continue
+    in_enum "$v" "$ENUM_PAYLOAD_FIELD" || echo "guard_bindings: payload_fields key '$v' not in closed enum"
+  done < <(printf '%s\n' "$bindings" | awk '
+    function ind(s) { match(s, /[^ ]/); return RSTART }
+    /^[[:space:]]*payload_fields:/ { f=1; base=ind($0); next }
+    f {
+      if ($0 !~ /[^[:space:]]/ || ind($0) <= base) { f=0 }
+      else if ($0 !~ /^[[:space:]]*#/) { k=$1; sub(/:.*/, "", k); print k }
+    }
+  ')
+
+  # --- permissions_surface: config_target reference + managed boolean --------
   local perms target
   perms="$(section "$manifest" permissions_surface)"
   target="$(key_value "$perms" config_target)"
@@ -203,17 +251,27 @@ validate_manifest() {
     printf '%s\n' "$targets" | grep -qE "^[[:space:]]*(- )?id:[[:space:]]*$target([[:space:]]|#|$)" \
       || echo "permissions_surface: config_target '$target' does not reference an install_targets id"
   fi
+  v="$(key_value "$perms" managed)"
+  if [[ -z "$v" ]]; then
+    echo "permissions_surface: managed is missing"
+  elif [[ "$v" != "true" && "$v" != "false" ]]; then
+    echo "permissions_surface: managed '$v' is not a boolean"
+  fi
 
   # --- doctor_module must exist ----------------------------------------------
   local module
   module="$(grep -E '^doctor_module:' "$manifest" | head -1 | sed 's/^doctor_module:[[:space:]]*//;s/[[:space:]]*#.*$//')"
-  if [[ -n "$module" && ! -f "$REPO_ROOT/$module" ]]; then
+  if [[ -z "$module" ]]; then
+    echo "doctor_module is empty"
+  elif [[ ! -f "$REPO_ROOT/$module" ]]; then
     echo "doctor_module '$module' not found under repo root"
   fi
 
   # --- uninstall_module must be null or an existing repo-relative file --------
   module="$(grep -E '^uninstall_module:' "$manifest" | head -1 | sed 's/^uninstall_module:[[:space:]]*//;s/[[:space:]]*#.*$//')"
-  if [[ -n "$module" && "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
+  if [[ -z "$module" ]]; then
+    echo "uninstall_module is empty (must be null or an existing repo-relative path)"
+  elif [[ "$module" != "null" && ! -f "$REPO_ROOT/$module" ]]; then
     echo "uninstall_module '$module' not found under repo root (must be null or an existing repo-relative path)"
   fi
 
@@ -341,6 +399,36 @@ run_negative_case "doctor_module pointing at missing file" \
 run_negative_case "uninstall_module non-null pointing at missing file" \
   's|^uninstall_module:.*|uninstall_module: scripts/lib/uninstall-host-missing.sh|' \
   "uninstall_module 'scripts/lib/uninstall-host-missing.sh' not found"
+run_negative_case "unknown schema_version" \
+  's/^schema_version:.*/schema_version: 2/' \
+  "schema_version '2' is not a known version"
+run_negative_case "empty host_binary" \
+  's/^host_binary:.*/host_binary:/' \
+  "host_binary is empty"
+run_negative_case "duplicate install_targets id" \
+  's/^([[:space:]]+- )id: config/\1id: hooks/' \
+  "install_targets: duplicate id: hooks"
+run_negative_case "install target path not env-var anchored" \
+  's|path: "\$CODEX_HOME/hooks.json"|path: "/home/user/.codex/hooks.json"|' \
+  "path '/home/user/.codex/hooks.json' is not anchored to a host home env var"
+run_negative_case "headless_required_flags entry not a flag" \
+  's/- --dangerously-bypass-hook-trust/- dangerously-bypass-hook-trust/' \
+  "headless_required_flags entry 'dangerously-bypass-hook-trust' is not a flag"
+run_negative_case "payload_fields key outside closed set" \
+  's/^([[:space:]]+)command: tool_input.command/\1kommand: tool_input.command/' \
+  "payload_fields key 'kommand' not in closed enum"
+run_negative_case "permissions_surface missing managed" \
+  's/^([[:space:]]+)managed: false$/\1managet: false/' \
+  "permissions_surface: managed is missing"
+run_negative_case "permissions_surface managed not boolean" \
+  's/^([[:space:]]+)managed: false$/\1managed: nope/' \
+  "permissions_surface: managed 'nope' is not a boolean"
+run_negative_case "empty doctor_module" \
+  's|^doctor_module:.*|doctor_module:|' \
+  "doctor_module is empty"
+run_negative_case "empty uninstall_module" \
+  's|^uninstall_module:.*|uninstall_module:|' \
+  "uninstall_module is empty"
 run_negative_case "ticket reference in manifest" \
   's/^host_binary: codex/host_binary: codex # CC-999/' \
   "manifest contains ticket references"
@@ -404,7 +492,7 @@ done
 
 # Every closed-enum value the validator enforces must be documented in the
 # contract doc, so the doc and the test cannot drift apart silently.
-for enum_list in "$ENUM_FORMAT" "$ENUM_CAPABILITY" "$ENUM_BINDING_FORM" "$ENUM_PROVIDER" "$ENUM_ENFORCEMENT" "$ENUM_COVERAGE" "$ENUM_STABILITY" "$ENUM_CONFIDENCE"; do
+for enum_list in "$ENUM_FORMAT" "$ENUM_CAPABILITY" "$ENUM_BINDING_FORM" "$ENUM_PROVIDER" "$ENUM_ENFORCEMENT" "$ENUM_COVERAGE" "$ENUM_STABILITY" "$ENUM_CONFIDENCE" "$ENUM_PAYLOAD_FIELD"; do
   for v in $enum_list; do
     name="host-contract.md: documents enum value '$v'"
     should_run "$name" || continue

@@ -47,7 +47,7 @@ behaves as a dispatched executor.
 | `install_targets` | yes | List of files the install write path would own or assert (see below). |
 | `hook_surface` | yes | Hook runtime facts: config format, event names, headless requirements. May be an empty map for hosts with no hook system. |
 | `guard_bindings` | yes | List of guard capability declarations (see below). |
-| `permissions_surface` | yes | The host's native permission model outside the hook surface, and whether the installer manages it. Its `config_target` must reference an `install_targets` entry `id`. |
+| `permissions_surface` | yes | The host's native permission model outside the hook surface. Carries `config_target` (must reference an `install_targets` entry `id`) and `managed` (boolean: whether the install write path manages that surface). |
 | `doctor_module` | yes | Repo-relative path to the sourceable doctor host module; must exist. |
 | `uninstall_module` | yes | Repo-relative path to the uninstall module, or `null` while no install write path exists. |
 
@@ -100,9 +100,11 @@ declared and probed layers stay mechanically comparable:
 | `stability` | `stable`, `evolving` | Whether the host mechanism is still moving. |
 | `confidence` | `observed`, `probed`, `declared`, `assumed` | Evidence strength, strongest first: observed in production use > probed end-to-end once > declared by host docs > assumed. |
 
-Optional per-entry field `payload_fields` maps guard-check inputs (command,
-cwd, file path) to the host's payload field paths, documenting how the binding
-feeds `pmctl guard check`.
+Optional per-entry field `payload_fields` maps guard-check inputs to the
+host's payload field paths, documenting how the binding feeds
+`pmctl guard check`. Its keys are a closed set — `command`, `cwd`,
+`file_path` — because an unknown key would declare an input the guard CLI
+cannot consume.
 
 **Full enumeration**: every value of the closed `capability` enum must appear
 exactly once in `guard_bindings` — a missing entry is a validation error, not
@@ -162,7 +164,9 @@ degrading it.
 
 `schema_version` is a positive integer. Additive, backward-compatible fields
 may land within a version; removing or re-typing a field, or extending a
-closed enum, bumps the version. Once the repo-wide stability contract lands,
+closed enum, bumps the version. The manifest validator accepts only versions
+it knows how to check (currently `1`) — a manifest declaring a newer version
+fails validation until the validator learns that version's rules. Once the repo-wide stability contract lands,
 `host.yaml` joins the stable-schema tier and changes become subject to its
 deprecation policy.
 
