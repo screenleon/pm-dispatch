@@ -15,9 +15,14 @@ For code symbols, omit --domain or use --domain repo:
 
     pmctl context query <repo_root> <symbol-name>
 
-`<repo_root>` must be an explicit directory argument — if the first argument
-isn't a directory, the query falls back to `pmctl`'s own `REPO_ROOT` (the
-pm-dispatch install repo), not your target project.
+`<repo_root>` is optional — when omitted (or the first argument isn't a
+directory), the query defaults to the **git toplevel of the current working
+directory**, so running these commands from inside your target project
+resolves correctly without naming it explicitly. Only when the CWD is not
+inside any git worktree does it fall back to `pmctl`'s own `REPO_ROOT` (the
+pm-dispatch install repo), printing a one-line stderr warning when it does.
+When scripting or dispatching from an unknown CWD, pass `<repo_root>`
+explicitly to be unambiguous.
 
 ## Source planes — repo and memory
 

@@ -543,14 +543,15 @@ test_commands_pr_gate_md_does_not_reuse_shell_var_across_bash_calls() {
 }
 
 test_commands_pr_gate_md_wait_block_self_resolves_pmctl() {
-  # CC-423 pr-gate finding (critic/qa-tester/architecture-reviewer, high,
-  # round 2 of the same class of bug): the wait command block still called
-  # "$PMCTL" while relying on a $PMCTL assignment from the separate,
-  # earlier "Step 1 - Locate pmctl" Bash call -- the exact same
-  # cross-process shell-variable-leakage bug as $GATE_ID, just for a
-  # different variable. Extract the fenced code block that actually invokes
-  # `gate wait <gate_id>` and require that SAME block also assigns PMCTL --
-  # it must never depend on a variable set by an earlier, separate Bash call.
+  # The wait command block must invoke `pmctl` bare -- no PMCTL=... resolution
+  # preamble, no dependency on a variable assigned by an earlier, separate
+  # Bash call. A resolution preamble (or any `$PMCTL` reference) means the
+  # submitted command text never literally starts with `pmctl`, so it can
+  # never match a `Bash(pmctl:*)`-style permission allowlist rule and forces
+  # a manual approval on every wait call even when pmctl is already on PATH.
+  # Extract the fenced code block that actually invokes `gate wait <gate_id>`
+  # and require it to be a bare `pmctl ...` invocation with no PMCTL variable
+  # anywhere in the block.
   local name="commands-pr-gate-md-wait-block-self-resolves-pmctl"
   local target="$REPO_ROOT/commands/pr-gate.md"
   local wait_block
@@ -567,8 +568,12 @@ test_commands_pr_gate_md_wait_block_self_resolves_pmctl() {
     fail "$name" "could not locate a fenced bash block invoking gate wait <gate_id> in $target"
     return
   fi
-  if [[ "$wait_block" != *'PMCTL='* ]]; then
-    fail "$name" "wait code block invokes pmctl without self-resolving PMCTL first: $wait_block"
+  if [[ "$wait_block" == *'PMCTL'* ]]; then
+    fail "$name" "wait code block still depends on a PMCTL variable instead of a bare pmctl call: $wait_block"
+    return
+  fi
+  if [[ "$wait_block" != 'pmctl gate wait <gate_id>'* ]]; then
+    fail "$name" "wait code block does not open with a bare pmctl invocation: $wait_block"
     return
   fi
   pass "$name"

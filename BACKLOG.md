@@ -16,7 +16,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
-| CC-455 | 🔵 active | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | — | P2 | — |
+| CC-455 | ✅ closed 2026-07-06 | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | pr:#371 | P2 | — |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
@@ -493,7 +493,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**: 無前置；v0.9.0 hardening phase。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
 **Source**: 2026-07-06 盲測程式碼稽核；洩漏目錄實例（已清除）。
 
-## CC-455 — context plane repo_root 跟隨工作目錄（跨 repo 使用 context.db 打錯 repo）🔵 active
+## CC-455 — context plane repo_root 跟隨工作目錄（跨 repo 使用 context.db 打錯 repo）✅ 2026-07-06
 
 **Problem**（2026-07-06 使用者回報 + 實測確認）: 在 pm-dispatch 以外的 repo 用 CLI 觸發 pm agent 時，目標 repo 的 context.db 不會被建立或刷新。根因鏈：
 1. `cli/pmctl` 的 `REPO_ROOT` 從 pmctl 腳本自身路徑（穿過 `~/.local/bin` symlink）解析——**永遠指向 pm-dispatch 安裝 repo，與執行時的工作目錄無關**。
@@ -508,6 +508,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. 盤點 context 家族以外是否有同型「default REPO_ROOT 但語意應為 target repo」的子指令（如 memory 平面已獨立解析、應不受影響——確認即可）。
 3. `agents/project-pm.md` retrieval reflex 與 `docs/context-retrieval.md` 同步：明確「跨 repo 時查詢必帶 target repo root（或依賴修正後的 CWD default）」。
 4. 回歸測試：外部 repo 內執行 query/reuse-scan → 在該 repo 建立/刷新 `.pm-dispatch/ctx/context.db`、不觸碰 pm-dispatch 自身 db。
+
+**AS-BUILT**：新增共用 helper `_ctx_default_repo_root`（`scripts/lib/pmctl-context.sh`）：未帶路徑時先解析呼叫時 CWD 的 git toplevel，非 git 目錄才 fallback `REPO_ROOT` 並印一行 stderr warning；`index`/`update`/`query`/`pack`/`reuse-scan` 五個子指令全部改用（Requirement 1）。pr-gate 過程中另抓到 `pack`/`reuse-scan` 有「default 早於 explicit-repo 解析」的排序 bug（explicit repo 呼叫仍誤印 fallback warning），一併修正。`agents/project-pm.md` retrieval reflex 與 `docs/context-retrieval.md` 同步改為要求明確帶 `<working_dir>`（Requirement 3）。回歸測試新增 external-repo/no-git-fallback/pm-dispatch-tree-unchanged/live-db-untouched 等情境，共 99 案全綠（Requirement 4）。Requirement 2 抽查 worktree/dispatch/ship/task 等子指令：`repo_root`（install repo，供 lib/state 定位）與 `work_dir`/`--cd`（實際 target repo）本就是分離參數，`work_dir` 一律要求明確 `--cd`/positional 而非依賴 CWD 隱性 default，架構上與 context 的單一參數混用問題不同類，未發現同型缺陷。過程中順帶把 `commands/pr-gate.md`/`pre-release.md`/`ship.md` 的 pmctl 呼叫方式改為裸指令（原本的路徑解析 preamble 會讓指令永遠比對不到 `Bash(pmctl:*)` allowlist、每次都要提權）。
+**See**: pr:#371
 
 **Dependencies**: 無前置。v0.9.0。與 [[CC-453]]（auto-pack work_dir 驗證）同屬「路徑語意」修正面，可同批評估但不合票。
 **Source**: 使用者 2026-07-06 回報「其他 repo 的 context.db 不會自動使用/刷新」；主線程實測確認。

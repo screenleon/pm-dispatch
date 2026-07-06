@@ -20,18 +20,26 @@ paths or when reviewer independence matters.
 | Auth / payment / migration / sensitive paths | `--parallel` |
 | Force a specific tier | `express` / `standard` / `full` |
 
-## Step 1 - Locate pmctl
+## Step 1 - Invoke pmctl directly
 
-Resolve the installed `pmctl` binary. `~/.local/bin/pmctl` is the installed
-symlink; fall back to the repo-relative path when the install is absent.
-**This resolution is a one-liner repeated verbatim at the top of every Bash
-call in this skill that invokes `pmctl`** (Step 2's launch call and the wait
-call below) — never assume `$PMCTL` set in one Bash call is visible in
-another; each call is its own subprocess:
+Call the bare `pmctl` command with no resolution preamble — an installed
+setup has it on PATH, and a literal `pmctl ...` invocation is what matches
+allowlisted `Bash(pmctl:*)`-style permission rules; anything prefixed onto
+the command (a variable assignment, a `command -v` check, a subshell) does
+not match that prefix and forces a manual approval every time.
+
+Only if a bare `pmctl` call actually fails with a command-not-found error
+(exit 127, or stderr naming `pmctl: command not found`) — meaning `pmctl` is
+not on PATH, e.g. a fresh checkout before `install.sh` has run — retry that
+**same** step with the resolved repo-relative path instead:
 
 ```bash
-PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
+"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run ...
 ```
+
+This fallback form only ever runs once, on the rare not-installed path, and
+naturally needs one manual approval when it does — it does not become the
+default shape of every gate call.
 
 ## Step 2 - Parse args and launch detached
 
@@ -61,7 +69,6 @@ This command should pass exactly one of these explicit modes when known:
 `/pm` profile defaults and `scripts/install-guards.sh` auto-detect.
 
 ```bash
-PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
 RAW_ARGS="${ARGUMENTS:-}"
 TIER_OVERRIDE=""
 TARGETED_REVIEWERS=""
@@ -106,9 +113,15 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
 done
 
 SCOPE="${SCOPE_TOKENS[*]:-}"
-# --cd defaults to $PWD inside pmctl gate run when omitted; pass explicitly
-# so the intent is clear and portable across invocation contexts.
-GATE_ARGS=(--cd "$PWD" --executor auto)
+# --cd's value below, "<work_dir>", is a placeholder to replace with the
+# actual working directory (already known from context) as a literal quoted
+# string before running this block -- e.g. "/home/user/repo" -- NOT "$PWD".
+# A "$PWD" expansion makes the whole command unanalyzable statically (see
+# note below the launch call) and forces a manual approval regardless of the
+# `pmctl:*` prefix match. The quotes around the placeholder keep this block
+# valid, executable Bash even before that substitution (bare, unquoted
+# `<work_dir>` would be parsed as I/O redirection and fail to parse).
+GATE_ARGS=(--cd "<work_dir>" --executor auto)
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
@@ -117,20 +130,31 @@ GATE_ARGS=(--cd "$PWD" --executor auto)
 # Launch detached: this call is inline (NOT run_in_background) and returns in
 # well under a second once the supervisor is forked -- it prints exactly one
 # line, the gate_id, and nothing else on success.
-"$PMCTL" gate run "${GATE_ARGS[@]}" --lifecycle detached
+pmctl gate run "${GATE_ARGS[@]}" --lifecycle detached
 ```
+
+If this fails with `pmctl: command not found` (exit 127), `pmctl` is not on
+PATH — retry with the resolved fallback path instead:
+`"$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl" gate run "${GATE_ARGS[@]}" --lifecycle detached`
+(re-run the full arg-parsing block above first — `GATE_ARGS` does not
+survive across Bash calls).
 
 Read the printed `gate_id` from this call's stdout, then launch the wait as a
 **separate Bash tool call** with `run_in_background: true` so the main thread
 is free while the gate runs. This is a genuinely independent subprocess, so
-it re-resolves `pmctl` itself (Step 1's one-liner, repeated -- never `$PMCTL`
-from an earlier call) and receives `gate_id` only as a substituted literal
-value, never a shell variable from the block above:
+it does not depend on any variable from the block above — call `pmctl`
+bare (no resolution preamble; see Step 1) and receive `gate_id` and
+`<work_dir>` only as substituted literal values, never shell variables (a
+`"$PWD"` expansion here defeats the whole point of calling `pmctl` bare: it
+makes the command unanalyzable statically, so it needs a manual approval
+every time regardless of the `pmctl:*` prefix match):
 
 ```bash
-PMCTL="${HOME}/.local/bin/pmctl"; [[ -x "$PMCTL" ]] || PMCTL="$(cd "$(dirname "$(readlink -f "${HOME}/.claude/commands/pr-gate.md" 2>/dev/null || readlink "${HOME}/.claude/commands/pr-gate.md")")/.." && pwd)/cli/pmctl"
-"$PMCTL" gate wait <gate_id> --cd "$PWD"
+pmctl gate wait <gate_id> --cd "<work_dir>"
 ```
+
+If this fails with `pmctl: command not found`, fall back per Step 1 (retry
+with the resolved absolute `cli/pmctl` path).
 
 After firing the wait, reply with one short status line, e.g.:
 
@@ -139,11 +163,12 @@ After firing the wait, reply with one short status line, e.g.:
 Do not poll, sleep, or call `BashOutput` immediately. If the session is
 interrupted before the wait notification arrives, the gate keeps running
 detached; note the `gate_id` before the interrupt (or recover it via
-`pmctl artifacts list --cd "$PWD"`) and reattach with
-`pmctl gate wait <gate_id> --cd "$PWD"` in a new session -- a fresh `/pr-gate`
-invocation starts a NEW gate and does NOT reattach to the interrupted one.
+`pmctl artifacts list --cd "<work_dir>"`) and reattach with
+`pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
+`/pr-gate` invocation starts a NEW gate and does NOT reattach to the
+interrupted one.
 (gate wait exit 3 means the sentinel was already consumed by a prior wait —
-check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
+check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
 file in that case).
 
 ## Executor routes — both dispatch an independent subprocess
@@ -171,14 +196,15 @@ When the `pmctl gate wait` background Bash completion notification arrives:
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
-   running detached -- retry `pmctl gate wait <gate_id> --cd "$PWD"` once with
+   running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "$PWD"`
+   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`
    to locate the durable result instead), other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
-   `pmctl artifacts show <gate_id> --cd "$PWD"`).
+   `pmctl artifacts show <gate_id> --cd "<work_dir>"`).
 4. Read `result_file` directly (both executor routes write it in-process). To
-   re-confirm out of band, run `pmctl gate verify "$result_file"` (exit 0 = valid).
+   re-confirm out of band, run `pmctl gate verify <result_file_path>` (the
+   literal path parsed in step 2, not a shell variable; exit 0 = valid).
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and

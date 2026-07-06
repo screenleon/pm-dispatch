@@ -149,9 +149,14 @@ case_context_index_missing_repo() {
   local out err status=0
   out="$tmp_root/idx-mr.out"; err="$tmp_root/idx-mr.err"
   # CLI always sets REPO_ROOT; test the function directly with REPO_ROOT unset.
-  env -u REPO_ROOT bash -c \
-    ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index" \
-    > "$out" 2> "$err" || status=$?
+  # Must also run from a CWD outside any git worktree — otherwise the
+  # git-toplevel default would resolve to this repo's own toplevel and this
+  # case would start indexing the LIVE repo DB (see LIVE_DB_BASELINE guard).
+  local nogit_dir="$tmp_root/idx-mr-nogit"
+  mkdir -p "$nogit_dir"
+  ( cd "$nogit_dir" && env -u REPO_ROOT bash -c \
+      ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index" \
+      > "$out" 2> "$err" ) || status=$?
   if assert_exit "$name" "$status" 2; then pass "$name"; fi
 }
 
@@ -2556,6 +2561,169 @@ case_context_pack_repo_sources_no_memory_index() {
   fi
 }
 
+# ── repo_root defaults to CWD git toplevel, not the pmctl install repo ────────
+
+case_context_default_repo_root_uses_cwd_git_toplevel() {
+  local name="pmctl context index: no-arg invocation from an external git repo indexes THAT repo, not pm-dispatch"
+  should_run "$name" || return 0
+  local ext_repo="$tmp_root/defroot-ext-repo"
+  make_fixture_repo "$ext_repo"
+  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  local out err status=0
+  out="$tmp_root/defroot-idx.out"; err="$tmp_root/defroot-idx.err"
+  ( cd "$ext_repo" && "$PMCTL" context index --source repo > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "index exited $status: $(<"$err")"; return 0; fi
+  if [[ -f "$ext_repo/.pm-dispatch/ctx/context.db" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected $ext_repo/.pm-dispatch/ctx/context.db to exist; index output: $(<"$out")"
+  fi
+}
+
+case_context_default_repo_root_falls_back_to_repo_root_env() {
+  local name="pmctl context index: no-arg invocation outside any git worktree falls back to REPO_ROOT with a stderr warning"
+  should_run "$name" || return 0
+  local nogit_dir="$tmp_root/defroot-nogit"
+  local fallback_repo="$tmp_root/defroot-fallback-repo"
+  mkdir -p "$nogit_dir"
+  make_fixture_repo "$fallback_repo"
+  local out err status=0
+  out="$tmp_root/defroot-fb.out"; err="$tmp_root/defroot-fb.err"
+  ( cd "$nogit_dir" && REPO_ROOT="$fallback_repo" bash -c \
+      ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
+      > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -ne 0 ]]; then fail "$name" "index exited $status: $(<"$err")"; return 0; fi
+  if [[ -f "$fallback_repo/.pm-dispatch/ctx/context.db" ]] && grep -qi 'falling back to REPO_ROOT' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected fallback DB + stderr warning; db exists=$([[ -f "$fallback_repo/.pm-dispatch/ctx/context.db" ]] && echo yes || echo no) stderr=$(<"$err")"
+  fi
+}
+
+case_context_default_repo_root_pm_dispatch_tree_unchanged() {
+  local name="pmctl context index: when CWD git toplevel equals REPO_ROOT (running from within a checkout), resolution is a no-op change (self-consistent, matches legacy behavior) — verified on an isolated fixture, never the live repo"
+  should_run "$name" || return 0
+  # Simulate "running from inside a pm-dispatch-like checkout" without touching
+  # the real live repo DB: a fixture that is its OWN git toplevel AND its own
+  # REPO_ROOT, mirroring the case where the two values coincide.
+  local self_repo="$tmp_root/defroot-self-repo"
+  make_fixture_repo "$self_repo"
+  ( cd "$self_repo" && git init -q && git add -A && git commit -q -m init )
+  local out err status=0
+  out="$tmp_root/defroot-self.out"; err="$tmp_root/defroot-self.err"
+  ( cd "$self_repo" && REPO_ROOT="$self_repo" bash -c \
+      ". \"$SCRIPT_DIR/lib/pmctl-context.sh\" 2>/dev/null; pmctl_context_index --source repo" \
+      > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && [[ -f "$self_repo/.pm-dispatch/ctx/context.db" ]] && ! grep -qi 'falling back' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, DB created, no fallback warning; status=$status stderr=$(<"$err")"
+  fi
+}
+
+case_context_no_arg_cross_repo_never_touches_pm_dispatch_db() {
+  local name="pmctl context index/query: no-arg invocation from an external repo never creates or mutates pm-dispatch's own context.db"
+  should_run "$name" || return 0
+  local ext_repo="$tmp_root/defroot-cross-repo"
+  make_fixture_repo "$ext_repo"
+  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  local before after
+  before="$(_live_db_fingerprint)"
+  ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
+  ( cd "$ext_repo" && "$PMCTL" context query --source repo my_func_alpha > /dev/null 2>&1 )
+  after="$(_live_db_fingerprint)"
+  if [[ "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "pm-dispatch's own context.db changed after cross-repo no-arg calls: before=$before after=$after"
+  fi
+}
+
+case_context_default_repo_root_update_uses_cwd() {
+  local name="pmctl context update: no-arg invocation from an external git repo re-scans THAT repo, not pm-dispatch"
+  should_run "$name" || return 0
+  local ext_repo="$tmp_root/defroot-update-repo"
+  make_fixture_repo "$ext_repo"
+  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  ( cd "$ext_repo" && "$PMCTL" context index --source repo > /dev/null 2>&1 )
+  local out err status=0
+  out="$tmp_root/defroot-update.out"; err="$tmp_root/defroot-update.err"
+  ( cd "$ext_repo" && "$PMCTL" context update > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && [[ -f "$ext_repo/.pm-dispatch/ctx/context.db" ]]; then
+    pass "$name"
+  else
+    fail "$name" "update exited $status; db exists=$([[ -f "$ext_repo/.pm-dispatch/ctx/context.db" ]] && echo yes || echo no) stderr=$(<"$err")"
+  fi
+}
+
+case_context_default_repo_root_pack_uses_cwd() {
+  local name="pmctl context pack: no-arg (no positional repo) invocation from an external git repo packs THAT repo"
+  should_run "$name" || return 0
+  local ext_repo="$tmp_root/defroot-pack-repo"
+  make_fixture_repo "$ext_repo"
+  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  local out err status=0
+  out="$tmp_root/defroot-pack.out"; err="$tmp_root/defroot-pack.err"
+  ( cd "$ext_repo" && "$PMCTL" context pack --task-id T-DEFROOT --query my_func_alpha > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q '"task_id":"T-DEFROOT"' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "pack exited $status: $(<"$out") stderr=$(<"$err")"
+  fi
+}
+
+case_context_default_repo_root_reuse_scan_uses_cwd() {
+  local name="pmctl context reuse-scan: no-arg (no positional repo) invocation from an external git repo scans THAT repo"
+  should_run "$name" || return 0
+  local ext_repo="$tmp_root/defroot-reuse-repo"
+  make_fixture_repo "$ext_repo"
+  ( cd "$ext_repo" && git init -q && git add -A && git commit -q -m init )
+  local out err status=0
+  out="$tmp_root/defroot-reuse.out"; err="$tmp_root/defroot-reuse.err"
+  ( cd "$ext_repo" && "$PMCTL" context reuse-scan "reuse my_func_alpha helper" > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && grep -q '^reuse_candidates:' "$out"; then
+    pass "$name"
+  else
+    fail "$name" "reuse-scan exited $status: $(<"$out") stderr=$(<"$err")"
+  fi
+}
+
+case_context_pack_explicit_repo_no_fallback_warning() {
+  local name="pmctl context pack: explicit repo argument from a non-git CWD does NOT emit the fallback-to-REPO_ROOT warning"
+  should_run "$name" || return 0
+  local nogit_dir="$tmp_root/defroot-pack-nogit"
+  local explicit_repo="$tmp_root/defroot-pack-explicit-repo"
+  mkdir -p "$nogit_dir"
+  make_fixture_repo "$explicit_repo"
+  local out err status=0
+  out="$tmp_root/defroot-pack-explicit.out"; err="$tmp_root/defroot-pack-explicit.err"
+  ( cd "$nogit_dir" && "$PMCTL" context pack "$explicit_repo" --task-id T-EXPLICIT --query my_func_alpha \
+      > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && ! grep -qi 'falling back' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with no fallback warning; status=$status stderr=$(<"$err")"
+  fi
+}
+
+case_context_reuse_scan_explicit_repo_no_fallback_warning() {
+  local name="pmctl context reuse-scan: explicit repo argument from a non-git CWD does NOT emit the fallback-to-REPO_ROOT warning"
+  should_run "$name" || return 0
+  local nogit_dir="$tmp_root/defroot-reuse-nogit"
+  local explicit_repo="$tmp_root/defroot-reuse-explicit-repo"
+  mkdir -p "$nogit_dir"
+  make_fixture_repo "$explicit_repo"
+  local out err status=0
+  out="$tmp_root/defroot-reuse-explicit.out"; err="$tmp_root/defroot-reuse-explicit.err"
+  ( cd "$nogit_dir" && "$PMCTL" context reuse-scan "$explicit_repo" "reuse my_func_alpha helper" \
+      > "$out" 2> "$err" ) || status=$?
+  if [[ "$status" -eq 0 ]] && ! grep -qi 'falling back' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with no fallback warning; status=$status stderr=$(<"$err")"
+  fi
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -2647,6 +2815,15 @@ case_context_reuse_scan_never_returns_memory
 case_context_index_source_missing_value
 case_context_memory_source_attribution
 case_context_pack_repo_sources_no_memory_index
+case_context_default_repo_root_uses_cwd_git_toplevel
+case_context_default_repo_root_falls_back_to_repo_root_env
+case_context_default_repo_root_pm_dispatch_tree_unchanged
+case_context_no_arg_cross_repo_never_touches_pm_dispatch_db
+case_context_default_repo_root_update_uses_cwd
+case_context_default_repo_root_pack_uses_cwd
+case_context_default_repo_root_reuse_scan_uses_cwd
+case_context_pack_explicit_repo_no_fallback_warning
+case_context_reuse_scan_explicit_repo_no_fallback_warning
 case_context_no_live_db_mutation
 
 th_summary

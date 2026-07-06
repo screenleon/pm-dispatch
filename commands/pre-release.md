@@ -11,17 +11,14 @@ This command covers **Layer 1** (machine-executable structural checks),
 **Output is a report — not a GO/NO-GO verdict.** The release decision remains
 with the user.
 
-## Step 1 — Locate pmctl
+## Step 1 — Invoke pmctl directly
 
-```bash
-if [[ -x "${HOME}/.local/bin/pmctl" ]]; then
-  PMCTL="${HOME}/.local/bin/pmctl"
-else
-  CMD_LINK="${HOME}/.claude/commands/pre-release.md"
-  CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
-  PMCTL="$(cd "$(dirname "$CMD_REAL")/.." && pwd)/cli/pmctl"
-fi
-```
+Call the bare `pmctl` command with no resolution preamble — an installed setup
+has it on PATH, and a literal `pmctl ...` invocation is what matches
+allowlisted `Bash(pmctl:*)`-style permission rules; anything prefixed onto the
+command (a variable assignment, a `command -v` check) does not match that
+prefix and forces a manual approval every time. See Step 2 below for the
+fallback when `pmctl` is not on PATH.
 
 ## Step 2 — Parse args and run Layer 1 + Layer 3 audit
 
@@ -36,8 +33,23 @@ if [[ -z "$MILESTONE_ID" ]]; then
   exit 1
 fi
 
-"$PMCTL" pre-release audit "$MILESTONE_ID"
+pmctl pre-release audit "$MILESTONE_ID"
 ```
+
+If this fails with a command-not-found error (exit 127) — meaning `pmctl` is
+not on PATH, e.g. a fresh checkout before `install.sh` has run — retry with
+the resolved repo-relative path instead (re-running the `MILESTONE_ID`
+parsing above first, since it does not survive across separate Bash calls):
+
+```bash
+CMD_LINK="${HOME}/.claude/commands/pre-release.md"
+CMD_REAL="$(readlink -f "$CMD_LINK" 2>/dev/null || readlink "$CMD_LINK")"
+"$(cd "$(dirname "$CMD_REAL")/.." && pwd)/cli/pmctl" pre-release audit "$MILESTONE_ID"
+```
+
+This fallback form only ever runs once, on the rare not-installed path, and
+naturally needs one manual approval when it does — it does not become the
+default shape of every call.
 
 `pmctl pre-release audit` outputs the full Layer 1 structural check report
 followed by the Layer 3 blind-spot declaration.
