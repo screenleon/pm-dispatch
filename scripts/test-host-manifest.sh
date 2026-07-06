@@ -46,7 +46,7 @@ CAPABILITY_FIELDS=(provider enforcement coverage stability confidence)
 # Closed enums (docs/host-contract.md). Space-separated membership strings.
 ENUM_FORMAT="claude-settings-json codex-hooks-json codex-config-toml opencode-config-json markdown-managed-block symlink-tree copy-tree"
 ENUM_CAPABILITY="command_guard file_guard session_lifecycle pm_command_interface statusline"
-ENUM_BINDING_FORM="hook-script config-fragment"
+ENUM_BINDING_FORM="hook-script config-fragment none"
 ENUM_PROVIDER="host_hook host_policy host_native cli_wrapper doc_instruction none"
 ENUM_ENFORCEMENT="blocking approval advisory none"
 ENUM_COVERAGE="full partial none"
@@ -143,6 +143,13 @@ validate_manifest() {
   bindings="$(section "$manifest" guard_bindings)"
   cap_count="$(count_in "$bindings" capability)"
   [[ "$cap_count" -ge 1 ]] || echo "guard_bindings has no capability entries"
+  # Full-enumeration rule: every capability in the closed enum must appear;
+  # an omission is a validation error, never a semantic statement.
+  local cap
+  for cap in $ENUM_CAPABILITY; do
+    printf '%s\n' "$bindings" | grep -qE "^[[:space:]]*-[[:space:]]*capability:[[:space:]]*$cap([[:space:]]|#|$)" \
+      || echo "guard_bindings: capability $cap missing (full enumeration required)"
+  done
   for key in binding_form "${CAPABILITY_FIELDS[@]}"; do
     f_count="$(count_in "$bindings" "$key")"
     [[ "$f_count" -eq "$cap_count" ]] \
@@ -164,20 +171,23 @@ validate_manifest() {
       in_enum "$v" "$allowed" || echo "guard_bindings: $field '$v' not in closed enum"
     done < <(printf '%s\n' "$bindings" | grep -E "^[[:space:]]*(- )?$field:" | sed -E "s/^[[:space:]]*(- )?$field:[[:space:]]*//;s/[[:space:]]*#.*$//")
   done
-  # Unsupported-capability rule: provider none => enforcement none AND coverage none.
+  # Per-entry consistency rules:
+  #   provider none => enforcement none AND coverage none (unsupported rule);
+  #   binding_form none => provider none (no artifact without a none provider).
   printf '%s\n' "$bindings" | sed -E 's/[[:space:]]+#.*$//' | awk '
-    /^[[:space:]]*- capability:/ { if (bad()) print viol; prov=""; enf=""; cov=""; cap=$NF }
-    /^[[:space:]]*(- )?provider:/    { prov=$NF }
-    /^[[:space:]]*(- )?enforcement:/ { enf=$NF }
-    /^[[:space:]]*(- )?coverage:/    { cov=$NF }
-    function bad() {
-      if (prov == "none" && (enf != "none" || cov != "none")) {
-        viol = "guard_bindings: capability " cap " declares provider none but enforcement/coverage not none"
-        return 1
-      }
-      return 0
+    function flush() {
+      if (cap == "") return
+      if (prov == "none" && (enf != "none" || cov != "none"))
+        print "guard_bindings: capability " cap " declares provider none but enforcement/coverage not none"
+      if (bf == "none" && prov != "none")
+        print "guard_bindings: capability " cap " declares binding_form none but provider not none"
     }
-    END { if (bad()) print viol }
+    /^[[:space:]]*- capability:/ { flush(); cap=$NF; bf=""; prov=""; enf=""; cov="" }
+    /^[[:space:]]*(- )?binding_form:/ { bf=$NF }
+    /^[[:space:]]*(- )?provider:/     { prov=$NF }
+    /^[[:space:]]*(- )?enforcement:/  { enf=$NF }
+    /^[[:space:]]*(- )?coverage:/     { cov=$NF }
+    END { flush() }
   '
 
   # --- permissions_surface: config_target must reference an install id ------
@@ -302,6 +312,12 @@ run_negative_case "guard binding stability outside closed enum" \
 run_negative_case "guard binding confidence outside closed enum" \
   's/confidence: probed/confidence: guessed/g' \
   "confidence 'guessed' not in closed enum"
+run_negative_case "capability missing from full enumeration" \
+  's/capability: statusline/capability: command_guard/' \
+  "capability statusline missing (full enumeration required)"
+run_negative_case "binding_form none with non-none provider" \
+  's/^([[:space:]]+)provider: none/\1provider: host_hook/' \
+  "declares binding_form none but provider not none"
 run_negative_case "provider none with non-none coverage" \
   's/^([[:space:]]+)coverage: none/\1coverage: partial/' \
   "declares provider none but enforcement/coverage not none"

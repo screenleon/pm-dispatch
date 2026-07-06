@@ -93,7 +93,7 @@ declared and probed layers stay mechanically comparable:
 | Field | Enum | Meaning |
 |---|---|---|
 | `capability` | `command_guard`, `file_guard`, `session_lifecycle`, `pm_command_interface`, `statusline` | The semantic capability being declared. |
-| `binding_form` | `hook-script`, `config-fragment` | What artifact realizes the binding: an executable hook script wired into the host's hook surface, or a fragment merged into the host's declarative config. Never assume a guard binding is a script — opencode's is config. |
+| `binding_form` | `hook-script`, `config-fragment`, `none` | What artifact realizes the binding: an executable hook script wired into the host's hook surface, or a fragment merged into the host's declarative config. Never assume a guard binding is a script — opencode's is config. `none` means no binding artifact exists or has been designed, and is legal only when `provider` is `none`; an evaluated-but-unsupported capability may instead keep its anticipated form (e.g. `hook-script`) to record what the binding would be once its gaps close. |
 | `provider` | `host_hook`, `host_policy`, `host_native`, `cli_wrapper`, `doc_instruction`, `none` | Mechanism class providing the capability. |
 | `enforcement` | `blocking`, `approval`, `advisory`, `none` | What a violation does. |
 | `coverage` | `full`, `partial`, `none` | How much of the capability's surface the binding reaches. |
@@ -104,10 +104,20 @@ Optional per-entry field `payload_fields` maps guard-check inputs (command,
 cwd, file path) to the host's payload field paths, documenting how the binding
 feeds `pmctl guard check`.
 
-A capability the host cannot currently carry is declared explicitly with
-`provider: none` / `enforcement: none` / `coverage: none` rather than omitted
-— an absent entry means "not yet evaluated", a `none` entry means "evaluated
-and unsupported", and doctor output should be able to tell these apart.
+**Full enumeration**: every value of the closed `capability` enum must appear
+exactly once in `guard_bindings` — a missing entry is a validation error, not
+a statement. A capability the host cannot currently carry is declared with
+`provider: none` / `enforcement: none` / `coverage: none`, and its
+`confidence` field distinguishes the two `none` states doctor output needs to
+tell apart:
+
+- `confidence: probed` (or `observed`) on a `none` entry means **evaluated and
+  unsupported** — a probe demonstrated the host cannot carry it today.
+- `confidence: assumed` on a `none` entry means **not yet evaluated** — the
+  unsupported declaration is a placeholder awaiting a probe, and such an entry
+  typically pairs with `binding_form: none`.
+
+Omissions carry no semantic meaning; the manifest validator rejects them.
 
 ## Closure-of-all-paths acceptance clause
 
@@ -192,6 +202,29 @@ guard_bindings:
     coverage: none                    # all-deny hangs headless runs (unverified root cause)
     stability: evolving
     confidence: probed
+  # Full enumeration: the remaining capabilities have not been evaluated on
+  # this host — none tuple with confidence assumed, not omission.
+  - capability: session_lifecycle
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: pm_command_interface
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: statusline
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
 permissions_surface:
   config_target: config
   managed: true
@@ -207,6 +240,10 @@ Points the walkthrough demonstrates:
 - The closure-of-all-paths clause produces the same honest `none` declaration
   for both hosts' file guards, for the same structural reason (edit/write
   tools and shell execution are separate gates).
+- Full enumeration keeps the two `none` states distinguishable: the file
+  guard is `none`/`probed` (evaluated, unsupported), while the three
+  unevaluated capabilities are `none`/`assumed` placeholders — nothing is
+  omitted.
 - Denying a whole tool declaratively is *cleaner* than hook interception (the
   tool is never exposed to the model) but yields no per-attempt payload to
   audit; a host needing blocked-attempt logging must layer a plugin hook,

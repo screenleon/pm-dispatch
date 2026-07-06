@@ -85,12 +85,39 @@ guard_bindings:
   # stays provider none until both gaps close. The brief-level cli-only write
   # guard on the adapter axis remains the fallback.
   - capability: file_guard
-    binding_form: hook-script
+    binding_form: hook-script          # anticipated form once both gaps close
     provider: none
     enforcement: none
     coverage: none
     stability: evolving
     confidence: probed
+  # The capabilities below have not been evaluated on this host yet. The
+  # contract requires full enumeration: a none tuple with confidence assumed
+  # is the declared form of "not yet evaluated" (vs the probed none tuple
+  # above, which means "evaluated and unsupported").
+  # session_lifecycle: SessionStart/Stop events exist on the hook surface,
+  # but no end-to-end binding has been probed — stays assumed until one is.
+  - capability: session_lifecycle
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: pm_command_interface
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: statusline
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
 
 # Permission model native to the host, outside the hook surface. codex keeps
 # approval/sandbox policy in config.toml; the install write path does not
