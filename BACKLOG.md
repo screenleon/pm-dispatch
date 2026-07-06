@@ -89,7 +89,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v1.0-rc 候選；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 
 ---
@@ -418,8 +418,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Done-when**：sandbox 環境 opencode host install → doctor 全綠 →（若 probe 判定 guard 可承接）guard 攔截一次違規 → uninstall 無殘留；`docs/spikes/CC-448.md` 記錄能力矩陣；若 probe 判定 opencode hook 機制不足以承接 guard，fallback 為 cli-only guard（`pmctl guard check`）並在 host manifest 明宣告，v1.0 文件如實標示該能力差異。
 
-**Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。v1.0-rc 候選。
-**See**: DECISIONS.md 2026-07-04
+**Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。~~v1.0-rc 候選~~ → **v0.9.0**。
+
+**Update 2026-07-06（v1.0-rc → v0.9.0 整票提前）**: 維護者拍板 v0.9.0 host 軸 = codex + opencode 雙 host（DECISIONS 2026-07-06）——N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收，避免 `hosts/*/host.yaml` schema 在只有 codex 一個非 claude host 時定案被特例帶歪。三階段順序不變：階段 1 probe 與 [[CC-436]]/[[CC-437]] 並行先跑；[[CC-438]] schema 定案須同時吃進雙 probe 結果；階段 2+3 依 [[CC-438]]/[[CC-445]] 之後收尾。
+**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
