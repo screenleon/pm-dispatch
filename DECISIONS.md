@@ -7,6 +7,20 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-07-06: v0.9.0-host-axis-includes-opencode
+
+Relates: CC-436, CC-437, CC-438, CC-445, CC-448
+
+**Context**: v0.9.0 規劃時（依 2026-07-04 roadmap，host 軸原僅排 codex-host 四票 CC-436/437/438/445，opencode host CC-448 排 v0.10.0/v1.0-rc），維護者於 2026-07-06 指示：host 軸不應只做 codex，opencode 也要在 v0.9.0 就嘗試作為 host。理由與 CC-448 票內既有論證一致——host 抽象比照 executor 抽象的 N≥2 紅線，只有 codex 一個非 claude host 時 `hosts/*/host.yaml` schema 容易被 codex 特例帶歪；等 schema 在 v0.9.0 定案後才驗 opencode，發現抽象走歪的成本更高。
+
+**Decision**: CC-448 整票提前排入 v0.9.0 Phase 1（host 軸），三階段照票內順序：probe（唯讀、無前置，與 CC-436/437 並行先跑）→ `hosts/opencode/host.yaml`（依 CC-438 schema）→ install/doctor 接線（依 CC-445 host-generic write path）。「核心零改動、僅新增 `hosts/opencode/`」的 N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收。若 opencode probe 判定 hook 機制不足以承接 guard，照票內 fallback（cli-only guard + host manifest 明宣告），不阻塞版本。
+
+**Alternatives considered**: (a) 維持原案（opencode host 留 v1.0-rc）——被否，schema 帶歪風險後置；(b) 只提前 probe 階段——考慮過，但 probe 結果若良好而接線又隔一版，N=2 驗收仍延後，且 CC-445 的 write path 本就要求 host-generic，同版驗收成本最低。
+
+**Constraints introduced**: v0.9.0 的 host 軸完成定義 = codex + opencode 雙 host 通過「install → doctor 全綠 → guard 實攔（或明宣告 cli-only）→ uninstall 無殘留」；`hosts/*/host.yaml` schema 修訂必須以雙 host 需求共同定案，不得 codex 特例。
+
+Approver: screenleon（2026-07-06）。
+
 ## 2026-07-04: v1.0-public-roadmap-and-release-sequence
 
 Relates: CC-032, CC-033, CC-216, CC-296, CC-333, CC-358, CC-431, CC-436, CC-437, CC-438, CC-444, CC-445, CC-446, CC-447, CC-448

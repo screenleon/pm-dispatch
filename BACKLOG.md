@@ -12,6 +12,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-004 | ✅ closed 2026-07-06 | test-pr-gate.sh docstring 格式統一 | ops | 2026-05-12 | pr:#369 | P3 | — |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
+| CC-451 | 🔵 active | core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證（CC-446 契約凍結前置；2026-07-06 盲測稽核；v0.9.0） | arch | 2026-07-06 | — | P2 | design |
+| CC-452 | 🔵 active | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard set -e 統一、ISO8601 正規化抽 lib（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
+| CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
+| CC-455 | 🔵 active | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | — | P2 | — |
+| CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -85,8 +91,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-445 | 🔵 active | install write path host-aware：依 host manifest（CC-438）衍生 install/uninstall/doctor 對 codex-host 的接線；CC-381 完整實作第一刀（v0.9.0 候選；依賴 CC-436/438；umbrella: CC-333） | arch/install | 2026-07-04 | — | P2 | design |
 | CC-446 | 🔵 active | v1.0 契約凍結：`docs/stability-contract.md` 四層分級（stable/experimental CLI + stable/internal schema）+ SemVer/deprecation 政策 + 執行 CC-296 清掃（v1.0 P0，v0.9.0 候選；DECISIONS 2026-07-04） | process/DX | 2026-07-04 | — | P2 | design |
 | CC-447 | 🔵 active | 乾淨機器 onboarding 雙 smoke：offline clean-install smoke（v0.9.0 候選）+ live dogfood smoke（v1.0-rc）；摔倒點逐一開票；QA_RULES_DIR 缺席行為驗證 | docs/ops | 2026-07-04 | — | P2 | — |
-| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v1.0-rc 候選；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04） | arch/install | 2026-07-04 | — | P2 | design |
-| CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
+| CC-448 | 🔵 active | opencode host support：可行性 probe → `hosts/opencode/host.yaml` → install/doctor 接線；host 抽象 N=2 驗收（v0.9.0，2026-07-06 自 v1.0-rc 提前；依賴 CC-438/445；umbrella: CC-333；DECISIONS 2026-07-04+2026-07-06） | arch/install | 2026-07-04 | — | P2 | design |
+| CC-449 | 🔵 active | release-verify/test-e2e 對 v0.8.0 新 surface（`pmctl ship`/`pmctl worktree`）無 live 煙測 + run-all-tests 套件註冊完整性 lint（CC-444 收尾發現 test-pmctl-worktree 未註冊，已修；防再漏）+ CI↔run-all parity 斷言（2026-07-06 稽核：24 個本地 suite CI 缺席）（v0.9.0 候選） | ops/test | 2026-07-04 | — | P2 | — |
 
 ---
 
@@ -354,6 +360,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 1. install/uninstall/doctor 的 codex-host 接線由 host manifest（[[CC-438]] `hosts/codex/host.yaml`）能力旗標衍生——鏡像 adapter manifest 模式（[[CC-375]] 先例：manifest 宣告一次，三方一致性回歸鎖住）。
 2. write/bash guard 綁進 codex `PreToolUse` hook（[[CC-381]] spike 已實測可行、fail-closed；欄位表達力以 [[CC-436]] probe 結果為準）。
 3. uninstall 對稱清除 + doctor parity check（呼應 CC-224/CC-375 的三方一致性教訓）。
+4. **claude-host 殘餘耦合一併盤點**（2026-07-06 盲測稽核）：`adapters/*/dispatch.sh` 硬編 `${HOME}/.claude/scripts/log-usage.sh` 做 usage 記帳——host-generic write path 落地時改由 host manifest／既有 `PM_CFG_*` env 慣例衍生，或明文宣告該能力 claude-host-only，消除 host-independent 宣稱與實作的落差。
 
 **Done-when**：(a) claude host 路徑 **byte-compatible**（既有 install 輸出零變更，回歸鎖住）；(b) codex host 路徑至少通過 dry-run + sandbox `CODEX_HOME` 實裝驗證：install → doctor 全綠 → guard 實際攔截一次違規寫入 → uninstall 無殘留；(c) install/uninstall/doctor 三方 parity test 覆蓋 host 維度。
 
@@ -375,10 +382,11 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. SemVer 承諾範圍（什麼算 breaking）+ deprecation 流程（宣告 → 保留期 ≥1 minor → 移除）。
 3. 執行 [[CC-296]] deprecation 清掃（已過 v0.3.0 起多個正式版本）。
 4. deprecated surface 全清點：README 仍列已標 deprecated 的 `pr-gate-handover-schema.md`（executor-contract 已明言該 fan-out 路徑 retired）——去留與 README 目錄同步，消除自相矛盾。
+5. **契約可驗證性盤點**（2026-07-06 盲測稽核擴充）：(a) stable CLI 分級準則納入 `--json` 支援一致性——現僅約半數子指令支援（task/dispatch/ship/memory/worktree/trace/decision 有；backlog/guard/artifacts/gate/context/validate/pre-release 無），列 stable 的讀取型子指令應有結構化輸出或明文排除；(b) 「schema 承諾與行為不符」項逐一定案去留，如 `core/state/layout.yaml` 的 `threshold_days`（宣告但未實作，rotation 只看 bytes）。與 [[CC-451]] 同批評估——runtime 從不驗證的 schema 不應列 stable。
 
 **Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
 
-**Dependencies**：吸收 [[CC-296]] 執行。Cross-link [[CC-286]]（prefix-generic next-id，影響 cross-repo ID contract，可同批評估）、[[CC-357]]（skill schema——**明確排除**，除非 v1.0 要宣稱 skill 為 machine-readable public API）。v0.9.0 候選（v1.0 P0）。
+**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]（core schema runtime 接線）為 stable schema 分級的事實前置，宜先行或同批。Cross-link [[CC-286]]（prefix-generic next-id，影響 cross-repo ID contract，可同批評估）、[[CC-357]]（skill schema——**明確排除**，除非 v1.0 要宣稱 skill 為 machine-readable public API）。v0.9.0 候選（v1.0 P0）。
 **See**: DECISIONS.md 2026-07-04
 
 ## CC-447 — 乾淨機器 onboarding 雙 smoke（offline + live dogfood）🔵 active
@@ -412,8 +420,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Done-when**：sandbox 環境 opencode host install → doctor 全綠 →（若 probe 判定 guard 可承接）guard 攔截一次違規 → uninstall 無殘留；`docs/spikes/CC-448.md` 記錄能力矩陣；若 probe 判定 opencode hook 機制不足以承接 guard，fallback 為 cli-only guard（`pmctl guard check`）並在 host manifest 明宣告，v1.0 文件如實標示該能力差異。
 
-**Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。v1.0-rc 候選。
-**See**: DECISIONS.md 2026-07-04
+**Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。~~v1.0-rc 候選~~ → **v0.9.0**。
+
+**Update 2026-07-06（v1.0-rc → v0.9.0 整票提前）**: 維護者拍板 v0.9.0 host 軸 = codex + opencode 雙 host（DECISIONS 2026-07-06）——N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收，避免 `hosts/*/host.yaml` schema 在只有 codex 一個非 claude host 時定案被特例帶歪。三階段順序不變：階段 1 probe 與 [[CC-436]]/[[CC-437]] 並行先跑；[[CC-438]] schema 定案須同時吃進雙 probe 結果；階段 2+3 依 [[CC-438]]/[[CC-445]] 之後收尾。
+**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
@@ -425,11 +435,104 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 1. **套件註冊完整性 lint**（第一刀，機械）：`scripts/test-*.sh` 存在但未在 `run-all-tests.sh` 註冊 → fail loud（允許顯式 exclude 清單，如 fixture-only helper）；接入 CI 與 `release-verify.sh` Phase 1。注意新增套件目前需**三處**同步——`run-all-tests.sh`（SUITE 陣列 + path map）與 `test-run-all-tests.sh`（`SUITE_NAMES` mirror + `suite_path` case）；後者的 parity 已由 meta 套件自身把關（CC-444 補註冊時實際觸發），lint 只需補「檔案存在但未註冊」這缺口，並評估把 meta-suite mirror 改為從 run-all-tests.sh 動態派生以消除第三處人工同步。
 2. **ship/worktree e2e 煙測**：`test-e2e.sh` 新增 phase——synthetic target 上走一次 `pmctl worktree create → pmctl ship <id> --worktree → ship status 讀到 prepared → worktree remove`（不 dispatch、不花 LLM token 的最小閉環）；`ship finish` 的 live 驗證（含 gate）評估成本後決定納入或明文排除並記錄理由。
 3. 與 [[CC-431]]（adapter 清單動態派生）同批評估，避免 e2e 腳本兩次重構。
+4. **CI↔run-all parity 斷言**（2026-07-06 盲測稽核擴充）：`.github/workflows/lint.yml` 的 job 清單與 `run-all-tests.sh` 註冊表各自手動維護、零 parity 檢查——實測 24 個本地 suite 在 CI 從未執行，含 dispatch 核心（test-dispatch-lifecycle、test-dispatch-common、test-detached-launch、test-opencode-dispatch）與三個最大 pmctl 套件（test-pmctl-context/memory/dispatch）。lint 需一併涵蓋：run-all 每個註冊 suite 必須在 CI 出現，或列入顯式豁免清單並附理由（如 live-DB 互斥、耗時）。這是比第 1 項「未註冊」更大的同類靜默缺口。
+5. **零覆蓋 lib 盤點**（同批）：`scripts/lib/gate-workspace.sh`、`scripts/lib/pmctl-config.sh` 在所有測試檔零引用——補最小套件或記錄豁免理由。
 
-**Done-when**：lint 落地且能抓到「新增未註冊套件」的注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
+**Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」兩類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
 
 **Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
 **See**: [[CC-444]] Outcome、pr:#367
+
+---
+
+## CC-451 — core/ 定義層接上 runtime：enum 單一來源 + state 寫入 schema 驗證 🔵 active
+
+**Problem**: `core/` 定義層（8 個 JSON Schema + policy enum/狀態機 YAML）從未接上 runtime——`core/README.md` 自承「the current implementation handles path resolution and state writes without validating against the definition layer (integration deferred to a future milestone)」；三個 policy 檔（`executor-enum.yaml`、`dispatch-routes.yaml` 等）檔頭標「deferred to v0.3.x runtime phase」至今（v0.8.0）未兌現。實際後果：executor/isolation enum 在 adapter dispatch 腳本與 `handover-validate.sh` 各硬編一份、靠人工同步（`executor-enum.yaml` 自承 "embedded inline ... kept in sync"）；`scripts/lib/state-writer.sh` 手寫 JSON、不經任何 schema 檢查。
+
+**Why**: [[CC-446]] v1.0 契約凍結要把 schema 列為 stable 承諾，但 runtime 從不驗證的 schema，其承諾是空的——凍結前應先讓定義層「真的在管事」。enum inline 複本漂移也是未來新增第 4 個 executor 時的實際回歸風險（2026-07-06 盲測稽核）。
+
+**Requirement**:
+1. **enum 單一來源**：executor / isolation-level 等 enum 由 `core/policy/*.yaml` 派生（runtime 讀取或 build-time 生成，實作時 `/pre-impl` 收斂取捨）；至少先落地一個 parity 回歸測試鎖住「所有 inline 複本 == policy YAML」，抓漂移。
+2. **state 寫入驗證**：state-writer append 的 event/record 對 `core/schema/*.schema.json` 對應 schema 做結構檢查（jq 層即可，不引新依賴）；預設 fail-loud，可保留 warn-only 過渡開關。
+3. 不改 schema 內容本身；現有綠燈路徑行為不變（回歸鎖住）。
+
+**Non-goals**: 不做完整 JSON Schema validator（draft-07 全語意）；結構檢查以「必要欄位存在 + enum 值合法」為度。
+
+**Dependencies**: [[CC-446]] 的前置/同批（stable schema 分級需要「有驗證」的事實支撐）。承接 [[CC-211]]（schema-first epic）的 runtime 驗證切片。v0.9.0。
+**Source**: 2026-07-06 盲測程式碼稽核（四路獨立分析，未讀 backlog 前提下收斂的最大未規劃項）。
+
+## CC-452 — guard/hook 對稱性與併發 hardening 🔵 active
+
+**Problem**（2026-07-06 盲測稽核，三項低風險高確定性 correctness/一致性缺口）:
+1. `guard-session-summary.sh` 對 episodes.jsonl 的 skeleton append 是裸 `>>` 無鎖，而同一資料面的 `guard-inject-memory.sh` usage sidecar 已用 `serialize_with_lock`——並發 Stop hook（同 cwd 多 session）可交錯寫、破壞 dedup 前提。
+2. 三個安全 guard 的 shell 選項不一致：`guard-executor-write.sh` 用 `set -euo pipefail`，`guard-pm-write.sh`/`guard-reviewer-write.sh` 缺 `-e`——未預期非零命令靜默續行。
+3. ISO8601 日期正規化 ~30 行在 `guard-inject-memory.sh` 與 `guard-session-summary.sh` 逐字重複，漂移風險。
+
+**Requirement**:
+1. episodes.jsonl append 包進 `serialize_with_lock`，補並發回歸測試。
+2. 三安全 guard 統一 `set -euo pipefail`（逐檔確認無依賴非零續行的路徑後切換）。
+3. ISO8601 正規化抽到 `scripts/lib/memory.sh`（兩 hook 既有共用點），兩處改呼叫。
+各項行為對現有測試 byte-compatible；只修對稱性與併發安全。
+
+**Dependencies**: 無前置；v0.9.0 hardening phase，與其他 phase 檔案面不重疊可並行。
+**Source**: 2026-07-06 盲測程式碼稽核（runtime 管線角度）。
+
+## CC-453 — worktree/auto-pack 路徑契約 hardening 🔵 active
+
+**Problem**（2026-07-06 盲測稽核 + 實際洩漏案例）:
+1. `pmctl_worktree_create` 以「stdout 最後一行 = worktree 路徑」為輸出契約，`git worktree add` 的 stdout chatter（`HEAD is now at ...`）不抑制、只靠消費端 `tail -1`（`pmctl-ship.sh` 等）——契約脆弱。2026-07-03 開發期間曾實際把 5 個名為 `HEAD is now at <sha> seed` 的垃圾目錄洩漏到 repo 根目錄（內含 `.pm-dispatch/ctx/packs`；因 `.pm-dispatch` 被 gitignore，`git status` 完全不可見）。2026-07-06 已清除，現行套件重跑不再重現，但根因鏈仍在。
+2. `pmctl_dispatch_auto_pack` 對 work_dir 的 ctx_root 解析：`git -C "$work_dir" rev-parse` 失敗時靜默 fallback `ctx_root="$work_dir"`，接著相對路徑 `mkdir -p`——垃圾輸入會在當時 CWD 造出目錄而非 fail。
+3. `adapters/opencode/dispatch.sh` 的 isolation 錯誤訊息推薦 `workspace-write`，但其 `isolation-map.yaml` 只支援 `none`——把使用者導向不被接受的值。
+
+**Requirement**:
+1. `pmctl_worktree_create` 抑制 git chatter 進 stdout（導向 stderr 或丟棄），stdout 收斂為「只印路徑」；既有 `tail -1` 消費端保持相容。
+2. auto-pack 對 work_dir 驗證「存在 + 絕對路徑」，不符即 fail-loud 跳過 pack（沿用既有 auto-pack warning + telemetry 模式），絕不相對路徑 mkdir。
+3. opencode isolation 錯誤訊息只提實際支援值。
+各項補回歸測試（含「垃圾 work_dir 不得在 CWD 產生任何目錄」斷言）。
+
+**Dependencies**: 無前置；v0.9.0 hardening phase。與 [[CC-449]] e2e 煙測互補（那邊驗 happy path，本票驗防禦面）。
+**Source**: 2026-07-06 盲測程式碼稽核；洩漏目錄實例（已清除）。
+
+## CC-455 — context plane repo_root 跟隨工作目錄（跨 repo 使用 context.db 打錯 repo）🔵 active
+
+**Problem**（2026-07-06 使用者回報 + 實測確認）: 在 pm-dispatch 以外的 repo 用 CLI 觸發 pm agent 時，目標 repo 的 context.db 不會被建立或刷新。根因鏈：
+1. `cli/pmctl` 的 `REPO_ROOT` 從 pmctl 腳本自身路徑（穿過 `~/.local/bin` symlink）解析——**永遠指向 pm-dispatch 安裝 repo，與執行時的工作目錄無關**。
+2. `pmctl_context_query` / `pmctl_context_reuse_scan` / `pmctl_context_index` 的 repo_root 參數為「可選第一個位置參數，未帶時 default `REPO_ROOT`」。
+3. `agents/project-pm.md` 的 context retrieval reflex 指示 `pmctl context query --domain knowledge <term>` **不帶 repo 路徑**（僅 reuse-scan 帶 `<working_dir>`）。
+三者疊加：跨 repo 的查詢全部打到 pm-dispatch 自己的 db（命中不相關內容），且既有的 auto-build/auto-refresh 機制（`_ctx_ensure_fresh`，預設開啟）一直刷新錯的 repo。實測：在外部目錄執行 `pmctl context query <term>`，該目錄不產生任何 ctx 檔案，pm-dispatch 的 context.db mtime 反而被更新。
+
+**Why**: context retrieval 是 v0.7.0 epic 的核心能力，宣稱面是「per-repo 的本地 context 基底」；pm agent 的設計本來就是跨多個 repo 工作（任意位置的 repo，不限特定目錄佈局），此缺陷讓 context 能力在 pm-dispatch 以外的所有 repo 實質失效且靜默。
+
+**Requirement**:
+1. **CLI 層 chokepoint 修正**（優先）：context 家族子指令未帶路徑時，default 改為「呼叫時 CWD 的 git toplevel」（`git rev-parse --show-toplevel`），非 git 目錄再 fallback 既有 `REPO_ROOT` 行為並印 warning；在 pm-dispatch repo 內執行的行為不變（回歸鎖住）。
+2. 盤點 context 家族以外是否有同型「default REPO_ROOT 但語意應為 target repo」的子指令（如 memory 平面已獨立解析、應不受影響——確認即可）。
+3. `agents/project-pm.md` retrieval reflex 與 `docs/context-retrieval.md` 同步：明確「跨 repo 時查詢必帶 target repo root（或依賴修正後的 CWD default）」。
+4. 回歸測試：外部 repo 內執行 query/reuse-scan → 在該 repo 建立/刷新 `.pm-dispatch/ctx/context.db`、不觸碰 pm-dispatch 自身 db。
+
+**Dependencies**: 無前置。v0.9.0。與 [[CC-453]]（auto-pack work_dir 驗證）同屬「路徑語意」修正面，可同批評估但不合票。
+**Source**: 使用者 2026-07-06 回報「其他 repo 的 context.db 不會自動使用/刷新」；主線程實測確認。
+
+## CC-456 — 去除 maintainer-local `~/github/` 佈局假設（repos-root 參數化 + sweep + lint 防再犯）🔵 active
+
+**Problem**（2026-07-06 維護者自指出）: `~/github/` 是維護者本機的 repo 佈局習慣，卻已滲進多個操作性檔案成為隱含產品假設——其他使用者的 repo 可能在任何位置。盤點（2026-07-06）：
+- `agents/project-pm.md`：agent description 寫死「repos under ~/github/」；工作流第一步 `ls ~/github/` 識別專案；brief schema 指向 `~/github/pm-dispatch/docs/dispatch-brief.md`（同時硬編了 pm-dispatch 的安裝位置）。
+- `agents/qa-tester.md`：`QA_RULES_DIR` default `$HOME/github/qa-testing-rules`（有 env 覆寫，但 default 是 maintainer-local）。
+- `commands/pm.md`：`--all-repos` 掃 `~/github/*/`（有 `--repos-root` 覆寫，default 同病）。
+- `commands/skill-refine.md`：memory dir 範例假設 `-home-<user>-github` project slug。
+- `scripts/guard-pm-write.sh`：deny 訊息內嵌 `~/github/pm-dispatch/docs/...` 路徑。
+- `pm/scripts/validate.sh`：usage 訊息 `$HOME/github/pm-dispatch`；`pm/schema.md` canonical path 宣稱 `~/github/pm-dispatch/...`；`pm/templates/DECISIONS.md` 模板內文 `~/github/`。
+（test fixtures 用 `/home/example/github` 屬合成路徑，不在範圍；`hook-codex-bash-guard` read-root 舊案由 [[CC-104d]] 追蹤且該腳本已不在現行 scripts/。）
+
+**Why**: v1.0 public 正式版（DECISIONS 2026-07-04）的「別人裝得起來、用得下去」承諾，與 [[CC-447]] 乾淨機器 smoke 直接相關——非 `~/github/` 佈局的使用者會在 pm agent 識別專案、QA rules 解析、guard 錯誤訊息等處遇到靜默錯位或誤導。這與 [[CC-455]]（context repo_root 打錯 repo）同根：系統多處把「維護者本機佈局」當成「使用者環境契約」。
+
+**Requirement**:
+1. **參數化單一來源**：以既有 `PM_DISPATCH_REPO`（install 已錨定）派生 repos-root default（如其 parent 目錄），新增 env/config 覆寫（命名沿 `PM_DISPATCH_*` 慣例）；`--all-repos`、project-pm 的專案識別步驟、QA_RULES_DIR default 全改由此派生。
+2. **prose/文件 sweep**：上列各檔的 `~/github/` 字面改為 env 引用、佔位符（如 `<repos-root>`）或由安裝路徑派生的描述；`pm/schema.md` canonical path 改錨 `PM_DISPATCH_REPO`。
+3. **lint 防再犯**：比照既有 ratchet 慣例，在 lint 層加斷言——operational files（agents/commands/skills/scripts/docs/pm 模板）不得出現 `~/github` / `$HOME/github` 字面（測試 fixtures 的合成路徑除外）；sweep 完成後 allowlist 清空鎖死。
+4. 與 [[CC-447]] offline smoke 驗收互扣：smoke 環境刻意用非 `~/github/` 佈局跑一輪。
+
+**Dependencies**: 無硬前置；宜在 [[CC-447]] offline smoke 之前或同批完成，讓 smoke 直接驗證。與 [[CC-445]]（install write path）檔案面部分重疊（install/env 慣例），排程時注意順序。v0.9.0。
+**Source**: 維護者 2026-07-06「`~/github/` 是我本地的使用方式，不代表其他使用者」；主線程同日全 repo 盤點。
 
 ---
 
@@ -513,6 +616,20 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 純 audit-quality / 一致性問題，不影響測試邏輯或功能；規模較大故從 CC-004 拆出獨立票，避免單票範圍無限擴張。
 **Requirement**: 依 `scripts/lib/test-harness.sh` 頂部新增的 docstring 慣例說明（CC-004 帶入），逐檔把上述 9 個檔案的 test function 補上 `# Behavior:`/`# Steps:` 註解區塊，整段置於函式宣告正上方、不拆進函式內部。不改測試邏輯。完成後跑對應套件全綠、`bash -n` 語法檢查、以及 run_test 呼叫名稱與函式宣告的交叉核對（避免重蹈 CC-004 實作中一度誤刪宣告行的錯誤）。
 **Source**: 2026-07-03 CC-004 實作時的範圍盤點。
+
+## CC-454 — CI shellcheck ignore_names 白名單 ratchet 收斂 🟢 someday
+
+**Problem**: `.github/workflows/lint.yml` 的 shellcheck 步驟帶約 90 個檔案的 `ignore_names` 豁免白名單——絕大多數腳本實質未過 shellcheck；白名單靠人工維護、無 ratchet 票追蹤，且掛在 `test-skill-refine` 這個語意不相關的 job 底下。新增腳本若忘記處理，會無聲繞過靜態檢查。
+
+**Why**: 與 [[CC-450]]（docstring ratchet）同型的「規則已立、backfill 未竟」狀態，但缺少 CC-450 那樣的顯式追蹤；白名單只增不減。
+
+**Requirement**:
+1. shellcheck 拆成獨立 CI job（脫離 test-skill-refine）。
+2. `ignore_names` 白名單視為待清零 ratchet：逐批修檔、縮減白名單（比照 lint-test-docstrings 的 explicit-allowlist 收斂模式）；新腳本預設必須過 shellcheck，不得直接進白名單。
+3. 修檔時沿用既有慣例：動態 source 帶 `disable=SC1091`；test 檔的 `tmp_root` 等跨檔變數帶 `SC2154`。
+
+**Dependencies**: 無；規模大（~90 檔）故列 someday，逐版收割。與 [[CC-450]] 可共用「ratchet 進度 = allowlist 縮張」的機制敘事。
+**Source**: 2026-07-06 盲測程式碼稽核（測試/CI 角度）。
 
 ## CC-011 — sync-memory.sh + 跨裝置共用（deferred；建議與 CC-012 合併實作）
 
@@ -600,6 +717,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 1. **即刻 git history 損害盤點**（非 flip 前防護，是已曝光後的發現與處置）：原「git history 已審 clean」結論成於 2026-05-15，之後已累積 ~250 commits（含大量 dispatch trace / memory 路徑相關工作）——重掃 secrets、個人路徑、意外入 repo 的本機 artifact；發現即處置（rotate/清除/評估影響）。
 2. **README posture 一致化**：README 仍寫 "private-maintainer scoped" 而 repo 實際 public——文案改為明確的「publicly readable personal distribution, not a public support contract」定位（或依 v1.0 宣稱調整），與 CONTRIBUTING（不收外部 PR、issue 無 SLA）對齊。
 3. GitHub 設定決策照原 Requirement 1（Issues/Discussions/template/labels/CITATION.cff），時點改為 v1.0-rc；觀察期反轉為 v1.0.0 發佈後的觀察窗。
+4. **README 使用者表面重建**（2026-07-06 盲測稽核追加）：README 只記載 15 個 command 中的 2 個（`/pm`、`/pr-gate`）、Agents 段缺 spike agent、Layout 段引用已不存在的 `settings/` 目錄且缺 `skills/`（install.sh 實際會接線）——commands/agents/skills 清單改為與實際目錄一致（可由 `commands/*.md` frontmatter description 派生），Layout 修正到與 install 行為相符。
 someday → active，P3 → P2。
 **Source**: 2026-05-15 對話 — 公開前置盤點 #4。
 

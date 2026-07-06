@@ -9,6 +9,62 @@
 
 ---
 
+## v0.9.0 — v1.0 證據層 + 契約凍結 + host 軸（codex + opencode）（規劃中 2026-07-06）
+
+> 最後排程更新：2026-07-06
+
+**主題**：v1.0 public 正式版（DECISIONS 2026-07-04）的前置版本，三條主線：**(1) host 軸（codex + opencode 雙 host）**——把 CC-381 spike 收斂出的三張唯讀票推進到 install write path 落地，並依 DECISIONS 2026-07-06 把 opencode host（CC-448）整票提前併入本版，讓 host 抽象在本版內就通過 N=2 驗收，「pm-dispatch 支援非 claude host」從文件宣稱變成可安裝、可 doctor、可 uninstall 的事實；**(2) 證據層**——release 宣稱背後的可查證資料（run-stats reader、opencode e2e、ship/worktree 煙測、乾淨機器 offline smoke）；**(3) 契約凍結**——stable/experimental 分級與 SemVer/deprecation 政策，並先把 `core/` 定義層真正接上 runtime，讓凍結的 schema 是「有驗證的承諾」而非裝飾。另附一個低風險 hardening phase 收割 2026-07-06 盲測稽核的正確性發現。
+
+> **設計依據**：DECISIONS 2026-07-04（v1.0 roadmap：v0.9.0 = evidence + contract + host 軸）＋ DECISIONS 2026-07-06（host 軸擴為 codex + opencode 雙 host，CC-448 提前）＋ 2026-07-06 四路盲測程式碼稽核（CLI/核心架構、runtime 管線、prose/文件、測試/CI 四個獨立視角，未讀 backlog 前提下分析後對照）——稽核與既定 roadmap 方向高度一致，增量為：CC-449 擴充 CI parity、新票 CC-451（core 定義層接 runtime，契約凍結前置）、CC-452/453（hardening）、CC-454（someday ratchet）、CC-445/446/033 票內補充。
+
+### Phase 1 — host 軸：codex + opencode 雙 host（P2；依 CC-381 spike 收斂順序推進）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-436 | codex-host PreToolUse payload 驗證 probe：throwaway `CODEX_HOME` 實測 hook fail-closed 阻擋 + payload 欄位能否映射 `pmctl guard check --file/--command`；唯讀第一刀 | 🔵 |
+| CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | 🔵 |
+| CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | 🔵 |
+| CC-438 | host manifest schema v1：`hosts/codex/host.yaml` draft（install target/format、hook surface、guard bindings…）；依賴 CC-436 payload 結果，schema 定案須同時吃進 CC-448 階段 1 的 opencode probe 結果，不得 codex 特例 | 🔵 |
+| CC-445 | install write path host-aware：由 host manifest 衍生接線、host-generic（`hosts/*/host.yaml` 驅動）；claude 路徑 byte-compatible；含 claude-host 殘餘耦合盤點（usage-log 硬編路徑）；依賴 CC-436/438 | 🔵 |
+| CC-448（階段 2+3） | `hosts/opencode/host.yaml`（依 CC-438 schema）+ doctor/install 接線；N=2 驗收紅線：核心零改動、僅新增 `hosts/opencode/` 內容，做不到即回頭修抽象；probe 若判定 guard 不可承接則 fallback cli-only 並在 host manifest 明宣告 | 🔵 |
+
+> 順序：CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-445 → CC-448 階段 2+3。本 Phase 驗收面（DECISIONS 2026-07-06）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留。
+
+### Phase 2 — 證據層（P2；與 Phase 1 檔案面大致不重疊，可並行）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-358 | `pmctl run-stats --since --by-adapter [--json]`：dispatch/gate terminal outcome 分佈、post-verify failure、fallback 統計；v1.0 release notes 附報告的 reader | 🔵 |
+| CC-431 | test-e2e/release-verify 的 `--adapter` 清單改 adapters/ 動態派生，opencode e2e 通過；未過則 v1.0 將 opencode executor 降標 experimental | 🔵 |
+| CC-449 | ship/worktree surface 煙測 + 套件註冊完整性 lint + **CI↔run-all parity 斷言**（2026-07-06 稽核擴充：24 個本地 suite CI 缺席）+ 零覆蓋 lib 盤點；與 CC-431 檔案面重疊宜同批 | 🔵 |
+| CC-447 | 乾淨機器 onboarding smoke——**本版只做 offline 半**（fresh Linux + WSL2 clean install/doctor/uninstall）；live dogfood 半留 v1.0-rc | 🔵 |
+
+### Phase 3 — 契約凍結（P2；CC-451 先行或與 CC-446 同批）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-451 | core/ 定義層接上 runtime：enum 單一來源（policy YAML 派生 + parity 回歸）、state 寫入 schema 結構檢查；契約凍結的事實前置（2026-07-06 稽核新票） | 🔵 |
+| CC-446 | `docs/stability-contract.md` 四層分級 + SemVer/deprecation 政策 + CC-296 清掃 + deprecated surface 清點 + 契約可驗證性盤點（`--json` 一致性、死欄位去留） | 🔵 |
+
+### Phase 4 — hardening：盲測稽核 + 使用回報（P3-P2；低風險並行，檔案面與 Phase 1-3 不重疊）
+
+| 票 | 摘要 | 狀態 |
+|----|------|------|
+| CC-452 | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard `set -e` 統一、ISO8601 正規化抽 lib | 🔵 |
+| CC-453 | worktree/auto-pack 路徑契約 hardening：worktree create stdout 收斂只印路徑、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正 | 🔵 |
+| CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | 🔵 |
+| CC-456 | 去除 maintainer-local `~/github/` 佈局假設（P2）：repos-root 參數化（由 `PM_DISPATCH_REPO` 派生 + env 覆寫）、agents/commands/scripts/pm 層 prose sweep、lint 防再犯；與 CC-455 同根（維護者本機佈局被當成使用者環境契約）、與 CC-447 offline smoke 互扣驗收（2026-07-06 使用者指出） | 🔵 |
+
+### 待後續 / 明確排除
+
+- **CC-032 / CC-033（policies glossary、public posture）**——v1.0-rc（P0 但時點在 rc；CC-033 的 git history 損害盤點例外：票內標「即刻」，可隨時先做）。
+- **CC-447 live dogfood 半**——v1.0-rc，宜在 CC-446 契約凍結後執行。
+- **CC-450 / CC-454（docstring、shellcheck ratchet）**——不排程，逐版順手收割；allowlist 縮張即進度。
+- **CC-435（poll→通知）**——維持條件觸發 someday。
+- **CC-216 MCP**——維持排除，post-1.0 第一題（DECISIONS 2026-07-04）。
+
+---
+
 ## v0.8.0 — memory substrate 跨工具可攜 + gate DX（✅ released 2026-07-04）
 
 > 最後排程更新：2026-07-04（release closure CC-444）
