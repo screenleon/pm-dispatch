@@ -408,6 +408,7 @@ run_negative_case "empty host_binary" \
 run_negative_case "duplicate install_targets id" \
   's/^([[:space:]]+- )id: config/\1id: hooks/' \
   "install_targets: duplicate id: hooks"
+# shellcheck disable=SC2016  # sed pattern matches the literal $CODEX_HOME token in the manifest, no expansion wanted
 run_negative_case "install target path not env-var anchored" \
   's|path: "\$CODEX_HOME/hooks.json"|path: "/home/user/.codex/hooks.json"|' \
   "path '/home/user/.codex/hooks.json' is not anchored to a host home env var"
