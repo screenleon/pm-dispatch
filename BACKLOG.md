@@ -17,6 +17,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-453 | 🔵 active | worktree/auto-pack 路徑契約 hardening：worktree create stdout 契約、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正（2026-07-06 盲測稽核；v0.9.0） | ops | 2026-07-06 | — | P3 | hygiene |
 | CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
 | CC-455 | 🔵 active | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | — | P2 | — |
+| CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -500,7 +501,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. `agents/project-pm.md` 的 context retrieval reflex 指示 `pmctl context query --domain knowledge <term>` **不帶 repo 路徑**（僅 reuse-scan 帶 `<working_dir>`）。
 三者疊加：跨 repo 的查詢全部打到 pm-dispatch 自己的 db（命中不相關內容），且既有的 auto-build/auto-refresh 機制（`_ctx_ensure_fresh`，預設開啟）一直刷新錯的 repo。實測：在外部目錄執行 `pmctl context query <term>`，該目錄不產生任何 ctx 檔案，pm-dispatch 的 context.db mtime 反而被更新。
 
-**Why**: context retrieval 是 v0.7.0 epic 的核心能力，宣稱面是「per-repo 的本地 context 基底」；跨 repo 是 pm agent 的主要使用場景之一（project-pm 明文管 `~/github/` 下所有 repo），此缺陷讓 context 能力在跨 repo 場景實質失效且靜默。
+**Why**: context retrieval 是 v0.7.0 epic 的核心能力，宣稱面是「per-repo 的本地 context 基底」；pm agent 的設計本來就是跨多個 repo 工作（任意位置的 repo，不限特定目錄佈局），此缺陷讓 context 能力在 pm-dispatch 以外的所有 repo 實質失效且靜默。
 
 **Requirement**:
 1. **CLI 層 chokepoint 修正**（優先）：context 家族子指令未帶路徑時，default 改為「呼叫時 CWD 的 git toplevel」（`git rev-parse --show-toplevel`），非 git 目錄再 fallback 既有 `REPO_ROOT` 行為並印 warning；在 pm-dispatch repo 內執行的行為不變（回歸鎖住）。
@@ -510,6 +511,28 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 無前置。v0.9.0。與 [[CC-453]]（auto-pack work_dir 驗證）同屬「路徑語意」修正面，可同批評估但不合票。
 **Source**: 使用者 2026-07-06 回報「其他 repo 的 context.db 不會自動使用/刷新」；主線程實測確認。
+
+## CC-456 — 去除 maintainer-local `~/github/` 佈局假設（repos-root 參數化 + sweep + lint 防再犯）🔵 active
+
+**Problem**（2026-07-06 維護者自指出）: `~/github/` 是維護者本機的 repo 佈局習慣，卻已滲進多個操作性檔案成為隱含產品假設——其他使用者的 repo 可能在任何位置。盤點（2026-07-06）：
+- `agents/project-pm.md`：agent description 寫死「repos under ~/github/」；工作流第一步 `ls ~/github/` 識別專案；brief schema 指向 `~/github/pm-dispatch/docs/dispatch-brief.md`（同時硬編了 pm-dispatch 的安裝位置）。
+- `agents/qa-tester.md`：`QA_RULES_DIR` default `$HOME/github/qa-testing-rules`（有 env 覆寫，但 default 是 maintainer-local）。
+- `commands/pm.md`：`--all-repos` 掃 `~/github/*/`（有 `--repos-root` 覆寫，default 同病）。
+- `commands/skill-refine.md`：memory dir 範例假設 `-home-<user>-github` project slug。
+- `scripts/guard-pm-write.sh`：deny 訊息內嵌 `~/github/pm-dispatch/docs/...` 路徑。
+- `pm/scripts/validate.sh`：usage 訊息 `$HOME/github/pm-dispatch`；`pm/schema.md` canonical path 宣稱 `~/github/pm-dispatch/...`；`pm/templates/DECISIONS.md` 模板內文 `~/github/`。
+（test fixtures 用 `/home/example/github` 屬合成路徑，不在範圍；`hook-codex-bash-guard` read-root 舊案由 [[CC-104d]] 追蹤且該腳本已不在現行 scripts/。）
+
+**Why**: v1.0 public 正式版（DECISIONS 2026-07-04）的「別人裝得起來、用得下去」承諾，與 [[CC-447]] 乾淨機器 smoke 直接相關——非 `~/github/` 佈局的使用者會在 pm agent 識別專案、QA rules 解析、guard 錯誤訊息等處遇到靜默錯位或誤導。這與 [[CC-455]]（context repo_root 打錯 repo）同根：系統多處把「維護者本機佈局」當成「使用者環境契約」。
+
+**Requirement**:
+1. **參數化單一來源**：以既有 `PM_DISPATCH_REPO`（install 已錨定）派生 repos-root default（如其 parent 目錄），新增 env/config 覆寫（命名沿 `PM_DISPATCH_*` 慣例）；`--all-repos`、project-pm 的專案識別步驟、QA_RULES_DIR default 全改由此派生。
+2. **prose/文件 sweep**：上列各檔的 `~/github/` 字面改為 env 引用、佔位符（如 `<repos-root>`）或由安裝路徑派生的描述；`pm/schema.md` canonical path 改錨 `PM_DISPATCH_REPO`。
+3. **lint 防再犯**：比照既有 ratchet 慣例，在 lint 層加斷言——operational files（agents/commands/skills/scripts/docs/pm 模板）不得出現 `~/github` / `$HOME/github` 字面（測試 fixtures 的合成路徑除外）；sweep 完成後 allowlist 清空鎖死。
+4. 與 [[CC-447]] offline smoke 驗收互扣：smoke 環境刻意用非 `~/github/` 佈局跑一輪。
+
+**Dependencies**: 無硬前置；宜在 [[CC-447]] offline smoke 之前或同批完成，讓 smoke 直接驗證。與 [[CC-445]]（install write path）檔案面部分重疊（install/env 慣例），排程時注意順序。v0.9.0。
+**Source**: 維護者 2026-07-06「`~/github/` 是我本地的使用方式，不代表其他使用者」；主線程同日全 repo 盤點。
 
 ---
 
