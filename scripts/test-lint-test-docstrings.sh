@@ -174,6 +174,121 @@ test_missing_allowlisted_file_errors() {
   fi
 }
 
+# Behavior: -h/--help prints usage and exits 0 without touching any
+# allowlisted files.
+# Steps: run the linter with --help only, and assert exit 0 and a usage
+# line.
+test_help_flag_shows_usage() {
+  local name="lint-test-docstrings/help-flag-shows-usage"
+  should_run "$name" || return 0
+  local output status
+  output="$(bash "$LINTER" --help 2>&1)"; status=$?
+  if [[ $status -eq 0 ]] && [[ "$output" == *"usage:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0 with a usage line, got $status; output: $output"
+  fi
+}
+
+# Behavior: an unrecognized option is a controlled usage error (exit 2),
+# not a silent no-op.
+# Steps: run the linter with a bogus flag, and assert exit 2 and a usage
+# line.
+test_unknown_option_errors() {
+  local name="lint-test-docstrings/unknown-option-errors"
+  should_run "$name" || return 0
+  local output status
+  output="$(bash "$LINTER" --bogus-flag 2>&1)"; status=$?
+  if [[ $status -eq 2 ]] && [[ "$output" == *"usage:"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 with a usage line, got $status; output: $output"
+  fi
+}
+
+# Behavior: --repo-root and --allow with no following operand are
+# controlled usage errors (exit 2), not an unbound-variable crash.
+# Steps: run the linter with each flag as the last argument, and assert
+# exit 2 for both.
+test_missing_operand_errors() {
+  local name="lint-test-docstrings/missing-operand-errors"
+  should_run "$name" || return 0
+  local out1 st1 out2 st2
+  out1="$(bash "$LINTER" --repo-root 2>&1)"; st1=$?
+  out2="$(bash "$LINTER" --allow 2>&1)"; st2=$?
+  if [[ $st1 -eq 2 ]] && [[ $st2 -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 2 for both, got --repo-root=$st1 ($out1), --allow=$st2 ($out2)"
+  fi
+}
+
+# Behavior: a test_* function declared with the opening brace on its own
+# line (split-brace style) is still checked for a Behavior: docstring --
+# it must not silently bypass the gate just because the brace isn't on
+# the declaration line.
+# Steps: build a fixture with a split-brace declaration and no docstring,
+# run the linter, and assert a FAIL naming the declaration line (not the
+# brace line).
+test_split_brace_missing_docstring_fails() {
+  local name="lint-test-docstrings/split-brace-missing-docstring-fails"
+  should_run "$name" || return 0
+  local root output status
+  root="$(fixture_repo 'test_bad()
+{
+  echo hi
+}
+')"
+  output="$(run_linter "$root")"; status=$?
+  if [[ $status -ne 0 ]] && [[ "$output" == *"FAIL: scripts/fixture.sh:1"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected non-zero exit with a line-1 FAIL, got $status; output: $output"
+  fi
+}
+
+# Behavior: a split-brace declaration with a Behavior: docstring passes,
+# same as the same-line-brace form.
+# Steps: build a fixture with a documented split-brace declaration, run
+# the linter, and assert exit 0.
+test_split_brace_conforming_passes() {
+  local name="lint-test-docstrings/split-brace-conforming-passes"
+  should_run "$name" || return 0
+  local root output status
+  root="$(fixture_repo '# Behavior: split-brace form still counts.
+test_ok()
+{
+  echo hi
+}
+')"
+  output="$(run_linter "$root")"; status=$?
+  if [[ $status -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 0, got $status; output: $output"
+  fi
+}
+
+# Behavior: this file is intentionally excluded from the linter's default
+# ALLOWLIST (see the comment above ALLOWLIST in lint-test-docstrings.sh)
+# because its own fixture strings contain literal, column-0 test_*
+# declarations that the line-oriented matcher cannot tell apart from real
+# code. This pins that known limitation so a future contributor does not
+# re-add this file to ALLOWLIST expecting it to pass.
+# Steps: run the linter against the real repo with --allow pointing at
+# this file itself, and assert it fails on the embedded fixture text.
+test_self_cannot_be_allowlisted() {
+  local name="lint-test-docstrings/self-cannot-be-allowlisted"
+  should_run "$name" || return 0
+  local output status
+  output="$(cd "$REPO_ROOT" && bash "$LINTER" --allow scripts/test-lint-test-docstrings.sh 2>&1)"; status=$?
+  if [[ $status -ne 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected self-lint to fail on embedded fixture text, got exit 0; output: $output"
+  fi
+}
+
 test_conforming_function_passes
 test_missing_docstring_fails
 test_steps_only_fails
@@ -181,5 +296,11 @@ test_blank_line_break_fails
 test_mixed_file_reports_only_bad_one
 test_default_allowlist_is_clean
 test_missing_allowlisted_file_errors
+test_help_flag_shows_usage
+test_unknown_option_errors
+test_missing_operand_errors
+test_split_brace_missing_docstring_fails
+test_split_brace_conforming_passes
+test_self_cannot_be_allowlisted
 
 th_summary

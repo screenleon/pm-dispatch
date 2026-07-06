@@ -9,12 +9,14 @@
 # A `# Steps:` follow-on is the documented convention but is checked as
 # part of code review, not mechanically here, since existing allowlisted
 # files use it inconsistently (single-line Behavior-only docstrings are
-# already accepted practice in some of them). This is a ratchet, not a
-# repo-wide rule: files not yet converted (tracked by CC-443) are simply
-# not in ALLOWLIST, so adding a test to one of them does not fail this
-# check. Add a file to ALLOWLIST only once every test_* function in it
-# already has a Behavior: marker -- from that point this lint blocks both
-# regressions and new undocumented tests in that file.
+# already accepted practice in some of them) -- this is a known, narrower
+# gate than the two-part convention documented in test-harness.sh. This
+# is a ratchet, not a repo-wide rule: files not yet converted (tracked by
+# CC-450) are simply not in ALLOWLIST, so adding a test to one of them
+# does not fail this check. Add a file to ALLOWLIST only once every
+# test_* function in it already has a Behavior: marker -- from that point
+# this lint blocks both regressions and new undocumented tests in that
+# file.
 #
 # Exit 0 if all allowlisted files are clean; 1 if any violation.
 
@@ -53,6 +55,13 @@ done
 if [ "${#custom_allow[@]}" -gt 0 ]; then
   ALLOWLIST=("${custom_allow[@]}")
 else
+  # scripts/test-lint-test-docstrings.sh is deliberately NOT in this list:
+  # its regression tests build fixtures from literal, column-0 heredoc-style
+  # strings like "test_ok() {" that this line-oriented awk matcher cannot
+  # distinguish from a real declaration, so self-linting it produces false
+  # FAILs on fixture text rather than real code. See
+  # test_self_cannot_be_allowlisted in scripts/test-lint-test-docstrings.sh
+  # for the regression test that pins this known limitation.
   ALLOWLIST=(
     scripts/test-guard-framework.sh
     scripts/test-migrate-routing-log.sh
@@ -73,11 +82,26 @@ for rel in "${ALLOWLIST[@]}"; do
   checked=$((checked + 1))
 
   bad_lines="$(awk '
-    function reset() { has_behavior = 0 }
+    function reset() { has_behavior = 0; pending_line = 0 }
     BEGIN { reset() }
-    /^test_[A-Za-z0-9_]+\(\)[[:space:]]*\{/ {
+    pending_line && /^\{[[:space:]]*$/ {
+      if (!has_behavior) print pending_line
+      reset()
+      next
+    }
+    pending_line {
+      # Declaration line was not immediately followed by an opening
+      # brace -- stop treating it as pending and fall through to the
+      # normal comment/reset handling below for this line.
+      pending_line = 0
+    }
+    /^test_[A-Za-z0-9_]+\(\)[[:space:]]*\{[[:space:]]*$/ {
       if (!has_behavior) print NR
       reset()
+      next
+    }
+    /^test_[A-Za-z0-9_]+\(\)[[:space:]]*$/ {
+      pending_line = NR
       next
     }
     /^#/ {
