@@ -419,7 +419,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Dependencies**：依賴 [[CC-438]]（schema）、[[CC-445]]（host-generic write path）；probe（階段 1）可與 CC-436/437 並行先跑。umbrella [[CC-333]]。~~v1.0-rc 候選~~ → **v0.9.0**。
 
 **Update 2026-07-06（v1.0-rc → v0.9.0 整票提前）**: 維護者拍板 v0.9.0 host 軸 = codex + opencode 雙 host（DECISIONS 2026-07-06）——N=2 驗收紅線由 v1.0-rc 提前為 v0.9.0 版內驗收，避免 `hosts/*/host.yaml` schema 在只有 codex 一個非 claude host 時定案被特例帶歪。三階段順序不變：階段 1 probe 與 [[CC-436]]/[[CC-437]] 並行先跑；[[CC-438]] schema 定案須同時吃進雙 probe 結果；階段 2+3 依 [[CC-438]]/[[CC-445]] 之後收尾。
-**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06
+
+**Update 2026-07-06（階段 1 probe 完成）**：`docs/spikes/CC-448.md`。關鍵發現：opencode 有宣告式 `permission.{bash,edit,...}: allow/ask/deny` 靜態設定，guard binding 比 codex 的 hooks.json 外掛式機制更簡單（不需寫腳本）；`bash: deny` 實測 fail-closed 且比 codex 乾淨（模型完全不嘗試呼叫）；但 `edit: deny` 單獨設定會被 `bash: allow` 繞過（用 shell 重導向寫檔案），必須兩者都納管才是真正的 file guard——這與 CC-436 的 codex `apply_patch`/`Bash` 不對稱發現同一類問題；`edit`+`bash` 同時 deny 會導致 `opencode run` 掛起，根因未查明，是階段 2 manifest 定案前的 blocking open risk。階段 2（`hosts/opencode/host.yaml`）、階段 3（doctor/install 接線）尚未開始。
+**See**: DECISIONS.md 2026-07-04、DECISIONS.md 2026-07-06、`docs/spikes/CC-448.md`
 
 ## CC-449 — release-verify/test-e2e：ship/worktree surface 煙測 + 套件註冊完整性 lint 🔵 active
 
