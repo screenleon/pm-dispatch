@@ -20,7 +20,7 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# shellcheck source=scripts/lib/test-harness.sh
+# shellcheck source=scripts/lib/test-harness.sh disable=SC1091
 . "$SCRIPT_DIR/lib/test-harness.sh"
 th_init "test-host-manifest" "$@"
 
