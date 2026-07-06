@@ -47,7 +47,7 @@ behaves as a dispatched executor.
 | `install_targets` | yes | List of files the install write path would own or assert (see below). |
 | `hook_surface` | yes | Hook runtime facts: config format, event names, headless requirements. May be an empty map for hosts with no hook system. |
 | `guard_bindings` | yes | List of guard capability declarations (see below). |
-| `permissions_surface` | yes | The host's native permission model outside the hook surface, and whether the installer manages it. |
+| `permissions_surface` | yes | The host's native permission model outside the hook surface, and whether the installer manages it. Its `config_target` must reference an `install_targets` entry `id`. |
 | `doctor_module` | yes | Repo-relative path to the sourceable doctor host module; must exist. |
 | `uninstall_module` | yes | Repo-relative path to the uninstall module, or `null` while no install write path exists. |
 
@@ -80,7 +80,7 @@ Closed enum; adding a value is a schema revision, not a per-host improvisation:
 |---|---|
 | `config_format` | Format handler the hook wiring uses. |
 | `events` | Hook event names the host runtime exposes. |
-| `headless_required_flags` | Flags a headless invocation must pass for hooks to fire at all (see "Hook trust in headless runs"). |
+| `headless_required_flags` | Optional. Flags a headless invocation must pass for hooks to fire at all (see "Hook trust in headless runs"). |
 
 Hosts whose guard story is purely declarative config (no hook scripts) declare
 an empty `hook_surface: {}` rather than inventing pseudo-events.
