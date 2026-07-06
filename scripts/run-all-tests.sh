@@ -13,6 +13,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SUITE_NAMES=(
   lint-agents
   lint-scripts
+  lint-test-docstrings
   test-guards
   test-guard-framework
   test-migrate
@@ -40,6 +41,7 @@ SUITE_NAMES=(
   test-doctor
   test-hook-profile-parity
   test-lint-frontmatter
+  test-lint-test-docstrings
   test-test-harness
   test-commands
   test-commands-runner
@@ -84,6 +86,7 @@ SUITE_NAMES=(
 declare -A SUITE_PATHS=(
   [lint-agents]="scripts/lint-agents.sh"
   [lint-scripts]="scripts/lint-scripts.sh"
+  [lint-test-docstrings]="scripts/lint-test-docstrings.sh"
   [test-guards]="scripts/test-guards.sh"
   [test-guard-framework]="scripts/test-guard-framework.sh"
   [test-migrate]="scripts/test-migrate-routing-log.sh"
@@ -111,6 +114,7 @@ declare -A SUITE_PATHS=(
   [test-doctor]="scripts/test-doctor.sh"
   [test-hook-profile-parity]="scripts/test-hook-profile-parity.sh"
   [test-lint-frontmatter]="scripts/test-lint-frontmatter.sh"
+  [test-lint-test-docstrings]="scripts/test-lint-test-docstrings.sh"
   [test-test-harness]="scripts/test-test-harness.sh"
   [test-commands]="scripts/test-commands.sh"
   [test-commands-runner]="scripts/test-commands-runner.sh"

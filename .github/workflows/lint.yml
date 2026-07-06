@@ -49,6 +49,20 @@ jobs:
       - name: Validate codex model alias source-of-truth
         run: bash scripts/lint-model-aliases.sh
 
+  lint-test-docstrings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate test docstring convention (allowlisted files)
+        run: ./scripts/lint-test-docstrings.sh
+
+  test-lint-test-docstrings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: lint-test-docstrings regression suite
+        run: bash scripts/test-lint-test-docstrings.sh
+
   test-guards:
     runs-on: ubuntu-latest
     steps:
@@ -194,6 +208,7 @@ jobs:
             test-pmctl-validate.sh
             test-pmctl-decision.sh
             test-pmctl-worktree.sh
+            test-lint-test-docstrings.sh
 
   test-doctor:
     runs-on: ubuntu-latest

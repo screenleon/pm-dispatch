@@ -392,6 +392,11 @@ run_gate() {
   return "$code"
 }
 
+# Behavior: express-tier diff with no overrides routes to codex with the
+# express reviewer set (critic, qa-tester).
+# Steps: run the gate on a docs-only diff, assert stderr shows dispatch
+# success and the captured brief has Tier: express, Executor: codex, and
+# Reviewers: critic,qa-tester.
 test_tier_detection() {
   local name="tier-detection"
   should_run "$name" || return 0
@@ -419,6 +424,10 @@ test_tier_detection() {
   pass "$name"
 }
 
+# Behavior: pr-gate.sh never rewrites the target repo's own .gitignore.
+# Steps: hash .gitignore before running the gate on a repo with a
+# pre-existing .gitignore, run the gate, assert the post-run hash is
+# unchanged and no agent/codex boilerplate was appended.
 test_pr_gate_does_not_mutate_gitignore() {
   local name="pr-gate-does-not-mutate-gitignore"
   should_run "$name" || return 0
@@ -465,13 +474,12 @@ test_pr_gate_does_not_mutate_gitignore() {
 # repo that has not had them gitignored is not misread as prompt-injected. These
 # exercise scripts/lib/artifact-paths.sh directly -- the canonical leaf source.
 
+# Behavior: artifact_filter_porcelain drops every gate-artifact leaf record
+# from a porcelain -z status stream (positive control for CC-413).
+# Steps: source the canonical lib, build a -z stream of three artifact
+# records plus one real change, run it through artifact_filter_porcelain,
+# and assert no .agent-trace/.gate-briefs/.gate-results record survives.
 test_artifact_filter_drops_gate_artifacts() {
-  # artifact_filter_porcelain drops every gate-artifact leaf record from a
-  # porcelain -z status stream (positive control for CC-413).
-  # Steps:
-  # 1. Source the canonical lib and build a -z stream of three artifact records + one real change.
-  # 2. Run the stream through artifact_filter_porcelain.
-  # 3. Assert no .agent-trace/.gate-briefs/.gate-results record survives.
   local name="artifact-filter-drops-gate-artifacts"
   should_run "$name" || return 0
 
@@ -497,13 +505,12 @@ test_artifact_filter_drops_gate_artifacts() {
   pass "$name"
 }
 
+# Behavior: artifact_filter_porcelain preserves real source records and does
+# not over-filter (negative control for CC-413).
+# Steps: build a -z stream mixing two real changes with one artifact record,
+# run it through artifact_filter_porcelain, and assert both real-source
+# paths remain in the output.
 test_artifact_filter_keeps_real_sources() {
-  # artifact_filter_porcelain preserves real source records and does not
-  # over-filter (negative control for CC-413).
-  # Steps:
-  # 1. Build a -z stream mixing two real changes with one artifact record.
-  # 2. Run the stream through artifact_filter_porcelain.
-  # 3. Assert both real-source paths remain in the output.
   local name="artifact-filter-keeps-real-sources"
   should_run "$name" || return 0
 
@@ -526,13 +533,13 @@ test_artifact_filter_keeps_real_sources() {
   pass "$name"
 }
 
+# Behavior: a status stream with gate artifacts and one without hash
+# identically after filtering, so the pre/post integrity guard never
+# false-aborts (CC-413 core).
+# Steps: build a "post" stream (real change + artifacts) and a "pre" stream
+# (real change only), filter and sha256 each, and assert the two
+# fingerprints are byte-identical.
 test_artifact_filter_symmetry_ignores_artifacts() {
-  # A status stream with gate artifacts and one without hash identically after
-  # filtering, so the pre/post integrity guard never false-aborts (CC-413 core).
-  # Steps:
-  # 1. Build a "post" stream (real change + artifacts) and a "pre" stream (real change only).
-  # 2. Filter and sha256 each stream.
-  # 3. Assert the two fingerprints are byte-identical.
   local name="artifact-filter-symmetry-ignores-artifacts"
   should_run "$name" || return 0
 
@@ -559,13 +566,13 @@ test_artifact_filter_symmetry_ignores_artifacts() {
   pass "$name"
 }
 
+# Behavior: artifact_filter_porcelain keeps a space-bearing real filename
+# intact while still dropping a space-bearing artifact path, proving
+# NUL-delimited parsing.
+# Steps: build a -z stream with a space-bearing real file and a
+# space-bearing artifact file, run it through artifact_filter_porcelain, and
+# assert the real file survives whole and the artifact is dropped.
 test_artifact_filter_handles_special_filenames() {
-  # artifact_filter_porcelain keeps a space-bearing real filename intact while
-  # still dropping a space-bearing artifact path, proving NUL-delimited parsing.
-  # Steps:
-  # 1. Build a -z stream with a space-bearing real file and a space-bearing artifact file.
-  # 2. Run the stream through artifact_filter_porcelain.
-  # 3. Assert the real file survives whole and the artifact is dropped.
   local name="artifact-filter-handles-special-filenames"
   should_run "$name" || return 0
 
@@ -590,13 +597,13 @@ test_artifact_filter_handles_special_filenames() {
   pass "$name"
 }
 
+# Behavior: artifact_filter_porcelain evaluates the bare origin-path record
+# that follows a rename: an artifact rename drops both sides, a real-source
+# rename survives.
+# Steps: build a -z stream with an artifact rename (record + origin) and a
+# real rename (record + origin), run it through artifact_filter_porcelain,
+# and assert both real-rename paths survive and neither artifact path does.
 test_artifact_filter_handles_rename_origin() {
-  # artifact_filter_porcelain evaluates the bare origin-path record that follows
-  # a rename: an artifact rename drops both sides, a real-source rename survives.
-  # Steps:
-  # 1. Build a -z stream with an artifact rename (record + origin) and a real rename (record + origin).
-  # 2. Run the stream through artifact_filter_porcelain.
-  # 3. Assert both real-rename paths survive and neither artifact path does.
   local name="artifact-filter-handles-rename-origin"
   should_run "$name" || return 0
 
@@ -640,14 +647,16 @@ _extract_artifact_filter_body() {
   ' "$1"
 }
 
+# Behavior: the copy-mode inline artifact_filter_porcelain fallback in
+# pr-gate.sh filters the gate's own artifacts load-bearingly: a healthy repo
+# that never gitignored the artifact dirs (the exact CC-413 bug condition)
+# must not false-abort.
+# Steps: build a copy-mode runner (lib absent) and a repo whose .gitignore
+# omits the artifact dirs, run a full gate so it writes
+# .agent-trace/.gate-briefs/.gate-results into that repo, and assert the
+# gate exits 0, prints no injection abort, and the artifact dir was created
+# un-gitignored.
 test_copy_mode_artifact_filter_no_false_abort() {
-  # The copy-mode inline artifact_filter_porcelain fallback in pr-gate.sh filters
-  # the gate's own artifacts load-bearingly: a healthy repo that never gitignored
-  # the artifact dirs (the exact CC-413 bug condition) must not false-abort.
-  # Steps:
-  # 1. Build a copy-mode runner (lib absent) and a repo whose .gitignore omits the artifact dirs.
-  # 2. Run a full gate so it writes .agent-trace/.gate-briefs/.gate-results into that repo.
-  # 3. Assert the gate exits 0, prints no injection abort, and the artifact dir was created un-gitignored.
   local name="copy-mode/artifact-filter-no-false-abort"
   should_run "$name" || return 0
 
@@ -706,14 +715,15 @@ test_copy_mode_artifact_filter_no_false_abort() {
   pass "$name"
 }
 
+# Behavior: the copy-mode inline fallback in pr-gate.sh is byte-for-byte
+# (whitespace-normalized) identical to the canonical artifact_filter_porcelain
+# in the lib, so any drift in its NUL/rename/drop-keep logic is caught -- not
+# just the leaf list.
+# Steps: extract the whitespace-normalized function body from the lib and
+# from the pr-gate fallback, extract the leaf-array definition line from
+# each file, and assert both the function bodies and the leaf lines match
+# exactly.
 test_copy_mode_artifact_fallback_body_parity() {
-  # The copy-mode inline fallback in pr-gate.sh is byte-for-byte (whitespace-
-  # normalized) identical to the canonical artifact_filter_porcelain in the lib,
-  # so any drift in its NUL/rename/drop-keep logic is caught -- not just the leaf list.
-  # Steps:
-  # 1. Extract the whitespace-normalized function body from the lib and from the pr-gate fallback.
-  # 2. Extract the leaf-array definition line from each file.
-  # 3. Assert both the function bodies and the leaf lines match exactly.
   local name="copy-mode/artifact-fallback-body-parity"
   should_run "$name" || return 0
 
@@ -746,6 +756,11 @@ test_copy_mode_artifact_fallback_body_parity() {
   pass "$name"
 }
 
+# Behavior: the gate aborts with a clear error when a configured reviewer's
+# agent file is missing, without dispatching anything.
+# Steps: create agents missing one reviewer, run the gate, and assert a
+# non-zero exit, an "agent file not found" stderr message, and no dispatch
+# stub output.
 test_missing_reviewer_agent() {
   local name="missing-reviewer-agent"
   should_run "$name" || return 0
@@ -770,6 +785,11 @@ test_missing_reviewer_agent() {
   pass "$name"
 }
 
+# Behavior: the gate aborts with a clear error when --base names a
+# nonexistent ref, without dispatching anything.
+# Steps: run the gate with --base pointing at a nonexistent branch, and
+# assert a non-zero exit, a "base ref not found" stderr message, and no
+# dispatch stub output.
 test_invalid_base_ref() {
   local name="invalid-base-ref"
   should_run "$name" || return 0
@@ -794,6 +814,11 @@ test_invalid_base_ref() {
   pass "$name"
 }
 
+# Behavior: the gate aborts with a clear error when the diff against base is
+# empty, without dispatching anything.
+# Steps: run the gate on a repo with no changes against main, and assert a
+# non-zero exit, a "no changed files detected" stderr message, and no
+# dispatch stub output.
 test_no_changed_files() {
   local name="no-changed-files"
   should_run "$name" || return 0
@@ -818,6 +843,13 @@ test_no_changed_files() {
   pass "$name"
 }
 
+# Behavior: an explicit --reviewers list overrides tier auto-detection
+# (Tier: targeted) and the parallel synthesis brief embeds reviewer findings
+# inline rather than pointing at read: paths for reviewers not in the list.
+# Steps: run the gate with --reviewers critic --parallel against a diff that
+# would otherwise tier-detect to something else, and assert the captured
+# synthesis brief has Tier: targeted, Reviewers: critic, inline
+# "--- critic findings ---", and no reviewer-critic-/qa-tester read: paths.
 test_reviewers_override_skips_tier_detection() {
   local name="reviewers-override"
   should_run "$name" || return 0
@@ -848,6 +880,11 @@ test_reviewers_override_skips_tier_detection() {
   pass "$name"
 }
 
+# Behavior: the dispatch brief file exists on disk (inside the gate's
+# working dir) at the moment the executor is invoked, not written after.
+# Steps: run the gate with a marker env var that records whether the brief
+# path exists at dispatch time, and assert the marker file contains
+# "brief-present".
 test_brief_file_inside_workdir() {
   local name="brief-file-inside-workdir"
   should_run "$name" || return 0
@@ -871,6 +908,10 @@ test_brief_file_inside_workdir() {
   pass "$name"
 }
 
+# Behavior: a failed dispatch does not leave a stray brief file behind in
+# the repo's .gate-briefs directory.
+# Steps: run the gate with the dispatch stub forced to fail, and assert a
+# non-zero exit and no pr-gate-*.md file remaining under .gate-briefs.
 test_brief_cleanup_on_dispatch_failure() {
   local name="brief-cleanup-on-failure"
   should_run "$name" || return 0
@@ -897,6 +938,11 @@ test_brief_cleanup_on_dispatch_failure() {
   pass "$name"
 }
 
+# Behavior: --output creates any missing parent directories for the result
+# path, even when the dispatch subsequently fails.
+# Steps: run the gate with --output pointing at a nested nonexistent
+# directory and the dispatch stub forced to fail, and assert the parent
+# directory was created despite the failure.
 test_output_directory_created() {
   local name="output-directory-created"
   should_run "$name" || return 0
@@ -923,9 +969,13 @@ test_output_directory_created() {
   pass "$name"
 }
 
+# Behavior: pr-gate --executor claude dispatches a subprocess, materializes
+# the result file, and exits 0 on a GO result without emitting a handover
+# block.
+# Steps: run pr-gate.sh --executor claude directly, and assert exit 0, a
+# non-empty result file with "Final: GO", and no pr-gate-handover_v1 block
+# in stdout.
 test_claude_adapter_dispatches_subprocess() {
-  # Verifies pr-gate --executor claude dispatches a subprocess, materializes the
-  # result file, and exits 0 on a GO result without emitting a handover block.
   local name="claude-adapter-dispatches-subprocess"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -958,8 +1008,12 @@ test_claude_adapter_dispatches_subprocess() {
   pass "$name"
 }
 
+# Behavior: --parallel mode launches one dispatch per reviewer plus a
+# synthesis dispatch.
+# Steps: run the gate with --parallel and two reviewers, and assert stdout
+# shows a "[parallel] launched" line for each reviewer and a
+# "[synthesis] running PM consolidation" line.
 test_parallel_launches_per_reviewer() {
-  # Verifies --parallel mode launches one dispatch per reviewer and a synthesis.
   local name="parallel-launches-per-reviewer"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -984,9 +1038,15 @@ test_parallel_launches_per_reviewer() {
   pass "$name"
 }
 
+# Behavior: --parallel mode exits non-zero (does not hang indefinitely) when
+# a reviewer subprocess stalls; the gate watchdog kills it and reports a
+# Timeout, including reaping the underlying executor child, not just the
+# dispatch.sh wrapper.
+# Steps: shorten the watchdog timeout and hang the critic reviewer stub with
+# a unique sleep marker, run the gate with --parallel, and assert a
+# non-zero exit, a "Timeout:"/"critic" stderr message, and no surviving
+# process matching the sleep marker.
 test_parallel_timeout_kills_hanging_reviewer() {
-  # Verifies --parallel mode exits nonzero (does not hang indefinitely) when a
-  # reviewer subprocess stalls. The gate watchdog kills it and reports a Timeout.
   local name="parallel-timeout-kills-hanging-reviewer"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1018,9 +1078,14 @@ test_parallel_timeout_kills_hanging_reviewer() {
   pass "$name"
 }
 
+# Behavior: --parallel mode exits non-zero and reports Timeout when the
+# synthesis session stalls; a synthesis-specific watchdog kills it before
+# the gate hangs, reaping the underlying executor child.
+# Steps: shorten the synthesis watchdog timeout and hang the synthesis stub
+# (reviewers succeed normally) with a unique sleep marker, run the gate with
+# --parallel, and assert a non-zero exit, a "Timeout:" stderr message, and
+# no surviving process matching the sleep marker.
 test_parallel_timeout_kills_hanging_synthesis() {
-  # Verifies --parallel mode exits nonzero and reports Timeout when the synthesis
-  # session stalls. A synthesis-specific watchdog kills it before the gate hangs.
   local name="parallel-timeout-kills-hanging-synthesis"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1051,9 +1116,13 @@ test_parallel_timeout_kills_hanging_synthesis() {
   pass "$name"
 }
 
+# Behavior: --sequential produces a single combined reviewer brief carrying
+# the "Process each reviewer IN ORDER" instruction, with no parallel or
+# synthesis dispatch chatter.
+# Steps: run the gate with --sequential, and assert the captured brief
+# contains the in-order instruction and stdout has no [parallel] or
+# [synthesis] markers.
 test_sequential_flag_produces_combined_brief() {
-  # Verifies --sequential produces the combined reviewer brief with the
-  # "Process each reviewer IN ORDER" instruction.
   local name="sequential-flag-combined-brief"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1078,12 +1147,14 @@ test_sequential_flag_produces_combined_brief() {
   pass "$name"
 }
 
+# Behavior: the full-tier sequential combined brief satisfies
+# brief-validate.sh. The brief is the dispatch contract the reviewer
+# executor validates first; a top-level key indented into a preceding block
+# (e.g. acceptance nested under self_verify) is parsed as a child, so the
+# executor REJECTs the brief and no review runs.
+# Steps: run the gate with --sequential on a full-tier diff, capture the
+# brief, run brief-validate.sh on it, and assert it exits 0.
 test_sequential_combined_brief_validates() {
-  # Regression: the full-tier sequential combined brief must satisfy
-  # brief-validate.sh. The brief is the dispatch contract the reviewer executor
-  # validates first; a top-level key indented into a preceding block (e.g.
-  # acceptance nested under self_verify) is parsed as a child, so the executor
-  # REJECTs the brief and no review runs.
   local name="sequential-combined-brief-validates"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1114,9 +1185,11 @@ test_sequential_combined_brief_validates() {
   pass "$name"
 }
 
+# Behavior: each parallel per-reviewer brief satisfies brief-validate.sh
+# (same dispatch contract the reviewer executor validates first).
+# Steps: run the gate with --reviewers critic --parallel, capture the
+# per-reviewer brief, run brief-validate.sh on it, and assert it exits 0.
 test_parallel_reviewer_brief_validates() {
-  # Regression: each parallel per-reviewer brief must satisfy brief-validate.sh
-  # (same dispatch contract the reviewer executor validates first).
   local name="parallel-reviewer-brief-validates"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1148,9 +1221,11 @@ test_parallel_reviewer_brief_validates() {
   pass "$name"
 }
 
+# Behavior: the parallel synthesis brief satisfies brief-validate.sh. In
+# --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
+# Steps: run the gate with --parallel, capture the synthesis brief, run
+# brief-validate.sh on it, and assert it exits 0.
 test_parallel_synthesis_brief_validates() {
-  # Regression: the parallel synthesis brief must satisfy brief-validate.sh.
-  # In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
   local name="parallel-synthesis-brief-validates"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1181,9 +1256,12 @@ test_parallel_synthesis_brief_validates() {
   pass "$name"
 }
 
+# Behavior: when reviewer dispatches fail, the gate exits non-zero and
+# prints an error -- synthesis must not run on incomplete reviewer data.
+# Steps: run the gate with --parallel and the dispatch stub forced to fail,
+# and assert a non-zero exit, a "reviewer session(s) failed:" stderr
+# message, and no [synthesis] marker in stdout.
 test_failed_reviewer_aborts_gate() {
-  # Verifies that when reviewer dispatches fail the gate exits non-zero and
-  # prints an error — synthesis must not run on incomplete reviewer data.
   local name="failed-reviewer-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1250,11 +1328,13 @@ _make_ts_repo_with_test() {
   )
 }
 
+# Behavior: a *_test.go companion to a changed .go source file is
+# automatically included in the reviewer brief even when not in the diff.
+# Steps: run the gate with --sequential (so CAPTURE_BRIEF holds the combined
+# brief listing all review files) on a repo whose diff touches only app.go,
+# and assert stdout counts one adjacent test file added and the brief
+# contains app_test.go.
 test_adjacent_go_test_included() {
-  # Verifies that a *_test.go companion to a changed .go source file is
-  # automatically included in the reviewer brief even when not in the diff.
-  # Uses --sequential so CAPTURE_BRIEF holds the combined brief that lists all
-  # review files, directly proving inclusion (not just the stdout counter).
   local name="adjacent-go-test-included"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1278,9 +1358,13 @@ test_adjacent_go_test_included() {
   pass "$name"
 }
 
+# Behavior: a __tests__/<name>.test.ts file adjacent to a changed .ts source
+# file is included in the reviewer brief.
+# Steps: run the gate with --sequential on a repo whose diff touches only
+# src/format.ts with a sibling __tests__/format.test.ts, and assert stdout
+# counts one adjacent test file added and the brief contains
+# format.test.ts.
 test_adjacent_ts_test_in_tests_dir() {
-  # Verifies that __tests__/<name>.test.ts adjacent to a changed .ts source
-  # file is included in the reviewer brief.
   local name="adjacent-ts-test-tests-dir"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1305,8 +1389,12 @@ test_adjacent_ts_test_in_tests_dir() {
   pass "$name"
 }
 
+# Behavior: a __tests__/<name>.test.tsx file is recognised as an adjacent
+# test for a changed .ts source file.
+# Steps: run the gate with --sequential on a repo with a sibling
+# __tests__/format.test.tsx, and assert stdout counts one adjacent test
+# file added and the brief contains format.test.tsx.
 test_adjacent_ts_test_tsx_variant() {
-  # Verifies that __tests__/<name>.test.tsx is recognised as an adjacent test.
   local name="adjacent-ts-test-tsx-variant"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1331,8 +1419,12 @@ test_adjacent_ts_test_tsx_variant() {
   pass "$name"
 }
 
+# Behavior: a __tests__/<name>.spec.ts file is recognised as an adjacent
+# test for a changed .ts source file.
+# Steps: run the gate with --sequential on a repo with a sibling
+# __tests__/format.spec.ts, and assert stdout counts one adjacent test file
+# added and the brief contains format.spec.ts.
 test_adjacent_ts_spec_ts_variant() {
-  # Verifies that __tests__/<name>.spec.ts is recognised as an adjacent test.
   local name="adjacent-ts-spec-ts-variant"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1357,8 +1449,12 @@ test_adjacent_ts_spec_ts_variant() {
   pass "$name"
 }
 
+# Behavior: a sibling <name>.spec.tsx file (not in __tests__/) is
+# recognised as an adjacent test.
+# Steps: run the gate with --sequential on a repo with a sibling
+# format.spec.tsx, and assert stdout counts one adjacent test file added
+# and the brief contains format.spec.tsx.
 test_adjacent_ts_spec_tsx_variant() {
-  # Verifies that a sibling <name>.spec.tsx file is recognised as an adjacent test.
   local name="adjacent-ts-spec-tsx-variant"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1383,9 +1479,12 @@ test_adjacent_ts_spec_tsx_variant() {
   pass "$name"
 }
 
+# Behavior: a sibling <name>.test.ts file (not in __tests__/) is included
+# in the reviewer brief.
+# Steps: run the gate with --sequential on a repo with a sibling
+# format.test.ts, and assert stdout counts one adjacent test file added and
+# the brief contains format.test.ts.
 test_adjacent_ts_sibling_test() {
-  # Verifies that a sibling <name>.test.ts file (not in __tests__/) is
-  # included in the reviewer brief.
   local name="adjacent-ts-sibling-test"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1410,9 +1509,12 @@ test_adjacent_ts_sibling_test() {
   pass "$name"
 }
 
+# Behavior: a test file already present in the diff is not re-appended as
+# an adjacent file (de-duplication).
+# Steps: run the gate on a repo whose diff already changes both app.go and
+# app_test.go, and assert stdout does not report any adjacent test files
+# added.
 test_adjacent_test_not_duplicated_when_in_diff() {
-  # Verifies that a test file already in the diff is not re-appended as an
-  # adjacent file (de-duplication).
   local name="adjacent-test-not-duplicated"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1450,15 +1552,16 @@ test_adjacent_test_not_duplicated_when_in_diff() {
   pass "$name"
 }
 
+# Behavior: when synthesis writes Final: GO but the shell-computed verdict
+# from reviewer outputs is NO-GO (block), the gate aborts before reporting
+# success.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_VERDICT=block: reviewers write Verdict: block → SHELL_FINAL=NO-GO
+#      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit and "contradicts shell-computed" in stderr
 test_synthesis_verdict_mismatch_aborts_gate() {
-  # Verifies that when synthesis writes Final: GO but the shell-computed verdict
-  # from reviewer outputs is NO-GO (block), the gate aborts before reporting success.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_VERDICT=block: reviewers write Verdict: block → SHELL_FINAL=NO-GO
-  #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
   local name="synthesis-verdict-mismatch-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1482,14 +1585,15 @@ test_synthesis_verdict_mismatch_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a synthesis session modifying a tracked source file is detected
+# and the gate aborts after synthesis (guards against synthesis-side
+# injection).
+# Steps:
+#   1. Create a repo with a committed service.go (clean tracked file)
+#   2. CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE=service.go: synthesis stub appends to service.go
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit, "synthesis session modified" in stderr
 test_post_synthesis_injection_detected() {
-  # Verifies that a synthesis session modifying a tracked source file is detected
-  # and the gate aborts after synthesis (guards against synthesis-side injection).
-  # Steps:
-  #   1. Create a repo with a committed service.go (clean tracked file)
-  #   2. CODEX_GATE_STUB_SYNTHESIS_INJECT_FILE=service.go: synthesis stub appends to service.go
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit, "synthesis session modified" in stderr
   local name="post-synthesis-injection-detected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1516,14 +1620,15 @@ test_post_synthesis_injection_detected() {
   pass "$name"
 }
 
+# Behavior: PM synthesis exiting 0 without writing the gate result file
+# fails the gate -- reviewers succeed but synthesis silently omits its
+# output.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_SYNTHESIS_MODE=no-output: reviewers write output; synthesis does not
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit and "synthesis did not produce" in stderr
 test_synthesis_no_output_aborts_gate() {
-  # Verifies that PM synthesis exiting 0 without writing the gate result file
-  # fails the gate — reviewers succeed but synthesis silently omits its output.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_SYNTHESIS_MODE=no-output: reviewers write output; synthesis does not
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit and "synthesis did not produce" in stderr
   local name="synthesis-no-output-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1546,14 +1651,14 @@ test_synthesis_no_output_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a reviewer output file without a valid Verdict line fails the
+# gate before synthesis (guards against malformed or manipulated output).
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
 test_reviewer_invalid_verdict_aborts_gate() {
-  # Verifies that a reviewer output file without a valid Verdict line fails
-  # the gate before synthesis (guards against malformed or manipulated output).
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_MODE=no-verdict: reviewer writes output but no Verdict line
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="reviewer-invalid-verdict-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1576,14 +1681,14 @@ test_reviewer_invalid_verdict_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a reviewer session exiting 0 without writing its output file
+# fails the gate (fail-closed on silent reviewer failure).
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MODE=no-output: all dispatches (reviewers + synthesis) omit output
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
 test_reviewer_no_output_aborts_gate() {
-  # Verifies that a reviewer session exiting 0 without writing its output file
-  # fails the gate (fail-closed on silent reviewer failure).
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_MODE=no-output: all dispatches (reviewers + synthesis) omit output
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit and "reviewer output missing or empty" in stderr
   local name="reviewer-no-output-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1606,14 +1711,14 @@ test_reviewer_no_output_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: sequential mode exiting 0 without writing the gate result file
+# fails the gate before reporting a result.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
+#   3. Run gate in sequential mode (default)
+#   4. Assert non-zero exit and "sequential gate did not produce" in stderr
 test_sequential_no_output_aborts_gate() {
-  # Verifies that sequential mode exiting 0 without writing the gate result file
-  # fails the gate before reporting a result.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_MODE=no-output: dispatch exits 0 without output
-  #   3. Run gate in sequential mode (default)
-  #   4. Assert non-zero exit and "sequential gate did not produce" in stderr
   local name="sequential-no-output-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1636,14 +1741,14 @@ test_sequential_no_output_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: sequential mode output without a valid Final line fails the
+# gate before reporting a result.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
+#   3. Run gate in sequential mode (default)
+#   4. Assert non-zero exit and "must contain exactly one Final" in stderr
 test_sequential_no_final_line_aborts_gate() {
-  # Verifies that sequential mode output without a valid Final line fails
-  # the gate before reporting a result.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_MODE=no-verdict: dispatch writes output but no Final line
-  #   3. Run gate in sequential mode (default)
-  #   4. Assert non-zero exit and "must contain exactly one Final" in stderr
   local name="sequential-no-final-line-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1666,16 +1771,18 @@ test_sequential_no_final_line_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a consumer that reads a prefix of gate stdout and closes the
+# pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
+# dispatches and writes the result file (CC-350 regression). Pre-fix, the
+# next stdout write after the pipe closed failed with EPIPE; under `set -e`
+# that nonzero killed the script before dispatch, leaving a 0-byte result
+# file while the outer pipeline reported the consumer's exit 0 (a silent
+# false-success). The say() EPIPE-tolerant wrapper keeps the gate running to
+# completion so the per-route result-integrity checks stay authoritative.
+# Steps: pipe the gate's stdout into `head -n1` (closes the pipe after one
+# line) while writing a result file, and assert the result file is
+# non-empty and contains "Final: GO" despite the closed pipe.
 test_piped_stdout_does_not_abort_gate() {
-  # CC-350 regression: a consumer that reads a prefix of gate stdout and closes
-  # the pipe early (head -n1, grep -q, ...) must NOT abort the gate before it
-  # dispatches and writes the result file.
-  #
-  # Pre-fix the next stdout write after the pipe closed failed with EPIPE; under
-  # `set -e` that nonzero killed the script before dispatch, leaving a 0-byte
-  # result file while the outer pipeline reported the consumer's exit 0 (a silent
-  # false-success). The say() EPIPE-tolerant wrapper keeps the gate running to
-  # completion so the per-route result-integrity checks stay authoritative.
   local name="piped-stdout-does-not-abort-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1703,15 +1810,15 @@ test_piped_stdout_does_not_abort_gate() {
   pass "$name"
 }
 
+# Behavior: sequential mode aborts when the gate result YAML frontmatter
+# final: field disagrees with the body Final: line.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: body writes Final: GO
+#      CODEX_GATE_STUB_FRONTMATTER_FINAL=NO-GO: frontmatter writes final: NO-GO
+#   3. Run gate in sequential mode
+#   4. Assert non-zero exit and "does not match body Final" in stderr
 test_sequential_frontmatter_parity_mismatch_aborts_gate() {
-  # Verifies that sequential mode aborts when the gate result YAML frontmatter
-  # final: field disagrees with the body Final: line.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: body writes Final: GO
-  #      CODEX_GATE_STUB_FRONTMATTER_FINAL=NO-GO: frontmatter writes final: NO-GO
-  #   3. Run gate in sequential mode
-  #   4. Assert non-zero exit and "does not match body Final" in stderr
   local name="sequential-frontmatter-parity-mismatch-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1735,16 +1842,16 @@ test_sequential_frontmatter_parity_mismatch_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: parallel mode aborts when the synthesis YAML frontmatter final:
+# field disagrees with the shell-computed verdict.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: body writes Final: GO (matches SHELL_FINAL=GO)
+#      CODEX_GATE_STUB_FRONTMATTER_FINAL=NO-GO: frontmatter writes final: NO-GO
+#      Reviewers: default advise -> SHELL_FINAL=GO
+#   3. Run gate in parallel mode
+#   4. Assert non-zero exit and "frontmatter final" in stderr
 test_parallel_frontmatter_parity_mismatch_aborts_gate() {
-  # Verifies that parallel mode aborts when the synthesis YAML frontmatter
-  # final: field disagrees with the shell-computed verdict.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: body writes Final: GO (matches SHELL_FINAL=GO)
-  #      CODEX_GATE_STUB_FRONTMATTER_FINAL=NO-GO: frontmatter writes final: NO-GO
-  #      Reviewers: default advise -> SHELL_FINAL=GO
-  #   3. Run gate in parallel mode
-  #   4. Assert non-zero exit and "frontmatter final" in stderr
   local name="parallel-frontmatter-parity-mismatch-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1768,14 +1875,14 @@ test_parallel_frontmatter_parity_mismatch_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a reviewer session modifying a tracked source file (simulated
+# prompt injection) causes the gate to abort before synthesis.
+# Steps:
+#   1. Create a repo with a committed service.go (clean tracked file)
+#   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
+#   3. Run gate in parallel mode (default)
+#   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
 test_prompt_injection_detected() {
-  # Verifies that a reviewer session modifying a tracked source file (simulated
-  # prompt injection) causes the gate to abort before synthesis.
-  # Steps:
-  #   1. Create a repo with a committed service.go (clean tracked file)
-  #   2. CODEX_GATE_STUB_INJECT_FILE=service.go: reviewer stub appends to service.go
-  #   3. Run gate in parallel mode (default)
-  #   4. Assert non-zero exit, "prompt injection" in stderr, and no "[synthesis]" in stdout
   local name="prompt-injection-detected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1804,15 +1911,16 @@ test_prompt_injection_detected() {
   pass "$name"
 }
 
+# Behavior: block-soft (the mildest blocking verdict) causes
+# SHELL_FINAL=NO-GO and the gate exits with a contradiction error when
+# synthesis writes Final: GO.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_VERDICT=block-soft: reviewers write Verdict: block-soft → SHELL_FINAL=NO-GO
+#      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
+#   3. Run gate in --parallel mode
+#   4. Assert non-zero exit and "contradicts shell-computed" in stderr
 test_block_soft_verdict_is_no_go() {
-  # Verifies that block-soft (the mildest blocking verdict) causes SHELL_FINAL=NO-GO
-  # and the gate exits with a contradiction error when synthesis writes Final: GO.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_VERDICT=block-soft: reviewers write Verdict: block-soft → SHELL_FINAL=NO-GO
-  #      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO: synthesis stub writes Final: GO
-  #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "contradicts shell-computed" in stderr
   local name="block-soft-verdict-is-no-go"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1836,14 +1944,15 @@ test_block_soft_verdict_is_no_go() {
   pass "$name"
 }
 
+# Behavior: synthesis modifying a reviewer output artifact (gitignored) is
+# detected before the final verdict is accepted. This guards against a
+# synthesis session writing forged findings into an already-validated
+# reviewer file.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change) with a committed tracked file
+#   2. Run gate in --parallel mode; synthesis stub appends to the first reviewer output
+#   3. Assert non-zero exit and "artifact" or "tampering" in stderr
 test_synthesis_artifact_tamper_detected() {
-  # Verifies that synthesis modifying a reviewer output artifact (gitignored) is detected
-  # before the final verdict is accepted. This guards against a synthesis session
-  # writing forged findings into an already-validated reviewer file.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change) with a committed tracked file
-  #   2. Run gate in --parallel mode; synthesis stub appends to the first reviewer output
-  #   3. Assert non-zero exit and "artifact" or "tampering" in stderr
   local name="synthesis-artifact-tamper-detected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1914,14 +2023,15 @@ TWRAP_EOF
   pass "$name"
 }
 
+# Behavior: a verdict line with a valid prefix but invalid suffix is
+# rejected -- e.g. "Verdict: approved" must not be accepted as "Verdict:
+# approve".
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: stub writes "Verdict: approved" (not "approve")
+#   3. Run gate in --parallel mode
+#   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
 test_verdict_prefix_rejected() {
-  # Verifies that a verdict line with a valid prefix but invalid suffix is rejected.
-  # For example "Verdict: approved" must not be accepted as "Verdict: approve".
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_VERDICT_PREFIX_ONLY=1: stub writes "Verdict: approved" (not "approve")
-  #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="verdict-prefix-rejected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1945,15 +2055,15 @@ test_verdict_prefix_rejected() {
   pass "$name"
 }
 
+# Behavior: when neither sha256sum nor shasum is available the gate exits
+# non-zero immediately in --parallel mode rather than silently degrading to
+# empty-string fingerprints.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. Prepend a fakepath with failing sha256sum/shasum stubs to PATH
+#   3. Run gate with --parallel
+#   4. Assert non-zero exit and "no sha256sum or shasum" in stderr
 test_hash_tool_missing_aborts_gate() {
-  # Verifies that when neither sha256sum nor shasum is available the gate
-  # exits non-zero immediately in --parallel mode rather than silently
-  # degrading to empty-string fingerprints.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. Prepend a fakepath with failing sha256sum/shasum stubs to PATH
-  #   3. Run gate with --parallel
-  #   4. Assert non-zero exit and "no sha256sum or shasum" in stderr
   local name="hash-tool-missing-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -1983,18 +2093,18 @@ test_hash_tool_missing_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: when synthesis emits the Final: line wrapped in markdown bold
+# (e.g., `**Final: GO**`) -- as observed on CC-249 spike PR #146 where codex
+# applied prose emphasis -- the parser MUST reject it. The Final line is
+# contract-locked to plain text via the `^Final: (GO|NO-GO)$` regex.
+# Loosening the parser to accept bold-Final would silently hide the brief-
+# template drift the CC-250 brief is supposed to prevent.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_BOLD_FINAL=1: synthesis writes "**Final: GO**" instead of "Final: GO"
+#   3. Run gate in --parallel mode
+#   4. Assert non-zero exit and "exactly one Final" / "(found 0)" in stderr
 test_bold_final_line_rejected() {
-  # CC-252 regression: when synthesis emits the Final: line wrapped in markdown
-  # bold (e.g., `**Final: GO**`) — as observed on CC-249 spike PR #146 where
-  # codex applied prose emphasis — the parser MUST reject it. The Final line is
-  # contract-locked to plain text via the `^Final: (GO|NO-GO)$` regex.
-  # Loosening the parser to accept bold-Final would silently hide the brief-
-  # template drift the CC-250 brief is supposed to prevent.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_BOLD_FINAL=1: synthesis writes "**Final: GO**" instead of "Final: GO"
-  #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "exactly one Final" / "(found 0)" in stderr
   local name="bold-final-line-rejected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2018,20 +2128,20 @@ test_bold_final_line_rejected() {
   pass "$name"
 }
 
+# Behavior: the codex-brief heredoc at scripts/pr-gate.sh:362 (BRIEF_EOF)
+# and the synthesis-brief heredocs (SBRIEF_P1, SBRIEF_P2) are unquoted, so
+# bash performs command substitution on backtick pairs in the body. CC-252
+# (#147) introduced cautionary `` `Final: ...` `` tokens that bash then
+# tried to execute, producing 7 `command not found` lines per invocation.
+# Fix: escape the backticks in the heredoc body (\`Final: ...\`) so bash
+# writes them literally.
+# Steps:
+#   1. Run gate against a minimal repo (express tier, docs change)
+#   2. Assert exit 0 (gate ran cleanly)
+#   3. Assert stderr file contains zero "command not found" lines
+#   4. Assert the captured brief still contains the cautionary tokens
+#      (`Final:`, `final:`, `**Final: GO**`) so codex still sees the warning
 test_brief_construction_emits_no_shell_errors() {
-  # CC-257 regression: the codex-brief heredoc at scripts/pr-gate.sh:362
-  # (BRIEF_EOF) and the synthesis-brief heredocs (SBRIEF_P1, SBRIEF_P2) are
-  # unquoted, so bash performs command substitution on backtick pairs in the
-  # body. CC-252 (#147) introduced cautionary `` `Final: ...` `` tokens that
-  # bash then tried to execute, producing 7 `command not found` lines per
-  # invocation. Fix: escape the backticks in the heredoc body (\`Final: ...\`)
-  # so bash writes them literally.
-  # Steps:
-  #   1. Run gate against a minimal repo (express tier, docs change)
-  #   2. Assert exit 0 (gate ran cleanly)
-  #   3. Assert stderr file contains zero "command not found" lines
-  #   4. Assert the captured brief still contains the cautionary tokens
-  #      (`Final:`, `final:`, `**Final: GO**`) so codex still sees the warning
   local name="brief-construction-no-shell-errors"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2056,15 +2166,15 @@ test_brief_construction_emits_no_shell_errors() {
   pass "$name"
 }
 
+# Behavior: a synthesis output with more than one Final: line causes the
+# gate to abort -- duplicate or contradictory Final: lines indicate a
+# manipulated or corrupt gate artifact.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL=NO-GO: synthesis writes two Final: lines
+#   3. Run gate in --parallel mode
+#   4. Assert non-zero exit and "exactly one Final" in stderr
 test_synthesis_multiple_final_lines_aborts_gate() {
-  # Verifies that a synthesis output with more than one Final: line causes the
-  # gate to abort — duplicate or contradictory Final: lines indicate a
-  # manipulated or corrupt gate artifact.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL=NO-GO: synthesis writes two Final: lines
-  #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "exactly one Final" in stderr
   local name="synthesis-multiple-final-lines-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2088,15 +2198,16 @@ test_synthesis_multiple_final_lines_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: a reviewer artifact with more than one valid Verdict: line is
+# rejected. The gate must fail closed on ambiguous reviewer output --
+# silently taking the first match would allow a more-severe later verdict
+# to be ignored.
+# Steps:
+#   1. Create a minimal repo (express tier, docs change)
+#   2. CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: stub writes "Verdict: approve" then "Verdict: block"
+#   3. Run gate in --parallel mode
+#   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
 test_multiple_verdict_lines_aborts_gate() {
-  # Verifies that a reviewer artifact with more than one valid Verdict: line is rejected.
-  # The gate must fail closed on ambiguous reviewer output — silently taking the first
-  # match would allow a more-severe later verdict to be ignored.
-  # Steps:
-  #   1. Create a minimal repo (express tier, docs change)
-  #   2. CODEX_GATE_STUB_MULTIPLE_VERDICTS=1: stub writes "Verdict: approve" then "Verdict: block"
-  #   3. Run gate in --parallel mode
-  #   4. Assert non-zero exit and "exactly one valid Verdict line" in stderr
   local name="multiple-verdict-lines-aborts-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2120,18 +2231,17 @@ test_multiple_verdict_lines_aborts_gate() {
   pass "$name"
 }
 
+# Behavior: cross-reviewer artifact tampering in --parallel mode is
+# detected and the gate aborts before synthesis runs on tainted data.
+# Steps: qa-tester (index 0) writes output quickly and exits; critic (index
+# 1, the tamper reviewer) writes its own output, sleeps 0.3s, then appends
+# to qa-tester's artifact before exiting. The wait loop captures
+# qa-tester's post-wait hash immediately after qa-tester exits (before
+# critic's sleep ends); after critic exits, the cross-tamper check
+# re-hashes qa-tester's artifact, detects the mismatch, and the test
+# asserts a non-zero exit, a "cross-reviewer artifact tampering" stderr
+# message, and no [synthesis] marker in stdout.
 test_reviewer_cross_artifact_tamper_detected() {
-  # Verifies that cross-reviewer artifact tampering in --parallel mode is detected
-  # and the gate aborts before synthesis runs on tainted data.
-  #
-  # Scenario:
-  #   - qa-tester is at index 0: writes output quickly, exits.
-  #   - critic is at index 1 (the tamper reviewer): writes its own output, sleeps
-  #     0.3s, then appends to qa-tester's artifact before exiting.
-  #
-  # The wait loop captures qa-tester's post-wait hash immediately after qa-tester
-  # exits (before critic's 0.3s sleep ends). After critic exits, the cross-tamper
-  # check re-hashes qa-tester's artifact and detects the mismatch.
   local name="reviewer-cross-artifact-tamper-detected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2158,6 +2268,13 @@ test_reviewer_cross_artifact_tamper_detected() {
   pass "$name"
 }
 
+# Behavior: the sequential gate result file carries a well-formed YAML
+# frontmatter block (gate_result_version, final, per-reviewer verdicts,
+# escalation) followed by a matching "## Escalation" body section.
+# Steps: run the gate with --sequential and --output, and assert the result
+# file starts and ends its frontmatter with "---", and both the frontmatter
+# and body contain gate_result_version, final, all five reviewer verdicts,
+# and the escalation recommendation/reviewers/reason fields.
 test_gate_result_frontmatter_and_escalation() {
   local name="gate-result-frontmatter-escalation"
   should_run "$name" || return 0
@@ -2238,6 +2355,11 @@ test_gate_result_frontmatter_and_escalation() {
   pass "$name"
 }
 
+# Behavior: the parallel gate result body still carries exactly one
+# plain-text Final: (GO|NO-GO) line, preserving the pre-frontmatter
+# back-compat contract that downstream consumers grep for.
+# Steps: run the gate with --parallel and --output, and assert the result
+# file contains exactly one line matching ^Final: (GO|NO-GO)$.
 test_gate_result_final_line_back_compat() {
   local name="gate-result-final-line-back-compat"
   should_run "$name" || return 0
@@ -2267,6 +2389,11 @@ test_gate_result_final_line_back_compat() {
   pass "$name"
 }
 
+# Behavior: the frontmatter's escalation.recommended value and the body's
+# "**Recommended**:" value under "## Escalation" always agree -- one is not
+# a stale or independently derived copy of the other.
+# Steps: run the gate with --parallel and --output, extract the frontmatter
+# recommended value and the body Recommended value, and assert they match.
 test_frontmatter_escalation_parity() {
   local name="frontmatter-escalation-parity"
   should_run "$name" || return 0
@@ -2301,6 +2428,11 @@ test_frontmatter_escalation_parity() {
   pass "$name"
 }
 
+# Behavior: when --base is omitted, the gate detects the PR base branch via
+# `gh pr view` and dispatches against it.
+# Steps: stub `gh` to print "main", run the gate with no --base, and assert
+# stdout logs "base detected from gh pr view: main" and the result file has
+# a valid Final: (GO|NO-GO) line.
 test_base_detection_via_gh_pr_view() {
   local name="base-detection-via-gh-pr-view"
   should_run "$name" || return 0
@@ -2335,6 +2467,10 @@ FAKE_GH
   pass "$name"
 }
 
+# Behavior: when `gh pr view` fails (e.g. no PR open yet), the gate falls
+# back silently without claiming a gh-detected base.
+# Steps: stub `gh` to exit 1, run the gate with no --base, and assert exit 0
+# and no "base detected from gh pr view" line in stdout.
 test_base_detection_gh_fallback() {
   local name="base-detection-gh-fallback"
   should_run "$name" || return 0
@@ -2368,8 +2504,12 @@ run_test() {
   "$@" || true
 }
 
+# Behavior: 100-500 non-doc changed lines on a feature branch triggers
+# standard tier with the standard reviewer set.
+# Steps: create a repo/branch with a standard-sized diff, run the gate, and
+# assert the captured brief has Tier: standard and
+# Reviewers: critic,qa-tester,architecture-reviewer.
 test_standard_tier_detection() {
-  # Verifies 100-500 non-doc lines on a feature branch triggers standard tier.
   local name="standard-tier-detection"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2393,8 +2533,11 @@ test_standard_tier_detection() {
   pass "$name"
 }
 
+# Behavior: more than 500 non-doc changed lines on a feature branch
+# triggers full tier.
+# Steps: create a repo/branch with a full-sized diff, run the gate, and
+# assert the captured brief has Tier: full.
 test_full_tier_line_count() {
-  # Verifies >500 non-doc lines on a feature branch triggers full tier.
   local name="full-tier-line-count"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2417,8 +2560,11 @@ test_full_tier_line_count() {
   pass "$name"
 }
 
+# Behavior: a sensitive filename (auth-*) triggers full tier regardless of
+# how few lines changed.
+# Steps: create a repo/branch with a tiny diff to a sensitive filename, run
+# the gate, and assert the captured brief has Tier: full.
 test_full_tier_sensitive_file() {
-  # Verifies a sensitive filename (auth-*) triggers full tier regardless of line count.
   local name="full-tier-sensitive-file"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2441,8 +2587,13 @@ test_full_tier_sensitive_file() {
   pass "$name"
 }
 
+# Behavior: the gate resolves its own real path correctly (readlink -f fix)
+# and dispatches when invoked through a symlink, e.g.
+# ~/.claude/scripts/pr-gate.sh pointing at the real script elsewhere.
+# Steps: symlink pr-gate.sh into a separate directory, invoke the gate
+# through the symlink, and assert exit 0 and a
+# "DISPATCH_STUB:success" stderr line.
 test_via_symlink() {
-  # Verifies readlink -f fix: gate dispatches correctly when run as a symlink.
   local name="via-symlink"
   should_run "$name" || return 0
   # Windows Git Bash: ln -s requires Developer Mode; skip rather than fail.
@@ -2471,8 +2622,11 @@ test_via_symlink() {
   pass "$name"
 }
 
+# Behavior: renaming a sensitive file (auth.ts -> login.ts) still triggers
+# full tier by matching the rename's old name, not just the new one.
+# Steps: commit auth.ts on main, then rename it to login.ts on a feature
+# branch, run the gate, and assert the captured brief has Tier: full.
 test_rename_sensitive_old_name() {
-  # Verifies that renaming auth.ts → login.ts still triggers full tier on the old name.
   local name="rename-sensitive-old-name"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2507,8 +2661,11 @@ test_rename_sensitive_old_name() {
   pass "$name"
 }
 
+# Behavior: a binary file change (git-detected, no line count) is not
+# silently routed to express tier -- it must route to standard.
+# Steps: commit a binary image.png on a feature branch, run the gate, and
+# assert the captured brief has Tier: standard.
 test_binary_file_routes_to_standard() {
-  # Verifies that a binary file change is not silently routed to express tier.
   local name="binary-file-routes-to-standard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2549,10 +2706,13 @@ test_binary_file_routes_to_standard() {
   pass "$name"
 }
 
+# Behavior: an untracked binary file in the working tree (no branch
+# commits) is not silently routed to express tier -- the working-tree
+# fallback must treat untracked non-doc files as having unknown size.
+# Steps: add an untracked binary image.png to the working tree (no commit,
+# no staging), run the gate, and assert the captured brief routes away from
+# express tier (standard).
 test_untracked_binary_routes_to_standard() {
-  # Verifies that an untracked binary in the working tree (no branch commits)
-  # is not silently routed to express tier. The working-tree fallback must treat
-  # untracked non-doc files as having unknown size.
   local name="untracked-binary-routes-to-standard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2655,13 +2815,11 @@ run_test test_adjacent_ts_spec_tsx_variant
 run_test test_adjacent_ts_sibling_test
 run_test test_adjacent_test_not_duplicated_when_in_diff
 
+# Behavior: the sequential review brief generated by pr-gate.sh includes
+# schema_version: 1 as required by brief.schema.json.
+# Steps: run pr-gate.sh in sequential mode, capture the generated brief
+# file, and assert it contains "schema_version: 1".
 test_seq_brief_has_schema_version() {
-  # Verifies that the sequential review brief generated by pr-gate.sh includes
-  # schema_version: 1 as required by brief.schema.json.
-  #
-  # Steps:
-  #   1. Run pr-gate.sh in sequential mode and capture the generated brief file.
-  #   2. Assert the brief file contains "schema_version: 1".
   local name="seq-brief-has-schema-version"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2684,15 +2842,13 @@ test_seq_brief_has_schema_version() {
   pass "$name"
 }
 
+# Behavior: reviewer verdict values in the gate result frontmatter contain
+# only tokens defined in core/policy/reviewer-policy.yaml (approve, pass,
+# pass-not-applicable, advise, block-soft, block, needs-tests, skipped).
+# Steps: run pr-gate.sh in sequential mode to generate a gate result file,
+# extract reviewer verdict values from the frontmatter, and assert each one
+# matches the valid set from reviewer-policy.yaml.
 test_gate_result_reviewer_verdicts_are_valid() {
-  # Verifies that reviewer verdict values in the gate result frontmatter contain
-  # only tokens defined in core/policy/reviewer-policy.yaml (approve, pass,
-  # pass-not-applicable, advise, block-soft, block, needs-tests, skipped).
-  #
-  # Steps:
-  #   1. Run pr-gate.sh in sequential mode to generate a gate result file.
-  #   2. Extract reviewer verdict values from the frontmatter using sed/awk.
-  #   3. Assert each verdict matches the valid set from reviewer-policy.yaml.
   local name="gate-result-reviewer-verdicts-valid"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2734,10 +2890,11 @@ test_gate_result_reviewer_verdicts_are_valid() {
   pass "$name"
 }
 
+# Behavior: an executable .pm-dispatch/pre-gate.sh runs before dispatch.
+# Steps: create a repo with an executable pre-gate hook that writes a
+# marker, run the gate with --allow-hooks, and assert exit 0 and the
+# marker exists.
 test_pre_gate_hook_runs() {
-  # Verifies that an executable .pm-dispatch/pre-gate.sh runs before dispatch.
-  # Steps: create repo + executable pre-gate that writes a marker; run gate; assert
-  # exit 0 and marker exists.
   local name="pre-gate-hook-runs"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2769,10 +2926,12 @@ test_pre_gate_hook_runs() {
   pass "$name"
 }
 
+# Behavior: a pre-gate hook exiting non-zero aborts the gate before
+# dispatch.
+# Steps: create a repo with a pre-gate hook that exits 1, run the gate with
+# --allow-hooks and a brief-existence marker, and assert a non-zero exit
+# and the brief marker does NOT exist (dispatch never reached).
 test_pre_gate_hook_aborts_gate_on_failure() {
-  # Verifies that a pre-gate hook exiting non-zero aborts the gate before dispatch.
-  # Steps: create repo + pre-gate that exits 1; run gate with brief marker; assert
-  # non-zero exit and brief marker does NOT exist (dispatch never reached).
   local name="pre-gate-hook-aborts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2801,10 +2960,12 @@ test_pre_gate_hook_aborts_gate_on_failure() {
   pass "$name"
 }
 
+# Behavior: an executable .pm-dispatch/post-gate.sh runs after dispatch
+# completes.
+# Steps: create a repo with an executable post-gate hook that writes a
+# marker, run the gate with --allow-hooks, and assert exit 0 and the
+# marker exists.
 test_post_gate_hook_runs() {
-  # Verifies that an executable .pm-dispatch/post-gate.sh runs after dispatch completes.
-  # Steps: create repo + executable post-gate that writes a marker; run gate; assert
-  # exit 0 and marker exists.
   local name="post-gate-hook-runs"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2836,9 +2997,11 @@ test_post_gate_hook_runs() {
   pass "$name"
 }
 
+# Behavior: a post-gate hook exiting non-zero causes the gate to exit
+# non-zero.
+# Steps: create a repo with a post-gate hook that exits 1, run the gate
+# with --allow-hooks, and assert a non-zero exit.
 test_post_gate_hook_aborts_on_failure() {
-  # Verifies that a post-gate hook exiting non-zero causes the gate to exit non-zero.
-  # Steps: create repo + post-gate that exits 1; run gate; assert non-zero exit.
   local name="post-gate-hook-aborts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2863,10 +3026,12 @@ test_post_gate_hook_aborts_on_failure() {
   pass "$name"
 }
 
+# Behavior: a non-executable pre-gate.sh emits a warning and is skipped
+# (not an abort).
+# Steps: create a repo with a pre-gate hook that is not chmod +x, run the
+# gate with --allow-hooks, and assert exit 0, a "not executable" stderr
+# message, and the hook marker does NOT exist.
 test_pre_gate_hook_not_executable() {
-  # Verifies that a non-executable pre-gate.sh emits a warning and is skipped (not an abort).
-  # Steps: create repo + pre-gate without chmod +x; run gate; assert exit 0, stderr
-  # contains "not executable", and hook marker does NOT exist.
   local name="pre-gate-hook-not-executable"
   should_run "$name" || return 0
   # Windows Git Bash: POSIX execute permission not enforced; chmod -x has no effect.
@@ -2901,10 +3066,12 @@ test_pre_gate_hook_not_executable() {
   pass "$name"
 }
 
+# Behavior: a non-executable post-gate.sh emits a warning and is skipped
+# (not an abort).
+# Steps: create a repo with a post-gate hook that is not chmod +x, run the
+# gate with --allow-hooks, and assert exit 0, a "not executable" stderr
+# message, and the hook marker does NOT exist.
 test_post_gate_hook_not_executable() {
-  # Verifies that a non-executable post-gate.sh emits a warning and is skipped (not an abort).
-  # Steps: create repo + post-gate without chmod +x; run gate; assert exit 0, stderr
-  # contains "not executable", and hook marker does NOT exist.
   local name="post-gate-hook-not-executable"
   should_run "$name" || return 0
   # Windows Git Bash: POSIX execute permission not enforced; chmod -x has no effect.
@@ -2939,9 +3106,13 @@ test_post_gate_hook_not_executable() {
   pass "$name"
 }
 
+# Behavior: post-gate.sh is NOT invoked when the gate result is NO-GO --
+# even with --allow-hooks, post-gate is a success-only hook.
+# Steps: create a repo with a post-gate hook that writes a marker, force a
+# NO-GO verdict, run the gate with --allow-hooks, and assert a non-zero
+# exit, a "Skipping post-gate hook" stdout message, and the hook marker
+# does NOT exist.
 test_post_gate_hook_skipped_on_nogo() {
-  # Verifies that post-gate.sh is NOT invoked when the gate result is NO-GO.
-  # Even with --allow-hooks, post-gate is a success-only hook.
   local name="test_post_gate_hook_skipped_on_nogo-post-gate-hook-skipped-on-no-go"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -2982,9 +3153,12 @@ test_post_gate_hook_skipped_on_nogo() {
   pass "$name"
 }
 
+# Behavior: executable hook scripts are skipped (with a warning) when
+# --allow-hooks is not passed -- this is the default safe mode.
+# Steps: create a repo with an executable pre-gate hook, run the gate
+# without --allow-hooks, and assert exit 0, a "pass --allow-hooks" stderr
+# hint, and the hook marker does NOT exist.
 test_hook_skipped_without_allow_hooks() {
-  # Verifies that executable hook scripts are silently skipped (with a warning) when
-  # --allow-hooks is not passed. This is the default safe mode.
   local name="gate-hook-skipped-without-allow-hooks"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3017,8 +3191,12 @@ test_hook_skipped_without_allow_hooks() {
   pass "$name"
 }
 
+# Behavior: pr-gate.sh rejects unknown --isolation values before dispatch,
+# listing the valid set.
+# Steps: run the gate with --isolation bogus-level, and assert exit 2 and
+# stderr lists "must be one of" plus all five valid levels (none,
+# read-only, workspace-write, workspace-network, sandboxed).
 test_isolation_flag_validation() {
-  # Verifies that pr-gate.sh rejects unknown --isolation values before dispatch.
   local name="test_isolation_flag_validation-isolation-flag-validation"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3047,10 +3225,13 @@ test_isolation_flag_validation() {
   pass "$name"
 }
 
+# Behavior: --isolation workspace-network is forwarded from pr-gate.sh to
+# the adapter dispatch, not swallowed or translated away.
+# Steps: run the gate with --isolation workspace-network and
+# CODEX_GATE_CAPTURE_DISPATCH_ARGS set, and assert the captured dispatch
+# args file was written and contains both --isolation and
+# workspace-network.
 test_isolation_forwarding_through_pr_gate() {
-  # Verifies that --isolation workspace-network is forwarded from pr-gate.sh
-  # to the adapter dispatch. Uses CODEX_GATE_CAPTURE_DISPATCH_ARGS to record
-  # all raw args the stub dispatch received.
   local name="isolation-forwarding-through-pr-gate"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3086,11 +3267,13 @@ test_isolation_forwarding_through_pr_gate() {
   pass "$name"
 }
 
+# Behavior: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
+# dispatches via adapters/codex/dispatch.sh -- NOT the deleted (CC-296)
+# scripts/codex-dispatch.sh shim.
+# Steps: build a copy-mode runner (lib absent) with the adapter stub at
+# adapters/codex/dispatch.sh, run the gate, and assert exit 0 (a resolve to
+# the old shim path would fail with file-not-found).
 test_copy_mode_dispatches_via_adapter() {
-  # Regression guard: when lib/executor-router.sh is absent (copy-mode), pr-gate.sh
-  # must dispatch via adapters/codex/dispatch.sh — NOT scripts/codex-dispatch.sh
-  # (deleted in CC-296). The adapter stub is placed at the expected path; if
-  # pr-gate.sh resolves to the old shim path it will fail with file-not-found.
   local name="copy-mode/dispatches-via-adapter"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/copy-mode-dispatches-via-adapter"
@@ -3121,9 +3304,13 @@ test_copy_mode_dispatches_via_adapter() {
   pass "$name"
 }
 
+# Behavior: an unrecognized flag exits 2 and prints an actionable
+# accepted-flags list (not just a bare "Unknown arg"), so callers
+# self-correct on first failure.
+# Steps: run the gate with --bogus-flag, and assert exit 2 and stderr
+# contains "Unknown arg: --bogus-flag", "Accepted:", and
+# "--reviewers|--targeted".
 test_unknown_arg_message() {
-  # Verifies an unrecognized flag exits 2 AND prints an actionable accepted-flags
-  # list (not just a bare "Unknown arg"), so callers self-correct on first failure.
   local name="unknown-arg-message"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3148,10 +3335,14 @@ test_unknown_arg_message() {
   pass "$name"
 }
 
+# Behavior: --targeted is accepted as an alias of --reviewers (the
+# /pr-gate skill and the script's own comments use "targeted"
+# vocabulary). Scoping a parallel gate to critic must launch critic only --
+# same as --reviewers critic.
+# Steps: run the gate with --targeted critic --parallel, and assert exit
+# 0, no "unknown arg" in stderr, "launched critic" in stdout, and no
+# "launched qa-tester" line.
 test_targeted_alias() {
-  # Verifies --targeted is accepted as an alias of --reviewers (the /pr-gate skill
-  # and the script's own comments use "targeted" vocabulary). Scoping a parallel
-  # gate to critic must launch critic only — same as --reviewers critic.
   local name="targeted-alias"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3183,10 +3374,12 @@ test_targeted_alias() {
   pass "$name"
 }
 
+# Behavior: the sequential brief emitted by pr-gate.sh uses ASCII --
+# separators and contains no em dash (U+2014) bytes (CC-275 regression).
+# Steps: run the gate with --sequential, and assert the captured brief
+# contains "PR-Gate Result --" and "## {reviewer-name} -- {verdict}" using
+# ASCII dashes, and no UTF-8 em dash byte sequence (E2 80 94) is present.
 test_seq_brief_ascii_separator() {
-  # CC-275 regression: verifies that the sequential brief emitted by
-  # pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014) bytes.
-  # Fails if any em dash byte sequence (UTF-8: E2 80 94) is present in the brief.
   local name="seq-brief-ascii-separator"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3217,10 +3410,13 @@ test_seq_brief_ascii_separator() {
   pass "$name"
 }
 
+# Behavior: the parallel synthesis brief emitted by pr-gate.sh uses ASCII
+# -- separators and contains no em dash (U+2014) bytes (CC-275 regression).
+# In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
+# Steps: run the gate with --parallel, and assert the captured brief
+# contains "PR-Gate Result --" and "## {reviewer-name} -- {verdict}" using
+# ASCII dashes, and no UTF-8 em dash byte sequence is present.
 test_parallel_synthesis_brief_ascii_separator() {
-  # CC-275 regression: verifies that the parallel synthesis brief emitted by
-  # pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014) bytes.
-  # In --parallel mode CODEX_GATE_CAPTURE_BRIEF captures the synthesis brief.
   local name="parallel-synthesis-brief-ascii-separator"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3251,11 +3447,14 @@ test_parallel_synthesis_brief_ascii_separator() {
   pass "$name"
 }
 
+# Behavior: the per-reviewer brief emitted in parallel mode by pr-gate.sh
+# uses ASCII -- separators and contains no em dash (U+2014) (CC-275
+# regression). CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
+# non-synthesis brief dispatched during a parallel run.
+# Steps: run the gate with --reviewers critic --parallel, and assert the
+# captured reviewer brief contains "Executor: codex" and "file:line --"
+# using ASCII dashes, and no UTF-8 em dash byte sequence is present.
 test_parallel_reviewer_brief_ascii_separator() {
-  # CC-275 regression: verifies that the per-reviewer brief emitted in parallel
-  # mode by pr-gate.sh uses ASCII -- separators and contains no em dash (U+2014).
-  # Uses CODEX_GATE_CAPTURE_REVIEWER_BRIEF which captures the last non-synthesis
-  # brief dispatched during a parallel run.
   local name="parallel-reviewer-brief-ascii-separator"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3290,9 +3489,13 @@ test_parallel_reviewer_brief_ascii_separator() {
   pass "$name"
 }
 
+# Behavior: the sequential brief contains the citation-guard preamble
+# ("Verified reference files") and the explicit constraint ("do not invent
+# citations"), listing real repo files (CC-208 regression).
+# Steps: commit a fixture agent file, run the gate with --sequential, and
+# assert the captured brief contains "Verified reference files", "do not
+# invent citations", and the fixture path.
 test_sequential_brief_has_citation_guard() {
-  # CC-208 regression: verifies that the sequential brief contains the citation-guard
-  # preamble ("Verified reference files") and the explicit constraint ("do not invent citations").
   local name="sequential-brief-has-citation-guard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3321,9 +3524,13 @@ test_sequential_brief_has_citation_guard() {
   pass "$name"
 }
 
+# Behavior: the per-reviewer parallel brief contains the citation-guard
+# preamble ("Verified reference files") and the explicit constraint ("do
+# not invent citations"), listing real repo files (CC-208 regression).
+# Steps: commit a fixture agent file, run the gate with --reviewers critic
+# --parallel, and assert the captured reviewer brief contains "Verified
+# reference files", "do not invent citations", and the fixture path.
 test_parallel_reviewer_brief_has_citation_guard() {
-  # CC-208 regression: verifies that the per-reviewer parallel brief contains the citation-guard
-  # preamble ("Verified reference files") and the explicit constraint ("do not invent citations").
   local name="parallel-reviewer-brief-has-citation-guard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3357,9 +3564,13 @@ test_parallel_reviewer_brief_has_citation_guard() {
   pass "$name"
 }
 
+# Behavior: the parallel synthesis brief contains the citation-guard
+# preamble ("Verified reference files") and the explicit constraint ("do
+# not invent citations"), listing real repo files (CC-208 regression).
+# Steps: commit a fixture agent file, run the gate with --reviewers critic
+# --parallel, and assert the captured synthesis brief contains "Verified
+# reference files", "do not invent citations", and the fixture path.
 test_parallel_synthesis_brief_has_citation_guard() {
-  # CC-208 regression: verifies that the parallel synthesis brief contains the citation-guard
-  # preamble ("Verified reference files") and the explicit constraint ("do not invent citations").
   local name="parallel-synthesis-brief-has-citation-guard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3389,15 +3600,13 @@ test_parallel_synthesis_brief_has_citation_guard() {
   pass "$name"
 }
 
+# Behavior: pr-gate.sh fails loud (exit 3) when the branch has committed
+# BASE...HEAD changes AND the worktree is dirty, without --allow-dirty.
+# Steps: create a repo with committed feature-branch changes, then dirty a
+# tracked file (uncommitted), run the gate against main without
+# --allow-dirty, and assert exit 3 and stderr explains the omitted
+# tracked/untracked files.
 test_dirty_preflight_fails_on_committed_plus_dirty() {
-  # Verifies that pr-gate.sh fails loud (exit 3) when the branch has committed
-  # BASE...HEAD changes AND the worktree is dirty, without --allow-dirty.
-  #
-  # Steps:
-  #   1. Create a repo with committed feature-branch changes, then dirty a
-  #      tracked file (uncommitted).
-  #   2. Run pr-gate.sh against main without --allow-dirty.
-  #   3. Assert exit code 3 and stderr explains the omitted tracked/untracked files.
   local name="dirty-preflight-fails-on-committed-plus-dirty"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3422,16 +3631,13 @@ test_dirty_preflight_fails_on_committed_plus_dirty() {
   pass "$name"
 }
 
+# Behavior: --allow-dirty proceeds (exit 0) and folds the working tree
+# (here an untracked file) into the review brief scope.
+# Steps: create a repo with committed feature-branch changes, add an
+# untracked file (dirtysrc.go), run the gate against main with
+# --allow-dirty, and assert exit 0, dispatch succeeds, the brief lists
+# dirtysrc.go, and stderr notes --allow-dirty was set.
 test_dirty_preflight_allow_dirty_includes_worktree() {
-  # Verifies that --allow-dirty proceeds (exit 0) and folds the working tree
-  # (here an untracked file) into the review brief scope.
-  #
-  # Steps:
-  #   1. Create a repo with committed feature-branch changes, then add an
-  #      untracked file (dirtysrc.go).
-  #   2. Run pr-gate.sh against main with --allow-dirty, capturing the brief.
-  #   3. Assert exit 0, dispatch succeeds, the brief lists dirtysrc.go, and
-  #      stderr notes --allow-dirty was set.
   local name="dirty-preflight-allow-dirty-includes-worktree"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3458,19 +3664,17 @@ test_dirty_preflight_allow_dirty_includes_worktree() {
   pass "$name"
 }
 
+# Behavior: --allow-dirty folds an uncommitted *tracked* modification into
+# review scope. Mutation-proof: reverting the implementation to two-dot
+# `git diff "$BASE"` -> three-dot `git diff "$BASE"...HEAD` would drop this
+# file (its committed state is identical between BASE and HEAD), failing
+# this test.
+# Steps: commit tracked_base.go on main, branch to feature, commit app.go
+# (so BASE...HEAD covers app.go but NOT tracked_base.go), modify
+# tracked_base.go in the worktree without committing, run the gate against
+# main with --allow-dirty, and assert exit 0 and the brief includes
+# tracked_base.go.
 test_allow_dirty_includes_uncommitted_tracked() {
-  # Verifies that --allow-dirty folds an uncommitted *tracked* modification into
-  # review scope. Mutation-proof: reverting the implementation to two-dot
-  # `git diff "$BASE"` -> three-dot `git diff "$BASE"...HEAD` would drop this file
-  # (its committed state is identical between BASE and HEAD), failing this test.
-  #
-  # Steps:
-  #   1. Commit tracked_base.go on main, branch to feature, commit app.go
-  #      (so BASE...HEAD covers app.go but NOT tracked_base.go).
-  #   2. Modify tracked_base.go in the worktree without committing.
-  #   3. Run pr-gate.sh against main with --allow-dirty, capturing the brief.
-  #   4. Assert exit 0 and the brief includes tracked_base.go (only the two-dot
-  #      diff against BASE surfaces it; three-dot would omit it).
   local name="allow-dirty-includes-uncommitted-tracked"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3511,14 +3715,12 @@ test_allow_dirty_includes_uncommitted_tracked() {
   pass "$name"
 }
 
+# Behavior: a clean committed tree passes the preflight (exit 0) -- the
+# fail-loud check must not fire when the worktree is clean.
+# Steps: create a repo with committed feature-branch changes and a clean
+# worktree, run the gate against main without --allow-dirty, and assert
+# exit 0.
 test_clean_committed_tree_passes_preflight() {
-  # Verifies that a clean committed tree passes the preflight (exit 0) — the
-  # fail-loud check must not fire when the worktree is clean.
-  #
-  # Steps:
-  #   1. Create a repo with committed feature-branch changes and a clean worktree.
-  #   2. Run pr-gate.sh against main without --allow-dirty.
-  #   3. Assert exit code 0 (preflight does not fire).
   local name="clean-committed-tree-passes-preflight"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3540,14 +3742,13 @@ test_clean_committed_tree_passes_preflight() {
   pass "$name"
 }
 
+# Behavior: a dirty-only tree with NO committed BASE...HEAD changes is
+# still reviewed (exit 0) via the existing working-tree fallback (OPTION
+# B).
+# Steps: create a repo with an uncommitted docs change and no committed
+# branch diff, run the gate against main without --allow-dirty, and assert
+# exit 0.
 test_dirty_only_no_commit_still_reviewed() {
-  # Verifies that a dirty-only tree with NO committed BASE...HEAD changes is
-  # still reviewed (exit 0) via the existing working-tree fallback (OPTION B).
-  #
-  # Steps:
-  #   1. Create a repo with an uncommitted docs change and no committed branch diff.
-  #   2. Run pr-gate.sh against main without --allow-dirty.
-  #   3. Assert exit code 0 (no preflight failure; fallback reviews the tree).
   local name="dirty-only-no-commit-still-reviewed"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3569,11 +3770,13 @@ test_dirty_only_no_commit_still_reviewed() {
   pass "$name"
 }
 
+# Behavior: the sequential combined reviewer brief contains the explicit
+# pmctl guard check constraint that must be called before writing the
+# output file (CC-297) -- added to prevent prompt-injection from inducing
+# a reviewer to write arbitrary files.
+# Steps: run the gate with --sequential, and assert the captured brief
+# contains "pmctl guard check --role reviewer" and "--event pre-write".
 test_seq_brief_has_reviewer_guard_constraint() {
-  # CC-297: verifies that the sequential combined reviewer brief contains the
-  # explicit pmctl guard check constraint that must be called before writing the
-  # output file. The constraint was added to prevent prompt-injection from
-  # inducing a reviewer to write arbitrary files.
   local name="seq-brief-has-reviewer-guard-constraint"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3597,11 +3800,14 @@ test_seq_brief_has_reviewer_guard_constraint() {
   pass "$name"
 }
 
+# Behavior: each per-reviewer parallel brief contains the explicit pmctl
+# guard check constraint that must be called before writing the reviewer
+# output file (CC-297). CODEX_GATE_CAPTURE_REVIEWER_BRIEF captures the last
+# non-synthesis brief dispatched during a parallel run.
+# Steps: run the gate with --reviewers critic --parallel, and assert the
+# captured reviewer brief contains "pmctl guard check --role reviewer" and
+# "--event pre-write".
 test_parallel_reviewer_brief_has_guard_constraint() {
-  # CC-297: verifies that each per-reviewer parallel brief contains the explicit
-  # pmctl guard check constraint that must be called before writing the reviewer
-  # output file. Uses CODEX_GATE_CAPTURE_REVIEWER_BRIEF which captures the last
-  # non-synthesis brief dispatched during a parallel run.
   local name="parallel-reviewer-brief-has-guard-constraint"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3656,9 +3862,12 @@ run_test test_dirty_preflight_allow_dirty_includes_worktree
 run_test test_allow_dirty_includes_uncommitted_tracked
 run_test test_clean_committed_tree_passes_preflight
 run_test test_dirty_only_no_commit_still_reviewed
+# Behavior: a brief with architecture_impact:major emits a tier advisory
+# to stderr when the auto-detected tier is not full.
+# Steps: run the gate with --brief pointing at a major-impact brief on a
+# docs-only diff, and assert stderr contains "architecture_impact:major"
+# and "suggested tier: full".
 test_brief_major_suggests_full() {
-  # A brief with architecture_impact:major emits a tier advisory to stderr
-  # when the auto-detected tier is not full.
   local name="brief-major-suggests-full"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3689,9 +3898,13 @@ BRIEF_EOF
   pass "$name"
 }
 
+# Behavior: a brief with architecture_impact:minor emits a standard-tier
+# advisory to stderr when the auto-detected tier is express (docs-only
+# diff).
+# Steps: run the gate with --brief pointing at a minor-impact brief on a
+# docs-only diff, and assert stderr contains "architecture_impact:minor"
+# and "suggested tier: standard".
 test_brief_minor_express_suggests_standard() {
-  # A brief with architecture_impact:minor emits a standard-tier advisory to
-  # stderr when the auto-detected tier is express (docs-only diff).
   local name="brief-minor-express-suggests-standard"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3722,9 +3935,12 @@ BRIEF_EOF
   pass "$name"
 }
 
+# Behavior: when --tier is explicitly set, the brief advisory is
+# suppressed because TIER_OVERRIDE is populated and the advisory block is
+# skipped.
+# Steps: run the gate with --tier full and --brief pointing at a
+# major-impact brief, and assert stderr does not contain "suggested tier".
 test_brief_explicit_tier_suppresses_advisory() {
-  # When --tier is explicitly set, the brief advisory is suppressed because
-  # TIER_OVERRIDE is populated and the advisory block is skipped.
   local name="brief-explicit-tier-suppresses-advisory"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3757,9 +3973,12 @@ BRIEF_EOF
   pass "$name"
 }
 
+# Behavior: passing a --brief path that does not exist is benign -- the
+# gate runs normally and emits no advisory (the brief block checks -f
+# before reading).
+# Steps: run the gate with --brief pointing at a nonexistent file, and
+# assert stderr does not contain "suggested tier".
 test_brief_nonexistent_file_is_benign() {
-  # Passing a --brief path that does not exist is benign: the gate runs
-  # normally and emits no advisory (the brief block checks -f before reading).
   local name="brief-nonexistent-file-is-benign"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3781,8 +4000,11 @@ test_brief_nonexistent_file_is_benign() {
   pass "$name"
 }
 
+# Behavior: a brief with architecture_impact:none produces no tier
+# advisory in stderr.
+# Steps: run the gate with --brief pointing at a none-impact brief, and
+# assert stderr does not contain "suggested tier".
 test_brief_none_no_advisory() {
-  # A brief with architecture_impact:none produces no tier advisory in stderr.
   local name="brief-none-no-advisory"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3815,12 +4037,16 @@ BRIEF_EOF
   pass "$name"
 }
 
+# Behavior: a relative --output is normalized to an absolute path before it
+# is embedded in the reviewer brief's `pmctl guard check ... --file`
+# constraint (and the `- new:` target). The reviewer write-guard requires
+# an absolute file_path; a relative one makes the guard exit nonzero and
+# the reviewer abort the write -- the 0-byte-result failure mode, for any
+# executor.
+# Steps: run the gate with --sequential and a relative --output
+# sub/rel-result.md, and assert the captured brief embeds the absolute,
+# repo-rooted --file path and never the bare relative form.
 test_relative_output_normalized_to_absolute() {
-  # Regression: a relative --output must be normalized to an absolute path before
-  # it is embedded in the reviewer brief's `pmctl guard check ... --file` constraint
-  # (and the `- new:` target). The reviewer write-guard requires an absolute
-  # file_path; a relative one makes the guard exit nonzero and the reviewer abort
-  # the write -- the 0-byte-result failure mode, for any executor.
   local name="relative-output-normalized-to-absolute"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -3850,11 +4076,14 @@ test_relative_output_normalized_to_absolute() {
   pass "$name"
 }
 
+# Behavior: pr-gate.sh's inline copy of gate_result_verify (for copy-mode,
+# run standalone without scripts/lib/) stays identical (modulo
+# indentation) to scripts/lib/gate-result-verify.sh (CC-382/CC-383) -- a
+# drifted copy would silently diverge the gate's integrity contract.
+# Steps: extract the gate_result_verify function body from both the lib
+# and the pr-gate.sh inline fallback, and assert the two bodies match
+# exactly.
 test_inline_fallback_matches_lib() {
-  # CC-382/CC-383: pr-gate.sh carries an inline copy of gate_result_verify for
-  # copy-mode (run standalone without scripts/lib/). It MUST stay identical
-  # (modulo indentation) to scripts/lib/gate-result-verify.sh, or a drifted copy
-  # silently diverges the gate's integrity contract. This guard fails on any drift.
   local name="inline-fallback-matches-lib"
   should_run "$name" || return 0
   local lib_body inline_body
@@ -3871,6 +4100,11 @@ test_inline_fallback_matches_lib() {
   fi
 }
 
+# Behavior: a repo-root .gate-overrides.md is injected into the sequential
+# reviewer brief as an "Accepted-risk overrides" section.
+# Steps: write a .gate-overrides.md with an accepted-risk entry, run the
+# gate with --sequential, and assert the captured brief contains
+# "Accepted-risk overrides" and the override's content.
 test_override_file_injected_into_sequential_brief() {
   local name="override-file-injected-sequential"
   should_run "$name" || return 0
@@ -3897,6 +4131,11 @@ test_override_file_injected_into_sequential_brief() {
   pass "$name"
 }
 
+# Behavior: a .gate-overrides.md at the repo root is auto-discovered
+# without any explicit flag.
+# Steps: write a .gate-overrides.md at the repo root, run the gate with
+# --sequential, and assert stdout logs "discovered override file" and the
+# captured brief contains the override's content.
 test_override_file_autodiscovery() {
   local name="override-file-autodiscovery"
   should_run "$name" || return 0
@@ -3923,6 +4162,11 @@ test_override_file_autodiscovery() {
   pass "$name"
 }
 
+# Behavior: --override-file with an explicit path is honored even when
+# the file lives outside the repo.
+# Steps: write an override file outside the repo, run the gate with
+# --sequential --override-file pointing at it, and assert the captured
+# brief contains its content.
 test_override_file_explicit_flag() {
   local name="override-file-explicit-flag"
   should_run "$name" || return 0
@@ -3948,6 +4192,11 @@ test_override_file_explicit_flag() {
   pass "$name"
 }
 
+# Behavior: --override-file pointing at a nonexistent path is a hard
+# error, not a silent no-op.
+# Steps: run the gate with --override-file pointing at a nonexistent file,
+# and assert a non-zero exit and an "Error: override file not found"
+# stderr message.
 test_override_file_missing_errors() {
   local name="override-file-missing-errors"
   should_run "$name" || return 0
@@ -3971,6 +4220,11 @@ test_override_file_missing_errors() {
   pass "$name"
 }
 
+# Behavior: with no override file present (explicit or auto-discovered),
+# the brief carries no override section at all.
+# Steps: run the gate with --sequential on a repo with no
+# .gate-overrides.md, and assert the captured brief does not contain
+# "Accepted-risk overrides".
 test_no_overrides_brief_unchanged() {
   local name="no-overrides-brief-unchanged"
   should_run "$name" || return 0
@@ -3995,12 +4249,14 @@ test_no_overrides_brief_unchanged() {
   pass "$name"
 }
 
+# Behavior: the override block is injected into the --parallel per-reviewer
+# brief too -- a distinct insertion site (pr-gate.sh:906) from the
+# sequential one, needing its own coverage.
+# Steps: write a .gate-overrides.md, run the gate with --reviewers critic
+# --parallel (a single reviewer avoids a last-writer-wins race on the
+# capture target), and assert the captured reviewer brief (not synthesis)
+# contains "Accepted-risk overrides" and the override's content.
 test_override_file_injected_into_parallel_reviewer_brief() {
-  # The override block is injected into all three brief templates; --parallel
-  # reviewer briefs are a distinct insertion site (pr-gate.sh:906) from the
-  # sequential one, so it needs its own coverage. CODEX_GATE_CAPTURE_REVIEWER_BRIEF
-  # captures the reviewer (non-synthesis) brief; a single reviewer avoids a
-  # last-writer-wins race on the capture target.
   local name="override-file-injected-parallel-reviewer"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4027,10 +4283,14 @@ test_override_file_injected_into_parallel_reviewer_brief() {
   pass "$name"
 }
 
+# Behavior: the override block is injected into the parallel synthesis
+# brief too -- a third distinct insertion site (pr-gate.sh:1128).
+# Steps: write a .gate-overrides.md, run the gate with --reviewers critic
+# --parallel (CODEX_GATE_CAPTURE_BRIEF receives the synthesis brief, the
+# last dispatch), and assert the captured brief contains the synthesis
+# marker "Reviewer findings (embedded" plus "Accepted-risk overrides" and
+# the override's content.
 test_override_file_injected_into_parallel_synthesis_brief() {
-  # The parallel synthesis brief is a third distinct insertion site
-  # (pr-gate.sh:1128). In --parallel mode CODEX_GATE_CAPTURE_BRIEF receives the
-  # synthesis brief (the last dispatch), so assert the override reaches it too.
   local name="override-file-injected-parallel-synthesis"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4071,11 +4331,15 @@ run_test test_override_file_autodiscovery
 run_test test_override_file_explicit_flag
 run_test test_override_file_missing_errors
 run_test test_no_overrides_brief_unchanged
+# Behavior: the gate appends an audit record (source + content) to the
+# result file when overrides are applied -- so a GO that relied on
+# override suppression leaves a trace. This is written by the gate
+# deterministically, not the executor, so it holds regardless of what the
+# (stub) reviewer echoes.
+# Steps: write a .gate-overrides.md, run the gate with --sequential and
+# --output, and assert the result file contains "## Gate Overrides
+# Applied", the override filename, and its content.
 test_override_provenance_recorded_in_result() {
-  # The gate must append an audit record (source + content) to the RESULT file
-  # when overrides are applied -- so a GO that relied on override suppression
-  # leaves a trace. This is written by the gate deterministically, not the
-  # executor, so it holds regardless of what the (stub) reviewer echoes.
   local name="override-provenance-in-result"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4101,9 +4365,13 @@ test_override_provenance_recorded_in_result() {
   pass "$name"
 }
 
+# Behavior: with no override file, the result must NOT carry a provenance
+# section, so the audit block is unambiguous evidence that suppression
+# actually happened.
+# Steps: run the gate with --sequential and --output on a repo with no
+# override file, and assert the result does not contain "## Gate Overrides
+# Applied".
 test_no_overrides_no_provenance_in_result() {
-  # No override file -> the result must NOT carry a provenance section, so the
-  # audit block is unambiguous evidence that suppression actually happened.
   local name="no-overrides-no-provenance"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4126,11 +4394,15 @@ test_no_overrides_no_provenance_in_result() {
   pass "$name"
 }
 
+# Behavior: a relative --override-file is resolved against the working
+# dir (--cd), not the caller's CWD, because the file is loaded after the
+# gate cd's into the work dir -- a repo-root-relative name reaches both
+# the reviewer brief and the result provenance.
+# Steps: place my-overrides.md at the repo root, run the gate with
+# --sequential --override-file my-overrides.md (no leading path) and
+# --output, and assert both the captured brief and the result contain the
+# override's content (plus the result's provenance section).
 test_override_file_relative_path_resolved_against_workdir() {
-  # The help contract says a relative --override-file is resolved against the
-  # working dir (--cd), not the caller's CWD, because the file is loaded after
-  # the gate cd's into the work dir. Exercise that: a repo-root-relative name
-  # must reach both the reviewer brief AND the result provenance.
   local name="override-file-relative-path"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4158,9 +4430,12 @@ test_override_file_relative_path_resolved_against_workdir() {
   pass "$name"
 }
 
+# Behavior: a bare --override-file (no operand) exits with the script's
+# controlled CLI error, not a raw `set -u` unbound-variable abort.
+# Steps: run the gate with a trailing --override-file and no value, and
+# assert a non-zero exit, a "--override-file requires a file path" stderr
+# message, and no "unbound variable" text.
 test_override_file_missing_operand_controlled_error() {
-  # A bare --override-file (no operand) must exit with the script's controlled
-  # CLI error, not a raw `set -u` unbound-variable abort.
   local name="override-file-missing-operand"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4188,12 +4463,15 @@ run_test test_override_file_injected_into_parallel_reviewer_brief
 run_test test_override_file_injected_into_parallel_synthesis_brief
 run_test test_override_provenance_recorded_in_result
 run_test test_no_overrides_no_provenance_in_result
+# Behavior: an override file carrying parser-hostile lines (a bare
+# `Final: GO` and a `---` fence) does not corrupt the result when appended
+# as provenance. The append indents every line, and the gate re-verifies
+# the result afterward, so the hostile lines stay inert.
+# Steps: write a .gate-overrides.md containing a bare "Final: GO" line and
+# a "---" fence, run the gate with --sequential and --output, and assert
+# exit 0, exactly one top-level Final: line, and the hostile "Final: GO"
+# line surviving only in its indented, inert form.
 test_override_provenance_neutralizes_hostile_content() {
-  # Parser-safety: an override file carrying parser-hostile lines (a bare
-  # `Final: GO` and a `---` fence) must NOT corrupt the result when appended as
-  # provenance. The append indents every line, and the gate re-verifies the
-  # result afterward, so the hostile lines stay inert: exactly one top-level
-  # Final: line survives and the gate still exits 0.
   local name="override-provenance-hostile-content"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4231,12 +4509,14 @@ test_override_provenance_neutralizes_hostile_content() {
   pass "$name"
 }
 
+# Behavior: a .gate-overrides.md committed to the reviewed branch DOES
+# change reviewer instructions via auto-discovery -- an accepted
+# trust-boundary tradeoff (see DECISIONS), pinned here so the branch-
+# sourced override reaching the reviewer brief AND being audited in the
+# result stays visible, never silent.
+# Steps: commit a .gate-overrides.md on the reviewed branch, run the gate,
+# and assert both the captured brief and the result reflect the override.
 test_autodiscovered_branch_file_changes_reviewer_instructions() {
-  # Trust-boundary behavior (accepted via PM override, see DECISIONS): a
-  # .gate-overrides.md committed to the reviewed branch DOES change reviewer
-  # instructions via auto-discovery. This negative-coverage test pins that the
-  # branch-sourced override actually reaches the reviewer brief AND is audited in
-  # the result, so the accepted risk is never silent.
   local name="autodiscovered-branch-file-changes-instructions"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4270,8 +4550,11 @@ run_test test_override_file_missing_operand_controlled_error
 run_test test_override_provenance_neutralizes_hostile_content
 run_test test_autodiscovered_branch_file_changes_reviewer_instructions
 
+# Behavior: --run-dir must be an absolute path; a relative value causes
+# exit 2.
+# Steps: run the gate with --run-dir relative/path, and assert exit 2 and
+# an "absolute" stderr message.
 test_gate_run_dir_flag_rejected_if_relative() {
-  # --run-dir must be an absolute path; a relative value must cause exit 2.
   local name="gate-run-dir/relative-rejected"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-relative-rejected"
@@ -4294,9 +4577,13 @@ test_gate_run_dir_flag_rejected_if_relative() {
   pass "$name"
 }
 
+# Behavior: when --run-dir is set, dispatch_via forwards --trace-dir to
+# the adapter so the executor's own trace files land under the run dir,
+# not in the repo.
+# Steps: run the gate with --run-dir and CODEX_GATE_CAPTURE_DISPATCH_ARGS
+# set, and assert the captured dispatch args contain --trace-dir with a
+# value referencing run_dir.
 test_gate_run_dir_passes_trace_dir_to_adapter() {
-  # When --run-dir is set, dispatch_via must forward --trace-dir to the adapter
-  # so the executor's own trace files land under the run dir, not in the repo.
   local name="gate-run-dir/trace-dir-forwarded-to-adapter"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-trace-dir-forward"
@@ -4332,9 +4619,12 @@ test_gate_run_dir_passes_trace_dir_to_adapter() {
   pass "$name"
 }
 
+# Behavior: when --run-dir <abs> is passed, gate artifacts (briefs,
+# results) land under <run_dir>/ and NOT under the repo itself.
+# Steps: run the gate with --run-dir, and assert the result path reported
+# in stdout is under run_dir, and the repo has neither .gate-results nor
+# .gate-briefs.
 test_gate_artifacts_land_out_of_repo() {
-  # When --run-dir <abs> is passed, gate artifacts (briefs, results) land under
-  # <run_dir>/  and NOT under the repo itself.
   local name="gate-run-dir/artifacts-land-out-of-repo"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-artifacts-out-of-repo"
@@ -4379,9 +4669,11 @@ test_gate_artifacts_land_out_of_repo() {
   pass "$name"
 }
 
+# Behavior: in parallel mode with --run-dir, the DISPATCH_LOG
+# (.agent-trace) lands under the run dir, not in the repo itself.
+# Steps: run the gate with --run-dir and --parallel, and assert the repo
+# has no .agent-trace directory and run_dir/.agent-trace exists.
 test_gate_parallel_trace_lands_out_of_repo() {
-  # In parallel mode with --run-dir, the DISPATCH_LOG (.agent-trace) must land
-  # under the run dir, not in the repo itself.
   local name="gate-run-dir/parallel-trace-lands-out-of-repo"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-parallel-trace"
@@ -4428,11 +4720,15 @@ _assert_no_repo_gate_artifacts() {
   return 0
 }
 
+# Behavior: on the failure path where sequential dispatch exits 0 without
+# writing the result, the gate had already touch'd
+# $repo/.gate-results/gate-*.md before dispatch (sandbox-write seam), then
+# aborts on missing output BEFORE the inline relocation -- the EXIT trap
+# must still relocate it out so no repo-local gate artifacts survive.
+# Steps: run the gate with --run-dir and the dispatch stub set to
+# no-output, and assert a non-zero exit and no gate artifact directories
+# remain in the repo.
 test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts() {
-  # Failure path: sequential dispatch exits 0 without writing the result. The gate
-  # touch'd $repo/.gate-results/gate-*.md before dispatch (sandbox-write seam), then
-  # aborts on missing output -- BEFORE the inline relocation. The EXIT trap must
-  # still relocate it out so no repo-local gate artifacts survive.
   local name="gate-run-dir/no-output-failure-leaves-no-repo-artifacts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-no-output-failure"
@@ -4457,11 +4753,15 @@ test_gate_run_dir_no_output_failure_leaves_no_repo_artifacts() {
   pass "$name"
 }
 
+# Behavior: on the failure path where sequential dispatch writes malformed
+# output (no Final line), the gate aborts in verification with a
+# non-empty $repo/.gate-results result already on disk -- the EXIT trap
+# must relocate it out. This is the strongest leak case since an actual
+# (non-empty) artifact exists at exit time.
+# Steps: run the gate with --run-dir and the dispatch stub set to
+# no-verdict, and assert a non-zero exit and no gate artifact directories
+# remain in the repo.
 test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts() {
-  # Failure path: sequential dispatch writes malformed output (no Final line), so the
-  # gate aborts in verification with a non-empty $repo/.gate-results result already on
-  # disk. The EXIT trap must relocate it out -- this is the strongest leak case since
-  # an actual (non-empty) artifact exists at exit time.
   local name="gate-run-dir/no-verdict-failure-leaves-no-repo-artifacts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-no-verdict-failure"
@@ -4486,10 +4786,14 @@ test_gate_run_dir_no_verdict_failure_leaves_no_repo_artifacts() {
   pass "$name"
 }
 
+# Behavior: on the parallel-mode failure path where a reviewer/synthesis
+# dispatch produces no output (aborting the gate before inline
+# relocation), the EXIT trap keeps the repo free of .gate-results /
+# .gate-briefs / .agent-trace.
+# Steps: run the gate with --run-dir --parallel and the dispatch stub set
+# to no-output, and assert a non-zero exit and no gate artifact
+# directories remain in the repo.
 test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts() {
-  # Failure path in parallel mode: a reviewer/synthesis dispatch produces no output,
-  # aborting the gate before inline relocation. The EXIT trap must keep the repo free
-  # of .gate-results / .gate-briefs / .agent-trace.
   local name="gate-run-dir/parallel-failure-leaves-no-repo-artifacts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/gate-run-dir-parallel-failure"
@@ -4526,15 +4830,15 @@ run_test test_gate_run_dir_parallel_failure_leaves_no_repo_artifacts
 # (e.g. review a branch before opening a PR, or a tag-to-tag diff). Happy-path
 # only -- see test_head_override_merge_base_semantics below for the two-dot
 # vs three-dot distinction on a diverged base/head topology.
+# Behavior: --head <ref> reviews a fixed ref pair without requiring that
+# ref to be checked out -- the flag diffs base..head_ref directly rather
+# than relying on the working tree's current branch.
+# Steps:
+# 1. Build a repo with main + a feature branch carrying a committed change.
+# 2. Check out main (NOT feature) so the working tree is not on the reviewed ref.
+# 3. Run the gate with --base main --head feature.
+# 4. Assert exit 0, the brief records "Head: feature", and the feature-only file is in scope.
 test_head_override_diffs_fixed_ref() {
-  # --head <ref> reviews a fixed ref pair without requiring that ref to be
-  # checked out -- proves the flag diffs base..head_ref directly rather than
-  # relying on the working tree's current branch.
-  # Steps:
-  # 1. Build a repo with main + a feature branch carrying a committed change.
-  # 2. Check out main (NOT feature) so the working tree is not on the reviewed ref.
-  # 3. Run the gate with --base main --head feature.
-  # 4. Assert exit 0, the brief records "Head: feature", and the feature-only file is in scope.
   local name="head-override-diffs-fixed-ref"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4562,14 +4866,14 @@ test_head_override_diffs_fixed_ref() {
   pass "$name"
 }
 
+# Behavior: an unresolvable --head ref fails loud with a controlled error
+# before any dispatch happens, mirroring the existing --base validation.
+# Steps:
+# 1. Build a plain repo (no feature branch needed -- the ref never resolves).
+# 2. Run the gate with --head pointing at a nonexistent ref name.
+# 3. Assert non-zero exit and the "head ref not found" error on stderr.
+# 4. Assert no dispatch stub output landed on stdout (gate aborted pre-dispatch).
 test_head_override_invalid_ref() {
-  # An unresolvable --head ref must fail loud with a controlled error before
-  # any dispatch happens, mirroring the existing --base validation.
-  # Steps:
-  # 1. Build a plain repo (no feature branch needed -- the ref never resolves).
-  # 2. Run the gate with --head pointing at a nonexistent ref name.
-  # 3. Assert non-zero exit and the "head ref not found" error on stderr.
-  # 4. Assert no dispatch stub output landed on stdout (gate aborted pre-dispatch).
   local name="head-override-invalid-ref"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4593,15 +4897,16 @@ test_head_override_invalid_ref() {
   pass "$name"
 }
 
+# Behavior: --head diffs a fixed ref pair with no working tree involved,
+# so combining it with --allow-dirty (which exists to fold working-tree
+# state into scope) is a contradictory input and must be rejected, not
+# silently ignored.
+# Steps:
+# 1. Build a repo with main + a feature branch carrying a committed change.
+# 2. Check out main and run the gate with --head feature --allow-dirty together.
+# 3. Assert non-zero exit and the "incompatible" error on stderr.
+# 4. Assert no dispatch stub output landed on stdout.
 test_head_override_rejects_allow_dirty() {
-  # --head diffs a fixed ref pair with no working tree involved, so combining
-  # it with --allow-dirty (which exists to fold working-tree state into scope)
-  # is a contradictory input and must be rejected, not silently ignored.
-  # Steps:
-  # 1. Build a repo with main + a feature branch carrying a committed change.
-  # 2. Check out main and run the gate with --head feature --allow-dirty together.
-  # 3. Assert non-zero exit and the "incompatible" error on stderr.
-  # 4. Assert no dispatch stub output landed on stdout.
   local name="head-override-rejects-allow-dirty"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4626,16 +4931,17 @@ test_head_override_rejects_allow_dirty() {
   pass "$name"
 }
 
+# Behavior: --head uses the SAME merge-base (three-dot) semantics as the
+# default HEAD path, not a literal two-dot tree diff -- base's own
+# independent progress after the fork point must not leak into the
+# reviewed diff.
+# Steps:
+# 1. Build a repo with main + a feature branch carrying a committed change (app.go).
+# 2. Check out main and commit an independent main-only file the feature branch never sees.
+# 3. Run the gate with --base main --head feature (base and head now diverged both ways).
+# 4. Assert exit 0, app.go is in scope, and main-only.txt is NOT in scope --
+#    a two-dot diff would additionally report main-only.txt as removed.
 test_head_override_merge_base_semantics() {
-  # --head uses the SAME merge-base (three-dot) semantics as the default HEAD
-  # path, not a literal two-dot tree diff -- base's own independent progress
-  # after the fork point must not leak into the reviewed diff.
-  # Steps:
-  # 1. Build a repo with main + a feature branch carrying a committed change (app.go).
-  # 2. Check out main and commit an independent main-only file the feature branch never sees.
-  # 3. Run the gate with --base main --head feature (base and head now diverged both ways).
-  # 4. Assert exit 0, app.go is in scope, and main-only.txt is NOT in scope --
-  #    a two-dot diff would additionally report main-only.txt as removed.
   local name="head-override-merge-base-semantics"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
@@ -4667,15 +4973,15 @@ test_head_override_merge_base_semantics() {
   pass "$name"
 }
 
+# Behavior: a bare --head with no following operand fails with a
+# controlled CLI error, not a raw `unbound variable` crash under set -u.
+# Steps:
+# 1. Build a plain repo.
+# 2. Run the gate with --base main --head as the last argument (no operand).
+# 3. Assert exit 2 (usage error) and the controlled "--head requires a ref" message.
+# 4. Assert stderr does NOT contain "unbound variable" (the raw crash this guards against).
+# 5. Assert no dispatch stub output landed on stdout.
 test_head_override_missing_operand() {
-  # A bare --head with no following operand must fail with a controlled CLI
-  # error, not a raw `unbound variable` crash under set -u.
-  # Steps:
-  # 1. Build a plain repo.
-  # 2. Run the gate with --base main --head as the last argument (no operand).
-  # 3. Assert exit 2 (usage error) and the controlled "--head requires a ref" message.
-  # 4. Assert stderr does NOT contain "unbound variable" (the raw crash this guards against).
-  # 5. Assert no dispatch stub output landed on stdout.
   local name="head-override-missing-operand"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
