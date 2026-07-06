@@ -52,7 +52,7 @@
 |----|------|------|
 | CC-452 | guard/hook 對稱性與併發 hardening：episodes.jsonl append 加鎖、三安全 guard `set -e` 統一、ISO8601 正規化抽 lib | 🔵 |
 | CC-453 | worktree/auto-pack 路徑契約 hardening：worktree create stdout 收斂只印路徑、auto-pack work_dir fail-loud、opencode isolation 錯誤訊息修正 | 🔵 |
-| CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | 🔵 |
+| CC-455 | context plane repo_root 跟隨工作目錄（P2）：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD——跨 repo 用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db；CLI 層改 CWD git-toplevel default + agent prose 同步 + 回歸測試（2026-07-06 使用者回報，實測確認） | ✅ done pr:#371 |
 | CC-456 | 去除 maintainer-local `~/github/` 佈局假設（P2）：repos-root 參數化（由 `PM_DISPATCH_REPO` 派生 + env 覆寫）、agents/commands/scripts/pm 層 prose sweep、lint 防再犯；與 CC-455 同根（維護者本機佈局被當成使用者環境契約）、與 CC-447 offline smoke 互扣驗收（2026-07-06 使用者指出） | 🔵 |
 
 ### 待後續 / 明確排除
