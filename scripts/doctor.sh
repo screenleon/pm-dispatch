@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # PROFILE (and settings-state flags) are consumed by lib/doctor-host-*.sh modules sourced at runtime
 set -euo pipefail
 export LC_ALL=C.UTF-8
 
@@ -54,6 +55,28 @@ if [[ -f "$SCRIPT_DIR/lib/runner-kind.sh" ]]; then
 else
   _RUNNER_KIND_AVAILABLE=0
 fi
+
+# Host modules: each scripts/lib/doctor-host-<name>.sh declares a
+# doctor_host_<name>_run() entry point with that host's checks and capability
+# probes. The core discovers modules by glob and dispatches generically, so
+# adding a host is a new module file only — no core edit. In copy-mode (lib/
+# absent) no module loads and main() runs a compact degraded fallback instead
+# (see check_host_fallback_copy_mode).
+_DOCTOR_HOST_NAMES=()
+for _module in "$SCRIPT_DIR"/lib/doctor-host-*.sh; do
+  [[ -f "$_module" ]] || continue
+  # Pure parameter expansion (no basename): doctor must run under the minimal
+  # PATHs the restricted-environment tests model.
+  _host_name="${_module##*/}"
+  _host_name="${_host_name#doctor-host-}"
+  _host_name="${_host_name%.sh}"
+  # Host names become function-name fragments; skip anything unexpected.
+  [[ "$_host_name" =~ ^[a-z0-9_-]+$ ]] || continue
+  # shellcheck disable=SC1090
+  . "$_module"
+  _DOCTOR_HOST_NAMES+=("$_host_name")
+done
+unset _module _host_name
 
 JSON=0
 QUIET=0
@@ -143,6 +166,40 @@ emit_check() {
       fi
       ;;
   esac
+}
+
+# Capability record emitter for host modules. Same status envelope and
+# counters as emit_check, plus the structured capability object fields the
+# host axis reports on (provider/enforcement/coverage/stability/confidence),
+# so JSON consumers can distinguish "what the host can do" records from plain
+# environment checks. Host-agnostic plumbing — host-specific values live in
+# lib/doctor-host-<name>.sh modules.
+#
+# Usage: emit_capability <slug> <status: ok|warn|fail> <host> <capability> \
+#          <provider> <enforcement> <coverage> <stability> <confidence> \
+#          <message> [fix]
+emit_capability() {
+  local slug="$1" status="$2" host="$3" capability="$4" provider="$5"
+  local enforcement="$6" coverage="$7" stability="$8" confidence="$9"
+  local msg="${10}" fix="${11-}"
+  if [[ "$JSON" -eq 1 ]]; then
+    case "$status" in
+      ok)   _OK_COUNT=$((_OK_COUNT + 1));   [[ "$QUIET" -eq 1 ]] && return 0 ;;
+      warn) _WARN_COUNT=$((_WARN_COUNT + 1)) ;;
+      fail) _FAIL_COUNT=$((_FAIL_COUNT + 1)) ;;
+    esac
+    local fld=""
+    [[ -n "$fix" ]] && fld=',"fix":"'"$(_json_esc "$fix")"'"'
+    printf '{"check":"%s","status":"%s","message":"%s","host":"%s","capability":"%s","provider":"%s","enforcement":"%s","coverage":"%s","stability":"%s","confidence":"%s"%s}\n' \
+      "$slug" "$status" "$(_json_esc "$msg")" "$(_json_esc "$host")" \
+      "$(_json_esc "$capability")" "$(_json_esc "$provider")" \
+      "$(_json_esc "$enforcement")" "$(_json_esc "$coverage")" \
+      "$(_json_esc "$stability")" "$(_json_esc "$confidence")" "$fld"
+  else
+    # Human mode: reuse emit_check's tagged formatting; the message carries
+    # the readable state, the capability tuple rides in a compact suffix.
+    emit_check "$slug" "$status" "$msg [$host/$capability: $provider/$enforcement]" "$fix"
+  fi
 }
 
 jq_fix() {
@@ -258,262 +315,67 @@ check_pmctl() {
   fi
 }
 
-check_settings_file() {
+# Copy-mode degraded fallback for the claude-host checks. Runs only when no
+# lib/doctor-host-*.sh module loaded (doctor.sh installed as a lone copied
+# file, e.g. native Windows). Keeps the settings-file / dispatch-allowlist /
+# manifest slugs and their pass/fail semantics concrete; the hooks inventory
+# needs the full jq matchers that live in lib/doctor-host-claude.sh, so it
+# degrades to a single warn here instead of duplicating them. Keep slugs and
+# semantics in sync with lib/doctor-host-claude.sh.
+check_host_fallback_copy_mode() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+
+  # settings-file (concrete, mirrors module semantics)
   _SETTINGS_FILE_FAILED=0
   _SETTINGS_FILE_INVALID=0
   if [[ ! -f "$settings" ]]; then
     _SETTINGS_FILE_FAILED=1
     emit_check settings-file fail "settings.json missing" "bash '${REPO_ROOT}/install.sh'"
-    return
-  fi
-
-  if command -v jq >/dev/null 2>&1 && ! jq . "$settings" >/dev/null 2>&1; then
+  elif command -v jq >/dev/null 2>&1 && ! jq . "$settings" >/dev/null 2>&1; then
     _SETTINGS_FILE_INVALID=1
     emit_check settings-file fail "settings.json exists but is not valid JSON" \
       "printf '{}\\n' > ~/.claude/settings.json  then re-run install-guards.sh"
-    return
-  fi
-
-  emit_check settings-file ok "settings.json present"
-}
-
-hook_present() {
-  local basename="$1" settings="$2"
-  jq -e --arg basename "$basename" '
-    # install-guards.sh shell-escapes managed command paths (printf %q), so a repo
-    # under a path with a space stores a backslash-escaped command. Strip those
-    # shell-escape backslashes (a backslash before any non-alphanumeric char)
-    # BEFORE the Windows backslash->slash conversion, which only applies to native
-    # path separators (a backslash before a component name, i.e. alphanumeric).
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
-    def managed_hook:
-      (.command? // "") as $cmd |
-      ($cmd | normalize_path) as $ncmd |
-      (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts");
-    ([
-      ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
-      ((.hooks // {}).PostToolUse[]? | (.hooks // [])[]? | select(managed_hook)),
-      ((.hooks // {}).Stop[]? | (.hooks // [])[]? | select(managed_hook)),
-      ((.hooks // {}).UserPromptSubmit[]? | (.hooks // [])[]? | select(managed_hook))
-    ] | length > 0)
-    or
-    (
-      $basename == "guard-save-rate-limits.sh" and
-      ((.statusLine.command? // "") as $cmd |
-        ($cmd | normalize_path) as $ncmd |
-        (($ncmd | split("/") | last) == $basename and ($ncmd | split("/") | .[-2]) == "scripts"))
-    )
-  ' "$settings" >/dev/null 2>&1
-}
-
-adapter_bg_present() {
-  local adapter_name="$1" settings="$2"
-  jq -e --arg adapter_name "$adapter_name" '
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else gsub("\\\\"; "/") end;
-    def managed_bg_hook:
-      (.command? // "") as $cmd |
-      ($cmd | normalize_path) as $ncmd |
-      (($ncmd | split("/") | last) == "bash-guard.sh"
-       and ($ncmd | split("/") | .[-2]) == $adapter_name
-       and ($ncmd | split("/") | .[-3]) == "adapters");
-    ([
-      ((.hooks // {}).PreToolUse[]? | (.hooks // [])[]? | select(managed_bg_hook))
-    ] | length > 0)
-  ' "$settings" >/dev/null 2>&1
-}
-
-stale_hook_commands() {
-  local settings="$1" repo_root="$2"
-  jq -r --arg repo_root "$repo_root" '
-    # Normalize Windows drive paths (C:/...) to POSIX form (/c/...) so that
-    # comparisons work regardless of which format the shell or installer used.
-    # First strip printf %q shell-escape backslashes (a backslash before any
-    # non-alphanumeric char) so an escaped command path written for a spaced repo
-    # root compares equal to the raw repo root.
-    def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
-      | if test("^[A-Za-z]:[/\\\\]") then
-          "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
-        else . end;
-    [
-      ((.hooks // {}) | .PreToolUse[]?  | (.hooks // [])[]?),
-      ((.hooks // {}) | .PostToolUse[]? | (.hooks // [])[]?),
-      ((.hooks // {}) | .Stop[]?        | (.hooks // [])[]?),
-      ((.hooks // {}) | .UserPromptSubmit[]? | (.hooks // [])[]?),
-      (if .statusLine then {command: (.statusLine.command // "")} else empty end)
-    ]
-    | map(select(
-        (.command? // "") as $cmd |
-        ($cmd | normalize_path) as $ncmd |
-        ($ncmd | length) > 0 and
-        (
-          (
-            ($ncmd | split("/") | .[-2]) == "scripts" and
-            (($ncmd | split("/") | last) | IN(
-              "guard-pm-write.sh",
-              "guard-log-claude-usage.sh",
-              "guard-session-summary.sh",
-              "guard-inject-memory.sh",
-              "guard-save-rate-limits.sh"
-            ))
-          ) or
-          (
-            ($ncmd | split("/") | last) == "bash-guard.sh" and
-            ($ncmd | split("/") | .[-3]) == "adapters"
-          )
-        ) and
-        ($ncmd | startswith(($repo_root | normalize_path) + "/") | not)
-      ) | .command)
-    | unique[]
-  ' "$settings" 2>/dev/null
-}
-
-check_hooks() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-  if [[ "$_SETTINGS_FILE_FAILED" -eq 1 ]]; then
-    emit_check hooks fail "settings.json missing — cannot check hooks" "bash '${REPO_ROOT}/install.sh'"
-    return
-  fi
-  if [[ "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
-    emit_check hooks fail "settings.json is not valid JSON — cannot check hooks"
-    return
-  fi
-  if ! command -v jq >/dev/null 2>&1; then
-    emit_check hooks warn "jq not available — cannot verify hooks"
-    return
-  fi
-
-  local profile
-  local -a hooks=(
-    guard-pm-write.sh
-    guard-log-claude-usage.sh
-    guard-session-summary.sh
-    guard-inject-memory.sh
-    guard-save-rate-limits.sh
-  )
-  local _want_full=0
-  case "$PROFILE" in
-    full)    _want_full=1 ;;
-    minimal) _want_full=0 ;;
-    *)       if [[ "$(detect_platform)" == "windows" ]]; then
-               _want_full=0
-             elif codex_available; then
-               _want_full=1
-             else
-               _want_full=0
-             fi ;;
-  esac
-
-  # Collect adapter bash guards from manifests (full profile only).
-  local -a _adapter_bg_names=()
-  if [[ "$_want_full" -eq 1 && "$_RUNNER_KIND_AVAILABLE" -eq 1 ]]; then
-    local _manifest _adapter_name _rk _nbg_override _nbg
-    for _manifest in "$REPO_ROOT"/adapters/*/adapter.yaml; do
-      [[ -f "$_manifest" ]] || continue
-      _adapter_name="$(basename "$(dirname "$_manifest")")"
-      _rk="$(runner_kind_manifest_field "$_manifest" runner_kind)"
-      [[ -n "$_rk" ]] || continue
-      _nbg_override="$(runner_kind_manifest_field "$_manifest" needs_bash_guard)"
-      _nbg="$(runner_kind_resolve_flag "$_rk" needs_bash_guard "$_nbg_override")"
-      [[ "$_nbg" == "true" ]] && _adapter_bg_names+=("$_adapter_name")
-    done
-  fi
-
-  if [[ "$_want_full" -eq 1 ]]; then
-    profile="full"
   else
-    profile="minimal"
+    emit_check settings-file ok "settings.json present"
   fi
 
-  local -a missing=()
-  local hook
-  for hook in "${hooks[@]}"; do
-    if ! hook_present "$hook" "$settings"; then
-      missing+=("$hook")
-    fi
-  done
-  if [[ "$_want_full" -eq 1 ]]; then
-    local _aname
-    for _aname in "${_adapter_bg_names[@]+"${_adapter_bg_names[@]}"}"; do
-      if ! adapter_bg_present "$_aname" "$settings"; then
-        missing+=("adapters/$_aname/bash-guard.sh")
+  # hooks (degraded: full inventory matchers live in lib/doctor-host-claude.sh)
+  emit_check hooks warn \
+    "hook inventory check unavailable in copy-mode (lib/ absent)" \
+    "run doctor from the checkout: bash '${REPO_ROOT}/scripts/doctor.sh'"
+
+  # dispatch-allowlist (concrete inline scan)
+  if [[ "$_SETTINGS_FILE_FAILED" -eq 0 && "$_SETTINGS_FILE_INVALID" -eq 0 ]]; then
+    if ! command -v jq >/dev/null 2>&1; then
+      emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch-allowlist"
+    else
+      local all_ok=1 any=0 f rel
+      for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
+        [[ -f "$f" ]] || continue
+        any=1; rel="${f#"$HOME/"}"
+        jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
+          '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
+          "$settings" >/dev/null 2>&1 || all_ok=0
+      done
+      if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
+        emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
+          "bash '${REPO_ROOT}/install.sh'"
+      else
+        emit_check dispatch-allowlist ok "dispatch allowlist present (all adapters)"
       fi
-    done
+    fi
   fi
 
-  # Compute stale list before emitting any status so we emit a single line.
-  local -a _stale=()
-  if command -v jq >/dev/null 2>&1; then
-    local _sc
-    while IFS= read -r _sc; do
-      [[ -n "$_sc" ]] && _stale+=("$_sc")
-    done < <(stale_hook_commands "$settings" "$REPO_ROOT")
-  fi
-
-  local _total_hooks=${#hooks[@]}
-  if [[ "$_want_full" -eq 1 ]]; then
-    _total_hooks=$(( _total_hooks + ${#_adapter_bg_names[@]} ))
-  fi
-  if [[ "${#missing[@]}" -gt 0 ]]; then
-    emit_check hooks fail "missing hooks: ${missing[*]}" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
-  elif [[ "${#_stale[@]}" -gt 0 ]]; then
-    emit_check hooks warn \
-      "${#_stale[@]} hook(s) wired from a different checkout (e.g. $(basename "${_stale[0]}"))" \
-      "bash '${REPO_ROOT}/install.sh' to re-wire hooks to this checkout"
+  # manifest (concrete, mirrors module semantics)
+  local manifest_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.pm-dispatch/install-manifest.json"
+  if [[ ! -f "$manifest_path" ]]; then
+    emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
+      "bash '${REPO_ROOT}/install.sh' to regenerate"
+  elif command -v jq >/dev/null 2>&1 && ! jq -e '.manifest_version == 1' "$manifest_path" >/dev/null 2>&1; then
+    emit_check manifest warn "install manifest has unexpected version" \
+      "bash '${REPO_ROOT}/install.sh' to regenerate"
   else
-    emit_check hooks ok "$_total_hooks hooks present ($profile profile)"
-  fi
-}
-
-check_dispatch_allowlist() {
-  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-  if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]]; then
-    return
-  fi
-  if ! command -v jq >/dev/null 2>&1; then
-    emit_check dispatch-allowlist warn "jq not available — cannot verify dispatch-allowlist"
-    return
-  fi
-
-  # Consume the shared dispatch_allowlist_entries() helper (sourced at top of
-  # file from scripts/lib/allowlist.sh).  Entries arrive in abs+tilde pairs;
-  # at least one form per script must be present in settings.json.
-  # Falls back to inline scan in copy-mode where lib/ is absent.
-  local all_ok=1 any=0
-  if declare -f dispatch_allowlist_entries >/dev/null 2>&1; then
-    local _abs _tilde
-    while IFS= read -r _abs && IFS= read -r _tilde; do
-      any=1
-      jq -e --arg a "$_abs" --arg t "$_tilde" \
-        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-        "$settings" >/dev/null 2>&1 || all_ok=0
-    done < <(dispatch_allowlist_entries)
-  else
-    # copy-mode fallback: lib/ absent, inline scan
-    local f rel
-    for f in "$REPO_ROOT/adapters"/*/dispatch.sh; do
-      [[ -f "$f" ]] || continue
-      any=1; rel="${f#"$HOME/"}"
-      jq -e --arg a "Bash($f:*)" --arg t "Bash(~/$rel:*)" \
-        '(.permissions.allow // []) | (index($a) != null or index($t) != null)' \
-        "$settings" >/dev/null 2>&1 || all_ok=0
-    done
-  fi
-
-  if [[ $any -eq 0 || $all_ok -eq 0 ]]; then
-    emit_check dispatch-allowlist fail "dispatch allowlist incomplete or missing" \
-      "bash '${REPO_ROOT}/install.sh'"
-  else
-    emit_check dispatch-allowlist ok "dispatch allowlist present (all adapters)"
+    emit_check manifest ok "install manifest present"
   fi
 }
 
@@ -562,23 +424,6 @@ check_memory_dir() {
     emit_check memory-dir warn "no memory directory for current path — created on first Claude Code session" \
       "bash '${REPO_ROOT}/scripts/setup-project.sh' or start a Claude Code session here"
   fi
-}
-
-check_manifest() {
-  local manifest_path="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.pm-dispatch/install-manifest.json"
-  if [[ ! -f "$manifest_path" ]]; then
-    emit_check manifest warn "install manifest missing — uninstall.sh cannot track files" \
-      "bash '${REPO_ROOT}/install.sh' to regenerate"
-    return
-  fi
-
-  if command -v jq >/dev/null 2>&1 && ! jq -e '.manifest_version == 1' "$manifest_path" >/dev/null 2>&1; then
-    emit_check manifest warn "install manifest has unexpected version" \
-      "bash '${REPO_ROOT}/install.sh' to regenerate"
-    return
-  fi
-
-  emit_check manifest ok "install manifest present"
 }
 
 check_frontmatter_lint() {
@@ -681,12 +526,19 @@ main() {
   check_claude
   check_codex
   check_pmctl
-  check_settings_file
-  check_hooks
-  check_dispatch_allowlist
+  # Host axis: generic dispatch into lib/doctor-host-*.sh modules (each host's
+  # checks + capability probes). Copy-mode (no modules loaded) degrades to the
+  # compact fallback instead.
+  if [[ ${#_DOCTOR_HOST_NAMES[@]} -gt 0 ]]; then
+    local _host
+    for _host in "${_DOCTOR_HOST_NAMES[@]}"; do
+      "doctor_host_${_host}_run"
+    done
+  else
+    check_host_fallback_copy_mode
+  fi
   check_scripts_executable
   check_memory_dir
-  check_manifest
   check_frontmatter_lint
 
   local ec=0

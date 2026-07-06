@@ -172,6 +172,10 @@ write_full_settings() {
 }
 EOF
   add_dispatch_allowlist "$home_dir"
+  # A fully-installed host also has the PM command interface installed —
+  # doctor's claude-host capability probe checks commands/pm.md.
+  mkdir -p "$home_dir/.claude/commands"
+  printf '# pm\n' > "$home_dir/.claude/commands/pm.md"
 }
 
 create_memory_dir_for_pwd() {
@@ -1025,29 +1029,144 @@ case_doctor_profile_invalid_value_exits_2() {
 }
 
 case_doctor_hook_inventory_parity() {
-  # CC-224 parity guard: managed hook basenames in doctor.sh must match those
-  # in install-guards.sh. Also asserts codex-only hooks appear only in the
-  # full-profile section of doctor.sh, not the base hooks array.
+  # Parity guard: managed hook basenames in doctor's claude-host module must
+  # match those in install-guards.sh (the inventory lives in
+  # lib/doctor-host-claude.sh since doctor.sh core went host-agnostic). Also
+  # asserts codex-only hooks appear only in the full-profile section of the
+  # module, not the base hooks array.
   local name="doctor-hook-inventory-parity"
   should_run "$name" || return 0
+  local module="$REPO_ROOT/scripts/lib/doctor-host-claude.sh"
   local doctor_hooks install_hooks
-  doctor_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$DOCTOR" | sort -u)"
+  # Union of core + module: the hooks=() inventory lives in the module while
+  # doctor.sh core still names guard scripts in check_scripts_executable.
+  doctor_hooks="$(cat "$DOCTOR" "$module" | grep -oE 'guard-[a-z-]+\.sh' | sort -u)"
   install_hooks="$(grep -oE 'guard-[a-z-]+\.sh' "$REPO_ROOT/scripts/install-guards.sh" | sort -u)"
   if [[ "$doctor_hooks" != "$install_hooks" ]]; then
-    fail "$name" "hook inventory mismatch between doctor.sh and install-guards.sh:
-doctor.sh:     $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
-install-guards: $(printf '%s' "$install_hooks" | tr '\n' ' ')"
+    fail "$name" "hook inventory mismatch between doctor-host-claude.sh and install-guards.sh:
+doctor-host-claude.sh: $(printf '%s' "$doctor_hooks" | tr '\n' ' ')
+install-guards:        $(printf '%s' "$install_hooks" | tr '\n' ' ')"
     return
   fi
-  # Codex-only hooks must appear in the full-profile section of doctor.sh,
+  # Codex-only hooks must appear in the full-profile section of the module,
   # not in the base hooks array (lines before the full) branch).
   local codex_in_base
-  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$DOCTOR" | grep -oE 'guard-codex-[a-z-]+\.sh' || true)"
+  codex_in_base="$(awk '/^  local -a hooks=\(/,/^  \)/' "$module" | grep -oE 'guard-codex-[a-z-]+\.sh' || true)"
   if [[ -n "$codex_in_base" ]]; then
     fail "$name" "codex-only hooks found in base hooks array (should be full-profile only): $codex_in_base"
     return
   fi
   pass "$name"
+}
+
+case_doctor_capability_json_fields() {
+  # Verifies that --json capability records carry the full structured
+  # capability object (host/capability/provider/enforcement/coverage/
+  # stability/confidence) and that both host modules emit records.
+  #
+  # Steps:
+  #   1. Write full healthy settings/memory/manifest; stub claude+codex.
+  #   2. Run doctor --json --repo <repo>.
+  #   3. Assert every record with .capability has all 7 fields, and at least
+  #      one host.claude.* and one host.codex.* record is present.
+  local name="doctor-capability-json-fields"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-capability-json" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-capability-json" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local bad_fields claude_count codex_count
+  bad_fields="$(printf '%s\n' "$out" | jq -s '[.[] | select(.capability) | select((has("host") and has("provider") and has("enforcement") and has("coverage") and has("stability") and has("confidence")) | not)] | length')"
+  claude_count="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check? // "" | startswith("host.claude."))] | length')"
+  codex_count="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check? // "" | startswith("host.codex."))] | length')"
+  if [[ "$bad_fields" -eq 0 && "$claude_count" -ge 1 && "$codex_count" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "bad_fields=$bad_fields claude_count=$claude_count codex_count=$codex_count status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_module_no_binary_degrades() {
+  # Verifies the codex-host module degrades (skips probes, no FAIL) when the
+  # codex binary is absent from PATH, mirroring check_codex's warn-not-fail
+  # convention for missing executors.
+  #
+  # Steps:
+  #   1. Write full healthy settings/memory/manifest.
+  #   2. Build an isolated PATH of linked coreutils with a claude stub but NO
+  #      codex (make_stub_bin prepends to the real PATH, which may have codex).
+  #   3. Run doctor --no-color --repo <repo>.
+  #   4. Assert the skip message appears and no [FAIL] line mentions host.codex.
+  local name="doctor-codex-module-no-binary-degrades"
+  should_run "$name" || return 0
+  # Isolated PATH of linked binaries; on MSYS those are copies that can't
+  # launch (missing DLLs), so the isolated invocation needs real symlinks.
+  if ! _td_needs_symlink "$name"; then return 0; fi
+  local home="$tmp_root/home-codex-degrade" out status=0 path bin cmd
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  bin="$tmp_root/bin-codex-degrade"
+  mkdir -p "$bin"
+  for cmd in bash dirname pwd readlink uname jq sed grep awk python3 tr; do
+    link_cmd "$bin" "$cmd"
+  done
+  [[ -x "$bin/jq" ]] || { pass "$name (jq not available - skip)"; return; }
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/claude"
+  chmod +x "$bin/claude"
+  path="$bin"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+
+  local codex_fail
+  codex_fail="$(printf '%s\n' "$out" | grep '\[FAIL\]' | grep -c 'host\.codex' || true)"
+  if [[ "$out" == *"codex-host capability probes skipped"* && "$codex_fail" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected skip message and no host.codex FAIL; status=$status out=$out"
+  fi
+}
+
+case_doctor_copy_mode_hooks_degraded() {
+  # Verifies that in copy-mode (lib/ absent, so no host modules load) the
+  # hooks check degrades to a single WARN while settings-file and manifest
+  # stay concrete — the compact fallback must not silently drop the slugs.
+  #
+  # Steps:
+  #   1. Copy doctor.sh alone to a temp dir (no lib/).
+  #   2. Run with healthy minimal settings + manifest.
+  #   3. Assert WARN "hook inventory check unavailable in copy-mode" plus
+  #      concrete settings-file and manifest OK lines.
+  local name="doctor-copy-mode-hooks-degraded"
+  should_run "$name" || return 0
+  local copydir="$tmp_root/copy-scripts-hooks-degraded"
+  mkdir -p "$copydir"
+  cp "$DOCTOR" "$copydir/doctor.sh"
+  local home="$tmp_root/home-copy-hooks-degraded" out status=0 path
+  write_minimal_settings "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-copy-hooks-degraded" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$copydir/doctor.sh" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+
+  if [[ "$out" == *"hook inventory check unavailable in copy-mode"* \
+    && "$out" == *"settings.json present"* \
+    && "$out" == *"install manifest present"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected degraded hooks WARN with concrete settings/manifest; status=$status out=$out"
+  fi
 }
 
 case_doctor_windows_path_hooks_present() {
@@ -1512,6 +1631,9 @@ test_dispatch_allowlist_copymode_no_lib_fail
 case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity
+case_doctor_capability_json_fields
+case_doctor_codex_module_no_binary_degrades
+case_doctor_copy_mode_hooks_degraded
 case_doctor_windows_path_hooks_present
 case_doctor_windows_path_hooks_stale
 case_doctor_stale_hook_path_warns
