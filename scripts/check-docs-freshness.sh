@@ -216,32 +216,19 @@ run_unit_milestones() {
 
   mapfile -t tags < <(git -C "$REPO_ROOT" tag --sort=-creatordate --list 'v[0-9]*.[0-9]*.[0-9]*' || true)
 
+  # Status markers live on the "## vX.Y.Z" heading line itself (規劃中 /
+  # released); section bodies may legitimately quote historical status text
+  # (e.g. a note about a past heading fix), so only the heading decides.
   while IFS= read -r line; do
     if [[ "$line" =~ ^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+) ]]; then
-      if [[ -n "$current" ]]; then
-        section_planned["$current"]="$planned"
-      fi
       current="${BASH_REMATCH[1]}"
       planned=0
       if [[ "$line" == *"規劃中"* || "${line,,}" == *"planned"* || "$line" == *"⏳"* ]]; then
         planned=1
       fi
-      continue
-    elif [[ -n "$current" && "$line" == "## "* ]]; then
       section_planned["$current"]="$planned"
-      current=""
-      planned=0
-      continue
-    fi
-
-    if [[ -n "$current" && ( "$line" == *"規劃中"* || "${line,,}" == *"planned"* || "$line" == *"⏳"* ) ]]; then
-      planned=1
     fi
   done < "$milestones"
-
-  if [[ -n "$current" ]]; then
-    section_planned["$current"]="$planned"
-  fi
 
   if (( ${#tags[@]} == 0 )); then
     emit_check "$unit" warn "No git tags found; skipped milestone/tag parity check" "$REPO_ROOT/.git"
