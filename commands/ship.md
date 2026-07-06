@@ -99,10 +99,14 @@ dispatch in Step 3.
 
 ## Step 3 — Gate loop
 
-Run `pmctl gate run --executor codex --cd "$PWD" --lifecycle foreground` (the
-`/pr-gate` command is the orchestration wrapper around this exact invocation
-— either entry point is acceptable, but the underlying gate call is always
-this one, never `bash scripts/pr-gate.sh` directly).
+Run `pmctl gate run --executor codex --cd <work_dir> --lifecycle foreground`
+(substitute `<work_dir>` with the literal absolute working directory, not
+`"$PWD"` — a shell-variable expansion makes the command unanalyzable
+statically and forces a manual approval every time even though a bare
+`pmctl ...` invocation matches allowlisted `Bash(pmctl:*)`-style permission
+rules). The `/pr-gate` command is the orchestration wrapper around this exact
+invocation — either entry point is acceptable, but the underlying gate call
+is always this one, never `bash scripts/pr-gate.sh` directly.
 `--lifecycle foreground` is required here: the default `--lifecycle detached`
 returns only a `gate_id` immediately and the gate keeps running in the
 background — reading `Final:` right after that call would read a stale or
@@ -119,8 +123,9 @@ once the call returns.
   read of every cited diff file, discovery sweep of all call sites of a
   flagged helper, minimum-list is a floor not a ceiling). Fix **every** finding
   it returns — high, medium, and low, hard gate and advisory alike, not only
-  the blocking ones. Re-run `pmctl gate run --executor codex --cd "$PWD"
-  --lifecycle foreground --reviewers <reviewer,...>` (the `/pr-gate`
+  the blocking ones. Re-run `pmctl gate run --executor codex --cd <work_dir>
+  --lifecycle foreground --reviewers <reviewer,...>` (same literal-path
+  substitution as Step 3's first call — never `"$PWD"`; the `/pr-gate`
   `--targeted` flag maps to this same `--reviewers` option) for the reviewers
   whose territory the fix touched. Repeat.
 

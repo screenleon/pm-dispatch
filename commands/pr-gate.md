@@ -113,9 +113,15 @@ while [[ "$idx" -lt "${#TOKENS[@]}" ]]; do
 done
 
 SCOPE="${SCOPE_TOKENS[*]:-}"
-# --cd defaults to $PWD inside pmctl gate run when omitted; pass explicitly
-# so the intent is clear and portable across invocation contexts.
-GATE_ARGS=(--cd "$PWD" --executor auto)
+# --cd's value below, "<work_dir>", is a placeholder to replace with the
+# actual working directory (already known from context) as a literal quoted
+# string before running this block -- e.g. "/home/user/repo" -- NOT "$PWD".
+# A "$PWD" expansion makes the whole command unanalyzable statically (see
+# note below the launch call) and forces a manual approval regardless of the
+# `pmctl:*` prefix match. The quotes around the placeholder keep this block
+# valid, executable Bash even before that substitution (bare, unquoted
+# `<work_dir>` would be parsed as I/O redirection and fail to parse).
+GATE_ARGS=(--cd "<work_dir>" --executor auto)
 [[ -n "$TIER_OVERRIDE" ]] && GATE_ARGS+=(--tier "$TIER_OVERRIDE")
 [[ -n "$TARGETED_REVIEWERS" ]] && GATE_ARGS+=(--reviewers "$TARGETED_REVIEWERS")
 [[ -n "$SCOPE" ]] && GATE_ARGS+=(--scope "$SCOPE")
@@ -137,11 +143,14 @@ Read the printed `gate_id` from this call's stdout, then launch the wait as a
 **separate Bash tool call** with `run_in_background: true` so the main thread
 is free while the gate runs. This is a genuinely independent subprocess, so
 it does not depend on any variable from the block above — call `pmctl`
-bare (no resolution preamble; see Step 1) and receive `gate_id` only as a
-substituted literal value, never a shell variable:
+bare (no resolution preamble; see Step 1) and receive `gate_id` and
+`<work_dir>` only as substituted literal values, never shell variables (a
+`"$PWD"` expansion here defeats the whole point of calling `pmctl` bare: it
+makes the command unanalyzable statically, so it needs a manual approval
+every time regardless of the `pmctl:*` prefix match):
 
 ```bash
-pmctl gate wait <gate_id> --cd "$PWD"
+pmctl gate wait <gate_id> --cd <work_dir>
 ```
 
 If this fails with `pmctl: command not found`, fall back per Step 1 (retry
@@ -154,9 +163,10 @@ After firing the wait, reply with one short status line, e.g.:
 Do not poll, sleep, or call `BashOutput` immediately. If the session is
 interrupted before the wait notification arrives, the gate keeps running
 detached; note the `gate_id` before the interrupt (or recover it via
-`pmctl artifacts list --cd "$PWD"`) and reattach with
-`pmctl gate wait <gate_id> --cd "$PWD"` in a new session -- a fresh `/pr-gate`
-invocation starts a NEW gate and does NOT reattach to the interrupted one.
+`pmctl artifacts list --cd <work_dir>`) and reattach with
+`pmctl gate wait <gate_id> --cd <work_dir>` in a new session -- a fresh
+`/pr-gate` invocation starts a NEW gate and does NOT reattach to the
+interrupted one.
 (gate wait exit 3 means the sentinel was already consumed by a prior wait —
 check `pmctl artifacts show <gate_id> --cd <work_dir>` for the durable result
 file in that case).
@@ -186,14 +196,15 @@ When the `pmctl gate wait` background Bash completion notification arrives:
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
-   running detached -- retry `pmctl gate wait <gate_id> --cd "$PWD"` once with
+   running detached -- retry `pmctl gate wait <gate_id> --cd <work_dir>` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
-   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "$PWD"`
+   already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd <work_dir>`
    to locate the durable result instead), other non-zero = gate failed (surface a
    brief failure summary: exit code + last ~20 lines of the supervisor log at
-   `pmctl artifacts show <gate_id> --cd "$PWD"`).
+   `pmctl artifacts show <gate_id> --cd <work_dir>`).
 4. Read `result_file` directly (both executor routes write it in-process). To
-   re-confirm out of band, run `pmctl gate verify "$result_file"` (exit 0 = valid).
+   re-confirm out of band, run `pmctl gate verify <result_file_path>` (the
+   literal path parsed in step 2, not a shell variable; exit 0 = valid).
 5. Prepend `PR-gate complete.` to completion relay and include the full gate
    result (including `Final: GO` / `Final: NO-GO`) unchanged.
 6. On failure, avoid collapsing findings; relay the actual stderr summary and
