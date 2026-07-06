@@ -15,6 +15,7 @@ FAILED_CASES=()
 SUITE_NAMES=(
   lint-agents
   lint-scripts
+  lint-test-docstrings
   test-guards
   test-guard-framework
   test-migrate
@@ -42,6 +43,7 @@ SUITE_NAMES=(
   test-doctor
   test-hook-profile-parity
   test-lint-frontmatter
+  test-lint-test-docstrings
   test-test-harness
   test-commands
   test-commands-runner
@@ -109,6 +111,7 @@ suite_path() {
   case "$1" in
     lint-agents) printf 'scripts/lint-agents.sh\n' ;;
     lint-scripts) printf 'scripts/lint-scripts.sh\n' ;;
+    lint-test-docstrings) printf 'scripts/lint-test-docstrings.sh\n' ;;
     test-guards) printf 'scripts/test-guards.sh\n' ;;
     test-guard-framework) printf 'scripts/test-guard-framework.sh\n' ;;
     test-migrate) printf 'scripts/test-migrate-routing-log.sh\n' ;;
@@ -136,6 +139,7 @@ suite_path() {
     test-doctor) printf 'scripts/test-doctor.sh\n' ;;
     test-hook-profile-parity) printf 'scripts/test-hook-profile-parity.sh\n' ;;
     test-lint-frontmatter) printf 'scripts/test-lint-frontmatter.sh\n' ;;
+    test-lint-test-docstrings) printf 'scripts/test-lint-test-docstrings.sh\n' ;;
     test-test-harness) printf 'scripts/test-test-harness.sh\n' ;;
     test-check-docs-freshness) printf 'scripts/test-check-docs-freshness.sh\n' ;;
     test-commands) printf 'scripts/test-commands.sh\n' ;;

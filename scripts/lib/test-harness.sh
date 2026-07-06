@@ -3,6 +3,22 @@
 # Shared test harness for scripts/test-*.sh
 # Provides a common argument parser, counting helpers, tmp directory lifecycle,
 # and summary reporting used by modern-style shell test scripts.
+#
+# Docstring convention: every test_* function is preceded by a two-part
+# comment block, placed directly above the function declaration (not
+# inside it):
+#
+#   # Behavior: <one- or two-sentence statement of what the test proves>.
+#   # Steps: <what the test does, in enough detail to reproduce it without
+#   # reading the body>.
+#   test_something_specific() {
+#     ...
+#   }
+#
+# `Steps:` may be a single wrapped sentence or a numbered list -- either
+# way it stays part of the same unindented comment block above the
+# declaration, never split across the `{`. See scripts/lib/test-guard-
+# framework.sh or scripts/test-pr-gate.sh for worked examples.
 
 th_init() {
   FILTER=""
