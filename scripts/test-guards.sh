@@ -2830,6 +2830,37 @@ ctx_inject_hook_kill_switch() {
   rm -rf "$dir"
 }
 
+ctx_inject_hook_timeout_fail_open() {
+  # Verifies a scan that exceeds PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT degrades to
+  # a silent exit 0 — the timeout fail-open path must never block the prompt.
+  # Steps:
+  #   1. Create an indexed git fixture repo (so no earlier exit path triggers)
+  #   2. Point PM_DISPATCH_PROMPT_CONTEXT_PMCTL at a stub that sleeps past a
+  #      1-second timeout
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/timeout-fail-open"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v timeout >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  cat > "$dir/slow-pmctl" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+STUB
+  chmod +x "$dir/slow-pmctl"
+  local _CTX_CASE_ENV=(
+    PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/slow-pmctl"
+    PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=1
+  )
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$state_root"
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_malformed_payload() {
   # Verifies malformed JSON stdin never crashes or blocks the prompt.
   # Steps:
@@ -2881,6 +2912,7 @@ ctx_inject_hook_no_db_silent
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch
+ctx_inject_hook_timeout_fail_open
 ctx_inject_hook_malformed_payload
 ctx_inject_hook_empty_stdin
 

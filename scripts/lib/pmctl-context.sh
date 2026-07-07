@@ -1618,22 +1618,11 @@ pmctl_context_prompt_scan() {
   local max_terms="${PM_DISPATCH_PROMPT_SCAN_MAX_TERMS:-8}"
   [[ "$max_terms" =~ ^[0-9]+$ ]] || max_terms=8
 
-  local db
-  db="$(_ctx_db_path "$repo_root")"
-  _ctx_ensure_fresh "$repo_root" || true
-  if [[ ! -f "$db" ]]; then
-    printf 'knowledge_hits: []\n'
-    # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
-    # event so the "emits after each call" contract holds uniformly.
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$prompt" 0
-    return 0
-  fi
-
-  if ! _ctx_sqlite3_check; then
-    printf 'pmctl context prompt-scan: sqlite3 not found on PATH\n' >&2
-    return 1
-  fi
-
+  # Terms are extracted up front because they are ALSO what telemetry records.
+  # PRIVACY (load-bearing): prompts arrive from an automated hook and can carry
+  # secrets or PII; the raw prompt text must never be persisted. Every
+  # context.prompt_scanned event below stores only the derived, capped search
+  # terms — never "$prompt" itself.
   local terms=()
   while IFS= read -r term; do
     [[ -n "$term" ]] && terms+=("$term")
@@ -1642,6 +1631,28 @@ pmctl_context_prompt_scan() {
     | sort -t$'\t' -k1,1r -k2,2 \
     | cut -f2 \
     | head -n "$max_terms")
+  local terms_joined="${terms[*]+"${terms[*]}"}"
+
+  local db
+  db="$(_ctx_db_path "$repo_root")"
+  _ctx_ensure_fresh "$repo_root" || true
+  if [[ ! -f "$db" ]]; then
+    printf 'knowledge_hits: []\n'
+    # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
+    # event so the "emits after each call" contract holds uniformly.
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" 0
+    return 0
+  fi
+
+  if ! _ctx_sqlite3_check; then
+    # Graceful degradation, NOT a hard error: this command is driven by an
+    # automated prompt hook, so a missing sqlite3 must degrade to an empty
+    # scan (plus the uniform zero-hit event) rather than surfacing a failure
+    # on every prompt.
+    printf 'knowledge_hits: []\n'
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" 0
+    return 0
+  fi
 
   local seen_file sym_tsv files_tsv hits_tsv
   seen_file="$(mktemp /tmp/ctx-prompt-seen-XXXXXX)"
@@ -1676,5 +1687,6 @@ pmctl_context_prompt_scan() {
 
   local reported_hits="$total_hits"
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
-  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$prompt" "$reported_hits"
+  # Derived terms only — see the privacy note above; never "$prompt".
+  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" "$reported_hits"
 }

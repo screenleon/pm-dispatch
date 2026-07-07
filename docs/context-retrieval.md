@@ -107,10 +107,21 @@ this whenever the live context DB must not be touched — for example while the
 full test suite is running against the pm-dispatch repo itself.
 
 `pmctl context prompt-scan` emits a `context.prompt_scanned` event after every
-call (including zero-hit and no-index calls), readable via
+call (including zero-hit, no-index, and no-sqlite calls — the last two degrade
+to an empty `knowledge_hits: []` scan rather than erroring, because the caller
+is an automated hook), readable via
 `pmctl trace tail --kind context.prompt_scanned`. The kind is deliberately
 distinct from `context.queried`: automated prompt-time scans must not pollute
 the telemetry signal for whether an agent ran a query on its own.
+
+**Privacy (load-bearing)**: the event's `query` payload field records only the
+derived, capped search terms — never the raw prompt. Prompts arrive from an
+automated hook and can carry secrets or PII; persisting the full prompt in the
+durable state store is forbidden.
+
+`PM_DISPATCH_PROMPT_CONTEXT_PMCTL` overrides the `pmctl` entrypoint the hook
+invokes (non-standard install layouts; also the regression-test seam for the
+timeout path).
 
 ## Dispatch auto-pack
 

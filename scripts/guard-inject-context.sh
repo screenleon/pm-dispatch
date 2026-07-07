@@ -45,7 +45,9 @@ if [[ -z "$repo_root" ]]; then
   exit 0
 fi
 
-pmctl_cli="$(cd "$(dirname "$0")/.." && pwd)/cli/pmctl"
+# PM_DISPATCH_PROMPT_CONTEXT_PMCTL overrides the pmctl entrypoint (non-standard
+# install layouts; also the seam the timeout regression test drives).
+pmctl_cli="${PM_DISPATCH_PROMPT_CONTEXT_PMCTL:-$(cd "$(dirname "$0")/.." && pwd)/cli/pmctl}"
 if [[ ! -f "$pmctl_cli" ]]; then
   exit 0
 fi
