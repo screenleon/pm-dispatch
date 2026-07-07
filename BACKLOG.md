@@ -626,7 +626,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: README 手動維護的 command 清單注定漂移（已實測漂到 2/15）；[[CC-446]] 契約凍結要把 CLI 分級列為 stable 承諾，若連「有哪些 command」都沒有機器可讀的單一來源，分級表本身就建立在會漂移的地基上。
 
 **Requirement**:
-1. `pmctl commands --json`：列舉所有已註冊 command/subcommand（來源可為 `commands/*.md` frontmatter + pmctl 內部 router 表，實作時 `/pre-impl` 收斂資料來源取捨），輸出結構化 JSON（name、summary、area、stability tier 若 CC-446 已定案）。
+1. `pmctl commands --json`：列舉所有已註冊 command/subcommand，輸出結構化 JSON（name、summary、area、stability tier 若 CC-446 已定案）。**權威來源分工**（避免雙寫漂移）：pmctl 內部 router 表是「command 是否存在/可執行」的權威來源（manifest 的 name/area 欄位由此派生）；`commands/*.md` frontmatter 是「summary 說明文字」的權威來源（manifest 讀取但不擁有存在性判定）。router 有但 frontmatter 缺（或反之）視為第 2 項 lint 要抓的漂移，而非留給實作臨時決定。
 2. **三方防漂移 lint**：router 已註冊的 command ↔ `pmctl commands --json` 輸出 ↔ README command 目錄，三者任一方向缺漏即 fail loud；接入 CI。
 3. **README/docs command 索引自動生成**（原 openyida 分析草稿的獨立子項，因與 manifest 屬同一 PR 範圍且無獨立驗收價值而併入本票，不另開票）：README command 目錄段落改由 `pmctl commands --json` 生成或以生成結果核對，取代目前手動列表。
 4. 與 [[CC-451]] enum 單一來源同一設計精神（一份定義、多處消費、機械 parity 檢查）——實作時可借鏡其 parity 回歸測試模式。
@@ -678,7 +678,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Why**: 批次執行涉及新的注入面（使用者提供的批次清單可能被用來繞過單筆操作的驗證）——這不是低風險的便利性功能，須明確設計安全邊界再落地，故列 someday 而非直接排入 milestone。
 
 **Requirement**:
-1. 依賴 [[CC-460]]（`pmctl commands --json` manifest）作為批次目標的合法性驗證來源——批次動作只能對已註冊、已知安全的 command 執行，不接受任意 shell 片段。
+1. 依賴 [[CC-460]]（`pmctl commands --json` manifest）確認批次目標「存在於已註冊 command 清單」這一必要條件，但 manifest 現規劃欄位（name/summary/area/stability）**不含**批次安全性判定，不足以單獨作為合法性驗證來源。本票須額外定義獨立的 batch-safe allowlist/引數 contract（如標記哪些 command 允許被批次呼叫、批次專屬引數限制），manifest 只負責「這個 command 名稱真實存在」，不接受任意 shell 片段這條防線由本票自建。
 2. 安全邊界設計需過 security-reviewer（新注入面：使用者可控的批次清單）。
 3. 實作前 `/pre-impl` 收斂：批次的原子性/部分失敗行為（全有全無 vs 盡力而為 + 報告）、並行度上限。
 
