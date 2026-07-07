@@ -128,8 +128,9 @@ GATE_ARGS=(--cd "<work_dir>" --executor auto)
 [[ "$PARALLEL" == "true" ]] && GATE_ARGS+=(--parallel)
 
 # Launch detached: this call is inline (NOT run_in_background) and returns in
-# well under a second once the supervisor is forked -- it prints exactly one
-# line, the gate_id, and nothing else on success.
+# well under a second once the supervisor is forked -- stdout prints exactly
+# one line, the gate_id; stderr prints a ready-to-paste `pmctl gate wait ...`
+# command with the id and --cd already filled in.
 pmctl gate run "${GATE_ARGS[@]}" --lifecycle detached
 ```
 
@@ -152,6 +153,12 @@ every time regardless of the `pmctl:*` prefix match):
 ```bash
 pmctl gate wait <gate_id> --cd "<work_dir>"
 ```
+
+The run call's stderr already printed this exact command with both values
+filled in — copy it verbatim instead of assembling id + `--cd` by hand.
+`--cd` is optional when the wait runs from inside the target repo (it
+defaults to the CWD git toplevel, the same derivation `gate run` uses);
+keep it explicit when waiting from anywhere else.
 
 If this fails with `pmctl: command not found`, fall back per Step 1 (retry
 with the resolved absolute `cli/pmctl` path).
@@ -191,11 +198,15 @@ skill does not fan out reviewers or parse any handover block.
 When the `pmctl gate wait` background Bash completion notification arrives:
 
 1. Fetch full stdout via `BashOutput(bash_id: <id>)`. It contains
-   `gate: <gate_id>  state: <GO|NO-GO|failed>  exit: <N>` and, when a result was
-   written, `result: <path>` on the next line.
+   `gate: <gate_id>  state: <GO|NO-GO|failed>  exit: <N>`, then `result: <path>`
+   when a result was written, then the result file's own `Final: GO` /
+   `Final: NO-GO` line once integrity checks pass — that `Final:` line is the
+   verdict source of truth.
 2. Parse the result file path from stdout:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
-3. Exit code meaning: 0 = GO, 1 = NO-GO, 124 = wait timed out (gate may still be
+3. Exit code meaning: 0 = GO, 1 = NO-GO (a gate verdict — the background
+   harness renders it as a failed command, but it is NOT an execution
+   error), 124 = wait timed out (gate may still be
    running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
    the same `gate_id` before treating it as stuck), 3 = indeterminate (sentinel
    already consumed by a prior wait; use `pmctl artifacts show <gate_id> --cd "<work_dir>"`

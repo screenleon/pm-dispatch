@@ -14,6 +14,22 @@ _pmctl_gate_hex6() {
   printf '%s\n' "${hex:0:6}"
 }
 
+# Default work dir for gate run/wait when --cd is omitted: the git toplevel
+# of the caller's CWD, falling back to $PWD outside any git worktree. Both
+# ends MUST use this same derivation — `pmctl gate wait` independently
+# recomputes the run dir partition from its --cd, so run and wait defaulting
+# differently (e.g. run from a subdir, wait from the repo root) would make the
+# recompute diverge and fail the result-path ownership check.
+_pmctl_gate_default_cd() {
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [[ -n "$toplevel" ]]; then
+    printf '%s\n' "$toplevel"
+  else
+    printf '%s\n' "$PWD"
+  fi
+}
+
 # Per-user private key-file directory for the detached-gate sentinel nonce,
 # mirroring _pmctl_sentinel_key_file in pmctl-dispatch.sh but rooted at a
 # separate /tmp namespace so gate and dispatch sentinels never collide.
@@ -77,7 +93,8 @@ pmctl_gate_run() {
   done
 
   # Extract --cd value first so the run dir is keyed to the TARGET repo's partition,
-  # not the caller's cwd. Fall back to $PWD when --cd is absent. A bare
+  # not the caller's cwd. Fall back to the CWD git toplevel (then $PWD) when
+  # --cd is absent, matching `pmctl gate wait`'s default. A bare
   # trailing --cd (no value follows) is a usage error, not "use $PWD" --
   # matching pmctl_dispatch_run's --cd validation (pmctl-dispatch.sh:1161-1165)
   # -- otherwise the detached path would silently launch a supervisor against
@@ -89,7 +106,8 @@ pmctl_gate_run() {
   # pr-gate.sh itself, mirroring dispatch's cd_arg/native split), so
   # validation and stripping share one parse instead of two separate loops
   # that could diverge on where --cd is found.
-  local effective_cd="$PWD"
+  local effective_cd
+  effective_cd="$(_pmctl_gate_default_cd)"
   local has_cd=false
   local -a _passthrough=()
   local _i=0
@@ -137,7 +155,7 @@ pmctl_gate_run() {
   fi
 
   if [[ "$has_cd" == false ]]; then
-    exec "$gate_script" "${run_dir_args[@]}" --cd "$PWD" "$@"
+    exec "$gate_script" "${run_dir_args[@]}" --cd "$effective_cd" "$@"
   else
     exec "$gate_script" "${run_dir_args[@]}" "$@"
   fi
@@ -224,15 +242,24 @@ pmctl_gate_run_detached() {
     "$gate_script" "$supervisor_log" "" \
     -- --gate-id "$gate_id" --cd "$effective_cd" --run-dir "$gate_run_dir" -- ${forward[@]+"${forward[@]}"}
 
+  # stdout stays a single gate_id line — existing callers capture it with
+  # command substitution. The ready-to-paste wait command goes to stderr so
+  # a human never has to assemble id + --cd by hand.
+  printf 'pmctl gate run: detached; check the verdict with: pmctl gate wait %s --cd %q\n' \
+    "$gate_id" "$effective_cd" >&2
   printf '%s\n' "$gate_id"
   return 0
 }
 
-# pmctl gate wait <gate_id> --cd <work_dir> [--timeout N]
+# pmctl gate wait <gate_id> [--cd <work_dir>] [--timeout N]
 # Polls for the nonce-authenticated sentinel scripts/gate-supervisor.sh writes
-# on completion, mirroring pmctl_dispatch_wait. Absent sentinel key => exit 3
-# (indeterminate) — never silently reports success. Returns the gate's real
-# exit code (0=GO, 1=NO-GO, other=failed) on completion, 124 on timeout.
+# on completion, mirroring pmctl_dispatch_wait. --cd defaults to the CWD git
+# toplevel (then $PWD) via _pmctl_gate_default_cd — the same derivation
+# `pmctl gate run` uses — so run/wait recompute the identical partition.
+# On a verified GO/NO-GO the result file's `Final:` line is echoed to stdout.
+# Exit codes are layered: 0 = GO, 1 = NO-GO (a gate verdict, not an execution
+# error), 2 = usage/result-integrity error, 3 = indeterminate (sentinel key
+# absent — never silently reports success), 124 = timeout.
 pmctl_gate_wait() {
   local repo_root="${1:-}"
   shift || true
@@ -296,8 +323,10 @@ pmctl_gate_wait() {
     return 2
   fi
   if [[ -z "$work_dir" ]]; then
-    printf 'pmctl gate wait: --cd <work_dir> is required\n' >&2
-    return 2
+    work_dir="$(_pmctl_gate_default_cd)"
+    if declare -F _portable_canonical_path >/dev/null 2>&1; then
+      work_dir="$(_portable_canonical_path "$work_dir")"
+    fi
   fi
 
   local _key_file _key_nonce
@@ -379,6 +408,17 @@ pmctl_gate_wait() {
         if ! gate_result_verify "$_result" >/dev/null 2>&1; then
           printf 'pmctl gate wait: FAIL: gate_result_verify rejected %s -- result is missing/corrupt/unparsable, treating as failed wait\n' "$_result" >&2
           return 2
+        fi
+        # Verdict summary: echo the result file's `Final:` line verbatim —
+        # the source of truth callers should read instead of the exit code,
+        # which background-task harnesses render as a bare "command failed".
+        local _final_line
+        _final_line="$(grep -m1 -E '^Final: (GO|NO-GO)$' "$_result" 2>/dev/null)" || _final_line=""
+        if [[ -n "$_final_line" ]]; then
+          printf '%s\n' "$_final_line"
+        fi
+        if [[ "$_state" == "NO-GO" ]]; then
+          printf 'pmctl gate wait: NO-GO is the gate verdict (exit 1), not an execution error; findings are in the result file above\n' >&2
         fi
       fi
       return "$_exit"
