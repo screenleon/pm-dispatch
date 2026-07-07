@@ -29,11 +29,13 @@
 # Any recognized cell that has no registered policy — e.g.
 # `executor(claude)/pre-bash` (claude headless subprocess governs its own Bash
 # via --permission-mode; no pm-dispatch bash policy), `executor/pre-bash` for
-# any other runtime (no adapter needs one today), or the reserved-but-
-# unimplemented `post-task` event — returns a non-zero deny, NOT a silent
-# allow. `pm/pre-bash` DOES have a registered policy (guard-pm-bash.sh, a
-# curated denylist — see that script's header): a codex-hosted PM runs Bash
-# directly, unlike claude's project-pm subagent which never does. A
+# any other runtime (no adapter needs one today), `pm/pre-bash` for any
+# runtime OTHER than codex (claude's project-pm subagent never runs Bash
+# itself), `reviewer/pre-bash`, or the reserved-but-unimplemented `post-task`
+# event — returns a non-zero deny, NOT a silent allow. `pm/pre-bash` with
+# runtime=codex DOES have a registered policy (guard-pm-bash.sh, a curated
+# denylist — see that script's header): a codex-hosted PM runs Bash directly,
+# so it needs one; every other runtime stays fail-closed exactly as before. A
 # success exit from this surface always means "a policy ran and permitted the
 # action".
 #
@@ -251,11 +253,22 @@ pmctl_guard_check() {
           return 3
           ;;
         pm)
-          # [role-based] On claude, project-pm never runs Bash itself, so this
-          # is dormant there. On a codex-hosted PM, the PM session IS the one
-          # running Bash — guard-pm-bash.sh's denylist policy applies
-          # regardless of runtime.
-          hook="guard-pm-bash.sh"
+          # [runtime-specific] On claude, project-pm never runs Bash itself —
+          # that stays fail-closed, unchanged from before (and unlike
+          # pre-write, which IS role-based/runtime-agnostic — see below).
+          # On a codex-hosted PM, the PM session IS the one running Bash, so
+          # guard-pm-bash.sh's denylist policy applies there ONLY. Scoping
+          # this to runtime=codex, not every runtime, keeps `pmctl safe bash
+          # --role pm --runtime claude` fail-closed exactly as before — a
+          # role-wide widen here would silently start executing commands
+          # through that CLI surface for a runtime this policy was never
+          # designed for.
+          if [[ "$runtime" == "codex" ]]; then
+            hook="guard-pm-bash.sh"
+          else
+            printf 'pmctl guard check: no guard policy registered for role=pm runtime=%s event=pre-bash — denying\n' "$runtime" >&2
+            return 3
+          fi
           ;;
         reviewer)
           # Reviewers read diff and write findings — no arbitrary bash policy.
