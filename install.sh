@@ -508,8 +508,9 @@ echo
 # codex-as-host wiring (hosts/codex/host.yaml driven; see scripts/install-guards-codex.sh).
 # Opt-in only via --enable-codex-command-guard — NEVER auto-detected from codex
 # being on PATH (see the flag's header comment: hooks.json is global to every
-# codex session on the machine, and the only registered guard policy denies all
-# bash unconditionally today).
+# codex session on the machine, and the registered guard policy — a curated
+# denylist, scripts/guard-pm-bash.sh — applies to every Bash call in every
+# codex session on this machine once wired, not just pm-dispatch ones).
 if [[ "$ENABLE_CODEX_COMMAND_GUARD" -eq 1 ]]; then
   echo "==> codex host"
   if [[ "$DRY_RUN" -eq 1 ]]; then

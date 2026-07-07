@@ -353,12 +353,17 @@ else
 fi
 
 # codex-as-host symmetric teardown (see install.sh's "codex host" step).
-# Gated on codex_available so uninstall on a machine without codex never touches
-# a stray $CODEX_HOME; if codex is present but was never wired, the script is
-# already idempotent ("not wired, nothing to do"). Also requires the script to
-# exist so a partial/copy-mode checkout (or a test fixture repo copying only a
-# subset of scripts/) degrades gracefully instead of erroring.
-if codex_available && [[ -f "$REPO_ROOT/scripts/uninstall-guards-codex.sh" ]]; then
+# Deliberately NOT gated on codex_available: install.sh --enable-codex-command-guard
+# writes into $CODEX_HOME regardless of whether the codex binary is on PATH at
+# install time, so uninstall must remove it regardless of whether codex is on
+# PATH at uninstall time too (gate-review finding: PR-gate NO-GO — a codex
+# uninstall/reinstall or a PATH change between install and uninstall left a
+# stale global hook behind). uninstall-guards-codex.sh is itself idempotent
+# ("not wired, nothing to do") when nothing was ever installed, so running it
+# unconditionally is safe. Still requires the script to exist so a
+# partial/copy-mode checkout (or a test fixture repo copying only a subset of
+# scripts/) degrades gracefully instead of erroring.
+if [[ -f "$REPO_ROOT/scripts/uninstall-guards-codex.sh" ]]; then
   if [[ "$DRY_RUN" -eq 1 ]]; then
     bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" --dry-run
   else

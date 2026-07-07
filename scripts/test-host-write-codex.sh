@@ -215,6 +215,28 @@ test_install_opt_in_wires_codex_and_uninstall_removes_it() {
   [[ "$content" == "{}" ]] && pass "$name" || fail "$name" "uninstall.sh should symmetrically remove the codex hook, got: $content"
 }
 
+test_uninstall_removes_codex_hook_when_codex_not_on_path() {
+  # Regression lock: uninstall.sh must not gate codex-host teardown on
+  # codex_available — a codex uninstall/reinstall or PATH change between
+  # install and uninstall must not leave a stale global hook behind.
+  local name="uninstall-removes-codex-hook-when-codex-not-on-path"
+  should_run "$name" || return 0
+  local claude_home="$tmp_root/int-nopath/.claude"
+  local codex_home="$tmp_root/int-nopath/.codex"
+  local minimal_path="/usr/bin:/bin"
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
+  if [[ ! -f "$codex_home/hooks.json" ]]; then
+    fail "$name" "setup: install --enable-codex-command-guard should wire the hook even without codex on PATH"
+    return
+  fi
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" \
+    bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
+  local content
+  content="$(jq -c . "$codex_home/hooks.json" 2>/dev/null)"
+  [[ "$content" == "{}" ]] && pass "$name" || fail "$name" "uninstall.sh left the codex hook behind when codex was not on PATH, got: $content"
+}
+
 test_host_manifest_reads_codex_install_targets
 test_host_manifest_expand_path_uses_env_override
 test_host_manifest_expand_path_default_when_unset
@@ -230,5 +252,6 @@ test_hook_codex_command_guard_denies_destructive_command
 test_hook_codex_command_guard_missing_command_denies
 test_install_default_never_touches_codex_home
 test_install_opt_in_wires_codex_and_uninstall_removes_it
+test_uninstall_removes_codex_hook_when_codex_not_on_path
 
 th_summary
