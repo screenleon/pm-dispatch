@@ -194,7 +194,9 @@ test_install_default_never_touches_codex_home() {
   should_run "$name" || return 0
   local claude_home="$tmp_root/int-default/.claude"
   local codex_home="$tmp_root/int-default/.codex"
-  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" bash "$REPO_ROOT/install.sh" --profile minimal >/dev/null 2>&1
+  local pmctl_bin_dir="$tmp_root/int-default/pmctl-bin"
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+    bash "$REPO_ROOT/install.sh" --profile minimal >/dev/null 2>&1
   [[ ! -e "$codex_home" ]] && pass "$name" || fail "$name" "\$CODEX_HOME should stay untouched without --enable-codex-command-guard"
 }
 
@@ -203,13 +205,15 @@ test_install_opt_in_wires_codex_and_uninstall_removes_it() {
   should_run "$name" || return 0
   local claude_home="$tmp_root/int-optin/.claude"
   local codex_home="$tmp_root/int-optin/.codex"
-  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" \
+  local pmctl_bin_dir="$tmp_root/int-optin/pmctl-bin"
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
     bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]] || ! jq -e '.hooks.PreToolUse[]? | select(.matcher=="Bash")' "$codex_home/hooks.json" >/dev/null 2>&1; then
     fail "$name" "install.sh --enable-codex-command-guard should wire the codex hook"
     return
   fi
-  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
+  CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
+    bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
   local content
   content="$(jq -c . "$codex_home/hooks.json" 2>/dev/null)"
   [[ "$content" == "{}" ]] && pass "$name" || fail "$name" "uninstall.sh should symmetrically remove the codex hook, got: $content"
@@ -223,14 +227,15 @@ test_uninstall_removes_codex_hook_when_codex_not_on_path() {
   should_run "$name" || return 0
   local claude_home="$tmp_root/int-nopath/.claude"
   local codex_home="$tmp_root/int-nopath/.codex"
+  local pmctl_bin_dir="$tmp_root/int-nopath/pmctl-bin"
   local minimal_path="/usr/bin:/bin"
-  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" \
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
     bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]]; then
     fail "$name" "setup: install --enable-codex-command-guard should wire the hook even without codex on PATH"
     return
   fi
-  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" \
+  PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" \
     bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1
   local content
   content="$(jq -c . "$codex_home/hooks.json" 2>/dev/null)"

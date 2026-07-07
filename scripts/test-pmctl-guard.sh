@@ -248,6 +248,18 @@ if should_run "pm-prebash-deny"; then
   fi
 fi
 
+if should_run "pm-prebash-deny-uppercase-recursive"; then
+  # rm accepts both -r and -R for recursive; the denylist must not miss the
+  # uppercase form (fail-open regression: a prior version's regex only
+  # matched lowercase flag letters).
+  name="pm-prebash-deny-uppercase-recursive"
+  run_guard --event pre-bash --role pm --runtime codex --command "rm -Rf /tmp/whatever"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
+    pass "$name"
+  fi
+fi
+
 if should_run "pm-missing-runtime"; then
   # pm now requires --runtime (uniform two-axis CLI — CC-291/CC-297).
   name="pm-missing-runtime"

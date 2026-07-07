@@ -30,6 +30,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
 | CC-467 | 🟢 someday | `pmctl memory stats`：注入效益可視化——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P3 | retrieval |
 | CC-468 | 🟢 someday | dispatch brief 帶 memory 約束：brief authoring/auto-pack 對 memory plane 做 pointer-only 查詢，feedback 卡約束自動浮上 brief（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P3 | retrieval |
+| CC-469 | 🔵 active | codex reviewer sandbox 找不到 pmctl：`codex exec --sandbox workspace-write` 派工 reviewer 時，sandbox 內裸呼叫 `pmctl guard check` 回報 command not found，導致該 reviewer 中止、gate 產不出結果檔案（2026-07-07 平行模式 gate run 實測發現） | ops/gate | 2026-07-07 | — | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -796,6 +797,21 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢失敗 fail-open 不阻斷 dispatch。
 
 **Cross-link**: [[CC-466]]。
+
+---
+
+## CC-469 — codex reviewer sandbox 找不到 pmctl 🔵 active
+
+**Problem**：`pmctl gate run --parallel`（或任何以 codex 為 reviewer 的派工）啟動 `codex exec --sandbox workspace-write` 後，reviewer brief 內裸呼叫 `pmctl guard check ...` 回報 `pmctl: command not found`，該 reviewer 未產出結果、整個 gate 拿不到完整結論。2026-07-07 一次平行模式 gate run 實測重現，另一個 session 稍早也踩過同症狀。
+
+**Why**：目前 `pmctl` 裸指令慣例是為了讓 Claude 的 permission-allow 前綴比對成立而設計；同一套「裸指令」假設套用到 codex sandbox 執行環境時可能失效——`codex exec` 的沙盒子行程未必繼承互動 shell 的完整 PATH（尤其 `~/.local/bin`），根因尚未確認。連續在兩個獨立情境命中，非偶發。
+
+**Requirement**（待調查後定案，此為粗刻）：
+1. 確認 `codex exec --sandbox workspace-write` 子行程實際繼承的 PATH/env——是否真的漏了 `~/.local/bin`，或另有原因（cwd、shell 種類等）。
+2. 依調查結果選擇修法：(a) codex-dispatch.sh 派工前顯式帶入/保留 PATH；或 (b) reviewer brief 對 `pmctl` 呼叫改用可靠的絕對路徑解析（不破壞既有 Claude 端裸指令慣例）。
+3. 回歸測試覆蓋兩種 gate 派工模式（sequential/parallel）在最小化 PATH 環境下仍能找到 `pmctl`。
+
+**Dependencies**：與 [[CC-445]] 無關（後者是 PM 本身跑在 codex host 上；本票是 codex 被派去當 reviewer 時的沙盒環境問題）。
 
 ---
 

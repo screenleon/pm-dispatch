@@ -3436,6 +3436,28 @@ run_case "pm-bash: rm -fr → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -fr /tmp/foo"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: rm -Rf (uppercase recursive) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -Rf /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm -fR (uppercase recursive, force first) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -fR /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm -r -f (separate flags) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r -f /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm --force --recursive (long flags) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm --force --recursive /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm -r alone (no force) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r /tmp/foo"}}'
+
+run_case "pm-bash: rm -f alone (no recursive) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -f /tmp/foo"}}'
+
 run_case "pm-bash: git push --force → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main --force"}}' \
   "denylisted pattern"

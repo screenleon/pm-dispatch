@@ -80,7 +80,15 @@ fi
 # the match loop below for why). Each entry pairs a pattern with the one-line
 # reason it exists.
 declare -a DENY_PATTERNS=(
-  'rm[[:space:]]+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)[[:space:]]'  # rm -rf / -fr: recursive+force delete
+  # rm -rf / -Rf / -fr / -fR (rm accepts both -r and -R for recursive; only
+  # lowercase -f is valid, but the recursive letter's case must not matter):
+  # combined single-flag-token form, either letter order, any other short
+  # flags mixed in (e.g. -rfv), end-of-string or space-terminated.
+  'rm[[:space:]]+(-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*)([[:space:]]|$)'
+  # rm with recursive and force passed as SEPARATE flags (either order),
+  # short or long form: `rm -r -f`, `rm --force --recursive`, etc.
+  'rm\b.*(-r\b|-R\b|--recursive\b).*(-f\b|--force\b)'
+  'rm\b.*(-f\b|--force\b).*(-r\b|-R\b|--recursive\b)'
   'git[[:space:]]+push([[:space:]]+[^|;&]*)?[[:space:]](-f|--force)([[:space:]]|$)'  # force push: can overwrite upstream history
   'git[[:space:]]+reset[[:space:]]+--hard'                                 # discards uncommitted work irreversibly
   'git[[:space:]]+clean[[:space:]]+-[a-z]*f'                               # deletes untracked files irreversibly
