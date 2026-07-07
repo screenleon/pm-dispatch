@@ -135,17 +135,19 @@ case_explicit_cd_passthrough() {
   fi
 }
 
-# ---- 2: missing --cd defaults to $PWD ----------------------------------------
+# ---- 2: missing --cd defaults to the CWD git toplevel (then $PWD) ------------
 case_default_cd_injected() {
-  # Verifies that pmctl_gate_run injects --cd $PWD when the caller omits it,
-  # so pr-gate.sh always receives a working directory without forcing callers
-  # to spell it out.
+  # Verifies that pmctl_gate_run derives --cd from the caller's CWD when
+  # omitted: the git toplevel when inside a worktree (so a run launched from
+  # a repo subdir lands in the same partition a wait from the repo root
+  # recomputes), falling back to $PWD outside any git repo.
   #
   # Steps:
   #   1. Install a fake pr-gate.sh that echoes its argv.
-  #   2. Call pmctl_gate_run without --cd.
-  #   3. Assert the echoed output contains --cd <current working directory>.
-  local name="gate/run: --cd defaults to \$PWD when omitted"
+  #   2. Call pmctl_gate_run without --cd from a git repo SUBDIR; assert the
+  #      echoed --cd is the repo toplevel, not the subdir.
+  #   3. Call it again from a non-git directory; assert --cd is that $PWD.
+  local name="gate/run: --cd defaults to CWD git toplevel, \$PWD outside git"
   should_run "$name" || return 0
 
   local fixture="$tmp_root/f2" wrapper="$tmp_root/b2/wrapper"
@@ -153,14 +155,31 @@ case_default_cd_injected() {
   _mk_fake_gate "$fixture" 0
   _mk_gate_wrapper "$fixture" "$wrapper"
 
-  local expected_cd out code
-  expected_cd="$PWD"
-  set +e; out="$("$wrapper" --lifecycle foreground --tier express 2>&1)"; code=$?; set -e
+  local gitrepo="$tmp_root/f2-gitrepo" nongit="$tmp_root/f2-nongit"
+  mkdir -p "$gitrepo/subdir" "$nongit"
+  git -C "$gitrepo" init -q
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"--cd $expected_cd"* ]]; then
+  local expected_toplevel out code
+  expected_toplevel="$(git -C "$gitrepo/subdir" rev-parse --show-toplevel)"
+  set +e
+  out="$(cd "$gitrepo/subdir" && "$wrapper" --lifecycle foreground --tier express 2>&1)"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]] || [[ "$out" != *"--cd $expected_toplevel"* ]]; then
+    fail "$name" "git subdir: code=$code out=$out (expected --cd $expected_toplevel)"
+    return
+  fi
+
+  local expected_pwd out2 code2
+  set +e
+  out2="$(cd "$nongit" && "$wrapper" --lifecycle foreground --tier express 2>&1)"
+  code2=$?
+  expected_pwd="$(cd "$nongit" && pwd)"
+  set -e
+  if [[ "$code2" -eq 0 ]] && [[ "$out2" == *"--cd $expected_pwd"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out (expected --cd $expected_cd)"
+    fail "$name" "non-git: code=$code2 out=$out2 (expected --cd $expected_pwd)"
   fi
 }
 
@@ -487,19 +506,24 @@ case_default_lifecycle_is_detached() {
     cp "$REPO_ROOT/scripts/lib/$_lib" "$fixture/scripts/lib/$_lib"
   done
 
-  local out code
+  local out code err_file="$tmp_root/f12-run.err"
   PM_DISPATCH_STATE_ROOT="$tmp_root/f12-state" XDG_RUNTIME_DIR="$tmp_root/f12-xdg"
   mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
   set +e
   out="$(PM_DISPATCH_STATE_ROOT="$PM_DISPATCH_STATE_ROOT" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    "$wrapper" --cd "$work" 2>&1)"
+    "$wrapper" --cd "$work" 2>"$err_file")"
   code=$?
   set -e
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+  # stdout must stay a single bare gate_id line (callers capture it with
+  # command substitution); the copy-paste wait hint goes to stderr only.
+  local err_out; err_out="$(cat "$err_file" 2>/dev/null)"
+  if [[ "$code" -eq 0 ]] \
+     && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] \
+     && [[ "$err_out" == *"pmctl gate wait $out --cd"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out (expected a bare gate_id, not synchronous pr-gate.sh output)"
+    fail "$name" "code=$code out=$out err=$err_out (expected bare gate_id on stdout + wait hint on stderr)"
   fi
 }
 
@@ -528,7 +552,7 @@ _run_gate_cli_route_case() {
   set +e
   gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     PM_GATE_WAIT_POLL_INTERVAL=0.1 \
-    "$cli_pmctl" gate run --cd "$work" --lifecycle detached 2>&1)"
+    "$cli_pmctl" gate run --cd "$work" --lifecycle detached 2>/dev/null)"
   code1=$?
   set -e
   if [[ "$code1" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
@@ -544,7 +568,16 @@ _run_gate_cli_route_case() {
   code2=$?
   set -e
 
-  if [[ "$code2" -eq "$expect_exit" ]] && [[ "$out2" == *"state: $expect_state"* ]]; then
+  # The wait must also surface the verdict itself: the result file's Final:
+  # line echoed to stdout, and for NO-GO an explicit "not an execution error"
+  # note so exit 1 is distinguishable from a genuine failure in harness output.
+  if [[ "$code2" -eq "$expect_exit" ]] \
+     && [[ "$out2" == *"state: $expect_state"* ]] \
+     && [[ "$out2" == *"Final: $expect_state"* ]]; then
+    if [[ "$expect_state" == "NO-GO" && "$out2" != *"not an execution error"* ]]; then
+      fail "$name" "NO-GO wait missing the verdict-vs-error note: out2=$out2"
+      return
+    fi
     pass "$name"
   else
     fail "$name" "code1=$code1 gate_id=$gate_id code2=$code2 (expected $expect_exit) out2=$out2"
@@ -618,6 +651,54 @@ case_run_wait_handoff_survives_separate_process() {
   fi
 }
 
+# ---- 16: gate wait without --cd defaults to the caller's CWD -----------------
+case_wait_default_cd() {
+  # Verifies that `pmctl gate wait <gate_id>` with no --cd derives the work
+  # dir from the caller's CWD (git toplevel, then $PWD) using the SAME
+  # derivation `gate run` uses, so a wait launched from the gate's work dir
+  # recomputes the identical run-dir partition and resolves the verdict.
+  #
+  # Steps:
+  #   1. Launch a detached GO gate with an explicit --cd <work>.
+  #   2. Run `gate wait <gate_id>` (no --cd) with CWD = <work> (a non-git
+  #      dir, exercising the $PWD fallback of the shared default).
+  #   3. Assert exit 0, state GO, and the echoed Final: GO verdict line.
+  local name="gate/wait: --cd defaults to caller CWD when omitted"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f16/fixture" work="$tmp_root/f16/work" state="$tmp_root/f16/state"
+  mkdir -p "$work"
+  _mk_gate_cli_fixture "$fixture"
+  _mk_fake_gate_with_result "$fixture" 0
+  local cli_pmctl="$fixture/cli/pmctl"
+
+  local gate_id code1
+  set +e
+  gate_id="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate run --cd "$work" --lifecycle detached 2>/dev/null)"
+  code1=$?
+  set -e
+  if [[ "$code1" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "gate run failed: code=$code1 out=$gate_id"
+    return
+  fi
+
+  local out code
+  set +e
+  out="$(cd "$work" && PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate wait "$gate_id" --timeout 30 2>&1)"
+  code=$?
+  set -e
+
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] && [[ "$out" == *"Final: GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out (expected default-cd wait to resolve GO)"
+  fi
+}
+
 case_explicit_cd_passthrough
 case_default_cd_injected
 case_exit_propagated
@@ -635,5 +716,6 @@ case_default_lifecycle_is_detached
 case_gate_wait_go_route_via_cli
 case_gate_wait_nogo_route_via_cli
 case_run_wait_handoff_survives_separate_process
+case_wait_default_cd
 
 th_summary

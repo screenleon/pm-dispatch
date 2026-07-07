@@ -19,6 +19,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-455 | ✅ closed 2026-07-06 | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | pr:#371 | P2 | — |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
+| CC-458 | 🔵 active | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | — | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -558,6 +559,25 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-438]] ✅（schema v1 已定案）。與 [[CC-445]] 同鏈：本票先行（純 additive、低風險），CC-445 接線時引用。v0.9.0 host 軸。
 **Source**: 維護者 2026-07-07「claude 的 host 也需要調整成新的架構，不然後續維護會相對不對齊」。
+
+---
+
+## CC-458 — gate run/wait DX：--cd 預設、wait 指令可複製、verdict 可區分 🔵 active
+
+**Problem**（2026-07-06 使用者指定優先；同一 session 內三個痛點全部實踩）:
+1. `pmctl gate wait` 強制要求 `--cd <work_dir>`，漏帶直接 exit 2；但 run-dir 分割本可由呼叫者 CWD 推導（[[CC-455]] context plane 已有 CWD git-toplevel 預設先例）。
+2. `pmctl gate run` 只在 stdout 印 gate id 一行，後續 wait 指令要手動拼 id + `--cd`，中間任何複製錯誤都是 usage error。
+3. NO-GO 時 `gate wait` exit 1，在背景任務完成通知裡顯示成 "command failed"，與真正執行錯誤難以區分——verdict 的 source of truth 是 result 檔 `Final:` 行（[[feedback_gate_verdict_source_of_truth]]），wait 卻不印它。
+
+**Requirement**:
+1. **wait `--cd` 改選填**：缺席時預設 CWD git toplevel（非 git 目錄 fallback `$PWD`）；`gate run` 的 `--cd` 預設同步改為同一推導，確保 run/wait 兩端獨立重算出同一個 run-dir partition。顯式 `--cd` 行為不變。
+2. **run 印可複製的 wait 指令**：detached 啟動後在 stderr 印一行完整的 `pmctl gate wait <gate_id> --cd <path>`（stdout 維持只印 gate_id 一行——ship/pr-gate 等既有消費者以 stdout 捕捉 id，契約不得破壞）。
+3. **wait 印 verdict 摘要**：sentinel 完成且 result 通過 `gate_result_verify` 後，把 result 檔的 `Final: GO|NO-GO` 行原樣印到 stdout；NO-GO 時另在 stderr 明示這是 gate verdict（exit 1）而非執行錯誤。exit code 分層維持既有語意並在函式註解明文化：0=GO、1=NO-GO、2=usage/整全性錯誤、3=indeterminate、124=timeout。
+
+**邊界**: 不動 sentinel/nonce 機制、不動 `gate_result_verify` 契約、不加新 flag；`commands/pr-gate.md` 的 wait 說明同步更新（不含票號）。
+
+**Dependencies**: 無。獨立 PR（使用者 2026-07-06 指示）。
+**Source**: 使用者 2026-07-06「pmctl gate wait 這段流程很容易執行錯誤，下一個 session 優先處理」。
 
 ---
 

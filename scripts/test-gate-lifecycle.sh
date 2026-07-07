@@ -191,13 +191,18 @@ case_detached_launch_returns_gate_id() {
   local run_wrapper="$tmp_root/c1/run"
   _run_gate_wrapper "$fixture" "$run_wrapper"
 
-  local out code
-  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>&1)"; code=$?; set -e
+  local out code err_file="$tmp_root/c1/run.err"
+  set +e; out="$("$run_wrapper" --cd "$work" --lifecycle detached 2>"$err_file")"; code=$?; set -e
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+  # stdout stays a single bare gate_id (command-substitution contract); the
+  # ready-to-paste `pmctl gate wait <id> --cd <path>` hint lands on stderr.
+  local err_out; err_out="$(cat "$err_file" 2>/dev/null)"
+  if [[ "$code" -eq 0 ]] \
+     && [[ "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]] \
+     && [[ "$err_out" == *"pmctl gate wait $out --cd"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out"
+    fail "$name" "code=$code out=$out err=$err_out"
   fi
 }
 
@@ -522,7 +527,7 @@ case_wait_fails_on_cd_partition_mismatch() {
 # ---- 11: gate wait usage-error contract (invalid timeout / gate_id / --cd) ---
 case_wait_usage_errors() {
   # CC-423 pr-gate finding (qa-tester, medium): the wait input-validation
-  # branches (invalid --timeout, invalid gate_id, missing --cd) had no direct
+  # branches (invalid --timeout, invalid gate_id, bare --cd) had no direct
   # coverage in this suite.
   local name="gate-lifecycle/gate wait rejects malformed usage (exit 2)"
   should_run "$name" || return 0
@@ -548,9 +553,11 @@ case_wait_usage_errors() {
     return
   fi
 
-  set +e; out="$("$wait_wrapper" gate-20260101-000000-abcdef 2>&1)"; code=$?; set -e
-  if [[ "$code" -ne 2 ]] || [[ "$out" != *"--cd <work_dir> is required"* ]]; then
-    fail "$name" "missing --cd: code=$code out=$out"
+  # --cd is now optional (defaults to the caller's CWD git toplevel / $PWD),
+  # so a bare `--cd` with no value is the remaining usage error on that flag.
+  set +e; out="$("$wait_wrapper" gate-20260101-000000-abcdef --cd 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 ]] || [[ "$out" != *"missing value for --cd"* ]]; then
+    fail "$name" "bare --cd without value: code=$code out=$out"
     return
   fi
 
