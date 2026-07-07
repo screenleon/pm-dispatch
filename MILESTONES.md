@@ -25,10 +25,11 @@
 | CC-437 | doctor 擴充切片：拆通用核心檢查 vs host-specific 模組介面，以 capability 為單位呈現；可與 CC-436 並行 | ✅ |
 | CC-448（階段 1） | opencode host probe（唯讀，鏡像 CC-436）：hook/plugin 機制有無 PreToolUse 等價事件、payload 表達力、fail-closed 可行性；結論寫 `docs/spikes/CC-448.md`；與 CC-436/437 並行先跑 | ✅ |
 | CC-438 | host manifest schema v1：`hosts/codex/host.yaml` draft（install target/format、hook surface、guard bindings…）；依賴 CC-436 payload 結果，schema 定案須同時吃進 CC-448 階段 1 的 opencode probe 結果，不得 codex 特例 | ✅ |
-| CC-445 | install write path host-aware：由 host manifest 衍生接線、host-generic（`hosts/*/host.yaml` 驅動）；claude 路徑 byte-compatible；含 claude-host 殘餘耦合盤點（usage-log 硬編路徑）；依賴 CC-436/438 | 🔵 |
+| CC-457 | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema，validator 納入 + doctor capability 一致性檢核；不動 install write path（接線歸 CC-445），作為 CC-445 claude byte-compatible 驗收的 reference instance（2026-07-07 使用者指出三 host 維護不對齊） | 🔵 |
+| CC-445 | install write path host-aware：由 host manifest 衍生接線、host-generic（`hosts/*/host.yaml` 驅動）；claude 路徑 byte-compatible（以 CC-457 manifest 為驗收基準）；含 claude-host 殘餘耦合盤點（usage-log 硬編路徑）；依賴 CC-436/438 | 🔵 |
 | CC-448（階段 2+3） | `hosts/opencode/host.yaml`（依 CC-438 schema）+ doctor/install 接線；N=2 驗收紅線：核心零改動、僅新增 `hosts/opencode/` 內容，做不到即回頭修抽象；probe 若判定 guard 不可承接則 fallback cli-only 並在 host manifest 明宣告 | 🔵 |
 
-> 順序：CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-445 → CC-448 階段 2+3。本 Phase 驗收面（DECISIONS 2026-07-06）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留。
+> 順序：CC-436、CC-437、CC-448 階段 1 三者並行先行 → CC-438（雙 probe 結果共同定案 schema）→ CC-457（claude 宣告面，純 additive 可先行）→ CC-445 → CC-448 階段 2+3。本 Phase 驗收面（DECISIONS 2026-07-06）：**codex 與 opencode 雙 host** 各自通過 sandbox install → doctor 全綠 → guard 實攔一次違規（或明宣告 cli-only）→ uninstall 無殘留。
 
 ### Phase 2 — 證據層（P2；與 Phase 1 檔案面大致不重疊，可並行）
 

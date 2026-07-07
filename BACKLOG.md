@@ -18,6 +18,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
 | CC-455 | ✅ closed 2026-07-06 | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | pr:#371 | P2 | — |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
+| CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -540,6 +541,23 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 無硬前置；宜在 [[CC-447]] offline smoke 之前或同批完成，讓 smoke 直接驗證。與 [[CC-445]]（install write path）檔案面部分重疊（install/env 慣例），排程時注意順序。v0.9.0。
 **Source**: 維護者 2026-07-06「`~/github/` 是我本地的使用方式，不代表其他使用者」；主線程同日全 repo 盤點。
+
+---
+
+## CC-457 — claude host manifest 化：`hosts/claude/host.yaml` reference instance 🔵 active
+
+**Problem**（2026-07-07 維護者指出）: [[CC-438]] 交付 host manifest schema v1 後，`hosts/` 只有 `hosts/codex/host.yaml`。claude 作為原生 host，install/uninstall 的檔案佈局（commands/agents/skills/hooks 寫入 `~/.claude/...`）仍散在 `install.sh` 硬編碼，doctor 側雖已有 `scripts/lib/doctor-host-claude.sh` host module（[[CC-437]]），但宣告面（capability/guard_bindings/install_targets/uninstall_module）沒有 claude instance。三 host（claude/codex/opencode）維護面不對齊：改 schema 或接線時 claude 永遠走特例路徑，後續每張 host 軸票都要為 claude 另寫一份心智模型。
+
+**Why**: claude 是能力最完整、confidence 最高的 host（PreToolUse hook 原生、payload 欄位齊、fail-closed 已驗證），最適合當 schema 的 reference instance——先宣告它能回頭驗證 CC-438 schema 表達力是否足夠（吃得下最完整的 host 才算 schema 成立）。同時 [[CC-445]]（install write path host-generic：`hosts/*/host.yaml` 驅動、claude 路徑 byte-compatible）需要一份 claude manifest 作為 byte-compatible 驗收的 source of truth，否則「host-generic」實際上只涵蓋 codex/opencode，claude 仍是隱形特例。
+
+**Requirement**:
+1. `hosts/claude/host.yaml`：依 `docs/host-contract.md` schema v1 完整宣告 claude host——install_targets（commands/agents/skills/hooks 各寫入點，path 以 env-var 錨定）、capability（七欄位與 `doctor-host-claude.sh` emit_capability 對齊，confidence 反映原生實測）、guard_bindings（PreToolUse hook-script form）、uninstall_module、permissions_surface。
+2. `scripts/test-host-manifest.sh` validator 納入 claude instance（含 claude 特有欄位組合的負向案例）；schema 表達力不足處回頭修 contract（版內允許，schema 尚未凍結）。
+3. doctor capability 輸出與 manifest 宣告一致性檢核（宣告 vs 實測不符要可觀察，形式參照 CC-437 介面）。
+4. **不動 install.sh write path**——接線歸 [[CC-445]]；本票只交付宣告面 + validator + 一致性檢核，CC-445 落地時以本 manifest 為 claude 驗收基準。
+
+**Dependencies**: [[CC-438]] ✅（schema v1 已定案）。與 [[CC-445]] 同鏈：本票先行（純 additive、低風險），CC-445 接線時引用。v0.9.0 host 軸。
+**Source**: 維護者 2026-07-07「claude 的 host 也需要調整成新的架構，不然後續維護會相對不對齊」。
 
 ---
 
