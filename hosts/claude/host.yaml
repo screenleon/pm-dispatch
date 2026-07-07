@@ -160,7 +160,7 @@ permissions_surface:
   managed: true
 
 # Host-module wiring. doctor_module must exist. uninstall_module is non-null
-# (unlike codex/opencode) because claude already has a live, manifest-driven
-# install write path with a matching uninstall path.
+# (unlike codex/opencode) because claude already has a live install write
+# path (install.sh, not yet manifest-driven) with a matching uninstall path.
 doctor_module: scripts/lib/doctor-host-claude.sh
 uninstall_module: uninstall.sh
