@@ -333,6 +333,31 @@ run_negative_case() {
   fi
 }
 
+# run_negative_case_on <ref_manifest> <host_dir> <case_name> <sed_mutation> <expected_substring>
+# Same shape as run_negative_case, but against an arbitrary manifest/host_dir
+# pair — used to exercise field combinations unique to a specific host (e.g.
+# claude's symlink-tree install targets, host_native/config-fragment
+# pm_command_interface binding, non-null uninstall_module) rather than
+# re-mutating the codex fixture for every enum.
+run_negative_case_on() {
+  local ref_manifest="$1" host_dir="$2" case_name="$3" mutation="$4" expected="$5"
+  local name="negative ($host_dir): $case_name is rejected"
+  should_run "$name" || return 0
+  local mutated="$tmp_root/host-$host_dir.yaml"
+  sed -E "$mutation" "$ref_manifest" > "$mutated"
+  if cmp -s "$ref_manifest" "$mutated"; then
+    fail "$name" "mutation did not change the fixture (sed: $mutation)"
+    return 0
+  fi
+  local violations
+  violations="$(validate_manifest "$mutated" "$host_dir")"
+  if [[ "$violations" == *"$expected"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected violation containing '$expected', got: $(printf '%s' "$violations" | tr '\n' '; ')"
+  fi
+}
+
 run_negative_case "missing top-level guard_bindings" \
   's/^guard_bindings:/guard_bindingz:/' \
   "missing top-level key: guard_bindings"
@@ -433,6 +458,31 @@ run_negative_case "empty uninstall_module" \
 run_negative_case "ticket reference in manifest" \
   's/^host_binary: codex/host_binary: codex # CC-999/' \
   "manifest contains ticket references"
+
+# --- claude-specific field-combination negative cases -----------------------
+# claude is the only manifest today with symlink-tree install targets, a
+# host_native/config-fragment pm_command_interface binding, and a non-null
+# uninstall_module — mutate those unique combinations directly rather than
+# only re-mutating the codex fixture's fields.
+
+REF_MANIFEST_CLAUDE="$REPO_ROOT/hosts/claude/host.yaml"
+
+run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
+  "install target format symlink-tree outside closed enum" \
+  's/format: symlink-tree/format: file-tree/' \
+  "format 'file-tree' not in closed enum"
+run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
+  "pm_command_interface provider host_native outside closed enum" \
+  's/provider: host_native/provider: host_original/' \
+  "provider 'host_original' not in closed enum"
+run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
+  "permissions_surface config_target referencing unknown id" \
+  's/config_target: settings/config_target: config/' \
+  "config_target 'config' does not reference an install_targets id"
+run_negative_case_on "$REF_MANIFEST_CLAUDE" claude \
+  "non-null uninstall_module pointing at missing file" \
+  's|^uninstall_module: uninstall.sh|uninstall_module: uninstall-missing.sh|' \
+  "uninstall_module 'uninstall-missing.sh' not found"
 
 # Duplicate-capability case: all five capabilities stay present and every
 # entry keeps a complete field tuple, so the ONLY violation is the

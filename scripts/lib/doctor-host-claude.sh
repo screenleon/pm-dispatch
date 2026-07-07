@@ -353,6 +353,85 @@ _doctor_host_claude_capabilities() {
   fi
 }
 
+# Extracts a single field's value from one capability entry of
+# hosts/claude/host.yaml's guard_bindings list. Deliberately grep/awk-based
+# (no YAML parser dependency), mirroring the block-extraction approach
+# scripts/test-host-manifest.sh already uses for the same file.
+_doctor_host_claude_manifest_field() {
+  local capability="$1" field="$2"
+  local manifest="$REPO_ROOT/hosts/claude/host.yaml"
+  [[ -f "$manifest" ]] || return 1
+  awk -v cap="$capability" -v field="$field" '
+    /^[[:space:]]*-[[:space:]]*capability:/ {
+      in_block = ($NF == cap)
+      next
+    }
+    in_block && $0 ~ ("^[[:space:]]+" field ":") {
+      sub("^[[:space:]]+" field ":[[:space:]]*", "")
+      sub("[[:space:]]*#.*$", "")
+      print
+      exit
+    }
+  ' "$manifest"
+}
+
+# Declared-vs-probed consistency check (docs/host-contract.md "Declared /
+# probed / effective layering"): hosts/claude/host.yaml's guard_bindings is
+# the DECLARED layer; the capability probes above are the PROBED layer. This
+# only compares the two layers for a capability that IS currently wired —
+# "not installed yet" is a normal, already-surfaced state (the capability
+# warn above), not a manifest defect, so it is intentionally not flagged
+# here. What this catches instead: hosts/claude/host.yaml edited to declare
+# a different provider/enforcement/coverage than what a live, wired
+# environment actually probes to — drift between the static file and
+# reality must be observable, not silent, per the same design rule the
+# doctor capability view itself was built on.
+_doctor_host_claude_check_manifest_consistency() {
+  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  if [[ ! -f "$REPO_ROOT/hosts/claude/host.yaml" ]]; then
+    emit_check host.claude.manifest-consistency warn \
+      "hosts/claude/host.yaml missing — cannot check declared/probed consistency"
+    return
+  fi
+  if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]] \
+    || ! command -v jq >/dev/null 2>&1; then
+    emit_check host.claude.manifest-consistency warn \
+      "manifest-consistency check skipped (settings.json unreadable or jq missing)"
+    return
+  fi
+
+  local -a drift=()
+  local declared
+
+  if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
+    declared="$(_doctor_host_claude_manifest_field session_lifecycle provider)"
+    [[ "$declared" == "host_hook" ]] || drift+=("session_lifecycle: wired but manifest declares provider '$declared' (expected host_hook)")
+    declared="$(_doctor_host_claude_manifest_field session_lifecycle enforcement)"
+    [[ "$declared" == "advisory" ]] || drift+=("session_lifecycle: wired but manifest declares enforcement '$declared' (expected advisory)")
+  fi
+
+  if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/pm.md" ]]; then
+    declared="$(_doctor_host_claude_manifest_field pm_command_interface provider)"
+    [[ "$declared" == "host_native" ]] || drift+=("pm_command_interface: installed but manifest declares provider '$declared' (expected host_native)")
+  fi
+
+  if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
+    declared="$(_doctor_host_claude_manifest_field statusline provider)"
+    [[ "$declared" == "host_hook" ]] || drift+=("statusline: wired but manifest declares provider '$declared' (expected host_hook)")
+    declared="$(_doctor_host_claude_manifest_field statusline enforcement)"
+    [[ "$declared" == "advisory" ]] || drift+=("statusline: wired but manifest declares enforcement '$declared' (expected advisory)")
+  fi
+
+  if [[ "${#drift[@]}" -gt 0 ]]; then
+    emit_check host.claude.manifest-consistency fail \
+      "declared vs probed mismatch: ${drift[*]}" \
+      "revise hosts/claude/host.yaml to match the wired capability (or fix the wiring if the manifest is right)"
+  else
+    emit_check host.claude.manifest-consistency ok \
+      "hosts/claude/host.yaml guard_bindings match probed capability state (for capabilities currently wired)"
+  fi
+}
+
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_claude_run() {
   _doctor_host_claude_check_settings_file
@@ -360,4 +439,5 @@ doctor_host_claude_run() {
   _doctor_host_claude_check_dispatch_allowlist
   _doctor_host_claude_check_manifest
   _doctor_host_claude_capabilities
+  _doctor_host_claude_check_manifest_consistency
 }
