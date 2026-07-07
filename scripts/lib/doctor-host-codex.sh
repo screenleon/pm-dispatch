@@ -43,6 +43,47 @@ _doctor_host_codex_hooks() {
   fi
 }
 
+# Declared-vs-installed parity check: hosts/codex/host.yaml's
+# install_targets is the DECLARED layer (docs/host-contract.md); this reports
+# which managed targets are present on disk under $CODEX_HOME. Distinct from
+# claude's declared-vs-PROBED consistency check (doctor-host-claude.sh) — codex
+# has no equivalent live-capability probe yet, only a file-presence fact.
+# codex-host wiring is opt-in (install.sh --enable-codex-command-guard), so a
+# missing managed target is the DEFAULT, expected state, not a defect — this
+# stays `ok` the same way _doctor_host_codex_hooks() above treats an absent
+# hooks.json as ok, never warn/fail. Only a broken checkout (manifest or
+# host-manifest.sh missing) warrants a warn.
+_doctor_host_codex_manifest_parity() {
+  if [[ "${_HOST_MANIFEST_AVAILABLE:-0}" -ne 1 ]]; then
+    emit_check host.codex.manifest-parity warn \
+      "scripts/lib/host-manifest.sh unavailable — cannot check declared-vs-installed parity"
+    return
+  fi
+  local manifest="$REPO_ROOT/hosts/codex/host.yaml"
+  if [[ ! -f "$manifest" ]]; then
+    emit_check host.codex.manifest-parity warn \
+      "hosts/codex/host.yaml missing — cannot check declared-vs-installed parity"
+    return
+  fi
+
+  local -a present=() missing=()
+  local id path fmt managed expanded
+  # shellcheck disable=SC2034  # fmt is part of the fixed TSV shape; unused here (no format filter needed)
+  while IFS=$'\t' read -r id path fmt managed; do
+    [[ "$managed" == "true" ]] || continue
+    expanded="$(host_manifest_expand_path "$path")"
+    if [[ -e "$expanded" ]]; then present+=("$id"); else missing+=("$id"); fi
+  done < <(host_manifest_install_targets "$manifest")
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    emit_check host.codex.manifest-parity ok \
+      "all managed hosts/codex/host.yaml install_targets present on disk (${present[*]:-none declared managed})"
+  else
+    emit_check host.codex.manifest-parity ok \
+      "managed install_target(s) not yet installed: ${missing[*]} (expected default — codex-host wiring is opt-in via install.sh --enable-codex-command-guard)"
+  fi
+}
+
 # Host-module entry point (required by doctor.sh's generic loader).
 doctor_host_codex_run() {
   if ! codex_available; then
@@ -55,4 +96,5 @@ doctor_host_codex_run() {
     host_native none full evolving probed \
     "codex binary on PATH"
   _doctor_host_codex_hooks
+  _doctor_host_codex_manifest_parity
 }

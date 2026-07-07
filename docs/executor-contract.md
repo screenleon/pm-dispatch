@@ -171,7 +171,7 @@ The surface is **fail-closed**: a success exit (`0`) always means a registered p
 |---|---|
 | `0` | a registered policy ran and **allowed** the action |
 | `2` | usage error (bad/missing flags) **or** a registered policy **denied** the action (the hook's own deny exit is propagated) |
-| `3` | request recognized but **no policy registered** to evaluate it — `pm/pre-bash` (project-pm never runs Bash), `executor` + `runtime=claude` + `pre-bash` (claude headless subprocess governs its own Bash via `--permission-mode`; pm-dispatch registers no executor bash policy for claude), and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". |
+| `3` | request recognized but **no policy registered** to evaluate it — `executor` + `runtime=claude` + `pre-bash` (claude headless subprocess governs its own Bash via `--permission-mode`; pm-dispatch registers no executor bash policy for claude), `executor` + any other runtime + `pre-bash` (no adapter needs one today), and the reserved-but-unimplemented `post-task` event. Distinct from `2` so a caller can tell "I cannot enforce this" apart from "this was denied". `pm/pre-bash` DOES have a registered policy (`guard-pm-bash.sh`, a curated denylist — codex-as-host runs Bash directly, unlike claude's project-pm subagent), so it now returns `0`/`2`, not `3`. |
 
 ### `pmctl guard check` vs `pmctl safe bash`
 

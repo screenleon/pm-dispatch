@@ -26,19 +26,25 @@
 # the agent_type map + the registry below — role-keyed, not per-(role,runtime).
 #
 # Fail-closed: a guard must never report success without evaluating a policy.
-# Any recognized cell that has no registered policy — e.g. `pm/pre-bash`
-# (project-pm never runs Bash), `executor(claude)/pre-bash` (claude headless
-# subprocess governs its own Bash via --permission-mode; no pm-dispatch bash policy), or the reserved-but-unimplemented
-# `post-task` event — returns a non-zero deny, NOT a silent allow. A success exit
-# from this surface always means "a policy ran and permitted the action".
+# Any recognized cell that has no registered policy — e.g.
+# `executor(claude)/pre-bash` (claude headless subprocess governs its own Bash
+# via --permission-mode; no pm-dispatch bash policy), `executor/pre-bash` for
+# any other runtime (no adapter needs one today), or the reserved-but-
+# unimplemented `post-task` event — returns a non-zero deny, NOT a silent
+# allow. `pm/pre-bash` DOES have a registered policy (guard-pm-bash.sh, a
+# curated denylist — see that script's header): a codex-hosted PM runs Bash
+# directly, unlike claude's project-pm subagent which never does. A
+# success exit from this surface always means "a policy ran and permitted the
+# action".
 #
 # Exit-code contract:
 #   0 — a registered policy ran and ALLOWED the action
 #   2 — usage error (bad/missing flags), or a registered policy DENIED the action
 #       (the underlying hook's own exit 2 is propagated verbatim)
 #   3 — fail-closed: the request is recognized but NO policy is registered to
-#       evaluate it (pm/pre-bash, executor(claude)/pre-bash, post-task). Distinct
-#       from 2 so a caller can tell "I cannot enforce this" apart from "denied".
+#       evaluate it (executor(claude)/pre-bash, executor(other)/pre-bash,
+#       reviewer/pre-bash, post-task). Distinct from 2 so a caller can tell "I
+#       cannot enforce this" apart from "denied".
 
 pmctl_guard_check() {
   local repo_root event="" role="" runtime="" file="" cmd_arg=""
@@ -245,9 +251,11 @@ pmctl_guard_check() {
           return 3
           ;;
         pm)
-          # project-pm is a planner that never runs Bash → fail closed.
-          printf 'pmctl guard check: no guard policy registered for role=pm event=pre-bash — denying\n' >&2
-          return 3
+          # [role-based] On claude, project-pm never runs Bash itself, so this
+          # is dormant there. On a codex-hosted PM, the PM session IS the one
+          # running Bash — guard-pm-bash.sh's denylist policy applies
+          # regardless of runtime.
+          hook="guard-pm-bash.sh"
           ;;
         reviewer)
           # Reviewers read diff and write findings — no arbitrary bash policy.

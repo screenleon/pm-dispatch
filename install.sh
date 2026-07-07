@@ -17,16 +17,32 @@
 #
 # --verify runs all preflight test suites before installing.
 #   Skipped by default; recommended when contributing or after updating.
+#
+# --enable-codex-command-guard opts into wiring scripts/hook-codex-command-guard.sh
+#   into $CODEX_HOME/hooks.json (see hosts/codex/host.yaml). OFF BY DEFAULT and NOT
+#   auto-detected from codex-on-PATH the way --profile is: unlike claude's
+#   settings.json, hooks.json is GLOBAL to every codex session on the machine,
+#   not scoped to pm-dispatch. The guard policy (scripts/guard-pm-bash.sh) is a
+#   curated denylist of destructive/hard-to-reverse commands (rm -rf, force
+#   push, sudo, ...) applied to EVERY Bash call in EVERY codex session on this
+#   machine once wired — not just pm-dispatch ones. Auto-wiring it from mere
+#   codex-on-PATH would silently change behavior for the user's unrelated
+#   codex usage without their opt-in, so this stays an explicit flag. This
+#   mirrors hosts/claude/host.yaml's own command_guard, which stays undeclared
+#   for the analogous reason (no host-level Bash guard for claude's own
+#   session either).
 
 set -euo pipefail
 
 DRY_RUN=0
 VERIFY=0
 PROFILE=""
+ENABLE_CODEX_COMMAND_GUARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --verify) VERIFY=1; shift ;;
+    --enable-codex-command-guard) ENABLE_CODEX_COMMAND_GUARD=1; shift ;;
     --profile)
       [[ $# -ge 2 ]] || { echo "install: --profile requires a value" >&2; exit 2; }
       PROFILE="$2"
@@ -488,6 +504,21 @@ echo
 echo "==> dispatch permissions.allow"
 install_dispatch_allowlist
 echo
+
+# codex-as-host wiring (hosts/codex/host.yaml driven; see scripts/install-guards-codex.sh).
+# Opt-in only via --enable-codex-command-guard — NEVER auto-detected from codex
+# being on PATH (see the flag's header comment: hooks.json is global to every
+# codex session on the machine, and the only registered guard policy denies all
+# bash unconditionally today).
+if [[ "$ENABLE_CODEX_COMMAND_GUARD" -eq 1 ]]; then
+  echo "==> codex host"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    bash "$REPO_ROOT/scripts/install-guards-codex.sh" --dry-run
+  else
+    bash "$REPO_ROOT/scripts/install-guards-codex.sh"
+  fi
+  echo
+fi
 
 if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo

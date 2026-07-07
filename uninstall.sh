@@ -352,6 +352,20 @@ else
   CLAUDE_HOME="$CLAUDE_HOME" bash "$REPO_ROOT/scripts/uninstall-guards.sh"
 fi
 
+# codex-as-host symmetric teardown (see install.sh's "codex host" step).
+# Gated on codex_available so uninstall on a machine without codex never touches
+# a stray $CODEX_HOME; if codex is present but was never wired, the script is
+# already idempotent ("not wired, nothing to do"). Also requires the script to
+# exist so a partial/copy-mode checkout (or a test fixture repo copying only a
+# subset of scripts/) degrades gracefully instead of erroring.
+if codex_available && [[ -f "$REPO_ROOT/scripts/uninstall-guards-codex.sh" ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" --dry-run
+  else
+    bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh"
+  fi
+fi
+
 if [[ "$DRY_RUN" -ne 1 ]]; then
   if [[ "$safety_skipped" -eq 0 ]]; then
     rm -rf "$CLAUDE_HOME/.pm-dispatch"

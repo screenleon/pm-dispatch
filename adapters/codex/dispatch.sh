@@ -343,7 +343,11 @@ if [[ "$EXIT" -eq 0 && -f "$TRACE" ]]; then
     # existing routing semantics in the PM dispatch contract and existing tests.
     [[ "${MODEL:-}" == *spark* ]] && _POOL="spark"
     _NOTE="auto: $(basename "$WORK_DIR")"
-    bash "${HOME}/.claude/scripts/log-usage.sh" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
+    # PM_CFG_USAGE_LOG_PATH (dispatch.usage_log_path in ~/.pm-dispatch/config,
+    # exported by pmctl-dispatch.sh) overrides the claude-host-assumed default
+    # path below — set it when the PM's own host is not claude
+    # (docs/host-contract.md).
+    bash "${PM_CFG_USAGE_LOG_PATH:-${HOME}/.claude/scripts/log-usage.sh}" "codex_dispatch" "$_CODEX_TOKENS" "$_NOTE" "" "$_POOL" 2>>"$STDERR_LOG" || \
       echo "[$(date -Is)] codex-dispatch: usage log failed (pool=$_POOL tokens=$_CODEX_TOKENS)" \
         >> "$STDERR_LOG"
   fi

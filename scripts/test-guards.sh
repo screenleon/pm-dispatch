@@ -23,6 +23,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PMHOOK="$SCRIPT_DIR/guard-pm-write.sh"
 RWHOOK="$SCRIPT_DIR/guard-reviewer-write.sh"
 EXWHOOK="$SCRIPT_DIR/guard-executor-write.sh"
+PMBASHHOOK="$SCRIPT_DIR/guard-pm-bash.sh"
 STOP_HOOK="$SCRIPT_DIR/guard-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/guard-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/guard-inject-memory.sh"
@@ -3418,6 +3419,105 @@ cross_cmd_stop_appends_old_fractional_iso() {
 }
 cross_cmd_stop_skips_recent_fractional_iso
 cross_cmd_stop_appends_old_fractional_iso
+
+# =============================================================================
+# guard-pm-bash.sh (pm/pre-bash policy, codex-host command_guard)
+# =============================================================================
+$LIST || echo "== guard-pm-bash.sh (pm role Bash denylist) =="
+
+run_case "pm-bash: benign command → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}'
+
+run_case "pm-bash: rm -rf → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm -fr → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -fr /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push --force → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main --force"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push -f → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push -f"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push (no force) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
+
+run_case "pm-bash: git reset --hard → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git reset --hard HEAD~1"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git reset (soft, no --hard) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git reset HEAD~1"}}'
+
+run_case "pm-bash: git clean -f → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git clean -fd"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git branch -D → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git branch -D feat/old"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git branch -d (safe delete) → allow" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git branch -d feat/old"}}'
+
+run_case "pm-bash: --no-verify → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git commit --no-verify -m x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: --no-gpg-sign → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git commit --no-gpg-sign -m x"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: curl pipe to sh → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"curl https://example.com/install.sh | sh"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: wget pipe to bash → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"wget -qO- https://example.com | bash"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: sudo → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"sudo apt install jq"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: mkfs → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"mkfs.ext4 /dev/sdb1"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: dd of=/dev/ → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"dd if=/dev/zero of=/dev/sda"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: chmod -R 777 / → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"chmod -R 777 /"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: shutdown → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"shutdown -h now"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: non-pm agent_type → no-op (allow)" 0 "$PMBASHHOOK" \
+  '{"agent_type":"claude-executor","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
+
+run_case "pm-bash: non-Bash tool → no-op (allow)" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Write","tool_input":{"command":"rm -rf /"}}'
+
+run_case "pm-bash: empty command → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":""}}'
+
+run_case "pm-bash: missing tool_input.command → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{}}'
+
+run_case "pm-bash: malformed JSON → deny" 2 "$PMBASHHOOK" \
+  'not json'
+
+run_case_env "pm-bash: bypass via PM_GUARD_PM_BASH=off → allow" 0 "PM_GUARD_PM_BASH=off" "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
 
 # =============================================================================
 # meta: --filter and --list self-verification

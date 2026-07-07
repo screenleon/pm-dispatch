@@ -56,6 +56,14 @@ else
   _RUNNER_KIND_AVAILABLE=0
 fi
 
+if [[ -f "$SCRIPT_DIR/lib/host-manifest.sh" ]]; then
+  # shellcheck source=scripts/lib/host-manifest.sh
+  . "$SCRIPT_DIR/lib/host-manifest.sh"
+  _HOST_MANIFEST_AVAILABLE=1
+else
+  _HOST_MANIFEST_AVAILABLE=0
+fi
+
 # Host modules: each scripts/lib/doctor-host-<name>.sh declares a
 # doctor_host_<name>_run() entry point with that host's checks and capability
 # probes. The core discovers modules by glob and dispatches generically, so

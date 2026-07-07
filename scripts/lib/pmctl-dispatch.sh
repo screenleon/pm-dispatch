@@ -1359,7 +1359,7 @@ pmctl_dispatch_run() {
   #     unknown env vars. pm_config_load is guarded so test environments that did
   #     not source pmctl-config.sh degrade silently rather than hitting exit 127.
   # shellcheck disable=SC2163
-  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK
+  export PM_CFG_TIMEOUT PM_CFG_DEFAULT_MODEL PM_CFG_AUTO_PACK PM_CFG_USAGE_LOG_PATH
 
   # 5. Execute. Foreground runs the tail in-process (blocking). Detached persists
   #    a run-spec, snapshots the brief durably, and hands the post-preflight tail

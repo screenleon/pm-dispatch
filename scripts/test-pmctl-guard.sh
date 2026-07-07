@@ -9,15 +9,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Keying is role×runtime (CC-291): guard cares about --role (pm|executor|reviewer);
 # the --runtime axis (codex|claude) is consulted only where a role's policy differs
 # by runtime.
-# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, claude-prewrite-allow, reviewer-prewrite-allow (all via `cli/pmctl guard check --role/--runtime`)
-# 2. Boundary values: post-task-fail-closed (reserved event → exit 3), pm-prebash-fail-closed + claude-prebash-fail-closed + codex-prebash-fail-closed (no policy cell → exit 3), prewrite-empty-file-passthrough-deny
+# 1. Happy path: codex-prewrite-allow, pm-prewrite-allow, claude-prewrite-allow, reviewer-prewrite-allow, pm-prebash-allow (all via `cli/pmctl guard check --role/--runtime`)
+# 2. Boundary values: post-task-fail-closed (reserved event → exit 3), claude-prebash-fail-closed + codex-prebash-fail-closed (executor role, no policy cell → exit 3), prewrite-empty-file-passthrough-deny
 # 3. Negative inputs (usage errors, exit 2): unknown-role, unknown-runtime-fails-closed, invalid-runtime-traversal, executor-missing-runtime, pm-missing-runtime, pm-invalid-runtime, reviewer-missing-runtime, reviewer-invalid-runtime, role-missing-value, runtime-missing-value, unknown-event, missing-event, missing-role, unknown-flag, missing-event-value, prewrite-missing-file-flag, prewrite-rejects-command-flag, hook-not-executable, missing-repo-root, jq-missing
-# 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny
+# 4. Error paths (policy deny, exit 2): codex-prewrite-deny, pm-prewrite-deny, pm-prebash-deny
 # 5. State transitions: N/A - guard check is a stateless per-call decision; no persisted state machine in the SUT
 # 6. Concurrency / race conditions: N/A - each invocation is an isolated subprocess synthesizing its own JSON; no shared mutable state
 # 7. Side effects: prewrite-no-mutation - a pre-write check never creates the target file
 # 8. Resource lifecycle: N/A - no persistent handles beyond process-scoped jq/hook subprocesses
-# 9. Security: this IS the security surface - fail-closed cells (post-task-fail-closed, pm-prebash-fail-closed, claude-prebash-fail-closed) assert no silent allow; the fail-OPEN regression (claude-prewrite-nonbrief-deny) proves a non-brief claude pre-write is DENIED by the runtime-matched hook, not silently allowed by driving the wrong hook; deny cases assert the policy blocks; r2-equiv-* asserts the CLI is the same code path as the proven hooks
+# 9. Security: this IS the security surface - fail-closed cells (post-task-fail-closed, claude-prebash-fail-closed, codex-prebash-fail-closed for the executor role) assert no silent allow; pm-prebash-deny asserts the registered pm-role denylist policy actually blocks (not fail-closed-by-absence); the fail-OPEN regression (claude-prewrite-nonbrief-deny) proves a non-brief claude pre-write is DENIED by the runtime-matched hook, not silently allowed by driving the wrong hook; r2-equiv-* asserts the CLI is the same code path as the proven hooks
 # 10. Performance / scale boundaries: N/A - no published performance contract for the guard surface; this suite is behavioral
 # 11. Contract / interface compatibility: cli-unknown-sub - the cli/pmctl dispatch contract; the happy/deny cases above also exercise the real `cli/pmctl guard check` entry point
 # 12. Backward compatibility / migration: r2-equiv-* asserts the CLI produces identical allow/deny to the existing hooks (R2: equivalence-before-thinning)
@@ -227,12 +227,23 @@ fi
 # 2. Boundary values
 # ---------------------------------------------------------------------------
 
-if should_run "pm-prebash-fail-closed"; then
-  # pm/pre-bash has no policy (project-pm never runs Bash) → fail closed (exit 3).
-  name="pm-prebash-fail-closed"
-  run_guard --event pre-bash --role pm --runtime claude --command "ls"
-  if assert_exit "$name" "$GUARD_EXIT" "3" &&
-    assert_string_contains "$name" "$GUARD_OUT" "no guard policy registered for role=pm event=pre-bash"; then
+if should_run "pm-prebash-allow"; then
+  # pm/pre-bash has a real policy (guard-pm-bash.sh, a curated denylist) — a
+  # codex-hosted PM runs Bash directly, unlike claude's project-pm subagent
+  # which never does. Benign commands allow.
+  name="pm-prebash-allow"
+  run_guard --event pre-bash --role pm --runtime codex --command "ls"
+  assert_exit "$name" "$GUARD_EXIT" "0" && pass "$name"
+fi
+
+if should_run "pm-prebash-deny"; then
+  # Denylisted destructive pattern → exit 2 (policy ran and denied), not the
+  # exit 3 "no policy registered" fail-closed code — this cell has a real
+  # registered policy.
+  name="pm-prebash-deny"
+  run_guard --event pre-bash --role pm --runtime codex --command "rm -rf /tmp/whatever"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
     pass "$name"
   fi
 fi
