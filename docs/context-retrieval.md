@@ -99,6 +99,8 @@ text, scan error, timeout) exits 0 silently. It also runs with
 `PM_DISPATCH_CONTEXT_AUTOBUILD=0`, so a repo with no index yet is never given a
 first full index build on the interactive prompt path — build one explicitly
 with `pmctl context index`. Incremental refresh of an existing DB stays on.
+The scan is bounded by a 10-second timeout; override with
+`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=<seconds>` when a slower bound is needed.
 
 Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
 this whenever the live context DB must not be touched — for example while the

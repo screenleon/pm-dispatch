@@ -52,10 +52,14 @@ fi
 
 # AUTOBUILD=0: never trigger a first full index build on the interactive prompt
 # path (repos without an index stay silent); incremental refresh of an existing
-# DB stays on. The timeout bounds prompt latency on slow repos.
+# DB stays on. The timeout bounds prompt latency on slow repos; override via
+# PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT (seconds) when a slower bound is needed
+# (e.g. tests on a CPU-saturated machine).
+_timeout_secs="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-10}"
+[[ "$_timeout_secs" =~ ^[0-9]+$ ]] || _timeout_secs=10
 _runner=(bash "$pmctl_cli")
 if command -v timeout >/dev/null 2>&1; then
-  _runner=(timeout 10 bash "$pmctl_cli")
+  _runner=(timeout "$_timeout_secs" bash "$pmctl_cli")
 fi
 out=$(PM_DISPATCH_CONTEXT_AUTOBUILD=0 "${_runner[@]}" \
   context prompt-scan "$repo_root" "$prompt" 2>/dev/null) || exit 0

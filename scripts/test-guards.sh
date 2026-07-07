@@ -2636,12 +2636,22 @@ PMCTL_CLI="$REPO_ROOT/cli/pmctl"
 
 # Stand up an indexed git fixture repo with one knowledge doc, isolated from the
 # live install: context DB is repo-local, telemetry goes to the given state root.
+# Returns non-zero (with a printed reason) if the index build did not produce a
+# DB — a silent setup failure here would otherwise surface as a confusing
+# empty-output assertion failure in the case itself.
 ctx_inject_make_repo() {
-  local repo="$1" state_root="$2"
+  local repo="$1" state_root="$2" idx_err
+  idx_err="$(mktemp)"
   mkdir -p "$repo/docs"
   git -C "$repo" init -q
   printf '# Notes\n\n## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
-  PM_DISPATCH_STATE_ROOT="$state_root" bash "$PMCTL_CLI" context index "$repo" >/dev/null 2>&1
+  PM_DISPATCH_STATE_ROOT="$state_root" bash "$PMCTL_CLI" context index "$repo" >/dev/null 2>"$idx_err"
+  if [[ ! -f "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    printf '  SETUP-FAIL ctx_inject_make_repo: no context.db after index: %s\n' "$(<"$idx_err")"
+    rm -f "$idx_err"
+    return 1
+  fi
+  rm -f "$idx_err"
 }
 
 ctx_inject_case() {
@@ -2649,11 +2659,18 @@ ctx_inject_case() {
   # exit 0 plus expected/forbidden output substrings.
   # Args: name payload expect_mode ("hit" = auto-context block present,
   #       "silent" = empty stdout) [extra env assignments via _CTX_CASE_ENV array]
+  # A generous scan timeout is set for every case: the production default (10s)
+  # can be exceeded on a CPU-saturated machine (run-all-tests --jobs N), and a
+  # timed-out scan degrades to silence — which would flip "hit" cases red for
+  # load reasons, not correctness ones.
   local name="$1" payload="$2" expect="$3" state_root="$4"
-  local output status
+  local output status hook_err
+  hook_err="$(mktemp)"
   output=$(printf '%s' "$payload" \
-    | env PM_DISPATCH_STATE_ROOT="$state_root" "${_CTX_CASE_ENV[@]+"${_CTX_CASE_ENV[@]}"}" \
-      "$CTX_HOOK" 2>/dev/null)
+    | env PM_DISPATCH_STATE_ROOT="$state_root" \
+      PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=120 \
+      "${_CTX_CASE_ENV[@]+"${_CTX_CASE_ENV[@]}"}" \
+      "$CTX_HOOK" 2>"$hook_err")
   status=$?
   local ok=0
   if [[ "$expect" == "hit" ]]; then
@@ -2671,8 +2688,9 @@ ctx_inject_case() {
   else
     FAIL=$((FAIL+1))
     FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+    printf '  FAIL  %s — exit=%s output=%q stderr=%q\n' "$name" "$status" "$output" "$(<"$hook_err")"
   fi
+  rm -f "$hook_err"
 }
 
 ctx_inject_hook_happy_path() {
@@ -2687,7 +2705,9 @@ ctx_inject_hook_happy_path() {
   command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo state_root
   dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
-  ctx_inject_make_repo "$repo" "$state_root"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
   local _CTX_CASE_ENV=()
   ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" hit "$state_root"
   rm -rf "$dir"
@@ -2705,7 +2725,9 @@ ctx_inject_hook_subdir_resolves_toplevel() {
   command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo state_root
   dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
-  ctx_inject_make_repo "$repo" "$state_root"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
   mkdir -p "$repo/packages/app"
   local _CTX_CASE_ENV=()
   ctx_inject_case "$name" "{\"cwd\":\"$repo/packages/app\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" hit "$state_root"
@@ -2761,7 +2783,9 @@ ctx_inject_hook_no_hits_silent() {
   command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo state_root
   dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
-  ctx_inject_make_repo "$repo" "$state_root"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
   local _CTX_CASE_ENV=()
   ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"zzzznomatch yyyynomatch xxxxnomatch\"}" silent "$state_root"
   rm -rf "$dir"
@@ -2778,7 +2802,9 @@ ctx_inject_hook_short_prompt_silent() {
   command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo state_root
   dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
-  ctx_inject_make_repo "$repo" "$state_root"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
   local _CTX_CASE_ENV=()
   ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"hi there\"}" silent "$state_root"
   rm -rf "$dir"
@@ -2796,7 +2822,9 @@ ctx_inject_hook_kill_switch() {
   command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
   local dir repo state_root
   dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
-  ctx_inject_make_repo "$repo" "$state_root"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
   local _CTX_CASE_ENV=(PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1)
   ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$state_root"
   rm -rf "$dir"
