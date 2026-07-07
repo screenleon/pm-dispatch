@@ -81,7 +81,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
 | CC-436 | ✅ done | codex-host PreToolUse payload 驗證 probe（唯讀，驗證 CC-381 guard binding 可行性；umbrella: CC-333） | arch/install | 2026-07-02 | — | P2 | spike |
 | CC-437 | ✅ done | doctor 擴充切片：host-aware capability check（`doctor.sh` 拆出 host module 介面；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | pr:#374 | P2 | design |
-| CC-438 | 🔵 active | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | — | P2 | design |
+| CC-438 | ✅ done | host manifest schema v1：codex-host 設定面宣告化（`hosts/codex/host.yaml` + format handler；依賴 CC-436；umbrella: CC-333，承接 CC-381） | arch/install | 2026-07-02 | pr:#375 | P2 | design |
 | CC-439 | ✅ done | `/ship <ticket-id>` command：明確票直接實作到開 PR，pre-flight 一致性檢查 + gate 迴圈收斂 | process/DX | 2026-07-02 | pr:#360 | P2 | design |
 | CC-440 | ✅ done | spike: `/ship` 並行版可行性——worktree + dispatch + gate 迴圈同時跑 N 條 pipeline。四題已收斂（`docs/spikes/CC-440.md`）：lane 失敗互不干擾逐條通知、gate fix-loop 由 executor 自扛、worktree 等合併確認才 remove、N 可調且天生結構隔離不需選票機制 | arch/gate | 2026-07-03 | — | P2 | design |
 | CC-441 | ✅ done | `/ship --parallel` N-lane orchestrator v1——薄封裝在 CC-014 worktree 之上，保留 CC-439 ship 契約，落地 CC-440 五點決策 | arch/gate | 2026-07-03 | pr:#363 | P2 | design |
@@ -176,7 +176,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-438 — host manifest schema v1：codex-host 設定面宣告化 🔵 active
+## CC-438 — host manifest schema v1：codex-host 設定面宣告化 ✅ 2026-07-06
 
 **Problem**: install 目前把 codex-host 的設定 target/format 假設寫死在程式碼常數（若日後實作），而非宣告在 manifest；[[CC-381]] spike 已收斂出應與既有 executor adapter manifest（[[CC-372]] `runner_kind`）分離、互為姊妹結構的 host manifest 方向，但尚未有 schema v1 draft。
 
@@ -189,7 +189,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 - 不落地實際 `install.sh` write path 改動（留給後續票）。
 
 **Dependencies**: 依賴 [[CC-436]]（payload 驗證結果決定 `guard_bindings` 欄位能表達什麼）。承接 [[CC-381]] spike。umbrella [[CC-333]]。
-**See**: `docs/spikes/CC-381.md` §Angle 2 manifest YAML 草案、§Recommendation 步驟 2。
+
+**Outcome**: schema v1 定案（`docs/host-contract.md`）+ 首個 manifest（`hosts/codex/host.yaml`）+ 結構驗證器（`scripts/test-host-manifest.sh`，82 案例含 33 個負向 mutation，已註冊 run-all-tests）。schema 同時吃進雙 probe 結果——codex（[[CC-436]]）與 opencode 階段 1（[[CC-448]]）：`binding_form: config-fragment`/`provider: host_policy`/`hook_surface: {}` 承接宣告式 config host，不假設 guard binding 是腳本；closure-of-all-paths 條款明文寫入兩個 host file guard 的同構缺口（codex `apply_patch` 無 file_path 欄位 + shell 重導向繞過、opencode `edit:deny` 被 bash 繞過），all-deny 掛起風險與 headless hook-trust flag 亦入契約；contract 內含 opencode worked example 供階段 2 直接對照。gate 兩輪收斂（R1 qa NO-GO → enum-value 驗證補強；R2 GO + critic/arch advisory）→ advisory 修畢：capability 完整枚舉規則——五個 capability 全數必列，`none` 兩態由 `confidence` 區分（probed=已評估不支援、assumed=尚未評估），validator 強制完整性含負向案例。write path 不動，留給 [[CC-445]]。
+**See**: pr:#375；`docs/host-contract.md`
 
 ---
 
@@ -360,6 +362,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 2. write/bash guard 綁進 codex `PreToolUse` hook（[[CC-381]] spike 已實測可行、fail-closed；欄位表達力以 [[CC-436]] probe 結果為準）。
 3. uninstall 對稱清除 + doctor parity check（呼應 CC-224/CC-375 的三方一致性教訓）。
 4. **claude-host 殘餘耦合一併盤點**（2026-07-06 盲測稽核）：`adapters/*/dispatch.sh` 硬編 `${HOME}/.claude/scripts/log-usage.sh` 做 usage 記帳——host-generic write path 落地時改由 host manifest／既有 `PM_CFG_*` env 慣例衍生，或明文宣告該能力 claude-host-only，消除 host-independent 宣稱與實作的落差。
+5. **manifest declared-vs-probed parity check**（[[CC-438]] PR #375 gate advisory；qa-tester + architecture-reviewer 共同點名）：consumer 落地時加上 manifest 宣告 capability 對 probe 紀錄的機械比對，宣告不得默默超出 probed 佐證。
 
 **Done-when**：(a) claude host 路徑 **byte-compatible**（既有 install 輸出零變更，回歸鎖住）；(b) codex host 路徑至少通過 dry-run + sandbox `CODEX_HOME` 實裝驗證：install → doctor 全綠 → guard 實際攔截一次違規寫入 → uninstall 無殘留；(c) install/uninstall/doctor 三方 parity test 覆蓋 host 維度。
 

@@ -1,0 +1,132 @@
+# host.yaml - AUTHORED manifest for hosts/codex/.
+# This file is the source of truth for the codex HOST axis: what the codex CLI
+# can provide when it is the PM runtime itself (guard hooks, permission
+# surface, doctor/uninstall wiring targets). It is the sister structure of
+# adapters/codex/adapter.yaml, which describes the PM->executor dispatch axis
+# (runner_kind / write_guard_mode / needs_bash_guard). The two axes are
+# orthogonal and must never merge semantics: a host gaining a native hook does
+# not change how that same CLI behaves as a dispatched executor.
+#
+# Schema reference: docs/host-contract.md. The manifest records the DECLARED
+# capability layer (static facts an installer can act on); the doctor host
+# module reports the PROBED layer; EFFECTIVE is what an end-to-end guard test
+# observes. Declared values here must never exceed what a probe has shown.
+#
+# Read consumers today: none (the install write path is a later slice); the
+# doctor codex module still carries its own probe targets. Once the write path
+# lands, wiring targets move out of code and this file becomes load-bearing.
+schema_version: 1
+host_name: codex
+host_binary: codex
+
+# Files the installer would own or touch on this host. `format` is one of the
+# closed format-handler enum in docs/host-contract.md; `managed` says whether
+# the install write path owns the file content (true) or only reads/asserts it
+# (false). Paths are declared relative to the host home env var so nothing
+# assumes a maintainer-local layout.
+install_targets:
+  - id: hooks
+    path: "$CODEX_HOME/hooks.json"    # default CODEX_HOME: ~/.codex
+    format: codex-hooks-json
+    managed: true
+  - id: config
+    path: "$CODEX_HOME/config.toml"
+    format: codex-config-toml
+    managed: false                    # asserted by doctor, never written
+
+# Hook runtime facts probed end-to-end: the hook config lives in hooks.json
+# using the Claude-Code-compatible hooks block shape (NOT a config.toml
+# section), and deny decisions return via hookSpecificOutput.permissionDecision
+# on the hook script's stdout.
+hook_surface:
+  config_format: codex-hooks-json
+  events:
+    - PreToolUse
+    - PostToolUse
+    - PermissionRequest
+    - SessionStart
+    - UserPromptSubmit
+    - Stop
+    - PreCompact
+    - PostCompact
+  # Headless runs (codex exec) hang indefinitely on the interactive hook-trust
+  # prompt unless this flag is passed; there is no persisted trust store or
+  # trust subcommand. For self-authored, self-trusted hooks the flag is the
+  # headless enablement condition, not a security downgrade — see
+  # docs/host-contract.md "Hook trust in headless runs".
+  headless_required_flags:
+    - --dangerously-bypass-hook-trust
+
+# Guard capability declarations. Field names align verbatim with the doctor
+# emit_capability tuple (provider/enforcement/coverage/stability/confidence);
+# binding_form says what artifact the installer produces to realize the
+# binding (hook-script for codex; opencode uses config-fragment). Enum values:
+# docs/host-contract.md "Capability object".
+guard_bindings:
+  # Command-level guard: PreToolUse payload for Bash carries tool_input.command
+  # plus cwd, mapping directly onto `pmctl guard check --command` — probed
+  # fail-closed end-to-end (blocked command never executed).
+  - capability: command_guard
+    binding_form: hook-script
+    provider: host_hook
+    enforcement: blocking
+    coverage: full
+    stability: evolving
+    confidence: probed
+    payload_fields:
+      command: tool_input.command
+      cwd: cwd
+  # File-level guard: declared unsupported in v1. Two probed gaps: (1) the
+  # apply_patch payload has no file_path field — the target path is embedded
+  # in patch text and needs a parser; (2) shell redirection (`cat > file`)
+  # writes files through the Bash tool and never surfaces a file path at all.
+  # Under the closure-of-all-paths clause (docs/host-contract.md) a file guard
+  # that leaves the bash path open must not be declared supported, so this
+  # stays provider none until both gaps close. The brief-level cli-only write
+  # guard on the adapter axis remains the fallback.
+  - capability: file_guard
+    binding_form: hook-script          # anticipated form once both gaps close
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: probed
+  # The capabilities below have not been evaluated on this host yet. The
+  # contract requires full enumeration: a none tuple with confidence assumed
+  # is the declared form of "not yet evaluated" (vs the probed none tuple
+  # above, which means "evaluated and unsupported").
+  # session_lifecycle: SessionStart/Stop events exist on the hook surface,
+  # but no end-to-end binding has been probed — stays assumed until one is.
+  - capability: session_lifecycle
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: pm_command_interface
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+  - capability: statusline
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: assumed
+
+# Permission model native to the host, outside the hook surface. codex keeps
+# approval/sandbox policy in config.toml; the install write path does not
+# manage it in schema v1 (declared for doctor visibility only).
+permissions_surface:
+  config_target: config
+  managed: false
+
+# Host-module wiring. doctor_module must exist; uninstall_module is null until
+# the install write path lands (nothing installed means nothing to remove).
+doctor_module: scripts/lib/doctor-host-codex.sh
+uninstall_module: null
