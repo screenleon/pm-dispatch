@@ -1,0 +1,166 @@
+# host.yaml - AUTHORED manifest for hosts/claude/.
+# This file is the source of truth for the claude HOST axis: what Claude Code
+# can provide when it is the PM runtime itself (guard hooks, permission
+# surface, doctor/uninstall wiring targets). It is the sister structure of
+# a hypothetical adapters/claude/adapter.yaml (the PM->executor dispatch axis
+# for `claude` as a dispatched worker), which is orthogonal and must never
+# merge semantics with this file.
+#
+# Schema reference: docs/host-contract.md. The manifest records the DECLARED
+# capability layer (static facts an installer can act on); the doctor host
+# module (scripts/lib/doctor-host-claude.sh) reports the PROBED layer;
+# EFFECTIVE is what an end-to-end guard test observes. Declared values here
+# must never exceed what a probe has shown — claude is chosen as the schema
+# v1 reference instance specifically because it is the most capability-complete
+# probed host (native PreToolUse hook, full payload fields, fail-closed
+# verified), so this manifest is the hardest test of schema v1's expressive
+# power.
+#
+# Read consumers today: scripts/lib/doctor-host-claude.sh reads this file's
+# guard_bindings block to cross-check its own probed capability tuples
+# against the declared ones (a declared-vs-probed consistency check, not an
+# install path). install.sh's write path is not yet manifest-driven for
+# claude; this file is also the declarative baseline a future host-generic
+# install write path would diff its byte-compatible output against.
+#
+# Known naming inconsistency (not fixed here, out of scope for this
+# declarative-only manifest): install.sh derives its destination from
+# $CLAUDE_HOME, while doctor-host-claude.sh and the guard-*.sh hooks read
+# $CLAUDE_CONFIG_DIR — both default to ~/.claude but are two distinct env vars
+# today. This manifest anchors paths to $CLAUDE_CONFIG_DIR because that is the
+# variable the probed (doctor/guard) layer actually reads; a future
+# install-write-path wiring effort should reconcile the two names rather than
+# this file picking a third convention.
+schema_version: 1
+host_name: claude
+host_binary: claude
+
+# Files the installer owns today (install.sh: install_dir for
+# agents/skills/commands; install-guards.sh for settings.json hooks +
+# permissions.allow). `format` is one of the closed format-handler enum in
+# docs/host-contract.md; `managed: true` throughout because, unlike codex/
+# opencode, claude already has a live install write path.
+install_targets:
+  - id: settings
+    path: "$CLAUDE_CONFIG_DIR/settings.json"   # default CLAUDE_CONFIG_DIR: ~/.claude
+    format: claude-settings-json
+    managed: true
+  - id: commands
+    path: "$CLAUDE_CONFIG_DIR/commands"
+    format: symlink-tree
+    managed: true
+  - id: agents
+    path: "$CLAUDE_CONFIG_DIR/agents"
+    format: symlink-tree
+    managed: true
+  - id: skills
+    path: "$CLAUDE_CONFIG_DIR/skills"
+    format: symlink-tree
+    managed: true
+
+# Hook runtime facts: claude's own settings.json hooks block (the shape codex
+# and this repo's own hooks.json borrow from). Events reflect Claude Code's
+# documented hook surface; pm-dispatch itself currently wires only
+# PreToolUse/Stop/UserPromptSubmit (see scripts/install-guards.sh header
+# comment) — the remaining events are host-exposed but not yet consumed by
+# any guard-*.sh script in this repo.
+hook_surface:
+  config_format: claude-settings-json
+  events:
+    - PreToolUse
+    - PostToolUse
+    - Notification
+    - UserPromptSubmit
+    - Stop
+    - SubagentStop
+    - SessionStart
+    - SessionEnd
+    - PreCompact
+  # claude is the native host running the hooks it wires into its own
+  # settings.json; there is no interactive trust prompt to bypass for
+  # self-authored hooks the way codex headless runs require
+  # --dangerously-bypass-hook-trust, so no flags are declared here.
+
+# Guard capability declarations. Field names align verbatim with the doctor
+# emit_capability tuple; binding_form says what artifact realizes the
+# binding. Enum values: docs/host-contract.md "Capability object".
+guard_bindings:
+  # Command-level guard (guarding claude's own Bash tool calls generically):
+  # NOT wired today. install-guards.sh only ever attaches a "Bash" matcher
+  # hook per-adapter, gated by that adapter's needs_bash_guard flag (executor
+  # axis, dispatched-subprocess guarding) — and zero adapters set that flag
+  # today, so the mechanism is dormant. There is no host-level hook guarding
+  # arbitrary Bash commands run by the main thread or a subagent.
+  - capability: command_guard
+    binding_form: none
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: probed
+  # File-level guard: guard-pm-write.sh / guard-executor-write.sh /
+  # guard-reviewer-write.sh each guard Edit|Write for one specific subagent
+  # role (PM / executor / reviewer) — never the main thread, and never a
+  # general "any Edit/Write is guarded" claim. Even for a guarded subagent,
+  # the same closure-of-all-paths gap probed on codex/opencode applies: `cat
+  # > file` via the (unguarded) Bash tool bypasses the Edit|Write hook
+  # entirely. Declared unsupported per docs/host-contract.md
+  # "Closure-of-all-paths acceptance clause"; binding_form keeps the
+  # anticipated hook-script form (as codex's file_guard entry does) since the
+  # artifact shape is already known, only the closure gap blocks it.
+  - capability: file_guard
+    binding_form: hook-script
+    provider: none
+    enforcement: none
+    coverage: none
+    stability: evolving
+    confidence: probed
+  # Session lifecycle: guard-session-summary.sh wired on the Stop event,
+  # writing a session summary — probed end-to-end (fires on every session
+  # stop), advisory only (does not block anything).
+  - capability: session_lifecycle
+    binding_form: hook-script
+    provider: host_hook
+    enforcement: advisory
+    coverage: full
+    stability: stable
+    confidence: probed
+  # PM command interface: commands/pm.md is installed (symlink-tree) and
+  # loaded natively by Claude Code's own command mechanism — no hook or JSON
+  # config fragment is involved, which is a genuine schema v1 expressivity
+  # gap (binding_form's closed enum only offers hook-script/config-fragment/
+  # none, and none is illegal here because provider isn't none). config-
+  # fragment is the least-wrong fit: the installed markdown file is itself a
+  # declarative fragment the host's command loader merges in, structurally
+  # closer to opencode's config-fragment guard bindings than to a hook
+  # script. Left as a follow-up for whoever next revises the schema.
+  - capability: pm_command_interface
+    binding_form: config-fragment
+    provider: host_native
+    enforcement: none
+    coverage: full
+    stability: stable
+    confidence: probed
+  # Statusline: guard-save-rate-limits.sh wired via settings.json's
+  # statusLine.command field — a script artifact same as a hook, just keyed
+  # under statusLine rather than hooks.<event>.
+  - capability: statusline
+    binding_form: hook-script
+    provider: host_hook
+    enforcement: advisory
+    coverage: full
+    stability: stable
+    confidence: probed
+
+# Permission model native to the host, outside the hook surface. claude's
+# permissions.allow list (dispatch allowlist entries) lives inside
+# settings.json and is written by install.sh / install-guards.sh.
+permissions_surface:
+  config_target: settings
+  managed: true
+
+# Host-module wiring. doctor_module must exist. uninstall_module is non-null
+# (unlike codex/opencode) because claude already has a live install write
+# path (install.sh, not yet manifest-driven) with a matching uninstall path.
+doctor_module: scripts/lib/doctor-host-claude.sh
+uninstall_module: uninstall.sh
