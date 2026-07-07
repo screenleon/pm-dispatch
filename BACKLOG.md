@@ -18,7 +18,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-454 | 🟢 someday | CI shellcheck ignore_names 白名單 ratchet 收斂：獨立 job + 白名單清零機制（比照 CC-450 模式；2026-07-06 盲測稽核） | ops/test | 2026-07-06 | — | P3 | hygiene |
 | CC-455 | ✅ closed 2026-07-06 | context plane repo_root 跟隨工作目錄：query/reuse-scan/index 未帶路徑時 default 到 pmctl 安裝 repo 而非 CWD，跨 repo 使用 /pm 時目標 repo 的 context.db 永不建立/刷新、查詢打錯 db（2026-07-06 使用者回報+實測確認；v0.9.0） | ux/ops | 2026-07-06 | pr:#371 | P2 | — |
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
-| CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
+| CC-457 | ✅ closed 2026-07-07 | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | pr:#381 | P2 | design |
 | CC-458 | ✅ closed 2026-07-07 | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | pr:#378 | P2 | — |
 | CC-459 | ✅ closed 2026-07-07 | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind、空 query payload 隱私契約）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | pr:#379 | P2 | — |
 | CC-460 | 🔵 active | `pmctl commands --json` manifest 單一來源 + router↔manifest↔README 三方防漂移 lint（承接 CC-033 #4 README surface 重建、CC-446 #5a `--json` 覆蓋率缺口；2026-07-07 openyida 跨專案分析） | DX/docs | 2026-07-07 | — | P2 | design |
@@ -552,7 +552,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-457 — claude host manifest 化：`hosts/claude/host.yaml` reference instance 🔵 active
+## CC-457 — claude host manifest 化：`hosts/claude/host.yaml` reference instance ✅ 2026-07-07
 
 **Problem**（2026-07-07 維護者指出）: [[CC-438]] 交付 host manifest schema v1 後，`hosts/` 只有 `hosts/codex/host.yaml`。claude 作為原生 host，install/uninstall 的檔案佈局（commands/agents/skills/hooks 寫入 `~/.claude/...`）仍散在 `install.sh` 硬編碼，doctor 側雖已有 `scripts/lib/doctor-host-claude.sh` host module（[[CC-437]]），但宣告面（capability/guard_bindings/install_targets/uninstall_module）沒有 claude instance。三 host（claude/codex/opencode）維護面不對齊：改 schema 或接線時 claude 永遠走特例路徑，後續每張 host 軸票都要為 claude 另寫一份心智模型。
 
@@ -566,6 +566,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-438]] ✅（schema v1 已定案）。與 [[CC-445]] 同鏈：本票先行（純 additive、低風險），CC-445 接線時引用。v0.9.0 host 軸。
 **Source**: 維護者 2026-07-07「claude 的 host 也需要調整成新的架構，不然後續維護會相對不對齊」。
+
+**Outcome**（2026-07-07）: `hosts/claude/host.yaml` 依 schema v1 完整宣告（install_targets/capability/guard_bindings/uninstall_module/permissions_surface），claude 作為能力最完整的 host 通過 reference instance 驗收。`scripts/test-host-manifest.sh` 納入 claude 專屬正負案例（87 綠），`doctor-host-claude.sh` 加上宣告 vs 實測一致性檢核（test-doctor.sh 50 綠，含 drift 失敗案例）。不動 install.sh write path，接線留給 [[CC-445]]。Gate R1 GO（critic advise：uninstall_module 註解與 install.sh 尚未 manifest-driven 的事實矛盾）已修正並收斂。
+**See**: pr:#381
 
 ---
 
