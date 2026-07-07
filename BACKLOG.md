@@ -20,7 +20,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
 | CC-458 | ✅ closed 2026-07-07 | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | pr:#378 | P2 | — |
-| CC-459 | 🔵 active | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | — | P2 | — |
+| CC-459 | ✅ closed 2026-07-07 | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind、空 query payload 隱私契約）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | pr:#379 | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -586,7 +586,7 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 ---
 
-## CC-459 — context retrieval reflex 確定性化：prompt-scan 自動注入 + PM 編號步驟 🔵 active
+## CC-459 — context retrieval reflex 確定性化：prompt-scan 自動注入 + PM 編號步驟 ✅ 2026-07-07
 
 **Problem**（2026-07-07 使用者實踩）: `agents/project-pm.md` 的 context retrieval reflex（Principles #3）目前是純 prose，無任何 runtime enforcement。實測跨 repo telemetry（`pmctl trace tail --kind context.queried`）證實：數日內對某目標 repo 的所有 /pm 工作階段，agent 一次都沒呼叫過 `pmctl context query`——唯一有強制力的點是 `BRIEF_VALIDATE_RETRIEVAL=fail`，只卡 file-writing brief 的 context 證據；Analysis / Status / 一般知識查詢完全沒 gate，agent 直接 Read/Grep knowledge docs 跳過 query。這正是 `agents/project-pm.md` 自述的「a prose reflex degrades exactly when the session is busy」同一模式——discover 路由已用 Classify branch 解掉，knowledge retrieval 還停在 prose。
 
@@ -606,6 +606,10 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: 無（context plane 既有能力之上純 additive）。
 **Source**: 使用者 2026-07-07「context.db 沒刷新」誤報調查 → 根因是 reflex 從未被執行 → 「請幫我開票並實際規劃與實作」。
+
+**Outcome**（2026-07-07）: 六項 Requirement 全數交付。gate 三輪收斂：R1 full NO-GO（no-sqlite 降級契約不符、telemetry 存原始 prompt、覆蓋缺口）→ R2 targeted NO-GO（security/risk 升級：derived terms 仍可能重現 secret 形 token）→ 最終方案為 `context.prompt_scanned` 事件 query payload **一律為空**（僅記 hit count），加 secret-shaped regression（state root 遞迴 grep 零殘留）與 events.jsonl scrub 程序 → R3 targeted GO 零 findings。修復前本機 live store 的 3 筆 prompt-derived 事件已現場 scrub。測試：test-pmctl-context 108、test-guards 203（含 timeout fail-open stub seam）、test-install 86、test-doctor 49、test-commands 269、全套 71 suites 綠。
+
+**See**: pr:#379
 
 ---
 
