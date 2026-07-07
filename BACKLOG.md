@@ -26,6 +26,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
+| CC-465 | 🔵 active | memory/context 關鍵詞管線 CJK 支援：注入排序、prompt-scan/reuse-scan 抽詞、FTS 索引三處分詞 ASCII-only，中文 prompt 拿不到 keyword tier 與 usage 訊號（2026-07-07 記憶系統深入分析） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-466 | 🔵 active | 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + usage sidecar 休眠偵測 + doctor→distill 接線（2026-07-07 記憶系統分析 + 外部研究 Graphiti/mcp-memory-service） | memory | 2026-07-07 | feedback:2026-07-07 | P2 | retrieval |
+| CC-467 | 🟢 someday | `pmctl memory stats`：注入效益可視化——注入 bytes/卡片命中分佈/從未命中卡/episode 填寫率，回答「記憶有跟沒有差在哪」（2026-07-07；業界僅離線 recall 評測，無 per-injection 遙測） | DX/memory | 2026-07-07 | — | P3 | retrieval |
+| CC-468 | 🟢 someday | dispatch brief 帶 memory 約束：brief authoring/auto-pack 對 memory plane 做 pointer-only 查詢，feedback 卡約束自動浮上 brief（2026-07-07；auto-pack 現為 repo-only by construction） | ops/memory | 2026-07-07 | — | P3 | retrieval |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -701,6 +705,69 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 
 **Dependencies**: [[CC-286]]（⏸ deferred，尚未排程）。
 **Source**: 2026-07-07 openyida 跨專案分析——`flash-to-prd` 模式。
+
+---
+
+## CC-465 — memory/context 關鍵詞管線 CJK 支援 🔵 active
+
+**Problem**: 記憶注入排序（`guard-inject-memory.sh` 的 keyword 抽取）、檢索抽詞（`_ctx_extract_terms` → prompt-scan / reuse-scan）、FTS5 索引（unicode61 tokenizer）三處分詞全為 ASCII-only，CJK 字元被當分隔符丟棄。維護者工作語言為中文：中文 prompt 的 keyword tier 恆為 0 分、tier2 排序退化為純 frecency；且 usage sidecar 只在 keyword 命中時累積 access，中文工作流永遠累積不到使用訊號——整套 frecency 機制對 CJK 使用者形同虛設。prompt-scan / reuse-scan 對中文任務描述抽不出任何詞；FTS5 對整段中文只存單一 token，中文查詢僅靠 LIKE substring fallback 硬撐。
+
+**Why**: 分詞邏輯設計時只考慮英文 identifier；CJK 無空白斷詞，ASCII 字元類過濾直接消滅整段文字。這是功能性缺陷而非排序品質調校——注入排序、usage 累積、檢索三條線同時失效。零依賴的 CJK bigram（連續 CJK 串切 2-gram）即可讓三處恢復運作，不需外部分詞器，符合 bash / zero-LLM hooks 約束，也不觸發 [[CC-340]]（embeddings/semantic backend）的 resume 條件。
+
+**Requirement**:
+1. 中文 prompt 能對含中文 hook/topics 的卡片產生 keyword tier 命中（注入排序與 usage sidecar 累積同時恢復）。
+2. `pmctl context prompt-scan` / `reuse-scan` 對中文任務描述能抽出可查詢的詞。
+3. FTS/LIKE 檢索對中文查詢詞可命中中文內容（FTS5 不可用時 LIKE fallback 行為不退化）。
+4. 既有英文行為不變；回歸測試涵蓋純英文、中英混合、純中文三類輸入。
+
+**Cross-link**: [[CC-340]]（deferred；本票是非 embedding 的分詞修正，非其替代）。
+
+---
+
+## CC-466 — 記憶卡片生命週期閉環：expires_at 執行 + 關窗式 supersede + 休眠偵測 + doctor→distill 接線 🔵 active
+
+**Problem**: 卡片 schema 有 `expires_at` / `status` 生命週期欄位但無任何執行面：注入 hook 只降級 `stale`/`superseded`、不看 `expires_at`；doctor 不報過期卡；usage sidecar 只餵排序、不餵老化（沒有「N 天未命中」的休眠訊號）；doctor 找到的 stale_repo_refs / orphan 與 `/mem-distill` 的提案迴路完全斷開，修復全靠人記得。記憶只進不出，長期必然膨脹並讓固定注入預算被殭屍卡佔據。
+
+**Why**: 2026-07-07 外部研究（/research）結論——確定性生命週期的成熟做法是：(a) Graphiti/Zep 的雙時間軸「關窗不刪除」失效模型（schema 與關窗操作是確定性的，只有矛盾偵測需要智慧——正好是 `/mem-distill` 的既有職責）；(b) mcp-memory-service 家族的 access-count / last-access 休眠偵測（零 LLM）。pm-dispatch 原料已齊（usage sidecar、doctor、confirm-gated distill），缺的只是接線；LLM 判斷全部留在顯式指令桶，hooks 維持 zero-LLM。已評估並排除：mem0 每寫入 LLM 仲裁、Letta sleep-time LLM 整理（違反 zero-LLM hooks；`/mem-distill` + `/memory-compress` 已是顯式等價物）。
+
+**Requirement**:
+1. 過期卡（`expires_at` 已過）在注入時降級、在 doctor 報告中列出。
+2. supersede 採關窗語意：舊卡保留並標記失效日期與後繼指向，不物理刪除（與現有 archive-in-place 慣例一致）。
+3. doctor 能從 usage sidecar 偵測休眠卡（超過門檻天數未命中）並列出。
+4. `/mem-distill` 讀取 doctor 結構化輸出，把過期／休眠／stale-ref 卡轉成 UPDATE/REMOVE 提案，沿用既有確認閘門（不新增任何自動寫入路徑）。
+
+**Cross-link**: [[CC-452]]（episodes.jsonl 併發 hardening，同資料面）、[[CC-467]]（stats 讓閉環效果可見）。
+**Source**: 2026-07-07 /research——Graphiti bi-temporal（github.com/getzep/graphiti）、mcp-memory-service decay 家族（github.com/doobidoo/mcp-memory-service）。
+
+---
+
+## CC-467 — `pmctl memory stats`：注入效益可視化 🟢 someday
+
+**Problem**: 記憶注入每 prompt 默默執行，維護者無法回答「有記憶跟沒記憶差在哪」：沒有指標顯示注入了多少 bytes、哪些卡常被命中、哪些卡從未命中、episodes 骨架的語意摘要填寫率（Stop hook 只寫空骨架、`/mem-log` 靠人跑；填寫率低則 `/mem-distill` 上游是乾的，且此事目前完全不可見）。
+
+**Why**: 2026-07-07 外部研究——全業界（Letta / mem0 / Zep / Claude Code 社群工具）都只量離線 retrieval recall，無人做 per-injection 效益遙測；唯一在野的 token 可視化是 claude-mem 的 token economics 顯示。pm-dispatch 原料已齊（inject-usage.tsv、episodes.jsonl、doctor）——一個唯讀聚合報表即可回答維護者的核心疑問，符合「輕量執行」方向：不加新遙測寫入面，只聚合既有資料。
+
+**Requirement**:
+1. 唯讀子指令輸出：卡片總數與注入預算使用、各卡命中次數與最後命中時間分佈、從未命中卡清單、episode 填寫率（非空 summary 佔比）。
+2. 支援 `--json`（與 doctor 同級的結構化輸出）。
+3. 不新增 hook 寫入面；僅聚合既有 sidecar / episodes / doctor 資料。
+
+**Cross-link**: [[CC-466]]。
+
+---
+
+## CC-468 — dispatch brief 帶 memory 約束（pointer-only）🟢 someday
+
+**Problem**: auto-pack 走 reuse-scan 且 repo-only by construction；`context pack --source memory` 存在但 dispatch 從不使用。結果：feedback 卡裡的約束（如「此 repo 禁用某工具」「reviewer 反覆擋的模式」）永遠不會自動進 brief，全靠 PM 記得手貼——記憶對 executor 行為零影響力。
+
+**Why**: 成功指標（DECISIONS 2026-06-10）本來就是「brief 直接引用 memory/decision anchors」；目前管線只對 repo plane 兌現，memory plane 缺最後一哩。隱私模型不變：沿用 context pack 的 pointer-only 契約（只帶 ref + trust tier，卡片內容不進 repo-bound 產物）。
+
+**Requirement**:
+1. brief 授權／auto-pack 時對 memory plane 做一次查詢，命中的約束類卡片以 pointer-only ref 附入 brief context（數量設上限）。
+2. 私有內容不落入 repo 內任何檔案（含 pack 檔）——僅 ref 與 trust tier。
+3. 零命中時不加空區塊（比照 `auto_context:` 現行語意）；查詢失敗 fail-open 不阻斷 dispatch。
+
+**Cross-link**: [[CC-466]]。
 
 ---
 
