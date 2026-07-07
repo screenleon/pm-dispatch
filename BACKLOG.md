@@ -21,6 +21,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
 | CC-458 | ✅ closed 2026-07-07 | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | pr:#378 | P2 | — |
 | CC-459 | ✅ closed 2026-07-07 | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind、空 query payload 隱私契約）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | pr:#379 | P2 | — |
+| CC-460 | 🔵 active | `pmctl commands --json` manifest 單一來源 + router↔manifest↔README 三方防漂移 lint（承接 CC-033 #4 README surface 重建、CC-446 #5a `--json` 覆蓋率缺口；2026-07-07 openyida 跨專案分析） | DX/docs | 2026-07-07 | — | P2 | design |
+| CC-461 | 🟢 someday | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；待 CC-447 offline smoke 產出摔倒點清單後定白名單（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
+| CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
+| CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
+| CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -444,8 +449,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 3. 與 [[CC-431]]（adapter 清單動態派生）同批評估，避免 e2e 腳本兩次重構。
 4. **CI↔run-all parity 斷言**（2026-07-06 盲測稽核擴充）：`.github/workflows/lint.yml` 的 job 清單與 `run-all-tests.sh` 註冊表各自手動維護、零 parity 檢查——實測 24 個本地 suite 在 CI 從未執行，含 dispatch 核心（test-dispatch-lifecycle、test-dispatch-common、test-detached-launch、test-opencode-dispatch）與三個最大 pmctl 套件（test-pmctl-context/memory/dispatch）。lint 需一併涵蓋：run-all 每個註冊 suite 必須在 CI 出現，或列入顯式豁免清單並附理由（如 live-DB 互斥、耗時）。這是比第 1 項「未註冊」更大的同類靜默缺口。
 5. **零覆蓋 lib 盤點**（同批）：`scripts/lib/gate-workspace.sh`、`scripts/lib/pmctl-config.sh` 在所有測試檔零引用——補最小套件或記錄豁免理由。
+6. **surface 覆蓋分類 lint（反向補完，2026-07-07 openyida 跨專案分析併入）**：每個 command/agent/skill 必須宣告 `coverage: e2e|unit|opt-in|manual-only|deprecated` + 一行理由；本項是第 1 項「套件存在但未註冊」的反向缺口——「surface 存在但沒人宣告它該有什麼等級的覆蓋」。清單載體與既有 lint 機制（第 1/4 項）同批評估，避免產出第二套獨立 YAML/清單格式。
 
-**Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」兩類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
+**Done-when**：lint 落地且能抓到「新增未註冊套件」與「已註冊但 CI 缺席且無豁免」與「surface 缺 coverage 宣告」三類注入測試；e2e 新 phase 在 `release-verify.sh --e2e` 下通過；排除項（若有）記錄於腳本註解與本票。
 
 **Dependencies**：與 [[CC-431]] 檔案面重疊（test-e2e.sh/release-verify.sh），宜同版處理。v0.9.0 候選。
 **See**: [[CC-444]] Outcome、pr:#367
@@ -610,6 +616,91 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Outcome**（2026-07-07）: 六項 Requirement 全數交付。gate 三輪收斂：R1 full NO-GO（no-sqlite 降級契約不符、telemetry 存原始 prompt、覆蓋缺口）→ R2 targeted NO-GO（security/risk 升級：derived terms 仍可能重現 secret 形 token）→ 最終方案為 `context.prompt_scanned` 事件 query payload **一律為空**（僅記 hit count），加 secret-shaped regression（state root 遞迴 grep 零殘留）與 events.jsonl scrub 程序 → R3 targeted GO 零 findings。修復前本機 live store 的 3 筆 prompt-derived 事件已現場 scrub。測試：test-pmctl-context 108、test-guards 203（含 timeout fail-open stub seam）、test-install 86、test-doctor 49、test-commands 269、全套 71 suites 綠。
 
 **See**: pr:#379
+
+---
+
+## CC-460 — `pmctl commands --json` manifest + router↔manifest↔README 三方防漂移 lint 🔵 active
+
+**Problem**: [[CC-033]] 2026-07-06 盲測稽核發現 README 只列 15 個 command 中的 2 個（`/pm`、`/pr-gate`）；[[CC-446]] Requirement 5a 發現 `--json` 覆蓋率僅約半數子指令。兩者共同根因是同一個缺口——command/subcommand 的機器可讀清單不存在單一來源，README 與 router 各自手動維護、無防漂移機制。2026-07-07 openyida（DingTalk 宜搭 AI-native CLI）跨專案分析發現其 `commands --json` + `check:commands` 三方比對模式直接命中此缺口。
+
+**Why**: README 手動維護的 command 清單注定漂移（已實測漂到 2/15）；[[CC-446]] 契約凍結要把 CLI 分級列為 stable 承諾，若連「有哪些 command」都沒有機器可讀的單一來源，分級表本身就建立在會漂移的地基上。
+
+**Requirement**:
+1. `pmctl commands --json`：列舉所有已註冊 command/subcommand（來源可為 `commands/*.md` frontmatter + pmctl 內部 router 表，實作時 `/pre-impl` 收斂資料來源取捨），輸出結構化 JSON（name、summary、area、stability tier 若 CC-446 已定案）。
+2. **三方防漂移 lint**：router 已註冊的 command ↔ `pmctl commands --json` 輸出 ↔ README command 目錄，三者任一方向缺漏即 fail loud；接入 CI。
+3. **README/docs command 索引自動生成**（原 openyida 分析草稿的獨立子項，因與 manifest 屬同一 PR 範圍且無獨立驗收價值而併入本票，不另開票）：README command 目錄段落改由 `pmctl commands --json` 生成或以生成結果核對，取代目前手動列表。
+4. 與 [[CC-451]] enum 單一來源同一設計精神（一份定義、多處消費、機械 parity 檢查）——實作時可借鏡其 parity 回歸測試模式。
+
+**Non-goals**: 不做 command 說明文件內容重寫（僅索引/存在性，不驗證每個 command 的說明品質）；不覆蓋 skill/agent 的 coverage 分類（見 [[CC-449]] 第 6 項，機制不同、載體待同批評估避免兩套 YAML）。
+
+**Done-when**: `pmctl commands --json` 輸出涵蓋全部已註冊 command；三方 lint 在 CI 抓到「新增 command 未進 README」與「README 列了已刪除 command」兩類注入測試；README 目錄與 lint 輸出一致。
+
+**Dependencies**: 與 [[CC-446]]（stable CLI 分級表需要這份清單作為覆蓋範圍的事實依據，宜同批或先行）、[[CC-451]]（parity lint 設計參照）。v0.9.0 候選（契約凍結 Phase 3 的前置證據）。
+**Source**: 2026-07-07 openyida（github.com/openyida/openyida）跨專案分析——`commands --json` manifest + `check:commands` 三方防漂移模式；承接 [[CC-033]] #4、[[CC-446]] #5a 兩個既有票內已記載的缺口。
+
+## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 🟢 someday
+
+**Problem**: `doctor.sh` 目前只診斷不修復——使用者發現問題後仍要手動對照文件執行修復步驟。2026-07-07 openyida 跨專案分析發現其 `doctor --fix` 模式：對可安全自動化的檢查項提供一鍵修復。
+
+**Why**: 降低 onboarding 摩擦（呼應 [[CC-447]] 乾淨機器 onboarding 的動機），但自動修復本身有風險——必須先知道「摔倒點長什麼樣」才能定義安全的自動修復範圍，避免修復動作本身造成新的不可逆狀態。
+
+**Requirement**:
+1. 範圍限定：僅冪等（重跑無副作用）、可逆（有明確復原路徑）、不碰使用者內容（不動 BACKLOG/DECISIONS/memory 等使用者資料）三類檢查項可自動修復；每項修復動作需獨立小函式、獨立測試。
+2. 白名單需待 [[CC-447]] offline smoke 產出摔倒點清單後才定案——避免憑空猜測要修什麼。
+3. 與 [[CC-437]] doctor host module 介面對齊（host-specific 檢查項若可修復，走同一 module 介面）。
+
+**Done-when**: 白名單內每個修復項有「修復前狀態 → `--fix` → 修復後狀態」的回歸測試；`--fix` 對白名單外的問題明確拒絕（不猜測性修復）。
+
+**Dependencies**: 宜在 [[CC-447]] offline smoke 產出摔倒點清單後啟動；與 [[CC-437]] 對齊。
+**Source**: 2026-07-07 openyida 跨專案分析——`doctor --fix` 模式。
+
+## CC-462 — e2e 可拋棄資源紀律：前綴 + registry JSON + result artifact 🟢 someday
+
+**Problem**: e2e/live smoke 測試建立的暫時性資源（synthetic ticket、worktree、branch）目前無統一的可拋棄資源紀律——清理靠個別測試自行處理，缺少集中登記與清單化收尾證據。2026-07-07 openyida 跨專案分析發現其做法：可拋棄資源一律加前綴命名 + 寫入 registry JSON + 收尾產出 result artifact。
+
+**Why**: [[CC-449]] 新增的 ship/worktree e2e 煙測與 [[CC-447]] live dogfood smoke 都會產生此類暫時性資源，若無集中紀律，兩票會各自發明一套清理機制、後續維護者難以判斷「這個殘留資源是不是某次跑壞的 e2e 沒清乾淨」。
+
+**Requirement**:
+1. 可拋棄資源統一前綴命名慣例（如 `pmd-e2e-<run-id>-`）。
+2. 建立時登記進一個 registry JSON（run-scoped），收尾時逐一核對登記清單完成清理，未清乾淨即 fail loud 並列出殘留。
+3. 收尾產出 result artifact（本次建立/清理了哪些資源），供除錯與稽核。
+4. 與 [[CC-447]] live smoke 共用同一 registry 機制，避免兩套實作。
+
+**Done-when**: registry 機制落地且至少被 [[CC-449]] 新 e2e phase 或 [[CC-447]] live smoke 其中一者採用；殘留資源可被 lint 抓到。
+
+**Dependencies**: 掛在 [[CC-449]] e2e 新 phase 之後實作；與 [[CC-447]] live smoke 共用同一 registry。
+**Source**: 2026-07-07 openyida 跨專案分析——可拋棄資源紀律模式。
+
+## CC-463 — `pmctl batch` 泛用批次執行原語 🟢 someday
+
+**Problem**: 目前沒有通用的「對多個 ticket/target 批次執行同一動作」原語——每次需要批次操作（如批次跑 gate、批次 dispatch）都是臨時腳本。2026-07-07 openyida 跨專案分析發現其 `batch` 子指令模式。
+
+**Why**: 批次執行涉及新的注入面（使用者提供的批次清單可能被用來繞過單筆操作的驗證）——這不是低風險的便利性功能，須明確設計安全邊界再落地，故列 someday 而非直接排入 milestone。
+
+**Requirement**:
+1. 依賴 [[CC-460]]（`pmctl commands --json` manifest）作為批次目標的合法性驗證來源——批次動作只能對已註冊、已知安全的 command 執行，不接受任意 shell 片段。
+2. 安全邊界設計需過 security-reviewer（新注入面：使用者可控的批次清單）。
+3. 實作前 `/pre-impl` 收斂：批次的原子性/部分失敗行為（全有全無 vs 盡力而為 + 報告）、並行度上限。
+
+**Done-when**: 有明確 Requirement 與安全邊界設計文件（`/pre-impl` 輸出）後才具備排入 milestone 的條件；本票目前僅記錄構想。
+
+**Dependencies**: [[CC-460]]（合法性驗證來源）。
+**Source**: 2026-07-07 openyida 跨專案分析——`batch` 子指令模式。
+
+## CC-464 — `pmctl ticket draft --from <notes>` 🟢 someday
+
+**Problem**: 目前從隨手筆記到結構化 backlog 票草稿全靠人工（PM agent 手動寫 pm-schema v1.2 格式）。2026-07-07 openyida 跨專案分析發現其 `flash-to-prd`（隨手筆記→結構化 PRD）模式。
+
+**Why**: 若能把「筆記→結構化草稿」的機械部分自動化，可以降低 PM 起草票的摩擦；但草稿品質判斷（Problem/Why 是否抓對根因、Priority 是否合理）仍需人工 review，本票只做草稿生成，不做自動核准。
+
+**Requirement**:
+1. 依賴 [[CC-286]]（prefix-generic next-id derivation）——**注意 CC-286 目前狀態為 ⏸ deferred、尚未排程**，本票的 next-id 需求在 CC-286 落地前只能沿用現有 `pm-prep-snapshot.sh` 的 CC-only 派生，不阻塞本票開票但會限制其排入 milestone 的時機。
+2. 輸出為草稿（含 Problem/Why/Requirement 骨架），不自動寫入 BACKLOG.md——review-first 邊界：草稿必須經人工確認後才落地，比照現有「PM 產出 brief 交主線程」的既定模式獨立設計，**CC-054 僅供鬆散參照**（CC-054 本身是 `/skill-refine` diff generation 的 deferred 票，非本票的直接設計前例，不應視為既定機制）。
+
+**Done-when**: 有明確 Requirement 與人工 review 邊界設計後才具備排入 milestone 的條件；本票目前僅記錄構想。
+
+**Dependencies**: [[CC-286]]（⏸ deferred，尚未排程）。
+**Source**: 2026-07-07 openyida 跨專案分析——`flash-to-prd` 模式。
 
 ---
 
@@ -1088,6 +1179,8 @@ project_tooling: {makefile: false, backlog_render_target: false}
 Add `scripts/spike-validate.sh` (mirror `handover-validate.sh`) + `scripts/gen-brief-from-spike.sh` (mechanical extraction).
 
 **Why deferred to someday, not active**: only one spike exists today (CC-060). Schema's leverage scales with N — for N=1 it's pure overhead. Defer until 3+ spike docs accumulate and the brief-extraction pattern repeats verbatim, indicating real automation value. CC-243's schema-key naming was chosen now so that upgrade to CC-244 doesn't re-wash field names.
+
+**External reference (2026-07-07 openyida 跨專案分析)**: openyida 的 "generate-page" 產出物 manifest 模式（生成物本身攜帶 manifest 描述其結構，供後續 AI 編輯安全定位）是本票 `spike_v1`/`dispatch_handover_v1` schema 化構想的外部佐證之一——不改變本票的觸發條件（仍待 3+ spike 文件與 brief-extraction pattern 重複出現）。
 
 **Trigger conditions to promote from someday → active**:
 - 3+ spike documents under `docs/spikes/` with similar phase-1/phase-2/phase-3 structure
