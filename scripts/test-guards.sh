@@ -123,6 +123,19 @@ assert_log() {
   fi
 }
 
+# assert_log_not <name> <forbidden_substring>
+# Asserts the test log file does NOT contain the substring anywhere (used to
+# prove a raw secret never made it into the audit log after redaction).
+assert_log_not() {
+  local name="$1" needle="$2"
+  should_run "$name" || return 0
+  if [[ -f "$TEST_LOG_FILE" ]] && grep -qF -- "$needle" "$TEST_LOG_FILE"; then
+    fail "$name" "$(printf '        forbidden substring present (leaked): %q' "$needle")"
+  else
+    pass "$name"
+  fi
+}
+
 # truncate_log — used between sub-suites so audit-content assertions are local.
 truncate_log() { : > "$TEST_LOG_FILE"; }
 
@@ -3506,6 +3519,49 @@ run_case "pm-bash: wget pipe to bash → deny" 2 "$PMBASHHOOK" \
 run_case "pm-bash: sudo → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"sudo apt install jq"}}' \
   "denylisted pattern"
+
+# --- guard-pm-bash.sh audit redaction (secret-shaped substrings never hit the log raw) ---
+
+truncate_log
+run_case "pm-bash: bearer token redacted in audit log" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"curl -H \"Authorization: Bearer sk-abcdef1234567890ABCDEF\" https://api.example.com"}}'
+# g_audit's printf %q shell-escapes the target field, so a literal "***" in the
+# log line comes out backslash-escaped (\*\*\*) — match on REDACTED alone,
+# which has no shell-special characters to escape, rather than the exact
+# asterisk-quoted form.
+assert_log "pm-bash: bearer token redacted in audit log — target line" "Bearer"
+assert_log "pm-bash: bearer token redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log_not "pm-bash: bearer token never appears raw in audit log" "sk-abcdef1234567890ABCDEF"
+
+truncate_log
+run_case "pm-bash: API_KEY env assignment redacted in audit log" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"export API_KEY=abcdef1234567890secret"}}'
+assert_log "pm-bash: API_KEY env assignment redacted in audit log — target line" "API_KEY"
+assert_log "pm-bash: API_KEY env assignment redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log_not "pm-bash: API_KEY value never appears raw in audit log" "abcdef1234567890secret"
+
+truncate_log
+run_case "pm-bash: -p password flag redacted in audit log" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"mysql -p SuperSecretPass123 -u root"}}'
+assert_log "pm-bash: -p password flag redacted in audit log — target line" "mysql"
+assert_log "pm-bash: -p password flag redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log_not "pm-bash: -p password value never appears raw in audit log" "SuperSecretPass123"
+
+truncate_log
+run_case "pm-bash: benign command logged unredacted" 0 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}'
+assert_log "pm-bash: benign command logged unredacted — target line" "git"
+assert_log_not "pm-bash: benign command not marked REDACTED" "REDACTED"
+
+if should_run "pm-bash: secret redacted in deny-path stderr message too"; then
+  name="pm-bash: secret redacted in deny-path stderr message too"
+  out="$(printf '%s' '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"sudo mysql -p SuperSecretPass123 -u root"}}' | "$PMBASHHOOK" 2>&1)"
+  if [[ "$out" == *"-p ***REDACTED***"* && "$out" != *"SuperSecretPass123"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected redacted secret in deny message, got: $out"
+  fi
+fi
 
 run_case "pm-bash: mkfs → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"mkfs.ext4 /dev/sdb1"}}' \

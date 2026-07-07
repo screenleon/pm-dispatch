@@ -22,7 +22,12 @@
 # Each bypass is logged.
 #
 # Audit: every evaluated firing (allow / deny / bypass) is appended to
-# ~/.claude/logs/hooks.log (or $PM_GUARD_LOG_DIR/hooks.log in tests).
+# ~/.claude/logs/hooks.log (or $PM_GUARD_LOG_DIR/hooks.log in tests) — with
+# common secret-shaped substrings (API keys, bearer tokens, password/token/
+# secret flag values) redacted first (see _redact_secrets below). The
+# denylist itself still matches against the RAW, unredacted command — only
+# what gets displayed/persisted (the audit log line and the stderr deny
+# message) is redacted.
 #
 # Extending the denylist: this is a ratchet, not a final list — add a pattern
 # below with a one-line reason when a new destructive command class is
@@ -56,6 +61,27 @@ PM_GUARD_PM_BASH=off for one turn (logged) after confirming the risk.
 EOF
 }
 
+# Best-effort redaction of common secret shapes before a command string is
+# displayed or persisted (audit log line, stderr deny message). Order matters:
+# specific token shapes are masked before the generic `key=value`/`--flag
+# value` fallback so a matched token isn't partially re-matched by a later
+# broader pattern. Not a complete secret scanner — a command containing a
+# secret in an unrecognized shape still gets logged as-is; this closes the
+# common cases (API keys, bearer tokens, password/token/secret flags), not
+# every possible one.
+_redact_secrets() {
+  local s="$1"
+  s="${s//$'\n'/ }"
+  sed -E \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/***REDACTED***/g' \
+    -e 's/gh[ps]_[A-Za-z0-9]{20,}/***REDACTED***/g' \
+    -e 's/AKIA[0-9A-Z]{16}/***REDACTED***/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
+    -e 's/(-p|--password|--pass)([=[:space:]])[^[:space:]]+/\1\2***REDACTED***/g' \
+    -e 's/([Pp]assword|[Tt]oken|[Ss]ecret|[Aa][Pp][Ii]_?[Kk][Ee][Yy])([=:][[:space:]]?)[^[:space:]]+/\1\2***REDACTED***/g' \
+    <<<"$s"
+}
+
 g_require_jq
 g_read_json
 
@@ -68,7 +94,10 @@ command_str="$(g_jq '.tool_input.command // ""')" || {
   echo "$GUARD_NAME: malformed JSON on stdin — denying" >&2
   exit 2
 }
-G_TARGET="$command_str"
+# G_TARGET drives both the audit log line and the stderr deny message — never
+# the raw command. The denylist match below uses $command_str (unredacted)
+# directly, so redaction can never weaken the policy itself.
+G_TARGET="$(_redact_secrets "$command_str")"
 
 g_check_bypass PM_GUARD_PM_BASH
 
