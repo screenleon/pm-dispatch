@@ -299,10 +299,87 @@ _doctor_host_claude_check_manifest() {
   emit_check manifest ok "install manifest present"
 }
 
-# Capability view of the claude host: one record per desired capability,
-# derived from the same wiring signals the checks above verify. Wiring is the
-# install contract for the claude host, so an unwired capability is warn (with
-# the install fix), unlike hosts whose install write path does not exist yet.
+# Single source of truth for the claude host's probed capability tuple — used
+# by both the human-facing capability view below and the declared-vs-probed
+# consistency check, so the two can never state a different probed value for
+# the same capability (docs/host-contract.md "declared and probed layers stay
+# mechanically comparable"). Sets _PROBE_* globals; callers read them
+# immediately (no subshell — bash 3.2 on macOS has no associative arrays to
+# return a tuple through otherwise).
+#
+# guard-pm-write.sh matches Edit|Write, not Bash — it is a file-write role
+# guard, not a command guard, so it probes file_guard. There is no
+# corresponding host-level Bash-tool hook for claude's own session at all
+# (the "Bash" matcher only ever wires adapters/<name>/bash-guard.sh, gated
+# per-adapter by needs_bash_guard for the DISPATCHED-EXECUTOR axis — a
+# different capability than guarding the host's own commands), so
+# command_guard has no wiring signal to probe and is always none. Both
+# file_guard and command_guard stay `none` even when guard-pm-write.sh is
+# wired: hosts/claude/host.yaml's closure-of-all-paths analysis (guard-pm-write
+# is scoped to one subagent and never closes the Bash-tool bypass) means
+# wiring status can never lift either capability's coverage above none — the
+# probe only varies the human message, not the tuple, for these two.
+_doctor_host_claude_probe() {
+  local capability="$1" settings="$2"
+  _PROBE_FIX=""
+  case "$capability" in
+    command_guard)
+      _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
+      _PROBE_STABILITY=evolving; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
+      _PROBE_MESSAGE="no host-level Bash command guard for claude's own session (adapter bash-guard hooks are the dispatched-executor axis, gated per-adapter by needs_bash_guard; none active today)"
+      ;;
+    file_guard)
+      _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
+      _PROBE_STABILITY=evolving; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
+      if _doctor_host_claude_hook_present guard-pm-write.sh "$settings"; then
+        _PROBE_MESSAGE="write guard wired (PreToolUse hook, PM subagent Edit|Write only) — does not close the Bash-tool bypass, so file_guard stays unsupported"
+      else
+        _PROBE_MESSAGE="write guard not wired"
+      fi
+      ;;
+    session_lifecycle)
+      if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
+        _PROBE_WIRED=1; _PROBE_PROVIDER=host_hook; _PROBE_ENFORCEMENT=advisory; _PROBE_COVERAGE=full
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
+        _PROBE_MESSAGE="session summary wired (Stop hook)"
+      else
+        _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
+        _PROBE_MESSAGE="session summary not wired"
+        _PROBE_FIX="bash '${REPO_ROOT}/scripts/install-guards.sh'"
+      fi
+      ;;
+    statusline)
+      if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
+        _PROBE_WIRED=1; _PROBE_PROVIDER=host_hook; _PROBE_ENFORCEMENT=advisory; _PROBE_COVERAGE=full
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
+        _PROBE_MESSAGE="statusline wired"
+      else
+        _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
+        _PROBE_MESSAGE="statusline not wired"
+        _PROBE_FIX="bash '${REPO_ROOT}/scripts/install-guards.sh'"
+      fi
+      ;;
+    pm_command_interface)
+      if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/pm.md" ]]; then
+        _PROBE_WIRED=1; _PROBE_PROVIDER=host_native; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=full
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=ok
+        _PROBE_MESSAGE="PM command interface installed (commands/pm.md)"
+      else
+        _PROBE_WIRED=0; _PROBE_PROVIDER=none; _PROBE_ENFORCEMENT=none; _PROBE_COVERAGE=none
+        _PROBE_STABILITY=stable; _PROBE_CONFIDENCE=probed; _PROBE_STATUS=warn
+        _PROBE_MESSAGE="PM command interface not installed"
+        _PROBE_FIX="bash '${REPO_ROOT}/install.sh'"
+      fi
+      ;;
+  esac
+}
+
+# Capability view of the claude host: one record per guard_bindings
+# capability in hosts/claude/host.yaml, derived from _doctor_host_claude_probe
+# — the single wiring-signal source of truth shared with the consistency
+# check below.
 _doctor_host_claude_capabilities() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   if [[ "$_SETTINGS_FILE_FAILED" -eq 1 || "$_SETTINGS_FILE_INVALID" -eq 1 ]] \
@@ -312,45 +389,20 @@ _doctor_host_claude_capabilities() {
     return
   fi
 
-  if _doctor_host_claude_hook_present guard-pm-write.sh "$settings"; then
-    emit_capability host.claude.command-guard ok claude command_guard \
-      host_hook blocking full stable probed \
-      "write guard wired (PreToolUse hook)"
-  else
-    emit_capability host.claude.command-guard warn claude command_guard \
-      none none none stable probed \
-      "write guard not wired" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
-  fi
-
-  if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
-    emit_capability host.claude.session-lifecycle ok claude session_lifecycle \
-      host_hook advisory full stable probed \
-      "session summary wired (Stop hook)"
-  else
-    emit_capability host.claude.session-lifecycle warn claude session_lifecycle \
-      none none none stable probed \
-      "session summary not wired" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
-  fi
-
-  if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
-    emit_capability host.claude.statusline ok claude statusline \
-      host_hook advisory full stable probed \
-      "statusline wired"
-  else
-    emit_capability host.claude.statusline warn claude statusline \
-      none none none stable probed \
-      "statusline not wired" "bash '${REPO_ROOT}/scripts/install-guards.sh'"
-  fi
-
-  if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/pm.md" ]]; then
-    emit_capability host.claude.command-interface ok claude pm_command_interface \
-      host_native none full stable probed \
-      "PM command interface installed (commands/pm.md)"
-  else
-    emit_capability host.claude.command-interface warn claude pm_command_interface \
-      none none none stable probed \
-      "PM command interface not installed" "bash '${REPO_ROOT}/install.sh'"
-  fi
+  local cap slug
+  for cap in command_guard file_guard session_lifecycle pm_command_interface statusline; do
+    case "$cap" in
+      command_guard)        slug=host.claude.command-guard ;;
+      file_guard)            slug=host.claude.file-guard ;;
+      session_lifecycle)     slug=host.claude.session-lifecycle ;;
+      pm_command_interface)  slug=host.claude.command-interface ;;
+      statusline)            slug=host.claude.statusline ;;
+    esac
+    _doctor_host_claude_probe "$cap" "$settings"
+    emit_capability "$slug" "$_PROBE_STATUS" claude "$cap" \
+      "$_PROBE_PROVIDER" "$_PROBE_ENFORCEMENT" "$_PROBE_COVERAGE" "$_PROBE_STABILITY" "$_PROBE_CONFIDENCE" \
+      "$_PROBE_MESSAGE" "$_PROBE_FIX"
+  done
 }
 
 # Extracts a single field's value from one capability entry of
@@ -377,15 +429,17 @@ _doctor_host_claude_manifest_field() {
 
 # Declared-vs-probed consistency check (docs/host-contract.md "Declared /
 # probed / effective layering"): hosts/claude/host.yaml's guard_bindings is
-# the DECLARED layer; the capability probes above are the PROBED layer. This
-# only compares the two layers for a capability that IS currently wired —
-# "not installed yet" is a normal, already-surfaced state (the capability
-# warn above), not a manifest defect, so it is intentionally not flagged
-# here. What this catches instead: hosts/claude/host.yaml edited to declare
-# a different provider/enforcement/coverage than what a live, wired
-# environment actually probes to — drift between the static file and
-# reality must be observable, not silent, per the same design rule the
-# doctor capability view itself was built on.
+# the DECLARED layer; _doctor_host_claude_probe (shared with the capability
+# view above, so there is exactly one source of truth for the probed tuple)
+# is the PROBED layer. Every capability is compared, across every tuple field
+# doctor tracks (provider/enforcement/coverage/stability/confidence) — but
+# only for a capability the probe reports as WIRED (_PROBE_WIRED=1).
+# "Not installed yet" is a normal, already-surfaced state (the capability
+# warn already emitted above), not a manifest defect, so an unwired
+# capability is skipped here rather than flagged. What this does catch:
+# hosts/claude/host.yaml edited to declare a different tuple than what a
+# live, wired environment actually probes to — drift between the static file
+# and reality must be observable, not silent.
 _doctor_host_claude_check_manifest_consistency() {
   local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   if [[ ! -f "$REPO_ROOT/hosts/claude/host.yaml" ]]; then
@@ -401,26 +455,24 @@ _doctor_host_claude_check_manifest_consistency() {
   fi
 
   local -a drift=()
-  local declared
+  local cap field declared probed
 
-  if _doctor_host_claude_hook_present guard-session-summary.sh "$settings"; then
-    declared="$(_doctor_host_claude_manifest_field session_lifecycle provider)"
-    [[ "$declared" == "host_hook" ]] || drift+=("session_lifecycle: wired but manifest declares provider '$declared' (expected host_hook)")
-    declared="$(_doctor_host_claude_manifest_field session_lifecycle enforcement)"
-    [[ "$declared" == "advisory" ]] || drift+=("session_lifecycle: wired but manifest declares enforcement '$declared' (expected advisory)")
-  fi
-
-  if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/pm.md" ]]; then
-    declared="$(_doctor_host_claude_manifest_field pm_command_interface provider)"
-    [[ "$declared" == "host_native" ]] || drift+=("pm_command_interface: installed but manifest declares provider '$declared' (expected host_native)")
-  fi
-
-  if _doctor_host_claude_hook_present guard-save-rate-limits.sh "$settings"; then
-    declared="$(_doctor_host_claude_manifest_field statusline provider)"
-    [[ "$declared" == "host_hook" ]] || drift+=("statusline: wired but manifest declares provider '$declared' (expected host_hook)")
-    declared="$(_doctor_host_claude_manifest_field statusline enforcement)"
-    [[ "$declared" == "advisory" ]] || drift+=("statusline: wired but manifest declares enforcement '$declared' (expected advisory)")
-  fi
+  for cap in command_guard file_guard session_lifecycle pm_command_interface statusline; do
+    _doctor_host_claude_probe "$cap" "$settings"
+    [[ "$_PROBE_WIRED" -eq 1 ]] || continue
+    for field in provider enforcement coverage stability confidence; do
+      case "$field" in
+        provider)    probed="$_PROBE_PROVIDER" ;;
+        enforcement) probed="$_PROBE_ENFORCEMENT" ;;
+        coverage)    probed="$_PROBE_COVERAGE" ;;
+        stability)   probed="$_PROBE_STABILITY" ;;
+        confidence)  probed="$_PROBE_CONFIDENCE" ;;
+      esac
+      declared="$(_doctor_host_claude_manifest_field "$cap" "$field")"
+      [[ "$declared" == "$probed" ]] || \
+        drift+=("$cap: wired but manifest declares $field '$declared' (probed: $probed)")
+    done
+  done
 
   if [[ "${#drift[@]}" -gt 0 ]]; then
     emit_check host.claude.manifest-consistency fail \

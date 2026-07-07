@@ -1092,11 +1092,14 @@ case_doctor_capability_json_fields() {
   bad_fields="$(printf '%s\n' "$out" | jq -s '[.[] | select(.capability) | select((has("host") and has("provider") and has("enforcement") and has("coverage") and has("stability") and has("confidence")) | not)] | length')"
   # Value-level assertions: a wired claude write guard and a present codex
   # binary must report these exact capability tuples, so a silent mutation of
-  # any field fails here rather than passing a mere has()-check.
-  guard_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.claude.command-guard")
-    | select(.status == "ok" and .host == "claude" and .capability == "command_guard"
-      and .provider == "host_hook" and .enforcement == "blocking" and .coverage == "full"
-      and .stability == "stable" and .confidence == "probed")] | length')"
+  # any field fails here rather than passing a mere has()-check. guard-pm-write.sh
+  # matches Edit|Write (not Bash), so it probes file_guard, not command_guard —
+  # and per the closure-of-all-paths rule (it never closes the Bash-tool
+  # bypass) file_guard's tuple stays none/none/none even while wired.
+  guard_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.claude.file-guard")
+    | select(.status == "ok" and .host == "claude" and .capability == "file_guard"
+      and .provider == "none" and .enforcement == "none" and .coverage == "none"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
   binary_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.binary")
     | select(.status == "ok" and .host == "codex" and .capability == "pm_command_interface"
       and .provider == "host_native" and .enforcement == "none" and .coverage == "full"
@@ -1254,6 +1257,61 @@ case_doctor_claude_command_interface_missing_warns() {
     pass "$name"
   else
     fail "$name" "expected exactly one command-interface warn tuple with fix; warned=$warned status=$status out=$out"
+  fi
+}
+
+case_doctor_claude_manifest_consistency_drift_fails() {
+  # Verifies host.claude.manifest-consistency actually fails when a wired
+  # capability's probed tuple disagrees with hosts/claude/host.yaml's
+  # declared tuple — the regression the PR-gate qa-tester/critic/
+  # architecture-reviewer round asked for, proving the check does not just
+  # always pass regardless of the manifest content.
+  #
+  # Steps:
+  #   1. Copy scripts/, adapters/, and hosts/ into a writable fake_repo (doctor
+  #      reads hosts/claude/host.yaml relative to --repo, not its own location).
+  #   2. Mutate the copied hosts/claude/host.yaml: change session_lifecycle's
+  #      declared provider from host_hook to host_policy (still a valid enum
+  #      value, so this exercises the consistency check specifically, not the
+  #      schema validator).
+  #   3. Full healthy env (session-summary Stop hook wired) + --repo fake_repo.
+  #   4. Assert exit 1, [FAIL], and the specific drift message naming
+  #      session_lifecycle/provider/host_policy.
+  local name="doctor-claude-manifest-consistency-drift-fails"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-manifest-drift" out status=0 path
+  local fake_repo="$tmp_root/fake-repo-manifest-drift"
+  mkdir -p "$fake_repo/scripts"
+  cp -r "$REPO_ROOT/scripts/lib" "$fake_repo/scripts/" 2>/dev/null || true
+  for f in "$REPO_ROOT/scripts/"*.sh; do
+    cp "$f" "$fake_repo/scripts/$(basename "$f")"
+    chmod +x "$fake_repo/scripts/$(basename "$f")"
+  done
+  cp -r "$REPO_ROOT/adapters" "$fake_repo/adapters"
+  mkdir -p "$fake_repo/hosts"
+  cp -r "$REPO_ROOT/hosts/claude" "$fake_repo/hosts/claude"
+  sed -i.bak \
+    '/capability: session_lifecycle/,/capability: pm_command_interface/ s/provider: host_hook/provider: host_policy/' \
+    "$fake_repo/hosts/claude/host.yaml"
+  rm -f "$fake_repo/hosts/claude/host.yaml.bak"
+
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-manifest-drift" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --no-color --repo "$fake_repo" 2>&1)" || status=$?
+
+  if [[ "$status" -eq 1 && "$out" == *"[FAIL]"* \
+    && "$out" == *"session_lifecycle: wired but manifest declares provider 'host_policy'"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
   fi
 }
 
@@ -1796,6 +1854,7 @@ case_doctor_profile_missing_arg_exits_2
 case_doctor_profile_invalid_value_exits_2
 case_doctor_hook_inventory_parity
 case_doctor_capability_json_fields
+case_doctor_claude_manifest_consistency_drift_fails
 case_doctor_codex_hooks_wired_tuple
 case_doctor_codex_hooks_malformed_warns
 case_doctor_codex_hooks_absent_unwired_tuple
