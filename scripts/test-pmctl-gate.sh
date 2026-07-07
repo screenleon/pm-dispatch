@@ -659,10 +659,14 @@ case_wait_default_cd() {
   # recomputes the identical run-dir partition and resolves the verdict.
   #
   # Steps:
-  #   1. Launch a detached GO gate with an explicit --cd <work>.
-  #   2. Run `gate wait <gate_id>` (no --cd) with CWD = <work> (a non-git
-  #      dir, exercising the $PWD fallback of the shared default).
-  #   3. Assert exit 0, state GO, and the echoed Final: GO verdict line.
+  #   1. Launch a detached GO gate with an explicit --cd <work> (non-git),
+  #      then run `gate wait <gate_id>` (no --cd) with CWD = <work>,
+  #      exercising the $PWD fallback of the shared default.
+  #   2. Launch a second gate with --cd <git repo toplevel>, then wait (no
+  #      --cd) from a SUBDIRECTORY of that repo, exercising the
+  #      git-toplevel branch: the wait must climb to the toplevel to
+  #      recompute the same partition the run derived.
+  #   3. Assert exit 0, state GO, and the echoed Final: GO line for both.
   local name="gate/wait: --cd defaults to caller CWD when omitted"
   should_run "$name" || return 0
 
@@ -692,10 +696,43 @@ case_wait_default_cd() {
   code=$?
   set -e
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] && [[ "$out" == *"Final: GO"* ]]; then
+  if [[ "$code" -ne 0 ]] || [[ "$out" != *"state: GO"* ]] || [[ "$out" != *"Final: GO"* ]]; then
+    fail "$name" "non-git \$PWD fallback: code=$code out=$out (expected default-cd wait to resolve GO)"
+    return
+  fi
+
+  # Git-toplevel branch: run keyed to the repo toplevel, wait from a subdir.
+  # The repo path is created physical (pwd -P) so the toplevel git reports
+  # matches the partition key the run derived from the literal --cd value.
+  local gitwork
+  mkdir -p "$tmp_root/f16/gitwork/subdir"
+  gitwork="$(cd "$tmp_root/f16/gitwork" && pwd -P)"
+  git -C "$gitwork" init -q
+
+  local gate_id2 code2
+  set +e
+  gate_id2="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate run --cd "$gitwork" --lifecycle detached 2>/dev/null)"
+  code2=$?
+  set -e
+  if [[ "$code2" -ne 0 ]] || ! [[ "$gate_id2" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "gate run (git toplevel) failed: code=$code2 out=$gate_id2"
+    return
+  fi
+
+  local out2 wcode2
+  set +e
+  out2="$(cd "$gitwork/subdir" && PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_GATE_WAIT_POLL_INTERVAL=0.1 \
+    "$cli_pmctl" gate wait "$gate_id2" --timeout 30 2>&1)"
+  wcode2=$?
+  set -e
+
+  if [[ "$wcode2" -eq 0 ]] && [[ "$out2" == *"state: GO"* ]] && [[ "$out2" == *"Final: GO"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out (expected default-cd wait to resolve GO)"
+    fail "$name" "git-subdir default: code=$wcode2 out=$out2 (expected wait from subdir to climb to toplevel and resolve GO)"
   fi
 }
 
