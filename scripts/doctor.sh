@@ -386,6 +386,7 @@ check_scripts_executable() {
     guard-log-claude-usage.sh
     guard-session-summary.sh
     guard-inject-memory.sh
+    guard-inject-context.sh
     guard-save-rate-limits.sh
     token-usage.sh
     log-usage.sh

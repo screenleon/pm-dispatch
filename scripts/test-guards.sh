@@ -26,6 +26,7 @@ EXWHOOK="$SCRIPT_DIR/guard-executor-write.sh"
 STOP_HOOK="$SCRIPT_DIR/guard-log-claude-usage.sh"
 RL_HOOK="$SCRIPT_DIR/guard-save-rate-limits.sh"
 MEM_HOOK="$SCRIPT_DIR/guard-inject-memory.sh"
+CTX_HOOK="$SCRIPT_DIR/guard-inject-context.sh"
 SESSION_HOOK="$SCRIPT_DIR/guard-session-summary.sh"
 
 # shellcheck source=scripts/lib/test-harness.sh
@@ -2623,6 +2624,297 @@ inject_hook_routing_dir_isolation() {
   fi
 }
 inject_hook_routing_dir_isolation
+
+# =============================================================================
+# guard-inject-context
+# =============================================================================
+
+echo
+$LIST || echo "== guard-inject-context =="
+
+PMCTL_CLI="$REPO_ROOT/cli/pmctl"
+
+# Stand up an indexed git fixture repo with one knowledge doc, isolated from the
+# live install: context DB is repo-local, telemetry goes to the given state root.
+# Returns non-zero (with a printed reason) if the index build did not produce a
+# DB — a silent setup failure here would otherwise surface as a confusing
+# empty-output assertion failure in the case itself.
+ctx_inject_make_repo() {
+  local repo="$1" state_root="$2" idx_err
+  idx_err="$(mktemp)"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '# Notes\n\n## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  PM_DISPATCH_STATE_ROOT="$state_root" bash "$PMCTL_CLI" context index "$repo" >/dev/null 2>"$idx_err"
+  if [[ ! -f "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    printf '  SETUP-FAIL ctx_inject_make_repo: no context.db after index: %s\n' "$(<"$idx_err")"
+    rm -f "$idx_err"
+    return 1
+  fi
+  rm -f "$idx_err"
+}
+
+ctx_inject_case() {
+  # Shared assertion runner: feeds a payload to the ctx hook and checks
+  # exit 0 plus expected/forbidden output substrings.
+  # Args: name payload expect_mode ("hit" = auto-context block present,
+  #       "silent" = empty stdout) [extra env assignments via _CTX_CASE_ENV array]
+  # A generous scan timeout is set for every case: the production default (10s)
+  # can be exceeded on a CPU-saturated machine (run-all-tests --jobs N), and a
+  # timed-out scan degrades to silence — which would flip "hit" cases red for
+  # load reasons, not correctness ones.
+  local name="$1" payload="$2" expect="$3" state_root="$4"
+  local output status hook_err
+  hook_err="$(mktemp)"
+  output=$(printf '%s' "$payload" \
+    | env PM_DISPATCH_STATE_ROOT="$state_root" \
+      PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=120 \
+      "${_CTX_CASE_ENV[@]+"${_CTX_CASE_ENV[@]}"}" \
+      "$CTX_HOOK" 2>"$hook_err")
+  status=$?
+  local ok=0
+  if [[ "$expect" == "hit" ]]; then
+    [[ "$status" == "0" \
+      && "$output" == ===\ auto-context:*$'\n'* \
+      && "$output" == *"knowledge_hits:"* \
+      && "$output" == *"docs/notes.md"* \
+      && "$output" == *$'\n'===\ end\ auto-context\ === ]] && ok=1
+  else
+    [[ "$status" == "0" && -z "$output" ]] && ok=1
+  fi
+  if [[ "$ok" == "1" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q stderr=%q\n' "$name" "$status" "$output" "$(<"$hook_err")"
+  fi
+  rm -f "$hook_err"
+}
+
+ctx_inject_hook_happy_path() {
+  # Verifies knowledge hits are injected as an auto-context block when the cwd
+  # is inside an indexed git repo and the prompt matches a knowledge doc.
+  # Steps:
+  #   1. Create a git fixture repo with docs/notes.md and build its index
+  #   2. Run the hook with a payload whose prompt contains the matching term
+  #   3. Assert exit 0, auto-context delimiters, knowledge_hits with the doc ref
+  local name="ctx-inject-hook/happy-path"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" hit "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_subdir_resolves_toplevel() {
+  # Verifies the hook resolves the git toplevel from a nested cwd — the scan
+  # target is the repo root, not the subdirectory.
+  # Steps:
+  #   1. Create an indexed git fixture repo with a nested subdir
+  #   2. Run the hook with cwd set to the subdir and a matching prompt
+  #   3. Assert the knowledge hit from the repo root is injected
+  local name="ctx-inject-hook/subdir-resolves-toplevel"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  mkdir -p "$repo/packages/app"
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$repo/packages/app\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" hit "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_non_git_cwd_silent() {
+  # Verifies a cwd outside any git worktree exits 0 with empty stdout.
+  # Steps:
+  #   1. Create a plain (non-git) directory
+  #   2. Run the hook with a valid payload pointing at it
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/non-git-cwd-silent"
+  should_run "$name" || return 0
+  local dir
+  dir="$(mktemp -d)"
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$dir\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$dir/state"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_no_db_silent() {
+  # Verifies a git repo with no context index stays silent — the hook must not
+  # trigger a first full index build on the prompt path (AUTOBUILD=0).
+  # Steps:
+  #   1. Create a git fixture repo WITHOUT building an index
+  #   2. Run the hook with a matching prompt
+  #   3. Assert exit 0, empty stdout, and no context.db created
+  local name="ctx-inject-hook/no-db-silent"
+  should_run "$name" || return 0
+  local dir repo
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$dir/state"
+  if [[ -e "$repo/.pm-dispatch/ctx/context.db" ]]; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name/no-autobuild")
+    printf '  FAIL  %s — hook auto-built context.db on the prompt path\n' "$name"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_no_hits_silent() {
+  # Verifies an indexed repo with a non-matching prompt stays silent.
+  # Steps:
+  #   1. Create an indexed git fixture repo
+  #   2. Run the hook with a prompt matching nothing in the index
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/no-hits-silent"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"zzzznomatch yyyynomatch xxxxnomatch\"}" silent "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_short_prompt_silent() {
+  # Verifies trivially short prompts (< 12 chars) skip the scan entirely.
+  # Steps:
+  #   1. Create an indexed git fixture repo
+  #   2. Run the hook with a short prompt
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/short-prompt-silent"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  local _CTX_CASE_ENV=()
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"hi there\"}" silent "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_kill_switch() {
+  # Verifies PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1 disables the scan even when
+  # a hit would otherwise be injected.
+  # Steps:
+  #   1. Create an indexed git fixture repo with a matching prompt setup
+  #   2. Run the hook with the kill-switch env set
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/kill-switch"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  local _CTX_CASE_ENV=(PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1)
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_timeout_fail_open() {
+  # Verifies a scan that exceeds PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT degrades to
+  # a silent exit 0 — the timeout fail-open path must never block the prompt.
+  # Steps:
+  #   1. Create an indexed git fixture repo (so no earlier exit path triggers)
+  #   2. Point PM_DISPATCH_PROMPT_CONTEXT_PMCTL at a stub that sleeps past a
+  #      1-second timeout
+  #   3. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/timeout-fail-open"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v timeout >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo state_root
+  dir="$(mktemp -d)"; repo="$dir/repo"; state_root="$dir/state"
+  if ! ctx_inject_make_repo "$repo" "$state_root"; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); rm -rf "$dir"; return 0
+  fi
+  cat > "$dir/slow-pmctl" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+STUB
+  chmod +x "$dir/slow-pmctl"
+  local _CTX_CASE_ENV=(
+    PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/slow-pmctl"
+    PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=1
+  )
+  ctx_inject_case "$name" "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" silent "$state_root"
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_malformed_payload() {
+  # Verifies malformed JSON stdin never crashes or blocks the prompt.
+  # Steps:
+  #   1. Run the hook with non-JSON stdin
+  #   2. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/malformed-payload"
+  should_run "$name" || return 0
+  local dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '%s' 'not-json{{{' | PM_DISPATCH_STATE_ROOT="$dir/state" "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_empty_stdin() {
+  # Verifies empty stdin exits 0 without stdout.
+  # Steps:
+  #   1. Run the hook with empty stdin
+  #   2. Assert exit 0 and empty stdout
+  local name="ctx-inject-hook/empty-stdin"
+  should_run "$name" || return 0
+  local dir output status
+  dir="$(mktemp -d)"
+  output=$(printf '' | PM_DISPATCH_STATE_ROOT="$dir/state" "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  if [[ "$status" == "0" && -z "$output" ]]; then
+    PASS=$((PASS+1))
+    [[ "${VERBOSE:-}" ]] && printf '  PASS  %s\n' "$name"
+  else
+    FAIL=$((FAIL+1))
+    FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q\n' "$name" "$status" "$output"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_happy_path
+ctx_inject_hook_subdir_resolves_toplevel
+ctx_inject_hook_non_git_cwd_silent
+ctx_inject_hook_no_db_silent
+ctx_inject_hook_no_hits_silent
+ctx_inject_hook_short_prompt_silent
+ctx_inject_hook_kill_switch
+ctx_inject_hook_timeout_fail_open
+ctx_inject_hook_malformed_payload
+ctx_inject_hook_empty_stdin
 
 # =============================================================================
 # guard-session-summary

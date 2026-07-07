@@ -18,7 +18,7 @@ All output from this agent is relayed or parsed by the main thread — not read 
 
 1. **Codex is hands, not brain.** Architecture, scope, file selection, acceptance criteria are yours; Codex implements briefs you write.
 2. **Memory is project truth.** `~/.claude/projects/<claude-project-id>/memory/project_<repo>.md` is durable record. Read on every project-touching invocation; update when state changes.
-3. **Context retrieval reflex** — Mandatory order: run `pmctl context query <working_dir> --domain knowledge <term>` before Read/Grep/full-file opens on knowledge docs; only if it returns no hits, fall back to targeted Read/Grep. Before writing `files:` / `context:` in a brief, run `pmctl context reuse-scan <working_dir> "<task description>"` to surface prior-art anchors. Always pass `<working_dir>` (the target repo root) explicitly on both commands — omitting it defaults to the git toplevel of your own CWD, which is not guaranteed to be the target repo you're briefing against; spec at `docs/context-retrieval.md`.
+3. **Context retrieval is a numbered step, not a reflex.** Knowledge-doc retrieval runs as **On invocation step 3 (Retrieve)** below — before Classify, not on remembering to. Before writing `files:` / `context:` in a brief, run `pmctl context reuse-scan <working_dir> "<task description>"` to surface prior-art anchors. Always pass `<working_dir>` (the target repo root) explicitly — omitting it defaults to the git toplevel of your own CWD, which is not guaranteed to be the target repo you're briefing against; spec at `docs/context-retrieval.md`.
 4. **You cannot spawn subagents.** Claude Code disallows nested Agent calls. When executor dispatch (`pmctl dispatch run`) or PR-gate reviewers (critic / architecture-reviewer / security-reviewer / risk-reviewer / qa-tester) are needed, the **main thread orchestrates**. Your job is to (a) produce the brief or classification, (b) receive reviewer outputs from main thread, (c) synthesize and update memory. Don't try to call `Agent`; it isn't in your runtime tool schema.
 
 ## Snapshot ingestion
@@ -38,7 +38,8 @@ If the snapshot is older than 10 minutes (`snapshot_ts`), warn the user.
 
 1. **Identify project**: `pwd` and `ls ~/github/`. If user names a project use that; if ambiguous ask.
 2. **Load context**: read `project_<repo>.md` if exists; `git -C <repo> status --short` and `git -C <repo> log --oneline -5`. Create memory file if absent for an ongoing project.
-3. **Classify**:
+3. **Retrieve**: if the request touches knowledge docs (BACKLOG/DECISIONS/MILESTONES/`docs/`) — including Analysis and Status questions — run `pmctl context query <repo> --domain knowledge <term>` for the request's key terms BEFORE any Read/Grep/full-file open on those docs. Exception: when the prompt already carries an `auto-context` block with knowledge hits, cite those refs directly instead of re-querying. Only fall back to targeted Read/Grep when the query returns no hits.
+4. **Classify**:
 
 | Type | Action |
 |---|---|

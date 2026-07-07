@@ -2724,6 +2724,359 @@ case_context_reuse_scan_explicit_repo_no_fallback_warning() {
   fi
 }
 
+# ── prompt-scan cases ──────────────────────────────────────────────────────────
+
+case_context_prompt_scan_missing_prompt() {
+  local name="pmctl context prompt-scan: exits 2 when prompt text is missing"
+  # Behavior: prompt-scan must exit 2 when no prompt argument is provided.
+  # Steps: call prompt-scan with only a repo path and no prompt; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pscan-mp.out"; err="$tmp_root/pscan-mp.err"
+  local noarg_repo="$tmp_root/noarg-repo-pscan"
+  mkdir -p "$noarg_repo"
+  "$PMCTL" context prompt-scan "$noarg_repo" > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_prompt_scan_unknown_flag() {
+  local name="pmctl context prompt-scan: exits 2 on unknown flag"
+  # Behavior: prompt-scan must reject unknown flags with exit 2.
+  # Steps: call prompt-scan with --bogus; assert exit 2.
+  should_run "$name" || return 0
+  local out err status=0
+  out="$tmp_root/pscan-uf.out"; err="$tmp_root/pscan-uf.err"
+  local flag_repo="$tmp_root/flag-repo-pscan"
+  mkdir -p "$flag_repo"
+  "$PMCTL" context prompt-scan "$flag_repo" --bogus "some prompt" > "$out" 2> "$err" || status=$?
+  if assert_exit "$name" "$status" 2; then pass "$name"; fi
+}
+
+case_context_prompt_scan_no_db() {
+  local name="pmctl context prompt-scan: exits 0 with empty YAML + zero-hit event when index DB not found"
+  # Behavior: with autobuild disabled, a missing index must return graceful empty
+  # output (knowledge_hits: []) with exit 0, never create the DB, and still emit
+  # a zero-hit context.prompt_scanned event.
+  # Steps: run prompt-scan on a repo with no index and autobuild disabled; assert
+  # exit 0, empty hits, no DB, and a hits=0 event in the isolated state root.
+  should_run "$name" || return 0
+
+  local nodb_repo="$tmp_root/nodb-repo-pscan"
+  mkdir -p "$nodb_repo"
+  local state_root="$tmp_root/state-pscan-nodb"; mkdir -p "$state_root"
+
+  local out err status=0
+  out="$tmp_root/pscan-nodb.out"; err="$tmp_root/pscan-nodb.err"
+  PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan "$nodb_repo" "how does the gate verdict work" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if [[ -e "$nodb_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "autobuild disabled but context.db was created"; return 0
+  fi
+  if ! grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "expected 'knowledge_hits: []'; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "no-db prompt-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+  # Telemetry persists an EMPTY query payload — nothing prompt-derived
+  # (privacy contract; the state root is isolated so tail -1 is our event).
+  local evt query hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
+    | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.prompt_scanned event for the no-db scan"; return 0
+  fi
+  query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
+  if [[ -n "$query" ]]; then
+    fail "$name" "event query payload must be empty (nothing prompt-derived); got: $query"; return 0
+  fi
+  hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$hits" != "0" ]]; then
+    fail "$name" "expected payload.hits=0 for no-db prompt-scan; got: $hits"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_knowledge_domain_only() {
+  local name="pmctl context prompt-scan: returns knowledge-domain hits only"
+  # Behavior: prompt-scan is knowledge-domain by construction — a prompt whose
+  # terms match both knowledge docs (BACKLOG.md) and repo code (mymodule.sh)
+  # must return the knowledge refs and never the repo-plane code refs.
+  # Steps: index fixture; scan with a prompt matching both planes; assert a
+  # BACKLOG.md ref is present and no scripts/ ref appears.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-domain"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  out="$tmp_root/pscan-domain.out"; err="$tmp_root/pscan-domain.err"
+  # "alpha" matches BACKLOG.md/docs (knowledge) AND my_func_alpha (repo code).
+  "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q '^knowledge_hits:' "$out"; then
+    fail "$name" "expected knowledge_hits: header; got: $(<"$out")"; return 0
+  fi
+  if ! grep -qE '  - ref: (BACKLOG\.md|docs/)' "$out"; then
+    fail "$name" "expected a knowledge-domain ref (BACKLOG.md or docs/); got: $(<"$out")"; return 0
+  fi
+  if grep -q 'mymodule.sh' "$out"; then
+    fail "$name" "repo-plane code ref leaked into knowledge-only output: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_dedup_and_hit_cap() {
+  local name="pmctl context prompt-scan: refs are unique and capped at 5"
+  # Behavior: overlapping terms must not produce duplicate refs, and output must
+  # emit at most 5 refs regardless of how many knowledge chunks match.
+  # Steps: index a fixture with many matching knowledge headings; scan with
+  # overlapping terms; assert unique refs and count <= 5.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-cap"
+  mkdir -p "$fix_repo/docs"
+  {
+    printf '# Captest\n\n'
+    for i in $(seq 1 10); do
+      printf '## Heading %d\n\ncaptest knowledge body %d.\n\n' "$i" "$i"
+    done
+  } > "$fix_repo/docs/captest.md"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  out="$tmp_root/pscan-cap.out"; err="$tmp_root/pscan-cap.err"
+  "$PMCTL" context prompt-scan "$fix_repo" "captest knowledge captest" \
+    > "$out" 2> "$err" || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  local total_refs unique_refs
+  total_refs="$(grep -c '^  - ref:' "$out" 2>/dev/null || printf '0')"
+  unique_refs="$(grep '^  - ref:' "$out" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+  if [[ "$total_refs" -ne "$unique_refs" ]]; then
+    fail "$name" "duplicate refs: total=$total_refs unique=$unique_refs out=$(<"$out")"; return 0
+  fi
+  if [[ "$total_refs" -lt 1 || "$total_refs" -gt 5 ]]; then
+    fail "$name" "expected 1..5 refs (cap), got $total_refs; output: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_term_cap_longest_first() {
+  local name="pmctl context prompt-scan: term cap keeps longest terms first"
+  # Behavior: terms are ranked longest-first and capped at
+  # PM_DISPATCH_PROMPT_SCAN_MAX_TERMS. With cap=1 and a prompt whose longest
+  # term matches nothing, the shorter matching term must be dropped (no hits);
+  # with the default cap the same prompt must find hits.
+  # Steps: index fixture; scan with cap=1 (longest term is a no-match) → expect
+  # empty; rescan with default cap → expect hits.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-termcap"
+  make_fixture_repo "$fix_repo"
+
+  local out err status=0
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  # "zzzzzzunmatchable" (17 chars) outranks "alpha" (5 chars) under cap=1.
+  out="$tmp_root/pscan-termcap1.out"; err="$tmp_root/pscan-termcap1.err"
+  PM_DISPATCH_PROMPT_SCAN_MAX_TERMS=1 \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan (cap=1) exited $status: $(<"$err")"; return 0
+  fi
+  if ! grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "cap=1 should query only the longest (no-match) term; got: $(<"$out")"; return 0
+  fi
+
+  status=0
+  out="$tmp_root/pscan-termcap8.out"; err="$tmp_root/pscan-termcap8.err"
+  "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan (default cap) exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "default cap should reach the matching term 'alpha'; got: $(<"$out")"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_no_sqlite_graceful() {
+  local name="pmctl context prompt-scan: missing sqlite degrades to empty scan + zero-hit event (DB present)"
+  # Behavior: prompt-scan is driven by an automated prompt hook, so a missing
+  # sqlite3 with an EXISTING index DB must degrade to 'knowledge_hits: []' with
+  # exit 0 and a zero-hit empty-query event — never a hard error.
+  # Steps: index a fixture (real sqlite); re-run prompt-scan in a subshell whose
+  # _ctx_sqlite3_check fails, capturing the emit args; assert graceful output,
+  # exit 0, and a zero-hit event with an empty query payload.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-nosqlite"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+  if [[ ! -f "$fix_repo/.pm-dispatch/ctx/context.db" ]]; then
+    fail "$name" "setup: index DB missing after context index"; return 0
+  fi
+
+  local out err emit_capture status=0
+  out="$tmp_root/pscan-nosqlite.out"; err="$tmp_root/pscan-nosqlite.err"
+  emit_capture="$tmp_root/pscan-nosqlite-emit.txt"
+  EMIT_FILE="$emit_capture" bash -c '
+    set -euo pipefail
+    # shellcheck source=scripts/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    _ctx_sqlite3_check() { return 1; }
+    _ctx_emit_usage_event() { printf "%s\t%s\t%s\n" "$1" "$3" "${4:-}" >> "$EMIT_FILE"; }
+    pmctl_context_prompt_scan "$2" "alpha knowledge question"
+  ' bash "$SCRIPT_DIR" "$fix_repo" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "expected exit 0 (graceful empty); got $status err=$(<"$err")"; return 0
+  fi
+  if ! grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "expected 'knowledge_hits: []'; got: $(<"$out")"; return 0
+  fi
+  if grep -q 'sqlite3 not found' "$err" 2>/dev/null; then
+    fail "$name" "missing sqlite must not emit a hard error; stderr: $(<"$err")"; return 0
+  fi
+  local emit_line
+  emit_line="$(cat "$emit_capture" 2>/dev/null || true)"
+  if [[ "$emit_line" != "context.prompt_scanned"$'\t'$'\t'"0" ]]; then
+    fail "$name" "expected zero-hit empty-query event; got: $emit_line"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_secret_never_persisted() {
+  local name="pmctl context prompt-scan: secret-shaped prompt content never reaches the state store"
+  # Behavior: a prompt containing a secret-shaped token must leave NO trace of
+  # that token anywhere under the state root — not as raw prompt, not as a
+  # derived term (the event query payload is empty by contract).
+  # Steps: index fixture; scan a prompt embedding a unique secret-shaped token
+  # in an isolated state root; assert the event exists with empty query and a
+  # recursive grep for the token over the state root finds nothing.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-secret"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-pscan-secret"
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  local secret="apitoken_zq8x7secretregression42token"
+  local out err status=0
+  out="$tmp_root/pscan-secret.out"; err="$tmp_root/pscan-secret.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan "$fix_repo" "please use token $secret to authenticate the alpha deploy" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  local evt query
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
+    | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.prompt_scanned event"; return 0
+  fi
+  query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
+  if [[ -n "$query" ]]; then
+    fail "$name" "event query payload must be empty; got: $query"; return 0
+  fi
+  # The decisive assertion: the secret token (in any case form) appears nowhere
+  # in the durable state root.
+  if grep -riq "zq8x7secretregression42token" "$state_root" 2>/dev/null; then
+    fail "$name" "secret-shaped token found under the state root"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_emits_event() {
+  local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
+  # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
+  # via pmctl trace) and must NOT emit context.queried — automated scans must not
+  # pollute the manual-query telemetry signal.
+  # Steps: index fixture in isolated state root; run prompt-scan; assert a
+  # prompt_scanned event with integer hits exists and zero context.queried events.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-evt"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-pscan-evt"
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  local out err status=0
+  out="$tmp_root/pscan-evt.out"; err="$tmp_root/pscan-evt.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha knowledge question" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+  if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
+    fail "$name" "prompt-scan reported a telemetry emit failure: $(<"$err")"; return 0
+  fi
+
+  # Payload contract: the query field is EMPTY — neither the raw prompt nor
+  # derived terms are persisted (privacy: prompts arrive from an automated
+  # hook; the isolated state root makes tail -1 our event).
+  local evt evt_kind evt_subject_type payload_query payload_hits
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
+    | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.prompt_scanned event"; return 0
+  fi
+  payload_query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
+  if [[ -n "$payload_query" ]]; then
+    fail "$name" "event query payload must be empty (nothing prompt-derived); got: $payload_query"; return 0
+  fi
+  evt_kind="$(printf '%s\n' "$evt" | jq -r '.kind' 2>/dev/null)"
+  evt_subject_type="$(printf '%s\n' "$evt" | jq -r '.subject_type' 2>/dev/null)"
+  payload_hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
+  if [[ "$evt_kind" != "context.prompt_scanned" ]]; then
+    fail "$name" "event kind: expected context.prompt_scanned, got: $evt_kind"; return 0
+  fi
+  if [[ "$evt_subject_type" != "context" ]]; then
+    fail "$name" "event subject_type: expected context, got: $evt_subject_type"; return 0
+  fi
+  if ! [[ "$payload_hits" =~ ^[0-9]+$ ]]; then
+    fail "$name" "event payload.hits: expected integer, got: $payload_hits"; return 0
+  fi
+
+  # Kind separation: the scan must not have recorded any context.queried event.
+  local queried_count=0
+  queried_count="$(PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" trace tail --kind context.queried --all --json 2>/dev/null \
+    | wc -l | tr -d ' ')" || queried_count=0
+  if [[ "$queried_count" -gt 0 ]]; then
+    fail "$name" "prompt-scan leaked $queried_count context.queried event(s); kinds must stay separate"; return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -2824,6 +3177,15 @@ case_context_default_repo_root_pack_uses_cwd
 case_context_default_repo_root_reuse_scan_uses_cwd
 case_context_pack_explicit_repo_no_fallback_warning
 case_context_reuse_scan_explicit_repo_no_fallback_warning
+case_context_prompt_scan_missing_prompt
+case_context_prompt_scan_unknown_flag
+case_context_prompt_scan_no_db
+case_context_prompt_scan_knowledge_domain_only
+case_context_prompt_scan_dedup_and_hit_cap
+case_context_prompt_scan_term_cap_longest_first
+case_context_prompt_scan_no_sqlite_graceful
+case_context_prompt_scan_secret_never_persisted
+case_context_prompt_scan_emits_event
 case_context_no_live_db_mutation
 
 th_summary

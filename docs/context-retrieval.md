@@ -76,6 +76,65 @@ including calls that find no hits and calls against a repo with no index yet
 `pmctl trace tail --kind context.reuse_scanned` (or `--kind context.queried`).
 `pmctl context pack` does not emit usage events.
 
+## Prompt auto-scan (deterministic retrieval at prompt time)
+
+The query-before-Read discipline above is a prose rule, and prose rules degrade
+exactly when a session is busy. The prompt auto-scan makes the knowledge-doc
+half of that rule deterministic: a `UserPromptSubmit` hook
+(`scripts/guard-inject-context.sh`, wired by `install-guards.sh`) runs
+
+    pmctl context prompt-scan [<repo_root>] "<prompt text>"
+
+against the git toplevel of the session's working directory on every prompt.
+`prompt-scan` extracts search terms from the prompt (longest-first, capped at
+`PM_DISPATCH_PROMPT_SCAN_MAX_TERMS`, default 8), queries the repo plane with
+`--domain knowledge`, and emits a pointer-only `knowledge_hits:` YAML block of
+up to 5 deduped hits. When the scan finds hits, the hook injects them as an
+`=== auto-context ===` block; zero hits stay silent. The agent starts the turn
+with heading-anchored refs already in context — citing them replaces the
+full-file Read it would otherwise reach for.
+
+The hook never blocks a prompt: every failure path (no git repo, no prompt
+text, scan error, timeout) exits 0 silently. It also runs with
+`PM_DISPATCH_CONTEXT_AUTOBUILD=0`, so a repo with no index yet is never given a
+first full index build on the interactive prompt path — build one explicitly
+with `pmctl context index`. Incremental refresh of an existing DB stays on.
+The scan is bounded by a 10-second timeout; override with
+`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT=<seconds>` when a slower bound is needed.
+
+Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
+this whenever the live context DB must not be touched — for example while the
+full test suite is running against the pm-dispatch repo itself.
+
+`pmctl context prompt-scan` emits a `context.prompt_scanned` event after every
+call (including zero-hit, no-index, and no-sqlite calls — the last two degrade
+to an empty `knowledge_hits: []` scan rather than erroring, because the caller
+is an automated hook), readable via
+`pmctl trace tail --kind context.prompt_scanned`. The kind is deliberately
+distinct from `context.queried`: automated prompt-time scans must not pollute
+the telemetry signal for whether an agent ran a query on its own.
+
+**Privacy (load-bearing)**: the event's `query` payload field is always
+**empty** for prompt scans — neither the raw prompt nor derived search terms
+are persisted, because even a derived term can reproduce a secret-shaped token
+verbatim. Prompts arrive from an automated hook and can carry secrets or PII;
+nothing prompt-derived may reach the durable state store. Only the hit count
+is recorded.
+
+**Scrub procedure**: if a pre-fix build ever persisted prompt-derived content,
+remove those events by filtering the state store's `events.jsonl` (under the
+pmctl install partition, honoring `PM_DISPATCH_STATE_ROOT`):
+
+    jq -c 'select(.kind != "context.prompt_scanned")' events.jsonl > events.jsonl.scrubbed
+    mv events.jsonl.scrubbed events.jsonl
+
+Rotated archives (`archive/events-*.jsonl.gz`) need the same filter after
+decompression.
+
+`PM_DISPATCH_PROMPT_CONTEXT_PMCTL` overrides the `pmctl` entrypoint the hook
+invokes (non-standard install layouts; also the regression-test seam for the
+timeout path).
+
 ## Dispatch auto-pack
 
 `pmctl dispatch run` runs a deterministic prior-art packing step. Auto-pack is
@@ -178,5 +237,7 @@ HTML files are not currently scanned; HTML semantic chunking is deferred to a la
 Not query-count > 0. A later brief cites knowledge-doc anchors or repo-plane
 reuse candidates directly from query output instead of the PM re-deriving
 context from memory or a full-file read. The number of times each tool was
-called is observable via `pmctl trace tail --kind context.queried` and
-`pmctl trace tail --kind context.reuse_scanned`.
+called is observable via `pmctl trace tail --kind context.queried`,
+`pmctl trace tail --kind context.reuse_scanned`, and
+`pmctl trace tail --kind context.prompt_scanned` (automated prompt auto-scans;
+kept as a separate kind so they never inflate the manual-query signal).
