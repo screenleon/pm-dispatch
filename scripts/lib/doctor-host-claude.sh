@@ -126,6 +126,7 @@ _doctor_host_claude_stale_hook_commands() {
               "guard-log-claude-usage.sh",
               "guard-session-summary.sh",
               "guard-inject-memory.sh",
+              "guard-inject-context.sh",
               "guard-save-rate-limits.sh"
             ))
           ) or
@@ -161,6 +162,7 @@ _doctor_host_claude_check_hooks() {
     guard-log-claude-usage.sh
     guard-session-summary.sh
     guard-inject-memory.sh
+    guard-inject-context.sh
     guard-save-rate-limits.sh
   )
   local _want_full=0

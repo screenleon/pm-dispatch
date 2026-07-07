@@ -758,6 +758,7 @@ test_install_sh_wires_hooks() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
@@ -786,6 +787,7 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
   assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   pass "$name"
 }
 
@@ -1364,6 +1366,7 @@ EOF
   # The other managed hooks must still be present after cleanup.
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   pass "$name"
 }
 
@@ -1561,6 +1564,7 @@ test_install_sh_wires_hooks_no_settings() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   pass "$name"
 }
@@ -1579,6 +1583,7 @@ test_hooks_install_uninstall_lifecycle() {
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
@@ -1589,6 +1594,7 @@ test_hooks_install_uninstall_lifecycle() {
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "statusLine should be deleted when no chain target exists"
@@ -1691,6 +1697,7 @@ JSON
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-log-claude-usage.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   assert_file_contains "$name" "$home/.claude/settings.json" "guard-save-rate-limits.sh" || return
   pass "$name"
 }
@@ -1734,7 +1741,7 @@ JSON
   # Each managed hook basename must appear exactly once (no duplicates)
   local settings="$home/.claude/settings.json"
   for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
-              guard-inject-memory.sh guard-save-rate-limits.sh; do
+              guard-inject-memory.sh guard-inject-context.sh guard-save-rate-limits.sh; do
     local count
     count=$(grep -o "$hook" "$settings" | wc -l | tr -d ' ')
     if [[ "$count" -ne 1 ]]; then
@@ -1856,7 +1863,7 @@ JSON
 
   # All managed hook basenames must be gone after uninstall
   for hook in guard-pm-write.sh guard-log-claude-usage.sh guard-session-summary.sh \
-              guard-inject-memory.sh guard-save-rate-limits.sh; do
+              guard-inject-memory.sh guard-inject-context.sh guard-save-rate-limits.sh; do
     if grep -q "$hook" "$settings"; then
       fail "$name" "$hook still present in settings.json after uninstall of stale paths"
       return
@@ -1887,8 +1894,9 @@ test_userpromptsubmit_install_wires_hook() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   # install-guards writes the native path form (C:/... on Windows); match it.
-  local inject
+  local inject ctx_inject
   inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-memory.sh")"
+  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-context.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
@@ -1900,6 +1908,12 @@ test_userpromptsubmit_install_wires_hook() {
     '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
     "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "UserPromptSubmit hook command not found"
+    return
+  fi
+  if ! jq -e --arg inject "$ctx_inject" \
+    '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
+    "$home/.claude/settings.json" >/dev/null; then
+    fail "$name" "UserPromptSubmit context hook command not found"
     return
   fi
   pass "$name"
@@ -1921,6 +1935,7 @@ test_userpromptsubmit_uninstall_removes_hook() {
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   if ! jq -e '((.hooks // {}) | has("UserPromptSubmit") | not) or ((.hooks.UserPromptSubmit // []) | length == 0)' \
     "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "UserPromptSubmit should be absent or empty"
@@ -1938,8 +1953,9 @@ test_userpromptsubmit_install_idempotent() {
   local name="userpromptsubmit-install-idempotent"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
-  local inject
+  local inject ctx_inject
   inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-memory.sh")"
+  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/scripts/guard-inject-context.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -1952,6 +1968,13 @@ test_userpromptsubmit_install_idempotent() {
     "$home/.claude/settings.json")"
   if [[ "$count" != "1" ]]; then
     fail "$name" "expected one UserPromptSubmit memory hook, got $count"
+    return
+  fi
+  count="$(jq --arg inject "$ctx_inject" \
+    '[.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)] | length' \
+    "$home/.claude/settings.json")"
+  if [[ "$count" != "1" ]]; then
+    fail "$name" "expected one UserPromptSubmit context hook, got $count"
     return
   fi
   pass "$name"
@@ -1976,6 +1999,7 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
 
   assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
   assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-context.sh" || return
   pass "$name"
 }
 

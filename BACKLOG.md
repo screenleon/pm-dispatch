@@ -20,6 +20,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-456 | 🔵 active | 去除 maintainer-local `~/github/` 佈局假設：repos-root 參數化 + prose/scripts/pm 層全面 sweep + lint 防再犯（2026-07-06 使用者指出；v1.0 public 前提；v0.9.0） | arch/portability | 2026-07-06 | — | P2 | oss |
 | CC-457 | 🔵 active | claude host manifest 化：`hosts/claude/host.yaml` 把原生 claude host 宣告進 CC-438 schema（install_targets/capability/guard_bindings/uninstall_module），validator 納入，作為 CC-445 host-generic 接線的 reference instance（2026-07-07 使用者指出三 host 維護不對齊；v0.9.0） | arch/install | 2026-07-07 | — | P2 | design |
 | CC-458 | ✅ closed 2026-07-07 | gate run/wait DX：wait `--cd` 改預設 CWD git toplevel、run stderr 印可直接複製的 wait 指令、wait 完成印 result `Final:` verdict 行讓 NO-GO 與執行錯誤可區分（2026-07-06 使用者指定優先；三痛點同 session 實踩） | ux/gate | 2026-07-07 | pr:#378 | P2 | — |
+| CC-459 | 🔵 active | context retrieval reflex 確定性化：`pmctl context prompt-scan`（knowledge-domain 抽詞查詢、獨立事件 kind）+ UserPromptSubmit hook 自動注入 knowledge hits + project-pm On-invocation 編號 Retrieve 步驟；第 2 層 read-guard 顯式 deferred（2026-07-07 telemetry 證實 reflex 從未被執行） | DX/hook | 2026-07-07 | — | P2 | — |
 | CC-011 | 🟢 someday | sync-memory.sh + install 選項：symlink memory 到雲端資料夾實現跨裝置共用 | ux/memory | 2026-05-14 | — | — | — |
 | CC-012 | 🟢 someday | SessionStart hook：session 啟動時 pull 最新 memory（git/rsync）確保跨裝置同步 | ux/memory | 2026-05-14 | — | — | — |
 | CC-014 | ✅ closed 2026-07-02 | repo 通用 worktree 平行開發工具：建立/清理 worktree + using-git-worktrees skill。v0.8.0 Phase 4 | arch | 2026-05-14 | pr:#358 | — | — |
@@ -582,6 +583,29 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 **Outcome**（2026-07-07）: 三項 Requirement 全數交付於 `scripts/lib/pmctl-gate.sh`：(1) `_pmctl_gate_default_cd`（CWD git toplevel → `$PWD` fallback）同時供 run/wait 兩端推導，partition 重算一致，顯式 `--cd` 不變；(2) detached run 在 stderr 印完整可複製的 wait 指令，stdout 維持單行 gate_id 契約；(3) wait 在 `gate_result_verify` 通過後原樣印出 result `Final:` 行、NO-GO 加 stderr 註記與執行錯誤區分，exit code 分層（0/1/2/3/124）明文化於函式註解。`commands/pr-gate.md` 指引同步。測試：test-pmctl-gate 18 綠（含 git-subdir 爬升與非 git fallback 直接覆蓋）、test-gate-lifecycle 12 綠、test-pr-gate-profile 13 綠。gate R1 NO-GO（qa block：wait 預設 git-toplevel 分支缺直接測試）修畢後 R2 GO 零 advisory。本票 gate 流程本身即以新 DX 走完（dogfood）。
 
 **See**: pr:#378
+
+---
+
+## CC-459 — context retrieval reflex 確定性化：prompt-scan 自動注入 + PM 編號步驟 🔵 active
+
+**Problem**（2026-07-07 使用者實踩）: `agents/project-pm.md` 的 context retrieval reflex（Principles #3）目前是純 prose，無任何 runtime enforcement。實測跨 repo telemetry（`pmctl trace tail --kind context.queried`）證實：數日內對某目標 repo 的所有 /pm 工作階段，agent 一次都沒呼叫過 `pmctl context query`——唯一有強制力的點是 `BRIEF_VALIDATE_RETRIEVAL=fail`，只卡 file-writing brief 的 context 證據；Analysis / Status / 一般知識查詢完全沒 gate，agent 直接 Read/Grep knowledge docs 跳過 query。這正是 `agents/project-pm.md` 自述的「a prose reflex degrades exactly when the session is busy」同一模式——discover 路由已用 Classify branch 解掉，knowledge retrieval 還停在 prose。
+
+**Why**: 本 repo 已兩次驗證「prose reflex → deterministic path」有效（dispatch auto-pack、discover Classify branch），另有 pm-write-guard 證明 hook 硬閘可行。與其要求 model「記得」查，不如讓 pipeline 自動查好注入——agent 開場就拿到 heading-anchored refs，跳過 query 的動機直接消失，telemetry 也天然回填。
+
+**Requirement**:
+1. **`pmctl context prompt-scan [<repo_root>] "<prompt text>"`**：以 `_ctx_extract_terms` 抽詞（沿用既有 change seam，不 inline）、每 term 對 repo plane 以 `--domain knowledge` 查詢、跨 term dedupe、輸出 pointer-only 的 `knowledge_hits:` YAML（上限 5 條）。發射**獨立事件 kind `context.prompt_scanned`**——不得混用 `context.queried`，否則自動掃描會污染「agent 是否主動查詢」的 telemetry 訊號。no-index / no-sqlite 優雅降級（空輸出 + 零 hit 事件），與 reuse-scan 對稱。
+2. **`scripts/guard-inject-context.sh`**（UserPromptSubmit hook）：讀 payload `cwd`+`prompt` → 解析 git toplevel（非 git 目錄靜默退出）→ 以 `PM_DISPATCH_CONTEXT_AUTOBUILD=0` 呼叫 prompt-scan（不在互動 prompt 路徑觸發首次全量建索引；incremental refresh 保留）→ 僅在有 hits 時輸出 `=== auto-context ===` 區塊（含「更多請跑 pmctl context query」提示行）。永遠 exit 0（hook 絕不阻斷 prompt）；`PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` kill-switch；呼叫包 timeout 防慢 repo 拖累 prompt 延遲。
+3. **`scripts/install-guards.sh`** 註冊新 hook 為 managed hook（presence check / path refresh / prune 與 guard-inject-memory 對稱）。
+4. **`agents/project-pm.md`**：On invocation 於 Classify 前插入編號 Retrieve 步驟（knowledge 類請求先 query；若 prompt 已帶 auto-context hits 則直接引用、不重查），Principle #3 指向該步驟——prose 從原則段落升格為結構化步驟。
+5. **`docs/context-retrieval.md`** 補 prompt-scan / auto-inject / `context.prompt_scanned` 文件；成功判準沿用既有 Success metric（下游引用 anchors，非 query count）。
+6. 測試：`test-pmctl-context.sh`（prompt-scan：no-index、hits、knowledge-domain-only、dedupe、事件發射）、`test-guards.sh`（hook：happy path、非 git、零 hits 靜默、malformed payload、kill-switch）、`test-install.sh` 於 inject-memory 斷言點鏡像新 hook。
+
+**Deferred（顯式非目標）**: 第 2 層 PreToolUse read-guard（Read/Grep/Bash 開 knowledge docs 前檢查本 session 是否 query 過）——待本票上線後以 telemetry 覆蓋率決定邊際價值再議；若做，須依 [[feedback_cut_capability_close_all_paths]] 同時關 Bash 路徑。
+
+**Risk**: hook 會在每個 prompt 自動觸發 pmctl context 讀取路徑，與 [[feedback_no_pmctl_during_full_test_run]]（全套測試期間勿碰 live DB）存在自動化衝突——kill-switch 即為此而設，並在 docs 註記。
+
+**Dependencies**: 無（context plane 既有能力之上純 additive）。
+**Source**: 使用者 2026-07-07「context.db 沒刷新」誤報調查 → 根因是 reflex 從未被執行 → 「請幫我開票並實際規劃與實作」。
 
 ---
 

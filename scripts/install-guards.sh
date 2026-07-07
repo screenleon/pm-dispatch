@@ -8,6 +8,7 @@
 #   - Stop                 → scripts/guard-log-claude-usage.sh
 #   - Stop                 → scripts/guard-session-summary.sh
 #   - UserPromptSubmit     → scripts/guard-inject-memory.sh
+#   - UserPromptSubmit     → scripts/guard-inject-context.sh
 #   - StatusLine           → scripts/guard-save-rate-limits.sh (chains previous if present)
 #
 # Note: guard-reviewer-write.sh is NOT wired as a PreToolUse hook.
@@ -127,6 +128,7 @@ stop_cmd="$repo_root/scripts/guard-log-claude-usage.sh"
 old_stop_cmd="$repo_root/hooks/guard-log-claude-usage.sh"
 session_cmd="$repo_root/scripts/guard-session-summary.sh"
 inject_cmd="$repo_root/scripts/guard-inject-memory.sh"
+ctx_inject_cmd="$repo_root/scripts/guard-inject-context.sh"
 statusline_cmd="$repo_root/scripts/guard-save-rate-limits.sh"
 statusline_chain_conf="$CLAUDE_HOME/statusline-chain.conf"
 
@@ -181,12 +183,13 @@ write_statusline_chain() {
   mv "$chain_tmp" "$statusline_chain_conf"
 }
 
-if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
+if [ ! -x "$pm_cmd" ] || [ ! -x "$stop_cmd" ] || [ ! -x "$session_cmd" ] || [ ! -x "$inject_cmd" ] || [ ! -x "$ctx_inject_cmd" ] || [ ! -x "$statusline_cmd" ]; then
   echo "install-guards: hook scripts missing or not executable" >&2
   echo "  $pm_cmd" >&2
   echo "  $stop_cmd" >&2
   echo "  $session_cmd" >&2
   echo "  $inject_cmd" >&2
+  echo "  $ctx_inject_cmd" >&2
   echo "  $statusline_cmd" >&2
   exit 2
 fi
@@ -229,6 +232,7 @@ pm_cmd_q="$(printf '%q' "$pm_cmd")"
 stop_cmd_q="$(printf '%q' "$stop_cmd")"
 session_cmd_q="$(printf '%q' "$session_cmd")"
 inject_cmd_q="$(printf '%q' "$inject_cmd")"
+ctx_inject_cmd_q="$(printf '%q' "$ctx_inject_cmd")"
 statusline_cmd_q="$(printf '%q' "$statusline_cmd")"
 
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
@@ -244,6 +248,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg old_stop "$old_stop_cmd" \
   --arg session "$session_cmd_q" \
   --arg inject "$inject_cmd_q" \
+  --arg ctx_inject "$ctx_inject_cmd_q" \
   --arg statusline "$statusline_cmd_q" \
   --argjson sl_present "$_statusline_already_wired" \
   --argjson bg_guards "$_bg_json" \
@@ -331,6 +336,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($stop | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $stop_present |
   ( [ .hooks.Stop[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($session | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $session_present |
   ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $inject_present |
+  ( [ .hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") ] | length ) as $ctx_inject_present |
 
   # Refresh stale command paths for managed hooks (scripts/<basename> path shape).
   .hooks.PreToolUse |= map(
@@ -361,7 +367,8 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   .hooks.UserPromptSubmit |= map(
     .hooks |= map(
-      if ((.command | split("/") | last) == ($inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $inject
+      if   ((.command | split("/") | last) == ($inject     | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $inject
+      elif ((.command | split("/") | last) == ($ctx_inject | split("/") | last) and (.command | split("/") | .[-2]) == "scripts") then .command = $ctx_inject
       else . end
     )
   ) |
@@ -414,6 +421,10 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   ) |
   ( if $inject_present == 0 then
       .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $inject}]}]
+    else . end
+  ) |
+  ( if $ctx_inject_present == 0 then
+      .hooks.UserPromptSubmit += [{"hooks": [{"type": "command", "command": $ctx_inject}]}]
     else . end
   ) |
   ( if $sl_present == 0 then

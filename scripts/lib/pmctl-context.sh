@@ -1563,3 +1563,118 @@ pmctl_context_reuse_scan() {
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
   _ctx_emit_usage_event "context.reuse_scanned" "$repo_root" "$desc" "$reported_hits"
 }
+
+# ── pmctl_context_prompt_scan ─────────────────────────────────────────────────
+#
+# Takes a free-text prompt, extracts search terms via _ctx_extract_terms,
+# queries the repo index knowledge domain (BACKLOG/DECISIONS/MILESTONES/docs)
+# for each term, and emits a compact pointer-only knowledge_hits: YAML block
+# for prompt-time injection (consumed by scripts/guard-inject-context.sh).
+#
+# Emits a context.prompt_scanned usage event — deliberately distinct from
+# context.queried, so automated prompt-time scans never pollute the telemetry
+# signal for whether an agent queried the index on its own.
+#
+# Terms are ranked longest-first (longer terms are more distinctive) and capped
+# at PM_DISPATCH_PROMPT_SCAN_MAX_TERMS (default 8) to bound per-prompt latency.
+#
+# CLI: pmctl context prompt-scan [<repo_root>] "<prompt text>"
+
+pmctl_context_prompt_scan() {
+  local repo_root=""
+  local prompt=""
+  local repo_root_set=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*)
+        printf 'pmctl context prompt-scan: unknown flag %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ "$repo_root_set" -eq 0 && -d "$1" ]]; then
+          repo_root="$1"
+          repo_root_set=1
+        elif [[ -z "$prompt" ]]; then
+          prompt="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_ctx_default_repo_root)" || repo_root=""
+  fi
+  if [[ -z "$repo_root" ]]; then
+    printf 'pmctl context prompt-scan: repo root required\n' >&2
+    return 2
+  fi
+  if [[ -z "$prompt" ]]; then
+    printf 'pmctl context prompt-scan: prompt text required\n' >&2
+    return 2
+  fi
+
+  local max_terms="${PM_DISPATCH_PROMPT_SCAN_MAX_TERMS:-8}"
+  [[ "$max_terms" =~ ^[0-9]+$ ]] || max_terms=8
+
+  local db
+  db="$(_ctx_db_path "$repo_root")"
+  _ctx_ensure_fresh "$repo_root" || true
+  if [[ ! -f "$db" ]]; then
+    printf 'knowledge_hits: []\n'
+    # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
+    # event so the "emits after each call" contract holds uniformly.
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$prompt" 0
+    return 0
+  fi
+
+  if ! _ctx_sqlite3_check; then
+    printf 'pmctl context prompt-scan: sqlite3 not found on PATH\n' >&2
+    return 1
+  fi
+
+  local terms=()
+  while IFS= read -r term; do
+    [[ -n "$term" ]] && terms+=("$term")
+  done < <(_ctx_extract_terms "$prompt" \
+    | awk '{ printf "%05d\t%s\n", length($0), $0 }' \
+    | sort -t$'\t' -k1,1r -k2,2 \
+    | cut -f2 \
+    | head -n "$max_terms")
+
+  local seen_file sym_tsv files_tsv hits_tsv
+  seen_file="$(mktemp /tmp/ctx-prompt-seen-XXXXXX)"
+  sym_tsv="$(mktemp /tmp/ctx-prompt-sym-XXXXXX)"
+  files_tsv="$(mktemp /tmp/ctx-prompt-files-XXXXXX)"
+  hits_tsv="$(mktemp /tmp/ctx-prompt-hits-XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$seen_file' '$sym_tsv' '$files_tsv' '$hits_tsv'" EXIT
+
+  for term in "${terms[@]+"${terms[@]}"}"; do
+    _ctx_parse_query_tsv "$repo_root" "$term" "$seen_file" "$sym_tsv" "$files_tsv" "knowledge"
+  done
+  cat "$files_tsv" "$sym_tsv" > "$hits_tsv"
+
+  local total_hits=0
+  [[ -s "$hits_tsv" ]] && total_hits="$(wc -l < "$hits_tsv" | tr -d ' ')"
+
+  if [[ "$total_hits" -eq 0 ]]; then
+    printf 'knowledge_hits: []\n'
+  else
+    printf 'knowledge_hits:\n'
+    local emitted=0
+    while IFS=$'\t' read -r ref _domain why _conf _trust; do
+      [[ "$emitted" -ge 5 ]] && break
+      local safe_why="${why//$'\n'/ }"
+      safe_why="${safe_why//\'/\'\'}"
+      printf '  - ref: %s\n'            "$ref"
+      printf "    why_relevant: '%s'\n" "$safe_why"
+      emitted=$((emitted + 1))
+    done < "$hits_tsv"
+  fi
+
+  local reported_hits="$total_hits"
+  [[ "$reported_hits" -gt 5 ]] && reported_hits=5
+  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$prompt" "$reported_hits"
+}

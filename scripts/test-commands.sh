@@ -272,6 +272,12 @@ should_run "spike-agent: returns spike_plan_v1" && assert_file_contains "spike-a
 should_run "spike-agent: cannot spawn subagents (planner only)" && assert_file_contains "spike-agent: cannot spawn subagents (planner only)" "$SPIKE_AGENT" "You cannot spawn subagents." && pass "spike-agent: cannot spawn subagents (planner only)"
 should_run "spike-agent: has a synthesis pass" && assert_file_contains "spike-agent: has a synthesis pass" "$SPIKE_AGENT" "# Synthesis pass" && pass "spike-agent: has a synthesis pass"
 
+# project-pm deterministic knowledge retrieval (numbered On-invocation step)
+should_run "project-pm: Retrieve is a numbered On-invocation step before Classify" && assert_file_contains "project-pm: Retrieve is a numbered On-invocation step before Classify" "$PROJECT_PM" "3. **Retrieve**" && pass "project-pm: Retrieve is a numbered On-invocation step before Classify"
+should_run "project-pm: Retrieve step queries knowledge domain first" && assert_file_contains "project-pm: Retrieve step queries knowledge domain first" "$PROJECT_PM" "--domain knowledge" && pass "project-pm: Retrieve step queries knowledge domain first"
+should_run "project-pm: Retrieve cites injected auto-context instead of re-querying" && assert_file_contains "project-pm: Retrieve cites injected auto-context instead of re-querying" "$PROJECT_PM" "auto-context" && pass "project-pm: Retrieve cites injected auto-context instead of re-querying"
+should_run "project-pm: Classify renumbered after Retrieve step" && assert_file_contains "project-pm: Classify renumbered after Retrieve step" "$PROJECT_PM" "4. **Classify**" && pass "project-pm: Classify renumbered after Retrieve step"
+
 # project-pm uncertainty routing + load-bearing active-scope guard
 should_run "project-pm: has Uncertainty routing section" && assert_file_contains "project-pm: has Uncertainty routing section" "$PROJECT_PM" "## Uncertainty routing" && pass "project-pm: has Uncertainty routing section"
 should_run "project-pm: documents load-bearing active-scope guard" && assert_file_contains "project-pm: documents load-bearing active-scope guard" "$PROJECT_PM" "Active-scope guard (load-bearing)" && pass "project-pm: documents load-bearing active-scope guard"
