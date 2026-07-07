@@ -1088,7 +1088,7 @@ case_doctor_capability_json_fields() {
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
     bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
 
-  local bad_fields guard_tuple binary_tuple
+  local bad_fields guard_tuple binary_tuple command_guard_tuple
   bad_fields="$(printf '%s\n' "$out" | jq -s '[.[] | select(.capability) | select((has("host") and has("provider") and has("enforcement") and has("coverage") and has("stability") and has("confidence")) | not)] | length')"
   # Value-level assertions: a wired claude write guard and a present codex
   # binary must report these exact capability tuples, so a silent mutation of
@@ -1100,14 +1100,22 @@ case_doctor_capability_json_fields() {
     | select(.status == "ok" and .host == "claude" and .capability == "file_guard"
       and .provider == "none" and .enforcement == "none" and .coverage == "none"
       and .stability == "evolving" and .confidence == "probed")] | length')"
+  # command_guard has no wiring signal at all for claude (the "Bash" matcher
+  # only ever wires adapter bash-guard scripts, an executor-axis mechanism,
+  # not a host-level Bash command guard) — its tuple must stay none/none/none
+  # unconditionally, distinctly from file_guard's stability/confidence pairing.
+  command_guard_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.claude.command-guard")
+    | select(.status == "ok" and .host == "claude" and .capability == "command_guard"
+      and .provider == "none" and .enforcement == "none" and .coverage == "none"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
   binary_tuple="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.binary")
     | select(.status == "ok" and .host == "codex" and .capability == "pm_command_interface"
       and .provider == "host_native" and .enforcement == "none" and .coverage == "full"
       and .stability == "evolving" and .confidence == "probed")] | length')"
-  if [[ "$bad_fields" -eq 0 && "$guard_tuple" -eq 1 && "$binary_tuple" -eq 1 ]]; then
+  if [[ "$bad_fields" -eq 0 && "$guard_tuple" -eq 1 && "$command_guard_tuple" -eq 1 && "$binary_tuple" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "bad_fields=$bad_fields guard_tuple=$guard_tuple binary_tuple=$binary_tuple status=$status out=$out"
+    fail "$name" "bad_fields=$bad_fields guard_tuple=$guard_tuple command_guard_tuple=$command_guard_tuple binary_tuple=$binary_tuple status=$status out=$out"
   fi
 }
 

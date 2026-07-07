@@ -16,10 +16,12 @@
 # verified), so this manifest is the hardest test of schema v1's expressive
 # power.
 #
-# Read consumers today: none — install.sh's write path is not yet manifest-
-# driven for claude; this file is the declarative baseline a future
-# host-generic install write path would diff its byte-compatible output
-# against.
+# Read consumers today: scripts/lib/doctor-host-claude.sh reads this file's
+# guard_bindings block to cross-check its own probed capability tuples
+# against the declared ones (a declared-vs-probed consistency check, not an
+# install path). install.sh's write path is not yet manifest-driven for
+# claude; this file is also the declarative baseline a future host-generic
+# install write path would diff its byte-compatible output against.
 #
 # Known naming inconsistency (not fixed here, out of scope for this
 # declarative-only manifest): install.sh derives its destination from
