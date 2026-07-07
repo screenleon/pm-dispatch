@@ -2782,15 +2782,17 @@ case_context_prompt_scan_no_db() {
   if grep -q 'telemetry not recorded' "$err" 2>/dev/null; then
     fail "$name" "no-db prompt-scan reported a telemetry emit failure: $(<"$err")"; return 0
   fi
-  # Telemetry stores derived terms, never the raw prompt (privacy contract).
-  local evt hits
+  # Telemetry persists an EMPTY query payload — nothing prompt-derived
+  # (privacy contract; the state root is isolated so tail -1 is our event).
+  local evt query hits
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
-    | jq -c 'select(.payload.query | contains("verdict"))' 2>/dev/null | tail -1)"
+    | tail -1)"
   if [[ -z "$evt" ]]; then
     fail "$name" "expected a context.prompt_scanned event for the no-db scan"; return 0
   fi
-  if [[ "$(printf '%s\n' "$evt" | jq -r '.payload.query')" == "how does the gate verdict work" ]]; then
-    fail "$name" "event stored the raw prompt; must store derived terms only"; return 0
+  query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
+  if [[ -n "$query" ]]; then
+    fail "$name" "event query payload must be empty (nothing prompt-derived); got: $query"; return 0
   fi
   hits="$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)"
   if [[ "$hits" != "0" ]]; then
@@ -2921,10 +2923,10 @@ case_context_prompt_scan_no_sqlite_graceful() {
   local name="pmctl context prompt-scan: missing sqlite degrades to empty scan + zero-hit event (DB present)"
   # Behavior: prompt-scan is driven by an automated prompt hook, so a missing
   # sqlite3 with an EXISTING index DB must degrade to 'knowledge_hits: []' with
-  # exit 0 and a zero-hit derived-terms event — never a hard error.
+  # exit 0 and a zero-hit empty-query event — never a hard error.
   # Steps: index a fixture (real sqlite); re-run prompt-scan in a subshell whose
   # _ctx_sqlite3_check fails, capturing the emit args; assert graceful output,
-  # exit 0, and a zero-hit event carrying derived terms (not the raw prompt).
+  # exit 0, and a zero-hit event with an empty query payload.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-pscan-nosqlite"
@@ -2957,8 +2959,54 @@ case_context_prompt_scan_no_sqlite_graceful() {
   fi
   local emit_line
   emit_line="$(cat "$emit_capture" 2>/dev/null || true)"
-  if [[ "$emit_line" != "context.prompt_scanned"$'\t'"knowledge question alpha"$'\t'"0" ]]; then
-    fail "$name" "expected zero-hit derived-terms event; got: $emit_line"; return 0
+  if [[ "$emit_line" != "context.prompt_scanned"$'\t'$'\t'"0" ]]; then
+    fail "$name" "expected zero-hit empty-query event; got: $emit_line"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_secret_never_persisted() {
+  local name="pmctl context prompt-scan: secret-shaped prompt content never reaches the state store"
+  # Behavior: a prompt containing a secret-shaped token must leave NO trace of
+  # that token anywhere under the state root — not as raw prompt, not as a
+  # derived term (the event query payload is empty by contract).
+  # Steps: index fixture; scan a prompt embedding a unique secret-shaped token
+  # in an isolated state root; assert the event exists with empty query and a
+  # recursive grep for the token over the state root finds nothing.
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-pscan-secret"
+  make_fixture_repo "$fix_repo"
+
+  local state_root="$tmp_root/state-pscan-secret"
+  mkdir -p "$state_root"
+  PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+
+  local secret="apitoken_zq8x7secretregression42token"
+  local out err status=0
+  out="$tmp_root/pscan-secret.out"; err="$tmp_root/pscan-secret.err"
+  PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan "$fix_repo" "please use token $secret to authenticate the alpha deploy" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  fi
+
+  local evt query
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
+    | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "expected a context.prompt_scanned event"; return 0
+  fi
+  query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
+  if [[ -n "$query" ]]; then
+    fail "$name" "event query payload must be empty; got: $query"; return 0
+  fi
+  # The decisive assertion: the secret token (in any case form) appears nowhere
+  # in the durable state root.
+  if grep -riq "zq8x7secretregression42token" "$state_root" 2>/dev/null; then
+    fail "$name" "secret-shaped token found under the state root"; return 0
   fi
   pass "$name"
 }
@@ -2992,18 +3040,18 @@ case_context_prompt_scan_emits_event() {
     fail "$name" "prompt-scan reported a telemetry emit failure: $(<"$err")"; return 0
   fi
 
-  # Payload contract: query field carries the derived, length-ranked terms —
-  # "alpha knowledge question" extracts to "knowledge question alpha" — and
-  # NEVER the raw prompt (privacy: prompts arrive from an automated hook).
+  # Payload contract: the query field is EMPTY — neither the raw prompt nor
+  # derived terms are persisted (privacy: prompts arrive from an automated
+  # hook; the isolated state root makes tail -1 our event).
   local evt evt_kind evt_subject_type payload_query payload_hits
   evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null \
-    | jq -c 'select(.payload.query == "knowledge question alpha")' 2>/dev/null | tail -1)"
+    | tail -1)"
   if [[ -z "$evt" ]]; then
-    fail "$name" "expected a context.prompt_scanned event with derived-terms query"; return 0
+    fail "$name" "expected a context.prompt_scanned event"; return 0
   fi
   payload_query="$(printf '%s\n' "$evt" | jq -r '.payload.query' 2>/dev/null)"
-  if [[ "$payload_query" == "alpha knowledge question" ]]; then
-    fail "$name" "event stored the raw prompt; must store derived terms only"; return 0
+  if [[ -n "$payload_query" ]]; then
+    fail "$name" "event query payload must be empty (nothing prompt-derived); got: $payload_query"; return 0
   fi
   evt_kind="$(printf '%s\n' "$evt" | jq -r '.kind' 2>/dev/null)"
   evt_subject_type="$(printf '%s\n' "$evt" | jq -r '.subject_type' 2>/dev/null)"
@@ -3136,6 +3184,7 @@ case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_prompt_scan_term_cap_longest_first
 case_context_prompt_scan_no_sqlite_graceful
+case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_no_live_db_mutation
 

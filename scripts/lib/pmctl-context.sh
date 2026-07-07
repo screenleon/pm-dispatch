@@ -1618,11 +1618,11 @@ pmctl_context_prompt_scan() {
   local max_terms="${PM_DISPATCH_PROMPT_SCAN_MAX_TERMS:-8}"
   [[ "$max_terms" =~ ^[0-9]+$ ]] || max_terms=8
 
-  # Terms are extracted up front because they are ALSO what telemetry records.
   # PRIVACY (load-bearing): prompts arrive from an automated hook and can carry
-  # secrets or PII; the raw prompt text must never be persisted. Every
-  # context.prompt_scanned event below stores only the derived, capped search
-  # terms — never "$prompt" itself.
+  # secrets or PII — and even derived terms can reproduce a secret-shaped token
+  # verbatim. Every context.prompt_scanned event below therefore persists an
+  # EMPTY query payload: no raw prompt, no derived terms, nothing prompt-derived
+  # reaches the durable state store. Only the hit count is recorded.
   local terms=()
   while IFS= read -r term; do
     [[ -n "$term" ]] && terms+=("$term")
@@ -1631,7 +1631,6 @@ pmctl_context_prompt_scan() {
     | sort -t$'\t' -k1,1r -k2,2 \
     | cut -f2 \
     | head -n "$max_terms")
-  local terms_joined="${terms[*]+"${terms[*]}"}"
 
   local db
   db="$(_ctx_db_path "$repo_root")"
@@ -1640,7 +1639,7 @@ pmctl_context_prompt_scan() {
     printf 'knowledge_hits: []\n'
     # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
     # event so the "emits after each call" contract holds uniformly.
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" 0
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
     return 0
   fi
 
@@ -1650,7 +1649,7 @@ pmctl_context_prompt_scan() {
     # scan (plus the uniform zero-hit event) rather than surfacing a failure
     # on every prompt.
     printf 'knowledge_hits: []\n'
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" 0
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
     return 0
   fi
 
@@ -1687,6 +1686,6 @@ pmctl_context_prompt_scan() {
 
   local reported_hits="$total_hits"
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
-  # Derived terms only — see the privacy note above; never "$prompt".
-  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "$terms_joined" "$reported_hits"
+  # Empty query payload — see the privacy note above; nothing prompt-derived.
+  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$reported_hits"
 }

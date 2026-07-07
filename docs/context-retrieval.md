@@ -114,10 +114,22 @@ is an automated hook), readable via
 distinct from `context.queried`: automated prompt-time scans must not pollute
 the telemetry signal for whether an agent ran a query on its own.
 
-**Privacy (load-bearing)**: the event's `query` payload field records only the
-derived, capped search terms — never the raw prompt. Prompts arrive from an
-automated hook and can carry secrets or PII; persisting the full prompt in the
-durable state store is forbidden.
+**Privacy (load-bearing)**: the event's `query` payload field is always
+**empty** for prompt scans — neither the raw prompt nor derived search terms
+are persisted, because even a derived term can reproduce a secret-shaped token
+verbatim. Prompts arrive from an automated hook and can carry secrets or PII;
+nothing prompt-derived may reach the durable state store. Only the hit count
+is recorded.
+
+**Scrub procedure**: if a pre-fix build ever persisted prompt-derived content,
+remove those events by filtering the state store's `events.jsonl` (under the
+pmctl install partition, honoring `PM_DISPATCH_STATE_ROOT`):
+
+    jq -c 'select(.kind != "context.prompt_scanned")' events.jsonl > events.jsonl.scrubbed
+    mv events.jsonl.scrubbed events.jsonl
+
+Rotated archives (`archive/events-*.jsonl.gz`) need the same filter after
+decompression.
 
 `PM_DISPATCH_PROMPT_CONTEXT_PMCTL` overrides the `pmctl` entrypoint the hook
 invokes (non-standard install layouts; also the regression-test seam for the
