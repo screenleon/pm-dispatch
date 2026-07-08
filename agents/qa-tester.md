@@ -40,6 +40,11 @@ Any directory that provides a Tier 1 entry point works — the [`qa-testing-rule
 1. Each test conforms to AGENT.md §3 (behavior-named, structured docstring, three red lines respected).
 2. Cross-check `ANTI-PATTERNS.md` (mocking SUT internals, sleep waits, asserting implementation not behavior).
 3. Run tests. Non-runnable or flaky → block.
+   - If the brief's `context:` includes a `Pre-flight test run:` line, the aggregate suite has
+     already been run mechanically outside this session (independent of any reviewer's timeout
+     budget) and its PASS/FAIL is enforced independently of what you write here — do not
+     reflexively re-run the full suite yourself. You may still run additional, scope-limited
+     tests to verify coverage of behavioral units introduced by this diff (Step 0 below).
 4. Mutation self-check (AGENT.md §4): for each non-trivial test, propose a mutation that should break it; confirm it would. Tests that survive any plausible mutation are nominal, not real, coverage.
 
 ## C — full test phase (PR gate default)

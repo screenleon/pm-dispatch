@@ -473,12 +473,15 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `scripts/archive-closed
 1. **sequential 模式逐 reviewer 落地**：改 brief 指示（`scripts/pr-gate.sh` task 區塊）讓 session 在每個 reviewer 完成後立即把該 reviewer 的區塊附加寫入 `${OUTPUT_FILE}`，而非等到最後才一次寫入；dispatch 呼叫（`eval "$DISPATCH_CMD"`）改為捕捉 exit code 而非讓 `set -e` 直接中止腳本；逾時/失敗時比對 `${OUTPUT_FILE}` 已完成哪些 reviewer 區塊，回報「N of 5 完成：xxx；未完成：yyy」的 partial 結果，並保留 partial artifact 供人工追查（不視為 GO，仍 `exit 1`，pass/fail 語意不變）。
 2. **`test-pmctl-dispatch.sh` poll interval 修復**：補上 `export PM_DISPATCH_WAIT_POLL_INTERVAL="${PM_DISPATCH_WAIT_POLL_INTERVAL:-0.1}"`（`test-dispatch-lifecycle.sh:48` 已驗證安全的既有模式），預期從 309s 省下 60-90s。
 3. **`pmctl-context.sh` 的 `_ctx_fts5_available` 加快取**：目前每次呼叫都 fork 2 個 sqlite3 子行程探測 FTS5 支援，改為模組層級關聯陣列快取（FTS5 支援在同一 binary/process 生命週期內是靜態的），預期從 244s 省下 5-15s。
+4. **測試套件執行與 reviewer session timeout 完全解耦**（2026-07-08 使用者進一步收斂）：Requirement 1 只是止血——只要 qa-tester 還在 dispatch session 內自己跑測試，測試耗時就會侵蝕跟其他 reviewer 共用的 `--timeout` 預算。改為在 dispatch 之前用純 bash 跑一次目標 repo 的測試指令（`--test-cmd` 明確指定，或自動偵測 `scripts/run-all-tests.sh`），跟任何 reviewer 的 LLM 判斷完全脫鉤；結果（`test_suite: pass|fail|skipped`）機械寫入 frontmatter，FAIL 時**強制覆寫**最終 `final:`/`Final:` 為 NO-GO，不依賴任何 reviewer 正確引用證據。`--test-timeout`（獨立於 `--timeout`）、`--skip-preflight-tests` 逃生閥。
 
-**Non-goals**：不解析 `.agent-trace/*.jsonl` 做結構化 partial 回收（adapter 事件格式不統一，維護成本高，只當人工追查路徑指標）；不處理 `cli/pmctl` 每次呼叫 source 22 個 lib 檔案的系統性 ~0.5-0.7s 開銷（影響全產品所有 pmctl 呼叫路徑，需要更大規模的 lazy-loading/常駐行程重設計，風險/範圍都遠大於本票，另開票處理）；不把 `--parallel` 設為預設（成本 ×2，僅適合 auth/payment/migration 等高風險變更）。
+**Non-goals**：不解析 `.agent-trace/*.jsonl` 做結構化 partial 回收（adapter 事件格式不統一，維護成本高，只當人工追查路徑指標）；不處理 `cli/pmctl` 每次呼叫 source 22 個 lib 檔案的系統性 ~0.5-0.7s 開銷（影響全產品所有 pmctl 呼叫路徑，需要更大規模的 lazy-loading/常駐行程重設計，風險/範圍都遠大於本票，另開票處理）；不把 `--parallel` 設為預設（成本 ×2，僅適合 auth/payment/migration 等高風險變更）；不做「iteration vs final round」測試分層啟發式；不新增 `.pr-gate.yml` 設定檔格式。
 
-**Verification**：`scripts/test-pr-gate.sh` 新增 codex stub 分支模擬「2 of 5 reviewer 完成後逾時」，斷言 partial 結果訊息 + `${OUTPUT_FILE}` 內容在磁碟上不被清理掉；`test-pmctl-dispatch.sh`/`test-pmctl-context.sh` 改動前後量測 wall time 確認確實變快、案例數不變全綠。
+**Verification**：`scripts/test-pr-gate.sh` 新增 codex stub 分支模擬「2 of 5 reviewer 完成後逾時」，斷言 partial 結果訊息 + `${OUTPUT_FILE}` 內容在磁碟上不被清理掉；`test-pmctl-dispatch.sh`/`test-pmctl-context.sh` 改動前後量測 wall time 確認確實變快、案例數不變全綠；Requirement 4 新增 8 個測試涵蓋 pass/fail/timeout/skip/auto-detect/explicit-override/不依賴 reviewer 陣容 等情境，含關鍵案例「reviewer 全部說 GO 但機械覆寫成 NO-GO」。
 
-**Source**：CC-445 pr-gate 第 7 輪逾時實測 + 使用者要求優先處理（2026-07-08）；已用 Explore + Plan agent 交叉核實根因與改動點，見對話紀錄。
+**Source**：CC-445 pr-gate 第 7 輪逾時實測 + 使用者要求優先處理、並在討論中收斂出機械化解耦設計（2026-07-08）；已用 Explore + Plan agent 交叉核實根因與改動點，並經 Ultraplan 雲端 session 精修 Requirement 4 的實作行號，見對話紀錄。
+
+**Outcome**（2026-07-08）：Requirement 1-3 已 commit（`038d409`/`531e48f`，`feat/CC-470` 分支，尚未合併）；Requirement 4 完成並驗證，`scripts/test-pr-gate.sh` 133/133 全綠（含新增 8 個 pre-flight 測試）；待 pr-gate 收斂後合併。
 
 ---
 

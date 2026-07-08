@@ -85,6 +85,15 @@ _kill_process_tree() {
 #                        <f> is resolved against the working dir (--cd), not the caller's CWD, since
 #                        the file is loaded after the gate cd's into the work dir. The loaded source
 #                        and content are recorded in the gate result (## Gate Overrides Applied).
+#   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
+#                        --timeout; pass/fail is recorded mechanically (frontmatter test_suite: field)
+#                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
+#                        Auto-detected as `bash scripts/run-all-tests.sh` when this flag is omitted
+#                        and that script exists and is executable under --cd.
+#   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
+#                        test suite can never cause a reviewer dispatch session to time out.
+#   --skip-preflight-tests   disable the pre-flight test check entirely (falls back to reviewers
+#                        judging test status themselves, as before this flag existed).
 
 WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
@@ -109,6 +118,9 @@ DISPATCH_SANDBOX="workspace-write"
 DISPATCH_ISOLATION=""   # isolation_level; empty = use codex default (workspace-write)
 DISPATCH_APPROVAL="never"
 BRIEF_FILE=""
+TEST_CMD_OVERRIDE=""   # --test-cmd: explicit pre-flight test command (see CC-470 Part 3)
+TEST_TIMEOUT="1800"    # --test-timeout: independent of --timeout (dispatch budget)
+SKIP_PREFLIGHT_TESTS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -141,12 +153,19 @@ while [[ $# -gt 0 ]]; do
       # script's controlled CLI error style.
       [[ $# -ge 2 ]] || { printf 'Error: --override-file requires a file path\n' >&2; exit 2; }
       OVERRIDE_FILE="$2";  shift 2;;
+    --test-cmd)
+      [[ $# -ge 2 ]] || { printf 'Error: --test-cmd requires a shell command\n' >&2; exit 2; }
+      TEST_CMD_OVERRIDE="$2"; shift 2;;
+    --test-timeout)
+      [[ $# -ge 2 ]] || { printf 'Error: --test-timeout requires a number of seconds\n' >&2; exit 2; }
+      TEST_TIMEOUT="$2";   shift 2;;
+    --skip-preflight-tests) SKIP_PREFLIGHT_TESTS=true; shift;;
     -h|--help)
-      sed -n '2,87p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
-      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file (-h for help)\n' >&2
+      printf 'Accepted: --cd --run-dir --tier --brief --reviewers|--targeted --scope --base --head --output --executor --model --isolation --timeout --parallel --sequential --allow-hooks --allow-dirty --override-file --test-cmd --test-timeout --skip-preflight-tests (-h for help)\n' >&2
       exit 2;;
   esac
 done
@@ -831,6 +850,8 @@ ADJ_COUNT=$(printf '%s\n' "$ADJACENT_TEST_FILES" | grep -c '[^[:space:]]' 2>/dev
 # (sequential, parallel reviewer, parallel synthesis) reference the one
 # ${GATE_OVERRIDES_CONTEXT_BLOCK} this produces, so an override-rendering change
 # lands in exactly one place. Emits the empty string when there are no overrides.
+# (render_test_evidence_block() below follows this same single-source-of-truth
+# shape for the pre-flight test evidence block -- see CC-470 Part 3.)
 render_gate_overrides_block() {
   local content="$1" indented
   [[ -z "$content" ]] && return 0
@@ -861,6 +882,57 @@ elif [[ -x "$_PRE_GATE_HOOK" ]]; then
   fi
   say 'pre-gate hook completed.\n\n'
 fi
+
+# ── Pre-flight test suite (mechanical, decoupled from reviewer --timeout budget) ──
+# Runs BEFORE any dispatch, in plain bash, with its own independent timeout
+# (--test-timeout, default 1800s) -- however long the target repo's test suite
+# takes, it can never cause a reviewer session to hit --timeout, because it has
+# already finished by the time dispatch starts. Shared by both sequential and
+# --parallel modes (computed once here, injected into whichever brief(s) follow).
+# The result is enforced mechanically after dispatch (gate_apply_preflight_result,
+# after the sequential/parallel if/else below) -- NOT by asking a reviewer LLM to
+# correctly interpret and relay it. See CC-470 Part 3.
+PREFLIGHT_STATUS="skipped"
+PREFLIGHT_LOG_PATH=""
+if [[ "$SKIP_PREFLIGHT_TESTS" != "true" ]]; then
+  _PREFLIGHT_CMD="$TEST_CMD_OVERRIDE"
+  if [[ -z "$_PREFLIGHT_CMD" && -x "$WORK_DIR/scripts/run-all-tests.sh" ]]; then
+    _PREFLIGHT_CMD="bash scripts/run-all-tests.sh"
+  fi
+  if [[ -n "$_PREFLIGHT_CMD" ]]; then
+    mkdir -p "$WORK_DIR/.gate-results"
+    PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
+    say 'pr-gate: running pre-flight test suite (timeout %ss): %s\n' "$TEST_TIMEOUT" "$_PREFLIGHT_CMD"
+    _preflight_rc=0
+    ( cd "$WORK_DIR" && timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$_PREFLIGHT_CMD" ) \
+      > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
+    if [[ "$_preflight_rc" -eq 0 ]]; then
+      PREFLIGHT_STATUS="pass"
+    else
+      PREFLIGHT_STATUS="fail"
+    fi
+    say 'pr-gate: pre-flight test suite: %s (log: %s)\n\n' "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
+  else
+    say 'pr-gate: no --test-cmd and no executable scripts/run-all-tests.sh -- pre-flight test check skipped\n\n'
+  fi
+fi
+
+# Render the pre-flight evidence block for brief injection. Informational
+# context only for reviewers -- NOT the enforcement mechanism (see above).
+render_test_evidence_block() {
+  local status="$1" log_path="$2" tail
+  [[ "$status" == "skipped" ]] && return 0
+  printf '  Pre-flight test run: %s' "$status"
+  if [[ "$status" == "fail" && -n "$log_path" ]]; then
+    printf ' (log: %s)\n  Last ~40 lines:\n' "$log_path"
+    tail=$(tail -n 40 "$log_path" 2>/dev/null | sed 's/^/    /')
+    printf '%s\n' "$tail"
+  else
+    printf '\n'
+  fi
+  printf '  This is informational context only -- the mechanical enforcement (if any) happens\n  after your session completes and does not depend on you reading or citing this block.\n'
+}
+TEST_EVIDENCE_CONTEXT_BLOCK="$(render_test_evidence_block "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH")"
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 if [[ "$SEQUENTIAL" == "true" ]]; then
@@ -901,7 +973,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -1134,7 +1206,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Diff (${LINES} changed lines):
@@ -1358,7 +1430,7 @@ context:
   Base: ${BASE}${HEAD_METADATA_LINE}
   Scope: ${SCOPE:-none}
   Date: $(date '+%Y-%m-%d')
-${GATE_OVERRIDES_CONTEXT_BLOCK}
+${GATE_OVERRIDES_CONTEXT_BLOCK}${TEST_EVIDENCE_CONTEXT_BLOCK}
   Verified reference files (exist in working tree -- check before citing):
 ${REPO_REF_INDEX}
   Reviewer findings (embedded -- do NOT attempt to read any external reviewer output file):
@@ -1525,6 +1597,53 @@ SBRIEF_P2
   fi
   fi
 
+fi
+
+# ── Pre-flight test result: mechanical override (CC-470 Part 3) ────────────────
+# Applies AFTER dispatch (sequential or parallel) and its own gate_result_verify
+# have already succeeded -- this is the single point where both routes converge,
+# so the override logic lives here once instead of duplicated per route (same
+# shape as the override provenance block immediately below, which is the
+# established precedent for "shared post-dispatch bash processing of OUTPUT_FILE").
+# A FAIL forces Final: NO-GO regardless of what any reviewer LLM wrote -- the
+# whole point is that this does not depend on a reviewer correctly reading or
+# citing the pre-flight evidence injected into its brief context above.
+gate_apply_preflight_result() {
+  local result_file="$1" status="$2" log_path="$3"
+  local force_nogo=0
+  [[ "$status" == "fail" ]] && force_nogo=1
+
+  awk -v status="$status" -v logpath="$log_path" -v force_nogo="$force_nogo" '
+    /^---$/ {
+      if (fence < 2) fence++
+      if (fence == 2 && !ts_done) { print "test_suite: " status; ts_done=1 }
+      print; next
+    }
+    fence == 1 && /^final:/ {
+      print (force_nogo ? "final: NO-GO" : $0); next
+    }
+    fence == 2 && /^Final: (GO|NO-GO)$/ {
+      print (force_nogo ? "Final: NO-GO" : $0)
+      if (force_nogo && !note_done) {
+        print "Overridden by pre-flight test failure (mechanical, not reviewer-judged) -- see: " logpath
+        note_done=1
+      }
+      next
+    }
+    { print }
+  ' "$result_file" > "${result_file}.preflight-tmp"
+  mv "${result_file}.preflight-tmp" "$result_file"
+
+  # Self-check: if this rewrite corrupted frontmatter/body parity, fail closed
+  # rather than let a broken result file out the door.
+  gate_result_verify "$result_file" "" "preflight-override" || {
+    printf 'Error: internal -- gate_apply_preflight_result corrupted frontmatter/body parity\n' >&2
+    exit 1
+  }
+}
+
+if [[ "$PREFLIGHT_STATUS" != "skipped" ]]; then
+  gate_apply_preflight_result "$OUTPUT_FILE" "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
 fi
 
 # ── Override provenance (audit record) ─────────────────────────────────────────

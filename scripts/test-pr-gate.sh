@@ -1919,6 +1919,241 @@ test_sequential_frontmatter_parity_mismatch_aborts_gate() {
   pass "$name"
 }
 
+# ── Pre-flight test suite (CC-470 Part 3): mechanical, decoupled from --timeout ──
+
+# Behavior: a passing --test-cmd records test_suite: pass in the frontmatter
+# and does not touch final:/Final: (reviewers' own verdict stands).
+# Steps: run gate with --test-cmd "exit 0", stub reviewers default to GO.
+# Assert exit 0, Final: GO, frontmatter test_suite: pass.
+test_preflight_pass_no_override() {
+  local name="preflight-pass-no-override"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
+  pass "$name"
+}
+
+# Behavior (key case): a FAILING --test-cmd forces Final: NO-GO even when
+# every reviewer LLM says GO -- the mechanical override does not depend on
+# any reviewer correctly reading or citing the pre-flight evidence.
+# Steps: run gate with --test-cmd "echo boom; exit 1", stub reviewers all GO.
+# Assert exit non-zero, Final: NO-GO, frontmatter test_suite: fail, an
+# "Overridden by pre-flight" note is present.
+test_preflight_fail_forces_no_go_override() {
+  local name="preflight-fail-forces-no-go-override"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "echo boom; exit 1" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-flight tests fail"
+    return
+  fi
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty -- mechanical override must still produce a result"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_file_contains "$name" "$result" "Overridden by pre-flight" || return
+  pass "$name"
+}
+
+# Behavior: the mechanical override in test_preflight_fail_forces_no_go_override
+# does not corrupt frontmatter/body Final: parity -- gate_result_verify (the
+# same contract `pmctl gate verify` re-runs) must still pass on the rewritten file.
+test_preflight_fail_override_preserves_frontmatter_body_parity() {
+  local name="preflight-fail-override-preserves-parity"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "exit 1" --output "$result"
+  set -e
+  if [[ ! -s "$result" ]]; then
+    fail "$name" "result file missing/empty"
+    return
+  fi
+  local rc=0
+  ( source "$REPO_ROOT/scripts/lib/gate-result-verify.sh" && gate_result_verify "$result" "" "post-preflight-check" ) || rc=$?
+  [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "gate_result_verify rejected the mechanically-overridden result file"
+}
+
+# Behavior: --test-cmd exceeding --test-timeout is treated the same as a
+# non-zero exit (fail), not left as "skipped" or silently ignored.
+test_preflight_timeout_treated_as_fail() {
+  local name="preflight-timeout-treated-as-fail"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "sleep 5" --test-timeout 1 --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when pre-flight tests time out"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: fail" || return
+  assert_file_contains "$name" "$result" "Final: NO-GO" || return
+  pass "$name"
+}
+
+# Behavior (copy-mode safety net): with no --test-cmd and no executable
+# scripts/run-all-tests.sh under --cd, the pre-flight step is a no-op --
+# behavior is identical to before this feature existed (no test_suite: field,
+# reviewers' own verdict determines Final: unmodified).
+test_preflight_skipped_without_test_cmd_or_autodetect() {
+  local name="preflight-skipped-without-test-cmd-or-autodetect"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 (no pre-flight configured -- legacy behavior)"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: an explicit --test-cmd takes precedence over an auto-detected
+# scripts/run-all-tests.sh in the target repo.
+# Steps: seed $repo/scripts/run-all-tests.sh that would FAIL if invoked, but
+# pass --test-cmd "exit 0". Assert test_suite: pass (the failing auto-detected
+# script was never run).
+test_preflight_explicit_test_cmd_overrides_autodetect() {
+  local name="preflight-explicit-test-cmd-overrides-autodetect"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/scripts"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
+  chmod +x "$repo/scripts/run-all-tests.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- explicit --test-cmd should override the failing autodetected script"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
+  pass "$name"
+}
+
+# Behavior: --skip-preflight-tests disables the whole mechanism even when a
+# test command would otherwise be auto-detected.
+test_preflight_skip_flag_disables() {
+  local name="preflight-skip-flag-disables"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/scripts"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
+  chmod +x "$repo/scripts/run-all-tests.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --skip-preflight-tests --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- --skip-preflight-tests should bypass the failing autodetected script entirely"
+    return
+  fi
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: pre-flight runs regardless of which reviewers are targeted -- it
+# is a mechanical check independent of reviewer role, not gated on qa-tester
+# being present. A --targeted re-gate round still needs to know whether the
+# code (which may have changed since the last round) still passes tests.
+test_preflight_runs_even_when_qa_tester_not_targeted() {
+  local name="preflight-runs-even-when-qa-tester-not-targeted"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --targeted critic --test-cmd "exit 0" --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0"
+    return
+  fi
+  assert_file_contains "$name" "$result" "test_suite: pass" || return
+  pass "$name"
+}
+
 # Behavior: parallel mode aborts when the synthesis YAML frontmatter final:
 # field disagrees with the shell-computed verdict.
 # Steps:
@@ -2875,6 +3110,14 @@ run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result
 run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
+run_test test_preflight_pass_no_override
+run_test test_preflight_fail_forces_no_go_override
+run_test test_preflight_fail_override_preserves_frontmatter_body_parity
+run_test test_preflight_timeout_treated_as_fail
+run_test test_preflight_skipped_without_test_cmd_or_autodetect
+run_test test_preflight_explicit_test_cmd_overrides_autodetect
+run_test test_preflight_skip_flag_disables
+run_test test_preflight_runs_even_when_qa_tester_not_targeted
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
 run_test test_prompt_injection_detected
 run_test test_block_soft_verdict_is_no_go
