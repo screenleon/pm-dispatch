@@ -25,6 +25,13 @@
 # patch text and need a parser before a file guard can bind. Headless runs also
 # require an explicit hook-trust bypass flag, so wiring alone is not effective
 # enforcement — hence confidence stays at probed, stability at evolving.
+#
+# "Wired" here means THIS checkout's managed hook is actually present (see
+# _doctor_host_codex_target_installed below), not merely that hooks.json
+# exists and parses — a hooks.json holding only unrelated or same-basename
+# foreign entries must report as unwired here too, matching
+# _doctor_host_codex_manifest_parity's determination (the two probes must
+# never disagree about the same underlying fact).
 _doctor_host_codex_hooks() {
   local codex_home="${CODEX_HOME:-$HOME/.codex}"
   if [[ -f "$codex_home/hooks.json" ]]; then
@@ -34,9 +41,15 @@ _doctor_host_codex_hooks() {
         "codex hooks.json exists but is not valid JSON ($codex_home/hooks.json)"
       return
     fi
-    emit_capability host.codex.hooks ok codex command_guard \
-      host_hook blocking partial evolving probed \
-      "codex hook surface wired ($codex_home/hooks.json; command coverage full, file-write needs patch parsing)"
+    if _doctor_host_codex_target_installed "$codex_home/hooks.json" codex-hooks-json; then
+      emit_capability host.codex.hooks ok codex command_guard \
+        host_hook blocking partial evolving probed \
+        "codex hook surface wired ($codex_home/hooks.json; command coverage full, file-write needs patch parsing)"
+    else
+      emit_capability host.codex.hooks ok codex command_guard \
+        none none none evolving probed \
+        "codex hook surface not wired ($codex_home/hooks.json exists but does not contain this checkout's managed hook; opt-in via install.sh --enable-codex-command-guard)"
+    fi
   else
     emit_capability host.codex.hooks ok codex command_guard \
       none none none evolving probed \

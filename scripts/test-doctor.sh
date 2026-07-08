@@ -1121,11 +1121,16 @@ case_doctor_capability_json_fields() {
 
 case_doctor_codex_hooks_wired_tuple() {
   # Verifies the codex-host hooks probe reports the exact wired capability
-  # tuple when a valid CODEX_HOME/hooks.json exists (command coverage is
-  # partial by observation: file-write payloads embed paths in patch text).
+  # tuple when CODEX_HOME/hooks.json actually contains this checkout's
+  # managed hook-codex-command-guard.sh command (command coverage is partial
+  # by observation: file-write payloads embed paths in patch text). Must use
+  # the real managed command, not an empty PreToolUse array — the probe now
+  # derives "wired" from the exact-managed-hook predicate
+  # (_doctor_host_codex_target_installed), not from hooks.json merely parsing
+  # as valid JSON, so an empty array would (correctly) read as unwired.
   #
   # Steps:
-  #   1. Full healthy env; write a valid JSON hooks file under $HOME/.codex.
+  #   1. Full healthy env; write hooks.json with this checkout's managed hook wired.
   #   2. Run doctor --json --repo <repo> with claude+codex stubs.
   #   3. Assert exactly one host.codex.hooks record with the wired tuple.
   local name="doctor-codex-hooks-wired-tuple"
@@ -1139,7 +1144,9 @@ case_doctor_codex_hooks_wired_tuple() {
   create_memory_dir_for_pwd "$home"
   write_manifest "$home"
   mkdir -p "$home/.codex"
-  printf '{"hooks":{"PreToolUse":[]}}\n' > "$home/.codex/hooks.json"
+  jq -n --arg cmd "$REPO_ROOT/scripts/hook-codex-command-guard.sh" \
+    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]}}' \
+    > "$home/.codex/hooks.json"
   path="$(make_stub_bin "$tmp_root/bin-codex-hooks-wired" claude codex)"
 
   out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
@@ -1154,6 +1161,46 @@ case_doctor_codex_hooks_wired_tuple() {
     pass "$name"
   else
     fail "$name" "expected exactly one wired host.codex.hooks tuple; wired=$wired status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_hooks_unrelated_hooks_unwired_tuple() {
+  # Regression: a valid CODEX_HOME/hooks.json holding only an unrelated hook
+  # (not this checkout's managed guard command) must report the SAME unwired
+  # tuple as a missing hooks.json — the capability probe and the manifest
+  # parity check must never disagree about the same underlying fact.
+  #
+  # Steps:
+  #   1. Full healthy env; write hooks.json with only a foreign hook entry.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert exactly one host.codex.hooks record with the unwired tuple.
+  local name="doctor-codex-hooks-unrelated-hooks-unwired-tuple"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-hooks-unrelated" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/some/other/tool/hook.sh"}]}]}}\n' \
+    > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-hooks-unrelated" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local unwired
+  unwired="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.hooks")
+    | select(.status == "ok" and .host == "codex" and .capability == "command_guard"
+      and .provider == "none" and .enforcement == "none" and .coverage == "none"
+      and .stability == "evolving" and .confidence == "probed")] | length')"
+  if [[ "$unwired" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected an unrelated-only hooks.json to report the unwired tuple; unwired=$unwired status=$status out=$out"
   fi
 }
 
@@ -2012,6 +2059,7 @@ case_doctor_hook_inventory_parity
 case_doctor_capability_json_fields
 case_doctor_claude_manifest_consistency_drift_fails
 case_doctor_codex_hooks_wired_tuple
+case_doctor_codex_hooks_unrelated_hooks_unwired_tuple
 case_doctor_codex_hooks_malformed_warns
 case_doctor_codex_hooks_absent_unwired_tuple
 case_doctor_codex_manifest_parity_missing_ok

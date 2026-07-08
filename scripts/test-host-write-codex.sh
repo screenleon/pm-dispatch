@@ -159,6 +159,23 @@ test_install_guards_codex_spaced_repo_root() {
     return
   fi
 
+  # Prove the escaped hook path still ENFORCES real allow/deny decisions, not
+  # just that it launches without word-splitting — feed representative Codex
+  # hook payloads through it.
+  local allow_rc=0 deny_rc=0
+  printf '{"tool_input":{"command":"git status","cwd":"/tmp"}}' \
+    | PM_GUARD_LOG_DIR="$tmp_root/spaced-guard-logs" bash -c "$cmd" >/dev/null 2>&1 || allow_rc=$?
+  if [[ "$allow_rc" -ne 0 ]]; then
+    fail "$name" "spaced-path hook denied a benign command (rc=$allow_rc): [$cmd]"
+    return
+  fi
+  printf '{"tool_input":{"command":"rm -rf /tmp/whatever","cwd":"/tmp"}}' \
+    | PM_GUARD_LOG_DIR="$tmp_root/spaced-guard-logs" bash -c "$cmd" >/dev/null 2>&1 || deny_rc=$?
+  if [[ "$deny_rc" -eq 0 ]]; then
+    fail "$name" "spaced-path hook allowed a destructive command that should be denied: [$cmd]"
+    return
+  fi
+
   CODEX_HOME="$codex_home" bash "$spaced/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
   local content
   content="$(jq -c . "$codex_home/hooks.json")"
