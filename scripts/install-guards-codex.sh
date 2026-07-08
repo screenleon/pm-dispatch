@@ -63,6 +63,13 @@ if [[ ! -x "$hook_cmd" ]]; then
   exit 2
 fi
 
+# Codex runs each hook `command` string through the shell, same as Claude's
+# hooks.json (see install-guards.sh). An unquoted path with a space is
+# word-split and the hook fails to launch, so shell-escape it before writing
+# — printf %q only adds backslashes when needed, so space-free paths are
+# stored verbatim (no churn for existing installs).
+hook_cmd_q="$(printf '%q' "$hook_cmd")"
+
 tmp_new="$(mktemp)"
 tmp_current="$(mktemp)"
 trap 'rm -f "$tmp_new" "$tmp_current"' EXIT
@@ -76,7 +83,7 @@ fi
 
 # Merge idempotently: only append the managed hook entry if no existing
 # PreToolUse/Bash entry already points at this repo's guard script.
-jq --arg cmd "$hook_cmd" '
+jq --arg cmd "$hook_cmd_q" '
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?.command] | index($cmd)) as $already |

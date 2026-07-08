@@ -124,6 +124,47 @@ test_install_guards_codex_unknown_flag_rejected() {
     || fail "$name" "expected non-zero exit and no $codex_home mutation for an unknown flag, got rc=$rc"
 }
 
+test_install_guards_codex_spaced_repo_root() {
+  # Regression: a repo checked out under a path containing a space (e.g. a
+  # Windows home like C:/Users/First Last/) must still produce a RUNNABLE
+  # hook. Codex runs each hook `command` through the shell; an unquoted
+  # spaced path is word-split and fails ("No such file or directory").
+  # install-guards-codex.sh shell-escapes the command path so it survives,
+  # and uninstall-guards-codex.sh must still recognise and remove it.
+  local name="install-guards-codex-spaced-repo-root"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/ic-spaced/.codex"
+  local spaced="$tmp_root/repo with space"
+  if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
+    printf '  (skip) %s — no directory symlink support here\n' "$name"
+    return 0
+  fi
+
+  CODEX_HOME="$codex_home" bash "$spaced/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  if [[ ! -f "$codex_home/hooks.json" ]]; then
+    fail "$name" "hooks.json not created via spaced repo root"
+    return
+  fi
+
+  local cmd
+  cmd="$(jq -r '.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]?.command' "$codex_home/hooks.json")"
+  if [[ -z "$cmd" ]]; then
+    fail "$name" "expected PreToolUse Bash hook not found in $codex_home/hooks.json"
+    return
+  fi
+  local out
+  out="$(bash -c "$cmd" </dev/null 2>&1 || true)"
+  if printf '%s' "$out" | grep -q "No such file or directory"; then
+    fail "$name" "hook command word-split on space: [$cmd]"
+    return
+  fi
+
+  CODEX_HOME="$codex_home" bash "$spaced/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
+  local content
+  content="$(jq -c . "$codex_home/hooks.json")"
+  [[ "$content" == "{}" ]] && pass "$name" || fail "$name" "uninstall left the escaped spaced-repo hook behind, got: $content"
+}
+
 # --- uninstall-guards-codex.sh --------------------------------------------
 
 test_uninstall_guards_codex_removes_hook() {
@@ -307,6 +348,7 @@ test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent
 test_install_guards_codex_missing_manifest_target_errors
 test_install_guards_codex_unknown_flag_rejected
+test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_uninstall_guards_codex_idempotent_when_absent
