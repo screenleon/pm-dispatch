@@ -169,4 +169,24 @@ for _pattern in "${DENY_PATTERNS[@]}"; do
   fi
 done
 
-g_allow "no denylisted pattern matched"
+# Allow-path audit target is a bounded class + hash, NOT the (even redacted)
+# command text: this guard fires on EVERY Bash call in a codex-hosted PM
+# session, so the allow path is the highest-volume line in the audit log —
+# persisting full command text there for every benign command multiplies the
+# window in which an unrecognized-shape secret (the one _redact_secrets does
+# not catch) ends up on disk. The deny path keeps full redacted text (see
+# g_deny above) because it fires rarely and the text is the diagnostic value
+# of that log line; the hash here still lets an operator correlate an allow
+# entry back to a specific command if they have it in shell history.
+_allow_audit_summary() {
+  local s="$1" first_word hash
+  first_word="$(awk '{print $1}' <<<"$s")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash="$(printf '%s' "$s" | sha256sum 2>/dev/null | cut -c1-12)"
+  else
+    hash="$(printf '%s' "$s" | shasum -a 256 2>/dev/null | cut -c1-12)"
+  fi
+  printf '%s#%s' "${first_word:-?}" "${hash:-nohash}"
+}
+
+g_allow "no denylisted pattern matched" "$(_allow_audit_summary "$command_str")"

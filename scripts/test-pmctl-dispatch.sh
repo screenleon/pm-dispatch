@@ -945,6 +945,46 @@ case_config_malformed_model_warns_and_fallback() {
   rm -rf "$home" "$work"; rm -f "$stderr"
 }
 
+# ---- 23b: pmctl exports config usage_log_path to adapter subprocess, end-to-end ----
+# Prior coverage (test-codex-dispatch.sh/test-claude-dispatch.sh) only proves the
+# adapter itself honours PM_CFG_USAGE_LOG_PATH when the env var is injected
+# directly. This proves the full pmctl-level path: a real
+# `dispatch.usage_log_path = /abs/path` line in ~/.pm-dispatch/config is parsed
+# by pm_config_load, exported by pmctl dispatch run, and actually reaches the
+# adapter subprocess's environment — observed by running a REAL (non
+# --print-cmd) dispatch through a fake codex CLI and a custom usage-log stub
+# that records its own invocation.
+case_config_usage_log_path_exported_to_adapter() {
+  local name="config/dispatch.usage_log_path exported by pmctl to adapter, end-to-end"
+  should_run "$name" || return 0
+  local home work brief bindir custom_log marker code
+  home="$(mktemp -d)"; mkdir -p "$home/.pm-dispatch"
+  custom_log="$(mktemp -d)/custom-log-usage.sh"
+  marker="$(mktemp -d)/marker"
+  cat > "$custom_log" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$marker"
+EOF
+  chmod +x "$custom_log"
+  printf 'dispatch.usage_log_path = %s\n' "$custom_log" > "$home/.pm-dispatch/config"
+  work="$(mktemp -d)"; git init -q "$work"
+  brief="$(_mk_guard_brief "$work")"
+  bindir="$(mktemp -d)"
+  _install_fake_codex "$bindir" 0
+  set +e
+  PATH="$bindir:$PATH" HOME="$home" \
+    "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" \
+    >/dev/null 2>&1; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && [[ -f "$marker" ]] && grep -q "codex_dispatch" "$marker" \
+     && [[ ! -f "$home/.claude/usage-tracker.jsonl" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code marker_exists=$([[ -f "$marker" ]] && echo yes || echo no) marker=$(cat "$marker" 2>/dev/null || true)"
+  fi
+  rm -rf "$home" "$work" "$bindir" "$(dirname "$custom_log")" "$(dirname "$marker")"
+}
+
 # ---- 24: pmctl exports config timeout to claude adapter subprocess (CC-293) ----
 # Symmetric to case_config_timeout_exported_to_adapter (case 20) but through the
 # claude adapter, covering the path removed from test-claude-dispatch.sh.
@@ -1403,6 +1443,7 @@ case_config_timeout_exported_to_adapter
 case_config_model_exported_to_adapter
 case_caller_model_beats_config
 case_config_malformed_model_warns_and_fallback
+case_config_usage_log_path_exported_to_adapter
 case_config_timeout_exported_to_claude_adapter
 case_timeout_flag_beats_config_via_pmctl
 case_auto_pack_default_on_emits_event

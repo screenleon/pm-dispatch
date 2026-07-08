@@ -3579,45 +3579,56 @@ run_case "pm-bash: sudo → deny" 2 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"sudo apt install jq"}}' \
   "denylisted pattern"
 
-# --- guard-pm-bash.sh audit redaction (secret-shaped substrings never hit the log raw) ---
+# --- guard-pm-bash.sh audit logging (allow-path: bounded hash, never full text; deny-path: full redacted text) ---
+#
+# The allow path fires on EVERY Bash call in a codex-hosted PM session (the
+# highest-volume line in the audit log), so it logs only `<first-word>#<hash>`
+# — never the (even redacted) command text — closing the "unrecognized secret
+# shape survives best-effort redaction" gap at the source instead of relying
+# on _redact_secrets to catch every shape. The deny path is rare enough that
+# full redacted text is kept for diagnosis (see the stderr-message test below
+# and the asymmetric design note above _allow_audit_summary in guard-pm-bash.sh).
 
 truncate_log
-run_case "pm-bash: bearer token redacted in audit log" 0 "$PMBASHHOOK" \
+run_case "pm-bash: bearer token — allow path logs no command text at all" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"curl -H \"Authorization: Bearer sk-abcdef1234567890ABCDEF\" https://api.example.com"}}'
-# g_audit's printf %q shell-escapes the target field, so a literal "***" in the
-# log line comes out backslash-escaped (\*\*\*) — match on REDACTED alone,
-# which has no shell-special characters to escape, rather than the exact
-# asterisk-quoted form.
-assert_log "pm-bash: bearer token redacted in audit log — target line" "Bearer"
-assert_log "pm-bash: bearer token redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log "pm-bash: bearer token allow — target is bounded class#hash" "curl#"
 assert_log_not "pm-bash: bearer token never appears raw in audit log" "sk-abcdef1234567890ABCDEF"
+assert_log_not "pm-bash: bearer token — full command text not logged even redacted" "Bearer"
 
 truncate_log
-run_case "pm-bash: API_KEY env assignment redacted in audit log" 0 "$PMBASHHOOK" \
+run_case "pm-bash: API_KEY env assignment — allow path logs no command text at all" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"export API_KEY=abcdef1234567890secret"}}'
-assert_log "pm-bash: API_KEY env assignment redacted in audit log — target line" "API_KEY"
-assert_log "pm-bash: API_KEY env assignment redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log "pm-bash: API_KEY allow — target is bounded class#hash" "export#"
 assert_log_not "pm-bash: API_KEY value never appears raw in audit log" "abcdef1234567890secret"
+assert_log_not "pm-bash: API_KEY — full command text not logged even redacted" "API_KEY"
 
 truncate_log
-run_case "pm-bash: -p password flag redacted in audit log" 0 "$PMBASHHOOK" \
+run_case "pm-bash: -p password flag — allow path logs no command text at all" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"mysql -p SuperSecretPass123 -u root"}}'
-assert_log "pm-bash: -p password flag redacted in audit log — target line" "mysql"
-assert_log "pm-bash: -p password flag redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log "pm-bash: -p password allow — target is bounded class#hash" "mysql#"
 assert_log_not "pm-bash: -p password value never appears raw in audit log" "SuperSecretPass123"
 
 truncate_log
-run_case "pm-bash: --client-secret (space-separated, previously uncovered) redacted in audit log" 0 "$PMBASHHOOK" \
+run_case "pm-bash: --client-secret (space-separated) — allow path logs no command text at all" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"curl --client-secret myS3cretValue123 https://api.example.com"}}'
-assert_log "pm-bash: --client-secret redacted in audit log — target line" "client-secret"
-assert_log "pm-bash: --client-secret redacted in audit log — REDACTED marker present" "REDACTED"
+assert_log "pm-bash: --client-secret allow — target is bounded class#hash" "curl#"
 assert_log_not "pm-bash: --client-secret value never appears raw in audit log" "myS3cretValue123"
+assert_log_not "pm-bash: --client-secret — full command text not logged even redacted" "client-secret"
 
 truncate_log
-run_case "pm-bash: benign command logged unredacted" 0 "$PMBASHHOOK" \
+run_case "pm-bash: benign command — allow path logs bounded class#hash, not full args" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}'
-assert_log "pm-bash: benign command logged unredacted — target line" "git"
-assert_log_not "pm-bash: benign command not marked REDACTED" "REDACTED"
+assert_log "pm-bash: benign command allow — target is bounded class#hash" "git#"
+assert_log_not "pm-bash: benign command not marked REDACTED (nothing to redact on allow path)" "REDACTED"
+
+truncate_log
+run_case "pm-bash: deny path still logs full redacted target in the audit LOG (not just stderr)" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"sudo mysql -p SuperSecretPass123 -u root"}}' \
+  "denylisted pattern"
+assert_log "pm-bash: deny-path audit log target line" "mysql"
+assert_log "pm-bash: deny-path audit log REDACTED marker present" "REDACTED"
+assert_log_not "pm-bash: deny-path password value never appears raw in audit log" "SuperSecretPass123"
 
 if should_run "pm-bash: secret redacted in deny-path stderr message too"; then
   name="pm-bash: secret redacted in deny-path stderr message too"

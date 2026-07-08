@@ -31,6 +31,13 @@ g_audit() {
   local log_dir
   log_dir="$(dirname "$LOG_FILE")"
   mkdir -p "$log_dir" 2>/dev/null || return 0
+  # Restrict a newly-created log file to owner-only before the first line is
+  # ever appended — the audit log across all guards can carry redacted-but-
+  # imperfect command/path text (see guard-pm-bash.sh's _redact_secrets best-
+  # effort caveat), so a world/group-readable log is an unnecessary secondary
+  # exposure surface. Best-effort like the rest of this function: a failure
+  # here must never disturb the allow/deny decision.
+  [[ -e "$LOG_FILE" ]] || { : > "$LOG_FILE"; chmod 600 "$LOG_FILE"; } 2>/dev/null || true
   local ts
   ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
   # The append is wrapped in a brace group whose stderr is redirected as the
