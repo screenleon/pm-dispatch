@@ -133,7 +133,12 @@ declare -a DENY_PATTERNS=(
   # subcommand does not shield it — `git -C /tmp reset --hard` and
   # `git -c foo=bar push --force` are denied too, not just the bare form
   # (same fix shape as the rm cluster pattern above).
-  'git\b.*[[:space:]]push\b([[:space:]]+[^|;&]*)?[[:space:]](-f|--force)([[:space:]]|$)'  # force push: can overwrite upstream history
+  # force push: bare `-f`/`--force` plus the safer-looking variants that still
+  # rewrite or delete remote refs — `--force-with-lease`/`--force-if-includes`
+  # (optionally with a `=<refspec>` value, hence the `=` alternative in the
+  # trailing boundary) still force-overwrite, and `--mirror` can delete remote
+  # refs/branches wholesale.
+  'git\b.*[[:space:]]push\b([[:space:]]+[^|;&]*)?[[:space:]](-f|--force(-with-lease|-if-includes)?|--mirror)([[:space:]=]|$)'
   # force-refspec push: `git push origin +main`, `git push +HEAD:main` — a
   # `+` prefix on a refspec argument means "force this update" without
   # spelling `-f`/`--force`, so it must be matched independently of the

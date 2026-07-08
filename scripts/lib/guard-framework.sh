@@ -35,9 +35,15 @@ g_audit() {
   # ever appended — the audit log across all guards can carry redacted-but-
   # imperfect command/path text (see guard-pm-bash.sh's _redact_secrets best-
   # effort caveat), so a world/group-readable log is an unnecessary secondary
-  # exposure surface. Best-effort like the rest of this function: a failure
-  # here must never disturb the allow/deny decision.
-  [[ -e "$LOG_FILE" ]] || { : > "$LOG_FILE"; chmod 600 "$LOG_FILE"; } 2>/dev/null || true
+  # exposure surface. `set -o noclobber` makes the create atomic (O_EXCL): if
+  # two guard invocations race here, the loser's `>` fails closed instead of
+  # truncating a first line the winner already appended — a bare
+  # `[[ -e ]] || : > file` check-then-act would have exactly that race.
+  # Best-effort like the rest of this function: a failure here must never
+  # disturb the allow/deny decision.
+  if [[ ! -e "$LOG_FILE" ]]; then
+    ( set -o noclobber; : > "$LOG_FILE" ) 2>/dev/null && chmod 600 "$LOG_FILE" 2>/dev/null
+  fi
   local ts
   ts=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
   # The append is wrapped in a brace group whose stderr is redirected as the

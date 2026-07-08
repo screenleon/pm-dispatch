@@ -3511,6 +3511,22 @@ run_case "pm-bash: git push +HEAD:main (force-refspec, no remote name) → deny"
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push +HEAD:main"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: git push --force-with-lease → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push --force-with-lease origin main"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push --force-with-lease=<refspec> → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push --force-with-lease=refs/heads/main:abc123 origin main"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push --force-if-includes → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push --force-if-includes origin main"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: git push --mirror → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push --mirror origin"}}' \
+  "denylisted pattern"
+
 run_case "pm-bash: git push (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
 
@@ -3638,6 +3654,31 @@ if should_run "pm-bash: secret redacted in deny-path stderr message too"; then
   else
     fail "$name" "expected redacted secret in deny message, got: $out"
   fi
+fi
+
+if should_run "pm-bash: concurrent first-write to a fresh audit log never truncates a sibling's line"; then
+  name="pm-bash: concurrent first-write to a fresh audit log never truncates a sibling's line"
+  # Regression: g_audit's first-creation path used to be check-then-truncate
+  # (`[[ -e ]] || : > file`), so two guard invocations racing on a BRAND-NEW
+  # log file could have the second one truncate the first one's just-appended
+  # line. Fire N invocations in parallel against a fresh log dir and assert
+  # every decision line survives.
+  _concurrency_log_dir="$(mktemp -d)"
+  _n=10
+  for _i in $(seq 1 "$_n"); do
+    PM_GUARD_LOG_DIR="$_concurrency_log_dir" \
+      printf '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"git status"}}' \
+      | PM_GUARD_LOG_DIR="$_concurrency_log_dir" "$PMBASHHOOK" >/dev/null 2>&1 &
+  done
+  wait
+  _lines="$(wc -l < "$_concurrency_log_dir/hooks.log" 2>/dev/null | tr -d ' ')"
+  if [[ "${_lines:-0}" -eq "$_n" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected $_n audit lines after $_n concurrent first-writes, got ${_lines:-0}"
+  fi
+  rm -rf "$_concurrency_log_dir"
+  unset _concurrency_log_dir _n _i _lines
 fi
 
 run_case "pm-bash: mkfs → deny" 2 "$PMBASHHOOK" \
