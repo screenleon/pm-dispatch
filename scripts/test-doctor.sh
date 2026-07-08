@@ -1231,6 +1231,115 @@ case_doctor_codex_hooks_absent_unwired_tuple() {
   fi
 }
 
+case_doctor_codex_manifest_parity_missing_ok() {
+  # Verifies the manifest-parity check reports the managed hooks target as
+  # not wired (ok, expected-default message) when no CODEX_HOME/hooks.json
+  # exists at all.
+  #
+  # Steps:
+  #   1. Full healthy env; ensure no hooks.json under $HOME/.codex.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert one host.codex.manifest-parity ok record mentioning "not wired".
+  local name="doctor-codex-manifest-parity-missing-ok"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-parity-missing" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  path="$(make_stub_bin "$tmp_root/bin-codex-parity-missing" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local matched
+  matched="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.manifest-parity")
+    | select(.status == "ok" and (.message | contains("not wired")))] | length')"
+  if [[ "$matched" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected one not-wired manifest-parity ok record; matched=$matched status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_manifest_parity_present_ok() {
+  # Verifies the manifest-parity check reports the managed hooks target as
+  # wired when CODEX_HOME/hooks.json holds the actual managed guard command,
+  # not merely when the file exists.
+  #
+  # Steps:
+  #   1. Full healthy env; write a hooks.json with the managed guard command wired.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert one host.codex.manifest-parity ok record mentioning "wired" (not "not wired").
+  local name="doctor-codex-manifest-parity-present-ok"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-parity-present" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  jq -n --arg cmd "$REPO_ROOT/scripts/hook-codex-command-guard.sh" \
+    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]}}' \
+    > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-parity-present" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local matched
+  matched="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.manifest-parity")
+    | select(.status == "ok" and (.message | contains("wired")) and (.message | contains("not wired") | not))] | length')"
+  if [[ "$matched" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected one wired manifest-parity ok record; matched=$matched status=$status out=$out"
+  fi
+}
+
+case_doctor_codex_manifest_parity_unrelated_hooks_not_wired() {
+  # Regression: a CODEX_HOME/hooks.json holding only an unrelated hook (not
+  # the pm-dispatch managed guard command) must NOT be reported as wired —
+  # file existence alone is not installation.
+  #
+  # Steps:
+  #   1. Full healthy env; write a hooks.json with only a foreign hook entry.
+  #   2. Run doctor --json --repo <repo> with claude+codex stubs.
+  #   3. Assert one host.codex.manifest-parity ok record mentioning "not wired".
+  local name="doctor-codex-manifest-parity-unrelated-hooks-not-wired"
+  should_run "$name" || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    pass "$name (jq not available - skip)"
+    return
+  fi
+  local home="$tmp_root/home-codex-parity-unrelated" out status=0 path
+  write_full_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  mkdir -p "$home/.codex"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/some/other/tool/hook.sh"}]}]}}\n' \
+    > "$home/.codex/hooks.json"
+  path="$(make_stub_bin "$tmp_root/bin-codex-parity-unrelated" claude codex)"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    bash "$DOCTOR" --json --repo "$REPO_ROOT" 2>/dev/null)" || status=$?
+
+  local matched
+  matched="$(printf '%s\n' "$out" | jq -s '[.[] | select(.check == "host.codex.manifest-parity")
+    | select(.status == "ok" and (.message | contains("not wired")))] | length')"
+  if [[ "$matched" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected the unrelated-only hooks.json to be reported not-wired; matched=$matched status=$status out=$out"
+  fi
+}
+
 case_doctor_claude_command_interface_missing_warns() {
   # Verifies the claude-host pm_command_interface probe emits the warn tuple
   # (provider none) when commands/pm.md is not installed.
@@ -1866,6 +1975,9 @@ case_doctor_claude_manifest_consistency_drift_fails
 case_doctor_codex_hooks_wired_tuple
 case_doctor_codex_hooks_malformed_warns
 case_doctor_codex_hooks_absent_unwired_tuple
+case_doctor_codex_manifest_parity_missing_ok
+case_doctor_codex_manifest_parity_present_ok
+case_doctor_codex_manifest_parity_unrelated_hooks_not_wired
 case_doctor_claude_command_interface_missing_warns
 case_doctor_codex_module_no_binary_degrades
 case_doctor_copy_mode_hooks_degraded

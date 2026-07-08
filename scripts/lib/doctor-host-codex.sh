@@ -44,16 +44,37 @@ _doctor_host_codex_hooks() {
   fi
 }
 
+# Per-target installed check: for the codex-hooks-json format this verifies
+# the managed hook COMMAND is actually wired inside the hooks file, not merely
+# that the file exists — a hooks.json holding only unrelated entries (e.g. a
+# user's own Codex hooks) must not read as this target being installed. Other
+# formats have no content probe yet, so path existence is the best available
+# signal for them.
+_doctor_host_codex_target_installed() {
+  local expanded="$1" fmt="$2"
+  if [[ "$fmt" == "codex-hooks-json" ]]; then
+    [[ -f "$expanded" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    jq -e '
+      (.hooks.PreToolUse // [])[]? | select(.matcher == "Bash") | (.hooks // [])[]?.command
+      | select((split("/") | last) == "hook-codex-command-guard.sh")
+    ' "$expanded" >/dev/null 2>&1
+    return $?
+  fi
+  [[ -e "$expanded" ]]
+}
+
 # Declared-vs-installed parity check: hosts/codex/host.yaml's
 # install_targets is the DECLARED layer (docs/host-contract.md); this reports
-# which managed targets are present on disk under $CODEX_HOME. Distinct from
-# claude's declared-vs-PROBED consistency check (doctor-host-claude.sh) — codex
-# has no equivalent live-capability probe yet, only a file-presence fact.
-# codex-host wiring is opt-in (install.sh --enable-codex-command-guard), so a
-# missing managed target is the DEFAULT, expected state, not a defect — this
-# stays `ok` the same way _doctor_host_codex_hooks() above treats an absent
-# hooks.json as ok, never warn/fail. Only a broken checkout (manifest or
-# host-manifest.sh missing) warrants a warn.
+# which managed targets are actually installed (see
+# _doctor_host_codex_target_installed above). Distinct from claude's
+# declared-vs-PROBED consistency check (doctor-host-claude.sh) — codex has no
+# equivalent live-capability probe yet. codex-host wiring is opt-in (install.sh
+# --enable-codex-command-guard), so a missing managed target is the DEFAULT,
+# expected state, not a defect — this stays `ok` the same way
+# _doctor_host_codex_hooks() above treats an absent hooks.json as ok, never
+# warn/fail. Only a broken checkout (manifest or host-manifest.sh missing)
+# warrants a warn.
 _doctor_host_codex_manifest_parity() {
   if [[ "${_HOST_MANIFEST_AVAILABLE:-0}" -ne 1 ]]; then
     emit_check host.codex.manifest-parity warn \
@@ -69,19 +90,22 @@ _doctor_host_codex_manifest_parity() {
 
   local -a present=() missing=()
   local id path fmt managed expanded
-  # shellcheck disable=SC2034  # fmt is part of the fixed TSV shape; unused here (no format filter needed)
   while IFS=$'\t' read -r id path fmt managed; do
     [[ "$managed" == "true" ]] || continue
     expanded="$(host_manifest_expand_path "$path")"
-    if [[ -e "$expanded" ]]; then present+=("$id"); else missing+=("$id"); fi
+    if _doctor_host_codex_target_installed "$expanded" "$fmt"; then
+      present+=("$id")
+    else
+      missing+=("$id")
+    fi
   done < <(host_manifest_install_targets "$manifest")
 
   if [[ "${#missing[@]}" -eq 0 ]]; then
     emit_check host.codex.manifest-parity ok \
-      "all managed hosts/codex/host.yaml install_targets present on disk (${present[*]:-none declared managed})"
+      "all managed hosts/codex/host.yaml install_targets wired (${present[*]:-none declared managed})"
   else
     emit_check host.codex.manifest-parity ok \
-      "managed install_target(s) not yet installed: ${missing[*]} (expected default — codex-host wiring is opt-in via install.sh --enable-codex-command-guard)"
+      "managed install_target(s) not wired: ${missing[*]} (expected default — codex-host wiring is opt-in via install.sh --enable-codex-command-guard)"
   fi
 }
 

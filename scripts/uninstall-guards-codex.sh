@@ -54,23 +54,25 @@ if [[ ! -f "$hooks_file" ]]; then
   exit 0
 fi
 
-repo_root_q="$(printf '%q' "$REPO_ROOT")"
-
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
 
-jq \
-  --arg repo_root "$REPO_ROOT" \
-  --arg repo_root_q "$repo_root_q" \
-  '
-  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/"));
+# Match only the exact managed guard entry (basename + parent dir "scripts"),
+# not "any command under this repo root" — a user-maintained Codex hook
+# stored in the same checkout (e.g. scripts/my-own-hook.sh) must survive
+# uninstall. Basename matching is immune to the shell-escape backslashes
+# install-guards-codex.sh may add around a spaced repo path (the escape stays
+# inside a path component, never crosses a "/" boundary — see that script's
+# printf %q comment), so escaped and unescaped installs both match here.
+jq '
+  def is_managed: (. // "") | (split("/") | last) == "hook-codex-command-guard.sh" and (split("/") | .[-2]) == "scripts";
   ( [.hooks // {} | keys[]] ) as $event_types |
   reduce $event_types[] as $et (
     .;
     if (.hooks[$et] | type) == "array" then
       .hooks[$et] |= map(
         if (.hooks | type) == "array" then
-          .hooks |= map(select((.command | in_repo) | not))
+          .hooks |= map(select((.command | is_managed) | not))
         else . end
       ) |
       .hooks[$et] |= map(select((.hooks // [] | length) > 0)) |

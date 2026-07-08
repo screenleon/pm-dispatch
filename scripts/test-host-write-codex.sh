@@ -194,6 +194,28 @@ test_uninstall_guards_codex_preserves_unrelated_hook() {
   fi
 }
 
+test_uninstall_guards_codex_preserves_in_repo_user_hook() {
+  # Regression: uninstall must remove only the exact managed guard entry, not
+  # every hook command that happens to live under this repo checkout — a
+  # user-maintained hook stored alongside pm-dispatch's own scripts (e.g. a
+  # personal scripts/my-own-hook.sh) must survive.
+  local name="uninstall-guards-codex-preserves-in-repo-user-hook"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uc-inrepo/.codex"
+  local user_hook="$REPO_ROOT/scripts/my-own-hook.sh"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  jq --arg cmd "$user_hook" \
+    '.hooks.PreToolUse += [{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]' \
+    "$codex_home/hooks.json" > "$codex_home/hooks.json.tmp" && mv "$codex_home/hooks.json.tmp" "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
+  if jq -e --arg cmd "$user_hook" '.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]? | select(.command==$cmd)' \
+      "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "in-repo user hook should survive uninstall, was removed"
+  fi
+}
+
 test_uninstall_guards_codex_idempotent_when_absent() {
   local name="uninstall-guards-codex-idempotent-when-absent"
   should_run "$name" || return 0
@@ -351,6 +373,7 @@ test_install_guards_codex_unknown_flag_rejected
 test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_preserves_unrelated_hook
+test_uninstall_guards_codex_preserves_in_repo_user_hook
 test_uninstall_guards_codex_idempotent_when_absent
 test_uninstall_guards_codex_unknown_flag_rejected
 test_hook_codex_command_guard_allows_benign_command

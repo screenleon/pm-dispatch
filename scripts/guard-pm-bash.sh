@@ -139,7 +139,11 @@ declare -a DENY_PATTERNS=(
   'git\b.*[[:space:]]branch\b[[:space:]]+-D'                               # force-deletes a branch, bypassing merge check
   '\-\-no-verify\b'                                                        # skips commit/push hooks
   '\-\-no-gpg-sign\b'                                                      # bypasses commit signing
-  '(curl|wget)[^|]*\|[[:space:]]*(ba)?sh\b'                                # pipe-to-shell remote code execution
+  # pipe-to-shell remote code execution: `| sh`, `| bash`, plus common
+  # equivalent spellings — an absolute/relative interpreter path (`/bin/sh`,
+  # `./sh`), an `env`-wrapped invocation (`env bash`), and `sudo`-prefixed
+  # forms, any of which reach the same shell interpreter as the bare form.
+  '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(([[:alnum:]_./-]*/)?env[[:space:]]+)?([[:alnum:]_./-]*/)?(ba|da|z)?sh\b'
   '\bsudo\b'                                                               # PM sessions should never need root
   '\bmkfs(\.[a-z0-9]+)?\b'                                                 # filesystem-format, irreversibly destroys data
   '\bdd[[:space:]]+.*of=/dev/'                                             # raw block-device write
