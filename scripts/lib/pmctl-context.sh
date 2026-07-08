@@ -131,13 +131,28 @@ _ctx_sqlite3_check() {
 
 # Probe FTS5 support by creating and immediately dropping a test virtual table.
 # Returns 0 if FTS5 is available, 1 otherwise.
+#
+# Cached per db path: FTS5 support is a property of the sqlite3 binary, static
+# for the lifetime of this process, but this call sits on the query hot path
+# (called on every `pmctl context query`) — forking 2 sqlite3 subprocesses per
+# call was pure repeated cost for an answer that never changes. Keyed by $db
+# (not a single global) so nothing changes if a caller ever queries multiple
+# db paths in one process.
+declare -gA _CTX_FTS5_CACHE 2>/dev/null || true
+
 _ctx_fts5_available() {
   local db="$1"
+  if [[ -n "${_CTX_FTS5_CACHE[$db]+set}" ]]; then
+    [[ "${_CTX_FTS5_CACHE[$db]}" == "1" ]]
+    return
+  fi
+  local result=1
   if sqlite3 "$db" "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x);" 2>/dev/null; then
     sqlite3 "$db" "DROP TABLE IF EXISTS _fts5_probe;" 2>/dev/null || true
-    return 0
+    result=0
   fi
-  return 1
+  _CTX_FTS5_CACHE[$db]="$result"
+  [[ "$result" == "0" ]]
 }
 
 # ── Database schema ────────────────────────────────────────────────────────────
