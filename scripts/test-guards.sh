@@ -3465,6 +3465,14 @@ run_case "pm-bash: rm --force --recursive (long flags) → deny" 2 "$PMBASHHOOK"
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm --force --recursive /tmp/foo"}}' \
   "denylisted pattern"
 
+run_case "pm-bash: rm -v -rf (unrelated option before cluster, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -v -rf /tmp/foo"}}' \
+  "denylisted pattern"
+
+run_case "pm-bash: rm --one-file-system -rf (long option before cluster, previously bypassed) → deny" 2 "$PMBASHHOOK" \
+  '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm --one-file-system -rf /tmp/foo"}}' \
+  "denylisted pattern"
+
 run_case "pm-bash: rm -r alone (no force) → allow" 0 "$PMBASHHOOK" \
   '{"agent_type":"project-pm","tool_name":"Bash","tool_input":{"command":"rm -r /tmp/foo"}}'
 

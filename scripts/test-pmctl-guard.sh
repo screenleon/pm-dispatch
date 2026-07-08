@@ -274,6 +274,28 @@ if should_run "pm-prebash-deny-uppercase-recursive"; then
   fi
 fi
 
+if should_run "pm-prebash-deny-rm-prefixed-option-bypass"; then
+  # PR-gate finding (R6): the denylist's combined -rf token cluster used to
+  # match only when it was the FIRST option after `rm`, so a preceding
+  # unrelated option (short or long form) shielded the destructive command
+  # from denial. Regression lock through the same `pmctl guard check` path.
+  name="pm-prebash-deny-rm-prefixed-option-bypass"
+  run_guard --event pre-bash --role pm --runtime codex --command "rm -v -rf /tmp/whatever"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
+    pass "$name"
+  fi
+fi
+
+if should_run "pm-prebash-deny-rm-long-option-bypass"; then
+  name="pm-prebash-deny-rm-long-option-bypass"
+  run_guard --event pre-bash --role pm --runtime codex --command "rm --one-file-system -rf /tmp/whatever"
+  if assert_exit "$name" "$GUARD_EXIT" "2" &&
+    assert_string_contains "$name" "$GUARD_OUT" "denylisted pattern"; then
+    pass "$name"
+  fi
+fi
+
 if should_run "pm-missing-runtime"; then
   # pm now requires --runtime (uniform two-axis CLI — CC-291/CC-297).
   name="pm-missing-runtime"

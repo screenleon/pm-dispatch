@@ -11,9 +11,10 @@
 # well-known files or PATH binaries. It must never run a codex CLI command that
 # could mutate state, hang on a trust prompt, or incur cost.
 #
-# The codex host has no install write path yet, so an unwired capability is
-# reported as ok with provider=none (an observed state, not an install defect)
-# — unlike the claude host where unwired means the install contract is broken.
+# The codex host's install write path is opt-in (install.sh
+# --enable-codex-command-guard), so an unwired capability is reported as ok
+# with provider=none (the default, expected state, not an install defect) —
+# unlike the claude host where unwired means the install contract is broken.
 # Once a host manifest declares codex wiring targets, the declared values move
 # out of this file into the manifest; the module interface stays the same.
 
@@ -39,7 +40,7 @@ _doctor_host_codex_hooks() {
   else
     emit_capability host.codex.hooks ok codex command_guard \
       none none none evolving probed \
-      "codex hook surface not wired (no $codex_home/hooks.json; install write path pending)"
+      "codex hook surface not wired (no $codex_home/hooks.json; opt-in via install.sh --enable-codex-command-guard)"
   fi
 }
 

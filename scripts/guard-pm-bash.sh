@@ -118,8 +118,12 @@ declare -a DENY_PATTERNS=(
   # rm -rf / -Rf / -fr / -fR (rm accepts both -r and -R for recursive; only
   # lowercase -f is valid, but the recursive letter's case must not matter):
   # combined single-flag-token form, either letter order, any other short
-  # flags mixed in (e.g. -rfv), end-of-string or space-terminated.
-  'rm[[:space:]]+(-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*)([[:space:]]|$)'
+  # flags mixed into the SAME token (e.g. -rfv), end-of-string or
+  # space-terminated. Matched anywhere after `rm` (not just as the first
+  # token) so a preceding unrelated option does not shield the cluster —
+  # `rm -v -rf x` and `rm --one-file-system -rf x` are denied too, not just
+  # `rm -rf x`.
+  'rm\b.*[[:space:]](-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*)([[:space:]]|$)'
   # rm with recursive and force passed as SEPARATE flags (either order),
   # short or long form: `rm -r -f`, `rm --force --recursive`, etc.
   'rm\b.*(-r\b|-R\b|--recursive\b).*(-f\b|--force\b)'
