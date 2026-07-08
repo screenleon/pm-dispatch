@@ -11,7 +11,14 @@
 set -euo pipefail
 
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+case "${1:-}" in
+  --dry-run) DRY_RUN=1 ;;
+  "") : ;;
+  *)
+    echo "uninstall-guards-codex: unknown argument: $1 (usage: uninstall-guards-codex.sh [--dry-run])" >&2
+    exit 2
+    ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

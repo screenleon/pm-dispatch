@@ -113,6 +113,17 @@ test_install_guards_codex_missing_manifest_target_errors() {
   [[ "$rc" -ne 0 ]] && pass "$name" || fail "$name" "expected non-zero exit when no managed hooks install_target is declared"
 }
 
+test_install_guards_codex_unknown_flag_rejected() {
+  local name="install-guards-codex-unknown-flag-rejected"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/ic-badflag/.codex"
+  local rc=0
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" --bogus >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] && [[ ! -e "$codex_home" ]] \
+    && pass "$name" \
+    || fail "$name" "expected non-zero exit and no $codex_home mutation for an unknown flag, got rc=$rc"
+}
+
 # --- uninstall-guards-codex.sh --------------------------------------------
 
 test_uninstall_guards_codex_removes_hook() {
@@ -149,6 +160,20 @@ test_uninstall_guards_codex_idempotent_when_absent() {
   local rc=0
   CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1 || rc=$?
   [[ "$rc" -eq 0 ]] && pass "$name" || fail "$name" "expected exit 0 when nothing is wired"
+}
+
+test_uninstall_guards_codex_unknown_flag_rejected() {
+  local name="uninstall-guards-codex-unknown-flag-rejected"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uc-badflag/.codex"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  local before after rc=0
+  before="$(jq -c . "$codex_home/hooks.json")"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" --bogus >/dev/null 2>&1 || rc=$?
+  after="$(jq -c . "$codex_home/hooks.json")"
+  [[ "$rc" -ne 0 ]] && [[ "$before" == "$after" ]] \
+    && pass "$name" \
+    || fail "$name" "expected non-zero exit and unchanged hooks.json for an unknown flag, got rc=$rc"
 }
 
 # --- hook-codex-command-guard.sh ------------------------------------------
@@ -265,9 +290,11 @@ test_install_guards_codex_dry_run_no_side_effect
 test_install_guards_codex_wires_hook
 test_install_guards_codex_idempotent
 test_install_guards_codex_missing_manifest_target_errors
+test_install_guards_codex_unknown_flag_rejected
 test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_uninstall_guards_codex_idempotent_when_absent
+test_uninstall_guards_codex_unknown_flag_rejected
 test_hook_codex_command_guard_allows_benign_command
 test_hook_codex_command_guard_denies_destructive_command
 test_hook_codex_command_guard_denies_prefixed_option_bypass
