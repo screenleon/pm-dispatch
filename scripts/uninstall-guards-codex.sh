@@ -54,18 +54,20 @@ if [[ ! -f "$hooks_file" ]]; then
   exit 0
 fi
 
+hook_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
+hook_cmd_q="$(printf '%q' "$hook_cmd")"
+
 tmp_new="$(mktemp)"
 trap 'rm -f "$tmp_new"' EXIT
 
-# Match only the exact managed guard entry (basename + parent dir "scripts"),
-# not "any command under this repo root" — a user-maintained Codex hook
-# stored in the same checkout (e.g. scripts/my-own-hook.sh) must survive
-# uninstall. Basename matching is immune to the shell-escape backslashes
-# install-guards-codex.sh may add around a spaced repo path (the escape stays
-# inside a path component, never crosses a "/" boundary — see that script's
-# printf %q comment), so escaped and unescaped installs both match here.
-jq '
-  def is_managed: (. // "") | (split("/") | last) == "hook-codex-command-guard.sh" and (split("/") | .[-2]) == "scripts";
+# Match only the exact managed command identity THIS checkout's installer
+# writes (install-guards-codex.sh:59) — not a basename+parent-dir heuristic,
+# which would also strip a same-named hook-codex-command-guard.sh belonging
+# to a different checkout or tool. Compare both the escaped form (current
+# installer output) and the raw unescaped form (installs written before the
+# shell-escape fix), so an older install still uninstalls cleanly.
+jq --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" '
+  def is_managed: (. // "") | (. == $cmd or . == $cmd_q);
   ( [.hooks // {} | keys[]] ) as $event_types |
   reduce $event_types[] as $et (
     .;

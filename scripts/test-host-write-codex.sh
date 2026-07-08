@@ -216,6 +216,28 @@ test_uninstall_guards_codex_preserves_in_repo_user_hook() {
   fi
 }
 
+test_uninstall_guards_codex_preserves_same_basename_other_checkout() {
+  # Regression: uninstall must match the EXACT command identity this
+  # checkout's installer writes, not "basename == hook-codex-command-guard.sh
+  # under a scripts/ parent" — a same-named hook installed by a DIFFERENT
+  # checkout (or vendored copy of this tool) must survive uninstall.
+  local name="uninstall-guards-codex-preserves-same-basename-other-checkout"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uc-samebasename/.codex"
+  local other_hook="/other/repo/scripts/hook-codex-command-guard.sh"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  jq --arg cmd "$other_hook" \
+    '.hooks.PreToolUse += [{"matcher":"Bash","hooks":[{"type":"command","command":$cmd}]}]' \
+    "$codex_home/hooks.json" > "$codex_home/hooks.json.tmp" && mv "$codex_home/hooks.json.tmp" "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/uninstall-guards-codex.sh" >/dev/null 2>&1
+  if jq -e --arg cmd "$other_hook" '.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]? | select(.command==$cmd)' \
+      "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "same-basename hook from a different checkout should survive uninstall, was removed"
+  fi
+}
+
 test_uninstall_guards_codex_idempotent_when_absent() {
   local name="uninstall-guards-codex-idempotent-when-absent"
   should_run "$name" || return 0
@@ -374,6 +396,7 @@ test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_uninstall_guards_codex_preserves_in_repo_user_hook
+test_uninstall_guards_codex_preserves_same_basename_other_checkout
 test_uninstall_guards_codex_idempotent_when_absent
 test_uninstall_guards_codex_unknown_flag_rejected
 test_hook_codex_command_guard_allows_benign_command
