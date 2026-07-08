@@ -143,7 +143,7 @@ declare -gA _CTX_FTS5_CACHE 2>/dev/null || true
 _ctx_fts5_available() {
   local db="$1"
   if [[ -n "${_CTX_FTS5_CACHE[$db]+set}" ]]; then
-    [[ "${_CTX_FTS5_CACHE[$db]}" == "1" ]]
+    [[ "${_CTX_FTS5_CACHE[$db]}" == "0" ]]
     return
   fi
   local result=1

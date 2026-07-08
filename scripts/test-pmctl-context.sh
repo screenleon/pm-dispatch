@@ -3077,6 +3077,53 @@ case_context_prompt_scan_emits_event() {
   pass "$name"
 }
 
+case_context_fts5_availability_is_cached() {
+  local name="pmctl context: _ctx_fts5_available caches its result per db path"
+  # Behavior: _ctx_fts5_available forks 2 sqlite3 subprocesses per call to probe
+  # FTS5 support -- this is cached per db path since support cannot change within
+  # a process's lifetime (a prior version's cache-hit branch compared the cached
+  # marker against the wrong value, so a cache HIT always reported "unavailable"
+  # regardless of what the first, real probe found -- this locks the fix).
+  # Steps: source the lib directly (white-box); call _ctx_fts5_available once
+  # against a real db (whatever the real answer is, record it); shadow `sqlite3`
+  # with a function that always fails; call again on the SAME db path. If the
+  # cache is bypassed, the second call re-probes with the broken sqlite3 and
+  # wrongly flips to "unavailable" regardless of the first result. Assert both
+  # calls agree.
+  should_run "$name" || return 0
+
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH, cannot exercise this path"; return 0; }
+
+  local db out err status=0
+  db="$tmp_root/fts5-cache-probe.db"
+  out="$tmp_root/fts5-cache-probe.out"; err="$tmp_root/fts5-cache-probe.err"
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=scripts/lib/pmctl-context.sh
+    . "$1/lib/pmctl-context.sh"
+    db="$2"
+    sqlite3 "$db" "SELECT 1;" >/dev/null 2>&1 || true
+    if _ctx_fts5_available "$db"; then echo "first=available"; else echo "first=unavailable"; fi
+    # Shadow sqlite3 with a function that always fails: if the cache is
+    # bypassed, the second call re-probes through THIS broken stub.
+    sqlite3() { return 1; }
+    if _ctx_fts5_available "$db"; then echo "second=available"; else echo "second=unavailable"; fi
+  ' bash "$SCRIPT_DIR" "$db" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "exit $status err=$(<"$err")"; return 0
+  fi
+  local first second
+  first="$(grep '^first=' "$out" | cut -d= -f2)"
+  second="$(grep '^second=' "$out" | cut -d= -f2)"
+  if [[ -z "$first" || -z "$second" ]]; then
+    fail "$name" "expected first= and second= output lines; got: $(<"$out")"; return 0
+  fi
+  if [[ "$first" != "$second" ]]; then
+    fail "$name" "second call did not use the cache -- first probe said '$first', second (should be cached) said '$second'"; return 0
+  fi
+  pass "$name"
+}
+
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_context_index_missing_repo
@@ -3186,6 +3233,7 @@ case_context_prompt_scan_term_cap_longest_first
 case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
+case_context_fts5_availability_is_cached
 case_context_no_live_db_mutation
 
 th_summary

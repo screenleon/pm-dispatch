@@ -88,12 +88,15 @@ _kill_process_tree() {
 #   --test-cmd <cmd>     pre-flight test command run in plain bash BEFORE dispatch, independent of
 #                        --timeout; pass/fail is recorded mechanically (frontmatter test_suite: field)
 #                        and a FAIL forces Final: NO-GO regardless of what any reviewer LLM writes.
-#                        Auto-detected as `bash scripts/run-all-tests.sh` when this flag is omitted
-#                        and that script exists and is executable under --cd.
+#                        No auto-detection -- pr-gate.sh is copy-mode portable (see header) and must
+#                        not assume any repo-specific test command or path convention; the caller
+#                        supplies one explicitly (e.g. the /pr-gate skill passes this repo's own
+#                        `bash scripts/run-all-tests.sh` for pm-dispatch's own gate runs). Omitting
+#                        this flag skips the pre-flight check entirely (reviewers judge test status
+#                        themselves, as before this feature existed).
 #   --test-timeout <s>   timeout for --test-cmd (default: 1800), decoupled from --timeout so a slow
 #                        test suite can never cause a reviewer dispatch session to time out.
-#   --skip-preflight-tests   disable the pre-flight test check entirely (falls back to reviewers
-#                        judging test status themselves, as before this flag existed).
+#   --skip-preflight-tests   force-disable the pre-flight test check even if --test-cmd is passed.
 
 WORK_DIR=""
 GATE_RUN_DIR_OVERRIDE=""   # out-of-repo artifact root; set via --run-dir from pmctl-gate
@@ -161,7 +164,7 @@ while [[ $# -gt 0 ]]; do
       TEST_TIMEOUT="$2";   shift 2;;
     --skip-preflight-tests) SKIP_PREFLIGHT_TESTS=true; shift;;
     -h|--help)
-      sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,99p' "$0" | sed 's/^# \{0,1\}//'
       exit 0;;
     *)
       printf 'Unknown arg: %s\n' "$1" >&2
@@ -894,38 +897,82 @@ fi
 # correctly interpret and relay it. See CC-470 Part 3.
 PREFLIGHT_STATUS="skipped"
 PREFLIGHT_LOG_PATH=""
-if [[ "$SKIP_PREFLIGHT_TESTS" != "true" ]]; then
-  _PREFLIGHT_CMD="$TEST_CMD_OVERRIDE"
-  if [[ -z "$_PREFLIGHT_CMD" && -x "$WORK_DIR/scripts/run-all-tests.sh" ]]; then
-    _PREFLIGHT_CMD="bash scripts/run-all-tests.sh"
-  fi
-  if [[ -n "$_PREFLIGHT_CMD" ]]; then
-    mkdir -p "$WORK_DIR/.gate-results"
-    PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
-    say 'pr-gate: running pre-flight test suite (timeout %ss): %s\n' "$TEST_TIMEOUT" "$_PREFLIGHT_CMD"
-    _preflight_rc=0
-    ( cd "$WORK_DIR" && timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$_PREFLIGHT_CMD" ) \
-      > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
-    if [[ "$_preflight_rc" -eq 0 ]]; then
-      PREFLIGHT_STATUS="pass"
-    else
-      PREFLIGHT_STATUS="fail"
-    fi
-    say 'pr-gate: pre-flight test suite: %s (log: %s)\n\n' "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
+
+# relocate_gate_artifacts() (below) moves everything under $WORK_DIR/.gate-results
+# carrying $TIMESTAMP -- including the pre-flight log -- out to $GATE_RUN_DIR_OVERRIDE
+# AFTER dispatch completes. Any log path baked into persisted text (the brief's
+# evidence block, the mechanical override note in the result body) must point at
+# where the file will actually BE by the time a human reads it, not where it
+# started -- otherwise --run-dir runs leave a stale pointer into a directory the
+# EXIT trap already emptied. This mirrors relocate_gate_artifacts' own
+# OUTPUT_FILE-repointing logic (same condition) without needing to relocate the
+# log file itself any earlier than dispatch allows.
+_preflight_log_display_path() {
+  local path="$1"
+  if [[ -n "$path" && -n "$GATE_RUN_DIR_OVERRIDE" && -z "$OUTPUT_OVERRIDE" ]]; then
+    printf '%s/.gate-results/%s' "$GATE_RUN_DIR_OVERRIDE" "$(basename "$path")"
   else
-    say 'pr-gate: no --test-cmd and no executable scripts/run-all-tests.sh -- pre-flight test check skipped\n\n'
+    printf '%s' "$path"
   fi
+}
+
+if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
+  # pr-gate.sh is designed to be copied standalone into any repo (copy-mode --
+  # see the file header), so it must not hardcode any repo-specific test
+  # command or path convention. --test-cmd is the ONLY way to opt in: the
+  # caller (a human, or the /pr-gate skill, which already knows this repo's
+  # own convention) supplies it explicitly for this invocation -- that
+  # explicit act IS the consent, so no additional --allow-hooks gate applies
+  # (contrast with .pm-dispatch/pre-gate.sh above, whose content is arbitrary
+  # and repo-supplied, not operator-supplied).
+  mkdir -p "$WORK_DIR/.gate-results"
+  PREFLIGHT_LOG_PATH="$WORK_DIR/.gate-results/preflight-tests-${TIMESTAMP}.log"
+  say 'pr-gate: running pre-flight test suite (timeout %ss): %s\n' "$TEST_TIMEOUT" "$TEST_CMD_OVERRIDE"
+  _preflight_rc=0
+  ( cd "$WORK_DIR" && timeout --kill-after=15 "$TEST_TIMEOUT" bash -c "$TEST_CMD_OVERRIDE" ) \
+    > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
+  if [[ "$_preflight_rc" -eq 0 ]]; then
+    PREFLIGHT_STATUS="pass"
+  else
+    PREFLIGHT_STATUS="fail"
+  fi
+  say 'pr-gate: pre-flight test suite: %s (log: %s)\n\n' "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
 fi
+
+# Best-effort redaction of common secret shapes before a failed pre-flight
+# log excerpt is copied into a reviewer brief -- a non-hermetic test suite's
+# stdout/stderr can legitimately contain API keys, bearer tokens, or
+# password/token values from the environment it ran in. Mirrors the proven
+# pattern in scripts/guard-pm-bash.sh's _redact_secrets (same threat: don't
+# let secret-shaped substrings reach a place they get displayed/persisted).
+# Not a complete secret scanner -- closes the common cases, not every one.
+_preflight_redact_secrets() {
+  # Reads from stdin (used as a pipe filter: `tail ... | _preflight_redact_secrets`),
+  # not an argument -- an earlier version took "$1" here, which meant the
+  # piped log content was silently discarded and the function only ever
+  # processed an empty string. Caught by shellcheck (SC2119/SC2120) before ship.
+  sed -E \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/***REDACTED***/g' \
+    -e 's/gh[ps]_[A-Za-z0-9]{20,}/***REDACTED***/g' \
+    -e 's/AKIA[0-9A-Z]{16}/***REDACTED***/g' \
+    -e 's/([Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
+    -e 's/(-{0,2}[A-Za-z0-9][A-Za-z0-9_-]*)?([Pp]assword|[Tt]oken|[Ss]ecret|[Cc]redential|[Aa][Pp][Ii]_?[Kk][Ee][Yy])([A-Za-z0-9_-]*)([=:[:space:]])[^[:space:]]+/\1\2\3\4***REDACTED***/g'
+}
 
 # Render the pre-flight evidence block for brief injection. Informational
 # context only for reviewers -- NOT the enforcement mechanism (see above).
 render_test_evidence_block() {
-  local status="$1" log_path="$2" tail
+  local status="$1" log_path="$2" tail display_path
   [[ "$status" == "skipped" ]] && return 0
   printf '  Pre-flight test run: %s' "$status"
   if [[ "$status" == "fail" && -n "$log_path" ]]; then
-    printf ' (log: %s)\n  Last ~40 lines:\n' "$log_path"
-    tail=$(tail -n 40 "$log_path" 2>/dev/null | sed 's/^/    /')
+    # Read from the CURRENT (still in-repo) path -- relocation hasn't happened
+    # yet at this point in the script -- but DISPLAY the path it will live at
+    # once relocate_gate_artifacts moves it, so any reviewer that quotes this
+    # verbatim into the persisted result doesn't leave a stale pointer.
+    display_path="$(_preflight_log_display_path "$log_path")"
+    printf ' (log: %s)\n  Last ~40 lines (secret-shaped substrings redacted):\n' "$display_path"
+    tail=$(tail -n 40 "$log_path" 2>/dev/null | _preflight_redact_secrets | sed 's/^/    /')
     printf '%s\n' "$tail"
   else
     printf '\n'
@@ -1643,7 +1690,12 @@ gate_apply_preflight_result() {
 }
 
 if [[ "$PREFLIGHT_STATUS" != "skipped" ]]; then
-  gate_apply_preflight_result "$OUTPUT_FILE" "$PREFLIGHT_STATUS" "$PREFLIGHT_LOG_PATH"
+  # The "Overridden by pre-flight..." note gets baked as literal text into
+  # $OUTPUT_FILE's body; relocate_gate_artifacts (called after this, at gate
+  # completion) will move the log out from under $WORK_DIR/.gate-results to
+  # $GATE_RUN_DIR_OVERRIDE under --run-dir. Pass the eventual (post-relocation)
+  # path so the note doesn't point at a location the EXIT trap already emptied.
+  gate_apply_preflight_result "$OUTPUT_FILE" "$PREFLIGHT_STATUS" "$(_preflight_log_display_path "$PREFLIGHT_LOG_PATH")"
 fi
 
 # ── Override provenance (audit record) ─────────────────────────────────────────

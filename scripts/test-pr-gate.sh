@@ -1985,6 +1985,43 @@ test_preflight_fail_forces_no_go_override() {
   pass "$name"
 }
 
+# Behavior: a failed pre-flight run's log excerpt (injected into the brief as
+# reviewer context) must actually contain the log's real content, with
+# secret-shaped substrings redacted -- not silently empty. Regression lock: an
+# earlier version's redaction helper read a function argument instead of its
+# piped stdin, so the piped log content was discarded entirely and the
+# brief's excerpt was blank (caught by shellcheck SC2119/SC2120, not a test,
+# until this was added).
+# Steps: --test-cmd that echoes a distinctive marker AND a secret-shaped
+# token, then fails. Capture the sequential brief. Assert the marker survives
+# (proves the pipe carried real content) and the raw secret does not (proves
+# redaction actually ran on that content).
+test_preflight_fail_log_excerpt_is_redacted_not_empty() {
+  local name="preflight-fail-log-excerpt-is-redacted-not-empty"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd 'echo "MARKER_needle_visible_in_excerpt"; echo "token sk-abcdef1234567890ABCDEF"; exit 1' \
+    --output "$result"
+  set -e
+  if [[ ! -s "$brief" ]]; then
+    fail "$name" "brief was not captured"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "MARKER_needle_visible_in_excerpt" || return
+  assert_file_contains "$name" "$brief" "REDACTED" || return
+  assert_not_contains "$name" "$brief" "sk-abcdef1234567890ABCDEF" || return
+  pass "$name"
+}
+
 # Behavior: the mechanical override in test_preflight_fail_forces_no_go_override
 # does not corrupt frontmatter/body Final: parity -- gate_result_verify (the
 # same contract `pmctl gate verify` re-runs) must still pass on the rewritten file.
@@ -2039,12 +2076,12 @@ test_preflight_timeout_treated_as_fail() {
   pass "$name"
 }
 
-# Behavior: copy-mode safety net -- with no --test-cmd and no executable
-# scripts/run-all-tests.sh under --cd, the pre-flight step is a no-op --
-# behavior is identical to before this feature existed (no test_suite: field,
-# reviewers' own verdict determines Final: unmodified).
-test_preflight_skipped_without_test_cmd_or_autodetect() {
-  local name="preflight-skipped-without-test-cmd-or-autodetect"
+# Behavior: copy-mode safety net -- with no --test-cmd, the pre-flight step
+# is a no-op regardless of what's in the target repo -- behavior is identical
+# to before this feature existed (no test_suite: field, reviewers' own
+# verdict determines Final: unmodified).
+test_preflight_skipped_without_test_cmd() {
+  local name="preflight-skipped-without-test-cmd"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -2067,13 +2104,45 @@ test_preflight_skipped_without_test_cmd_or_autodetect() {
   pass "$name"
 }
 
-# Behavior: an explicit --test-cmd takes precedence over an auto-detected
-# scripts/run-all-tests.sh in the target repo.
-# Steps: seed $repo/scripts/run-all-tests.sh that would FAIL if invoked, but
-# pass --test-cmd "exit 0". Assert test_suite: pass (the failing auto-detected
-# script was never run).
-test_preflight_explicit_test_cmd_overrides_autodetect() {
-  local name="preflight-explicit-test-cmd-overrides-autodetect"
+# Behavior: pr-gate.sh must NEVER auto-execute a repo-local script just
+# because it exists and is executable -- it is copy-mode portable (see file
+# header) and must not assume any repo-specific test command convention.
+# Steps: seed $repo/scripts/run-all-tests.sh (executable, would FAIL if run)
+# but do NOT pass --test-cmd. Assert the gate does not touch it at all: no
+# test_suite: field, Final: determined purely by reviewers, and the failing
+# script's presence has zero effect on the outcome.
+test_preflight_never_auto_executes_repo_local_script() {
+  local name="preflight-never-auto-executes-repo-local-script"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  mkdir -p "$repo/scripts"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
+  chmod +x "$repo/scripts/run-all-tests.sh"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0 -- the executable script must not be auto-run without --test-cmd"
+    return
+  fi
+  assert_file_contains "$name" "$result" "Final: GO" || return
+  assert_not_contains "$name" "$result" "test_suite:" || return
+  pass "$name"
+}
+
+# Behavior: an explicit --test-cmd is honored even when the target repo also
+# happens to have its own scripts/run-all-tests.sh -- the two are unrelated;
+# only what the caller explicitly passed ever runs.
+test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts() {
+  local name="preflight-explicit-test-cmd-runs-independent-of-repo-scripts"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -2091,15 +2160,15 @@ test_preflight_explicit_test_cmd_overrides_autodetect() {
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0 -- explicit --test-cmd should override the failing autodetected script"
+    fail "$name" "exit $code, expected 0 -- explicit --test-cmd (exit 0) should be what actually ran"
     return
   fi
   assert_file_contains "$name" "$result" "test_suite: pass" || return
   pass "$name"
 }
 
-# Behavior: --skip-preflight-tests disables the whole mechanism even when a
-# test command would otherwise be auto-detected.
+# Behavior: --skip-preflight-tests force-disables the mechanism even when an
+# explicit --test-cmd is ALSO passed (the escape hatch wins).
 test_preflight_skip_flag_disables() {
   local name="preflight-skip-flag-disables"
   should_run "$name" || return 0
@@ -2110,16 +2179,14 @@ test_preflight_skip_flag_disables() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
-  mkdir -p "$repo/scripts"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/run-all-tests.sh"
-  chmod +x "$repo/scripts/run-all-tests.sh"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --skip-preflight-tests --output "$result"
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main \
+    --test-cmd "exit 1" --skip-preflight-tests --output "$result"
   local code=$?
   set -e
   if [[ "$code" -ne 0 ]]; then
-    fail "$name" "exit $code, expected 0 -- --skip-preflight-tests should bypass the failing autodetected script entirely"
+    fail "$name" "exit $code, expected 0 -- --skip-preflight-tests should bypass --test-cmd entirely"
     return
   fi
   assert_not_contains "$name" "$result" "test_suite:" || return
@@ -3112,10 +3179,12 @@ run_test test_piped_stdout_does_not_abort_gate
 run_test test_sequential_frontmatter_parity_mismatch_aborts_gate
 run_test test_preflight_pass_no_override
 run_test test_preflight_fail_forces_no_go_override
+run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_override_preserves_frontmatter_body_parity
 run_test test_preflight_timeout_treated_as_fail
-run_test test_preflight_skipped_without_test_cmd_or_autodetect
-run_test test_preflight_explicit_test_cmd_overrides_autodetect
+run_test test_preflight_skipped_without_test_cmd
+run_test test_preflight_never_auto_executes_repo_local_script
+run_test test_preflight_explicit_test_cmd_runs_independent_of_repo_scripts
 run_test test_preflight_skip_flag_disables
 run_test test_preflight_runs_even_when_qa_tester_not_targeted
 run_test test_parallel_frontmatter_parity_mismatch_aborts_gate
